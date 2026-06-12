@@ -1,0 +1,29 @@
+# terminal-delight theme — hacker (phosphor green CRT)
+# Edit this file while the app is running: it hot-reloads. No recompile.
+name = "hacker"
+
+[colors]
+bg      = "#050706"
+surface = "#08100d"
+text    = "#86efac"
+accent  = "#22c55e"
+faint   = "#14401f"
+cursor  = "#4ade80"
+# ANSI 16, tinted to the phosphor identity
+ansi = [
+  "#0a0f0a", "#ff4444", "#22c55e", "#f5c542",
+  "#3b82f6", "#c45ab3", "#67e8f9", "#86efac",
+  "#14401f", "#ff7b7b", "#4ade80", "#fbe08a",
+  "#7aa5ff", "#e08ad4", "#a5f3fc", "#ecfff4",
+]
+
+[effects]
+scanline_opacity = 0.055   # 0 = off
+scanline_step    = 3.0     # px between scanlines
+vignette         = 0.35    # top/bottom CRT falloff, 0 = off
+glow             = 0.45    # accent glow strength (header, cursor), 0 = off
+
+[font]
+family      = "JetBrains Mono"
+size        = 14.0
+cell_height = 20.0
