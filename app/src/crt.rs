@@ -153,6 +153,23 @@ pub fn glass(th: &Theme, fx: &Fx) -> impl IntoElement {
     div()
         .absolute()
         .inset_0()
+        // upper-left specular: the room's light source catching the glass
+        .when(vignette > 0.001, |el| {
+            el.child(
+                div()
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .w(px(260.))
+                    .h(px(150.))
+                    .rounded(px(60.))
+                    .bg(linear_gradient(
+                        135.,
+                        linear_color_stop(gpui::white().alpha(0.05 * vignette), 0.),
+                        linear_color_stop(gpui::white().alpha(0.0), 0.75),
+                    )),
+            )
+        })
         .when(bloom > 0.001, |el| {
             // center phosphor bloom (CSS: radial at 50% 42%) approximated with
             // a vertical gradient band — soft and cheap
