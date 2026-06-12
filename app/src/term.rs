@@ -8,6 +8,7 @@
 //! emitted through the proxy and NOT auto-routed back to the PTY — the consumer
 //! must bounce it via the notifier or interactive apps hang.
 
+use std::fs::File;
 use std::io;
 use std::sync::Arc;
 
@@ -55,6 +56,10 @@ pub struct Session {
     pub notifier: Notifier,
     /// Taken once by the UI entity to drive event handling.
     pub events: Option<UnboundedReceiver<TermEvent>>,
+    /// Our own handle on the PTY master — used to ask the kernel what the
+    /// foreground process is (tcgetpgrp), powering mode detection.
+    pub master: Option<File>,
+    pub shell_pid: u32,
 }
 
 impl Session {
@@ -84,6 +89,8 @@ pub fn spawn(size: GridSize, cell_width: u16, cell_height: u16) -> io::Result<Se
     };
 
     let pty = tty::new(&tty::Options::default(), window_size, 0)?;
+    let master = pty.file().try_clone().ok();
+    let shell_pid = pty.child().id();
     let term = Arc::new(FairMutex::new(Term::new(
         Config::default(),
         &size,
@@ -97,5 +104,7 @@ pub fn spawn(size: GridSize, cell_width: u16, cell_height: u16) -> io::Result<Se
         term,
         notifier,
         events: Some(rx),
+        master,
+        shell_pid,
     })
 }

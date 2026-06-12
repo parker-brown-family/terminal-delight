@@ -12,6 +12,7 @@ alacritty_terminal = "0.26"
 futures = "0.3"
 gpui = { path = "../../zed-upstream/crates/gpui" }
 gpui_platform = { path = "../../zed-upstream/crates/gpui_platform", features = ["x11", "wayland"] }
+libc = "0.2.186"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 # our td-crt-pass patch lives in this crate (see docs/patches/)

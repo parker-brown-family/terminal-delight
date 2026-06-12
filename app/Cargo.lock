@@ -5536,6 +5536,7 @@ dependencies = [
  "gpui",
  "gpui_platform",
  "gpui_wgpu",
+ "libc",
  "serde",
  "toml 0.8.23",
 ]
