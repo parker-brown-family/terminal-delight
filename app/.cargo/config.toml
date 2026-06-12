@@ -1,0 +1,4 @@
+# Share the zed-upstream target dir so gpui's dependency artifacts compile once,
+# not once per workspace. Remove when we move to a published gpui.
+[build]
+target-dir = "/home/user/code/zed-upstream/target"

@@ -1,0 +1,19 @@
+[package]
+name = "terminal-delight"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Tabful tiling Linux terminal manager — native-snappy, web-app polished, themeable at will"
+
+# gpui consumed from the pinned zed checkout (rev abbe85a, post-wgpu-renderer).
+# Path deps = the pin. Switch to git+rev form when we publish.
+[dependencies]
+gpui = { path = "../../zed-upstream/crates/gpui" }
+gpui_platform = { path = "../../zed-upstream/crates/gpui_platform", features = ["x11", "wayland"] }
+
+[profile.dev]
+# gpui is heavy; keep our own code debuggable but deps optimized
+opt-level = 0
+
+[profile.dev.package."*"]
+opt-level = 2
