@@ -23,6 +23,93 @@ use crate::crt;
 use crate::term;
 use crate::theme::{self, Theme};
 
+/// What the tube is showing — drives the per-pane screen colour.
+/// Recommended phosphor quartet: green=shell, amber=claude, ice-cyan=codex,
+/// violet=remote (you are not local).
+#[derive(Clone, PartialEq, Debug)]
+pub enum PaneMode {
+    Shell,
+    Claude,
+    Codex,
+    Remote,
+    Other(String),
+}
+
+impl PaneMode {
+    fn classify(comm: &str, cmdline: &str) -> PaneMode {
+        let c = comm.trim();
+        if c == "claude" || cmdline.contains("/claude") {
+            PaneMode::Claude
+        } else if c == "codex" || cmdline.contains("/codex") {
+            PaneMode::Codex
+        } else if matches!(c, "ssh" | "mosh-client" | "et" | "telnet") {
+            PaneMode::Remote
+        } else if matches!(c, "bash" | "zsh" | "fish" | "sh" | "dash" | "nu") {
+            PaneMode::Shell
+        } else {
+            PaneMode::Other(c.to_string())
+        }
+    }
+
+    pub fn label(&self) -> &str {
+        match self {
+            PaneMode::Shell => "SHELL",
+            PaneMode::Claude => "CLAUDE",
+            PaneMode::Codex => "CODEX",
+            PaneMode::Remote => "REMOTE",
+            PaneMode::Other(name) => name,
+        }
+    }
+}
+
+/// Foreground process of the PTY, the honest kernel answer.
+fn foreground_mode(master: &std::fs::File, shell_pid: u32) -> PaneMode {
+    use std::os::fd::AsRawFd;
+    let pgid = unsafe { libc::tcgetpgrp(master.as_raw_fd()) };
+    if pgid <= 0 {
+        return PaneMode::Shell;
+    }
+    let comm = std::fs::read_to_string(format!("/proc/{pgid}/comm")).unwrap_or_default();
+    let cmdline = std::fs::read_to_string(format!("/proc/{pgid}/cmdline"))
+        .unwrap_or_default()
+        .replace('\0', " ");
+    if pgid as u32 == shell_pid {
+        return PaneMode::Shell;
+    }
+    PaneMode::classify(&comm, &cmdline)
+}
+
+/// Apply the mode's screen colour over the structural theme.
+fn mode_theme(base: &Theme, mode: &PaneMode) -> Theme {
+    let mut th = base.clone();
+    let (accent, text, faint, cursor) = match mode {
+        PaneMode::Shell | PaneMode::Other(_) => return th,
+        // amber phosphor — Claude (P3 tube, Anthropic-warm)
+        PaneMode::Claude => (0xf59e0bu32, 0xfbe3b0u32, 0x4a3410u32, 0xfbbf24u32),
+        // ice cyan — Codex
+        PaneMode::Codex => (0x22d3eeu32, 0xc3f4fcu32, 0x0e3a44u32, 0x67e8f9u32),
+        // violet — Remote: you are NOT local
+        PaneMode::Remote => (0xc084fcu32, 0xead9fcu32, 0x3b2354u32, 0xd8b4feu32),
+    };
+    let acc: gpui::Hsla = gpui::rgb(accent).into();
+    th.accent = acc;
+    th.text = gpui::rgb(text).into();
+    th.faint = gpui::rgb(faint).into();
+    th.cursor = gpui::rgb(cursor).into();
+    // tint the tube's depths toward the mode hue
+    let mut bg = acc;
+    bg.s = 0.35;
+    bg.l = 0.035;
+    th.bg = bg;
+    let mut surface = acc;
+    surface.s = 0.32;
+    surface.l = 0.07;
+    th.surface = surface;
+    // default fg/ANSI-7-ish stays app-controlled; swap the green slots' default fg
+    th.ansi[7] = th.text;
+    th
+}
+
 const HEADER_H: f32 = 28.0;
 const PAD_X: f32 = 8.0;
 const PAD_Y: f32 = 4.0;
@@ -79,6 +166,7 @@ pub struct TerminalView {
     /// Barrel coefficients (from the theme's curvature dial); used to
     /// warp-correct mouse-to-cell mapping so selection lands where you look.
     warp_k: (f32, f32),
+    pub mode: PaneMode,
 }
 
 impl TerminalView {
@@ -95,6 +183,31 @@ impl TerminalView {
                     })
                     .unwrap_or(false);
                 if !keep_going {
+                    break;
+                }
+            }
+        })
+        .detach();
+
+        // foreground-process watcher: what is this tube showing?
+        cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor()
+                    .timer(std::time::Duration::from_millis(800))
+                    .await;
+                let alive = this
+                    .update(cx, |view: &mut TerminalView, cx| {
+                        if let Some(master) = view.session.master.as_ref() {
+                            let mode = foreground_mode(master, view.session.shell_pid);
+                            if mode != view.mode {
+                                view.mode = mode;
+                                cx.notify();
+                            }
+                        }
+                        !view.exited
+                    })
+                    .unwrap_or(false);
+                if !alive {
                     break;
                 }
             }
@@ -141,6 +254,7 @@ impl TerminalView {
             spawned: Instant::now(),
             fx: crt::Fx::new(seed),
             warp_k: (0., 0.),
+            mode: PaneMode::Shell,
         }
     }
 
@@ -478,7 +592,7 @@ impl Focusable for TerminalView {
 
 impl Render for TerminalView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let th = theme::theme(cx);
+        let th = mode_theme(&theme::theme(cx), &self.mode);
         let scale = cx
             .try_global::<crate::UiScale>()
             .map(|s| s.0)
@@ -508,7 +622,7 @@ impl Render for TerminalView {
             .border_b_1()
             .border_color(th.accent.alpha(0.5))
             .text_color(th.accent)
-            .child(format!("▸ {}", self.title))
+            .child(format!("▸ {} · {}", self.mode.label(), self.title))
             .child(grid_label);
         {
             let mut shadows = vec![
