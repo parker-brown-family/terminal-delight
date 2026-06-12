@@ -11,6 +11,7 @@ mod crt;
 mod pane;
 mod term;
 mod theme;
+mod warp;
 
 use std::fs;
 use std::path::PathBuf;
@@ -608,6 +609,7 @@ fn render_node(node: &Node, th: &theme::Theme, focused: Option<EntityId>) -> gpu
 impl Render for Workspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.reap(window, cx);
+        warp::begin_frame(); // visible panes re-register their tube rects below
         let th = theme::theme(cx);
         if self.tabs.is_empty() {
             return div();
