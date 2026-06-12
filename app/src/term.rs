@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 use alacritty_terminal::{
     event::{Event as TermEvent, EventListener, WindowSize},
-    event_loop::{EventLoop, Notifier},
+    event_loop::{EventLoop, Msg, Notifier},
     grid::Dimensions,
     sync::FairMutex,
     term::{Config, Term},
@@ -55,6 +55,20 @@ pub struct Session {
     pub notifier: Notifier,
     /// Taken once by the UI entity to drive event handling.
     pub events: Option<UnboundedReceiver<TermEvent>>,
+}
+
+impl Session {
+    /// Resize both the emulation grid and the PTY (SIGWINCH to the child).
+    pub fn resize(&self, size: GridSize, cell_width: u16, cell_height: u16) {
+        let window_size = WindowSize {
+            num_lines: size.rows as u16,
+            num_cols: size.cols as u16,
+            cell_width,
+            cell_height,
+        };
+        let _ = self.notifier.0.send(Msg::Resize(window_size));
+        self.term.lock().resize(size);
+    }
 }
 
 /// Spawn the user's default shell on a PTY, emulation wired, I/O thread running.
