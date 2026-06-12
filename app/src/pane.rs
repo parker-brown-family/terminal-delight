@@ -166,12 +166,12 @@ impl TerminalView {
     }
 
     /// Measure the real cell metrics from the active theme, fit grid to window.
-    fn sync_size(&mut self, th: &Theme, window: &mut Window) {
-        self.cell_h = th.cell_h;
+    fn sync_size(&mut self, th: &Theme, scale: f32, window: &mut Window) {
+        self.cell_h = th.cell_h * scale;
         let font = grid_font(th, FontWeight::NORMAL);
         if let Ok(w) = window.text_system().advance(
             window.text_system().resolve_font(&font),
-            px(th.font_size),
+            px(th.font_size * scale),
             'M',
         ) {
             if f32::from(w.width) > 1.0 {
@@ -267,6 +267,9 @@ impl TerminalView {
     }
 
     fn on_wheel(&mut self, ev: &ScrollWheelEvent, _w: &mut Window, cx: &mut Context<Self>) {
+        if ev.modifiers.control {
+            return; // workspace handles ctrl+wheel = text-size scrub
+        }
         let dy = match ev.delta {
             gpui::ScrollDelta::Lines(l) => l.y * 3.0,
             gpui::ScrollDelta::Pixels(p) => f32::from(p.y) / self.cell_h,
@@ -453,7 +456,11 @@ impl Focusable for TerminalView {
 impl Render for TerminalView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let th = theme::theme(cx);
-        self.sync_size(&th, window);
+        let scale = cx
+            .try_global::<crate::UiScale>()
+            .map(|s| s.0)
+            .unwrap_or(1.0);
+        self.sync_size(&th, scale, window);
         let lines = self.styled_lines(&th);
         let status = if self.exited { "exited" } else { "live" };
         let grid_label = format!("{}×{} · {} · {status}", self.grid.cols, self.grid.rows, th.name);
@@ -484,7 +491,7 @@ impl Render for TerminalView {
                 // the reflection: bright inner top edge
                 BoxShadow {
                     color: gpui::white().alpha(0.16),
-                    offset: point(px(0.), px(1.)),
+                    offset: point(px(1.), px(1.)),
                     blur_radius: px(0.),
                     spread_radius: px(0.),
                     inset: true,
@@ -516,7 +523,7 @@ impl Render for TerminalView {
             .flex()
             .flex_col()
             .font_family(th.font_family.clone())
-            .text_size(px(th.font_size))
+            .text_size(px(th.font_size * scale))
             .text_color(th.text)
             .pt(px(jiggle.max(0.)))
             .pb(px((-jiggle).max(0.)))

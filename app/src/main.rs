@@ -1,13 +1,11 @@
-//! terminal-delight — tabs · splits · device bezel.
+//! terminal-delight — tiling tree · tabs · device bezel · text-size scrubber.
 //!
-//! ctrl+shift+t: new tab · ctrl+pgup/pgdn: switch tab
-//! ctrl+alt+r: split right · ctrl+alt+d: split down · alt+arrows: switch pane
-//! Triple-button cluster (Tilix-style): [+ tab] [split right] [split down]
-//! Panes close when their shell exits; empty tab closes; last tab quits.
-//! Layout (tabs, panes, direction) persists and restores.
+//! Splits divide ONLY the focused terminal's space (true tiling tree); every
+//! other pane keeps its exact place. ctrl+shift+t / [+]: new tab ·
+//! ctrl+pgup/pgdn: switch · right-click tab: rename · alt+arrows: pane focus ·
+//! ctrl+scroll or the bezel scrubber: text size.
 //!
-//! TODO(os-chrome): theme the OS window itself — gpui supports client-side
-//! decorations (WindowDecorations::Client); revisit after 0.2.
+//! TODO(os-chrome): client-side window decorations (WindowDecorations::Client).
 
 mod crt;
 mod pane;
@@ -16,17 +14,23 @@ mod theme;
 
 use std::fs;
 use std::path::PathBuf;
-use std::time::Duration;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use gpui::{
-    App, Bounds, Context, Entity, Focusable, Hsla, KeyDownEvent, MouseButton, MouseDownEvent,
-    TitlebarOptions, Window, WindowBounds, WindowOptions, div, prelude::*, px, size,
+    App, Bounds, BoxShadow, Context, Entity, EntityId, Focusable, Hsla, KeyDownEvent, MouseButton,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, ScrollWheelEvent, TitlebarOptions,
+    Window, WindowBounds, WindowOptions, canvas, div, hsla, linear_color_stop, linear_gradient,
+    point, prelude::*, px, size, white,
 };
 use gpui_platform::application;
 use pane::TerminalView;
 use serde::{Deserialize, Serialize};
 
-const MAX_PANES: usize = 6; // split always ADDS to the current tab; tree tiling in 0.2
+const MAX_PANES: usize = 8;
+
+pub struct UiScale(pub f32);
+impl gpui::Global for UiScale {}
 
 #[derive(Clone, Copy, PartialEq, Serialize, Deserialize)]
 enum SplitDir {
@@ -34,24 +38,106 @@ enum SplitDir {
     Col,
 }
 
+/// The tiling tree: splits divide only the targeted leaf.
+enum Node {
+    Leaf(Entity<TerminalView>),
+    Split {
+        dir: SplitDir,
+        a: Box<Node>,
+        b: Box<Node>,
+    },
+}
+
+impl Node {
+    fn leaves<'a>(&'a self, out: &mut Vec<&'a Entity<TerminalView>>) {
+        match self {
+            Node::Leaf(e) => out.push(e),
+            Node::Split { a, b, .. } => {
+                a.leaves(out);
+                b.leaves(out);
+            }
+        }
+    }
+
+    /// Replace the leaf holding `target` with a split of (old, new).
+    fn split_leaf(&mut self, target: EntityId, dir: SplitDir, new: Entity<TerminalView>) -> bool {
+        match self {
+            Node::Leaf(e) if e.entity_id() == target => {
+                let old = std::mem::replace(self, Node::Leaf(new.clone()));
+                *self = Node::Split {
+                    dir,
+                    a: Box::new(old),
+                    b: Box::new(Node::Leaf(new)),
+                };
+                true
+            }
+            Node::Leaf(_) => false,
+            Node::Split { a, b, .. } => {
+                if a.split_leaf(target, dir, new.clone()) {
+                    true
+                } else {
+                    b.split_leaf(target, dir, new)
+                }
+            }
+        }
+    }
+
+    /// Drop exited leaves; a split with one survivor collapses to it.
+    fn reap(self, cx: &App) -> Option<Node> {
+        match self {
+            Node::Leaf(e) => (!e.read(cx).exited).then_some(Node::Leaf(e)),
+            Node::Split { dir, a, b } => match (a.reap(cx), b.reap(cx)) {
+                (Some(a), Some(b)) => Some(Node::Split {
+                    dir,
+                    a: Box::new(a),
+                    b: Box::new(b),
+                }),
+                (Some(x), None) | (None, Some(x)) => Some(x),
+                (None, None) => None,
+            },
+        }
+    }
+
+    fn to_saved(&self) -> SavedNode {
+        match self {
+            Node::Leaf(_) => SavedNode::Leaf,
+            Node::Split { dir, a, b } => SavedNode::Split {
+                dir: *dir,
+                a: Box::new(a.to_saved()),
+                b: Box::new(b.to_saved()),
+            },
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+enum SavedNode {
+    Leaf,
+    Split {
+        dir: SplitDir,
+        a: Box<SavedNode>,
+        b: Box<SavedNode>,
+    },
+}
+
 struct Tab {
-    panes: Vec<Entity<TerminalView>>,
-    dir: SplitDir,
+    root: Node,
     name: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Default)]
 struct StateFile {
     active: usize,
-    tabs: Vec<TabState>,
+    #[serde(default)]
+    scale: Option<f32>,
+    tabs: Vec<SavedTab>,
 }
 
 #[derive(Serialize, Deserialize)]
-struct TabState {
-    panes: usize,
-    dir: SplitDir,
+struct SavedTab {
     #[serde(default)]
     name: Option<String>,
+    node: SavedNode,
 }
 
 fn state_path() -> PathBuf {
@@ -66,54 +152,145 @@ fn load_state() -> StateFile {
         .unwrap_or_default()
 }
 
+/// Frame-wide jiggle: the whole device hops ±1px every so often.
+struct FrameJiggle {
+    started: Instant,
+    rng: u64,
+    px: f32,
+    until: f32,
+    next_at: f32,
+}
+
+impl FrameJiggle {
+    fn new() -> Self {
+        let seed = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.subsec_nanos() as u64)
+            .unwrap_or(3);
+        Self {
+            started: Instant::now(),
+            rng: 0x9E3779B97F4A7C15 ^ seed,
+            px: 0.,
+            until: 0.,
+            next_at: 5.0,
+        }
+    }
+    fn rand(&mut self) -> f32 {
+        self.rng = self
+            .rng
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        ((self.rng >> 33) as f32) / (u32::MAX as f32 / 2.0)
+    }
+    fn tick(&mut self) -> bool {
+        let t = self.started.elapsed().as_secs_f32();
+        if self.px != 0. && t >= self.until {
+            self.px = 0.;
+            return true;
+        }
+        if self.px == 0. && t >= self.next_at {
+            self.px = if self.rand() > 1.0 { 1.0 } else { -1.0 };
+            self.until = t + 0.07;
+            self.next_at = t + 7.0 + self.rand() * 5.0;
+            return true;
+        }
+        false
+    }
+}
+
 struct Workspace {
     tabs: Vec<Tab>,
     active: usize,
     focus_handle: gpui::FocusHandle,
-    /// (tab index, buffer) while a tab is being renamed via right-click
     renaming: Option<(usize, String)>,
+    scrubbing: bool,
+    scrub_bounds: Arc<Mutex<Option<Bounds<Pixels>>>>,
+    jiggle: FrameJiggle,
+    last_action: Instant,
+}
+
+fn make_pane(window: &mut Window, cx: &mut Context<Workspace>) -> Entity<TerminalView> {
+    let pane = cx.new(TerminalView::new);
+    cx.observe(&pane, |_, _, cx| cx.notify()).detach();
+    window.focus(&pane.focus_handle(cx), cx);
+    pane
+}
+
+fn build_node(saved: &SavedNode, window: &mut Window, cx: &mut Context<Workspace>) -> Node {
+    match saved {
+        SavedNode::Leaf => Node::Leaf(make_pane(window, cx)),
+        SavedNode::Split { dir, a, b } => Node::Split {
+            dir: *dir,
+            a: Box::new(build_node(a, window, cx)),
+            b: Box::new(build_node(b, window, cx)),
+        },
+    }
 }
 
 impl Workspace {
     fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let saved = load_state();
+        cx.set_global(UiScale(saved.scale.unwrap_or(1.0).clamp(0.7, 1.6)));
         let mut ws = Self {
             tabs: vec![],
             active: 0,
             focus_handle: cx.focus_handle(),
             renaming: None,
+            scrubbing: false,
+            scrub_bounds: Arc::new(Mutex::new(None)),
+            jiggle: FrameJiggle::new(),
+            last_action: Instant::now() - Duration::from_secs(1),
         };
-        let saved = load_state();
         if saved.tabs.is_empty() {
             ws.new_tab(window, cx);
         } else {
             for t in &saved.tabs {
-                let dir = t.dir;
+                let root = build_node(&t.node, window, cx);
                 ws.tabs.push(Tab {
-                    panes: vec![],
-                    dir,
+                    root,
                     name: t.name.clone(),
                 });
-                ws.active = ws.tabs.len() - 1;
-                for _ in 0..t.panes.clamp(1, MAX_PANES) {
-                    ws.spawn_pane(window, cx);
-                }
             }
-            ws.active = saved.active.min(ws.tabs.len().saturating_sub(1));
+            ws.active = saved.active.min(ws.tabs.len() - 1);
             ws.focus_active(window, cx);
         }
+        // frame jiggle clock (cheap idle poll)
+        cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor()
+                    .timer(Duration::from_millis(60))
+                    .await;
+                let _ = this.update(cx, |ws: &mut Workspace, cx| {
+                    if ws.jiggle.tick() {
+                        cx.notify();
+                    }
+                });
+            }
+        })
+        .detach();
         ws
     }
 
-    fn save(&self) {
+    fn pane_count(&self) -> usize {
+        let mut n = 0;
+        for t in &self.tabs {
+            let mut v = vec![];
+            t.root.leaves(&mut v);
+            n += v.len();
+        }
+        n
+    }
+
+    fn save(&self, cx: &App) {
         let state = StateFile {
             active: self.active,
+            scale: Some(cx.global::<UiScale>().0),
             tabs: self
                 .tabs
                 .iter()
-                .map(|t| TabState {
-                    panes: t.panes.len().max(1),
-                    dir: t.dir,
+                .map(|t| SavedTab {
                     name: t.name.clone(),
+                    node: t.root.to_saved(),
                 })
                 .collect(),
         };
@@ -125,82 +302,106 @@ impl Workspace {
         }
     }
 
-    fn spawn_pane(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let active = self.active;
-        let Some(tab) = self.tabs.get_mut(active) else {
-            return;
-        };
-        if tab.panes.len() >= MAX_PANES {
-            return;
+    /// Mouse-down can dispatch more than once per physical click (capture +
+    /// bubble); structural actions debounce to one per 200ms.
+    fn debounced(&mut self) -> bool {
+        if self.last_action.elapsed() < Duration::from_millis(200) {
+            return false;
         }
-        if std::env::var("TD_KEYDEBUG").is_ok() {
-            eprintln!("spawn_pane: tab {} panes {}", active, self.tabs[active].panes.len());
-        }
-        let pane = cx.new(TerminalView::new);
-        cx.observe(&pane, |_, _, cx| cx.notify()).detach();
-        window.focus(&pane.focus_handle(cx), cx);
-        self.tabs[active].panes.push(pane);
-        self.save();
-        cx.notify();
+        self.last_action = Instant::now();
+        true
     }
 
     fn new_tab(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.debounced() {
+            return;
+        }
+        if std::env::var("TD_KEYDEBUG").is_ok() {
+            eprintln!("new_tab");
+        }
+        let pane = make_pane(window, cx);
         self.tabs.push(Tab {
-            panes: vec![],
-            dir: SplitDir::Row,
+            root: Node::Leaf(pane),
             name: None,
         });
         self.active = self.tabs.len() - 1;
-        self.spawn_pane(window, cx);
+        self.save(cx);
+        cx.notify();
     }
 
+    /// Split ONLY the focused terminal; everything else keeps its exact space.
     fn split(&mut self, dir: SplitDir, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(tab) = self.tabs.get_mut(self.active) {
-            tab.dir = dir;
+        if !self.debounced() {
+            return;
         }
-        self.spawn_pane(window, cx);
+        if std::env::var("TD_KEYDEBUG").is_ok() {
+            eprintln!("split col={}", matches!(dir, SplitDir::Col));
+        }
+        if self.pane_count() >= MAX_PANES {
+            return;
+        }
+        let Some(tab) = self.tabs.get(self.active) else {
+            return;
+        };
+        let mut leaves = vec![];
+        tab.root.leaves(&mut leaves);
+        let target = leaves
+            .iter()
+            .find(|p| p.focus_handle(cx).is_focused(window))
+            .or_else(|| leaves.first())
+            .map(|p| p.entity_id());
+        let Some(target) = target else { return };
+        let new_pane = make_pane(window, cx);
+        self.tabs[self.active]
+            .root
+            .split_leaf(target, dir, new_pane);
+        self.save(cx);
+        cx.notify();
     }
 
     fn activate_tab(&mut self, i: usize, window: &mut Window, cx: &mut Context<Self>) {
         if i < self.tabs.len() {
             self.active = i;
             self.focus_active(window, cx);
-            self.save();
+            self.save(cx);
             cx.notify();
         }
     }
 
     fn focus_active(&self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(tab) = self.tabs.get(self.active) {
-            if let Some(p) = tab.panes.first() {
+            let mut leaves = vec![];
+            tab.root.leaves(&mut leaves);
+            if let Some(p) = leaves.first() {
                 window.focus(&p.focus_handle(cx), cx);
             }
         }
     }
 
-    fn focused_pane(&self, window: &Window, cx: &App) -> usize {
-        self.tabs
-            .get(self.active)
-            .map(|t| {
-                t.panes
-                    .iter()
-                    .position(|p| p.focus_handle(cx).is_focused(window))
-                    .unwrap_or(0)
-            })
-            .unwrap_or(0)
+    fn set_scale(&mut self, value: f32, cx: &mut Context<Self>) {
+        cx.set_global(UiScale(value.clamp(0.7, 1.6)));
+        self.save(cx);
+        cx.refresh_windows();
+    }
+
+    fn scale_from_pos(&self, x: Pixels) -> Option<f32> {
+        let b = (*self.scrub_bounds.lock().unwrap())?;
+        let ratio =
+            ((f32::from(x) - f32::from(b.origin.x)) / f32::from(b.size.width)).clamp(0., 1.);
+        Some(0.7 + ratio * 0.9)
     }
 
     fn on_key(&mut self, ev: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         let ks = &ev.keystroke;
         let m = &ks.modifiers;
-        // themed inline rename has the keyboard while open
+        // the inline rename box owns the keyboard while open
         if let Some((tab_i, mut buf)) = self.renaming.take() {
             match ks.key.as_str() {
                 "enter" => {
                     if let Some(tab) = self.tabs.get_mut(tab_i) {
                         tab.name = (!buf.trim().is_empty()).then(|| buf.trim().to_string());
                     }
-                    self.save();
+                    self.save(cx);
                     self.focus_active(window, cx);
                 }
                 "escape" => self.focus_active(window, cx),
@@ -219,9 +420,6 @@ impl Workspace {
             }
             cx.notify();
             return;
-        }
-        if std::env::var("TD_KEYDEBUG").is_ok() {
-            eprintln!("ws on_key: key={:?} ctrl={} alt={} shift={}", ks.key, m.control, m.alt, m.shift);
         }
         if m.control && m.shift && ks.key.as_str() == "t" {
             self.new_tab(window, cx);
@@ -254,54 +452,85 @@ impl Workspace {
             let Some(tab) = self.tabs.get(self.active) else {
                 return;
             };
-            if tab.panes.len() > 1 {
+            let mut leaves = vec![];
+            tab.root.leaves(&mut leaves);
+            if leaves.len() > 1 {
                 let dir: i32 = match ks.key.as_str() {
                     "left" | "up" => -1,
                     "right" | "down" => 1,
                     _ => return,
                 };
-                let cur = self.focused_pane(window, cx) as i32;
-                let next = (cur + dir).rem_euclid(tab.panes.len() as i32) as usize;
-                window.focus(&tab.panes[next].focus_handle(cx), cx);
+                let cur = leaves
+                    .iter()
+                    .position(|p| p.focus_handle(cx).is_focused(window))
+                    .unwrap_or(0) as i32;
+                let next = (cur + dir).rem_euclid(leaves.len() as i32) as usize;
+                window.focus(&leaves[next].focus_handle(cx), cx);
                 cx.notify();
             }
         }
     }
 
-    /// Drop exited panes; drop empty tabs; quit when none remain.
-    fn reap(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let mut dirty = false;
-        for tab in &mut self.tabs {
-            let before = tab.panes.len();
-            tab.panes.retain(|p| !p.read(cx).exited);
-            dirty |= tab.panes.len() != before;
+    /// ctrl+wheel anywhere = text-size scrub (panes skip scrolling when ctrl).
+    fn on_wheel(&mut self, ev: &ScrollWheelEvent, _w: &mut Window, cx: &mut Context<Self>) {
+        if !ev.modifiers.control {
+            return;
         }
-        let before_tabs = self.tabs.len();
-        self.tabs.retain(|t| !t.panes.is_empty());
-        dirty |= self.tabs.len() != before_tabs;
-        if dirty {
+        let dy = match ev.delta {
+            gpui::ScrollDelta::Lines(l) => l.y,
+            gpui::ScrollDelta::Pixels(p) => f32::from(p.y) / 20.,
+        };
+        let cur = cx.global::<UiScale>().0;
+        self.set_scale(cur + dy * 0.05, cx);
+    }
+
+    fn on_mouse_move(&mut self, ev: &MouseMoveEvent, _w: &mut Window, cx: &mut Context<Self>) {
+        if self.scrubbing && ev.pressed_button == Some(MouseButton::Left) {
+            if let Some(s) = self.scale_from_pos(ev.position.x) {
+                self.set_scale(s, cx);
+            }
+        }
+    }
+
+    fn on_mouse_up(&mut self, _ev: &MouseUpEvent, _w: &mut Window, _cx: &mut Context<Self>) {
+        self.scrubbing = false;
+    }
+
+    fn reap(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let had = self.pane_count();
+        let tabs = std::mem::take(&mut self.tabs);
+        self.tabs = tabs
+            .into_iter()
+            .filter_map(|t| {
+                t.root.reap(cx).map(|root| Tab {
+                    root,
+                    name: t.name,
+                })
+            })
+            .collect();
+        if self.pane_count() != had {
             if self.tabs.is_empty() {
                 cx.quit();
                 return;
             }
             self.active = self.active.min(self.tabs.len() - 1);
             self.focus_active(window, cx);
-            self.save();
+            self.save(cx);
         }
     }
 
-    /// Solid, reflective bezel button: gradient face + crisp top glint.
+    /// Solid, reflective bezel button — light source upper-left.
     fn bezel_btn(th: &theme::Theme, label: &str, active: bool) -> gpui::Div {
-        let glint = gpui::BoxShadow {
-            color: gpui::white().alpha(0.22),
-            offset: gpui::point(px(0.), px(1.)),
+        let glint = BoxShadow {
+            color: white().alpha(0.22),
+            offset: point(px(1.), px(1.)),
             blur_radius: px(0.),
             spread_radius: px(0.),
             inset: true,
         };
-        let seat = gpui::BoxShadow {
-            color: gpui::hsla(0., 0., 0., 0.55),
-            offset: gpui::point(px(0.), px(2.)),
+        let seat = BoxShadow {
+            color: hsla(0., 0., 0., 0.55),
+            offset: point(px(2.), px(2.)),
             blur_radius: px(3.),
             spread_radius: px(0.),
             inset: false,
@@ -315,19 +544,19 @@ impl Workspace {
             .cursor_pointer()
             .shadow(vec![glint, seat].into());
         if active {
-            b.bg(gpui::linear_gradient(
-                180.,
-                gpui::linear_color_stop(th.accent.alpha(0.42), 0.),
-                gpui::linear_color_stop(th.accent.alpha(0.12), 1.),
+            b.bg(linear_gradient(
+                135.,
+                linear_color_stop(th.accent.alpha(0.42), 0.),
+                linear_color_stop(th.accent.alpha(0.12), 1.),
             ))
             .border_color(th.accent)
-            .text_color(gpui::white().alpha(0.92))
+            .text_color(white().alpha(0.92))
             .child(label.to_string())
         } else {
-            b.bg(gpui::linear_gradient(
-                180.,
-                gpui::linear_color_stop(brighten(th.surface, 1.7), 0.),
-                gpui::linear_color_stop(darken(th.surface, 0.7), 1.),
+            b.bg(linear_gradient(
+                135.,
+                linear_color_stop(brighten(th.surface, 1.7), 0.),
+                linear_color_stop(darken(th.surface, 0.7), 1.),
             ))
             .border_color(th.accent.alpha(0.4))
             .text_color(th.text)
@@ -346,6 +575,36 @@ fn brighten(mut c: Hsla, f: f32) -> Hsla {
     c
 }
 
+fn render_node(node: &Node, th: &theme::Theme, focused: Option<EntityId>) -> gpui::Div {
+    match node {
+        Node::Leaf(e) => {
+            let is_focused = focused == Some(e.entity_id());
+            div()
+                .flex_1()
+                .min_w_0()
+                .min_h_0()
+                .overflow_hidden()
+                .rounded_md()
+                .border_1()
+                .border_color(if is_focused {
+                    th.accent.alpha(0.55)
+                } else {
+                    th.faint
+                })
+                .child(e.clone())
+        }
+        Node::Split { dir, a, b } => {
+            let base = div().flex_1().min_w_0().min_h_0().flex().gap(px(3.));
+            let base = match dir {
+                SplitDir::Row => base.flex_row(),
+                SplitDir::Col => base.flex_col(),
+            };
+            base.child(render_node(a, th, focused))
+                .child(render_node(b, th, focused))
+        }
+    }
+}
+
 impl Render for Workspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.reap(window, cx);
@@ -353,26 +612,31 @@ impl Render for Workspace {
         if self.tabs.is_empty() {
             return div();
         }
-        let focused = self.focused_pane(window, cx);
+        let scale = cx.global::<UiScale>().0;
         let bezel = darken(th.surface, 0.55);
         let tab = &self.tabs[self.active];
-        let dir = tab.dir;
-        let focused_title = tab
-            .panes
-            .get(focused)
+        let mut leaves = vec![];
+        tab.root.leaves(&mut leaves);
+        let focused_id = leaves
+            .iter()
+            .find(|p| p.focus_handle(cx).is_focused(window))
+            .map(|p| p.entity_id());
+        let focused_title = leaves
+            .iter()
+            .find(|p| Some(p.entity_id()) == focused_id)
+            .or(leaves.first())
             .map(|p| p.read(cx).title.clone())
             .unwrap_or_default();
-        let pane_count: usize = self.tabs.iter().map(|t| t.panes.len()).sum();
+        let pane_count = self.pane_count();
         let tab_count = self.tabs.len();
+        let jiggle = self.jiggle.px;
 
-        // ---- bezel top: brand · tabs (right-click renames) · split cluster ----
+        // ---- tabs (right-click renames) ----
         let renaming = self.renaming.clone();
         let mut tab_strip = div().flex().flex_row().gap_1().items_center();
         for i in 0..tab_count {
             let is_active = i == self.active;
-            if let Some((ri, buf)) = renaming.as_ref().filter(|(ri, _)| *ri == i) {
-                let _ = ri;
-                // themed inline rename box
+            if let Some((_, buf)) = renaming.as_ref().filter(|(ri, _)| *ri == i) {
                 tab_strip = tab_strip.child(
                     div()
                         .px_2()
@@ -386,7 +650,7 @@ impl Render for Workspace {
                         .flex()
                         .flex_row()
                         .items_center()
-                        .child(format!("{buf}"))
+                        .child(buf.clone())
                         .child(div().w(px(6.)).h(px(13.)).bg(th.cursor)),
                 );
                 continue;
@@ -421,7 +685,104 @@ impl Render for Workspace {
             ),
         );
 
-        let triple = div()
+        // ---- text-size scrubber: A ──●── A 110% ----
+        let ratio = ((scale - 0.7) / 0.9).clamp(0., 1.);
+        let scrub_store = self.scrub_bounds.clone();
+        let scrubber = div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap_1()
+            .child(div().text_size(px(9.)).text_color(th.text).child("A"))
+            .child(
+                div()
+                    .w(px(90.))
+                    .h(px(12.))
+                    .relative()
+                    .cursor_pointer()
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|ws, ev: &MouseDownEvent, _w, cx| {
+                            ws.scrubbing = true;
+                            let s = ws.scale_from_pos(ev.position.x);
+                            if std::env::var("TD_KEYDEBUG").is_ok() {
+                                eprintln!(
+                                    "scrub down at {:?} -> {:?} (bounds {:?})",
+                                    ev.position.x,
+                                    s,
+                                    ws.scrub_bounds.lock().unwrap().map(|b| b.origin.x)
+                                );
+                            }
+                            if let Some(s) = s {
+                                ws.set_scale(s, cx);
+                            }
+                        }),
+                    )
+                    .child(
+                        canvas(
+                            move |bounds, _, _| {
+                                *scrub_store.lock().unwrap() = Some(bounds);
+                            },
+                            |_, _, _, _| {},
+                        )
+                        .size_full(),
+                    )
+                    .child(
+                        div()
+                            .absolute()
+                            .left_0()
+                            .right_0()
+                            .top(px(5.))
+                            .h(px(3.))
+                            .rounded_full()
+                            .bg(darken(th.surface, 0.4))
+                            .border_1()
+                            .border_color(th.faint),
+                    )
+                    .child(
+                        div()
+                            .absolute()
+                            .left_0()
+                            .top(px(5.))
+                            .h(px(3.))
+                            .w(px(90. * ratio))
+                            .rounded_full()
+                            .bg(th.accent),
+                    )
+                    .child(
+                        div()
+                            .absolute()
+                            .left(px((90. * ratio - 5.).max(0.)))
+                            .top(px(1.))
+                            .w(px(10.))
+                            .h(px(10.))
+                            .rounded_full()
+                            .bg(linear_gradient(
+                                135.,
+                                linear_color_stop(brighten(th.accent, 1.4), 0.),
+                                linear_color_stop(darken(th.accent, 0.7), 1.),
+                            ))
+                            .shadow(
+                                vec![BoxShadow {
+                                    color: white().alpha(0.4),
+                                    offset: point(px(-1.), px(-1.)),
+                                    blur_radius: px(1.),
+                                    spread_radius: px(0.),
+                                    inset: true,
+                                }]
+                                .into(),
+                            ),
+                    ),
+            )
+            .child(div().text_size(px(12.)).text_color(th.text).child("A"))
+            .child(
+                div()
+                    .text_size(px(10.))
+                    .text_color(th.accent)
+                    .child(format!("{}%", (scale * 100.).round() as i32)),
+            );
+
+        let cluster = div()
             .flex()
             .flex_row()
             .gap_1()
@@ -473,9 +834,16 @@ impl Render for Workspace {
                     )
                     .child(tab_strip),
             )
-            .child(triple);
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_3()
+                    .child(scrubber)
+                    .child(cluster),
+            );
 
-        // ---- bezel bottom: the codex-style metadata readout ----
         let bezel_bottom = div()
             .h(px(22.))
             .flex_none()
@@ -503,27 +871,11 @@ impl Render for Workspace {
                     .child(div().text_color(th.accent).child("● READY")),
             );
 
-        // ---- the screen, inset into the device ----
-        let mut pane_area = div().size_full().flex().gap(px(3.)).p(px(3.));
-        pane_area = match dir {
-            SplitDir::Row => pane_area.flex_row(),
-            SplitDir::Col => pane_area.flex_col(),
-        };
-        let pane_area = pane_area.children(tab.panes.iter().enumerate().map(|(i, p)| {
-            div()
-                .flex_1()
-                .min_w_0()
-                .min_h_0()
-                .overflow_hidden()
-                .rounded_md()
-                .border_1()
-                .border_color(if i == focused {
-                    th.accent.alpha(0.55)
-                } else {
-                    th.faint
-                })
-                .child(p.clone())
-        }));
+        let pane_area = div()
+            .size_full()
+            .flex()
+            .p(px(3.))
+            .child(render_node(&tab.root, &th, focused_id));
 
         let screen = div()
             .flex_1()
@@ -537,55 +889,58 @@ impl Render for Workspace {
             .mx_2()
             .child(pane_area);
 
-        // ---- device shell ----
         div()
             .size_full()
             .bg(darken(bezel, 0.5))
-            .p(px(5.))
+            .px(px(5.))
+            .pt(px(5. + jiggle.max(0.)))
+            .pb(px(5. + (-jiggle).max(0.)))
             .font_family(th.font_family.clone())
             .track_focus(&self.focus_handle)
             .on_key_down(cx.listener(Self::on_key))
+            .on_scroll_wheel(cx.listener(Self::on_wheel))
+            .on_mouse_move(cx.listener(Self::on_mouse_move))
+            .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .child(
                 div()
                     .size_full()
                     .flex()
                     .flex_col()
                     .rounded(px(14.))
-                    .bg(gpui::linear_gradient(
-                        180.,
-                        gpui::linear_color_stop(brighten(bezel, 1.6), 0.),
-                        gpui::linear_color_stop(darken(bezel, 0.8), 1.),
+                    .bg(linear_gradient(
+                        135.,
+                        linear_color_stop(brighten(bezel, 1.6), 0.),
+                        linear_color_stop(darken(bezel, 0.8), 1.),
                     ))
                     .border_2()
                     .border_color(th.accent.alpha(0.45))
                     .shadow(
                         vec![
-                            // crisp top reflection line — the "solid device" glint
-                            gpui::BoxShadow {
-                                color: gpui::white().alpha(0.14),
-                                offset: gpui::point(px(0.), px(1.)),
+                            // upper-left light source: glint biased to (1,1)
+                            BoxShadow {
+                                color: white().alpha(0.14),
+                                offset: point(px(1.), px(1.)),
                                 blur_radius: px(0.),
                                 spread_radius: px(0.),
                                 inset: true,
                             },
-                            // inner bottom shade — material thickness
-                            gpui::BoxShadow {
-                                color: gpui::hsla(0., 0., 0., 0.5),
-                                offset: gpui::point(px(0.), px(-2.)),
+                            BoxShadow {
+                                color: hsla(0., 0., 0., 0.5),
+                                offset: point(px(-2.), px(-2.)),
                                 blur_radius: px(3.),
                                 spread_radius: px(0.),
                                 inset: true,
                             },
-                            gpui::BoxShadow {
-                                color: gpui::hsla(0., 0., 0., 0.6),
-                                offset: gpui::point(px(0.), px(6.)),
+                            BoxShadow {
+                                color: hsla(0., 0., 0., 0.6),
+                                offset: point(px(4.), px(6.)),
                                 blur_radius: px(22.),
                                 spread_radius: px(0.),
                                 inset: false,
                             },
-                            gpui::BoxShadow {
+                            BoxShadow {
                                 color: th.accent.alpha(0.10 * th.glow),
-                                offset: gpui::point(px(0.), px(0.)),
+                                offset: point(px(0.), px(0.)),
                                 blur_radius: px(30.),
                                 spread_radius: px(2.),
                                 inset: false,
