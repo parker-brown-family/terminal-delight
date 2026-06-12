@@ -40,6 +40,7 @@ struct FileEffects {
     tracking_sweep: Option<f32>,
     flicker: Option<f32>,
     jiggle: Option<f32>,
+    curvature: Option<f32>,
 }
 
 #[derive(Deserialize, Default)]
@@ -79,6 +80,7 @@ pub struct Theme {
     pub tracking_sweep: f32,
     pub flicker: f32,
     pub jiggle: f32,
+    pub curvature: f32,
     pub font_family: String,
     pub font_size: f32,
     pub cell_h: f32,
@@ -89,6 +91,12 @@ impl Global for ActiveTheme {}
 
 pub fn theme(cx: &App) -> Arc<Theme> {
     cx.global::<ActiveTheme>().0.clone()
+}
+
+/// Push the curvature dial into the renderer's CRT warp pass (td-crt-pass patch).
+fn apply_warp(theme: &Theme) {
+    #[cfg(target_os = "linux")]
+    gpui_wgpu::set_crt_warp(theme.curvature * 0.14, theme.curvature * 0.06);
 }
 
 fn hex(value: &str) -> Option<Hsla> {
@@ -130,6 +138,7 @@ fn parse(source: &str) -> Result<Theme, String> {
         tracking_sweep: file.effects.tracking_sweep.unwrap_or(7.).clamp(1., 30.),
         flicker: file.effects.flicker.unwrap_or(0.).clamp(0., 1.),
         jiggle: file.effects.jiggle.unwrap_or(0.).clamp(0., 1.),
+        curvature: file.effects.curvature.unwrap_or(0.).clamp(0., 1.),
         font_family: file.font.family.unwrap_or_else(|| "JetBrains Mono".into()),
         font_size: file.font.size.unwrap_or(14.).clamp(8., 32.),
         cell_h: file.font.cell_height.unwrap_or(20.).clamp(10., 48.),
@@ -162,6 +171,7 @@ pub fn init(cx: &mut App) {
         .ok()
         .and_then(|s| parse(&s).ok())
         .unwrap_or_else(|| parse(DEFAULT_THEME_TOML).expect("embedded theme parses"));
+    apply_warp(&initial);
     cx.set_global(ActiveTheme(Arc::new(initial)));
 
     let mut last = mtime(&path);
@@ -176,6 +186,7 @@ pub fn init(cx: &mut App) {
                 if let Ok(source) = fs::read_to_string(&path) {
                     match parse(&source) {
                         Ok(theme) => {
+                            apply_warp(&theme);
                             let _ = cx.update(|cx| {
                                 cx.set_global(ActiveTheme(Arc::new(theme)));
                                 cx.refresh_windows();

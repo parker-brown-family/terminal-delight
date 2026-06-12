@@ -26,6 +26,7 @@ tracking         = 0.35
 tracking_period  = 20.0
 tracking_sweep   = 8.0
 flicker          = 0.3
+curvature        = 0.3     # barrel warp (needs td-crt-pass renderer patch)
 jiggle           = 0.3
 
 [font]
