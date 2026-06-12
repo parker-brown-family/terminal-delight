@@ -1,70 +1,69 @@
 # terminal-delight
 
-A **Tilix-shaped web workspace** wearing a **themeable phosphor-green CRT** look.
-Tabs, split panes, draggable dividers, and drag-a-pane-out-to-break-it-into-a-window —
-all running at compositor speed, with a 4-theme × any-seed-colour selector lifted from
-the IMT PM engine.
+A **GPU-native Linux terminal** with a hot-reloadable, CRT-flavored visual identity.
+Rust end-to-end: [gpui](https://github.com/zed-industries/zed/tree/main/crates/gpui)
+(Zed's GPU UI framework) renders everything; [`alacritty_terminal`](https://docs.rs/alacritty_terminal)
+does the VT emulation; your real shell runs on a real PTY.
 
-> The "impossible trilemma" — *look gorgeous · run like Tilix · be fully themeable* —
-> is actually one token-driven system plus one discipline (compositor-only effects).
+> Goal: **2-5-20 terminals in one window · native-snappy · web-app polished ·
+> modify-at-will themes · open source.** See [docs/PLAN.md](docs/PLAN.md) for the
+> gated build plan (all five G0 risk gates + MVP 0.1: **passed**).
 
-![hacker theme](assets/preview-hacker.png)
+![two panes: vim + top](assets/mvp-vim-top.png)
 
-## Run
+## Status — MVP 0.1 (two-pane real terminal)
+
+| Capability | State |
+|---|---|
+| Real shells (PTY + full VT emulation) — bash, vim, top, tmux verified | ✅ |
+| Two split panes, per-pane grids, focus borders | ✅ |
+| `ctrl+alt+r` / `ctrl+alt+d` split · `alt+←/→` switch panes | ✅ |
+| Pane closes when its shell exits; last one quits the app | ✅ |
+| Layout (pane count) restores on launch | ✅ |
+| Live resize → SIGWINCH (verified against `tput`) | ✅ |
+| Full ANSI color (16 themed + 256 + truecolor), bold/underline/inverse/dim | ✅ |
+| Scrollback (wheel), mouse selection (click/word/line), `ctrl+shift+c/v`, bracketed paste | ✅ |
+| **Hot-reload themes** — edit `~/.config/terminal-delight/theme.toml`, no restart | ✅ |
+| CRT-lite effects: scanlines, vignette, glow — per-theme dials, fully off in light theme | ✅ |
+| Latency probe (`TD_LATENCY=1`): key→echo→parsed **p50 121µs / p99 169µs**; `seq 1 100000` in **0.089s** | ✅ |
+
+## Build & run
 
 ```bash
-npm run dev          # python3 -m http.server 4322  (zero deps)
-# or:  npm run dev:vite
+# deps (Ubuntu): bash scripts/setup-deps.sh   (Vulkan + build libs)
+git clone --depth 1 https://github.com/zed-industries/zed ../zed-upstream  # pinned substrate
+cd app && cargo run
 ```
-Open <http://localhost:4322>. Deep-link a theme: `?theme=tactical-overdrive&seed=%2331d7ff`.
 
-No build step. Pure ES modules + CSS custom properties.
+gpui is consumed from a pinned zed checkout (`abbe85a`, post-wgpu-Linux-renderer —
+the crates.io release still ships the older blade renderer with known NVIDIA/X11 issues).
 
-## What works today
+## Theming — edit while it runs
 
-| Behaviour | Status |
-|---|---|
-| Tabs — add / close / **drag-reorder** / double-click-rename | ✅ |
-| Tiling — **split-right / split-down**, recursive binary tree | ✅ |
-| **Draggable splitters** (live resize) | ✅ |
-| Per-pane **triple-button** (split-right · split-down · detach) + close | ✅ |
-| **Drag a pane header off the tiling area → breaks out into its own window** | ✅ |
-| Detach button → pop-out window, theme-synced via `BroadcastChannel` | ✅ |
-| **Theme selector**: hacker / tactical-overdrive / field-command / quiet-command | ✅ |
-| **Seed-colour** picker → whole palette derived via HSL math | ✅ |
-| UI-scale slider, localStorage persistence | ✅ |
-| Faux terminal panes (`help`, `ls`, `neofetch`, `echo`, …) | ✅ |
+First launch seeds `~/.config/terminal-delight/theme.toml` (hacker). Change any value —
+colors, the 16 ANSI slots, `scanline_opacity`, `vignette`, `glow`, font — and the running
+app picks it up in ~300ms. Four themes ship in [`app/themes/`](app/themes/):
+**hacker** (phosphor green) · **tactical-overdrive** (cyan) · **field-command** (olive) ·
+**quiet-command** (light, effects off). Copy one over your config file to switch.
 
 ## Architecture
 
-Three theming tiers (see `src/styles/theme.css`):
-
-1. **seed palette** — `theme-engine.js` runs a seed hex through HSL math → `--theme-*` vars.
-2. **semantic tokens** — each `html[data-theme=…]` maps those to `--bg / --surface / --text / --accent …`.
-3. **effect dial** — `--scanline-opacity / --glow-radius / --crt-vignette`. `hacker` turns them up; `quiet-command` to zero. **Same engine, different dial.**
-
-Switching themes swaps one attribute — no re-render, no rebuild. The CRT overlay is a
-single fixed, GPU-composited `body::after` layer that never repaints.
-
 ```
-index.html            workspace chrome + theme-menu markup (data-* contract)
-popout.html           standalone broken-out pane
-src/styles/theme.css  tokens + the 4 themes + effect dial
-src/styles/workspace.css  tabs, tiling, splitters, triple-button, CRT overlay
-src/js/theme-engine.js    seed→palette, selector, BroadcastChannel sync  (ported from IMT)
-src/js/workspace.js       tab + tiling-tree engine, splitters, detach gesture
-src/js/panes.js           pane content factories (terminal / panel / assistant)
-src/js/detach.js          break-out → window.open(popout)
+app/src/main.rs   Workspace: panes, split/focus/close, layout persistence
+app/src/pane.rs   TerminalView: grid render (styled runs), input→PTY bytes,
+                  selection, scrollback, clipboard, CRT-lite, latency probe
+app/src/term.rs   the seam: alacritty_terminal tty+EventLoop (clean-room, Apache-2.0 API)
+app/src/theme.rs  TOML themes, hot-reload watcher, gpui Global
+app/themes/       shipped themes (data files — the no-Rust contribution path)
+docs/PLAN.md      the adversarially-hardened plan, gates G0a–G0e + milestones
+index.html, src/  original browser design prototype (kept as design reference)
 ```
+
+License: MIT. (`gpui`, `alacritty_terminal` = Apache-2.0. Zed's GPL terminal crates
+were used as *shape* reference only — see the clean-room rule in docs/PLAN.md §2.)
 
 ## Roadmap
 
-- **base16/base24 adoption** — express the 4 palettes as [tinted-theming](https://github.com/tinted-theming/tinty)
-  schemes so 250+ community themes plug in for free, and ours become portable to terminals.
-- Real terminals via **xterm.js** in leaf panes (PTY over WebSocket).
-- Persist & restore layouts (serialize the node tree).
-- Drag a pane *onto* another to swap/move within the tree.
-
-## License
-
-MIT.
+**0.2** tabs · up to 5 panes · drag splitters · packaging smoke test (AppImage/Flatpak) ·
+**0.3** detach pane → own window · **0.4** true post-process CRT shader (wgpu pass — fork
+gate per PLAN R1) · **1.0** 20 panes · rigorous latency rig vs Alacritty · theme gallery.
