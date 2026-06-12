@@ -1,0 +1,160 @@
+/* ============================================================
+   terminal-delight — theme layer
+   Token-driven theming, lifted from the IMT PM engine.
+
+   Three tiers:
+     1. --theme-*   : seed-derived palette, written by theme-engine.js (HSL math)
+     2. semantic    : --bg/--surface/--text/--accent... mapped per [data-theme]
+     3. effect      : --scanline-opacity/--glow-radius — the CRT "dial"
+   A theme is just a different mapping of tiers 2+3. Switching = swap one attr.
+   ============================================================ */
+
+:root {
+  /* ---- UI scale (driven by the scale slider) ---- */
+  --ui-scale: 1;
+  --ui-scale-inverse: 1;
+
+  /* ---- seed-derived palette (theme-engine.js overwrites these) ---- */
+  --theme-accent: #22c55e;
+  --theme-accent-rgb: 34 197 94;
+  --theme-accent-strong: #4ade80;
+  --theme-accent-muted: #3f9963;
+  --theme-accent-dark: #14401f;
+  --theme-accent-ink: #04140a;
+  --theme-complement: #67e8f9;
+  --theme-complement-rgb: 103 232 249;
+  --theme-field: #9db86d;
+  --theme-field-rgb: 157 184 109;
+  --theme-warm: #f5c542;
+  --theme-warm-rgb: 245 197 66;
+
+  /* ---- semantic defaults (quiet-command / light) ---- */
+  --bg:            #f3f6f9;
+  --surface:       #ffffff;
+  --surface-alt:   #f7f9fc;
+  --panel:         #ffffff;
+  --border:        #d9e1ea;
+  --border-strong: #c2ccd8;
+  --text:          #101828;
+  --text-muted:    #667085;
+  --text-faint:    #98a2b3;
+  --accent:        #2f6fdd;
+  --accent-strong: #1e57c0;
+  --accent-soft:   rgb(47 111 221 / .12);
+  --warn:          #d97706;
+  --danger:        #dc2626;
+
+  --font:      'Inter', system-ui, -apple-system, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Fira Code', 'Berkeley Mono', ui-monospace, monospace;
+
+  --radius:        8px;
+  --radius-sm:     5px;
+  --shadow-panel:  0 1px 3px rgb(0 0 0 / .08), 0 8px 24px rgb(0 0 0 / .06);
+
+  /* ---- effect dial: 0 here = no CRT. Themes turn it up. ---- */
+  --scanline-opacity: 0;
+  --scanline-size:    3px;
+  --glow-radius:      0px;
+  --glow-text:        0px;
+  --crt-vignette:     0;
+}
+
+/* ============================================================
+   quiet-command — calm light theme (effects off)
+   ============================================================ */
+html[data-theme="quiet-command"] {
+  color-scheme: light;
+  --accent:        var(--theme-accent, #2f6fdd);
+  --accent-strong: var(--theme-accent-strong, #1e57c0);
+  --accent-soft:   rgb(var(--theme-accent-rgb, 47 111 221) / .12);
+}
+
+/* ============================================================
+   field-command — muted dark olive (low glow)
+   ============================================================ */
+html[data-theme="field-command"] {
+  color-scheme: dark;
+  --bg:            #14160f;
+  --surface:       #1b1e15;
+  --surface-alt:   #20241a;
+  --panel:         #1d2117;
+  --border:        rgb(var(--theme-accent-rgb, 143 168 95) / .26);
+  --border-strong: rgb(var(--theme-accent-rgb, 143 168 95) / .46);
+  --text:          #e7ecd9;
+  --text-muted:    rgb(var(--theme-accent-rgb, 143 168 95) / .72);
+  --text-faint:    rgb(var(--theme-accent-rgb, 143 168 95) / .44);
+  --accent:        var(--theme-accent, #8fa85f);
+  --accent-strong: var(--theme-accent-strong, #b6cf86);
+  --accent-soft:   rgb(var(--theme-accent-rgb, 143 168 95) / .14);
+  --warn:          var(--theme-warm, #f5c542);
+  --shadow-panel:  0 0 0 1px rgb(var(--theme-accent-rgb, 143 168 95) / .10), 0 14px 34px rgb(0 0 0 / .6);
+  --scanline-opacity: 0.025;
+  --glow-radius:      6px;
+  --crt-vignette:     0.18;
+  --font:          var(--font-mono);
+}
+
+/* ============================================================
+   tactical-overdrive — high-contrast cyan command deck
+   ============================================================ */
+html[data-theme="tactical-overdrive"] {
+  color-scheme: dark;
+  --bg:            #06090d;
+  --surface:       #0a1018;
+  --surface-alt:   #0e1622;
+  --panel:         #0c131d;
+  --border:        rgb(var(--theme-accent-rgb, 49 215 255) / .30);
+  --border-strong: rgb(var(--theme-accent-rgb, 49 215 255) / .55);
+  --text:          #dff6ff;
+  --text-muted:    rgb(var(--theme-accent-rgb, 49 215 255) / .74);
+  --text-faint:    rgb(var(--theme-accent-rgb, 49 215 255) / .44);
+  --accent:        var(--theme-accent, #31d7ff);
+  --accent-strong: var(--theme-accent-strong, #91f6ff);
+  --accent-soft:   rgb(var(--theme-accent-rgb, 49 215 255) / .14);
+  --warn:          var(--theme-warm, #ff9b45);
+  --shadow-panel:  0 0 0 1px rgb(var(--theme-accent-rgb, 49 215 255) / .14), 0 18px 46px rgb(0 0 0 / .72);
+  --scanline-opacity: 0.04;
+  --glow-radius:      10px;
+  --glow-text:        0px;
+  --crt-vignette:     0.28;
+  --font:          var(--font-mono);
+}
+
+/* ============================================================
+   hacker — phosphor green CRT (effects maxed) — the hero
+   ============================================================ */
+html[data-theme="hacker"] {
+  color-scheme: dark;
+  --hacker-depth:   color-mix(in srgb, var(--theme-accent-dark, #14401f) 30%, #020403);
+  --hacker-depth-2: color-mix(in srgb, var(--theme-accent-dark, #14401f) 40%, #050706);
+  --hacker-surface: color-mix(in srgb, var(--theme-accent-dark, #14401f) 30%, #08100d);
+  --hacker-panel:   color-mix(in srgb, var(--theme-accent-dark, #14401f) 26%, rgb(8 15 12 / .9));
+
+  --bg:            var(--hacker-depth);
+  --surface:       var(--hacker-surface);
+  --surface-alt:   color-mix(in srgb, var(--theme-accent-dark, #14401f) 40%, #0b1410);
+  --panel:         var(--hacker-panel);
+  --border:        rgb(var(--theme-accent-rgb, 34 197 94) / .26);
+  --border-strong: rgb(var(--theme-accent-rgb, 34 197 94) / .52);
+  --text:          color-mix(in srgb, var(--theme-accent-strong, #4ade80) 34%, #ecfff4);
+  --text-muted:    rgb(var(--theme-accent-rgb, 34 197 94) / .70);
+  --text-faint:    rgb(var(--theme-accent-rgb, 34 197 94) / .42);
+  --accent:        var(--theme-accent, #22c55e);
+  --accent-strong: var(--theme-accent-strong, #4ade80);
+  --accent-soft:   rgb(var(--theme-accent-rgb, 34 197 94) / .12);
+  --warn:          var(--theme-warm, #f5c542);
+  --danger:        #ff4444;
+  --shadow-panel:  0 0 22px rgb(var(--theme-accent-rgb, 34 197 94) / .10), 0 24px 60px rgb(0 0 0 / .84);
+
+  --scanline-opacity: 0.07;
+  --scanline-size:    3px;
+  --glow-radius:      9px;
+  --glow-text:        0px;          /* body text stays crisp; glow lives on accents */
+  --crt-vignette:     0.42;
+  --font:          var(--font-mono);
+}
+
+/* Phosphor bloom on accent surfaces (composited box-shadow, not per-glyph) */
+html[data-theme="hacker"] body { background:
+    radial-gradient(circle at 50% -18%, rgb(var(--theme-accent-rgb, 34 197 94) / .16), transparent 38rem),
+    linear-gradient(180deg, var(--hacker-depth-2) 0, var(--hacker-depth) 100%); }

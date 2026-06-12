@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en" data-theme="hacker">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>terminal-delight — pane</title>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700;800&family=Inter:wght@400;600;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="src/styles/theme.css" />
+  <link rel="stylesheet" href="src/styles/workspace.css" />
+</head>
+<body>
+  <div class="workspace">
+    <div class="panes" style="padding:8px">
+      <div class="node">
+        <div class="pane is-focused">
+          <div class="pane-head"><div class="pane-title" id="pop-title">pane</div></div>
+          <div class="pane-body" id="pop-body"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <script type="module" src="src/js/popout.js"></script>
+</body>
+</html>

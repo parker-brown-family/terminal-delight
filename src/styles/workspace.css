@@ -1,0 +1,210 @@
+/* ============================================================
+   workspace.css — Tilix-like chrome: tabs, tiling panes, splitters,
+   the per-pane triple-button, detach, and the CRT effect overlay.
+   All effects are compositor-only (transform/opacity) so it "runs like
+   tilix" even with the phosphor look turned up.
+   ============================================================ */
+
+* , *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { font-size: 16px; }
+body {
+  font-family: var(--font);
+  background: var(--bg);
+  color: var(--text);
+  height: 100dvh;
+  overflow: hidden;
+  zoom: var(--ui-scale);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ---- global CRT overlay: ONE fixed composited layer, never repaints ---- */
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 9999;
+  transform: translateZ(0);            /* promote to its own layer */
+  background:
+    repeating-linear-gradient(
+      to bottom,
+      rgb(0 0 0 / var(--scanline-opacity)) 0,
+      rgb(0 0 0 / var(--scanline-opacity)) 1px,
+      transparent 1px,
+      transparent var(--scanline-size)),
+    radial-gradient(ellipse at center, transparent 58%, rgb(0 0 0 / var(--crt-vignette)) 100%);
+}
+
+/* ============================================================ workspace shell */
+.workspace { display: flex; flex-direction: column; height: 100dvh; }
+
+/* ---- top bar: brand + tabs + theme menu ---- */
+.topbar {
+  display: flex; align-items: center; gap: 10px;
+  height: 40px; padding: 0 10px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+.brand {
+  font-family: var(--font-mono); font-weight: 800; font-size: 13px;
+  letter-spacing: .5px; color: var(--accent);
+  text-shadow: 0 0 var(--glow-radius) rgb(var(--theme-accent-rgb) / .8);
+  white-space: nowrap; padding-right: 6px;
+}
+.brand .blink { animation: blink 1.1s steps(1) infinite; }
+@keyframes blink { 50% { opacity: 0; } }
+
+/* ---- tab strip ---- */
+.tabstrip { display: flex; align-items: center; gap: 4px; flex: 1; min-width: 0; overflow-x: auto; height: 100%; }
+.tabstrip::-webkit-scrollbar { height: 0; }
+.tab {
+  display: flex; align-items: center; gap: 7px;
+  height: 28px; padding: 0 8px 0 11px; max-width: 220px;
+  border: 1px solid transparent; border-radius: var(--radius-sm);
+  background: transparent; color: var(--text-muted);
+  font-family: var(--font-mono); font-size: 12.5px;
+  cursor: pointer; user-select: none; white-space: nowrap;
+}
+.tab:hover { background: var(--surface-alt); color: var(--text); }
+.tab.is-active {
+  background: var(--accent-soft); color: var(--accent-strong);
+  border-color: var(--border-strong);
+  box-shadow: 0 0 var(--glow-radius) rgb(var(--theme-accent-rgb) / .25);
+}
+.tab .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; opacity: .8; }
+.tab .label { overflow: hidden; text-overflow: ellipsis; }
+.tab .x { opacity: .5; font-size: 14px; line-height: 1; padding: 0 2px; }
+.tab .x:hover { opacity: 1; color: var(--danger); }
+.tab.drag-over { border-color: var(--accent); }
+.tab-add {
+  display: grid; place-items: center; width: 26px; height: 26px;
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  background: transparent; color: var(--text-muted); cursor: pointer; font-size: 15px;
+}
+.tab-add:hover { color: var(--accent); border-color: var(--accent); }
+
+/* ============================================================ tiling area */
+.panes { position: relative; flex: 1; min-height: 0; padding: 8px; }
+.node { position: absolute; inset: 0; }
+.node.split { display: flex; }
+.node.split.row { flex-direction: row; }
+.node.split.col { flex-direction: column; }
+.node.split > .node { position: relative; inset: auto; flex: 1 1 0; min-width: 0; min-height: 0; }
+
+/* splitter handle — drag to resize, like tilix dividers */
+.splitter { flex: 0 0 6px; position: relative; z-index: 2; }
+.splitter.row { cursor: col-resize; }
+.splitter.col { cursor: row-resize; }
+.splitter::after {
+  content: ""; position: absolute; inset: 0; margin: auto;
+  background: var(--border);
+}
+.splitter.row::after { width: 1px; }
+.splitter.col::after { height: 1px; }
+.splitter:hover::after, .splitter.dragging::after { background: var(--accent); box-shadow: 0 0 var(--glow-radius) rgb(var(--theme-accent-rgb) / .6); }
+
+/* ---- leaf pane ---- */
+.pane {
+  position: absolute; inset: 0;
+  display: flex; flex-direction: column;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  box-shadow: var(--shadow-panel);
+}
+.pane.is-focused { border-color: var(--border-strong); box-shadow: var(--shadow-panel), 0 0 0 1px rgb(var(--theme-accent-rgb) / .35); }
+
+.pane-head {
+  display: flex; align-items: center; gap: 8px;
+  height: 28px; padding: 0 6px 0 10px; flex: 0 0 auto;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  cursor: grab;
+}
+.pane-head:active { cursor: grabbing; }
+.pane-title {
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-family: var(--font-mono); font-size: 11.5px; color: var(--text-muted); letter-spacing: .4px;
+}
+.pane-title::before { content: "▸ "; color: var(--accent); }
+
+/* the triple-button cluster (split-right / split-down / detach) + close */
+.pane-tools { display: flex; align-items: center; gap: 2px; }
+.pane-tools button {
+  display: grid; place-items: center; width: 22px; height: 20px;
+  border: 0; background: transparent; color: var(--text-faint);
+  cursor: pointer; border-radius: 4px;
+}
+.pane-tools button:hover { color: var(--accent); background: var(--accent-soft); }
+.pane-tools button.close:hover { color: var(--danger); }
+.pane-tools svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 1.6; }
+
+.pane-body { flex: 1; min-height: 0; position: relative; overflow: hidden; }
+
+/* drop overlay shown while dragging a pane head */
+.pane.drop-target::before {
+  content: ""; position: absolute; inset: 0; z-index: 5;
+  background: rgb(var(--theme-accent-rgb) / .12);
+  border: 1.5px dashed var(--accent); border-radius: var(--radius);
+  pointer-events: none;
+}
+
+/* ============================================================ pane content */
+.term {
+  height: 100%; padding: 10px 12px; overflow-y: auto;
+  font-family: var(--font-mono); font-size: 13px; line-height: 1.55;
+  color: var(--text);
+}
+.term .ln { white-space: pre-wrap; word-break: break-word; }
+.term .pfx { color: var(--accent); text-shadow: 0 0 var(--glow-radius) rgb(var(--theme-accent-rgb) / .7); }
+.term .muted { color: var(--text-muted); }
+.term .ok { color: var(--accent-strong); }
+.term .warn { color: var(--warn); }
+.term .err { color: var(--danger); }
+.term-input-row { display: flex; gap: 6px; align-items: baseline; }
+.term-input { flex: 1; background: transparent; border: 0; outline: 0; color: var(--text); font: inherit; caret-color: var(--accent); }
+
+.cursor { display: inline-block; width: 8px; height: 1.05em; vertical-align: text-bottom; background: var(--accent); animation: blink 1.1s steps(1) infinite; box-shadow: 0 0 var(--glow-radius) rgb(var(--theme-accent-rgb) / .7); }
+
+/* generic info panel content */
+.panel-pad { padding: 14px 16px; height: 100%; overflow-y: auto; }
+.panel-pad h2 { font-family: var(--font-mono); font-size: 15px; color: var(--accent-strong); margin-bottom: 6px; text-shadow: 0 0 var(--glow-radius) rgb(var(--theme-accent-rgb) / .5); }
+.panel-pad p { color: var(--text-muted); font-size: 13px; margin-bottom: 10px; }
+.kv { display: grid; grid-template-columns: 120px 1fr; gap: 4px 12px; font-family: var(--font-mono); font-size: 12px; }
+.kv dt { color: var(--text-faint); text-transform: uppercase; letter-spacing: .5px; }
+.kv dd { color: var(--text); }
+
+/* ============================================================ theme menu */
+.theme-menu { position: relative; }
+.theme-menu-trigger {
+  display: grid; place-items: center; width: 30px; height: 26px;
+  border: 1px solid var(--border); border-radius: 999px;
+  background: var(--surface-alt); cursor: pointer;
+}
+.theme-menu-trigger::after {
+  content: ""; width: 14px; height: 14px; border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 var(--glow-radius) rgb(var(--theme-accent-rgb) / .8);
+}
+.theme-menu-panel {
+  position: absolute; right: 0; top: 32px; z-index: 50; width: 232px;
+  padding: 12px; border: 1px solid var(--border-strong); border-radius: 10px;
+  background: var(--panel); box-shadow: var(--shadow-panel);
+}
+.theme-menu-panel[hidden] { display: none; }
+.tm-label { font-family: var(--font-mono); font-size: 10px; letter-spacing: 1px; color: var(--text-faint); text-transform: uppercase; margin: 4px 0 6px; }
+.theme-row { display: flex; gap: 6px; margin-bottom: 12px; }
+.theme-switcher-btn {
+  flex: 1; height: 30px; border: 1px solid var(--border); border-radius: 7px;
+  background: transparent; color: var(--text-muted); cursor: pointer; font-size: 14px;
+}
+.theme-switcher-btn:hover { color: var(--accent); border-color: var(--accent); }
+.theme-switcher-btn.is-active { background: var(--accent-soft); color: var(--accent-strong); border-color: var(--accent); }
+.seed-row { display: flex; align-items: center; gap: 7px; margin-bottom: 12px; }
+.palette-switcher-btn { width: 22px; height: 22px; border-radius: 50%; border: 2px solid transparent; cursor: pointer; padding: 0; }
+.palette-switcher-btn.is-active { border-color: var(--text); }
+input[type="color"][data-theme-accent] { width: 26px; height: 26px; padding: 0; border: 1px solid var(--border); border-radius: 6px; background: none; cursor: pointer; }
+.scale-row { display: flex; align-items: center; gap: 8px; }
+.scale-row input[type="range"] { flex: 1; accent-color: var(--accent); }
+.ui-scale-value { font-family: var(--font-mono); font-size: 11px; color: var(--text-muted); min-width: 34px; text-align: right; }
