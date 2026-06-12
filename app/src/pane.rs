@@ -167,6 +167,8 @@ pub struct TerminalView {
     /// warp-correct mouse-to-cell mapping so selection lands where you look.
     warp_k: (f32, f32),
     pub mode: PaneMode,
+    /// Debounced PTY resize: (target grid, when it stabilized).
+    pending_grid: Option<(term::GridSize, Instant)>,
 }
 
 impl TerminalView {
@@ -223,6 +225,19 @@ impl TerminalView {
                         if view.fx.tick(&th) {
                             cx.notify();
                         }
+                        // debounced PTY resize: fire once the drag settles
+                        if let Some((grid, since)) = view.pending_grid {
+                            if since.elapsed() > std::time::Duration::from_millis(140) {
+                                view.pending_grid = None;
+                                view.grid = grid;
+                                view.session.resize(
+                                    grid,
+                                    view.cell_w as u16,
+                                    view.cell_h as u16,
+                                );
+                                cx.notify();
+                            }
+                        }
                         view.fx.active()
                     })
                     .unwrap_or(false);
@@ -255,6 +270,7 @@ impl TerminalView {
             fx: crt::Fx::new(seed),
             warp_k: (0., 0.),
             mode: PaneMode::Shell,
+            pending_grid: None,
         }
     }
 
@@ -312,10 +328,15 @@ impl TerminalView {
         };
         let cols = ((avail_w / self.cell_w).floor() as usize).max(10);
         let rows = ((avail_h / self.cell_h).floor() as usize).max(3);
-        if cols != self.grid.cols || rows != self.grid.rows {
-            self.grid = term::GridSize { cols, rows };
-            self.session
-                .resize(self.grid, self.cell_w as u16, self.cell_h as u16);
+        let target = term::GridSize { cols, rows };
+        if target.cols != self.grid.cols || target.rows != self.grid.rows {
+            // stage it; the effects clock applies once the size stops moving
+            match self.pending_grid {
+                Some((g, _)) if g.cols == cols && g.rows == rows => {}
+                _ => self.pending_grid = Some((target, Instant::now())),
+            }
+        } else {
+            self.pending_grid = None;
         }
     }
 
@@ -421,6 +442,9 @@ impl TerminalView {
     }
 
     fn on_mouse_down(&mut self, ev: &MouseDownEvent, _w: &mut Window, cx: &mut Context<Self>) {
+        if std::env::var("TD_KEYDEBUG").is_ok() {
+            eprintln!("pane mousedown at {:?}", ev.position);
+        }
         let offset = self.session.term.lock().grid().display_offset();
         let (point, side) = self.cell_at(ev.position, offset);
         let ty = match ev.click_count {

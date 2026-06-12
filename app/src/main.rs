@@ -39,11 +39,18 @@ enum SplitDir {
     Col,
 }
 
+static SPLIT_IDS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+fn next_split_id() -> u64 {
+    SPLIT_IDS.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+}
+
 /// The tiling tree: splits divide only the targeted leaf.
 enum Node {
     Leaf(Entity<TerminalView>),
     Split {
+        id: u64,
         dir: SplitDir,
+        ratio: f32,
         a: Box<Node>,
         b: Box<Node>,
     },
@@ -66,7 +73,9 @@ impl Node {
             Node::Leaf(e) if e.entity_id() == target => {
                 let old = std::mem::replace(self, Node::Leaf(new.clone()));
                 *self = Node::Split {
+                    id: next_split_id(),
                     dir,
+                    ratio: 0.5,
                     a: Box::new(old),
                     b: Box::new(Node::Leaf(new)),
                 };
@@ -87,9 +96,11 @@ impl Node {
     fn reap(self, cx: &App) -> Option<Node> {
         match self {
             Node::Leaf(e) => (!e.read(cx).exited).then_some(Node::Leaf(e)),
-            Node::Split { dir, a, b } => match (a.reap(cx), b.reap(cx)) {
+            Node::Split { id, dir, ratio, a, b } => match (a.reap(cx), b.reap(cx)) {
                 (Some(a), Some(b)) => Some(Node::Split {
+                    id,
                     dir,
+                    ratio,
                     a: Box::new(a),
                     b: Box::new(b),
                 }),
@@ -99,11 +110,39 @@ impl Node {
         }
     }
 
+    fn dir_of(&self, target: u64) -> Option<SplitDir> {
+        match self {
+            Node::Leaf(_) => None,
+            Node::Split { id, dir, a, b, .. } => {
+                if *id == target {
+                    Some(*dir)
+                } else {
+                    a.dir_of(target).or_else(|| b.dir_of(target))
+                }
+            }
+        }
+    }
+
+    fn set_ratio(&mut self, target: u64, value: f32) -> bool {
+        match self {
+            Node::Leaf(_) => false,
+            Node::Split { id, ratio, a, b, .. } => {
+                if *id == target {
+                    *ratio = value.clamp(0.15, 0.85);
+                    true
+                } else {
+                    a.set_ratio(target, value) || b.set_ratio(target, value)
+                }
+            }
+        }
+    }
+
     fn to_saved(&self) -> SavedNode {
         match self {
             Node::Leaf(_) => SavedNode::Leaf,
-            Node::Split { dir, a, b } => SavedNode::Split {
+            Node::Split { dir, ratio, a, b, .. } => SavedNode::Split {
                 dir: *dir,
+                ratio: *ratio,
                 a: Box::new(a.to_saved()),
                 b: Box::new(b.to_saved()),
             },
@@ -116,9 +155,15 @@ enum SavedNode {
     Leaf,
     Split {
         dir: SplitDir,
+        #[serde(default = "default_ratio")]
+        ratio: f32,
         a: Box<SavedNode>,
         b: Box<SavedNode>,
     },
+}
+
+fn default_ratio() -> f32 {
+    0.5
 }
 
 struct Tab {
@@ -208,6 +253,9 @@ struct Workspace {
     scrub_bounds: Arc<Mutex<Option<Bounds<Pixels>>>>,
     jiggle: FrameJiggle,
     last_action: Instant,
+    /// split-id being dragged, if any
+    drag_split: Option<u64>,
+    split_bounds: Arc<Mutex<std::collections::HashMap<u64, Bounds<Pixels>>>>,
 }
 
 fn make_pane(window: &mut Window, cx: &mut Context<Workspace>) -> Entity<TerminalView> {
@@ -220,8 +268,10 @@ fn make_pane(window: &mut Window, cx: &mut Context<Workspace>) -> Entity<Termina
 fn build_node(saved: &SavedNode, window: &mut Window, cx: &mut Context<Workspace>) -> Node {
     match saved {
         SavedNode::Leaf => Node::Leaf(make_pane(window, cx)),
-        SavedNode::Split { dir, a, b } => Node::Split {
+        SavedNode::Split { dir, ratio, a, b } => Node::Split {
+            id: next_split_id(),
             dir: *dir,
+            ratio: (*ratio).clamp(0.15, 0.85),
             a: Box::new(build_node(a, window, cx)),
             b: Box::new(build_node(b, window, cx)),
         },
@@ -241,6 +291,8 @@ impl Workspace {
             scrub_bounds: Arc::new(Mutex::new(None)),
             jiggle: FrameJiggle::new(),
             last_action: Instant::now() - Duration::from_secs(1),
+            drag_split: None,
+            split_bounds: Arc::new(Mutex::new(std::collections::HashMap::new())),
         };
         if saved.tabs.is_empty() {
             ws.new_tab(window, cx);
@@ -486,6 +538,32 @@ impl Workspace {
     }
 
     fn on_mouse_move(&mut self, ev: &MouseMoveEvent, _w: &mut Window, cx: &mut Context<Self>) {
+        if ev.pressed_button == Some(MouseButton::Left) {
+            if let Some(split_id) = self.drag_split {
+                let bounds = self.split_bounds.lock().unwrap().get(&split_id).copied();
+                if std::env::var("TD_KEYDEBUG").is_ok() {
+                    eprintln!("dragging {split_id}: bounds={:?} pos={:?}", bounds.map(|b| b.origin.x), ev.position.x);
+                }
+                if let (Some(b), Some(tab)) = (bounds, self.tabs.get_mut(self.active)) {
+                    // ratio along the split's own axis; dir recovered from shape
+                    let rx = ((f32::from(ev.position.x) - f32::from(b.origin.x))
+                        / f32::from(b.size.width).max(1.))
+                    .clamp(0., 1.);
+                    let ry = ((f32::from(ev.position.y) - f32::from(b.origin.y))
+                        / f32::from(b.size.height).max(1.))
+                    .clamp(0., 1.);
+                    let dir = tab.root.dir_of(split_id);
+                    let ratio = match dir {
+                        Some(SplitDir::Row) => rx,
+                        Some(SplitDir::Col) => ry,
+                        None => return,
+                    };
+                    tab.root.set_ratio(split_id, ratio);
+                    cx.notify();
+                }
+                return;
+            }
+        }
         if self.scrubbing && ev.pressed_button == Some(MouseButton::Left) {
             if let Some(s) = self.scale_from_pos(ev.position.x) {
                 self.set_scale(s, cx);
@@ -493,8 +571,11 @@ impl Workspace {
         }
     }
 
-    fn on_mouse_up(&mut self, _ev: &MouseUpEvent, _w: &mut Window, _cx: &mut Context<Self>) {
+    fn on_mouse_up(&mut self, _ev: &MouseUpEvent, _w: &mut Window, cx: &mut Context<Self>) {
         self.scrubbing = false;
+        if self.drag_split.take().is_some() {
+            self.save(cx);
+        }
     }
 
     fn reap(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -576,7 +657,14 @@ fn brighten(mut c: Hsla, f: f32) -> Hsla {
     c
 }
 
-fn render_node(node: &Node, th: &theme::Theme, focused: Option<EntityId>) -> gpui::Div {
+fn render_node(
+    node: &Node,
+    th: &theme::Theme,
+    focused: Option<EntityId>,
+    dragging: Option<u64>,
+    registry: &Arc<Mutex<std::collections::HashMap<u64, Bounds<Pixels>>>>,
+    cx: &mut Context<Workspace>,
+) -> gpui::Div {
     match node {
         Node::Leaf(e) => {
             let is_focused = focused == Some(e.entity_id());
@@ -594,14 +682,104 @@ fn render_node(node: &Node, th: &theme::Theme, focused: Option<EntityId>) -> gpu
                 })
                 .child(e.clone())
         }
-        Node::Split { dir, a, b } => {
-            let base = div().flex_1().min_w_0().min_h_0().flex().gap(px(3.));
+        Node::Split {
+            id,
+            dir,
+            ratio,
+            a,
+            b,
+        } => {
+            let id = *id;
+            let dir = *dir;
+            let is_dragging = dragging == Some(id);
+            let store = registry.clone();
+            // measure this split's container so drags map to a ratio
+            let measure = div().absolute().inset_0().child(
+                canvas(
+                    move |bounds, _, _| {
+                        store.lock().unwrap().insert(id, bounds);
+                    },
+                    |_, _, _, _| {},
+                )
+                .size_full(),
+            );
+            // the grab handle (visual only; the container detects the press)
+            let mut handle = div().flex_none().bg(if is_dragging {
+                th.accent.alpha(0.8)
+            } else {
+                th.faint
+            });
+            handle = match dir {
+                SplitDir::Row => handle.w(px(7.)).h_full().cursor_col_resize(),
+                SplitDir::Col => handle.h(px(7.)).w_full().cursor_row_resize(),
+            };
+
+            let first = div()
+                .min_w_0()
+                .min_h_0()
+                .flex()
+                .child(render_node(a, th, focused, dragging, registry, cx));
+            let first = match dir {
+                SplitDir::Row => first.h_full().w(gpui::relative(*ratio)),
+                SplitDir::Col => first.w_full().h(gpui::relative(*ratio)),
+            };
+            let second = div()
+                .flex_1()
+                .min_w_0()
+                .min_h_0()
+                .flex()
+                .child(render_node(b, th, focused, dragging, registry, cx));
+
+            let ratio_now = *ratio;
+            let store2 = registry.clone();
+            let base = div()
+                .flex_1()
+                .min_w_0()
+                .min_h_0()
+                .relative()
+                .flex()
+                // proven pattern: container-level mousedown + handle-zone math
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |ws, ev: &MouseDownEvent, _w, cx| {
+                        if std::env::var("TD_KEYDEBUG").is_ok() {
+                            eprintln!(
+                                "split {id} container mousedown at {:?}, bounds {:?}",
+                                ev.position,
+                                ws.split_bounds.lock().unwrap().get(&id).map(|b| (b.origin.x, b.size.width))
+                            );
+                        }
+                        if ws.drag_split.is_some() {
+                            return; // an inner split already claimed this press
+                        }
+                        let Some(b) = store2.lock().unwrap().get(&id).copied() else {
+                            return;
+                        };
+                        let (along, extent) = match dir {
+                            SplitDir::Row => (
+                                f32::from(ev.position.x) - f32::from(b.origin.x),
+                                f32::from(b.size.width),
+                            ),
+                            SplitDir::Col => (
+                                f32::from(ev.position.y) - f32::from(b.origin.y),
+                                f32::from(b.size.height),
+                            ),
+                        };
+                        let strip = ratio_now * extent;
+                        if along >= strip - 6. && along <= strip + 13. {
+                            if std::env::var("TD_KEYDEBUG").is_ok() {
+                                eprintln!("split handle grabbed: {id}");
+                            }
+                            ws.drag_split = Some(id);
+                            cx.notify();
+                        }
+                    }),
+                );
             let base = match dir {
                 SplitDir::Row => base.flex_row(),
                 SplitDir::Col => base.flex_col(),
             };
-            base.child(render_node(a, th, focused))
-                .child(render_node(b, th, focused))
+            base.child(measure).child(first).child(handle).child(second)
         }
     }
 }
@@ -873,11 +1051,13 @@ impl Render for Workspace {
                     .child(div().text_color(th.accent).child("● READY")),
             );
 
+        let dragging = self.drag_split;
+        let registry = self.split_bounds.clone();
         let pane_area = div()
             .size_full()
             .flex()
             .p(px(3.))
-            .child(render_node(&tab.root, &th, focused_id));
+            .child(render_node(&tab.root, &th, focused_id, dragging, &registry, cx));
 
         let screen = div()
             .flex_1()
