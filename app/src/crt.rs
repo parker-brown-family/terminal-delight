@@ -34,19 +34,24 @@ pub struct Fx {
 const BAND_H: f32 = 160.0;
 
 impl Fx {
-    pub fn new() -> Self {
-        Self {
+    /// Seed gives every screen its own desynced rhythm.
+    pub fn new(seed: u64) -> Self {
+        let mut fx = Self {
             started: Instant::now(),
-            rng: 0x5DEECE66D,
+            rng: 0x5DEECE66D ^ seed,
             band: None,
-            next_band_at: 1.5,
+            next_band_at: 0.,
             flicker_mul: 1.0,
             flicker_burst_until: 0.,
-            next_flicker_at: 7.0,
+            next_flicker_at: 0.,
             jiggle_px: 0.,
             jiggle_until: 0.,
-            next_jiggle_at: 6.0,
-        }
+            next_jiggle_at: 0.,
+        };
+        fx.next_band_at = 1.0 + fx.rand() * 7.0;
+        fx.next_flicker_at = 2.0 + fx.rand() * 12.0;
+        fx.next_jiggle_at = 4.0 + fx.rand() * 8.0;
+        fx
     }
 
     fn rand(&mut self) -> f32 {
