@@ -162,9 +162,21 @@ wide, no-Rust contribution path.
 
 ---
 
-## 6. Status
+## 6. Status — MVP 0.1 SHIPPED (2026-06-12, one session)
 
-- Plan v2 adopted. Next concrete step: **G0a** (GPUI window + grid text + keyboard input),
-  with R1–R3 research running in parallel.
-- Browser demo (`index.html`, `src/`) is retained as the **design reference** for theme tokens,
-  effect dials, and chrome UX — not as foundation code.
+| Gate | Result | Evidence |
+|---|---|---|
+| G0a window+grid+input | ✅ | screenshots; wgpu renderer on X11/NVIDIA |
+| G0b real shell | ✅ | bash/ls/top/alt-screen; PtyWrite manual-bounce verified from crate source |
+| G0c resize/scrollback/clipboard | ✅ | tput agrees with grid; wheel history; selection round trip |
+| G0d CRT-lite + hot-reload themes | ✅ | 3-theme live swap, session preserved; JetBrains Mono installed |
+| G0e latency | ✅ | key→echo→parsed p50=121µs p99=169µs; seq 1 100000 in 0.089s |
+| **MVP 0.1** | ✅ | 2 panes, vim+top side-by-side (file round trip), tmux+git log, split/focus/close/restore |
+
+Bugs found & fixed by the automated gauntlet: window-vs-pane grid sizing (150→75 cols),
+mouse-origin offset in right pane, stray key leak on split (spawn guard), DejaVu Sans
+silent font fallback. Known quirk: xdotool synthetic typing races `windowactivate`
+(test-harness artifact, not app input path).
+
+Next: **0.2** (tabs, 5 panes, drag splitters, packaging smoke test) per §3.
+- Browser demo (`index.html`, `src/`) remains the design reference.
