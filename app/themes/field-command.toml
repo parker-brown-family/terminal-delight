@@ -21,6 +21,12 @@ scanline_step    = 3.0
 vignette         = 0.18
 glow             = 0.3
 
+bloom            = 0.2
+tracking         = 0.15
+tracking_period  = 16.0
+flicker          = 0.15
+jiggle           = 0.0
+
 [font]
 family      = "JetBrains Mono"
 size        = 14.0

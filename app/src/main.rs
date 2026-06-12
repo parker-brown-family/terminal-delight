@@ -2,12 +2,14 @@
 //! ctrl+alt+r / ctrl+alt+d: split · alt+←/→: switch focus · pane closes when
 //! its shell exits (last one quits the app) · pane count restores on launch.
 
+mod crt;
 mod pane;
 mod term;
 mod theme;
 
 use std::fs;
 use std::path::PathBuf;
+use std::time::Duration;
 
 use gpui::{
     App, Bounds, Context, Entity, Focusable, KeyDownEvent, TitlebarOptions, Window, WindowBounds,
@@ -46,14 +48,43 @@ fn save_pane_count(n: usize) {
 
 struct Workspace {
     panes: Vec<Entity<TerminalView>>,
+    fx: crt::Fx,
 }
 
 impl Workspace {
     fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let mut ws = Self { panes: vec![] };
+        let mut ws = Self {
+            panes: vec![],
+            fx: crt::Fx::new(),
+        };
         for _ in 0..load_pane_count() {
             ws.add_pane(window, cx);
         }
+        // effects clock: ~30fps while a sweep/jiggle runs, lazy when idle
+        let fx_debug = std::env::var("TD_FXDEBUG").is_ok();
+        cx.spawn(async move |this, cx| {
+            let mut n: u64 = 0;
+            loop {
+                n += 1;
+                let result = this.update(cx, |ws: &mut Workspace, cx| {
+                    let th = theme::theme(cx);
+                    let changed = ws.fx.tick(&th);
+                    if changed {
+                        cx.notify();
+                    }
+                    (ws.fx.active(), changed, ws.fx.band, ws.fx.flicker_mul)
+                });
+                if fx_debug && n % 30 == 0 {
+                    eprintln!("fx tick#{n}: {result:?}");
+                }
+                let active = result.map(|r| r.0).unwrap_or(false);
+                let ms = if active { 33 } else { 120 };
+                cx.background_executor()
+                    .timer(Duration::from_millis(ms))
+                    .await;
+            }
+        })
+        .detach();
         ws
     }
 
@@ -119,28 +150,40 @@ impl Render for Workspace {
         self.reap(window, cx);
         let th = theme::theme(cx);
         let focused = self.focused_index(window, cx);
+        let jiggle = self.fx.jiggle_px;
         div()
             .size_full()
             .bg(th.bg)
-            .flex()
-            .flex_row()
-            .gap(px(3.))
-            .p(px(3.))
+            .relative()
             .on_key_down(cx.listener(Self::on_key))
-            .children(self.panes.iter().enumerate().map(|(i, p)| {
+            .child(
+                // pane row; jiggle = the CRT vertical-hold hop
                 div()
-                    .flex_1()
-                    .min_w_0()
-                    .overflow_hidden()
-                    .rounded_md()
-                    .border_1()
-                    .border_color(if i == focused {
-                        th.accent.alpha(0.55)
-                    } else {
-                        th.faint
-                    })
-                    .child(p.clone())
-            }))
+                    .size_full()
+                    .flex()
+                    .flex_row()
+                    .gap(px(3.))
+                    .pt(px(3. + jiggle.max(0.)))
+                    .pb(px(3. + (-jiggle).max(0.)))
+                    .px(px(3.))
+                    .children(self.panes.iter().enumerate().map(|(i, p)| {
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .overflow_hidden()
+                            .rounded_md()
+                            .border_1()
+                            .border_color(if i == focused {
+                                th.accent.alpha(0.55)
+                            } else {
+                                th.faint
+                            })
+                            .child(p.clone())
+                    })),
+            )
+            .when(std::env::var("TD_NOGLASS").is_err(), |el| {
+                el.child(crt::glass(&th, &self.fx))
+            })
     }
 }
 
