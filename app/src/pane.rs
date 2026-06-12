@@ -19,6 +19,7 @@ use gpui::{
     Pixels, ScrollWheelEvent, StyledText, TextRun, UnderlineStyle, Window, canvas, div, fill,
     font, hsla, linear_color_stop, linear_gradient, point, prelude::*, px, rgb, size,
 };
+use crate::crt;
 use crate::term;
 use crate::theme::{self, Theme};
 
@@ -73,6 +74,8 @@ pub struct TerminalView {
     /// Written by the measuring canvas during prepaint; read by sync_size.
     content_bounds: Arc<Mutex<Option<Bounds<Pixels>>>>,
     spawned: Instant,
+    /// This pane's own CRT rhythm — desynced from every other pane.
+    pub fx: crt::Fx,
 }
 
 impl TerminalView {
@@ -95,6 +98,30 @@ impl TerminalView {
         })
         .detach();
 
+        // per-pane effects clock
+        cx.spawn(async move |this, cx| {
+            loop {
+                let active = this
+                    .update(cx, |view: &mut TerminalView, cx| {
+                        let th = theme::theme(cx);
+                        if view.fx.tick(&th) {
+                            cx.notify();
+                        }
+                        view.fx.active()
+                    })
+                    .unwrap_or(false);
+                let ms = if active { 33 } else { 150 };
+                cx.background_executor()
+                    .timer(std::time::Duration::from_millis(ms))
+                    .await;
+            }
+        })
+        .detach();
+
+        let seed = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.subsec_nanos() as u64 ^ d.as_secs())
+            .unwrap_or(7);
         Self {
             focus_handle: cx.focus_handle(),
             session,
@@ -109,6 +136,7 @@ impl TerminalView {
             latency_log: std::env::var("TD_LATENCY").is_ok(),
             content_bounds: Arc::new(Mutex::new(None)),
             spawned: Instant::now(),
+            fx: crt::Fx::new(seed),
         }
     }
 
@@ -431,6 +459,9 @@ impl Render for TerminalView {
         let grid_label = format!("{}×{} · {} · {status}", self.grid.cols, self.grid.rows, th.name);
         let glow = th.glow;
 
+        // solid, reflective header: gradient face + crisp top reflection line
+        let mut lighter = th.surface;
+        lighter.l = (lighter.l * 1.9).min(0.9);
         let mut header = div()
             .h(px(HEADER_H))
             .flex()
@@ -438,25 +469,40 @@ impl Render for TerminalView {
             .items_center()
             .justify_between()
             .px_3()
-            .bg(th.surface)
+            .bg(linear_gradient(
+                180.,
+                linear_color_stop(lighter, 0.),
+                linear_color_stop(th.surface, 1.),
+            ))
             .border_b_1()
-            .border_color(th.faint)
+            .border_color(th.accent.alpha(0.5))
             .text_color(th.accent)
             .child(format!("▸ {}", self.title))
             .child(grid_label);
-        if glow > 0.001 {
-            header = header.shadow(
-                vec![BoxShadow {
+        {
+            let mut shadows = vec![
+                // the reflection: bright inner top edge
+                BoxShadow {
+                    color: gpui::white().alpha(0.16),
+                    offset: point(px(0.), px(1.)),
+                    blur_radius: px(0.),
+                    spread_radius: px(0.),
+                    inset: true,
+                },
+            ];
+            if glow > 0.001 {
+                shadows.push(BoxShadow {
                     color: th.accent.alpha(glow * 0.5),
                     offset: point(px(0.), px(1.)),
                     blur_radius: px(16.),
                     spread_radius: px(0.),
                     inset: false,
-                }]
-                .into(),
-            );
+                });
+            }
+            header = header.shadow(shadows.into());
         }
 
+        let jiggle = self.fx.jiggle_px;
         div()
             .track_focus(&self.focus_handle(cx))
             .on_key_down(cx.listener(Self::on_key))
@@ -466,11 +512,14 @@ impl Render for TerminalView {
             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .size_full()
             .bg(th.bg)
+            .relative()
             .flex()
             .flex_col()
             .font_family(th.font_family.clone())
             .text_size(px(th.font_size))
             .text_color(th.text)
+            .pt(px(jiggle.max(0.)))
+            .pb(px((-jiggle).max(0.)))
             .child(header)
             .child(
                 div()
@@ -517,9 +566,11 @@ impl Render for TerminalView {
                                     line.child(StyledText::new(text).with_runs(runs))
                                 }
                             })),
-                    )
-                    ,
+                    ),
             )
+            .when(std::env::var("TD_NOGLASS").is_err(), |el| {
+                el.child(crt::glass(&th, &self.fx))
+            })
     }
 }
 

@@ -26,7 +26,7 @@ use gpui_platform::application;
 use pane::TerminalView;
 use serde::{Deserialize, Serialize};
 
-const MAX_PANES: usize = 2; // per tab; full tiling tree lands in 0.2
+const MAX_PANES: usize = 6; // split always ADDS to the current tab; tree tiling in 0.2
 
 #[derive(Clone, Copy, PartialEq, Serialize, Deserialize)]
 enum SplitDir {
@@ -37,6 +37,7 @@ enum SplitDir {
 struct Tab {
     panes: Vec<Entity<TerminalView>>,
     dir: SplitDir,
+    name: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Default)]
@@ -49,6 +50,8 @@ struct StateFile {
 struct TabState {
     panes: usize,
     dir: SplitDir,
+    #[serde(default)]
+    name: Option<String>,
 }
 
 fn state_path() -> PathBuf {
@@ -66,7 +69,9 @@ fn load_state() -> StateFile {
 struct Workspace {
     tabs: Vec<Tab>,
     active: usize,
-    fx: crt::Fx,
+    focus_handle: gpui::FocusHandle,
+    /// (tab index, buffer) while a tab is being renamed via right-click
+    renaming: Option<(usize, String)>,
 }
 
 impl Workspace {
@@ -74,7 +79,8 @@ impl Workspace {
         let mut ws = Self {
             tabs: vec![],
             active: 0,
-            fx: crt::Fx::new(),
+            focus_handle: cx.focus_handle(),
+            renaming: None,
         };
         let saved = load_state();
         if saved.tabs.is_empty() {
@@ -82,7 +88,11 @@ impl Workspace {
         } else {
             for t in &saved.tabs {
                 let dir = t.dir;
-                ws.tabs.push(Tab { panes: vec![], dir });
+                ws.tabs.push(Tab {
+                    panes: vec![],
+                    dir,
+                    name: t.name.clone(),
+                });
                 ws.active = ws.tabs.len() - 1;
                 for _ in 0..t.panes.clamp(1, MAX_PANES) {
                     ws.spawn_pane(window, cx);
@@ -91,25 +101,6 @@ impl Workspace {
             ws.active = saved.active.min(ws.tabs.len().saturating_sub(1));
             ws.focus_active(window, cx);
         }
-        // effects clock: frame-rate only while something animates
-        cx.spawn(async move |this, cx| {
-            loop {
-                let active = this
-                    .update(cx, |ws: &mut Workspace, cx| {
-                        let th = theme::theme(cx);
-                        if ws.fx.tick(&th) {
-                            cx.notify();
-                        }
-                        ws.fx.active()
-                    })
-                    .unwrap_or(false);
-                let ms = if active { 33 } else { 120 };
-                cx.background_executor()
-                    .timer(Duration::from_millis(ms))
-                    .await;
-            }
-        })
-        .detach();
         ws
     }
 
@@ -122,6 +113,7 @@ impl Workspace {
                 .map(|t| TabState {
                     panes: t.panes.len().max(1),
                     dir: t.dir,
+                    name: t.name.clone(),
                 })
                 .collect(),
         };
@@ -156,6 +148,7 @@ impl Workspace {
         self.tabs.push(Tab {
             panes: vec![],
             dir: SplitDir::Row,
+            name: None,
         });
         self.active = self.tabs.len() - 1;
         self.spawn_pane(window, cx);
@@ -200,6 +193,33 @@ impl Workspace {
     fn on_key(&mut self, ev: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         let ks = &ev.keystroke;
         let m = &ks.modifiers;
+        // themed inline rename has the keyboard while open
+        if let Some((tab_i, mut buf)) = self.renaming.take() {
+            match ks.key.as_str() {
+                "enter" => {
+                    if let Some(tab) = self.tabs.get_mut(tab_i) {
+                        tab.name = (!buf.trim().is_empty()).then(|| buf.trim().to_string());
+                    }
+                    self.save();
+                    self.focus_active(window, cx);
+                }
+                "escape" => self.focus_active(window, cx),
+                "backspace" => {
+                    buf.pop();
+                    self.renaming = Some((tab_i, buf));
+                }
+                _ => {
+                    if let Some(ch) = ks.key_char.as_ref() {
+                        if buf.chars().count() < 18 {
+                            buf.push_str(ch);
+                        }
+                    }
+                    self.renaming = Some((tab_i, buf));
+                }
+            }
+            cx.notify();
+            return;
+        }
         if std::env::var("TD_KEYDEBUG").is_ok() {
             eprintln!("ws on_key: key={:?} ctrl={} alt={} shift={}", ks.key, m.control, m.alt, m.shift);
         }
@@ -270,30 +290,59 @@ impl Workspace {
         }
     }
 
-    /// Small bezel button (tab strip + triple cluster share this look).
+    /// Solid, reflective bezel button: gradient face + crisp top glint.
     fn bezel_btn(th: &theme::Theme, label: &str, active: bool) -> gpui::Div {
+        let glint = gpui::BoxShadow {
+            color: gpui::white().alpha(0.22),
+            offset: gpui::point(px(0.), px(1.)),
+            blur_radius: px(0.),
+            spread_radius: px(0.),
+            inset: true,
+        };
+        let seat = gpui::BoxShadow {
+            color: gpui::hsla(0., 0., 0., 0.55),
+            offset: gpui::point(px(0.), px(2.)),
+            blur_radius: px(3.),
+            spread_radius: px(0.),
+            inset: false,
+        };
         let b = div()
             .px_2()
             .py_0p5()
             .rounded_sm()
             .border_1()
             .text_size(px(11.))
-            .cursor_pointer();
+            .cursor_pointer()
+            .shadow(vec![glint, seat].into());
         if active {
-            b.bg(th.accent.alpha(0.16))
-                .border_color(th.accent.alpha(0.6))
-                .text_color(th.accent)
-                .child(label.to_string())
+            b.bg(gpui::linear_gradient(
+                180.,
+                gpui::linear_color_stop(th.accent.alpha(0.42), 0.),
+                gpui::linear_color_stop(th.accent.alpha(0.12), 1.),
+            ))
+            .border_color(th.accent)
+            .text_color(gpui::white().alpha(0.92))
+            .child(label.to_string())
         } else {
-            b.border_color(th.faint)
-                .text_color(th.text.alpha(0.65))
-                .child(label.to_string())
+            b.bg(gpui::linear_gradient(
+                180.,
+                gpui::linear_color_stop(brighten(th.surface, 1.7), 0.),
+                gpui::linear_color_stop(darken(th.surface, 0.7), 1.),
+            ))
+            .border_color(th.accent.alpha(0.4))
+            .text_color(th.text)
+            .child(label.to_string())
         }
     }
 }
 
 fn darken(mut c: Hsla, f: f32) -> Hsla {
     c.l *= f;
+    c
+}
+
+fn brighten(mut c: Hsla, f: f32) -> Hsla {
+    c.l = (c.l * f).min(0.92);
     c
 }
 
@@ -305,7 +354,6 @@ impl Render for Workspace {
             return div();
         }
         let focused = self.focused_pane(window, cx);
-        let jiggle = self.fx.jiggle_px;
         let bezel = darken(th.surface, 0.55);
         let tab = &self.tabs[self.active];
         let dir = tab.dir;
@@ -317,17 +365,53 @@ impl Render for Workspace {
         let pane_count: usize = self.tabs.iter().map(|t| t.panes.len()).sum();
         let tab_count = self.tabs.len();
 
-        // ---- bezel top: brand · tabs · triple cluster ----
+        // ---- bezel top: brand · tabs (right-click renames) · split cluster ----
+        let renaming = self.renaming.clone();
         let mut tab_strip = div().flex().flex_row().gap_1().items_center();
         for i in 0..tab_count {
             let is_active = i == self.active;
+            if let Some((ri, buf)) = renaming.as_ref().filter(|(ri, _)| *ri == i) {
+                let _ = ri;
+                // themed inline rename box
+                tab_strip = tab_strip.child(
+                    div()
+                        .px_2()
+                        .py_0p5()
+                        .rounded_sm()
+                        .border_1()
+                        .border_color(th.accent)
+                        .bg(darken(th.bg, 0.8))
+                        .text_size(px(11.))
+                        .text_color(th.text)
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .child(format!("{buf}"))
+                        .child(div().w(px(6.)).h(px(13.)).bg(th.cursor)),
+                );
+                continue;
+            }
+            let label = self.tabs[i]
+                .name
+                .clone()
+                .unwrap_or_else(|| format!("{}", i + 1));
             tab_strip = tab_strip.child(
-                Self::bezel_btn(&th, &format!("{}", i + 1), is_active).on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
-                        ws.activate_tab(i, window, cx)
-                    }),
-                ),
+                Self::bezel_btn(&th, &label, is_active)
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
+                            ws.activate_tab(i, window, cx)
+                        }),
+                    )
+                    .on_mouse_down(
+                        MouseButton::Right,
+                        cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
+                            let seed = ws.tabs[i].name.clone().unwrap_or_default();
+                            ws.renaming = Some((i, seed));
+                            window.focus(&ws.focus_handle, cx);
+                            cx.notify();
+                        }),
+                    ),
             );
         }
         tab_strip = tab_strip.child(
@@ -342,12 +426,6 @@ impl Render for Workspace {
             .flex_row()
             .gap_1()
             .items_center()
-            .child(
-                Self::bezel_btn(&th, "⊞ tab", false).on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(|ws, _: &MouseDownEvent, window, cx| ws.new_tab(window, cx)),
-                ),
-            )
             .child(
                 Self::bezel_btn(&th, "◫ split", false).on_mouse_down(
                     MouseButton::Left,
@@ -407,7 +485,7 @@ impl Render for Workspace {
             .justify_between()
             .px_3()
             .text_size(px(10.5))
-            .text_color(th.text.alpha(0.55))
+            .text_color(th.text)
             .child(div().child(format!("{} · {}", th.name, focused_title)))
             .child(
                 div()
@@ -426,13 +504,7 @@ impl Render for Workspace {
             );
 
         // ---- the screen, inset into the device ----
-        let mut pane_area = div()
-            .size_full()
-            .flex()
-            .gap(px(3.))
-            .pt(px(3. + jiggle.max(0.)))
-            .pb(px(3. + (-jiggle).max(0.)))
-            .px(px(3.));
+        let mut pane_area = div().size_full().flex().gap(px(3.)).p(px(3.));
         pane_area = match dir {
             SplitDir::Row => pane_area.flex_row(),
             SplitDir::Col => pane_area.flex_col(),
@@ -463,10 +535,7 @@ impl Render for Workspace {
             .border_1()
             .border_color(darken(th.surface, 0.3))
             .mx_2()
-            .child(pane_area)
-            .when(std::env::var("TD_NOGLASS").is_err(), |el| {
-                el.child(crt::glass(&th, &self.fx))
-            });
+            .child(pane_area);
 
         // ---- device shell ----
         div()
@@ -474,6 +543,7 @@ impl Render for Workspace {
             .bg(darken(bezel, 0.5))
             .p(px(5.))
             .font_family(th.font_family.clone())
+            .track_focus(&self.focus_handle)
             .on_key_down(cx.listener(Self::on_key))
             .child(
                 div()
@@ -481,11 +551,31 @@ impl Render for Workspace {
                     .flex()
                     .flex_col()
                     .rounded(px(14.))
-                    .bg(bezel)
+                    .bg(gpui::linear_gradient(
+                        180.,
+                        gpui::linear_color_stop(brighten(bezel, 1.6), 0.),
+                        gpui::linear_color_stop(darken(bezel, 0.8), 1.),
+                    ))
                     .border_2()
-                    .border_color(th.accent.alpha(0.22))
+                    .border_color(th.accent.alpha(0.45))
                     .shadow(
                         vec![
+                            // crisp top reflection line — the "solid device" glint
+                            gpui::BoxShadow {
+                                color: gpui::white().alpha(0.14),
+                                offset: gpui::point(px(0.), px(1.)),
+                                blur_radius: px(0.),
+                                spread_radius: px(0.),
+                                inset: true,
+                            },
+                            // inner bottom shade — material thickness
+                            gpui::BoxShadow {
+                                color: gpui::hsla(0., 0., 0., 0.5),
+                                offset: gpui::point(px(0.), px(-2.)),
+                                blur_radius: px(3.),
+                                spread_radius: px(0.),
+                                inset: true,
+                            },
                             gpui::BoxShadow {
                                 color: gpui::hsla(0., 0., 0., 0.6),
                                 offset: gpui::point(px(0.), px(6.)),
