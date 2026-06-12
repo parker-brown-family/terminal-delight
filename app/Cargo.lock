@@ -5535,6 +5535,8 @@ dependencies = [
  "futures",
  "gpui",
  "gpui_platform",
+ "serde",
+ "toml 0.8.23",
 ]
 
 [[package]]

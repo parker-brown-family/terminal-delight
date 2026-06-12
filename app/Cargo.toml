@@ -12,6 +12,8 @@ alacritty_terminal = "0.26"
 futures = "0.3"
 gpui = { path = "../../zed-upstream/crates/gpui" }
 gpui_platform = { path = "../../zed-upstream/crates/gpui_platform", features = ["x11", "wayland"] }
+serde = { version = "1.0.228", features = ["derive"] }
+toml = "0.8"
 
 [profile.dev]
 # gpui is heavy; keep our own code debuggable but deps optimized

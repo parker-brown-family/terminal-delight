@@ -1,0 +1,27 @@
+# terminal-delight theme — tactical-overdrive (high-contrast cyan command deck)
+name = "tactical-overdrive"
+
+[colors]
+bg      = "#06090d"
+surface = "#0a1018"
+text    = "#dff6ff"
+accent  = "#31d7ff"
+faint   = "#10324a"
+cursor  = "#91f6ff"
+ansi = [
+  "#0a1018", "#ff5050", "#39d98a", "#ff9b45",
+  "#31d7ff", "#b78aff", "#67e8f9", "#dff6ff",
+  "#1d4663", "#ff8484", "#6ee7b7", "#ffb36f",
+  "#91f6ff", "#d0b3ff", "#a5f3fc", "#f2fbff",
+]
+
+[effects]
+scanline_opacity = 0.035
+scanline_step    = 3.0
+vignette         = 0.25
+glow             = 0.6
+
+[font]
+family      = "JetBrains Mono"
+size        = 14.0
+cell_height = 20.0

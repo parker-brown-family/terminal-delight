@@ -1,0 +1,27 @@
+# terminal-delight theme — field-command (muted dark olive)
+name = "field-command"
+
+[colors]
+bg      = "#14160f"
+surface = "#1b1e15"
+text    = "#e7ecd9"
+accent  = "#8fa85f"
+faint   = "#3a4226"
+cursor  = "#b6cf86"
+ansi = [
+  "#171a12", "#d96c5f", "#8fa85f", "#d9b35f",
+  "#6f8fae", "#a87a9b", "#7fb0a0", "#e7ecd9",
+  "#3a4226", "#eda092", "#b6cf86", "#f0d390",
+  "#9cb8d6", "#cfa6c4", "#aad4c6", "#f6f8ef",
+]
+
+[effects]
+scanline_opacity = 0.025
+scanline_step    = 3.0
+vignette         = 0.18
+glow             = 0.3
+
+[font]
+family      = "JetBrains Mono"
+size        = 14.0
+cell_height = 20.0
