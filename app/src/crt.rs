@@ -21,15 +21,16 @@ pub struct Fx {
     /// 0..1 progress of the current tracking sweep, if one is running.
     pub band: Option<f32>,
     next_band_at: f32,
-    /// current flicker opacity multiplier (CSS: steps between .70 and .82 of .78)
+    /// current flicker opacity multiplier; 1.0 except during occasional bursts
     pub flicker_mul: f32,
+    flicker_burst_until: f32,
+    next_flicker_at: f32,
     /// vertical hop in px, ±, usually 0
     pub jiggle_px: f32,
     jiggle_until: f32,
     next_jiggle_at: f32,
 }
 
-const SWEEP_SECS: f32 = 2.4;
 const BAND_H: f32 = 160.0;
 
 impl Fx {
@@ -40,6 +41,8 @@ impl Fx {
             band: None,
             next_band_at: 1.5,
             flicker_mul: 1.0,
+            flicker_burst_until: 0.,
+            next_flicker_at: 7.0,
             jiggle_px: 0.,
             jiggle_until: 0.,
             next_jiggle_at: 6.0,
@@ -59,21 +62,22 @@ impl Fx {
         let t = self.started.elapsed().as_secs_f32();
         let mut changed = false;
 
-        // tracking band: sweep, then rest until the period elapses
+        // tracking band: slow sweep (theme-dialed), then rest for the period
+        let sweep = th.tracking_sweep;
         if th.tracking > 0.001 {
             match self.band {
                 Some(_) => {
-                    let progress = (t - (self.next_band_at - SWEEP_SECS)) / SWEEP_SECS;
+                    let progress = (t - (self.next_band_at - sweep)) / sweep;
                     if progress >= 1.0 {
                         self.band = None;
-                        self.next_band_at = t + (th.tracking_period - SWEEP_SECS).max(1.0)
-                            + self.rand() * 2.0;
+                        self.next_band_at =
+                            t + (th.tracking_period - sweep).max(1.0) + self.rand() * 2.0;
                     } else {
                         self.band = Some(progress);
                     }
                     changed = true;
                 }
-                None if t >= self.next_band_at - SWEEP_SECS => {
+                None if t >= self.next_band_at - sweep => {
                     self.band = Some(0.);
                     changed = true;
                 }
@@ -81,18 +85,26 @@ impl Fx {
             }
         }
 
-        // flicker: the CSS keyframe steps over a 5.6s cycle, scaled by the dial
+        // flicker: OCCASIONAL — a ~0.45s burst of stepped dips every ~9-25s
         if th.flicker > 0.001 {
-            let phase = (t % 5.6) / 5.6;
-            let step = match phase {
-                p if p < 0.18 => 1.00,
-                p if p < 0.19 => 1.05,
-                p if p < 0.20 => 0.90,
-                p if p < 0.63 => 1.01,
-                p if p < 0.64 => 0.95,
-                _ => 1.05,
+            if t >= self.next_flicker_at && self.flicker_burst_until < t {
+                self.flicker_burst_until = t + 0.45;
+                self.next_flicker_at = t + 9.0 + self.rand() * 8.0;
+            }
+            let target = if t < self.flicker_burst_until {
+                // stepped dip pattern within the burst
+                let ph = ((self.flicker_burst_until - t) / 0.45 * 5.0) as i32;
+                let step = match ph {
+                    4 => 0.86,
+                    3 => 1.06,
+                    2 => 0.90,
+                    1 => 1.03,
+                    _ => 0.95,
+                };
+                1.0 + (step - 1.0) * th.flicker
+            } else {
+                1.0
             };
-            let target = 1.0 + (step - 1.0) * th.flicker;
             if (target - self.flicker_mul).abs() > 0.001 {
                 self.flicker_mul = target;
                 changed = true;
@@ -118,7 +130,7 @@ impl Fx {
 
     /// True while an animation needs frame-rate ticks (else the ticker can idle).
     pub fn active(&self) -> bool {
-        self.band.is_some() || self.jiggle_px != 0.
+        self.band.is_some() || self.jiggle_px != 0. || self.flicker_mul != 1.0
     }
 }
 

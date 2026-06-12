@@ -23,7 +23,8 @@ glow             = 0.3
 
 bloom            = 0.2
 tracking         = 0.15
-tracking_period  = 16.0
+tracking_period  = 30.0
+tracking_sweep   = 10.0
 flicker          = 0.15
 jiggle           = 0.0
 
