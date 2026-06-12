@@ -411,33 +411,6 @@ fn keystroke_bytes(ks: &Keystroke) -> Option<Vec<u8>> {
     Some(seq.to_vec())
 }
 
-/// One composited scanline overlay (quads only — stays off the input path).
-fn scanlines(th: &Theme) -> impl IntoElement {
-    let alpha = th.scanline_opacity;
-    let step = th.scanline_step;
-    div().absolute().inset_0().child(
-        canvas(
-            |_, _, _| (),
-            move |bounds, _, window, _| {
-                if alpha <= 0.001 {
-                    return;
-                }
-                let color = hsla(0., 0., 0., alpha);
-                let mut y = f32::from(bounds.origin.y);
-                let bottom = f32::from(bounds.bottom());
-                while y < bottom {
-                    window.paint_quad(fill(
-                        Bounds::new(point(bounds.origin.x, px(y)), size(bounds.size.width, px(1.))),
-                        color,
-                    ));
-                    y += step;
-                }
-            },
-        )
-        .size_full(),
-    )
-}
-
 impl Focusable for TerminalView {
     fn focus_handle(&self, _cx: &App) -> FocusHandle {
         self.focus_handle.clone()
@@ -451,9 +424,7 @@ impl Render for TerminalView {
         let lines = self.styled_lines(&th);
         let status = if self.exited { "exited" } else { "live" };
         let grid_label = format!("{}×{} · {} · {status}", self.grid.cols, self.grid.rows, th.name);
-        let vignette = th.vignette;
         let glow = th.glow;
-        let dark = |a: f32| hsla(0., 0., 0., a);
 
         let mut header = div()
             .h(px(HEADER_H))
@@ -542,27 +513,7 @@ impl Render for TerminalView {
                                 }
                             })),
                     )
-                    .child(scanlines(&th))
-                    .when(vignette > 0.001, |el| {
-                        el.child(
-                            div().absolute().top_0().left_0().right_0().h(px(70.)).bg(
-                                linear_gradient(
-                                    180.,
-                                    linear_color_stop(dark(vignette * 0.45), 0.),
-                                    linear_color_stop(dark(0.), 1.),
-                                ),
-                            ),
-                        )
-                        .child(
-                            div().absolute().bottom_0().left_0().right_0().h(px(70.)).bg(
-                                linear_gradient(
-                                    180.,
-                                    linear_color_stop(dark(0.), 0.),
-                                    linear_color_stop(dark(vignette * 0.55), 1.),
-                                ),
-                            ),
-                        )
-                    }),
+                    ,
             )
     }
 }

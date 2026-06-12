@@ -18,10 +18,16 @@ ansi = [
 ]
 
 [effects]
-scanline_opacity = 0.055   # 0 = off
-scanline_step    = 3.0     # px between scanlines
-vignette         = 0.35    # top/bottom CRT falloff, 0 = off
+scanline_opacity = 0.16   # 0 = off
+scanline_step    = 4.0     # px between scanlines
+vignette         = 0.6    # top/bottom CRT falloff, 0 = off
 glow             = 0.45    # accent glow strength (header, cursor), 0 = off
+
+bloom            = 0.5     # center phosphor bloom
+tracking         = 0.6     # rolling tracking band strength
+tracking_period  = 8.0     # seconds between sweeps
+flicker          = 0.5     # stepped CRT flicker
+jiggle           = 0.7     # rare 1-2px vertical-hold hop
 
 [font]
 family      = "JetBrains Mono"
