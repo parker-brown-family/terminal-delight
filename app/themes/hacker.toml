@@ -3,8 +3,8 @@
 name = "hacker"
 
 [colors]
-bg      = "#050706"
-surface = "#08100d"
+bg      = "#03100a"
+surface = "#071a10"
 text    = "#86efac"
 accent  = "#22c55e"
 faint   = "#14401f"
@@ -18,12 +18,12 @@ ansi = [
 ]
 
 [effects]
-scanline_opacity = 0.16   # 0 = off
+scanline_opacity = 0.22   # 0 = off
 scanline_step    = 4.0     # px between scanlines
-vignette         = 0.6    # top/bottom CRT falloff, 0 = off
-glow             = 0.45    # accent glow strength (header, cursor), 0 = off
+vignette         = 0.8    # top/bottom CRT falloff, 0 = off
+glow             = 0.85    # accent glow strength (header, cursor), 0 = off
 
-bloom            = 0.5     # center phosphor bloom
+bloom            = 0.9     # center phosphor bloom
 tracking         = 0.6     # rolling tracking band strength
 tracking_period  = 8.0     # seconds between sweeps
 flicker          = 0.5     # stepped CRT flicker
