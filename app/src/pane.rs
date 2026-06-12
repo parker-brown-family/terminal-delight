@@ -76,6 +76,9 @@ pub struct TerminalView {
     spawned: Instant,
     /// This pane's own CRT rhythm — desynced from every other pane.
     pub fx: crt::Fx,
+    /// Barrel coefficients (from the theme's curvature dial); used to
+    /// warp-correct mouse-to-cell mapping so selection lands where you look.
+    warp_k: (f32, f32),
 }
 
 impl TerminalView {
@@ -137,6 +140,7 @@ impl TerminalView {
             content_bounds: Arc::new(Mutex::new(None)),
             spawned: Instant::now(),
             fx: crt::Fx::new(seed),
+            warp_k: (0., 0.),
         }
     }
 
@@ -202,12 +206,31 @@ impl TerminalView {
     }
 
     fn cell_at(&self, pos: gpui::Point<Pixels>, display_offset: usize) -> (TermPoint, Side) {
-        let (ox, oy) = match *self.content_bounds.lock().unwrap() {
-            Some(b) => (f32::from(b.origin.x) + PAD_X, f32::from(b.origin.y) + PAD_Y),
-            None => (PAD_X, HEADER_H + PAD_Y),
+        let bounds = *self.content_bounds.lock().unwrap();
+        let (bx, by, bw, bh) = match bounds {
+            Some(b) => (
+                f32::from(b.origin.x),
+                f32::from(b.origin.y),
+                f32::from(b.size.width).max(1.),
+                f32::from(b.size.height).max(1.),
+            ),
+            None => (0., HEADER_H, 1000., 1000.),
         };
-        let fx = (f32::from(pos.x) - ox) / self.cell_w;
-        let y = ((f32::from(pos.y) - oy) / self.cell_h).max(0.) as usize;
+        // in-rect coordinates; apply the same forward barrel the shader uses,
+        // because a screen point displays content sampled from warped(point)
+        let mut sx = f32::from(pos.x) - bx;
+        let mut sy = f32::from(pos.y) - by;
+        let (k1, k2) = self.warp_k;
+        if k1.abs() > 0.0005 {
+            let cu = sx / bw - 0.5;
+            let cv = sy / bh - 0.5;
+            let r2 = cu * cu + cv * cv;
+            let f = 1.0 + k1 * r2 + k2 * r2 * r2;
+            sx = (0.5 + cu * f) * bw;
+            sy = (0.5 + cv * f) * bh;
+        }
+        let fx = (sx - PAD_X) / self.cell_w;
+        let y = ((sy - PAD_Y) / self.cell_h).max(0.) as usize;
         let col = (fx.max(0.) as usize).min(self.grid.cols.saturating_sub(1));
         let row = y.min(self.grid.rows.saturating_sub(1));
         let side = if fx.fract() < 0.5 { Side::Left } else { Side::Right };
@@ -461,6 +484,7 @@ impl Render for TerminalView {
             .map(|s| s.0)
             .unwrap_or(1.0);
         self.sync_size(&th, scale, window);
+        self.warp_k = (th.curvature * 0.14, th.curvature * 0.06);
         let lines = self.styled_lines(&th);
         let status = if self.exited { "exited" } else { "live" };
         let grid_label = format!("{}×{} · {} · {status}", self.grid.cols, self.grid.rows, th.name);
@@ -538,7 +562,14 @@ impl Render for TerminalView {
                         let weak = cx.entity().downgrade();
                         div().absolute().inset_0().child(
                             canvas(
-                                move |bounds, _, cx| {
+                                move |bounds, window, cx| {
+                                    let sf = window.scale_factor();
+                                    crate::warp::register([
+                                        f32::from(bounds.origin.x) * sf,
+                                        f32::from(bounds.origin.y) * sf,
+                                        f32::from(bounds.size.width) * sf,
+                                        f32::from(bounds.size.height) * sf,
+                                    ]);
                                     let changed = {
                                         let mut slot = store.lock().unwrap();
                                         let changed = slot.map_or(true, |b| b != bounds);
