@@ -61,7 +61,7 @@ fn ansi_to_hsla(color: AnsiColor, th: &Theme, default: Hsla) -> Hsla {
 pub struct TerminalView {
     focus_handle: FocusHandle,
     session: term::Session,
-    title: String,
+    pub title: String,
     pub exited: bool,
     grid: term::GridSize,
     cell_w: f32,
@@ -197,6 +197,8 @@ impl TerminalView {
         let m = &ks.modifiers;
         if m.control && m.shift {
             match ks.key.as_str() {
+                // workspace chords: new tab
+                "t" => return,
                 "c" => {
                     let text = self.session.term.lock().selection_to_string();
                     if let Some(text) = text {
@@ -390,6 +392,9 @@ fn keystroke_bytes(ks: &Keystroke) -> Option<Vec<u8>> {
         if c.is_ascii_lowercase() {
             return Some(vec![c as u8 - b'a' + 1]);
         }
+    }
+    if m.control && matches!(ks.key.as_str(), "pageup" | "pagedown") {
+        return None; // workspace: tab switching
     }
     let seq: &[u8] = match ks.key.as_str() {
         "enter" => b"\r",
