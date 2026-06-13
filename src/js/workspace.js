@@ -4,10 +4,16 @@
    • binary tiling tree (split-right / split-down)
    • draggable splitters (live resize)
    • per-pane triple-button + close
-   • drag a pane's header off the tiling area to break it out into a window
+   • UNIFIED pane drag (grab a pane header), three drop targets:
+       1. release OUTSIDE the tiling area  → break the pane out into its own window
+       2. onto a TAB in the top bar         → move the pane into that tab
+       3. onto another PANE (sub-tab)       → edge-aware split:
+            right → split row,  dragged lands right    left  → lands left
+            bottom→ split col,  dragged lands bottom    top   → lands top
 
    The node tree only references leafIds; live content lives in contentMap so
-   panes keep their state (terminal scrollback, input) across splits & moves.
+   panes keep their state (terminal scrollback, input) across splits & moves —
+   moving a leaf between tabs is just a tree edit, the content map is global.
    ============================================================ */
 import { makeContent } from './panes.js';
 import { detachPane } from './detach.js';
@@ -28,6 +34,10 @@ export class Workspace {
     this.content = new Map();      // leafId -> {id, el, paneType, title, focus}
     this.focusedLeaf = null;
     this.tabSeq = 0;
+    // --- pane drag state ---
+    this._dragLeafId = null;       // leaf currently being dragged
+    this._dropHandled = false;     // a valid drop consumed the drag (suppress breakout)
+    this._dropEl = null;           // reusable drop-zone indicator overlay
   }
 
   /* ---------- content helpers ---------- */
@@ -98,6 +108,67 @@ export class Workspace {
     this.closeLeaf(leafId);
   }
 
+  /* Detach a leaf node from whatever tab/tree holds it WITHOUT destroying its
+     content, promoting its sibling in place. Returns the orphaned leaf node
+     (or null). Empties-then-removes the source tab if the leaf was its root. */
+  _extractLeaf(leafId) {
+    for (const tab of this.tabs) {
+      const loc = locate(tab.root, n => n.type === 'leaf' && n.leafId === leafId);
+      if (!loc) continue;
+      const node = loc.node;
+      if (!loc.parent) {
+        // leaf was the entire tab — drop the tab shell (content kept for the move)
+        const i = this.tabs.indexOf(tab);
+        if (i >= 0) this.tabs.splice(i, 1);
+        if (this.active === tab) this.active = this.tabs[Math.max(0, i - 1)] || null;
+      } else {
+        const sibling = loc.parent.children[1 - loc.index];
+        const gp = locate(tab.root, n => n === loc.parent);
+        if (!gp.parent) tab.root = sibling; else gp.parent.children[gp.index] = sibling;
+        if (tab.focusedLeafId === leafId) tab.focusedLeafId = firstLeaf(tab.root);
+      }
+      return node;
+    }
+    return null;
+  }
+
+  /* Target #3 — drop a pane onto another pane, splitting it along the edge. */
+  dropPaneOnLeaf(srcLeafId, targetLeafId, edge) {
+    if (!srcLeafId || srcLeafId === targetLeafId) return;
+    const src = this._extractLeaf(srcLeafId);
+    if (!src) return;
+    // locate target AFTER extraction (the tree may have collapsed a level)
+    let targetTab = null, loc = null;
+    for (const tab of this.tabs) {
+      const l = locate(tab.root, n => n.type === 'leaf' && n.leafId === targetLeafId);
+      if (l) { targetTab = tab; loc = l; break; }
+    }
+    if (!targetTab) { this.addTab(src, this.content.get(src.leafId)?.title, true); return; }
+    const dir = (edge === 'left' || edge === 'right') ? 'row' : 'col';
+    const children = (edge === 'right' || edge === 'bottom') ? [loc.node, src] : [src, loc.node];
+    const split = { type: 'split', dir, children, sizes: [0.5, 0.5] };
+    if (!loc.parent) targetTab.root = split; else loc.parent.children[loc.index] = split;
+    targetTab.focusedLeafId = src.leafId;
+    this.active = targetTab;
+    this.renderTabs(); this.renderPanes();
+  }
+
+  /* Target #2 — drop a pane onto a tab: merge it into that tab's tree. */
+  dropPaneOnTab(srcLeafId, tabId) {
+    const target = this.tabs.find(t => t.id === tabId);
+    if (!target || !srcLeafId) return;
+    // no-op if the pane is already the entire content of the target tab
+    if (target.root.type === 'leaf' && target.root.leafId === srcLeafId) return;
+    const src = this._extractLeaf(srcLeafId);
+    if (!src) return;
+    const tt = this.tabs.find(t => t.id === tabId);     // may have been removed if src was its root
+    if (!tt) { this.addTab(src, this.content.get(src.leafId)?.title, true); return; }
+    tt.root = { type: 'split', dir: 'row', sizes: [0.6, 0.4], children: [tt.root, src] };
+    tt.focusedLeafId = src.leafId;
+    this.active = tt;
+    this.renderTabs(); this.renderPanes();
+  }
+
   /* ---------- rendering ---------- */
   renderTabs() {
     this.strip.innerHTML = '';
@@ -110,16 +181,39 @@ export class Workspace {
       el.addEventListener('click', (e) => { if (!e.target.classList.contains('x')) this.activateTab(tab.id); });
       el.querySelector('.x').addEventListener('click', (e) => { e.stopPropagation(); this.closeTab(tab.id); });
       el.addEventListener('dblclick', (e) => { if (e.target.classList.contains('label')) this._rename(tab, e.target); });
-      // drag-reorder
+      // drag source: reorder
       el.addEventListener('dragstart', (e) => { e.dataTransfer.setData('text/tab', String(idx)); e.dataTransfer.effectAllowed = 'move'; });
-      el.addEventListener('dragover', (e) => { if (e.dataTransfer.types.includes('text/tab')) { e.preventDefault(); el.classList.add('drag-over'); } });
-      el.addEventListener('dragleave', () => el.classList.remove('drag-over'));
-      el.addEventListener('drop', (e) => { e.preventDefault(); el.classList.remove('drag-over'); const from = Number(e.dataTransfer.getData('text/tab')); this.moveTab(from, idx); });
+      // drop target: accept a tab (reorder) OR a pane (merge into this tab)
+      el.addEventListener('dragover', (e) => {
+        const t = e.dataTransfer.types;
+        if (t.includes('text/pane')) { e.preventDefault(); el.classList.add('pane-drop-over'); }
+        else if (t.includes('text/tab')) { e.preventDefault(); el.classList.add('drag-over'); }
+      });
+      el.addEventListener('dragleave', () => el.classList.remove('drag-over', 'pane-drop-over'));
+      el.addEventListener('drop', (e) => {
+        e.preventDefault(); el.classList.remove('drag-over', 'pane-drop-over');
+        if (e.dataTransfer.types.includes('text/pane')) {
+          this._dropHandled = true;
+          this.dropPaneOnTab(this._dragLeafId, tab.id);
+        } else if (e.dataTransfer.types.includes('text/tab')) {
+          this.moveTab(Number(e.dataTransfer.getData('text/tab')), idx);
+        }
+      });
       this.strip.appendChild(el);
     });
     const add = document.createElement('button');
     add.className = 'tab-add'; add.title = 'new tab'; add.textContent = '+';
     add.addEventListener('click', () => this.addTab(null, `shell ${this.tabSeq + 1}`));
+    // drop a pane on "+" → break it into a brand-new tab
+    add.addEventListener('dragover', (e) => { if (e.dataTransfer.types.includes('text/pane')) { e.preventDefault(); add.classList.add('pane-drop-over'); } });
+    add.addEventListener('dragleave', () => add.classList.remove('pane-drop-over'));
+    add.addEventListener('drop', (e) => {
+      if (!e.dataTransfer.types.includes('text/pane')) return;
+      e.preventDefault(); add.classList.remove('pane-drop-over');
+      this._dropHandled = true;
+      const src = this._extractLeaf(this._dragLeafId);
+      if (src) this.addTab(src, this.content.get(src.leafId)?.title, true);
+    });
     this.strip.appendChild(add);
   }
   _rename(tab, labelEl) {
@@ -133,6 +227,8 @@ export class Workspace {
 
   renderPanes() {
     this.panes.innerHTML = '';
+    this._dropEl = null;                       // overlay is rebuilt lazily per drag
+    if (!this.active) return;
     this.panes.appendChild(this._renderNode(this.active.root));
     const c = this.content.get(this.active.focusedLeafId);
     if (c?.focus) c.focus();
@@ -170,7 +266,10 @@ export class Workspace {
       else if (act === 'close') this.closeLeaf(leafId);
     });
     head.append(title, tools);
-    this._wireHeadDetach(head, leafId);
+    // the header is the drag handle for the whole pane
+    head.draggable = true;
+    this._wirePaneDrag(head, pane, leafId);
+    this._wirePaneDrop(pane, leafId);
     const body = document.createElement('div'); body.className = 'pane-body';
     if (c) body.appendChild(c.el);              // move live content in (preserves state)
     pane.append(head, body);
@@ -179,31 +278,72 @@ export class Workspace {
   }
   _refocus() {
     this.panes.querySelectorAll('.pane').forEach(p => p.classList.remove('is-focused'));
-    // cheap: re-mark without full re-render
     const c = this.content.get(this.active.focusedLeafId);
     if (c) { const el = c.el.closest('.pane'); el && el.classList.add('is-focused'); c.focus && c.focus(); }
   }
 
-  /* drag the pane header OFF the tiling area → break out into its own window */
-  _wireHeadDetach(head, leafId) {
-    head.addEventListener('pointerdown', (e) => {
-      if (e.target.closest('.pane-tools')) return;        // tool clicks handled elsewhere
-      const startX = e.clientX, startY = e.clientY;
-      let armed = false;
-      const move = (ev) => {
-        if (!armed && Math.hypot(ev.clientX - startX, ev.clientY - startY) > 6) armed = true;
-      };
-      const up = (ev) => {
-        document.removeEventListener('pointermove', move);
-        document.removeEventListener('pointerup', up);
-        if (!armed) return;
-        const r = this.panes.getBoundingClientRect();
-        const outside = ev.clientX < r.left || ev.clientX > r.right || ev.clientY < r.top || ev.clientY > r.bottom;
-        if (outside) this.detachLeaf(leafId);
-      };
-      document.addEventListener('pointermove', move);
-      document.addEventListener('pointerup', up);
+  /* ---------- pane drag & drop (the unified gesture) ---------- */
+  _wirePaneDrag(head, pane, leafId) {
+    head.addEventListener('dragstart', (e) => {
+      if (e.target.closest('.pane-tools')) { e.preventDefault(); return; }  // let tool buttons click
+      this._dragLeafId = leafId;
+      this._dropHandled = false;
+      const c = this.content.get(leafId);
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/pane', leafId);
+      // descriptor for a future cross-window handshake (BroadcastChannel)
+      e.dataTransfer.setData('text/td-pane', JSON.stringify({ paneType: c?.paneType, title: c?.title }));
+      pane.classList.add('is-dragging');
     });
+    head.addEventListener('dragend', (e) => {
+      pane.classList.remove('is-dragging');
+      this._clearDropZone();
+      // Target #1 — released on nothing, outside the tiling area → break out to a window
+      if (!this._dropHandled) {
+        const r = this.panes.getBoundingClientRect();
+        const outside = e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom;
+        if (outside) this.detachLeaf(leafId);
+      }
+      this._dragLeafId = null;
+      this._dropHandled = false;
+    });
+  }
+  _wirePaneDrop(pane, leafId) {
+    pane.addEventListener('dragover', (e) => {
+      if (!this._dragLeafId || !e.dataTransfer.types.includes('text/pane')) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      if (leafId === this._dragLeafId) { this._clearDropZone(); return; }   // can't drop onto self
+      const edge = edgeFromEvent(pane.getBoundingClientRect(), e.clientX, e.clientY);
+      this._showDropZone(pane, edge);
+    });
+    pane.addEventListener('dragleave', (e) => {
+      // only clear when actually leaving the pane (not crossing into a child)
+      if (!pane.contains(e.relatedTarget)) this._clearDropZone();
+    });
+    pane.addEventListener('drop', (e) => {
+      if (!e.dataTransfer.types.includes('text/pane')) return;
+      e.preventDefault();
+      const edge = edgeFromEvent(pane.getBoundingClientRect(), e.clientX, e.clientY);
+      this._clearDropZone();
+      this._dropHandled = true;
+      this.dropPaneOnLeaf(this._dragLeafId, leafId, edge);
+    });
+  }
+  _showDropZone(pane, edge) {
+    if (!this._dropEl) {
+      this._dropEl = document.createElement('div');
+      this._dropEl.className = 'drop-indicator';
+    }
+    if (this._dropEl.parentElement !== pane) pane.appendChild(this._dropEl);
+    const half = { left:   { left:0, top:0, right:'50%', bottom:0 },
+                   right:  { left:'50%', top:0, right:0, bottom:0 },
+                   top:    { left:0, top:0, right:0, bottom:'50%' },
+                   bottom: { left:0, top:'50%', right:0, bottom:0 } }[edge];
+    Object.assign(this._dropEl.style, { left:'', top:'', right:'', bottom:'' }, half);
+  }
+  _clearDropZone() {
+    if (this._dropEl && this._dropEl.parentElement) this._dropEl.parentElement.removeChild(this._dropEl);
   }
 
   _wireSplitter(sp, node, elA, elB) {
@@ -249,3 +389,11 @@ function locate(root, pred, parent = null, index = -1) {
 }
 function firstLeaf(node) { return node.type === 'leaf' ? node.leafId : firstLeaf(node.children[0]); }
 function eachLeaf(node, fn) { if (node.type === 'leaf') fn(node.leafId); else node.children.forEach(c => eachLeaf(c, fn)); }
+
+/* Which edge of `rect` is the cursor nearest? → 'left' | 'right' | 'top' | 'bottom' */
+function edgeFromEvent(rect, x, y) {
+  const lx = (x - rect.left) / Math.max(1, rect.width);
+  const ly = (y - rect.top) / Math.max(1, rect.height);
+  const d = { left: lx, right: 1 - lx, top: ly, bottom: 1 - ly };
+  return Object.keys(d).reduce((a, b) => (d[b] < d[a] ? b : a));
+}
