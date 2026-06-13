@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- terminal-delight app icon: curved CRT tube, tiled into three panes,
+     one phosphor colour per pane to show off the per-pane theming. -->
+<svg width="256" height="256" viewBox="0 0 256 256" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bezel" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2e333c"/>
+      <stop offset="1" stop-color="#15181d"/>
+    </linearGradient>
+    <radialGradient id="glass" cx="0.5" cy="0.45" r="0.75">
+      <stop offset="0" stop-color="#101713"/>
+      <stop offset="1" stop-color="#05080a"/>
+    </radialGradient>
+    <!-- barrel-bulged tube outline, reused for fill + clip -->
+    <path id="tube" d="M 50,60 Q 128,48 206,60 Q 222,120 206,176 Q 128,188 50,176 Q 34,120 50,60 Z"/>
+    <clipPath id="tubeClip"><use href="#tube"/></clipPath>
+  </defs>
+
+  <!-- monitor stand -->
+  <path d="M 106,194 L 150,194 L 160,218 L 96,218 Z" fill="#1b1f25"/>
+  <rect x="80" y="216" width="96" height="12" rx="6" fill="#23272e"/>
+
+  <!-- bezel -->
+  <rect x="22" y="34" width="212" height="164" rx="22" fill="url(#bezel)"/>
+  <rect x="22.5" y="34.5" width="211" height="163" rx="21.5" fill="none" stroke="#3c424d" stroke-width="1"/>
+
+  <!-- curved glass -->
+  <use href="#tube" fill="url(#glass)"/>
+
+  <g clip-path="url(#tubeClip)">
+    <!-- left pane: hacker green -->
+    <g fill="#39ff7a">
+      <rect x="60" y="70"  width="11" height="11" rx="2" opacity="0.95"/>
+      <rect x="77" y="72"  width="44" height="7"  rx="3.5" opacity="0.9"/>
+      <rect x="60" y="88"  width="58" height="7"  rx="3.5" opacity="0.6"/>
+      <rect x="60" y="104" width="40" height="7"  rx="3.5" opacity="0.75"/>
+      <rect x="60" y="120" width="62" height="7"  rx="3.5" opacity="0.45"/>
+      <rect x="60" y="136" width="48" height="7"  rx="3.5" opacity="0.65"/>
+      <rect x="60" y="152" width="30" height="7"  rx="3.5" opacity="0.4"/>
+      <rect x="60" y="166" width="11" height="9"  rx="2"   opacity="0.85"/>
+    </g>
+    <!-- top-right pane: tactical amber -->
+    <g fill="#ffb84d">
+      <rect x="150" y="68" width="42" height="6" rx="3" opacity="0.9"/>
+      <rect x="150" y="82" width="30" height="6" rx="3" opacity="0.6"/>
+      <rect x="150" y="96" width="38" height="6" rx="3" opacity="0.75"/>
+    </g>
+    <!-- bottom-right pane: quiet cyan -->
+    <g fill="#57d6ff">
+      <rect x="150" y="132" width="36" height="6" rx="3" opacity="0.9"/>
+      <rect x="150" y="146" width="44" height="6" rx="3" opacity="0.55"/>
+      <rect x="150" y="160" width="28" height="6" rx="3" opacity="0.75"/>
+    </g>
+
+    <!-- split dividers, gently bowed with the glass -->
+    <path d="M 140,52 Q 146,118 140,184" stroke="#23272e" stroke-width="9" fill="none" stroke-linecap="round"/>
+    <path d="M 138,116 Q 176,121 214,115" stroke="#23272e" stroke-width="8" fill="none" stroke-linecap="round"/>
+
+    <!-- scanlines -->
+    <g stroke="#000000" stroke-width="2" opacity="0.18">
+      <line x1="34" y1="66"  x2="222" y2="66"/>
+      <line x1="34" y1="80"  x2="222" y2="80"/>
+      <line x1="34" y1="94"  x2="222" y2="94"/>
+      <line x1="34" y1="108" x2="222" y2="108"/>
+      <line x1="34" y1="122" x2="222" y2="122"/>
+      <line x1="34" y1="136" x2="222" y2="136"/>
+      <line x1="34" y1="150" x2="222" y2="150"/>
+      <line x1="34" y1="164" x2="222" y2="164"/>
+      <line x1="34" y1="178" x2="222" y2="178"/>
+    </g>
+
+    <!-- glass glint -->
+    <path d="M 50,60 Q 128,48 206,60 Q 180,84 120,86 Q 70,86 50,60 Z" fill="#ffffff" opacity="0.05"/>
+  </g>
+
+  <!-- phosphor spill onto the bezel -->
+  <ellipse cx="128" cy="118" rx="104" ry="74" fill="#39ff7a" opacity="0.05"/>
+</svg>
