@@ -1626,4 +1626,91 @@ mod tests {
         assert_eq!(bytes("alt-left"), None);
         assert_eq!(bytes("ctrl-pageup"), None);
     }
+
+    #[test]
+    fn idx_color_cube_and_ramp_boundaries() {
+        // the hand-rolled 256-colour table feeds every 256-colour TUI, and the
+        // cube/ramp arithmetic is off-by-one-prone — pin the corners.
+        let c = |hex: u32| Hsla::from(rgb(hex));
+        // 0..16: the xterm base palette
+        assert_eq!(idx_color(0), c(0x000000));
+        assert_eq!(idx_color(7), c(0xe5e5e5));
+        assert_eq!(idx_color(15), c(0xffffff));
+        // 16..232: the 6x6x6 cube. 16 = black corner, 231 = white corner.
+        assert_eq!(idx_color(16), c(0x000000));
+        assert_eq!(idx_color(231), c(0xffffff));
+        assert_eq!(idx_color(196), c(0xff0000), "cube pure red");
+        assert_eq!(idx_color(17), c(0x00005f), "first non-zero cube level = 95");
+        // 232..256: the greyscale ramp, v = 8 + 10*(i-232)
+        assert_eq!(idx_color(232), c(0x080808), "ramp start");
+        assert_eq!(idx_color(255), c(0xeeeeee), "ramp end");
+    }
+
+    #[test]
+    fn shape_three_modes_and_grey_guard() {
+        use crate::theme::ColorMode;
+        let mut th = crate::theme::parse(crate::theme::DEFAULT_THEME_TOML).unwrap();
+        let red = Hsla {
+            h: 0.0,
+            s: 0.9,
+            l: 0.5,
+            a: 1.0,
+        };
+        // Default: untouched, the honest xterm palette
+        th.color_mode = ColorMode::Default;
+        assert_eq!(shape(red, &th), red);
+        // Monochrome: adopt the text hue+saturation, keep the source lightness
+        th.color_mode = ColorMode::Monochrome;
+        th.text = Hsla {
+            h: 1.0 / 3.0,
+            s: 0.8,
+            l: 0.4,
+            a: 1.0,
+        };
+        let m = shape(red, &th);
+        assert!((m.h - th.text.h).abs() < 1e-6 && (m.s - th.text.s).abs() < 1e-6);
+        assert!((m.l - red.l).abs() < 1e-6, "structure (lightness) survives");
+        // OnTheme grey guard: a near-grey keeps its low saturation (only the hue
+        // breathes the seed) instead of smearing toward the accent.
+        th.color_mode = ColorMode::OnTheme;
+        th.accent = Hsla {
+            h: 0.6,
+            s: 0.7,
+            l: 0.5,
+            a: 1.0,
+        };
+        let grey = Hsla {
+            h: 0.0,
+            s: 0.02,
+            l: 0.5,
+            a: 1.0,
+        };
+        let g = shape(grey, &th);
+        assert!(
+            (g.s - grey.s).abs() < 1e-6,
+            "near-grey stays low-saturation"
+        );
+        assert!(
+            (g.h - th.accent.h).abs() < 1e-6,
+            "grey breathes the seed hue"
+        );
+    }
+
+    #[test]
+    fn mode_theme_per_mode_palette() {
+        let base = crate::theme::parse(crate::theme::DEFAULT_THEME_TOML).unwrap();
+        // Shell and Other are passthrough — no retint.
+        assert_eq!(mode_theme(&base, &PaneMode::Shell).accent, base.accent);
+        assert_eq!(
+            mode_theme(&base, &PaneMode::Other("vim".into())).accent,
+            base.accent
+        );
+        // Agent modes retint the tube and keep their identity invariants.
+        for mode in [PaneMode::Claude, PaneMode::Codex, PaneMode::Remote] {
+            let th = mode_theme(&base, &mode);
+            assert_ne!(th.accent, base.accent, "{:?} retints the accent", mode);
+            assert_eq!(th.ansi[7], th.text, "default-fg slot follows the mode text");
+            assert!(th.bg.l < 0.1, "{:?} tube depths stay dark", mode);
+        }
+    }
 }

@@ -445,7 +445,7 @@ fn hex(value: &str) -> Option<Hsla> {
     u32::from_str_radix(v, 16).ok().map(|c| rgb(c).into())
 }
 
-fn parse(source: &str) -> Result<Theme, String> {
+pub(crate) fn parse(source: &str) -> Result<Theme, String> {
     let file: ThemeFile = toml::from_str(source).map_err(|e| e.to_string())?;
     let c = &file.colors;
     let need = |s: &String, what: &str| hex(s).ok_or(format!("bad color for {what}: {s}"));

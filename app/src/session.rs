@@ -260,7 +260,13 @@ mod tests {
         // a plain uuid still rides through untouched
         let id = "48be90b8-5777-44b6-bb6f-1c6069205c0d";
         assert_eq!(
-            agent_resume("claude", &format!("claude --resume {id}"), Some("/tmp"), home).as_deref(),
+            agent_resume(
+                "claude",
+                &format!("claude --resume {id}"),
+                Some("/tmp"),
+                home
+            )
+            .as_deref(),
             Some("claude --resume 48be90b8-5777-44b6-bb6f-1c6069205c0d")
         );
         assert!(safe_resume_id(id));
