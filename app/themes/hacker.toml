@@ -1,6 +1,7 @@
 # terminal-delight theme — hacker (phosphor green CRT)
 # Edit this file while the app is running: it hot-reloads. No recompile.
 name = "hacker"
+icon = ">_"
 
 [colors]
 bg      = "#03100a"
@@ -29,6 +30,7 @@ tracking_period  = 16.0     # seconds between sweeps
 tracking_sweep   = 7.0
 flicker          = 0.5     # stepped CRT flicker
 curvature        = 0.45     # barrel warp (needs td-crt-pass renderer patch)
+screen_glare    = 0.42     # top-left glass reflection, hacker-only by default
 jiggle           = 0.7     # rare 1-2px vertical-hold hop
 
 [font]

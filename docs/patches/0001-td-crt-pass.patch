@@ -1,32 +1,19 @@
-From 2a785e31a398e1e77c3a37739699c046bbf3852c Mon Sep 17 00:00:00 2001
-From: Parker Brown <parker@brownfamilysports.com>
-Date: Fri, 12 Jun 2026 15:39:58 -0700
-Subject: [PATCH 1/2] td-crt-pass: barrel-distortion post pass for the wgpu
- renderer
-
----
- crates/gpui_wgpu/src/crt_pass.wgsl    |  44 +++++
- crates/gpui_wgpu/src/gpui_wgpu.rs     |   1 +
- crates/gpui_wgpu/src/wgpu_renderer.rs | 237 +++++++++++++++++++++++++-
- 3 files changed, 280 insertions(+), 2 deletions(-)
- create mode 100644 crates/gpui_wgpu/src/crt_pass.wgsl
-
 diff --git a/crates/gpui_wgpu/src/crt_pass.wgsl b/crates/gpui_wgpu/src/crt_pass.wgsl
 new file mode 100644
-index 0000000..bfe429a
+index 0000000..04fa1b0
 --- /dev/null
 +++ b/crates/gpui_wgpu/src/crt_pass.wgsl
-@@ -0,0 +1,44 @@
-+// terminal-delight CRT post-pass: barrel distortion over the finished frame.
-+// The scene is rendered to an offscreen texture; this fullscreen pass samples
-+// it with warped UVs so glyphs bow with the glass. k1/k2 come from the app
-+// (gpui_wgpu::set_crt_warp), 0 disables the pass entirely upstream.
+@@ -0,0 +1,66 @@
++// terminal-delight CRT post-pass v2: PER-RECT barrel distortion.
++// The app registers up to 8 "tube" rectangles (terminal content areas, in
++// physical px). Pixels inside a rect warp in rect-local space; everything
++// else (bezel, buttons, chrome) passes through untouched, so hit-testing
++// stays exact. k1/k2 + rects come from gpui_wgpu::set_crt_warp/set_crt_rects.
 +
 +struct CrtParams {
-+    k1: f32,
-+    k2: f32,
-+    _pad0: f32,
-+    _pad1: f32,
++    k: vec4<f32>,                  // k1, k2, rect_count, _pad
++    rects: array<vec4<f32>, 8>,    // x, y, w, h (physical px)
++    glare: array<vec4<f32>, 8>,    // strength, _pad, _pad, _pad
 +}
 +
 +@group(0) @binding(0) var<uniform> crt: CrtParams;
@@ -40,7 +27,6 @@ index 0000000..bfe429a
 +
 +@vertex
 +fn vs_crt(@builtin(vertex_index) vi: u32) -> CrtVsOut {
-+    // single fullscreen triangle
 +    var out: CrtVsOut;
 +    let xy = vec2<f32>(f32((vi << 1u) & 2u), f32(vi & 2u));
 +    out.pos = vec4<f32>(xy * 2.0 - 1.0, 0.0, 1.0);
@@ -50,32 +36,57 @@ index 0000000..bfe429a
 +
 +@fragment
 +fn fs_crt(in: CrtVsOut) -> @location(0) vec4<f32> {
-+    let c = in.uv - vec2<f32>(0.5, 0.5);
-+    let r2 = dot(c, c);
-+    let f = 1.0 + crt.k1 * r2 + crt.k2 * r2 * r2;
-+    let uv = vec2<f32>(0.5, 0.5) + c * f;
-+    let inb = step(0.0, uv.x) * step(uv.x, 1.0) * step(0.0, uv.y) * step(uv.y, 1.0);
-+    var col = textureSampleLevel(screen_tex, screen_samp, clamp(uv, vec2<f32>(0.0), vec2<f32>(1.0)), 0.0);
-+    // gentle brightness falloff with the curve, like a tube's corners
-+    let falloff = mix(0.86, 1.0, smoothstep(0.5, 0.12, r2));
-+    col = vec4<f32>(col.rgb * inb * falloff, 1.0);
-+    return col;
++    let dims = vec2<f32>(textureDimensions(screen_tex));
++    let p = in.uv * dims;
++    let n = u32(crt.k.z);
++    for (var i = 0u; i < n; i = i + 1u) {
++        let r = crt.rects[i];
++        if (p.x >= r.x && p.x < r.x + r.z && p.y >= r.y && p.y < r.y + r.w) {
++            let local = (p - r.xy) / r.zw;
++            let c = local - vec2<f32>(0.5, 0.5);
++            let r2 = dot(c, c);
++            let f = 1.0 + crt.k.x * r2 + crt.k.y * r2 * r2;
++            let l2 = vec2<f32>(0.5, 0.5) + c * f;
++            let edge_distance = min(min(l2.x, 1.0 - l2.x), min(l2.y, 1.0 - l2.y));
++            let edge_width = max(max(fwidth(l2.x), fwidth(l2.y)) * 1.5, 1.0 / min(r.z, r.w));
++            let inb = smoothstep(-edge_width, edge_width, edge_distance);
++            let g = (r.xy + clamp(l2, vec2<f32>(0.0), vec2<f32>(1.0)) * r.zw) / dims;
++            let col = textureSampleLevel(screen_tex, screen_samp, g, 0.0);
++            let falloff = mix(0.86, 1.0, smoothstep(0.5, 0.12, r2));
++            let edge_blend = smoothstep(0.0, edge_width * 2.5, edge_distance);
++            let glare_strength = crt.glare[i].x;
++            let glare_offset = (local - vec2<f32>(0.18, 0.10)) / vec2<f32>(0.34, 0.18);
++            let glare_hotspot = exp(-dot(glare_offset, glare_offset) * 2.2);
++            let glare_band = (1.0 - smoothstep(0.0, 0.10, abs(local.y + local.x * 0.22 - 0.17)))
++                * (1.0 - smoothstep(0.0, 0.72, local.x))
++                * (1.0 - smoothstep(0.0, 0.42, local.y));
++            let glare_amount = clamp((glare_hotspot * 0.58 + glare_band * 0.34) * glare_strength, 0.0, 1.0);
++            let glare_color = vec3<f32>(0.72, 1.0, 0.78);
++            let tube = mix(vec3<f32>(0.0), col.rgb * falloff, edge_blend)
++                + glare_color * glare_amount;
++            return vec4<f32>(tube * inb, 1.0);
++        }
++    }
++    let col = textureSampleLevel(screen_tex, screen_samp, in.uv, 0.0);
++    return vec4<f32>(col.rgb, col.a);
 +}
 diff --git a/crates/gpui_wgpu/src/gpui_wgpu.rs b/crates/gpui_wgpu/src/gpui_wgpu.rs
-index 452c3c0..a0eff57 100644
+index 452c3c0..2aec8c6 100644
 --- a/crates/gpui_wgpu/src/gpui_wgpu.rs
 +++ b/crates/gpui_wgpu/src/gpui_wgpu.rs
-@@ -7,4 +7,5 @@ pub use cosmic_text_system::*;
+@@ -7,4 +7,7 @@ pub use cosmic_text_system::*;
  pub use wgpu;
  pub use wgpu_atlas::*;
  pub use wgpu_context::*;
 +pub use wgpu_renderer::set_crt_warp;
++pub use wgpu_renderer::set_crt_rects;
++pub use wgpu_renderer::set_crt_rects_with_glare;
  pub use wgpu_renderer::{GpuContext, WgpuRenderer, WgpuSurfaceConfig};
 diff --git a/crates/gpui_wgpu/src/wgpu_renderer.rs b/crates/gpui_wgpu/src/wgpu_renderer.rs
-index 08f30dc..3535888 100644
+index 08f30dc..d5d098a 100644
 --- a/crates/gpui_wgpu/src/wgpu_renderer.rs
 +++ b/crates/gpui_wgpu/src/wgpu_renderer.rs
-@@ -94,6 +94,165 @@ struct WgpuPipelines {
+@@ -94,6 +94,199 @@ struct WgpuPipelines {
      surfaces: wgpu::RenderPipeline,
  }
  
@@ -94,6 +105,40 @@ index 08f30dc..3535888 100644
 +        f32::from_bits(CRT_K1.load(std::sync::atomic::Ordering::Relaxed)),
 +        f32::from_bits(CRT_K2.load(std::sync::atomic::Ordering::Relaxed)),
 +    )
++}
++
++type CrtRect = ([f32; 4], f32);
++
++static CRT_RECTS: std::sync::Mutex<Vec<CrtRect>> = std::sync::Mutex::new(Vec::new());
++
++/// Replace the set of warped rectangles (physical px). Empty = pass disabled.
++pub fn set_crt_rects(rects: &[[f32; 4]]) {
++    let mut guard = CRT_RECTS.lock().unwrap();
++    guard.clear();
++    guard.extend(rects.iter().take(8).map(|rect| (*rect, 0.0)));
++}
++
++/// Replace the set of warped rectangles with a per-rect top-left glass glare.
++pub fn set_crt_rects_with_glare(rects: &[([f32; 4], f32)]) {
++    let mut guard = CRT_RECTS.lock().unwrap();
++    guard.clear();
++    guard.extend(
++        rects
++            .iter()
++            .take(8)
++            .map(|(rect, glare)| (*rect, glare.clamp(0.0, 1.0))),
++    );
++}
++
++fn crt_rects() -> ([[f32; 4]; 8], [f32; 8], u32) {
++    let guard = CRT_RECTS.lock().unwrap();
++    let mut rects = [[0.0f32; 4]; 8];
++    let mut glare = [0.0f32; 8];
++    for (i, (r, g)) in guard.iter().take(8).enumerate() {
++        rects[i] = *r;
++        glare[i] = *g;
++    }
++    (rects, glare, guard.len().min(8) as u32)
 +}
 +
 +/// Lazily-built resources for the CRT post pass.
@@ -192,7 +237,7 @@ index 08f30dc..3535888 100644
 +        });
 +        let params_buffer = device.create_buffer(&wgpu::BufferDescriptor {
 +            label: Some("crt_pass_params"),
-+            size: 16,
++            size: 16 + 8 * 16 + 8 * 16,
 +            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
 +            mapped_at_creation: false,
 +        });
@@ -241,7 +286,7 @@ index 08f30dc..3535888 100644
  struct WgpuBindGroupLayouts {
      globals: wgpu::BindGroupLayout,
      instances: wgpu::BindGroupLayout,
-@@ -158,6 +317,7 @@ pub struct WgpuRenderer {
+@@ -158,6 +351,7 @@ pub struct WgpuRenderer {
      device_lost: std::sync::Arc<std::sync::atomic::AtomicBool>,
      surface_configured: bool,
      needs_redraw: bool,
@@ -249,7 +294,7 @@ index 08f30dc..3535888 100644
  }
  
  impl WgpuRenderer {
-@@ -488,6 +648,7 @@ impl WgpuRenderer {
+@@ -488,6 +682,7 @@ impl WgpuRenderer {
              device_lost: context.device_lost_flag(),
              surface_configured: true,
              needs_redraw: false,
@@ -257,14 +302,16 @@ index 08f30dc..3535888 100644
          })
      }
  
-@@ -1151,6 +1312,28 @@ impl WgpuRenderer {
+@@ -1151,6 +1346,30 @@ impl WgpuRenderer {
              .texture
              .create_view(&wgpu::TextureViewDescriptor::default());
  
 +        // td-crt-pass: when warp is on, the scene renders offscreen and a
 +        // final barrel-distortion pass writes the swapchain.
 +        let (crt_k1, crt_k2) = crt_warp();
-+        let crt_active = crt_k1.abs() > 0.0005 || crt_k2.abs() > 0.0005;
++        let (crt_rect_arr, crt_glare_arr, crt_rect_count) = crt_rects();
++        let crt_active =
++            (crt_k1.abs() > 0.0005 || crt_k2.abs() > 0.0005) && crt_rect_count > 0;
 +        let crt_scene_view: Option<wgpu::TextureView> = if crt_active {
 +            if self.crt.is_none() {
 +                let pass = CrtPass::new(&self.resources().device, self.surface_config.format);
@@ -286,7 +333,7 @@ index 08f30dc..3535888 100644
          let gamma_params = GammaParams {
              gamma_ratios: self.rendering_params.gamma_ratios,
              grayscale_enhanced_contrast: self.rendering_params.grayscale_enhanced_contrast,
-@@ -1213,7 +1396,7 @@ impl WgpuRenderer {
+@@ -1213,7 +1432,7 @@ impl WgpuRenderer {
                  let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                      label: Some("main_pass"),
                      color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -295,7 +342,7 @@ index 08f30dc..3535888 100644
                          resolve_target: None,
                          ops: wgpu::Operations {
                              load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-@@ -1252,7 +1435,7 @@ impl WgpuRenderer {
+@@ -1252,7 +1471,7 @@ impl WgpuRenderer {
                              pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                                  label: Some("main_pass_continued"),
                                  color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -304,7 +351,7 @@ index 08f30dc..3535888 100644
                                      resolve_target: None,
                                      ops: wgpu::Operations {
                                          load: wgpu::LoadOp::Load,
-@@ -1327,6 +1510,56 @@ impl WgpuRenderer {
+@@ -1327,6 +1546,66 @@ impl WgpuRenderer {
                  continue;
              }
  
@@ -312,10 +359,20 @@ index 08f30dc..3535888 100644
 +            if let (true, Some(scene_view)) = (crt_active, crt_scene_view.as_ref()) {
 +                if let Some(crt) = self.crt.as_ref() {
 +                    let resources = self.resources();
++                    let mut params = [0.0f32; 4 + 32 + 32];
++                    params[0] = crt_k1;
++                    params[1] = crt_k2;
++                    params[2] = crt_rect_count as f32;
++                    for (i, r) in crt_rect_arr.iter().enumerate() {
++                        params[4 + i * 4..4 + i * 4 + 4].copy_from_slice(r);
++                    }
++                    for (i, glare) in crt_glare_arr.iter().enumerate() {
++                        params[4 + 32 + i * 4] = *glare;
++                    }
 +                    resources.queue.write_buffer(
 +                        &crt.params_buffer,
 +                        0,
-+                        bytemuck::bytes_of(&[crt_k1, crt_k2, 0.0f32, 0.0f32]),
++                        bytemuck::bytes_of(&params),
 +                    );
 +                    let bind_group =
 +                        resources
@@ -361,171 +418,3 @@ index 08f30dc..3535888 100644
              self.resources()
                  .queue
                  .submit(std::iter::once(encoder.finish()));
--- 
-2.34.1
-
-
-From fd7ce24fd664f08deedcf96244c6a8d9fef64ea2 Mon Sep 17 00:00:00 2001
-From: Parker Brown <parker@brownfamilysports.com>
-Date: Fri, 12 Jun 2026 15:49:30 -0700
-Subject: [PATCH 2/2] =?UTF-8?q?td-crt-pass=20v2:=20per-rect=20barrel=20war?=
- =?UTF-8?q?p=20=E2=80=94=20tubes=20only,=20chrome=20stays=20flat?=
-MIME-Version: 1.0
-Content-Type: text/plain; charset=UTF-8
-Content-Transfer-Encoding: 8bit
-
----
- crates/gpui_wgpu/src/crt_pass.wgsl    | 46 ++++++++++++++++-----------
- crates/gpui_wgpu/src/gpui_wgpu.rs     |  1 +
- crates/gpui_wgpu/src/wgpu_renderer.rs | 33 +++++++++++++++++--
- 3 files changed, 58 insertions(+), 22 deletions(-)
-
-diff --git a/crates/gpui_wgpu/src/crt_pass.wgsl b/crates/gpui_wgpu/src/crt_pass.wgsl
-index bfe429a..3f7354d 100644
---- a/crates/gpui_wgpu/src/crt_pass.wgsl
-+++ b/crates/gpui_wgpu/src/crt_pass.wgsl
-@@ -1,13 +1,12 @@
--// terminal-delight CRT post-pass: barrel distortion over the finished frame.
--// The scene is rendered to an offscreen texture; this fullscreen pass samples
--// it with warped UVs so glyphs bow with the glass. k1/k2 come from the app
--// (gpui_wgpu::set_crt_warp), 0 disables the pass entirely upstream.
-+// terminal-delight CRT post-pass v2: PER-RECT barrel distortion.
-+// The app registers up to 8 "tube" rectangles (terminal content areas, in
-+// physical px). Pixels inside a rect warp in rect-local space; everything
-+// else (bezel, buttons, chrome) passes through untouched, so hit-testing
-+// stays exact. k1/k2 + rects come from gpui_wgpu::set_crt_warp/set_crt_rects.
- 
- struct CrtParams {
--    k1: f32,
--    k2: f32,
--    _pad0: f32,
--    _pad1: f32,
-+    k: vec4<f32>,                  // k1, k2, rect_count, _pad
-+    rects: array<vec4<f32>, 8>,    // x, y, w, h (physical px)
- }
- 
- @group(0) @binding(0) var<uniform> crt: CrtParams;
-@@ -21,7 +20,6 @@ struct CrtVsOut {
- 
- @vertex
- fn vs_crt(@builtin(vertex_index) vi: u32) -> CrtVsOut {
--    // single fullscreen triangle
-     var out: CrtVsOut;
-     let xy = vec2<f32>(f32((vi << 1u) & 2u), f32(vi & 2u));
-     out.pos = vec4<f32>(xy * 2.0 - 1.0, 0.0, 1.0);
-@@ -31,14 +29,24 @@ fn vs_crt(@builtin(vertex_index) vi: u32) -> CrtVsOut {
- 
- @fragment
- fn fs_crt(in: CrtVsOut) -> @location(0) vec4<f32> {
--    let c = in.uv - vec2<f32>(0.5, 0.5);
--    let r2 = dot(c, c);
--    let f = 1.0 + crt.k1 * r2 + crt.k2 * r2 * r2;
--    let uv = vec2<f32>(0.5, 0.5) + c * f;
--    let inb = step(0.0, uv.x) * step(uv.x, 1.0) * step(0.0, uv.y) * step(uv.y, 1.0);
--    var col = textureSampleLevel(screen_tex, screen_samp, clamp(uv, vec2<f32>(0.0), vec2<f32>(1.0)), 0.0);
--    // gentle brightness falloff with the curve, like a tube's corners
--    let falloff = mix(0.86, 1.0, smoothstep(0.5, 0.12, r2));
--    col = vec4<f32>(col.rgb * inb * falloff, 1.0);
--    return col;
-+    let dims = vec2<f32>(textureDimensions(screen_tex));
-+    let p = in.uv * dims;
-+    let n = u32(crt.k.z);
-+    for (var i = 0u; i < n; i = i + 1u) {
-+        let r = crt.rects[i];
-+        if (p.x >= r.x && p.x < r.x + r.z && p.y >= r.y && p.y < r.y + r.w) {
-+            let local = (p - r.xy) / r.zw;
-+            let c = local - vec2<f32>(0.5, 0.5);
-+            let r2 = dot(c, c);
-+            let f = 1.0 + crt.k.x * r2 + crt.k.y * r2 * r2;
-+            let l2 = vec2<f32>(0.5, 0.5) + c * f;
-+            let inb = step(0.0, l2.x) * step(l2.x, 1.0) * step(0.0, l2.y) * step(l2.y, 1.0);
-+            let g = (r.xy + clamp(l2, vec2<f32>(0.0), vec2<f32>(1.0)) * r.zw) / dims;
-+            let col = textureSampleLevel(screen_tex, screen_samp, g, 0.0);
-+            let falloff = mix(0.86, 1.0, smoothstep(0.5, 0.12, r2));
-+            return vec4<f32>(col.rgb * inb * falloff, 1.0);
-+        }
-+    }
-+    let col = textureSampleLevel(screen_tex, screen_samp, in.uv, 0.0);
-+    return vec4<f32>(col.rgb, col.a);
- }
-diff --git a/crates/gpui_wgpu/src/gpui_wgpu.rs b/crates/gpui_wgpu/src/gpui_wgpu.rs
-index a0eff57..157da8d 100644
---- a/crates/gpui_wgpu/src/gpui_wgpu.rs
-+++ b/crates/gpui_wgpu/src/gpui_wgpu.rs
-@@ -8,4 +8,5 @@ pub use wgpu;
- pub use wgpu_atlas::*;
- pub use wgpu_context::*;
- pub use wgpu_renderer::set_crt_warp;
-+pub use wgpu_renderer::set_crt_rects;
- pub use wgpu_renderer::{GpuContext, WgpuRenderer, WgpuSurfaceConfig};
-diff --git a/crates/gpui_wgpu/src/wgpu_renderer.rs b/crates/gpui_wgpu/src/wgpu_renderer.rs
-index 3535888..b997e15 100644
---- a/crates/gpui_wgpu/src/wgpu_renderer.rs
-+++ b/crates/gpui_wgpu/src/wgpu_renderer.rs
-@@ -111,6 +111,24 @@ fn crt_warp() -> (f32, f32) {
-     )
- }
- 
-+static CRT_RECTS: std::sync::Mutex<Vec<[f32; 4]>> = std::sync::Mutex::new(Vec::new());
-+
-+/// Replace the set of warped rectangles (physical px). Empty = pass disabled.
-+pub fn set_crt_rects(rects: &[[f32; 4]]) {
-+    let mut guard = CRT_RECTS.lock().unwrap();
-+    guard.clear();
-+    guard.extend(rects.iter().take(8).copied());
-+}
-+
-+fn crt_rects() -> ([[f32; 4]; 8], u32) {
-+    let guard = CRT_RECTS.lock().unwrap();
-+    let mut out = [[0.0f32; 4]; 8];
-+    for (i, r) in guard.iter().take(8).enumerate() {
-+        out[i] = *r;
-+    }
-+    (out, guard.len().min(8) as u32)
-+}
-+
- /// Lazily-built resources for the CRT post pass.
- struct CrtPass {
-     pipeline: wgpu::RenderPipeline,
-@@ -207,7 +225,7 @@ impl CrtPass {
-         });
-         let params_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-             label: Some("crt_pass_params"),
--            size: 16,
-+            size: 16 + 8 * 16,
-             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-             mapped_at_creation: false,
-         });
-@@ -1315,7 +1333,9 @@ impl WgpuRenderer {
-         // td-crt-pass: when warp is on, the scene renders offscreen and a
-         // final barrel-distortion pass writes the swapchain.
-         let (crt_k1, crt_k2) = crt_warp();
--        let crt_active = crt_k1.abs() > 0.0005 || crt_k2.abs() > 0.0005;
-+        let (crt_rect_arr, crt_rect_count) = crt_rects();
-+        let crt_active =
-+            (crt_k1.abs() > 0.0005 || crt_k2.abs() > 0.0005) && crt_rect_count > 0;
-         let crt_scene_view: Option<wgpu::TextureView> = if crt_active {
-             if self.crt.is_none() {
-                 let pass = CrtPass::new(&self.resources().device, self.surface_config.format);
-@@ -1514,10 +1534,17 @@ impl WgpuRenderer {
-             if let (true, Some(scene_view)) = (crt_active, crt_scene_view.as_ref()) {
-                 if let Some(crt) = self.crt.as_ref() {
-                     let resources = self.resources();
-+                    let mut params = [0.0f32; 4 + 32];
-+                    params[0] = crt_k1;
-+                    params[1] = crt_k2;
-+                    params[2] = crt_rect_count as f32;
-+                    for (i, r) in crt_rect_arr.iter().enumerate() {
-+                        params[4 + i * 4..4 + i * 4 + 4].copy_from_slice(r);
-+                    }
-                     resources.queue.write_buffer(
-                         &crt.params_buffer,
-                         0,
--                        bytemuck::bytes_of(&[crt_k1, crt_k2, 0.0f32, 0.0f32]),
-+                        bytemuck::bytes_of(&params),
-                     );
-                     let bind_group =
-                         resources
--- 
-2.34.1
-
