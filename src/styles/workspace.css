@@ -142,12 +142,24 @@ body::after {
 
 .pane-body { flex: 1; min-height: 0; position: relative; overflow: hidden; }
 
-/* drop overlay shown while dragging a pane head */
-.pane.drop-target::before {
-  content: ""; position: absolute; inset: 0; z-index: 5;
-  background: rgb(var(--theme-accent-rgb) / .12);
-  border: 1.5px dashed var(--accent); border-radius: var(--radius);
-  pointer-events: none;
+/* the dragged pane dims while in flight */
+.pane.is-dragging { opacity: .45; }
+
+/* live edge-aware drop zone painted into the hovered pane (right/left/top/bottom half) */
+.drop-indicator {
+  position: absolute; z-index: 6; pointer-events: none;
+  background: rgb(var(--theme-accent-rgb) / .16);
+  border: 1.5px solid var(--accent); border-radius: var(--radius);
+  box-shadow: inset 0 0 var(--glow-radius) rgb(var(--theme-accent-rgb) / .55);
+  transition: left .07s ease, right .07s ease, top .07s ease, bottom .07s ease;
+}
+
+/* a tab (or the + button) lit up as a pane-merge target */
+.tab.pane-drop-over,
+.tab-add.pane-drop-over {
+  border-color: var(--accent); color: var(--accent-strong);
+  background: var(--accent-soft);
+  box-shadow: 0 0 var(--glow-radius) rgb(var(--theme-accent-rgb) / .4);
 }
 
 /* ============================================================ pane content */
