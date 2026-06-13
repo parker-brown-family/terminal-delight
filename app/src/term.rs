@@ -20,7 +20,7 @@ use alacritty_terminal::{
     term::{Config, Term},
     tty,
 };
-use futures::channel::mpsc::{UnboundedReceiver, UnboundedSender, unbounded};
+use futures::channel::mpsc::{unbounded, UnboundedReceiver, UnboundedSender};
 
 /// Grid dimensions for Term::new (the crate's own TermSize lives in its test module).
 #[derive(Clone, Copy, Debug)]
@@ -77,7 +77,19 @@ impl Session {
 }
 
 /// Spawn the user's default shell on a PTY, emulation wired, I/O thread running.
+#[allow(dead_code)]
 pub fn spawn(size: GridSize, cell_width: u16, cell_height: u16) -> io::Result<Session> {
+    spawn_in(size, cell_width, cell_height, None)
+}
+
+/// `spawn`, but the shell starts in `cwd` (session restore). A vanished dir
+/// falls back to the default start directory rather than failing the pane.
+pub fn spawn_in(
+    size: GridSize,
+    cell_width: u16,
+    cell_height: u16,
+    cwd: Option<std::path::PathBuf>,
+) -> io::Result<Session> {
     let (tx, rx) = unbounded();
     let proxy = EventProxy(tx);
 
@@ -88,7 +100,11 @@ pub fn spawn(size: GridSize, cell_width: u16, cell_height: u16) -> io::Result<Se
         cell_height,
     };
 
-    let pty = tty::new(&tty::Options::default(), window_size, 0)?;
+    let options = tty::Options {
+        working_directory: cwd.filter(|d| d.is_dir()),
+        ..Default::default()
+    };
+    let pty = tty::new(&options, window_size, 0)?;
     let master = pty.file().try_clone().ok();
     let shell_pid = pty.child().id();
     let term = Arc::new(FairMutex::new(Term::new(

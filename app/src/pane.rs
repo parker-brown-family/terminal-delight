@@ -4,24 +4,24 @@
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use crate::crt;
+use crate::term;
+use crate::theme::{self, Theme, ThemeChoice};
 use alacritty_terminal::{
     event::{Event as TermEvent, Notify},
     grid::Scroll,
     index::{Column, Point as TermPoint, Side},
     selection::{Selection, SelectionType},
-    term::{TermMode, cell::Flags, viewport_to_point},
+    term::{cell::Flags, viewport_to_point, TermMode},
     vte::ansi::{Color as AnsiColor, NamedColor},
 };
 use futures::StreamExt;
 use gpui::{
-    App, Bounds, BoxShadow, ClipboardItem, Context, FocusHandle, Focusable, Font, FontWeight,
-    Hsla, KeyDownEvent, Keystroke, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    Pixels, ScrollWheelEvent, StyledText, TextRun, UnderlineStyle, Window, canvas, div, fill,
-    font, hsla, linear_color_stop, linear_gradient, point, prelude::*, px, rgb, size,
+    canvas, div, font, linear_color_stop, linear_gradient, point, prelude::*, px, rgb, App, Bounds,
+    BoxShadow, ClipboardItem, Context, FocusHandle, Focusable, Font, FontWeight, Hsla,
+    KeyDownEvent, Keystroke, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
+    ScrollWheelEvent, StyledText, TextRun, UnderlineStyle, Window,
 };
-use crate::crt;
-use crate::term;
-use crate::theme::{self, Theme};
 
 /// What the tube is showing — drives the per-pane screen colour.
 /// Recommended phosphor quartet: green=shell, amber=claude, ice-cyan=codex,
@@ -114,9 +114,81 @@ const HEADER_H: f32 = 28.0;
 const PAD_X: f32 = 8.0;
 const PAD_Y: f32 = 4.0;
 
-fn idx_color(i: u8, th: &Theme) -> Hsla {
+/// The real xterm 16-colour palette. Cells always derive from these *true*
+/// colours; the active [`ColorMode`] decides how they're finally painted (see
+/// [`shape`]). The theme's own `ansi` array is reserved for chrome.
+const XTERM: [u32; 16] = [
+    0x000000, 0xcd0000, 0x00cd00, 0xcdcd00, 0x0000ee, 0xcd00cd, 0x00cdcd, 0xe5e5e5, 0x7f7f7f,
+    0xff0000, 0x00ff00, 0xffff00, 0x5c5cff, 0xff00ff, 0x00ffff, 0xffffff,
+];
+
+/// Fractional part of a hue — keeps it in `[0, 1)`.
+fn wrap01(h: f32) -> f32 {
+    h - h.floor()
+}
+
+/// Signed shortest distance of a hue from 0, in turns: `(-0.5, 0.5]`.
+fn signed_turn(h: f32) -> f32 {
+    let d = wrap01(h);
+    if d > 0.5 {
+        d - 1.0
+    } else {
+        d
+    }
+}
+
+/// The colour-shape algorithm: map a *real* terminal colour through the pane's
+/// active [`ColorMode`].
+///
+/// - `Default` — untouched, the honest xterm palette.
+/// - `Monochrome` — collapse onto the theme's phosphor: adopt the text hue and
+///   saturation, keep the source lightness so structure (bold/bright) survives.
+/// - `OnTheme` — fold the whole ANSI hue wheel onto a harmonic arc centred on
+///   the seed accent. The classic terminal green lands *on* the seed; warm hues
+///   fan one way, cool hues the other, so the program's colour *structure* is
+///   preserved while the palette becomes one coherent family. Greys stay grey.
+fn shape(c: Hsla, th: &Theme) -> Hsla {
+    use crate::theme::ColorMode;
+    match th.color_mode {
+        // Syntax overrides foregrounds itself (see `syntax_colors`); any colour
+        // still resolved here (e.g. a program-set background) stays honest.
+        ColorMode::Default | ColorMode::Syntax => c,
+        ColorMode::Monochrome => Hsla {
+            h: th.text.h,
+            s: th.text.s,
+            l: c.l,
+            a: c.a,
+        },
+        ColorMode::OnTheme => {
+            // ±~99° fan around the seed; greens are the anchor so a stock
+            // terminal's prompt-green becomes the seed colour itself.
+            const ARC: f32 = 0.55;
+            const GREEN: f32 = 1.0 / 3.0;
+            if c.s < 0.08 {
+                // near-grey: keep it neutral, just breathe the seed hue in
+                return Hsla {
+                    h: th.accent.h,
+                    s: c.s,
+                    l: c.l,
+                    a: c.a,
+                };
+            }
+            let d = signed_turn(c.h - GREEN);
+            Hsla {
+                h: wrap01(th.accent.h + d * ARC),
+                s: (c.s * 0.55 + th.accent.s * 0.55).clamp(0.25, 1.0),
+                l: c.l,
+                a: c.a,
+            }
+        }
+    }
+}
+
+/// The real colour for an ANSI palette index (pre-[`shape`]). `<16` is the
+/// xterm base; `16..232` the 6×6×6 cube; `232..` the greyscale ramp.
+fn idx_color(i: u8) -> Hsla {
     if (i as usize) < 16 {
-        return th.ansi[i as usize];
+        return rgb(XTERM[i as usize]).into();
     }
     if i >= 232 {
         let v = 8 + 10 * (i - 232) as u32;
@@ -124,7 +196,11 @@ fn idx_color(i: u8, th: &Theme) -> Hsla {
     }
     let i = i - 16;
     let lv = |n: u8| -> u32 {
-        if n == 0 { 0 } else { 55 + 40 * n as u32 }
+        if n == 0 {
+            0
+        } else {
+            55 + 40 * n as u32
+        }
     };
     let (r, g, b) = (lv(i / 36), lv((i / 6) % 6), lv(i % 6));
     rgb(r << 16 | g << 8 | b).into()
@@ -133,17 +209,224 @@ fn idx_color(i: u8, th: &Theme) -> Hsla {
 fn ansi_to_hsla(color: AnsiColor, th: &Theme, default: Hsla) -> Hsla {
     match color {
         AnsiColor::Named(named) => match named {
+            // structural colours stay themed in every mode
             NamedColor::Foreground => th.text,
             NamedColor::Background => th.bg,
             NamedColor::Cursor => th.cursor,
             n => {
                 let i = n as usize;
-                if i < 16 { th.ansi[i] } else { default }
+                if i < 16 {
+                    shape(rgb(XTERM[i]).into(), th)
+                } else {
+                    default
+                }
             }
         },
-        AnsiColor::Spec(c) => rgb((c.r as u32) << 16 | (c.g as u32) << 8 | c.b as u32).into(),
-        AnsiColor::Indexed(i) => idx_color(i, th),
+        AnsiColor::Spec(c) => shape(
+            rgb((c.r as u32) << 16 | (c.g as u32) << 8 | c.b as u32).into(),
+            th,
+        ),
+        AnsiColor::Indexed(i) => shape(idx_color(i), th),
     }
+}
+
+/// A short set of words worth popping in the accent (shell verbs + common
+/// language keywords). Kept small on purpose — generic highlighting, not a
+/// per-language grammar.
+fn is_keyword(w: &str) -> bool {
+    matches!(
+        w,
+        "fn" | "let"
+            | "mut"
+            | "pub"
+            | "use"
+            | "mod"
+            | "impl"
+            | "struct"
+            | "enum"
+            | "trait"
+            | "match"
+            | "if"
+            | "else"
+            | "for"
+            | "while"
+            | "loop"
+            | "return"
+            | "const"
+            | "async"
+            | "await"
+            | "move"
+            | "true"
+            | "false"
+            | "null"
+            | "nil"
+            | "None"
+            | "Some"
+            | "Ok"
+            | "Err"
+            | "self"
+            | "import"
+            | "from"
+            | "def"
+            | "class"
+            | "function"
+            | "var"
+            | "echo"
+            | "cd"
+            | "ls"
+            | "git"
+            | "cargo"
+            | "sudo"
+            | "export"
+            | "rm"
+            | "cp"
+            | "mv"
+            | "grep"
+            | "cat"
+            | "sed"
+            | "awk"
+            | "make"
+    )
+}
+
+/// Token classes the generic highlighter recognises. `Word` is the default
+/// (rendered in the theme's plain foreground); the rest each get a hue.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Tok {
+    Word,
+    Num,
+    Str,
+    Path,
+    Flag,
+    Op,
+    Punct,
+    Comment,
+    Keyword,
+}
+
+/// Tokenise one line, returning a class per `char` (1:1 with `line.chars()`).
+/// Pure and theme-free, so it's unit-testable on its own.
+fn classify_line(line: &str) -> Vec<Tok> {
+    let ch: Vec<char> = line.chars().collect();
+    let n = ch.len();
+    let mut out = vec![Tok::Word; n];
+    let paint = |out: &mut [Tok], a: usize, b: usize, t: Tok| {
+        out[a..b].iter_mut().for_each(|p| *p = t);
+    };
+    let boundary = |i: usize| i == 0 || ch[i - 1].is_whitespace();
+
+    let mut i = 0;
+    while i < n {
+        let c = ch[i];
+        if c.is_whitespace() {
+            i += 1;
+            continue;
+        }
+        // shell-style comment: # to end of line, only at a token boundary
+        if c == '#' && boundary(i) {
+            paint(&mut out, i, n, Tok::Comment);
+            break;
+        }
+        // quoted string (single/double/back), runs to the matching quote
+        if c == '"' || c == '\'' || c == '`' {
+            let mut j = i + 1;
+            while j < n && ch[j] != c {
+                j += 1;
+            }
+            j = (j + 1).min(n); // include the closing quote if present
+            paint(&mut out, i, j, Tok::Str);
+            i = j;
+            continue;
+        }
+        // flag: -x or --long, at a token boundary
+        if c == '-'
+            && boundary(i)
+            && i + 1 < n
+            && (ch[i + 1].is_ascii_alphabetic() || ch[i + 1] == '-')
+        {
+            let mut j = i;
+            while j < n && !ch[j].is_whitespace() {
+                j += 1;
+            }
+            paint(&mut out, i, j, Tok::Flag);
+            i = j;
+            continue;
+        }
+        // number: a digit-led run (handles 1, 1.5, 0xff, 12px, 3:14)
+        if c.is_ascii_digit() {
+            let mut j = i;
+            while j < n
+                && (ch[j].is_ascii_alphanumeric() || matches!(ch[j], '.' | ':' | '_' | 'x' | 'X'))
+            {
+                j += 1;
+            }
+            paint(&mut out, i, j, Tok::Num);
+            i = j;
+            continue;
+        }
+        // standalone operators / brackets
+        if "=+|&;<>!*%^~".contains(c) {
+            out[i] = Tok::Op;
+            i += 1;
+            continue;
+        }
+        if "()[]{},:.".contains(c) {
+            out[i] = Tok::Punct;
+            i += 1;
+            continue;
+        }
+        // otherwise a word/path run: chars that hang together in a token
+        let start = i;
+        let mut j = i;
+        while j < n && (ch[j].is_alphanumeric() || matches!(ch[j], '_' | '/' | '.' | '-' | '@')) {
+            j += 1;
+        }
+        if j == start {
+            i += 1; // unclassified single char — leave as Word, advance
+            continue;
+        }
+        let word: String = ch[start..j].iter().collect();
+        if word.contains('/') || word.starts_with('~') {
+            paint(&mut out, start, j, Tok::Path);
+        } else if is_keyword(word.trim_matches(|c: char| !c.is_alphanumeric())) {
+            paint(&mut out, start, j, Tok::Keyword);
+        }
+        i = j;
+    }
+    out
+}
+
+/// Per-character foreground colours for one line in `Syntax` mode: classify the
+/// raw text, then paint each token class its own hue on the seed arc. Returns
+/// one `Hsla` per `char` in `line` (so it maps 1:1 onto the row's cells).
+fn syntax_colors(line: &str, th: &Theme) -> Vec<Hsla> {
+    // Each class is a fixed offset on the seed arc — distinct, but unmistakably
+    // one family. Lightness flips so it reads on light themes too.
+    let dark = th.bg.l < 0.5;
+    let l = if dark { 0.72 } else { 0.40 };
+    let hue = |off: f32| -> Hsla {
+        Hsla {
+            h: wrap01(th.accent.h + off),
+            s: th.accent.s.clamp(0.45, 0.95),
+            l,
+            a: 1.0,
+        }
+    };
+    let comment = Hsla { a: 0.7, ..th.faint };
+    classify_line(line)
+        .into_iter()
+        .map(|t| match t {
+            Tok::Word => th.text,
+            Tok::Num => hue(0.09),
+            Tok::Str => hue(0.17),
+            Tok::Path => hue(-0.09),
+            Tok::Flag => hue(-0.17),
+            Tok::Op => hue(0.32),
+            Tok::Punct => hue(0.24),
+            Tok::Keyword => th.accent,
+            Tok::Comment => comment,
+        })
+        .collect()
 }
 
 pub struct TerminalView {
@@ -156,6 +439,13 @@ pub struct TerminalView {
     cell_h: f32,
     scroll_accum: f32,
     selecting: bool,
+    /// Drag-select auto-scroll: signed lines/tick (>0 = up into history), 0 idle.
+    autoscroll: f32,
+    /// True while the auto-scroll ticker loop is spinning (kept to exactly one).
+    autoscroll_running: bool,
+    /// Latest cursor position during a selection drag — the ticker re-extends
+    /// the selection at this point as the viewport scrolls under it.
+    last_mouse: gpui::Point<Pixels>,
     pending_input: Option<Instant>,
     latency_log: bool,
     /// Written by the measuring canvas during prepaint; read by sync_size.
@@ -163,18 +453,71 @@ pub struct TerminalView {
     spawned: Instant,
     /// This pane's own CRT rhythm — desynced from every other pane.
     pub fx: crt::Fx,
-    /// Barrel coefficients (from the theme's curvature dial); used to
-    /// warp-correct mouse-to-cell mapping so selection lands where you look.
+    /// Barrel coefficients for the optional renderer patch. Public upstream
+    /// GPUI builds keep this at zero so mouse hit testing stays linear.
     warp_k: (f32, f32),
     pub mode: PaneMode,
+    /// Explicit per-pane appearance; None = follow the outer theme (+ mode tint).
+    pub theme_override: Option<ThemeChoice>,
     /// Debounced PTY resize: (target grid, when it stabilized).
     pending_grid: Option<(term::GridSize, Instant)>,
 }
 
+/// Click on the header's theme icon — the workspace opens the breakout menu.
+/// Carries the window-space click position so the tray opens at the icon that
+/// was clicked (each sub-tab's icon lives in its own header), not a fixed spot.
+pub struct OpenThemeMenu {
+    pub at: gpui::Point<gpui::Pixels>,
+}
+impl gpui::EventEmitter<OpenThemeMenu> for TerminalView {}
+
+/// The user grabbed this sub-tab's header to drag it. The workspace takes over
+/// from here (window-level move/up) and decides where it lands. Carries the
+/// window-space press position so the drag has an anchor.
+pub struct DragPaneStart {
+    pub at: gpui::Point<gpui::Pixels>,
+}
+impl gpui::EventEmitter<DragPaneStart> for TerminalView {}
+
+/// The × on this sub-tab's header was clicked — close just this pane.
+pub struct ClosePane;
+impl gpui::EventEmitter<ClosePane> for TerminalView {}
+
 impl TerminalView {
+    /// The theme this pane actually renders with: an explicit override wins;
+    /// otherwise the outer theme tinted by what's running (mode).
+    pub fn resolved_theme(&self, cx: &App) -> Theme {
+        match &self.theme_override {
+            Some(choice) => (*theme::resolve(cx, choice)).clone(),
+            None => mode_theme(&theme::theme(cx), &self.mode),
+        }
+    }
+
+    /// What this pane is doing right now — cwd + resumable agent session —
+    /// captured from the kernel for the workspace snapshot.
+    pub fn runtime(&self) -> crate::session::PaneRuntime {
+        crate::session::capture(self.session.master.as_ref(), self.session.shell_pid)
+    }
+
+    /// Plain spawn (no restore context); kept for `cx.new(TerminalView::new)`.
+    #[allow(dead_code)]
     pub fn new(cx: &mut Context<Self>) -> Self {
-        let grid = term::GridSize { cols: 100, rows: 28 };
-        let mut session = term::spawn(grid, 8, 20).expect("spawn shell");
+        Self::new_restored(crate::session::PaneRestore::default(), cx)
+    }
+
+    /// Spawn with session-restore context: shell starts in `restore.cwd`, and
+    /// a resumable agent (`claude --resume <id>` / `codex resume <id>`) is
+    /// typed into the PTY — the kernel queues it until the first prompt reads.
+    pub fn new_restored(restore: crate::session::PaneRestore, cx: &mut Context<Self>) -> Self {
+        let grid = term::GridSize {
+            cols: 100,
+            rows: 28,
+        };
+        let cwd = restore.cwd.clone().map(std::path::PathBuf::from);
+        let mut session = term::spawn_in(grid, 8, 20, cwd).expect("spawn shell");
+        if let Some(cmd) = restore.resume.as_deref() {
+            session.notifier.notify(format!("{cmd}\n").into_bytes());
+        }
 
         let mut events = session.events.take().expect("events taken once");
         cx.spawn(async move |this, cx| {
@@ -192,26 +535,24 @@ impl TerminalView {
         .detach();
 
         // foreground-process watcher: what is this tube showing?
-        cx.spawn(async move |this, cx| {
-            loop {
-                cx.background_executor()
-                    .timer(std::time::Duration::from_millis(800))
-                    .await;
-                let alive = this
-                    .update(cx, |view: &mut TerminalView, cx| {
-                        if let Some(master) = view.session.master.as_ref() {
-                            let mode = foreground_mode(master, view.session.shell_pid);
-                            if mode != view.mode {
-                                view.mode = mode;
-                                cx.notify();
-                            }
+        cx.spawn(async move |this, cx| loop {
+            cx.background_executor()
+                .timer(std::time::Duration::from_millis(800))
+                .await;
+            let alive = this
+                .update(cx, |view: &mut TerminalView, cx| {
+                    if let Some(master) = view.session.master.as_ref() {
+                        let mode = foreground_mode(master, view.session.shell_pid);
+                        if mode != view.mode {
+                            view.mode = mode;
+                            cx.notify();
                         }
-                        !view.exited
-                    })
-                    .unwrap_or(false);
-                if !alive {
-                    break;
-                }
+                    }
+                    !view.exited
+                })
+                .unwrap_or(false);
+            if !alive {
+                break;
             }
         })
         .detach();
@@ -230,11 +571,8 @@ impl TerminalView {
                             if since.elapsed() > std::time::Duration::from_millis(140) {
                                 view.pending_grid = None;
                                 view.grid = grid;
-                                view.session.resize(
-                                    grid,
-                                    view.cell_w as u16,
-                                    view.cell_h as u16,
-                                );
+                                view.session
+                                    .resize(grid, view.cell_w as u16, view.cell_h as u16);
                                 cx.notify();
                             }
                         }
@@ -263,6 +601,9 @@ impl TerminalView {
             cell_h: 20.,
             scroll_accum: 0.,
             selecting: false,
+            autoscroll: 0.,
+            autoscroll_running: false,
+            last_mouse: point(px(0.), px(0.)),
             pending_input: None,
             latency_log: std::env::var("TD_LATENCY").is_ok(),
             content_bounds: Arc::new(Mutex::new(None)),
@@ -270,6 +611,7 @@ impl TerminalView {
             fx: crt::Fx::new(seed),
             warp_k: (0., 0.),
             mode: PaneMode::Shell,
+            theme_override: None,
             pending_grid: None,
         }
     }
@@ -351,8 +693,8 @@ impl TerminalView {
             ),
             None => (0., HEADER_H, 1000., 1000.),
         };
-        // in-rect coordinates; apply the same forward barrel the shader uses,
-        // because a screen point displays content sampled from warped(point)
+        // Invert the tube's barrel warp: a screen point displays content
+        // sampled from warped(point), so selection must follow the glass.
         let mut sx = f32::from(pos.x) - bx;
         let mut sy = f32::from(pos.y) - by;
         let (k1, k2) = self.warp_k;
@@ -368,11 +710,82 @@ impl TerminalView {
         let y = ((sy - PAD_Y) / self.cell_h).max(0.) as usize;
         let col = (fx.max(0.) as usize).min(self.grid.cols.saturating_sub(1));
         let row = y.min(self.grid.rows.saturating_sub(1));
-        let side = if fx.fract() < 0.5 { Side::Left } else { Side::Right };
+        let side = if fx.fract() < 0.5 {
+            Side::Left
+        } else {
+            Side::Right
+        };
         (
             viewport_to_point(display_offset, TermPoint::new(row, Column(col))),
             side,
         )
+    }
+
+    /// While drag-selecting, the signed scroll rate (lines/tick) for cursor
+    /// `pos`: positive = up into history (cursor at/above the top edge),
+    /// negative = down toward live (at/below the bottom). 0 inside the safe
+    /// band. The rate ramps up the further past the edge the cursor goes.
+    fn autoscroll_rate(&self, pos: gpui::Point<Pixels>) -> f32 {
+        let Some(b) = *self.content_bounds.lock().unwrap() else {
+            return 0.0;
+        };
+        let top = f32::from(b.origin.y);
+        let bottom = top + f32::from(b.size.height);
+        let y = f32::from(pos.y);
+        let band = self.cell_h.max(1.0); // arm within ~one row of an edge
+        if y < top + band {
+            (1.0 + (top + band - y).max(0.0) / self.cell_h)
+                .ceil()
+                .min(6.0)
+        } else if y > bottom - band {
+            -((1.0 + (y - (bottom - band)).max(0.0) / self.cell_h)
+                .ceil()
+                .min(6.0))
+        } else {
+            0.0
+        }
+    }
+
+    /// Spin a ticker that scrolls the scrollback and drags the selection edge
+    /// along with it, so a selection can run past the visible region while the
+    /// cursor sits at (or beyond) an edge. Idempotent — only one loop runs; it
+    /// exits when the drag ends or the cursor returns inside the band.
+    fn ensure_autoscroll(&mut self, cx: &mut Context<Self>) {
+        if self.autoscroll_running {
+            return;
+        }
+        self.autoscroll_running = true;
+        cx.spawn(async move |this, cx| loop {
+            let keep = this
+                .update(cx, |view: &mut TerminalView, cx| {
+                    if !view.selecting || view.autoscroll == 0.0 {
+                        view.autoscroll_running = false;
+                        return false;
+                    }
+                    let lines = view.autoscroll.round() as i32;
+                    if lines != 0 {
+                        view.session
+                            .term
+                            .lock()
+                            .scroll_display(Scroll::Delta(lines));
+                        let offset = view.session.term.lock().grid().display_offset();
+                        let (point, side) = view.cell_at(view.last_mouse, offset);
+                        if let Some(sel) = view.session.term.lock().selection.as_mut() {
+                            sel.update(point, side);
+                        }
+                        cx.notify();
+                    }
+                    true
+                })
+                .unwrap_or(false);
+            if !keep {
+                break;
+            }
+            cx.background_executor()
+                .timer(Duration::from_millis(45))
+                .await;
+        })
+        .detach();
     }
 
     fn on_key(&mut self, ev: &KeyDownEvent, _window: &mut Window, cx: &mut Context<Self>) {
@@ -436,7 +849,10 @@ impl TerminalView {
         let lines = self.scroll_accum.trunc() as i32;
         if lines != 0 {
             self.scroll_accum -= lines as f32;
-            self.session.term.lock().scroll_display(Scroll::Delta(lines));
+            self.session
+                .term
+                .lock()
+                .scroll_display(Scroll::Delta(lines));
             cx.notify();
         }
     }
@@ -454,23 +870,33 @@ impl TerminalView {
         };
         self.session.term.lock().selection = Some(Selection::new(ty, point, side));
         self.selecting = true;
+        self.last_mouse = ev.position;
+        self.autoscroll = 0.;
         cx.notify();
     }
 
     fn on_mouse_move(&mut self, ev: &MouseMoveEvent, _w: &mut Window, cx: &mut Context<Self>) {
-        if !self.selecting || !ev.pressed_button.map_or(false, |b| b == MouseButton::Left) {
+        if !self.selecting || ev.pressed_button != Some(MouseButton::Left) {
             return;
         }
+        self.last_mouse = ev.position;
         let offset = self.session.term.lock().grid().display_offset();
         let (point, side) = self.cell_at(ev.position, offset);
         if let Some(sel) = self.session.term.lock().selection.as_mut() {
             sel.update(point, side);
+        }
+        // dragging to/over an edge arms the auto-scroll ticker (which keeps
+        // scrolling even if the cursor then holds still at the edge).
+        self.autoscroll = self.autoscroll_rate(ev.position);
+        if self.autoscroll != 0.0 {
+            self.ensure_autoscroll(cx);
         }
         cx.notify();
     }
 
     fn on_mouse_up(&mut self, _ev: &MouseUpEvent, _w: &mut Window, _cx: &mut Context<Self>) {
         self.selecting = false;
+        self.autoscroll = 0.;
     }
 
     /// Snapshot the viewport into one styled line per row.
@@ -482,10 +908,36 @@ impl TerminalView {
         let cursor = content.cursor;
         let show_cursor = content.mode.contains(TermMode::SHOW_CURSOR) && display_offset == 0;
 
-        let mut lines: Vec<(String, Vec<TextRun>)> =
-            (0..self.grid.rows).map(|_| (String::new(), vec![])).collect();
+        let mut lines: Vec<(String, Vec<TextRun>)> = (0..self.grid.rows)
+            .map(|_| (String::new(), vec![]))
+            .collect();
 
-        for indexed in content.display_iter {
+        // `Syntax` mode tokenises the literal text, so it needs each full row up
+        // front. Collect the cells once, build per-row colour palettes, then
+        // paint cell-by-cell with a per-row cursor that stays in lock-step with
+        // pass one (identical row-clamp + spacer skip ⇒ ordinals line up).
+        let cells: Vec<_> = content.display_iter.collect();
+        let syntax = matches!(th.color_mode, crate::theme::ColorMode::Syntax);
+        let palettes: Vec<Vec<Hsla>> = if syntax {
+            let mut rows_text = vec![String::new(); self.grid.rows];
+            for indexed in &cells {
+                let row = indexed.point.line.0 + display_offset as i32;
+                if row < 0 || row as usize >= self.grid.rows {
+                    continue;
+                }
+                let cell = &indexed.cell;
+                if cell.flags.contains(Flags::WIDE_CHAR_SPACER) {
+                    continue;
+                }
+                rows_text[row as usize].push(if cell.c == '\0' { ' ' } else { cell.c });
+            }
+            rows_text.iter().map(|t| syntax_colors(t, th)).collect()
+        } else {
+            Vec::new()
+        };
+        let mut ords = vec![0usize; self.grid.rows];
+
+        for indexed in &cells {
             let row = indexed.point.line.0 + display_offset as i32;
             if row < 0 || row as usize >= self.grid.rows {
                 continue;
@@ -494,13 +946,19 @@ impl TerminalView {
             if cell.flags.contains(Flags::WIDE_CHAR_SPACER) {
                 continue;
             }
-            let mut fg = ansi_to_hsla(cell.fg, th, th.text);
+            let mut fg = if syntax {
+                let ord = ords[row as usize];
+                ords[row as usize] += 1;
+                palettes[row as usize].get(ord).copied().unwrap_or(th.text)
+            } else {
+                ansi_to_hsla(cell.fg, th, th.text)
+            };
             let mut bg: Option<Hsla> = match cell.bg {
                 AnsiColor::Named(NamedColor::Background) => None,
                 other => Some(ansi_to_hsla(other, th, th.bg)),
             };
             let mut flags = cell.flags;
-            if selection.map_or(false, |s| s.contains(indexed.point)) {
+            if selection.is_some_and(|s| s.contains(indexed.point)) {
                 flags.insert(Flags::INVERSE);
             }
             if flags.contains(Flags::INVERSE) {
@@ -536,7 +994,7 @@ impl TerminalView {
             let ch_len = ch.len_utf8();
             text.push(ch);
 
-            let matches_last = runs.last().map_or(false, |r: &TextRun| {
+            let matches_last = runs.last().is_some_and(|r: &TextRun| {
                 r.color == fg
                     && r.background_color == bg
                     && r.font.weight == weight
@@ -588,17 +1046,31 @@ fn keystroke_bytes(ks: &Keystroke) -> Option<Vec<u8>> {
     if m.control && matches!(ks.key.as_str(), "pageup" | "pagedown") {
         return None; // workspace: tab switching
     }
+    // Cursor & nav keys carry modifiers in xterm's CSI 1;<mod> form, so
+    // ctrl+→/← skip by word, shift+→/← extend selection, etc. (alt+arrows are
+    // workspace pane-focus chords and already returned None above.)
+    if let Some(fin) = match ks.key.as_str() {
+        "up" => Some(b'A'),
+        "down" => Some(b'B'),
+        "right" => Some(b'C'),
+        "left" => Some(b'D'),
+        "home" => Some(b'H'),
+        "end" => Some(b'F'),
+        _ => None,
+    } {
+        // xterm modifier code: 1 + shift(1) + alt(2) + ctrl(4)
+        let code = 1 + u8::from(m.shift) + u8::from(m.alt) * 2 + u8::from(m.control) * 4;
+        return Some(if code == 1 {
+            vec![0x1b, b'[', fin]
+        } else {
+            format!("\x1b[1;{code}{}", fin as char).into_bytes()
+        });
+    }
     let seq: &[u8] = match ks.key.as_str() {
         "enter" => b"\r",
         "backspace" => &[0x7f],
         "tab" => b"\t",
         "escape" => &[0x1b],
-        "up" => b"\x1b[A",
-        "down" => b"\x1b[B",
-        "right" => b"\x1b[C",
-        "left" => b"\x1b[D",
-        "home" => b"\x1b[H",
-        "end" => b"\x1b[F",
         "pageup" => b"\x1b[5~",
         "pagedown" => b"\x1b[6~",
         "delete" => b"\x1b[3~",
@@ -616,7 +1088,7 @@ impl Focusable for TerminalView {
 
 impl Render for TerminalView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let th = mode_theme(&theme::theme(cx), &self.mode);
+        let th = self.resolved_theme(cx);
         let scale = cx
             .try_global::<crate::UiScale>()
             .map(|s| s.0)
@@ -625,8 +1097,17 @@ impl Render for TerminalView {
         self.warp_k = (th.curvature * 0.14, th.curvature * 0.06);
         let lines = self.styled_lines(&th);
         let status = if self.exited { "exited" } else { "live" };
-        let grid_label = format!("{}×{} · {} · {status}", self.grid.cols, self.grid.rows, th.name);
+        let grid_label = format!("{}×{}", self.grid.cols, self.grid.rows);
         let glow = th.glow;
+
+        // MAIN bar text + glow: the complement of the theme seed (accent),
+        // damped down — opposite hue, muted saturation, dimmed lightness.
+        let bar_fg = Hsla {
+            h: wrap01(th.accent.h + 0.5),
+            s: (th.accent.s * 0.55).clamp(0., 1.),
+            l: (th.accent.l * 0.8).clamp(0., 1.),
+            a: th.accent.a,
+        };
 
         // solid, reflective header: gradient face + crisp top reflection line
         let mut lighter = th.surface;
@@ -645,9 +1126,68 @@ impl Render for TerminalView {
             ))
             .border_b_1()
             .border_color(th.accent.alpha(0.5))
-            .text_color(th.accent)
-            .child(format!("▸ {} · {}", self.mode.label(), self.title))
-            .child(grid_label);
+            .text_color(bar_fg)
+            .child(
+                // the title doubles as the drag handle: grab it to move this
+                // sub-tab onto another tab, or drop it on a pane to split there.
+                div()
+                    .flex_1()
+                    .overflow_hidden()
+                    .whitespace_nowrap()
+                    .cursor_pointer()
+                    .child(format!("▸ {} · {}", self.mode.label(), self.title))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|_, ev: &MouseDownEvent, _w, cx| {
+                            cx.stop_propagation();
+                            cx.emit(DragPaneStart { at: ev.position });
+                        }),
+                    ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_2()
+                    .child(grid_label)
+                    .child(
+                        // the theme icon IS the theme UI: click for the breakout
+                        div()
+                            .px_1()
+                            .rounded_sm()
+                            .border_1()
+                            .border_color(th.accent.alpha(0.5))
+                            .cursor_pointer()
+                            .child(th.icon.clone())
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|_, ev: &MouseDownEvent, _w, cx| {
+                                    cx.stop_propagation();
+                                    cx.emit(OpenThemeMenu { at: ev.position });
+                                }),
+                            ),
+                    )
+                    .child(status)
+                    .child(
+                        // close just this sub-tab (×): ends this pane's shell
+                        div()
+                            .px_1()
+                            .rounded_sm()
+                            .border_1()
+                            .border_color(th.accent.alpha(0.3))
+                            .text_color(bar_fg)
+                            .cursor_pointer()
+                            .child("×")
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|_, _ev: &MouseDownEvent, _w, cx| {
+                                    cx.stop_propagation();
+                                    cx.emit(ClosePane);
+                                }),
+                            ),
+                    ),
+            );
         {
             let mut shadows = vec![
                 // the reflection: bright inner top edge
@@ -661,14 +1201,14 @@ impl Render for TerminalView {
             ];
             if glow > 0.001 {
                 shadows.push(BoxShadow {
-                    color: th.accent.alpha(glow * 0.5),
+                    color: bar_fg.alpha(glow * 0.5),
                     offset: point(px(0.), px(1.)),
                     blur_radius: px(16.),
                     spread_radius: px(0.),
                     inset: false,
                 });
             }
-            header = header.shadow(shadows.into());
+            header = header.shadow(shadows);
         }
 
         let jiggle = self.fx.jiggle_px;
@@ -702,15 +1242,18 @@ impl Render for TerminalView {
                             canvas(
                                 move |bounds, window, cx| {
                                     let sf = window.scale_factor();
-                                    crate::warp::register([
-                                        f32::from(bounds.origin.x) * sf,
-                                        f32::from(bounds.origin.y) * sf,
-                                        f32::from(bounds.size.width) * sf,
-                                        f32::from(bounds.size.height) * sf,
-                                    ]);
+                                    crate::warp::register_with_glare(
+                                        [
+                                            f32::from(bounds.origin.x) * sf,
+                                            f32::from(bounds.origin.y) * sf,
+                                            f32::from(bounds.size.width) * sf,
+                                            f32::from(bounds.size.height) * sf,
+                                        ],
+                                        th.screen_glare,
+                                    );
                                     let changed = {
                                         let mut slot = store.lock().unwrap();
-                                        let changed = slot.map_or(true, |b| b != bounds);
+                                        let changed = slot.is_none_or(|b| b != bounds);
                                         if changed {
                                             *slot = Some(bounds);
                                         }
@@ -747,6 +1290,95 @@ impl Render for TerminalView {
             .when(std::env::var("TD_NOGLASS").is_err(), |el| {
                 el.child(crt::glass(&th, &self.fx))
             })
+            // raised bezel frame sits above the glass, framing the whole pane
+            .when(th.bezel > 0.001, |el| el.child(crt::bezel(&th)))
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn classify_recognises_the_phosphor_quartet() {
+        assert_eq!(
+            PaneMode::classify("claude", "claude --resume"),
+            PaneMode::Claude
+        );
+        assert_eq!(
+            PaneMode::classify("node", "node /home/x/.local/bin/claude"),
+            PaneMode::Claude
+        );
+        assert_eq!(PaneMode::classify("codex", ""), PaneMode::Codex);
+        for remote in ["ssh", "mosh-client", "et", "telnet"] {
+            assert_eq!(PaneMode::classify(remote, ""), PaneMode::Remote);
+        }
+        for sh in ["bash", "zsh", "fish", "sh", "dash", "nu"] {
+            assert_eq!(PaneMode::classify(sh, ""), PaneMode::Shell);
+        }
+        assert_eq!(
+            PaneMode::classify("htop\n", ""),
+            PaneMode::Other("htop".into())
+        );
+    }
+
+    #[test]
+    fn hue_fold_keeps_colours_inside_the_seed_arc() {
+        // wrap01 stays in [0,1); signed_turn is the shortest signed distance.
+        assert!((wrap01(1.25) - 0.25).abs() < 1e-6);
+        assert!((wrap01(-0.25) - 0.75).abs() < 1e-6);
+        assert!((signed_turn(0.9) - (-0.1)).abs() < 1e-6); // 0.9 turns ≈ -0.1
+        assert!((signed_turn(0.1) - 0.1).abs() < 1e-6);
+
+        // OnTheme fold (mirrors `shape`): the canonical terminal green lands
+        // exactly on the seed, and the full wheel stays within ±ARC/2 of it.
+        const ARC: f32 = 0.55;
+        const GREEN: f32 = 1.0 / 3.0;
+        let seed = 0.6_f32; // arbitrary seed hue
+        let folded = |h: f32| wrap01(seed + signed_turn(h - GREEN) * ARC);
+        assert!((folded(GREEN) - seed).abs() < 1e-6, "green pins to seed");
+        for i in 0..360 {
+            let h = i as f32 / 360.0;
+            let d = signed_turn(folded(h) - seed).abs();
+            assert!(d <= ARC / 2.0 + 1e-4, "hue {h} escaped the arc: {d}");
+        }
+    }
+
+    #[test]
+    fn classify_line_tags_each_token_class() {
+        // index a char by hand and assert its class
+        let at = |line: &str, i: usize| classify_line(line)[i];
+        let line = r#"git commit -m "fix 3" /etc/hosts # done"#;
+        //            0123456789...
+        assert_eq!(at(line, 0), Tok::Keyword); // "git"
+        assert_eq!(at(line, 4), Tok::Word); // "commit"
+        assert_eq!(at(line, 11), Tok::Flag); // "-m"
+        let q = line.find('"').unwrap();
+        assert_eq!(at(line, q), Tok::Str); // opening quote
+        assert_eq!(at(line, line.find('3').unwrap()), Tok::Str); // inside the string
+        assert_eq!(at(line, line.find("/etc").unwrap()), Tok::Path); // "/etc/hosts"
+        assert_eq!(at(line, line.find('#').unwrap()), Tok::Comment); // to EOL
+                                                                     // a bare number outside a string is a number; classification is 1:1
+        let nums = classify_line("v = 1.5");
+        assert_eq!(nums.len(), "v = 1.5".chars().count());
+        assert_eq!(nums[2], Tok::Op); // '='
+        assert_eq!(nums[4], Tok::Num); // '1'
+    }
+
+    #[test]
+    fn keystroke_bytes_encodes_the_pty_protocol() {
+        let bytes = |s: &str| keystroke_bytes(&Keystroke::parse(s).unwrap());
+        assert_eq!(bytes("ctrl-c"), Some(vec![3]));
+        assert_eq!(bytes("enter"), Some(b"\r".to_vec()));
+        assert_eq!(bytes("up"), Some(b"\x1b[A".to_vec()));
+        assert_eq!(bytes("escape"), Some(vec![0x1b]));
+        // ctrl+arrows skip by word (xterm CSI 1;5 form)
+        assert_eq!(bytes("ctrl-right"), Some(b"\x1b[1;5C".to_vec()));
+        assert_eq!(bytes("ctrl-left"), Some(b"\x1b[1;5D".to_vec()));
+        // shift+arrows extend selection (CSI 1;2 form)
+        assert_eq!(bytes("shift-right"), Some(b"\x1b[1;2C".to_vec()));
+        // workspace-owned chords must NOT reach the shell
+        assert_eq!(bytes("alt-left"), None);
+        assert_eq!(bytes("ctrl-pageup"), None);
+    }
+}

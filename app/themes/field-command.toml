@@ -1,13 +1,16 @@
-# terminal-delight theme — field-command (muted dark olive)
+# terminal-delight theme — field-command (military field-kit)
+# Palette trued-up to IMT project-management: charcoal blue-grey base
+# (#0e1214/#172024), olive-drab accents only — flat and matte.
 name = "field-command"
+icon = "▾▾"
 
 [colors]
-bg      = "#14160f"
-surface = "#1b1e15"
-text    = "#e7ecd9"
+bg      = "#0e1214"
+surface = "#172024"
+text    = "#e8f0f2"
 accent  = "#8fa85f"
-faint   = "#3a4226"
-cursor  = "#b6cf86"
+faint   = "#2b3a40"
+cursor  = "#a8bd76"
 ansi = [
   "#171a12", "#d96c5f", "#8fa85f", "#d9b35f",
   "#6f8fae", "#a87a9b", "#7fb0a0", "#e7ecd9",
@@ -26,7 +29,7 @@ tracking         = 0.15
 tracking_period  = 30.0
 tracking_sweep   = 10.0
 flicker          = 0.15
-curvature        = 0.15     # barrel warp (needs td-crt-pass renderer patch)
+curvature        = 0.0      # barrel warp — off; only the hacker theme curves (needs td-crt-pass renderer patch)
 jiggle           = 0.0
 
 [font]

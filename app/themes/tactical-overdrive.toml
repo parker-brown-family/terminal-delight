@@ -1,13 +1,16 @@
 # terminal-delight theme — tactical-overdrive (high-contrast cyan command deck)
+# Palette trued-up to IMT campaign-manager: tactical base 5/11/14% lightness,
+# companion-hue borders (5baecd band), warm #ff9b45 signals.
 name = "tactical-overdrive"
+icon = "★"
 
 [colors]
-bg      = "#06090d"
-surface = "#0a1018"
-text    = "#dff6ff"
+bg      = "#061015"
+surface = "#101f26"
+text    = "#eefaff"
 accent  = "#31d7ff"
-faint   = "#10324a"
-cursor  = "#91f6ff"
+faint   = "#1b3947"
+cursor  = "#7df2ff"
 ansi = [
   "#0a1018", "#ff5050", "#39d98a", "#ff9b45",
   "#31d7ff", "#b78aff", "#67e8f9", "#dff6ff",
@@ -26,8 +29,9 @@ tracking         = 0.35
 tracking_period  = 20.0
 tracking_sweep   = 8.0
 flicker          = 0.3
-curvature        = 0.3     # barrel warp (needs td-crt-pass renderer patch)
+curvature        = 0.0     # barrel warp — off; only the hacker theme curves (needs td-crt-pass renderer patch)
 jiggle           = 0.3
+bezel            = 0.85    # raised metallic frame around the pane edge
 
 [font]
 family      = "JetBrains Mono"

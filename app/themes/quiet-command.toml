@@ -1,5 +1,6 @@
 # terminal-delight theme — quiet-command (calm light, effects off)
 name = "quiet-command"
+icon = "☀"
 
 [colors]
 bg      = "#f3f6f9"
