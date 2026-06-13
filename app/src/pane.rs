@@ -150,9 +150,7 @@ fn signed_turn(h: f32) -> f32 {
 fn shape(c: Hsla, th: &Theme) -> Hsla {
     use crate::theme::ColorMode;
     match th.color_mode {
-        // Syntax overrides foregrounds itself (see `syntax_colors`); any colour
-        // still resolved here (e.g. a program-set background) stays honest.
-        ColorMode::Default | ColorMode::Syntax => c,
+        ColorMode::Default => c,
         ColorMode::Monochrome => Hsla {
             h: th.text.h,
             s: th.text.s,
@@ -210,13 +208,16 @@ fn idx_color(i: u8) -> Hsla {
 /// screen. It varies by mode so each [`ColorMode`] has a distinct identity even
 /// on plain text, not only on programs that emit ANSI colour:
 /// - `Default` — the honest xterm default foreground (light grey).
-/// - `Monochrome` / `Syntax` — the theme's phosphor (`text`), the classic look.
+/// - `Monochrome` — the theme's phosphor (`text`), the classic look.
 /// - `OnTheme` — the seed accent, so plain text glows on-theme too.
+///
+/// (When the `syntax` overlay is on, default-fg text is instead recoloured by
+/// token class in [`syntax_colors`]; this is the no-overlay fallback.)
 fn default_fg(mode: crate::theme::ColorMode, text: Hsla, accent: Hsla) -> Hsla {
     use crate::theme::ColorMode;
     match mode {
         ColorMode::Default => rgb(0xe5e5e5).into(),
-        ColorMode::Monochrome | ColorMode::Syntax => text,
+        ColorMode::Monochrome => text,
         ColorMode::OnTheme => accent,
     }
 }
@@ -412,9 +413,11 @@ fn classify_line(line: &str) -> Vec<Tok> {
     out
 }
 
-/// Per-character foreground colours for one line in `Syntax` mode: classify the
-/// raw text, then paint each token class its own hue on the seed arc. Returns
-/// one `Hsla` per `char` in `line` (so it maps 1:1 onto the row's cells).
+/// Per-character foreground colours for one line under the `syntax` overlay:
+/// classify the raw text, then paint each token class its own hue on the seed
+/// arc. Returns one `Hsla` per `char` in `line` (so it maps 1:1 onto the row's
+/// cells). The renderer only applies these to cells the program left at default
+/// fg — cells with explicit ANSI colour still flow through [`ansi_to_hsla`].
 fn syntax_colors(line: &str, th: &Theme) -> Vec<Hsla> {
     // Each class is a fixed offset on the seed arc — distinct, but unmistakably
     // one family. Lightness flips so it reads on light themes too.
@@ -443,6 +446,45 @@ fn syntax_colors(line: &str, th: &Theme) -> Vec<Hsla> {
             Tok::Comment => comment,
         })
         .collect()
+}
+
+/// Which independent level a graded cell takes: foreground text vs background.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Channel {
+    Text,
+    Bg,
+}
+
+/// Apply the monitor-OSD [`Grade`](crate::theme::Grade) to one final cell colour,
+/// in HSLA, at paint time — the last step before a cell is committed so the whole
+/// composited display is graded uniformly (text and background still take their
+/// own levels). Each slider is `0..=1` with 0.5 neutral; a neutral grade is the
+/// identity (and is the common case, so it short-circuits).
+fn graded(c: Hsla, g: &crate::theme::Grade, ch: Channel) -> Hsla {
+    if g.is_neutral() {
+        return c;
+    }
+    // 0.5 → 1.0; the slider spans a 0..2 multiplier around neutral.
+    let f = |v: f32| v / 0.5;
+    let s = (c.s * f(g.colour)).clamp(0.0, 1.0);
+    let mut l = c.l.clamp(0.0, 1.0);
+    // gamma: 0.5 → exponent 1.0 (identity); <0.5 lifts mid-tones, >0.5 deepens.
+    let gamma = 2f32.powf((0.5 - g.gamma) * 2.0);
+    l = l.powf(gamma);
+    // contrast pushes lightness away from (or toward) mid-grey…
+    l = (l - 0.5) * f(g.contrast) + 0.5;
+    // …then master brightness and the per-channel text/background level scale it.
+    l *= f(g.brightness);
+    l *= match ch {
+        Channel::Text => f(g.text),
+        Channel::Bg => f(g.background),
+    };
+    Hsla {
+        h: c.h,
+        s,
+        l: l.clamp(0.0, 1.0),
+        a: c.a,
+    }
 }
 
 pub struct TerminalView {
@@ -492,6 +534,14 @@ pub struct OpenThemeMenu {
     pub at: gpui::Point<gpui::Pixels>,
 }
 impl gpui::EventEmitter<OpenThemeMenu> for TerminalView {}
+
+/// Click on the header's display icon — the workspace opens the monitor-OSD
+/// tray for this pane. Like [`OpenThemeMenu`], carries the window-space click
+/// position so the tray anchors at the icon that was clicked.
+pub struct OpenDisplayMenu {
+    pub at: gpui::Point<gpui::Pixels>,
+}
+impl gpui::EventEmitter<OpenDisplayMenu> for TerminalView {}
 
 /// The user grabbed this sub-tab's header to drag it. The workspace takes over
 /// from here (window-level move/up) and decides where it lands. Carries the
@@ -970,12 +1020,12 @@ impl TerminalView {
             .map(|_| (String::new(), vec![]))
             .collect();
 
-        // `Syntax` mode tokenises the literal text, so it needs each full row up
-        // front. Collect the cells once, build per-row colour palettes, then
-        // paint cell-by-cell with a per-row cursor that stays in lock-step with
-        // pass one (identical row-clamp + spacer skip ⇒ ordinals line up).
+        // The `syntax` overlay tokenises the literal text, so it needs each full
+        // row up front. Collect the cells once, build per-row colour palettes,
+        // then paint cell-by-cell with a per-row cursor that stays in lock-step
+        // with pass one (identical row-clamp + spacer skip ⇒ ordinals line up).
         let cells: Vec<_> = content.display_iter.collect();
-        let syntax = matches!(th.color_mode, crate::theme::ColorMode::Syntax);
+        let syntax = th.syntax;
         let palettes: Vec<Vec<Hsla>> = if syntax {
             let mut rows_text = vec![String::new(); self.grid.rows];
             for indexed in &cells {
@@ -1004,10 +1054,19 @@ impl TerminalView {
             if cell.flags.contains(Flags::WIDE_CHAR_SPACER) {
                 continue;
             }
+            // Overlay rule: the token hue lands only on cells the program left
+            // at its default foreground; anything the program explicitly
+            // coloured still flows through `color_mode` (so ls/git/vim keep
+            // their palette). The ord cursor advances on every non-spacer cell
+            // regardless, keeping the palette aligned with the row text.
             let mut fg = if syntax {
                 let ord = ords[row as usize];
                 ords[row as usize] += 1;
-                palettes[row as usize].get(ord).copied().unwrap_or(th.text)
+                if matches!(cell.fg, AnsiColor::Named(NamedColor::Foreground)) {
+                    palettes[row as usize].get(ord).copied().unwrap_or(th.text)
+                } else {
+                    ansi_to_hsla(cell.fg, th, th.text)
+                }
             } else {
                 ansi_to_hsla(cell.fg, th, th.text)
             };
@@ -1035,6 +1094,12 @@ impl TerminalView {
             if flags.contains(Flags::DIM) {
                 fg.a *= 0.6;
             }
+
+            // Monitor OSD: grade the final colours (text + background take their
+            // own levels). Neutral grade is the identity, so the default render
+            // is byte-for-byte unchanged.
+            fg = graded(fg, &th.grade, Channel::Text);
+            bg = bg.map(|c| graded(c, &th.grade, Channel::Bg));
 
             let weight = if flags.contains(Flags::BOLD) {
                 FontWeight::BOLD
@@ -1252,6 +1317,23 @@ impl Render for TerminalView {
                                 }),
                             ),
                     )
+                    .child(
+                        // the display icon: click for this pane's monitor-OSD tray
+                        div()
+                            .px_1()
+                            .rounded_sm()
+                            .border_1()
+                            .border_color(th.accent.alpha(0.5))
+                            .cursor_pointer()
+                            .child("⛭")
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|_, ev: &MouseDownEvent, _w, cx| {
+                                    cx.stop_propagation();
+                                    cx.emit(OpenDisplayMenu { at: ev.position });
+                                }),
+                            ),
+                    )
                     .child(status)
                     .child(
                         // close just this sub-tab (×): ends this pane's shell
@@ -1439,7 +1521,7 @@ mod tests {
         let mono = default_fg(ColorMode::Monochrome, text, accent);
         let ontheme = default_fg(ColorMode::OnTheme, text, accent);
         // The fix: plain text used to be `text` in EVERY mode, so ansi/mono/
-        // theme looked identical and only "code" (Syntax) appeared to work.
+        // theme looked identical and only the syntax overlay appeared to work.
         assert_eq!(
             ansi,
             Hsla::from(rgb(0xe5e5e5)),
@@ -1473,6 +1555,59 @@ mod tests {
         assert_eq!(nums.len(), "v = 1.5".chars().count());
         assert_eq!(nums[2], Tok::Op); // '='
         assert_eq!(nums[4], Tok::Num); // '1'
+    }
+
+    #[test]
+    fn grade_neutral_is_identity_and_channels_are_independent() {
+        use crate::theme::{Grade, GradeKey};
+        let c = Hsla {
+            h: 0.33,
+            s: 0.6,
+            l: 0.5,
+            a: 1.0,
+        };
+        // neutral grade leaves a colour untouched (the default render path)
+        let n = Grade::default();
+        assert_eq!(graded(c, &n, Channel::Text), c);
+        assert_eq!(graded(c, &n, Channel::Bg), c);
+
+        // brightness > 0.5 raises lightness, < 0.5 lowers it
+        let mut up = Grade::default();
+        up.set(GradeKey::Brightness, 0.75);
+        assert!(graded(c, &up, Channel::Text).l > c.l);
+        let mut down = Grade::default();
+        down.set(GradeKey::Brightness, 0.25);
+        assert!(graded(c, &down, Channel::Text).l < c.l);
+
+        // colour = 0 desaturates to greyscale
+        let mut grey = Grade::default();
+        grey.set(GradeKey::Colour, 0.0);
+        assert!(graded(c, &grey, Channel::Text).s.abs() < 1e-6);
+
+        // text vs background are independent: the text slider moves fg only
+        let mut text_only = Grade::default();
+        text_only.set(GradeKey::Text, 0.8);
+        assert!(
+            graded(c, &text_only, Channel::Text).l > c.l,
+            "text level lifts fg"
+        );
+        assert_eq!(
+            graded(c, &text_only, Channel::Bg),
+            c,
+            "text level must not touch the background channel"
+        );
+
+        // contrast > 0.5 widens the spread around mid-grey (a bright cell brightens)
+        let bright = Hsla { l: 0.7, ..c };
+        let mut hi = Grade::default();
+        hi.set(GradeKey::Contrast, 0.75);
+        assert!(graded(bright, &hi, Channel::Text).l > bright.l);
+
+        // results always stay in gamut
+        let mut extreme = Grade::default();
+        extreme.set(GradeKey::Brightness, 1.0);
+        let g = graded(Hsla { l: 0.95, ..c }, &extreme, Channel::Text);
+        assert!((0.0..=1.0).contains(&g.l) && (0.0..=1.0).contains(&g.s));
     }
 
     #[test]

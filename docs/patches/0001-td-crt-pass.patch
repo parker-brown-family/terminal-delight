@@ -1,9 +1,9 @@
 diff --git a/crates/gpui_wgpu/src/crt_pass.wgsl b/crates/gpui_wgpu/src/crt_pass.wgsl
 new file mode 100644
-index 0000000..ff52290
+index 0000000..ae12dd1
 --- /dev/null
 +++ b/crates/gpui_wgpu/src/crt_pass.wgsl
-@@ -0,0 +1,80 @@
+@@ -0,0 +1,82 @@
 +// terminal-delight CRT post-pass v2: PER-RECT barrel distortion.
 +// The app registers up to 8 "tube" rectangles (terminal content areas, in
 +// physical px). Pixels inside a rect warp in rect-local space; everything
@@ -76,7 +76,9 @@ index 0000000..ff52290
 +                * (1.0 - smoothstep(0.0, 0.42, local.y));
 +            let glare_amount = clamp((glare_hotspot * 0.58 + glare_band * 0.34) * glare_strength, 0.0, 1.0);
 +            let glare_color = vec3<f32>(0.72, 1.0, 0.78);
-+            let tube = mix(vec3<f32>(0.0), col.rgb * falloff, edge_blend)
++            // sub-terminal phosphor runs +35% hotter than the raw sample so the
++            // warped tube doesn't read dim against flat chrome / flat panes.
++            let tube = mix(vec3<f32>(0.0), col.rgb * falloff * 1.35, edge_blend)
 +                + glare_color * glare_amount;
 +            return vec4<f32>(tube * inb, 1.0);
 +        }

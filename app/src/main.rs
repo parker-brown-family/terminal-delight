@@ -26,7 +26,7 @@ use gpui::{
     Window, WindowBounds, WindowOptions,
 };
 use gpui_platform::application;
-use pane::{ClosePane, DragPaneStart, OpenThemeMenu, TerminalView};
+use pane::{ClosePane, DragPaneStart, OpenDisplayMenu, OpenThemeMenu, PaneRenamed, TerminalView};
 use serde::{Deserialize, Serialize};
 use theme::ThemeChoice;
 
@@ -259,6 +259,7 @@ impl<L: Clone> Tree<L> {
                     theme: s.theme,
                     cwd: s.cwd,
                     resume: s.resume,
+                    name: s.name,
                 }
             }
             Tree::Split {
@@ -288,6 +289,7 @@ impl Node {
                 theme: view.theme_override.clone(),
                 cwd: rt.cwd,
                 resume: rt.resume,
+                name: view.name.clone(),
             }
         })
     }
@@ -300,6 +302,7 @@ struct LeafState {
     theme: Option<ThemeChoice>,
     cwd: Option<String>,
     resume: Option<String>,
+    name: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -311,6 +314,8 @@ enum SavedNode {
         cwd: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         resume: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
     },
     Split {
         dir: SplitDir,
@@ -332,6 +337,8 @@ impl<'de> Deserialize<'de> for SavedNode {
             cwd: Option<String>,
             #[serde(default)]
             resume: Option<String>,
+            #[serde(default)]
+            name: Option<String>,
         }
         #[derive(Deserialize)]
         struct SplitFields {
@@ -353,6 +360,7 @@ impl<'de> Deserialize<'de> for SavedNode {
                         theme: None,
                         cwd: None,
                         resume: None,
+                        name: None,
                     }),
                     other => Err(E::custom(format!("unknown node: {other}"))),
                 }
@@ -372,6 +380,7 @@ impl<'de> Deserialize<'de> for SavedNode {
                             theme: f.theme,
                             cwd: f.cwd,
                             resume: f.resume,
+                            name: f.name,
                         })
                     }
                     "Split" => {
@@ -528,6 +537,14 @@ struct Workspace {
     /// Window-space point to anchor the open tray at (a sub-tab icon click).
     /// None = the fixed top-right anchor used by the global/outer menu.
     menu_at: Option<Point<Pixels>>,
+    /// Open monitor-OSD (display) tray, if any — same scope model as `theme_menu`.
+    osd_menu: Option<MenuScope>,
+    /// Window-space anchor for the open OSD tray (a pane display-icon click).
+    osd_at: Option<Point<Pixels>>,
+    /// The OSD slider being dragged, if any (which channel).
+    slider_drag: Option<theme::GradeKey>,
+    /// Live per-slider track rects for ratio math during a drag.
+    slider_bounds: Arc<Mutex<std::collections::HashMap<theme::GradeKey, Bounds<Pixels>>>>,
     scrubbing: bool,
     scrub_bounds: Arc<Mutex<Option<Bounds<Pixels>>>>,
     jiggle: FrameJiggle,
@@ -564,6 +581,13 @@ fn make_pane_restored(
         cx.notify();
     })
     .detach();
+    // the header display icon → open this pane's monitor-OSD tray at the click
+    cx.subscribe(&pane, |ws, pane, ev: &OpenDisplayMenu, cx| {
+        ws.osd_menu = Some(MenuScope::Pane(pane));
+        ws.osd_at = Some(ev.at);
+        cx.notify();
+    })
+    .detach();
     // grab the header → begin a sub-tab drag (the workspace drives it from here)
     cx.subscribe(&pane, |ws, pane, ev: &DragPaneStart, cx| {
         let start = ev.at;
@@ -582,13 +606,23 @@ fn make_pane_restored(
         ws.close_pane(pane.entity_id(), window, cx);
     })
     .detach();
+    // a committed rename → persist so the custom name survives a restart
+    cx.subscribe(&pane, |ws, _pane, _ev: &PaneRenamed, cx| {
+        ws.save(cx);
+    })
+    .detach();
     window.focus(&pane.focus_handle(cx), cx);
     pane
 }
 
 fn build_node(saved: &SavedNode, window: &mut Window, cx: &mut Context<Workspace>) -> Node {
     match saved {
-        SavedNode::Leaf { theme, cwd, resume } => {
+        SavedNode::Leaf {
+            theme,
+            cwd,
+            resume,
+            name,
+        } => {
             let pane = make_pane_restored(
                 session::PaneRestore {
                     cwd: cwd.clone(),
@@ -597,9 +631,15 @@ fn build_node(saved: &SavedNode, window: &mut Window, cx: &mut Context<Workspace
                 window,
                 cx,
             );
-            if theme.is_some() {
+            if theme.is_some() || name.is_some() {
                 let choice = theme.clone();
-                pane.update(cx, |view, _| view.theme_override = choice);
+                let name = name.clone();
+                pane.update(cx, |view, _| {
+                    view.theme_override = choice;
+                    if name.is_some() {
+                        view.name = name;
+                    }
+                });
             }
             Node::Leaf(pane)
         }
@@ -628,6 +668,10 @@ impl Workspace {
             confirm_close: None,
             theme_menu: None,
             menu_at: None,
+            osd_menu: None,
+            osd_at: None,
+            slider_drag: None,
+            slider_bounds: Arc::new(Mutex::new(std::collections::HashMap::new())),
             scrubbing: false,
             scrub_bounds: Arc::new(Mutex::new(None)),
             jiggle: FrameJiggle::new(),
@@ -748,14 +792,18 @@ impl Workspace {
         if std::env::var("TD_KEYDEBUG").is_ok() {
             eprintln!("split col={}", matches!(dir, SplitDir::Col));
         }
-        if self.pane_count() >= MAX_PANES {
-            return;
-        }
         let Some(tab) = self.tabs.get(self.active) else {
             return;
         };
         let mut leaves = vec![];
         tab.root.leaves(&mut leaves);
+        // The cap matches the CRT warp's 8-tube shader limit, which only ever
+        // applies to the VISIBLE (active-tab) panes — so it's per active tab, not
+        // global. (A global count silently blocked splits once enough panes were
+        // open across *other* tabs.)
+        if leaves.len() >= MAX_PANES {
+            return;
+        }
         let target = leaves
             .iter()
             .find(|p| p.focus_handle(cx).is_focused(window))
@@ -852,6 +900,11 @@ impl Workspace {
         let m = &ks.modifiers;
         if self.theme_menu.is_some() && ks.key.as_str() == "escape" {
             self.theme_menu = None;
+            cx.notify();
+            return;
+        }
+        if self.osd_menu.is_some() && ks.key.as_str() == "escape" {
+            self.osd_menu = None;
             cx.notify();
             return;
         }
@@ -1018,10 +1071,22 @@ impl Workspace {
                 self.set_scale(s, cx);
             }
         }
+        if let Some(key) = self.slider_drag {
+            if ev.pressed_button == Some(MouseButton::Left) {
+                if let Some(v) = self.grade_from_pos(key, ev.position.x) {
+                    self.apply_grade(key, v, cx);
+                }
+            }
+        }
     }
 
     fn on_mouse_up(&mut self, _ev: &MouseUpEvent, window: &mut Window, cx: &mut Context<Self>) {
         self.scrubbing = false;
+        if self.slider_drag.take().is_some() {
+            self.save(cx);
+            cx.notify();
+            return;
+        }
         if let Some(drag) = self.drag_pane.take() {
             let target = self.drop_target.take();
             if drag.engaged {
@@ -1219,37 +1284,183 @@ impl Workspace {
         }
     }
 
-    /// The choice the open menu is editing (pane override or outer).
-    fn menu_choice(&self, cx: &App) -> ThemeChoice {
-        match &self.theme_menu {
-            Some(MenuScope::Pane(p)) => p
+    /// The current choice for a given scope (pane override → fall back to outer).
+    /// Shared by the theme breakout and the monitor-OSD tray.
+    fn choice_for(&self, scope: &MenuScope, cx: &App) -> ThemeChoice {
+        match scope {
+            MenuScope::Pane(p) => p
                 .read(cx)
                 .theme_override
                 .clone()
                 .unwrap_or_else(|| theme::outer_choice(cx)),
-            _ => theme::outer_choice(cx),
+            MenuScope::Outer => theme::outer_choice(cx),
         }
     }
 
-    /// Apply a choice to the open menu's scope. None clears a pane override
-    /// (back to "follow outer").
-    fn set_menu_choice(&mut self, choice: Option<ThemeChoice>, cx: &mut Context<Self>) {
-        match self.theme_menu.clone() {
-            Some(MenuScope::Pane(pane)) => {
+    /// Write a choice back to a scope. None clears a pane override (back to
+    /// "follow outer"). Shared by both trays.
+    fn set_choice_for(
+        &mut self,
+        scope: &MenuScope,
+        choice: Option<ThemeChoice>,
+        cx: &mut Context<Self>,
+    ) {
+        match scope {
+            MenuScope::Pane(pane) => {
                 pane.update(cx, |view, cx| {
                     view.theme_override = choice;
                     cx.notify();
                 });
             }
-            Some(MenuScope::Outer) => {
+            MenuScope::Outer => {
                 if let Some(choice) = choice {
                     theme::select_outer(cx, choice);
                 }
             }
-            None => return,
         }
         self.save(cx);
         cx.notify();
+    }
+
+    /// The choice the open theme breakout is editing (pane override or outer).
+    fn menu_choice(&self, cx: &App) -> ThemeChoice {
+        match &self.theme_menu {
+            Some(scope) => self.choice_for(scope, cx),
+            None => theme::outer_choice(cx),
+        }
+    }
+
+    /// Apply a choice to the open theme breakout's scope.
+    fn set_menu_choice(&mut self, choice: Option<ThemeChoice>, cx: &mut Context<Self>) {
+        if let Some(scope) = self.theme_menu.clone() {
+            self.set_choice_for(&scope, choice, cx);
+        }
+    }
+
+    /// Slider track ratio (0..1) for the active OSD slider at window-x `x`.
+    fn grade_from_pos(&self, key: theme::GradeKey, x: Pixels) -> Option<f32> {
+        let b = *self.slider_bounds.lock().unwrap().get(&key)?;
+        let w = f32::from(b.size.width);
+        if w <= 0.0 {
+            return None;
+        }
+        Some(((f32::from(x) - f32::from(b.origin.x)) / w).clamp(0.0, 1.0))
+    }
+
+    /// Set one channel of the active OSD scope's grade to `v` (live, persisted).
+    fn apply_grade(&mut self, key: theme::GradeKey, v: f32, cx: &mut Context<Self>) {
+        let Some(scope) = self.osd_menu.clone() else {
+            return;
+        };
+        let mut choice = self.choice_for(&scope, cx);
+        choice.grade.set(key, v);
+        self.set_choice_for(&scope, Some(choice), cx);
+    }
+
+    /// Reset the active OSD scope's grade to neutral.
+    fn reset_grade(&mut self, cx: &mut Context<Self>) {
+        let Some(scope) = self.osd_menu.clone() else {
+            return;
+        };
+        let mut choice = self.choice_for(&scope, cx);
+        choice.grade = theme::Grade::default();
+        self.set_choice_for(&scope, Some(choice), cx);
+    }
+
+    /// One OSD slider: label + draggable track + a centre-relative readout
+    /// (`0` = neutral). Mirrors the text-size scrubber's bounds-capture + drag.
+    fn slider_row(
+        &self,
+        key: theme::GradeKey,
+        label: &str,
+        value: f32,
+        th: &theme::Theme,
+        cx: &mut Context<Self>,
+    ) -> gpui::Div {
+        const TRACK: f32 = 150.;
+        let store = self.slider_bounds.clone();
+        let v = value.clamp(0.0, 1.0);
+        div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap_2()
+            .child(
+                div()
+                    .w(px(74.))
+                    .text_size(px(10.))
+                    .text_color(th.text.alpha(0.8))
+                    .child(label.to_string()),
+            )
+            .child(
+                div()
+                    .w(px(TRACK))
+                    .h(px(14.))
+                    .relative()
+                    .cursor_pointer()
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |ws, ev: &MouseDownEvent, _w, cx| {
+                            cx.stop_propagation();
+                            ws.slider_drag = Some(key);
+                            if let Some(v) = ws.grade_from_pos(key, ev.position.x) {
+                                ws.apply_grade(key, v, cx);
+                            }
+                        }),
+                    )
+                    .child(
+                        canvas(
+                            move |bounds, _, _| {
+                                store.lock().unwrap().insert(key, bounds);
+                            },
+                            |_, _, _, _| {},
+                        )
+                        .size_full(),
+                    )
+                    .child(
+                        div()
+                            .absolute()
+                            .left_0()
+                            .right_0()
+                            .top(px(6.))
+                            .h(px(3.))
+                            .rounded_full()
+                            .bg(darken(th.surface, 0.4))
+                            .border_1()
+                            .border_color(th.faint),
+                    )
+                    .child(
+                        div()
+                            .absolute()
+                            .left_0()
+                            .top(px(6.))
+                            .h(px(3.))
+                            .w(px(TRACK * v))
+                            .rounded_full()
+                            .bg(th.accent),
+                    )
+                    .child(
+                        div()
+                            .absolute()
+                            .left(px((TRACK * v - 5.).max(0.)))
+                            .top(px(2.))
+                            .w(px(10.))
+                            .h(px(10.))
+                            .rounded_full()
+                            .bg(linear_gradient(
+                                135.,
+                                linear_color_stop(brighten(th.accent, 1.4), 0.),
+                                linear_color_stop(darken(th.accent, 0.7), 1.),
+                            )),
+                    ),
+            )
+            .child(
+                div()
+                    .w(px(28.))
+                    .text_size(px(9.))
+                    .text_color(th.accent)
+                    .child(format!("{:+}", ((v - 0.5) * 100.).round() as i32)),
+            )
     }
 
     /// Solid, reflective bezel button — light source upper-left.
@@ -1608,7 +1819,9 @@ impl Render for Workspace {
                              // An open overlay (theme breakout / confirm dialog) flattens the glass:
                              // the warp is a pixel post-process, so a panel over a tube would bow out
                              // of reach of its own flat hit box. Suppress so the menu reads true.
-        warp::set_suppressed(self.theme_menu.is_some() || self.confirm_close.is_some());
+        warp::set_suppressed(
+            self.theme_menu.is_some() || self.osd_menu.is_some() || self.confirm_close.is_some(),
+        );
         // drop-hit-test rects are rebuilt every frame by the canvases below, so
         // a closed pane / removed tab never leaves a stale target behind.
         self.pane_bounds.lock().unwrap().clear();
@@ -1841,7 +2054,7 @@ impl Render for Workspace {
             .flex_row()
             .gap_1()
             .items_center()
-            .child(Self::bezel_btn(&th, "◫ split", false).on_mouse_down(
+            .child(Self::bezel_btn(&th, "◧ split", false).on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|ws, _: &MouseDownEvent, window, cx| {
                     ws.split(SplitDir::Row, window, cx)
@@ -1902,6 +2115,18 @@ impl Render for Workspace {
                             }),
                         ),
                     )
+                    .child(
+                        // outer display: the monitor-OSD trigger (global grade)
+                        Self::bezel_btn(&th, "⛭", self.osd_menu.is_some()).on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                                cx.stop_propagation();
+                                ws.osd_menu = Some(MenuScope::Outer);
+                                ws.osd_at = None; // global tray uses the fixed anchor
+                                cx.notify();
+                            }),
+                        ),
+                    )
                     .child(scrubber)
                     .child(cluster),
             );
@@ -1938,6 +2163,8 @@ impl Render for Workspace {
             let is_pane = matches!(scope, MenuScope::Pane(_));
             let cur = self.menu_choice(cx);
             let color = cur.color;
+            let syntax = cur.syntax;
+            let grade = cur.grade; // preserved across theme edits (OSD owns it)
             let has_override = match &scope {
                 MenuScope::Pane(p) => p.read(cx).theme_override.is_some(),
                 MenuScope::Outer => true,
@@ -1955,6 +2182,8 @@ impl Render for Workspace {
                                 id: id.clone(),
                                 seed: seed.clone(),
                                 color,
+                                syntax,
+                                grade,
                             }),
                             cx,
                         );
@@ -1973,6 +2202,8 @@ impl Render for Workspace {
                                 id: id.clone(),
                                 seed: None,
                                 color,
+                                syntax,
+                                grade,
                             }),
                             cx,
                         );
@@ -1992,6 +2223,8 @@ impl Render for Workspace {
                                 id: id.clone(),
                                 seed: Some(hex.to_string()),
                                 color,
+                                syntax,
+                                grade,
                             }),
                             cx,
                         );
@@ -2013,12 +2246,40 @@ impl Render for Workspace {
                                     id: id.clone(),
                                     seed: seed.clone(),
                                     color: mode,
+                                    syntax,
+                                    grade,
                                 }),
                                 cx,
                             );
                         }),
                     ),
                 );
+            }
+            // SYNTAX axis: an off/on overlay orthogonal to the source row above.
+            // On = recolour default-fg text by token class (the old `code` look),
+            // letting program ANSI still pass through the chosen source mode.
+            let mut syntax_row = div().flex().flex_row().gap_2();
+            for (on, icon, caption) in [(false, "○", "off"), (true, "◆", "code")] {
+                let active = cur.syntax == on;
+                let id = cur.id.clone();
+                let seed = cur.seed.clone();
+                syntax_row =
+                    syntax_row.child(color_mode_btn(&th, icon, caption, active).on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                            cx.stop_propagation();
+                            ws.set_menu_choice(
+                                Some(ThemeChoice {
+                                    id: id.clone(),
+                                    seed: seed.clone(),
+                                    color,
+                                    syntax: on,
+                                    grade,
+                                }),
+                                cx,
+                            );
+                        }),
+                    ));
             }
             let label = |s: &str| {
                 div()
@@ -2031,7 +2292,7 @@ impl Render for Workspace {
             // on-screen. The global/outer menu (menu_at == None) keeps its fixed
             // top-right anchor under the titlebar control.
             const PANEL_W: f32 = 286.;
-            const PANEL_H_EST: f32 = 240.; // generous, incl. the follow-outer row
+            const PANEL_H_EST: f32 = 296.; // generous, incl. syntax row + follow-outer
             let mut panel = div().absolute().w(px(PANEL_W));
             panel = match self.menu_at {
                 Some(at) => {
@@ -2073,8 +2334,10 @@ impl Render for Workspace {
                 .child(theme_row)
                 .child(label("SEED COLOUR"))
                 .child(seed_row)
-                .child(label("TEXT COLOUR"))
-                .child(color_row);
+                .child(label("TEXT — SOURCE"))
+                .child(color_row)
+                .child(label("SYNTAX"))
+                .child(syntax_row);
             if is_pane {
                 panel = panel.child(
                     Self::bezel_btn(&th, "follow outer", !has_override).on_mouse_down(
@@ -2094,6 +2357,102 @@ impl Render for Workspace {
                     MouseButton::Left,
                     cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
                         ws.theme_menu = None;
+                        cx.notify();
+                    }),
+                )
+                .child(panel)
+        });
+
+        // ---- monitor OSD (display) tray: brightness/contrast/… sliders, per scope ----
+        let osd_overlay = self.osd_menu.clone().map(|scope| {
+            let is_pane = matches!(scope, MenuScope::Pane(_));
+            let cur = self.choice_for(&scope, cx);
+            let grade = cur.grade;
+            let has_override = match &scope {
+                MenuScope::Pane(p) => p.read(cx).theme_override.is_some(),
+                MenuScope::Outer => true,
+            };
+            let label = |s: &str| {
+                div()
+                    .text_size(px(9.))
+                    .text_color(th.text.alpha(0.55))
+                    .child(s.to_string())
+            };
+            let mut rows = div().flex().flex_col().gap_1();
+            for (key, name) in theme::Grade::CHANNELS {
+                rows = rows.child(self.slider_row(key, name, grade.get(key), &th, cx));
+            }
+            const PANEL_W: f32 = 300.;
+            const PANEL_H_EST: f32 = 280.;
+            let mut panel = div().absolute().w(px(PANEL_W));
+            panel = match self.osd_at {
+                Some(at) => {
+                    let vp = window.viewport_size();
+                    let (vw, vh) = (f32::from(vp.width), f32::from(vp.height));
+                    let right = (vw - f32::from(at.x)).clamp(8., (vw - PANEL_W - 8.).max(8.));
+                    let top = (f32::from(at.y) + 6.).clamp(8., (vh - PANEL_H_EST - 8.).max(8.));
+                    panel.right(px(right)).top(px(top))
+                }
+                None => panel.top(px(36.)).right(px(110.)),
+            };
+            panel = panel
+                .p_3()
+                .rounded_md()
+                .border_1()
+                .border_color(th.accent.alpha(0.55))
+                .bg(darken(th.surface, 0.6))
+                .shadow(vec![BoxShadow {
+                    color: hsla(0., 0., 0., 0.6),
+                    offset: point(px(4.), px(6.)),
+                    blur_radius: px(18.),
+                    spread_radius: px(0.),
+                    inset: false,
+                }])
+                .flex()
+                .flex_col()
+                .gap_2()
+                .text_size(px(10.))
+                .text_color(th.text)
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|_, _: &MouseDownEvent, _w, cx| cx.stop_propagation()),
+                )
+                .child(label(if is_pane {
+                    "DISPLAY — THIS PANE"
+                } else {
+                    "DISPLAY — OUTER"
+                }))
+                .child(rows)
+                .child(
+                    Self::bezel_btn(&th, "reset", grade.is_neutral()).on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                            cx.stop_propagation();
+                            ws.reset_grade(cx);
+                        }),
+                    ),
+                );
+            if is_pane {
+                panel = panel.child(
+                    Self::bezel_btn(&th, "follow outer", !has_override).on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                            cx.stop_propagation();
+                            if let Some(scope) = ws.osd_menu.clone() {
+                                ws.set_choice_for(&scope, None, cx);
+                            }
+                        }),
+                    ),
+                );
+            }
+            // full-screen scrim: click anywhere outside closes
+            div()
+                .absolute()
+                .inset_0()
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                        ws.osd_menu = None;
                         cx.notify();
                     }),
                 )
@@ -2304,6 +2663,7 @@ impl Render for Workspace {
                     .child(screen)
                     .child(bezel_bottom)
                     .children(menu_overlay)
+                    .children(osd_overlay)
                     .children(confirm_overlay)
                     .children(drag_chip),
             )
@@ -2394,6 +2754,31 @@ mod tests {
     }
 
     #[test]
+    fn to_saved_carries_per_leaf_custom_name() {
+        // a right-click rename lands in LeafState.name and must survive a
+        // serialize→deserialize round-trip so the name persists across reboot.
+        let t: Tree<u32> = Tree::Leaf(7);
+        let saved = t.to_saved_with(&|_| LeafState {
+            name: Some("build".into()),
+            ..Default::default()
+        });
+        assert!(
+            matches!(&saved, SavedNode::Leaf { name: Some(n), .. } if n == "build"),
+            "custom name lost on save"
+        );
+        let toml = toml::to_string(&SavedTab {
+            name: None,
+            node: saved,
+        })
+        .expect("serialize");
+        let back: SavedTab = toml::from_str(&toml).expect("deserialize");
+        assert!(
+            matches!(back.node, SavedNode::Leaf { name: Some(n), .. } if n == "build"),
+            "custom name lost on reload"
+        );
+    }
+
+    #[test]
     fn legacy_state_file_with_string_leaf_still_loads() {
         let legacy = r#"
 active = 0
@@ -2435,6 +2820,7 @@ b = "Leaf"
                     }),
                     cwd: None,
                     resume: None,
+                    name: None,
                 },
             }],
         };
@@ -2461,6 +2847,7 @@ b = "Leaf"
                     theme: None,
                     cwd: Some("/home/pbrown/proj".into()),
                     resume: Some("claude --resume 48be90b8-5777-44b6-bb6f-1c6069205c0d".into()),
+                    name: None,
                 },
             }],
         };

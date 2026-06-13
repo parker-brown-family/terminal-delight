@@ -13,7 +13,7 @@ use std::{
 };
 
 use gpui::{rgb, App, Global, Hsla};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
 pub const DEFAULT_THEME_TOML: &str = include_str!("../themes/hacker.toml");
 
@@ -97,6 +97,14 @@ pub struct Theme {
     pub ansi: [Hsla; 16],
     /// How program text colour is painted (default/monochrome/on-theme).
     pub color_mode: ColorMode,
+    /// IDE-style token highlighting overlaid on default-foreground text. An
+    /// orthogonal axis to `color_mode`: when on, cells the program left at its
+    /// default fg are recoloured by token class, while cells the program gave
+    /// an explicit ANSI colour still flow through `color_mode`.
+    pub syntax: bool,
+    /// Monitor-OSD grading baked from the scope's [`ThemeChoice::grade`], applied
+    /// to final cell colours at paint time (see `pane::graded`).
+    pub grade: Grade,
     pub scanline_opacity: f32,
     pub scanline_step: f32,
     pub vignette: f32,
@@ -123,10 +131,12 @@ pub fn theme(cx: &App) -> Arc<Theme> {
     cx.global::<ActiveTheme>().0.clone()
 }
 
-/// How a pane paints the program's text colour. Travels with the theme choice
-/// (so it follows outer-vs-pane scope like the seed does), and is baked onto
-/// the resolved `Theme.color_mode` for the renderer to read.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, Default)]
+/// The "source" half of the text-colour pair: how a pane renders the colour the
+/// program *emitted* (the ANSI byte stream). The orthogonal half — whether plain
+/// text is also token-highlighted — lives in `ThemeChoice::syntax`. Travels with
+/// the theme choice (follows outer-vs-pane scope like the seed), and is baked
+/// onto the resolved `Theme.color_mode` for the renderer to read.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Default)]
 #[serde(rename_all = "kebab-case")]
 pub enum ColorMode {
     /// The real xterm ANSI palette — blues, greens, reds, the lot.
@@ -136,19 +146,27 @@ pub enum ColorMode {
     Monochrome,
     /// ANSI hues folded onto a harmonic arc around the seed colour.
     OnTheme,
-    /// IDE-style: ignore the program's ANSI and instead tokenise the text,
-    /// colouring each token class (number, string, path, flag, …) its own
-    /// hue on the seed arc.
-    Syntax,
+}
+
+/// Lenient on load: the retired `Syntax`/`code` variant (now the independent
+/// `syntax` axis) and any unknown value fold to the monochrome default, so old
+/// state files keep deserialising instead of erroring the whole struct.
+impl<'de> Deserialize<'de> for ColorMode {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        Ok(match String::deserialize(d)?.as_str() {
+            "default" => ColorMode::Default,
+            "on-theme" => ColorMode::OnTheme,
+            _ => ColorMode::Monochrome,
+        })
+    }
 }
 
 impl ColorMode {
     /// Picker order.
-    pub const ALL: [ColorMode; 4] = [
+    pub const ALL: [ColorMode; 3] = [
         ColorMode::Default,
         ColorMode::Monochrome,
         ColorMode::OnTheme,
-        ColorMode::Syntax,
     ];
 
     /// Glyph shown in the breakout picker.
@@ -157,7 +175,6 @@ impl ColorMode {
             ColorMode::Default => "◍",
             ColorMode::Monochrome => "●",
             ColorMode::OnTheme => "◉",
-            ColorMode::Syntax => "◆",
         }
     }
 
@@ -167,13 +184,121 @@ impl ColorMode {
             ColorMode::Default => "ansi",
             ColorMode::Monochrome => "mono",
             ColorMode::OnTheme => "theme",
-            ColorMode::Syntax => "code",
         }
     }
 
     /// `true` for the serde/skip default (monochrome).
     pub fn is_default(&self) -> bool {
         matches!(self, ColorMode::Monochrome)
+    }
+}
+
+/// serde `skip_serializing_if` for the `syntax` flag — omit it when off (false).
+fn is_false(b: &bool) -> bool {
+    !*b
+}
+
+/// The neutral slider position. Every [`Grade`] channel reads 0.5 = no-op, so a
+/// fresh grade is the identity transform and serialises to nothing.
+fn half() -> f32 {
+    0.5
+}
+
+/// One channel of the monitor OSD — the address of a slider, used both to drive
+/// the picker loop and to tag an in-flight slider drag.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum GradeKey {
+    Brightness,
+    Contrast,
+    Colour,
+    Text,
+    Background,
+    Gamma,
+}
+
+/// Per-scope "monitor controls": real-display grading applied to the pane's
+/// final colours (HSLA, at paint time — see `pane::graded`). Each channel is a
+/// slider in `0..=1` with **0.5 = neutral**; `brightness`/`contrast`/`colour`/
+/// `gamma` grade both text and background, while `text`/`background` are the
+/// independent per-channel lightness levels. Rides on [`ThemeChoice`] so it
+/// follows the same outer-vs-pane scope and persistence as the theme.
+#[derive(Clone, Copy, PartialEq, Debug, Serialize, Deserialize)]
+pub struct Grade {
+    #[serde(default = "half")]
+    pub brightness: f32,
+    #[serde(default = "half")]
+    pub contrast: f32,
+    #[serde(default = "half")]
+    pub colour: f32,
+    #[serde(default = "half")]
+    pub text: f32,
+    #[serde(default = "half")]
+    pub background: f32,
+    #[serde(default = "half")]
+    pub gamma: f32,
+}
+
+impl Default for Grade {
+    fn default() -> Self {
+        Self {
+            brightness: 0.5,
+            contrast: 0.5,
+            colour: 0.5,
+            text: 0.5,
+            background: 0.5,
+            gamma: 0.5,
+        }
+    }
+}
+
+impl Grade {
+    /// Picker order: (channel, label) for the OSD slider rows.
+    pub const CHANNELS: [(GradeKey, &'static str); 6] = [
+        (GradeKey::Brightness, "brightness"),
+        (GradeKey::Contrast, "contrast"),
+        (GradeKey::Colour, "colour"),
+        (GradeKey::Text, "text"),
+        (GradeKey::Background, "background"),
+        (GradeKey::Gamma, "gamma"),
+    ];
+
+    /// True when every channel sits at neutral — the grade is the identity and
+    /// is omitted from the serialised form / takes `resolve`'s fast path.
+    pub fn is_neutral(&self) -> bool {
+        const EPS: f32 = 1e-3;
+        [
+            self.brightness,
+            self.contrast,
+            self.colour,
+            self.text,
+            self.background,
+            self.gamma,
+        ]
+        .iter()
+        .all(|v| (v - 0.5).abs() < EPS)
+    }
+
+    pub fn get(&self, k: GradeKey) -> f32 {
+        match k {
+            GradeKey::Brightness => self.brightness,
+            GradeKey::Contrast => self.contrast,
+            GradeKey::Colour => self.colour,
+            GradeKey::Text => self.text,
+            GradeKey::Background => self.background,
+            GradeKey::Gamma => self.gamma,
+        }
+    }
+
+    pub fn set(&mut self, k: GradeKey, v: f32) {
+        let v = v.clamp(0.0, 1.0);
+        match k {
+            GradeKey::Brightness => self.brightness = v,
+            GradeKey::Contrast => self.contrast = v,
+            GradeKey::Colour => self.colour = v,
+            GradeKey::Text => self.text = v,
+            GradeKey::Background => self.background = v,
+            GradeKey::Gamma => self.gamma = v,
+        }
     }
 }
 
@@ -186,6 +311,15 @@ pub struct ThemeChoice {
     pub seed: Option<String>,
     #[serde(default, skip_serializing_if = "ColorMode::is_default")]
     pub color: ColorMode,
+    /// IDE-style token highlighting, an axis orthogonal to `color`: it only
+    /// recolours cells the program left at default fg, so app ANSI colour still
+    /// flows through `color`. (Was the retired `ColorMode::Syntax` mode.)
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub syntax: bool,
+    /// Monitor-OSD grading for this scope. Neutral by default and omitted from
+    /// the wire form when so (see [`Grade::is_neutral`]).
+    #[serde(default, skip_serializing_if = "Grade::is_neutral")]
+    pub grade: Grade,
 }
 
 impl Default for ThemeChoice {
@@ -194,6 +328,8 @@ impl Default for ThemeChoice {
             id: "custom".into(),
             seed: None,
             color: ColorMode::default(),
+            syntax: false,
+            grade: Grade::default(),
         }
     }
 }
@@ -272,8 +408,8 @@ pub fn resolve(cx: &App, choice: &ThemeChoice) -> Arc<Theme> {
             .unwrap_or_else(|| reg.custom.clone())
     };
     let seed = choice.seed.as_deref().and_then(hex);
-    // Fast path: stock theme, no recolour and the default (monochrome) mode.
-    if seed.is_none() && choice.color.is_default() {
+    // Fast path: stock theme, no recolour, default mode, no syntax, neutral grade.
+    if seed.is_none() && choice.color.is_default() && !choice.syntax && choice.grade.is_neutral() {
         return base;
     }
     let mut th = match seed {
@@ -281,6 +417,8 @@ pub fn resolve(cx: &App, choice: &ThemeChoice) -> Arc<Theme> {
         None => (*base).clone(),
     };
     th.color_mode = choice.color;
+    th.syntax = choice.syntax;
+    th.grade = choice.grade;
     Arc::new(th)
 }
 
@@ -335,6 +473,8 @@ fn parse(source: &str) -> Result<Theme, String> {
         cursor: c.cursor.as_ref().and_then(|s| hex(s)).unwrap_or(accent),
         ansi,
         color_mode: ColorMode::default(),
+        syntax: false,
+        grade: Grade::default(),
         scanline_opacity: file.effects.scanline_opacity.unwrap_or(0.).clamp(0., 0.6),
         scanline_step: file.effects.scanline_step.unwrap_or(4.).max(2.),
         vignette: file.effects.vignette.unwrap_or(0.).clamp(0., 1.),
@@ -394,6 +534,73 @@ mod tests {
         let grey = hex("#828282").unwrap();
         let mono = apply_seed(&base, grey);
         assert!(mono.accent.s < 0.01 && mono.bg.s < 0.01);
+    }
+
+    #[test]
+    fn syntax_is_an_orthogonal_axis_and_round_trips() {
+        // source + syntax serialise as two independent fields
+        let c = ThemeChoice {
+            id: "hacker".into(),
+            color: ColorMode::OnTheme,
+            syntax: true,
+            ..Default::default()
+        };
+        let toml = toml::to_string(&c).unwrap();
+        let back: ThemeChoice = toml::from_str(&toml).unwrap();
+        assert_eq!(back.color, ColorMode::OnTheme);
+        assert!(back.syntax, "syntax flag survives a round-trip");
+
+        // off is the default, so it is omitted from the wire form
+        let off = toml::to_string(&ThemeChoice::default()).unwrap();
+        assert!(!off.contains("syntax"), "default syntax=false is skipped");
+    }
+
+    #[test]
+    fn grade_neutral_is_default_and_omitted_from_the_wire() {
+        assert!(
+            Grade::default().is_neutral(),
+            "a fresh grade is the identity"
+        );
+        let off = toml::to_string(&ThemeChoice::default()).unwrap();
+        assert!(
+            !off.contains("grade"),
+            "neutral grade is skipped on the wire"
+        );
+    }
+
+    #[test]
+    fn grade_round_trips_and_partial_toml_fills_neutral() {
+        // a non-neutral grade survives a round-trip on ThemeChoice
+        let mut g = Grade::default();
+        g.set(GradeKey::Brightness, 0.8);
+        g.set(GradeKey::Gamma, 0.3);
+        let c = ThemeChoice {
+            id: "hacker".into(),
+            grade: g,
+            ..Default::default()
+        };
+        let back: ThemeChoice = toml::from_str(&toml::to_string(&c).unwrap()).unwrap();
+        assert!((back.grade.brightness - 0.8).abs() < 1e-6);
+        assert!((back.grade.gamma - 0.3).abs() < 1e-6);
+        // a partial [grade] table must fill the *missing* channels with 0.5, not
+        // f32's 0.0 default — this guards the per-field `default = "half"` wiring.
+        let partial: ThemeChoice =
+            toml::from_str("id = \"hacker\"\n[grade]\nbrightness = 0.9\n").unwrap();
+        assert!((partial.grade.brightness - 0.9).abs() < 1e-6);
+        assert!(
+            (partial.grade.contrast - 0.5).abs() < 1e-6,
+            "omitted channel = neutral"
+        );
+        assert!((partial.grade.colour - 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn legacy_syntax_colour_mode_folds_to_mono() {
+        // Old state files stored the retired `color = "syntax"` mode; it must
+        // still load (folding onto the monochrome default) rather than erroring.
+        let c: ThemeChoice = toml::from_str("id = \"hacker\"\ncolor = \"syntax\"\n").unwrap();
+        assert_eq!(c.color, ColorMode::Monochrome);
+        assert!(!c.syntax);
     }
 }
 
