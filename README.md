@@ -31,12 +31,22 @@ does the VT emulation; your real shell runs on a real PTY.
 
 ```bash
 # deps (Ubuntu): bash scripts/setup-deps.sh   (Vulkan + build libs)
-git clone --depth 1 https://github.com/zed-industries/zed ../zed-upstream  # pinned substrate
+bash scripts/prepare-gpui.sh   # clone pinned Zed + apply the td-crt-pass patch
 cd app && cargo run
 ```
 
-gpui is consumed from a pinned zed checkout (`abbe85a`, post-wgpu-Linux-renderer —
-the crates.io release still ships the older blade renderer with known NVIDIA/X11 issues).
+gpui is consumed from a pinned Zed checkout
+(`abbe85a3321bf6cb7f5b241e623d9c2e16c29187`, post-wgpu-Linux-renderer) carrying
+the `td-crt-pass` renderer patch (`docs/patches/0001-td-crt-pass.patch`) — the
+per-pane CRT barrel warp. `scripts/prepare-gpui.sh` sets the checkout up as a
+sibling `zed-upstream/` directory; CI does the same. The crates.io gpui release
+still ships the older blade renderer with known NVIDIA/X11 issues.
+
+Release smoke:
+
+```bash
+bash scripts/release-smoke.sh
+```
 
 ## Theming — edit while it runs
 
@@ -54,13 +64,37 @@ app/src/pane.rs   TerminalView: grid render (styled runs), input→PTY bytes,
                   selection, scrollback, clipboard, CRT-lite, latency probe
 app/src/term.rs   the seam: alacritty_terminal tty+EventLoop (clean-room, Apache-2.0 API)
 app/src/theme.rs  TOML themes, hot-reload watcher, gpui Global
+app/src/warp.rs   per-pane warp registry feeding the td-crt-pass renderer patch
 app/themes/       shipped themes (data files — the no-Rust contribution path)
 docs/PLAN.md      the adversarially-hardened plan, gates G0a–G0e + milestones
 index.html, src/  original browser design prototype (kept as design reference)
 ```
 
-License: MIT. (`gpui`, `alacritty_terminal` = Apache-2.0. Zed's GPL terminal crates
-were used as *shape* reference only — see the clean-room rule in docs/PLAN.md §2.)
+## License
+
+terminal-delight's own source is **MIT** (see `LICENSE`). It links `gpui` and
+`alacritty_terminal`, both **Apache-2.0**.
+
+**This is a source-only project — please do not redistribute prebuilt binaries.**
+The pinned Zed graph pulls **GPL-3.0-or-later** crates (`ztracing`, `zlog`,
+`ztracing_macro`) into the linked binary through `gpui -> sum_tree`, so a
+*distributed binary* is a derivative work that would have to ship under
+GPL-3.0-or-later. The source tree stays cleanly MIT precisely because those GPL
+crates are never redistributed here — you build them yourself from your own Zed
+checkout via `scripts/prepare-gpui.sh`. Relicensing to GPL-3.0-or-later, or
+severing the `sum_tree -> ztracing` edge in the fork, is what would unlock MIT
+binaries later.
+
+`cargo deny check` enforces this license/source policy (`app/deny.toml`), and CI
+also runs formatting, strict Clippy, tests, the release build, and an advisory
+audit. The clean-room rule for Zed reference is in docs/PLAN.md §2.
+
+### Privacy
+
+terminal-delight records each pane's working directory and agent resume command
+(`claude --resume <id>` / `codex resume <id>`) to `~/.config/terminal-delight/state.toml`
+so it can reopen your work after a restart. That file is written owner-only
+(`0600`); delete it to clear the history.
 
 ## Roadmap
 
