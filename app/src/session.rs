@@ -13,7 +13,8 @@
 //! Everything here is std+libc only — no gpui — so it stays testable.
 
 use std::fs::File;
-use std::io;
+use std::io::{self, Write};
+use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 
 /// What a pane needs at spawn time to pick its work back up.
@@ -49,10 +50,23 @@ pub fn capture(master: Option<&File>, shell_pid: u32) -> PaneRuntime {
 /// the last good state.
 pub fn write_atomic(path: &Path, body: &str) -> io::Result<()> {
     if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)?;
+        // 0700 dir: the state it holds (cwd history + agent session ids) is the
+        // user's alone, so keep it owner-only on multi-user machines.
+        std::fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(dir)?;
     }
     let tmp = path.with_extension("toml.tmp");
-    std::fs::write(&tmp, body)?;
+    // 0600 file for the same reason — never world-readable.
+    let mut f = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(&tmp)?;
+    f.write_all(body.as_bytes())?;
+    f.sync_all()?;
     std::fs::rename(&tmp, path)
 }
 
@@ -89,9 +103,12 @@ fn home() -> String {
 fn agent_resume(comm: &str, cmdline: &str, cwd: Option<&str>, home: &Path) -> Option<String> {
     let c = comm.trim();
     if c == "claude" || cmdline.contains("/claude") || cmdline.starts_with("claude ") {
+        // Both sources (a cmdline arg, a transcript filename stem) end up typed
+        // into a shell, so reject anything that isn't a plain id before use.
         let id = arg_after(cmdline, &["--resume", "-r"])
             .map(str::to_string)
-            .or_else(|| cwd.and_then(|d| claude_session_for(d, home)));
+            .or_else(|| cwd.and_then(|d| claude_session_for(d, home)))
+            .filter(|id| safe_resume_id(id));
         Some(match id {
             Some(id) => format!("claude --resume {id}"),
             // --continue picks the most recent conversation for this cwd
@@ -101,7 +118,8 @@ fn agent_resume(comm: &str, cmdline: &str, cwd: Option<&str>, home: &Path) -> Op
         let id = arg_after(cmdline, &["resume", "--resume"])
             .filter(|v| looks_like_uuid(v))
             .map(str::to_string)
-            .or_else(|| cwd.and_then(|d| codex_session_for(d, home)));
+            .or_else(|| cwd.and_then(|d| codex_session_for(d, home)))
+            .filter(|id| safe_resume_id(id));
         Some(match id {
             Some(id) => format!("codex resume {id}"),
             None => "codex resume --last".to_string(),
@@ -124,6 +142,18 @@ fn arg_after<'a>(cmdline: &'a str, keys: &[&str]) -> Option<&'a str> {
 
 fn looks_like_uuid(v: &str) -> bool {
     v.len() >= 32 && v.chars().all(|c| c.is_ascii_hexdigit() || c == '-')
+}
+
+/// A resume id is interpolated into a command line that gets typed straight
+/// into a fresh shell, so it must not be able to break out of the command.
+/// Session ids are uuids (hex + dashes) or transcript filename stems; allow
+/// only those plain characters and reject shell metacharacters / whitespace.
+fn safe_resume_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 128
+        && id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
 
 /// Claude Code's per-project transcript dir slug: every non-alphanumeric
@@ -212,8 +242,41 @@ mod tests {
     #[test]
     fn slug_matches_claude_code_layout() {
         assert_eq!(
-            claude_slug("/home/pbrown/BROWN-FAMILY-SPORTS/Software/terminal-delight"),
-            "-home-pbrown-BROWN-FAMILY-SPORTS-Software-terminal-delight"
+            claude_slug("/home/user/Code/terminal-delight"),
+            "-home-user-Code-terminal-delight"
+        );
+    }
+
+    #[test]
+    fn resume_id_must_be_shell_safe() {
+        let home = Path::new("/nonexistent");
+        // a cmdline arg carrying shell metacharacters must NOT be typed into the
+        // shell — fall back to the safe cwd-scoped resume instead.
+        assert_eq!(
+            agent_resume("claude", "claude --resume a;rm~-rf~/", Some("/tmp"), home).as_deref(),
+            Some("claude --continue"),
+            "unsafe id rejected, falls back to --continue"
+        );
+        // a plain uuid still rides through untouched
+        let id = "48be90b8-5777-44b6-bb6f-1c6069205c0d";
+        assert_eq!(
+            agent_resume("claude", &format!("claude --resume {id}"), Some("/tmp"), home).as_deref(),
+            Some("claude --resume 48be90b8-5777-44b6-bb6f-1c6069205c0d")
+        );
+        assert!(safe_resume_id(id));
+        assert!(safe_resume_id("bbbb-new_2"));
+        assert!(!safe_resume_id("a;b"));
+        assert!(!safe_resume_id("$(whoami)"));
+        assert!(!safe_resume_id(""));
+    }
+
+    #[test]
+    fn resume_arg_ignores_a_following_flag() {
+        // `--resume` with a flag (not an id) after it must not capture the flag.
+        let home = Path::new("/nonexistent");
+        assert_eq!(
+            agent_resume("claude", "claude --resume --verbose", Some("/tmp"), home).as_deref(),
+            Some("claude --continue")
         );
     }
 
@@ -283,6 +346,17 @@ mod tests {
         write_atomic(&tmp, "first").unwrap();
         write_atomic(&tmp, "second").unwrap();
         assert_eq!(std::fs::read_to_string(&tmp).unwrap(), "second");
+        std::fs::remove_file(&tmp).unwrap();
+    }
+
+    #[test]
+    fn state_file_is_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+        // it holds cwd history + agent session ids — must never be world-readable
+        let tmp = std::env::temp_dir().join(format!("td-perm-{}.toml", std::process::id()));
+        write_atomic(&tmp, "secret cwds").unwrap();
+        let mode = std::fs::metadata(&tmp).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "state file must be 0600, got {mode:o}");
         std::fs::remove_file(&tmp).unwrap();
     }
 }
