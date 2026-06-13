@@ -4,9 +4,17 @@ version = "0.1.0"
 edition = "2021"
 license = "MIT"
 description = "Tabful tiling Linux terminal manager — native-snappy, web-app polished, themeable at will"
+repository = "https://github.com/parker-brown-family/terminal-delight"
+readme = "../README.md"
+publish = false
 
-# gpui consumed from the pinned zed checkout (rev abbe85a, post-wgpu-renderer).
-# Path deps = the pin. Switch to git+rev form when we publish.
+[package.metadata.terminal-delight]
+# gpui consumed from a pinned Zed checkout (post-wgpu Linux renderer) carrying
+# the td-crt-pass patch (docs/patches/0001-td-crt-pass.patch) — the per-pane
+# CRT barrel warp. To build: clone zed at zed_rev as a sibling `zed-upstream/`
+# of the repo root and `git apply` the patch (scripts/prepare-gpui.sh does both).
+zed_rev = "abbe85a3321bf6cb7f5b241e623d9c2e16c29187"
+
 [dependencies]
 alacritty_terminal = "0.26"
 futures = "0.3"
@@ -15,7 +23,7 @@ gpui_platform = { path = "../../zed-upstream/crates/gpui_platform", features = [
 libc = "0.2.186"
 
 [target.'cfg(target_os = "linux")'.dependencies]
-# our td-crt-pass patch lives in this crate (see docs/patches/)
+# td-crt-pass lives in this crate (see docs/patches/)
 gpui_wgpu = { path = "../../zed-upstream/crates/gpui_wgpu" }
 serde = { version = "1.0.228", features = ["derive"] }
 toml = "0.8"

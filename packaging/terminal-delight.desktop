@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Terminal Delight
+Comment=Tabful tiling terminal manager, CRT-flavored and themeable at will
+Exec=terminal-delight
+Icon=terminal-delight
+Terminal=false
+Categories=System;TerminalEmulator;
+Keywords=terminal;tiling;crt;tubes;
+StartupWMClass=terminal-delight
+StartupNotify=false
