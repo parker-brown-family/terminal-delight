@@ -2905,6 +2905,85 @@ b = "Leaf"
         assert_eq!(taken, None);
         assert_eq!(leaf_ids(&rest.unwrap()), vec![9]);
     }
+
+    // load_state() reads $HOME so isn't callable in tests, but its body is
+    // `read.ok().and_then(parse.ok()).unwrap_or_default()` — pin that parse
+    // contract so a corrupt or old state.toml degrades to a clean boot instead
+    // of bricking startup or silently producing a zero-tab workspace.
+    #[test]
+    fn malformed_or_partial_state_falls_back_safely() {
+        // garbage never parses → load_state's .ok() yields the default
+        assert!(toml::from_str::<StateFile>("not valid [ toml").is_err());
+        let recovered: StateFile = toml::from_str::<StateFile>("not valid [ toml")
+            .ok()
+            .unwrap_or_default();
+        assert!(recovered.tabs.is_empty(), "garbage degrades to default");
+        // `tabs` has no serde default: a file with no [[tabs]] must be REJECTED
+        // (→ fall back to a fresh one-tab workspace), not load as zero tabs.
+        assert!(
+            toml::from_str::<StateFile>("active = 0").is_err(),
+            "a tabs-less file is rejected, not silently empty"
+        );
+        // the real pre-window-persistence shape: only active + one leaf tab,
+        // win/scale/theme all absent → loads with those optionals None.
+        let legacy = "active = 0\n[[tabs]]\nnode = \"Leaf\"\n";
+        let s: StateFile = toml::from_str(legacy).expect("minimal legacy state loads");
+        assert_eq!(s.tabs.len(), 1);
+        assert!(s.win.is_none() && s.scale.is_none() && s.theme.is_none());
+    }
+
+    #[test]
+    fn nested_layout_round_trips_and_legacy_split_defaults_ratio() {
+        // a 3-deep tree: Row( Col(leaf,leaf) @0.7 , leaf ) @0.3
+        let leaf = || SavedNode::Leaf {
+            theme: None,
+            cwd: None,
+            resume: None,
+            name: None,
+        };
+        let node = SavedNode::Split {
+            dir: SplitDir::Row,
+            ratio: 0.3,
+            a: Box::new(SavedNode::Split {
+                dir: SplitDir::Col,
+                ratio: 0.7,
+                a: Box::new(leaf()),
+                b: Box::new(leaf()),
+            }),
+            b: Box::new(leaf()),
+        };
+        let state = StateFile {
+            active: 0,
+            win: None,
+            scale: None,
+            theme: None,
+            tabs: vec![SavedTab { name: None, node }],
+        };
+        let body = toml::to_string(&state).expect("serializes");
+        let back: StateFile = toml::from_str(&body).expect("round-trips");
+        let SavedNode::Split { dir, ratio, a, .. } = &back.tabs[0].node else {
+            panic!("outer must stay a split");
+        };
+        assert!(matches!(dir, SplitDir::Row));
+        assert!((ratio - 0.3).abs() < 1e-6, "outer ratio survives nesting");
+        let SavedNode::Split { dir, ratio, .. } = a.as_ref() else {
+            panic!("inner must stay a split");
+        };
+        assert!(matches!(dir, SplitDir::Col));
+        assert!((ratio - 0.7).abs() < 1e-6, "inner ratio survives nesting");
+
+        // a saved Split missing its ratio (older format) fills the neutral 0.5
+        let no_ratio =
+            "active = 0\n[[tabs]]\n[tabs.node.Split]\ndir = \"Col\"\na = \"Leaf\"\nb = \"Leaf\"\n";
+        let s: StateFile = toml::from_str(no_ratio).expect("ratio-less split loads");
+        let SavedNode::Split { ratio, .. } = &s.tabs[0].node else {
+            panic!("expected a split");
+        };
+        assert!(
+            (ratio - default_ratio()).abs() < 1e-6,
+            "missing ratio -> 0.5"
+        );
+    }
 }
 
 fn main() {
