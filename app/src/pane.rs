@@ -1242,7 +1242,7 @@ impl Render for TerminalView {
                             canvas(
                                 move |bounds, window, cx| {
                                     let sf = window.scale_factor();
-                                    crate::warp::register_with_glare(
+                                    crate::warp::register_tube(
                                         [
                                             f32::from(bounds.origin.x) * sf,
                                             f32::from(bounds.origin.y) * sf,
@@ -1250,6 +1250,8 @@ impl Render for TerminalView {
                                             f32::from(bounds.size.height) * sf,
                                         ],
                                         th.screen_glare,
+                                        th.curvature * 0.14,
+                                        th.curvature * 0.06,
                                     );
                                     let changed = {
                                         let mut slot = store.lock().unwrap();

@@ -1,19 +1,22 @@
 diff --git a/crates/gpui_wgpu/src/crt_pass.wgsl b/crates/gpui_wgpu/src/crt_pass.wgsl
 new file mode 100644
-index 0000000..04fa1b0
+index 0000000..ff52290
 --- /dev/null
 +++ b/crates/gpui_wgpu/src/crt_pass.wgsl
-@@ -0,0 +1,66 @@
+@@ -0,0 +1,80 @@
 +// terminal-delight CRT post-pass v2: PER-RECT barrel distortion.
 +// The app registers up to 8 "tube" rectangles (terminal content areas, in
 +// physical px). Pixels inside a rect warp in rect-local space; everything
 +// else (bezel, buttons, chrome) passes through untouched, so hit-testing
-+// stays exact. k1/k2 + rects come from gpui_wgpu::set_crt_warp/set_crt_rects.
++// stays exact. Curvature is PER RECT — each tube carries its own k1/k2 (in
++// glare.yz), so a pane on a bent theme bows even when the window theme is
++// flat, and a flat pane stays flat next to a bent neighbour. rects + glare
++// come from gpui_wgpu::set_crt_rects_tubes; k.z carries the rect count.
 +
 +struct CrtParams {
-+    k: vec4<f32>,                  // k1, k2, rect_count, _pad
++    k: vec4<f32>,                  // global k1, k2 (gate only), rect_count, _pad
 +    rects: array<vec4<f32>, 8>,    // x, y, w, h (physical px)
-+    glare: array<vec4<f32>, 8>,    // strength, _pad, _pad, _pad
++    glare: array<vec4<f32>, 8>,    // strength, k1, k2, _pad (per-rect curvature)
 +}
 +
 +@group(0) @binding(0) var<uniform> crt: CrtParams;
@@ -42,10 +45,21 @@ index 0000000..04fa1b0
 +    for (var i = 0u; i < n; i = i + 1u) {
 +        let r = crt.rects[i];
 +        if (p.x >= r.x && p.x < r.x + r.z && p.y >= r.y && p.y < r.y + r.w) {
++            // per-rect curvature: glare.y = k1, glare.z = k2. Each tube is
++            // authoritative for its own bend — a flat pane stays flat even when
++            // a bent neighbour has turned the pass on, and vice versa.
++            let k1 = crt.glare[i].y;
++            let k2 = crt.glare[i].z;
++            // a genuinely flat tube (a no-bend pane) passes straight through,
++            // so it looks identical with or without the pass — no vignette, no
++            // glare, exact hit-testing.
++            if (abs(k1) < 0.0005 && abs(k2) < 0.0005) {
++                return textureSampleLevel(screen_tex, screen_samp, in.uv, 0.0);
++            }
 +            let local = (p - r.xy) / r.zw;
 +            let c = local - vec2<f32>(0.5, 0.5);
 +            let r2 = dot(c, c);
-+            let f = 1.0 + crt.k.x * r2 + crt.k.y * r2 * r2;
++            let f = 1.0 + k1 * r2 + k2 * r2 * r2;
 +            let l2 = vec2<f32>(0.5, 0.5) + c * f;
 +            let edge_distance = min(min(l2.x, 1.0 - l2.x), min(l2.y, 1.0 - l2.y));
 +            let edge_width = max(max(fwidth(l2.x), fwidth(l2.y)) * 1.5, 1.0 / min(r.z, r.w));
@@ -71,22 +85,23 @@ index 0000000..04fa1b0
 +    return vec4<f32>(col.rgb, col.a);
 +}
 diff --git a/crates/gpui_wgpu/src/gpui_wgpu.rs b/crates/gpui_wgpu/src/gpui_wgpu.rs
-index 452c3c0..2aec8c6 100644
+index 452c3c0..58e1c1d 100644
 --- a/crates/gpui_wgpu/src/gpui_wgpu.rs
 +++ b/crates/gpui_wgpu/src/gpui_wgpu.rs
-@@ -7,4 +7,7 @@ pub use cosmic_text_system::*;
+@@ -7,4 +7,8 @@ pub use cosmic_text_system::*;
  pub use wgpu;
  pub use wgpu_atlas::*;
  pub use wgpu_context::*;
 +pub use wgpu_renderer::set_crt_warp;
 +pub use wgpu_renderer::set_crt_rects;
++pub use wgpu_renderer::set_crt_rects_tubes;
 +pub use wgpu_renderer::set_crt_rects_with_glare;
  pub use wgpu_renderer::{GpuContext, WgpuRenderer, WgpuSurfaceConfig};
 diff --git a/crates/gpui_wgpu/src/wgpu_renderer.rs b/crates/gpui_wgpu/src/wgpu_renderer.rs
-index 08f30dc..d5d098a 100644
+index 08f30dc..ace3728 100644
 --- a/crates/gpui_wgpu/src/wgpu_renderer.rs
 +++ b/crates/gpui_wgpu/src/wgpu_renderer.rs
-@@ -94,6 +94,199 @@ struct WgpuPipelines {
+@@ -94,6 +94,220 @@ struct WgpuPipelines {
      surfaces: wgpu::RenderPipeline,
  }
  
@@ -107,7 +122,9 @@ index 08f30dc..d5d098a 100644
 +    )
 +}
 +
-+type CrtRect = ([f32; 4], f32);
++// (rect[x,y,w,h], glare, k1, k2) — curvature is per rect so each tube bends
++// on its own theme regardless of the window-wide dial.
++type CrtRect = ([f32; 4], f32, f32, f32);
 +
 +static CRT_RECTS: std::sync::Mutex<Vec<CrtRect>> = std::sync::Mutex::new(Vec::new());
 +
@@ -115,7 +132,7 @@ index 08f30dc..d5d098a 100644
 +pub fn set_crt_rects(rects: &[[f32; 4]]) {
 +    let mut guard = CRT_RECTS.lock().unwrap();
 +    guard.clear();
-+    guard.extend(rects.iter().take(8).map(|rect| (*rect, 0.0)));
++    guard.extend(rects.iter().take(8).map(|rect| (*rect, 0.0, 0.0, 0.0)));
 +}
 +
 +/// Replace the set of warped rectangles with a per-rect top-left glass glare.
@@ -126,19 +143,38 @@ index 08f30dc..d5d098a 100644
 +        rects
 +            .iter()
 +            .take(8)
-+            .map(|(rect, glare)| (*rect, glare.clamp(0.0, 1.0))),
++            .map(|(rect, glare)| (*rect, glare.clamp(0.0, 1.0), 0.0, 0.0)),
 +    );
 +}
 +
-+fn crt_rects() -> ([[f32; 4]; 8], [f32; 8], u32) {
++/// Replace the set of warped rectangles with a per-rect glare AND per-rect
++/// barrel curvature (k1, k2). This is what the per-pane warp registry uses:
++/// each tube carries the curvature of its own theme.
++pub fn set_crt_rects_tubes(rects: &[([f32; 4], f32, f32, f32)]) {
++    let mut guard = CRT_RECTS.lock().unwrap();
++    guard.clear();
++    guard.extend(
++        rects
++            .iter()
++            .take(8)
++            .map(|(rect, glare, k1, k2)| (*rect, glare.clamp(0.0, 1.0), *k1, *k2)),
++    );
++}
++
++/// Returns (rects, packed glare+curvature [glare, k1, k2, _], count, max|k|).
++/// The max curvature magnitude lets the caller turn the pass on when any tube
++/// bends, even if the global dial is flat.
++fn crt_rects() -> ([[f32; 4]; 8], [[f32; 4]; 8], u32, f32) {
 +    let guard = CRT_RECTS.lock().unwrap();
 +    let mut rects = [[0.0f32; 4]; 8];
-+    let mut glare = [0.0f32; 8];
-+    for (i, (r, g)) in guard.iter().take(8).enumerate() {
++    let mut glare = [[0.0f32; 4]; 8];
++    let mut max_k = 0.0f32;
++    for (i, (r, g, k1, k2)) in guard.iter().take(8).enumerate() {
 +        rects[i] = *r;
-+        glare[i] = *g;
++        glare[i] = [*g, *k1, *k2, 0.0];
++        max_k = max_k.max(k1.abs()).max(k2.abs());
 +    }
-+    (rects, glare, guard.len().min(8) as u32)
++    (rects, glare, guard.len().min(8) as u32, max_k)
 +}
 +
 +/// Lazily-built resources for the CRT post pass.
@@ -286,7 +322,7 @@ index 08f30dc..d5d098a 100644
  struct WgpuBindGroupLayouts {
      globals: wgpu::BindGroupLayout,
      instances: wgpu::BindGroupLayout,
-@@ -158,6 +351,7 @@ pub struct WgpuRenderer {
+@@ -158,6 +372,7 @@ pub struct WgpuRenderer {
      device_lost: std::sync::Arc<std::sync::atomic::AtomicBool>,
      surface_configured: bool,
      needs_redraw: bool,
@@ -294,7 +330,7 @@ index 08f30dc..d5d098a 100644
  }
  
  impl WgpuRenderer {
-@@ -488,6 +682,7 @@ impl WgpuRenderer {
+@@ -488,6 +703,7 @@ impl WgpuRenderer {
              device_lost: context.device_lost_flag(),
              surface_configured: true,
              needs_redraw: false,
@@ -302,16 +338,16 @@ index 08f30dc..d5d098a 100644
          })
      }
  
-@@ -1151,6 +1346,30 @@ impl WgpuRenderer {
+@@ -1151,6 +1367,30 @@ impl WgpuRenderer {
              .texture
              .create_view(&wgpu::TextureViewDescriptor::default());
  
 +        // td-crt-pass: when warp is on, the scene renders offscreen and a
 +        // final barrel-distortion pass writes the swapchain.
 +        let (crt_k1, crt_k2) = crt_warp();
-+        let (crt_rect_arr, crt_glare_arr, crt_rect_count) = crt_rects();
-+        let crt_active =
-+            (crt_k1.abs() > 0.0005 || crt_k2.abs() > 0.0005) && crt_rect_count > 0;
++        let (crt_rect_arr, crt_glare_arr, crt_rect_count, crt_max_rect_k) = crt_rects();
++        let crt_active = crt_rect_count > 0
++            && (crt_k1.abs() > 0.0005 || crt_k2.abs() > 0.0005 || crt_max_rect_k > 0.0005);
 +        let crt_scene_view: Option<wgpu::TextureView> = if crt_active {
 +            if self.crt.is_none() {
 +                let pass = CrtPass::new(&self.resources().device, self.surface_config.format);
@@ -333,7 +369,7 @@ index 08f30dc..d5d098a 100644
          let gamma_params = GammaParams {
              gamma_ratios: self.rendering_params.gamma_ratios,
              grayscale_enhanced_contrast: self.rendering_params.grayscale_enhanced_contrast,
-@@ -1213,7 +1432,7 @@ impl WgpuRenderer {
+@@ -1213,7 +1453,7 @@ impl WgpuRenderer {
                  let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                      label: Some("main_pass"),
                      color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -342,7 +378,7 @@ index 08f30dc..d5d098a 100644
                          resolve_target: None,
                          ops: wgpu::Operations {
                              load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-@@ -1252,7 +1471,7 @@ impl WgpuRenderer {
+@@ -1252,7 +1492,7 @@ impl WgpuRenderer {
                              pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                                  label: Some("main_pass_continued"),
                                  color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -351,7 +387,7 @@ index 08f30dc..d5d098a 100644
                                      resolve_target: None,
                                      ops: wgpu::Operations {
                                          load: wgpu::LoadOp::Load,
-@@ -1327,6 +1546,66 @@ impl WgpuRenderer {
+@@ -1327,6 +1567,66 @@ impl WgpuRenderer {
                  continue;
              }
  
@@ -366,8 +402,8 @@ index 08f30dc..d5d098a 100644
 +                    for (i, r) in crt_rect_arr.iter().enumerate() {
 +                        params[4 + i * 4..4 + i * 4 + 4].copy_from_slice(r);
 +                    }
-+                    for (i, glare) in crt_glare_arr.iter().enumerate() {
-+                        params[4 + 32 + i * 4] = *glare;
++                    for (i, g) in crt_glare_arr.iter().enumerate() {
++                        params[4 + 32 + i * 4..4 + 32 + i * 4 + 4].copy_from_slice(g);
 +                    }
 +                    resources.queue.write_buffer(
 +                        &crt.params_buffer,
