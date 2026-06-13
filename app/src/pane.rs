@@ -206,11 +206,27 @@ fn idx_color(i: u8) -> Hsla {
     rgb(r << 16 | g << 8 | b).into()
 }
 
+/// The colour unstyled, default-foreground text takes — the bulk of the
+/// screen. It varies by mode so each [`ColorMode`] has a distinct identity even
+/// on plain text, not only on programs that emit ANSI colour:
+/// - `Default` — the honest xterm default foreground (light grey).
+/// - `Monochrome` / `Syntax` — the theme's phosphor (`text`), the classic look.
+/// - `OnTheme` — the seed accent, so plain text glows on-theme too.
+fn default_fg(mode: crate::theme::ColorMode, text: Hsla, accent: Hsla) -> Hsla {
+    use crate::theme::ColorMode;
+    match mode {
+        ColorMode::Default => rgb(0xe5e5e5).into(),
+        ColorMode::Monochrome | ColorMode::Syntax => text,
+        ColorMode::OnTheme => accent,
+    }
+}
+
 fn ansi_to_hsla(color: AnsiColor, th: &Theme, default: Hsla) -> Hsla {
     match color {
         AnsiColor::Named(named) => match named {
-            // structural colours stay themed in every mode
-            NamedColor::Foreground => th.text,
+            // unstyled text follows the active mode (honest grey / phosphor /
+            // seed); bg + cursor stay structural so the UI never loses contrast
+            NamedColor::Foreground => default_fg(th.color_mode, th.text, th.accent),
             NamedColor::Background => th.bg,
             NamedColor::Cursor => th.cursor,
             n => {
@@ -432,7 +448,13 @@ fn syntax_colors(line: &str, th: &Theme) -> Vec<Hsla> {
 pub struct TerminalView {
     focus_handle: FocusHandle,
     session: term::Session,
+    /// The OSC-driven shell title (apps overwrite it via the title sequence).
     pub title: String,
+    /// A user-set name (right-click the header to rename). Wins over `title`
+    /// and survives OSC title updates; persisted per leaf in the state file.
+    pub name: Option<String>,
+    /// Active inline-rename buffer; `Some` steals the keyboard from the PTY.
+    renaming: Option<String>,
     pub exited: bool,
     grid: term::GridSize,
     cell_w: f32,
@@ -482,6 +504,11 @@ impl gpui::EventEmitter<DragPaneStart> for TerminalView {}
 /// The × on this sub-tab's header was clicked — close just this pane.
 pub struct ClosePane;
 impl gpui::EventEmitter<ClosePane> for TerminalView {}
+
+/// This sub-tab's name just changed (rename committed) — the workspace
+/// persists the layout so the custom name survives a restart.
+pub struct PaneRenamed;
+impl gpui::EventEmitter<PaneRenamed> for TerminalView {}
 
 impl TerminalView {
     /// The theme this pane actually renders with: an explicit override wins;
@@ -595,6 +622,8 @@ impl TerminalView {
             focus_handle: cx.focus_handle(),
             session,
             title: "shell".into(),
+            name: None,
+            renaming: None,
             exited: false,
             grid,
             cell_w: 8.4,
@@ -789,10 +818,35 @@ impl TerminalView {
     }
 
     fn on_key(&mut self, ev: &KeyDownEvent, _window: &mut Window, cx: &mut Context<Self>) {
+        let ks = &ev.keystroke;
+        // The inline rename box owns the keyboard while open — keystrokes edit
+        // the name instead of reaching the PTY. Mirrors the main-tab rename.
+        if let Some(mut buf) = self.renaming.take() {
+            match ks.key.as_str() {
+                "enter" => {
+                    self.name = (!buf.trim().is_empty()).then(|| buf.trim().to_string());
+                    cx.emit(PaneRenamed);
+                }
+                "escape" => {}
+                "backspace" => {
+                    buf.pop();
+                    self.renaming = Some(buf);
+                }
+                _ => {
+                    if let Some(ch) = ks.key_char.as_ref() {
+                        if buf.chars().count() < 24 {
+                            buf.push_str(ch);
+                        }
+                    }
+                    self.renaming = Some(buf);
+                }
+            }
+            cx.notify();
+            return;
+        }
         if self.exited || self.spawned.elapsed() < Duration::from_millis(150) {
             return;
         }
-        let ks = &ev.keystroke;
         let m = &ks.modifiers;
         if m.control && m.shift {
             match ks.key.as_str() {
@@ -857,10 +911,14 @@ impl TerminalView {
         }
     }
 
-    fn on_mouse_down(&mut self, ev: &MouseDownEvent, _w: &mut Window, cx: &mut Context<Self>) {
+    fn on_mouse_down(&mut self, ev: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         if std::env::var("TD_KEYDEBUG").is_ok() {
             eprintln!("pane mousedown at {:?}", ev.position);
         }
+        // Clicking into a terminal makes it the focused leaf, so keystrokes and
+        // the split buttons (which target the focused pane) follow the pane the
+        // user is actually working in — not whichever pane happened to start focused.
+        window.focus(&self.focus_handle, cx);
         let offset = self.session.term.lock().grid().display_offset();
         let (point, side) = self.cell_at(ev.position, offset);
         let ty = match ev.click_count {
@@ -1100,12 +1158,13 @@ impl Render for TerminalView {
         let grid_label = format!("{}×{}", self.grid.cols, self.grid.rows);
         let glow = th.glow;
 
-        // MAIN bar text + glow: the complement of the theme seed (accent),
-        // damped down — opposite hue, muted saturation, dimmed lightness.
+        // Sub-tab header text + glow: the complement of the theme seed
+        // (accent), the opposite hue but kept legible. ~30% more vibrant than
+        // the old muting (s 0.55→0.72, l 0.8→0.9) so the bar reads less faded.
         let bar_fg = Hsla {
             h: wrap01(th.accent.h + 0.5),
-            s: (th.accent.s * 0.55).clamp(0., 1.),
-            l: (th.accent.l * 0.8).clamp(0., 1.),
+            s: (th.accent.s * 0.72).clamp(0., 1.),
+            l: (th.accent.l * 0.9).clamp(0., 1.),
             a: th.accent.a,
         };
 
@@ -1127,23 +1186,48 @@ impl Render for TerminalView {
             .border_b_1()
             .border_color(th.accent.alpha(0.5))
             .text_color(bar_fg)
-            .child(
+            .child(if let Some(buf) = self.renaming.clone() {
+                // inline rename box: a left-click anywhere else commits via
+                // focus loss is not wired, so enter/escape (in on_key) close it
+                div()
+                    .flex_1()
+                    .overflow_hidden()
+                    .whitespace_nowrap()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .child(format!("▸ {} · {buf}", self.mode.label()))
+                    .child(div().w(px(6.)).h(px(13.)).bg(th.cursor))
+                    .into_any_element()
+            } else {
                 // the title doubles as the drag handle: grab it to move this
                 // sub-tab onto another tab, or drop it on a pane to split there.
+                // Right-click renames it (custom name wins over the OSC title).
+                let label = self.name.clone().unwrap_or_else(|| self.title.clone());
                 div()
                     .flex_1()
                     .overflow_hidden()
                     .whitespace_nowrap()
                     .cursor_pointer()
-                    .child(format!("▸ {} · {}", self.mode.label(), self.title))
+                    .child(format!("▸ {} · {label}", self.mode.label()))
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(|_, ev: &MouseDownEvent, _w, cx| {
                             cx.stop_propagation();
                             cx.emit(DragPaneStart { at: ev.position });
                         }),
-                    ),
-            )
+                    )
+                    .on_mouse_down(
+                        MouseButton::Right,
+                        cx.listener(|view, _ev: &MouseDownEvent, window, cx| {
+                            cx.stop_propagation();
+                            view.renaming = Some(view.name.clone().unwrap_or_default());
+                            window.focus(&view.focus_handle, cx);
+                            cx.notify();
+                        }),
+                    )
+                    .into_any_element()
+            })
             .child(
                 div()
                     .flex()
@@ -1344,6 +1428,30 @@ mod tests {
             let d = signed_turn(folded(h) - seed).abs();
             assert!(d <= ARC / 2.0 + 1e-4, "hue {h} escaped the arc: {d}");
         }
+    }
+
+    #[test]
+    fn default_foreground_is_distinct_per_mode() {
+        use crate::theme::ColorMode;
+        let text: Hsla = rgb(0x33ff66).into(); // a theme phosphor
+        let accent: Hsla = rgb(0x00ffaa).into(); // its seed
+        let ansi = default_fg(ColorMode::Default, text, accent);
+        let mono = default_fg(ColorMode::Monochrome, text, accent);
+        let ontheme = default_fg(ColorMode::OnTheme, text, accent);
+        // The fix: plain text used to be `text` in EVERY mode, so ansi/mono/
+        // theme looked identical and only "code" (Syntax) appeared to work.
+        assert_eq!(
+            ansi,
+            Hsla::from(rgb(0xe5e5e5)),
+            "ansi shows honest xterm grey"
+        );
+        assert_eq!(mono, text, "mono keeps the classic phosphor look");
+        assert_eq!(ontheme, accent, "on-theme paints plain text in the seed");
+        assert_ne!(ansi, mono, "ansi must differ from mono on plain text");
+        assert_ne!(
+            ansi, ontheme,
+            "ansi must differ from on-theme on plain text"
+        );
     }
 
     #[test]
