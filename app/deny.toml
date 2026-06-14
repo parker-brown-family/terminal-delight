@@ -1,28 +1,73 @@
+# cargo-deny policy. The dependency graph cargo-deny sees is the *binary's*
+# graph — it includes the pinned Zed/gpui workspace we build from source. So
+# this file encodes two things at once: (1) terminal-delight's own MIT/permissive
+# license posture, and (2) an explicit, named acknowledgement of the GPL crates
+# the Zed graph links in (the reason binaries can't ship MIT — see
+# THIRD-PARTY-LICENSES.md and docs/PLAN.md §2). Anything *not* enumerated here
+# still fails, so a newly-introduced copyleft dep can't slip in unnoticed.
+
 [licenses]
 allow = [
   "Apache-2.0",
+  "Apache-2.0 WITH LLVM-exception", # ar_archive_writer (via gpui→stacker); strictly more permissive than Apache-2.0
   "BSD-2-Clause",
   "BSD-3-Clause",
   "BSL-1.0",
+  "bzip2-1.0.6",                    # libbz2-rs-sys; permissive, BSD-style
   "CC0-1.0",
   "ISC",
   "MIT",
   "MPL-2.0",
+  "NCSA",                          # libfuzzer-sys (fuzz-only, via the Zed graph); OSI-permissive
   "Unicode-3.0",
   "Zlib",
 ]
 confidence-threshold = 0.8
 
+# Per-crate license grants. The three GPL-3.0 crates are the documented binary
+# boundary: they are linked into the built binary (so a redistributed binary is
+# GPL-3.0-or-later), but they are NOT redistributed in this source tree. Naming
+# them here keeps the gate green while still failing on any *other* copyleft dep.
 exceptions = [
   { allow = ["Unicode-DFS-2016"], name = "unicode-ident" },
+  { allow = ["GPL-3.0-or-later"], name = "zlog" },
+  { allow = ["GPL-3.0-or-later"], name = "ztracing" },
+  { allow = ["GPL-3.0-or-later"], name = "ztracing_macro" },
 ]
+
+# First-party gpui workspace crates that ship without a `license` field. They are
+# part of the gpui codebase (Apache-2.0 — their sibling crates declare it), so we
+# clarify them rather than loosen the global allowlist.
+[[licenses.clarify]]
+name = "gpui_util"
+expression = "Apache-2.0"
+license-files = []
+
+[[licenses.clarify]]
+name = "gpui_shared_string"
+expression = "Apache-2.0"
+license-files = []
 
 [bans]
 multiple-versions = "allow"
-wildcards = "deny"
+# The Zed workspace crates reference each other by path with `*` version reqs,
+# and our own path deps on gpui/gpui_platform/gpui_wgpu are likewise wildcards.
+# allow-wildcard-paths clears the private path-dep wildcards; gpui itself is a
+# *publishable* crate, so cargo-deny won't path-exempt its internal wildcards —
+# and we can't edit upstream gpui's manifest. terminal-delight is source-only and
+# never published to crates.io, so a wildcard req can't break a publish here:
+# keep the signal as a warning rather than failing the build on upstream's shape.
+wildcards = "warn"
+allow-wildcard-paths = true
 
 [advisories]
 yanked = "warn"
+# Only flag unmaintained/discontinued crates in our own workspace (just
+# terminal-delight). The vendored Zed graph drags in deep transitives —
+# async-std, instant, paste, proc-macro-error2 — that we neither chose nor can
+# fix; "workspace" scoping silences exactly those without ignoring real security
+# advisories (vulnerabilities stay deny-by-default, and CI also runs `cargo audit`).
+unmaintained = "workspace"
 ignore = []
 
 [sources]
