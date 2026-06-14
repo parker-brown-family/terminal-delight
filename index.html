@@ -13,8 +13,7 @@
   <meta property="og:title" content="terminal-delight" />
   <meta property="og:description" content="GPU-native Linux terminal with hot-reloadable CRT-flavored themes and tiling multi-pane." />
   <meta property="og:type" content="website" />
-  <meta property="og:image" content="assets/crt-glass-hacker.png" />
-  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:card" content="summary" />
 
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -106,6 +105,11 @@
     .screen img { display: block; width: 100%; }
     .screen .playnote { position: absolute; left: 0; right: 0; bottom: 0; padding: 14px; background: linear-gradient(transparent, rgba(0,0,0,0.85)); font-family: var(--mono); font-size: 13px; color: var(--text); }
     .screen .playnote b { color: var(--accent); }
+    .screen .mock { margin: 0; padding: 22px 20px 30px; font-family: var(--mono); font-size: clamp(12px, 1.6vw, 15px); line-height: 1.7; color: var(--text); text-align: left; white-space: pre-wrap; word-break: break-word; text-shadow: 0 0 6px rgba(54,255,134,0.45); }
+    .screen .mock .p { color: var(--accent); font-weight: 700; }
+    .screen .mock .d { color: #6fd0ff; }
+    .screen .mock .g { color: #9affc0; }
+    .screen .mock .cur { animation: blink 1.1s steps(1) infinite; }
 
     /* ---- feature grid ---- */
     .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; margin-top: 30px; }
@@ -185,14 +189,20 @@
         <a class="btn" href="#build">⌨ Build from source</a>
       </div>
 
-      <!-- HERO DEMO. Default: the real gpui app, captured as a still. To swap in a
-           live recording, drop an asciinema cast at assets/demo.cast and uncomment
-           the asciinema-player block at the bottom of this file (it will replace
-           the <img> via #hero-demo), OR replace the <img> with a <video> mp4. -->
+      <!-- HERO DEMO. A leak-safe stylized mock (demo content only — never a capture
+           of a real machine). To swap in a live recording, drop an asciinema cast at
+           assets/demo.cast and uncomment the asciinema-player block at the bottom of
+           this file (it replaces #hero-demo's body), OR drop in a <video> mp4 — but
+           ONLY of a session staged with demo content (no real paths / usernames). -->
       <div class="screen" id="hero-demo">
         <div class="bar"><span class="dot"></span> terminal-delight — hacker theme · live CRT warp</div>
-        <img src="assets/crt-glass-hacker.png" alt="terminal-delight running with the hacker theme: phosphor-green CRT glass, scanlines, barrel warp" />
-        <div class="playnote">▶ This is the <b>real gpui renderer</b> (still). A live recording of the warp + theme-switching is coming — for now, the gallery below is all real captures.</div>
+        <pre class="mock" aria-label="terminal-delight demo session"><span class="p">demo@terminal-delight</span>:<span class="d">~/project</span>$ cargo run
+   <span class="g">Compiling</span> terminal-delight v0.1.0
+    <span class="g">Finished</span> release [optimized] target(s)
+<span class="p">demo@terminal-delight</span>:<span class="d">~/project</span>$ echo "the glass is curved now"
+the glass is curved now
+<span class="p">demo@terminal-delight</span>:<span class="d">~/project</span>$ <span class="cur">█</span></pre>
+        <div class="playnote">▶ Stylized preview. A live recording of the real warp + theme-switching is coming.</div>
       </div>
     </div>
   </header>
@@ -222,18 +232,14 @@
 
   <section id="gallery">
     <div class="wrap">
-      <div class="eyebrow">Gallery · click any shot to zoom</div>
-      <h2>All real captures of the running app</h2>
-      <div class="gallery">
-        <figure><img loading="lazy" src="assets/crt-warp.png" alt="barrel warp"><figcaption>barrel warp — the per-pane CRT curvature</figcaption></figure>
-        <figure><img loading="lazy" src="assets/native-quiet.png" alt="quiet-command theme"><figcaption>quiet-command — the calm built-in</figcaption></figure>
-        <figure><img loading="lazy" src="assets/preview-tactical.png" alt="tactical-overdrive theme"><figcaption>tactical-overdrive — amber HUD energy</figcaption></figure>
-        <figure><img loading="lazy" src="assets/tiling-tree-scrubber.png" alt="tiling tree with text-size scrubber"><figcaption>tiling tree + text-size scrubber</figcaption></figure>
-        <figure><img loading="lazy" src="assets/bezel-tabs-splits.png" alt="bezel, tabs, splits"><figcaption>bezel · tabs · splits</figcaption></figure>
-        <figure><img loading="lazy" src="assets/mode-tubes.png" alt="mode tubes"><figcaption>mode tubes — what's running, at a glance</figcaption></figure>
-        <figure><img loading="lazy" src="assets/drag-resize.png" alt="drag to resize"><figcaption>drag-to-resize a split</figcaption></figure>
-        <figure><img loading="lazy" src="assets/crt-glass-selection.png" alt="selection on CRT glass"><figcaption>selection on the phosphor glass</figcaption></figure>
-      </div>
+      <div class="eyebrow">Gallery</div>
+      <h2>Fresh captures incoming</h2>
+      <!-- Gallery images intentionally removed: the prior captures showed a real
+           shell prompt (username + local paths). All demo media must use staged
+           demo content only — no real paths, usernames, or directory trees. New
+           lipsum-staged captures will be dropped back into the .gallery grid. -->
+      <p class="prose" style="color:var(--text-dim)">We pulled the old screenshots while we re-shoot them with clean demo content. In the meantime, the feature list above and the build steps below tell the story — and the real app is one <code>cargo run</code> away.</p>
+      <div class="gallery"><!-- staged demo captures go here --></div>
     </div>
   </section>
 

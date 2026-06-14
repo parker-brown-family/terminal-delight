@@ -9,7 +9,8 @@ does the VT emulation; your real shell runs on a real PTY.
 > modify-at-will themes · open source.** See [docs/PLAN.md](docs/PLAN.md) for the
 > gated build plan (all five G0 risk gates + MVP 0.1: **passed**).
 
-![two panes: vim + top](assets/mvp-vim-top.png)
+<!-- Screenshots temporarily removed: the prior captures showed a real shell
+     prompt (username + local paths). Clean demo-content captures coming. -->
 
 **Platform:** Linux only (X11 & Wayland, via gpui's wgpu renderer). Not macOS/Windows.
 
