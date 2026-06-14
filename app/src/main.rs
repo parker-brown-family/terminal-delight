@@ -817,9 +817,13 @@ impl Workspace {
             .map(|p| p.entity_id());
         let Some(target) = target else { return };
         let new_pane = make_pane(window, cx);
+        // Keep a handle so we can focus it AFTER it's mounted in the tree —
+        // make_pane's focus-at-creation doesn't stick before the split inserts it.
+        let fresh = new_pane.clone();
         self.tabs[self.active]
             .root
             .split_leaf(&|p| p.entity_id() == target, dir, new_pane);
+        window.focus(&fresh.focus_handle(cx), cx);
         self.save(cx);
         cx.notify();
     }
@@ -1642,17 +1646,30 @@ impl Workspace {
 }
 
 /// Seed-colour presets for the breakout menu (IMT picker set).
-/// Theme-icon button for the breakout menu.
-fn theme_icon_btn(th: &theme::Theme, icon: &str, active: bool) -> gpui::Div {
+/// Theme-icon button for the breakout menu: glyph over a tiny caption. The
+/// caption names the slot so two themes that share a glyph (e.g. an unedited
+/// `custom` slot still carrying hacker's `>_`) stay tellable apart.
+fn theme_icon_btn(th: &theme::Theme, icon: &str, label: &str, active: bool) -> gpui::Div {
+    let inner = div()
+        .flex()
+        .flex_col()
+        .items_center()
+        .gap_0()
+        .child(div().text_size(px(14.)).child(icon.to_string()))
+        .child(
+            div()
+                .text_size(px(8.))
+                .text_color(th.text.alpha(if active { 0.85 } else { 0.6 }))
+                .child(label.to_string()),
+        );
     let b = div()
         .w(px(46.))
-        .h(px(34.))
+        .h(px(40.))
         .flex()
         .items_center()
         .justify_center()
         .rounded_md()
         .border_1()
-        .text_size(px(14.))
         .cursor_pointer();
     if active {
         b.bg(linear_gradient(
@@ -1662,12 +1679,12 @@ fn theme_icon_btn(th: &theme::Theme, icon: &str, active: bool) -> gpui::Div {
         ))
         .border_color(th.accent)
         .text_color(white().alpha(0.95))
-        .child(icon.to_string())
+        .child(inner)
     } else {
         b.bg(darken(th.surface, 0.8))
             .border_color(th.accent.alpha(0.35))
             .text_color(th.text)
-            .child(icon.to_string())
+            .child(inner)
     }
 }
 
@@ -2321,25 +2338,26 @@ impl Render for Workspace {
                 MenuScope::Outer => true,
             };
             let mut theme_row = div().flex().flex_row().gap_2();
-            for (id, icon) in theme::all_themes(cx) {
+            for (id, icon, lbl) in theme::all_themes(cx) {
                 let active = cur.id == id;
                 let seed = cur.seed.clone();
-                theme_row = theme_row.child(theme_icon_btn(&th, &icon, active).on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
-                        cx.stop_propagation();
-                        ws.set_menu_choice(
-                            Some(ThemeChoice {
-                                id: id.clone(),
-                                seed: seed.clone(),
-                                color,
-                                syntax,
-                                grade,
-                            }),
-                            cx,
-                        );
-                    }),
-                ));
+                theme_row =
+                    theme_row.child(theme_icon_btn(&th, &icon, &lbl, active).on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                            cx.stop_propagation();
+                            ws.set_menu_choice(
+                                Some(ThemeChoice {
+                                    id: id.clone(),
+                                    seed: seed.clone(),
+                                    color,
+                                    syntax,
+                                    grade,
+                                }),
+                                cx,
+                            );
+                        }),
+                    ));
             }
             let mut seed_row = div().flex().flex_row().items_center().gap_2();
             {

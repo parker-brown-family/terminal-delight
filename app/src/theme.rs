@@ -349,16 +349,28 @@ pub fn outer_choice(cx: &App) -> ThemeChoice {
     cx.global::<OuterChoice>().0.clone()
 }
 
-/// (id, icon) for the picker, in display order.
-pub fn all_themes(cx: &App) -> Vec<(String, String)> {
+/// (id, icon, label) for the picker, in display order. The label is a short
+/// caption shown under the glyph; it disambiguates glyph collisions — an
+/// unedited `custom` file still carries the `>_` glyph it was seeded from
+/// (hacker), so glyph alone can't tell the two apart, but "hacker" vs "custom"
+/// can.
+pub fn all_themes(cx: &App) -> Vec<(String, String, String)> {
     let reg = cx.global::<ThemeRegistry>();
     let mut out: Vec<_> = reg
         .builtins
         .iter()
-        .map(|(id, t)| (id.clone(), t.icon.clone()))
+        .map(|(id, t)| (id.clone(), t.icon.clone(), short_label(id)))
         .collect();
-    out.push(("custom".into(), reg.custom.icon.clone()));
+    // The hot-reloaded user file: always labelled "custom" so it reads as the
+    // live-editable slot even when it's still a verbatim copy of a built-in.
+    out.push(("custom".into(), reg.custom.icon.clone(), "custom".into()));
     out
+}
+
+/// Short picker caption for a theme id: the segment before the first '-'
+/// ("tactical-overdrive" → "tactical"), which is unique across the built-ins.
+fn short_label(id: &str) -> String {
+    id.split('-').next().unwrap_or(id).to_string()
 }
 
 pub fn parse_hex(value: &str) -> Option<Hsla> {
@@ -511,6 +523,26 @@ mod tests {
             icons.push(th.icon);
         }
         assert_eq!(BUILTIN_THEMES.len(), 4);
+    }
+
+    #[test]
+    fn picker_labels_are_distinct_so_glyph_collisions_stay_tellable_apart() {
+        // The custom slot is seeded from a built-in (hacker) and so shares its
+        // glyph; the picker leans on these captions to keep the entries apart.
+        let mut labels: Vec<String> = BUILTIN_THEMES
+            .iter()
+            .map(|(id, _)| short_label(id))
+            .collect();
+        labels.push("custom".into());
+        for l in &labels {
+            assert!(!l.is_empty(), "every picker entry needs a caption");
+        }
+        let unique: std::collections::HashSet<_> = labels.iter().collect();
+        assert_eq!(
+            unique.len(),
+            labels.len(),
+            "picker labels must be unique: {labels:?}"
+        );
     }
 
     #[test]
