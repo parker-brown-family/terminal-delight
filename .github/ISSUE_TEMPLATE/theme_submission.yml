@@ -1,0 +1,30 @@
+name: Theme submission
+description: Share a theme (no Rust required)
+labels: ["theme"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Themes are TOML data files — see [CONTRIBUTING.md](../blob/main/CONTRIBUTING.md#path-1--themes-no-rust).
+        You can paste the theme here, or open a PR adding `app/themes/<name>.toml`.
+  - type: input
+    id: name
+    attributes:
+      label: Theme name
+    validations:
+      required: true
+  - type: textarea
+    id: toml
+    attributes:
+      label: Theme TOML
+      description: Paste the full `.toml` (or link your PR).
+      render: toml
+    validations:
+      required: false
+  - type: textarea
+    id: shot
+    attributes:
+      label: Screenshot
+      description: Drop an image showing it in a couple of panes.
+    validations:
+      required: true

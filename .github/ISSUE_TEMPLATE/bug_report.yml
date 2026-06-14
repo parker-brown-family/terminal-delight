@@ -1,0 +1,42 @@
+name: Bug report
+description: Something is broken or behaves unexpectedly
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, what you got instead.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Launch the app
+        2. Split a pane with ctrl+alt+r
+        3. ...
+    validations:
+      required: true
+  - type: input
+    id: env
+    attributes:
+      label: Environment
+      description: Distro, GPU + driver, X11 or Wayland, display scaling.
+      placeholder: "Ubuntu 24.04 · NVIDIA 550 · X11 · 100%"
+    validations:
+      required: true
+  - type: input
+    id: rev
+    attributes:
+      label: Commit
+      description: "Output of `git rev-parse --short HEAD`."
+    validations:
+      required: false
+  - type: checkboxes
+    id: latency
+    attributes:
+      label: Diagnostics
+      options:
+        - label: "I can reproduce with a fresh `~/.config/terminal-delight/theme.toml` (delete it to reset)"
