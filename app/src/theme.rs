@@ -364,6 +364,10 @@ pub struct ThemeChoice {
     /// the wire form when so (see [`Grade::is_neutral`]).
     #[serde(default, skip_serializing_if = "Grade::is_neutral")]
     pub grade: Grade,
+    /// How the seed propagates into the palette (the theme-tray glyph). Part of
+    /// the theme group; `Plain` (single-hue tint) by default for back-compat.
+    #[serde(default, skip_serializing_if = "Dynamic::is_plain")]
+    pub dynamic: Dynamic,
 }
 
 impl Default for ThemeChoice {
@@ -374,6 +378,7 @@ impl Default for ThemeChoice {
             color: ColorMode::default(),
             syntax: false,
             grade: Grade::default(),
+            dynamic: Dynamic::default(),
         }
     }
 }
@@ -391,6 +396,8 @@ pub struct ThemeGroup {
     pub color: ColorMode,
     #[serde(default, skip_serializing_if = "is_false")]
     pub syntax: bool,
+    #[serde(default, skip_serializing_if = "Dynamic::is_plain")]
+    pub dynamic: Dynamic,
 }
 
 impl Default for ThemeGroup {
@@ -400,6 +407,7 @@ impl Default for ThemeGroup {
             seed: None,
             color: ColorMode::default(),
             syntax: false,
+            dynamic: Dynamic::default(),
         }
     }
 }
@@ -412,6 +420,7 @@ impl ThemeGroup {
             seed: c.seed.clone(),
             color: c.color,
             syntax: c.syntax,
+            dynamic: c.dynamic.clone(),
         }
     }
 }
@@ -477,6 +486,7 @@ impl PaneTheme {
             color: g.color,
             syntax: g.syntax,
             grade,
+            dynamic: g.dynamic,
         }
     }
 
@@ -569,6 +579,279 @@ pub fn parse_hex(value: &str) -> Option<Hsla> {
     hex(value)
 }
 
+/// Hand-picked roles for the [`Dynamic::Custom`] dynamic. Each is an optional
+/// "#rrggbb"; an empty slot falls back to a seed-derived default, so a partially
+/// filled custom palette still renders coherently.
+#[derive(Clone, PartialEq, Debug, Default, Serialize, Deserialize)]
+pub struct CustomPalette {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub primary: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub secondary: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tertiary: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quaternary: Option<String>,
+}
+
+/// A **theme dynamic**: the rule that turns the single seed colour into a whole
+/// coordinated palette. The seed (set on the colour wheel) is the one knob; the
+/// dynamic decides how every other role — title, secondary/tertiary accents,
+/// text, background — *relates* to it. Picked by the glyph column in the theme
+/// tray; lives in the theme group, so it inherits/overrides per pane like the
+/// rest of the look.
+#[derive(Clone, PartialEq, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Dynamic {
+    /// Single-hue tint — the original seed behaviour (chrome takes the seed hue,
+    /// structure keeps its own S/L). Default, so old state files are unchanged.
+    #[default]
+    Plain,
+    /// Gold→green→brown harmony: the seed is the gold anchor; green sits at a
+    /// fixed +offset, light brown at a −offset — the pineapple relationship,
+    /// applied wherever the seed lands.
+    Pineapple,
+    /// Near-monochrome around the seed with bright, high-intensity text.
+    Lightning,
+    /// Seed plus its complement — a high-contrast duotone.
+    Eclipse,
+    /// Triadic: seed and ±120°, three balanced hues.
+    Prism,
+    /// User-defined relationship: explicit primary/secondary/tertiary/quaternary.
+    Custom(CustomPalette),
+}
+
+impl Dynamic {
+    /// The named dynamics shown in the tray, in display order (Custom is appended
+    /// separately as the cog).
+    pub const NAMED: [Dynamic; 4] = [
+        Dynamic::Pineapple,
+        Dynamic::Lightning,
+        Dynamic::Eclipse,
+        Dynamic::Prism,
+    ];
+
+    /// Glyph shown in the tray's vertical box for this dynamic.
+    pub fn glyph(&self) -> &'static str {
+        match self {
+            Dynamic::Plain => "○",
+            Dynamic::Pineapple => "🍍",
+            Dynamic::Lightning => "⚡",
+            Dynamic::Eclipse => "◐",
+            Dynamic::Prism => "△",
+            Dynamic::Custom(_) => "⚙",
+        }
+    }
+
+    /// Human name (tests, accessibility) — the tray itself shows only the glyph.
+    pub fn label(&self) -> &'static str {
+        match self {
+            Dynamic::Plain => "plain",
+            Dynamic::Pineapple => "pineapple",
+            Dynamic::Lightning => "lightning",
+            Dynamic::Eclipse => "eclipse",
+            Dynamic::Prism => "prism",
+            Dynamic::Custom(_) => "custom",
+        }
+    }
+
+    /// `true` for the serde/skip default — a plain single-hue tint.
+    pub fn is_plain(&self) -> bool {
+        matches!(self, Dynamic::Plain)
+    }
+
+    /// Same variant (ignoring any custom-palette contents) — for tray active state.
+    pub fn same_kind(&self, other: &Dynamic) -> bool {
+        std::mem::discriminant(self) == std::mem::discriminant(other)
+    }
+}
+
+/// Rotate a gpui hue (0..1) by `deg` degrees, wrapping into 0..1.
+fn rot(h: f32, deg: f32) -> f32 {
+    (h + deg / 360.0).rem_euclid(1.0)
+}
+
+/// Shaping parameters for the offset-based named dynamics.
+struct Spec {
+    sec_deg: f32,
+    ter_deg: f32,
+    mono: bool,
+    text_l: f32,
+    text_s: f32,
+    prim_l: f32,
+    prim_s_floor: f32,
+}
+
+/// The four coordinated roles a dynamic derives from an anchor (seed) colour,
+/// plus the readable text and the screen background that go with them.
+pub struct Roles {
+    pub primary: Hsla,
+    pub secondary: Hsla,
+    pub tertiary: Hsla,
+    pub quaternary: Hsla,
+    pub text: Hsla,
+    pub bg: Hsla,
+}
+
+/// Resolve a dynamic + anchor (seed) into concrete role colours. This is the
+/// heart of the "relationship" idea: the named dynamics are pure hue-offset +
+/// shaping rules around the anchor; Custom reads explicit colours, falling back
+/// to the Prism spread for any empty slot.
+pub fn roles(anchor: Hsla, d: &Dynamic) -> Roles {
+    if let Dynamic::Custom(c) = d {
+        let derived = roles(anchor, &Dynamic::Prism);
+        let pick = |slot: &Option<String>, fallback: Hsla| {
+            slot.as_deref().and_then(hex).unwrap_or(fallback)
+        };
+        let primary = pick(&c.primary, derived.primary);
+        return Roles {
+            secondary: pick(&c.secondary, derived.secondary),
+            tertiary: pick(&c.tertiary, derived.tertiary),
+            quaternary: pick(&c.quaternary, derived.quaternary),
+            text: Hsla {
+                l: (primary.l + 0.28).min(0.92),
+                ..primary
+            },
+            bg: Hsla {
+                s: (primary.s * 0.45).min(0.35),
+                l: 0.035,
+                ..primary
+            },
+            primary,
+        };
+    }
+    let mono_seed = anchor.s < 0.08;
+    let spec = match d {
+        Dynamic::Pineapple => Spec {
+            sec_deg: 70.,
+            ter_deg: -22.,
+            mono: false,
+            text_l: 0.84,
+            text_s: 0.55,
+            prim_l: 0.62,
+            prim_s_floor: 0.70,
+        },
+        Dynamic::Lightning => Spec {
+            sec_deg: 0.,
+            ter_deg: 0.,
+            mono: true,
+            text_l: 0.93,
+            text_s: 0.12,
+            prim_l: 0.72,
+            prim_s_floor: 0.30,
+        },
+        Dynamic::Eclipse => Spec {
+            sec_deg: 180.,
+            ter_deg: 180.,
+            mono: false,
+            text_l: 0.82,
+            text_s: 0.30,
+            prim_l: 0.64,
+            prim_s_floor: 0.65,
+        },
+        Dynamic::Prism => Spec {
+            sec_deg: 120.,
+            ter_deg: -120.,
+            mono: false,
+            text_l: 0.82,
+            text_s: 0.45,
+            prim_l: 0.62,
+            prim_s_floor: 0.60,
+        },
+        // Plain (and anything else) → single-hue tint, mono when the seed is grey.
+        _ => Spec {
+            sec_deg: 0.,
+            ter_deg: 0.,
+            mono: mono_seed,
+            text_l: 0.78,
+            text_s: 0.40,
+            prim_l: 0.60,
+            prim_s_floor: 0.45,
+        },
+    };
+    let s = if spec.mono {
+        0.0
+    } else {
+        anchor.s.max(spec.prim_s_floor).clamp(0.0, 1.0)
+    };
+    let primary = Hsla {
+        h: anchor.h,
+        s,
+        l: spec.prim_l,
+        a: 1.,
+    };
+    let secondary = Hsla {
+        h: rot(anchor.h, spec.sec_deg),
+        s: if spec.mono { 0. } else { s * 0.92 },
+        l: (spec.prim_l + 0.04).min(0.80),
+        a: 1.,
+    };
+    // tertiary leans darker + less saturated — the "brown"/shadow of the harmony.
+    let tertiary = Hsla {
+        h: rot(anchor.h, spec.ter_deg),
+        s: if spec.mono { 0. } else { (s * 0.7).min(0.6) },
+        l: (spec.prim_l - 0.20).max(0.22),
+        a: 1.,
+    };
+    let quaternary = Hsla {
+        h: rot(anchor.h, (spec.sec_deg + spec.ter_deg) * 0.5),
+        s: if spec.mono { 0. } else { s * 0.5 },
+        l: (spec.prim_l + 0.10).min(0.85),
+        a: 1.,
+    };
+    let text = Hsla {
+        h: anchor.h,
+        s: if spec.mono { 0.06 } else { spec.text_s },
+        l: spec.text_l,
+        a: 1.,
+    };
+    let bg = Hsla {
+        h: anchor.h,
+        s: if spec.mono { 0.0 } else { (s * 0.5).min(0.35) },
+        l: 0.035,
+        a: 1.,
+    };
+    Roles {
+        primary,
+        secondary,
+        tertiary,
+        quaternary,
+        text,
+        bg,
+    }
+}
+
+/// Paint a theme from a dynamic + anchor: derive the harmony roles and assign
+/// them to the chrome (title/accent, text, background, surface, cursor). The CRT
+/// effects and structural geometry of `base` are kept; only colour is restated.
+pub fn apply_dynamic(base: &Theme, anchor: Hsla, d: &Dynamic) -> Theme {
+    let r = roles(anchor, d);
+    let mut th = base.clone();
+    th.accent = r.primary;
+    th.text = r.text;
+    th.bg = r.bg;
+    th.surface = Hsla {
+        l: 0.075,
+        ..r.tertiary
+    };
+    th.faint = Hsla {
+        l: 0.32,
+        ..r.tertiary
+    };
+    th.cursor = Hsla {
+        l: (r.primary.l + 0.12).min(0.9),
+        ..r.primary
+    };
+    th.ansi[7] = r.text;
+    // Echo the harmony into the chrome ANSI slots used for accents/links so the
+    // relationship reads even before program colour: green→secondary,
+    // yellow→tertiary, cyan→quaternary.
+    th.ansi[2] = r.secondary;
+    th.ansi[3] = r.tertiary;
+    th.ansi[6] = r.quaternary;
+    th
+}
+
 /// Recolour a theme around a seed: structural colours keep their own
 /// saturation/lightness, only the hue family moves (grey seeds desaturate).
 pub fn apply_seed(base: &Theme, seed: Hsla) -> Theme {
@@ -612,13 +895,24 @@ pub fn resolve(cx: &App, choice: &ThemeChoice) -> Arc<Theme> {
             .unwrap_or_else(|| reg.custom.clone())
     };
     let seed = choice.seed.as_deref().and_then(hex);
+    // A Plain dynamic with no seed is the identity recolour (today's behaviour);
+    // any named dynamic always restates the palette around its anchor.
+    let identity_colour = choice.dynamic.is_plain() && seed.is_none();
     // Fast path: stock theme, no recolour, default mode, no syntax, neutral grade.
-    if seed.is_none() && choice.color.is_default() && !choice.syntax && choice.grade.is_neutral() {
+    if identity_colour && choice.color.is_default() && !choice.syntax && choice.grade.is_neutral() {
         return base;
     }
-    let mut th = match seed {
-        Some(seed) => apply_seed(&base, seed),
-        None => (*base).clone(),
+    let mut th = if identity_colour {
+        (*base).clone()
+    } else {
+        // No explicit seed → anchor the dynamic on the base theme's own accent.
+        let anchor = seed.unwrap_or(base.accent);
+        match &choice.dynamic {
+            // Plain keeps the original single-hue tint so existing seeded themes
+            // render exactly as before.
+            Dynamic::Plain => apply_seed(&base, anchor),
+            d => apply_dynamic(&base, anchor, d),
+        }
     };
     th.color_mode = choice.color;
     th.syntax = choice.syntax;
@@ -842,6 +1136,106 @@ mod tests {
         let grey = hex("#828282").unwrap();
         let mono = apply_seed(&base, grey);
         assert!(mono.accent.s < 0.01 && mono.bg.s < 0.01);
+    }
+
+    /// Shortest distance between two gpui hues (0..1), in degrees.
+    fn hue_deg_gap(a: f32, b: f32) -> f32 {
+        let d = (a - b).rem_euclid(1.0) * 360.0;
+        d.min(360.0 - d)
+    }
+
+    #[test]
+    fn pineapple_spreads_gold_green_brown_and_travels_with_the_seed() {
+        let gold = hex("#ffcc00").unwrap();
+        let r = roles(gold, &Dynamic::Pineapple);
+        // primary keeps the seed (the gold anchor)
+        assert!(hue_deg_gap(r.primary.h, gold.h) < 1.0);
+        // green ~70° one way, brown ~22° the other — the pineapple relationship
+        assert!((hue_deg_gap(r.secondary.h, gold.h) - 70.0).abs() < 3.0);
+        assert!((hue_deg_gap(r.tertiary.h, gold.h) - 22.0).abs() < 3.0);
+        // the "brown" tertiary is darker than the gold primary
+        assert!(r.tertiary.l < r.primary.l);
+        // the SAME relationship applies wherever the seed lands (rotate to blue)
+        let blue = hex("#3366ff").unwrap();
+        let rb = roles(blue, &Dynamic::Pineapple);
+        assert!((hue_deg_gap(rb.secondary.h, blue.h) - 70.0).abs() < 3.0);
+    }
+
+    #[test]
+    fn lightning_is_monochrome_with_blazing_text() {
+        let r = roles(hex("#22c55e").unwrap(), &Dynamic::Lightning);
+        assert!(
+            r.secondary.s < 0.02 && r.tertiary.s < 0.02,
+            "all roles mono"
+        );
+        assert!(r.text.l > 0.9 && r.text.s < 0.2, "high-intensity letters");
+    }
+
+    #[test]
+    fn eclipse_is_a_complement_and_prism_is_triadic() {
+        let seed = hex("#e23d3d").unwrap();
+        let ecl = roles(seed, &Dynamic::Eclipse);
+        assert!((hue_deg_gap(ecl.secondary.h, seed.h) - 180.0).abs() < 3.0);
+        let pri = roles(seed, &Dynamic::Prism);
+        assert!((hue_deg_gap(pri.secondary.h, seed.h) - 120.0).abs() < 3.0);
+        assert!((hue_deg_gap(pri.tertiary.h, seed.h) - 120.0).abs() < 3.0);
+    }
+
+    #[test]
+    fn custom_uses_explicit_roles_and_falls_back_for_empty_slots() {
+        let c = CustomPalette {
+            primary: Some("#ff0000".into()),
+            secondary: Some("#00ff00".into()),
+            tertiary: None,
+            quaternary: None,
+        };
+        let r = roles(hex("#888888").unwrap(), &Dynamic::Custom(c));
+        assert!(hue_deg_gap(r.primary.h, hex("#ff0000").unwrap().h) < 1.0);
+        assert!(hue_deg_gap(r.secondary.h, hex("#00ff00").unwrap().h) < 1.0);
+        // an empty slot falls back to a derived role — not the explicit red
+        assert!(hue_deg_gap(r.tertiary.h, hex("#ff0000").unwrap().h) > 5.0);
+    }
+
+    #[test]
+    fn apply_dynamic_pops_the_title_off_the_base_and_the_body() {
+        let base = parse(DEFAULT_THEME_TOML).unwrap();
+        let gold = hex("#ffcc00").unwrap();
+        let th = apply_dynamic(&base, gold, &Dynamic::Pineapple);
+        // the title (accent) takes the vivid gold anchor, away from the base green
+        assert!(hue_deg_gap(th.accent.h, gold.h) < 2.0);
+        assert!(hue_deg_gap(th.accent.h, base.accent.h) > 5.0);
+        // title and body text stay distinct in lightness so the title reads
+        assert!((th.accent.l - th.text.l).abs() > 0.08);
+    }
+
+    #[test]
+    fn dynamic_round_trips_and_plain_is_omitted() {
+        // Plain is the default → skipped on the wire (old state files unchanged)
+        let plain = toml::to_string(&ThemeChoice::default()).unwrap();
+        assert!(
+            !plain.contains("dynamic"),
+            "default Plain dynamic is skipped"
+        );
+        // a named dynamic survives a round-trip
+        let named = ThemeChoice {
+            dynamic: Dynamic::Pineapple,
+            ..Default::default()
+        };
+        let back: ThemeChoice = toml::from_str(&toml::to_string(&named).unwrap()).unwrap();
+        assert_eq!(back.dynamic, Dynamic::Pineapple);
+        // a custom palette round-trips with its slots intact
+        let cust = ThemeChoice {
+            dynamic: Dynamic::Custom(CustomPalette {
+                primary: Some("#abcdef".into()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let back: ThemeChoice = toml::from_str(&toml::to_string(&cust).unwrap()).unwrap();
+        assert!(
+            matches!(back.dynamic, Dynamic::Custom(p) if p.primary.as_deref() == Some("#abcdef")),
+            "custom palette survives the wire"
+        );
     }
 
     #[test]
