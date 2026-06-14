@@ -20,10 +20,10 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use gpui::{
-    canvas, div, hsla, linear_color_stop, linear_gradient, point, prelude::*, px, size, white, App,
-    Bounds, BoxShadow, Context, Entity, EntityId, Focusable, Hsla, KeyDownEvent, MouseButton,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, ScrollWheelEvent, TitlebarOptions,
-    Window, WindowBounds, WindowOptions,
+    canvas, div, fill, hsla, linear_color_stop, linear_gradient, point, prelude::*, px, size,
+    white, App, Bounds, BoxShadow, Context, Entity, EntityId, Focusable, Hsla, KeyDownEvent,
+    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, ScrollWheelEvent,
+    TitlebarOptions, Window, WindowBounds, WindowOptions,
 };
 use gpui_platform::application;
 use pane::{ClosePane, DragPaneStart, OpenDisplayMenu, OpenThemeMenu, PaneRenamed, TerminalView};
@@ -545,6 +545,10 @@ struct Workspace {
     slider_drag: Option<theme::GradeKey>,
     /// Live per-slider track rects for ratio math during a drag.
     slider_bounds: Arc<Mutex<std::collections::HashMap<theme::GradeKey, Bounds<Pixels>>>>,
+    /// True while the seed colour-wheel is being dragged.
+    wheel_drag: bool,
+    /// Live colour-wheel rect, for polar hit-testing during a drag.
+    wheel_bounds: Arc<Mutex<Option<Bounds<Pixels>>>>,
     scrubbing: bool,
     scrub_bounds: Arc<Mutex<Option<Bounds<Pixels>>>>,
     jiggle: FrameJiggle,
@@ -672,6 +676,8 @@ impl Workspace {
             osd_at: None,
             slider_drag: None,
             slider_bounds: Arc::new(Mutex::new(std::collections::HashMap::new())),
+            wheel_drag: false,
+            wheel_bounds: Arc::new(Mutex::new(None)),
             scrubbing: false,
             scrub_bounds: Arc::new(Mutex::new(None)),
             jiggle: FrameJiggle::new(),
@@ -1078,10 +1084,21 @@ impl Workspace {
                 }
             }
         }
+        if self.wheel_drag && ev.pressed_button == Some(MouseButton::Left) {
+            if let Some(hex) = self.wheel_seed_from_pos(ev.position.x, ev.position.y) {
+                self.set_seed(Some(hex), cx);
+            }
+        }
     }
 
     fn on_mouse_up(&mut self, _ev: &MouseUpEvent, window: &mut Window, cx: &mut Context<Self>) {
         self.scrubbing = false;
+        if self.wheel_drag {
+            self.wheel_drag = false;
+            self.save(cx);
+            cx.notify();
+            return;
+        }
         if self.slider_drag.take().is_some() {
             self.save(cx);
             cx.notify();
@@ -1463,6 +1480,121 @@ impl Workspace {
             )
     }
 
+    /// Write a seed colour to the open theme breakout's scope (None = clear).
+    fn set_seed(&mut self, hex: Option<String>, cx: &mut Context<Self>) {
+        let mut choice = self.menu_choice(cx);
+        choice.seed = hex;
+        self.set_menu_choice(Some(choice), cx);
+    }
+
+    /// Map a window-space point on the colour wheel to a seed hex: angle → hue,
+    /// radius → saturation (clamped to the rim), lightness fixed mid.
+    fn wheel_seed_from_pos(&self, x: Pixels, y: Pixels) -> Option<String> {
+        let b = (*self.wheel_bounds.lock().unwrap())?;
+        let cx = f32::from(b.origin.x) + f32::from(b.size.width) / 2.0;
+        let cy = f32::from(b.origin.y) + f32::from(b.size.height) / 2.0;
+        let rad = f32::from(b.size.width).min(f32::from(b.size.height)) / 2.0;
+        if rad <= 0.0 {
+            return None;
+        }
+        let (dx, dy) = (f32::from(x) - cx, f32::from(y) - cy);
+        let dist = (dx * dx + dy * dy).sqrt().min(rad);
+        let ang = dy.atan2(dx) / std::f32::consts::TAU;
+        let hue = ang - ang.floor();
+        let sat = (dist / rad).min(1.0);
+        Some(hsla_to_hex(hsla(hue, sat, 0.55, 1.0)))
+    }
+
+    /// The seed colour wheel: a canvas-painted HSV disk (hue = angle, saturation
+    /// = radius) with a draggable selector ring at the current seed. Drives the
+    /// same scope as the theme breakout it lives in.
+    fn color_wheel(&self, seed: Option<Hsla>, cx: &mut Context<Self>) -> gpui::Div {
+        const D: f32 = 132.0;
+        let r = D / 2.0;
+        let store = self.wheel_bounds.clone();
+        // selector position from the current seed's hue + saturation
+        let dot = seed.map(|c| {
+            let ang = c.h.rem_euclid(1.0) * std::f32::consts::TAU;
+            let sat = c.s.clamp(0.0, 1.0);
+            (r + ang.cos() * sat * r, r + ang.sin() * sat * r)
+        });
+        let mut wheel = div()
+            .w(px(D))
+            .h(px(D))
+            .relative()
+            .rounded_full()
+            .cursor_pointer()
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|ws, ev: &MouseDownEvent, _w, cx| {
+                    cx.stop_propagation();
+                    ws.wheel_drag = true;
+                    if let Some(hex) = ws.wheel_seed_from_pos(ev.position.x, ev.position.y) {
+                        ws.set_seed(Some(hex), cx);
+                    }
+                }),
+            )
+            .child(
+                canvas(
+                    move |bounds, _, _| {
+                        *store.lock().unwrap() = Some(bounds);
+                    },
+                    move |bounds: Bounds<Pixels>, _, window, _| {
+                        let cx = f32::from(bounds.origin.x) + f32::from(bounds.size.width) / 2.0;
+                        let cy = f32::from(bounds.origin.y) + f32::from(bounds.size.height) / 2.0;
+                        let rad =
+                            f32::from(bounds.size.width).min(f32::from(bounds.size.height)) / 2.0;
+                        let cell = 3.5_f32;
+                        let mut yy = cy - rad;
+                        while yy <= cy + rad {
+                            let mut xx = cx - rad;
+                            while xx <= cx + rad {
+                                let dx = xx + cell / 2.0 - cx;
+                                let dy = yy + cell / 2.0 - cy;
+                                let dist = (dx * dx + dy * dy).sqrt();
+                                if dist <= rad {
+                                    let ang = dy.atan2(dx) / std::f32::consts::TAU;
+                                    let hue = ang - ang.floor();
+                                    let sat = (dist / rad).min(1.0);
+                                    window.paint_quad(fill(
+                                        Bounds::new(
+                                            point(px(xx), px(yy)),
+                                            size(px(cell + 0.6), px(cell + 0.6)),
+                                        ),
+                                        hsla(hue, sat, 0.55, 1.0),
+                                    ));
+                                }
+                                xx += cell;
+                            }
+                            yy += cell;
+                        }
+                    },
+                )
+                .size_full(),
+            );
+        if let Some((dx, dy)) = dot {
+            wheel = wheel.child(
+                div()
+                    .absolute()
+                    .left(px(dx - 7.0))
+                    .top(px(dy - 7.0))
+                    .w(px(14.))
+                    .h(px(14.))
+                    .rounded_full()
+                    .border_2()
+                    .border_color(white())
+                    .shadow(vec![BoxShadow {
+                        color: hsla(0., 0., 0., 0.7),
+                        offset: point(px(0.), px(0.)),
+                        blur_radius: px(2.),
+                        spread_radius: px(1.),
+                        inset: false,
+                    }]),
+            );
+        }
+        wheel
+    }
+
     /// Solid, reflective bezel button — light source upper-left.
     fn bezel_btn(th: &theme::Theme, label: &str, active: bool) -> gpui::Div {
         let glint = BoxShadow {
@@ -1510,10 +1642,6 @@ impl Workspace {
 }
 
 /// Seed-colour presets for the breakout menu (IMT picker set).
-const SEED_SWATCHES: &[&str] = &[
-    "#2f6fdd", "#31d7ff", "#00ff9c", "#ff8a3d", "#8fa85f", "#872d73", "#828282",
-];
-
 /// Theme-icon button for the breakout menu.
 fn theme_icon_btn(th: &theme::Theme, icon: &str, active: bool) -> gpui::Div {
     let b = div()
@@ -1609,6 +1737,29 @@ fn darken(mut c: Hsla, f: f32) -> Hsla {
 fn brighten(mut c: Hsla, f: f32) -> Hsla {
     c.l = (c.l * f).min(0.92);
     c
+}
+
+/// `Hsla` → `#rrggbb` (drops alpha) for storing a wheel-picked seed colour.
+fn hsla_to_hex(c: Hsla) -> String {
+    let (h, s, l) = (
+        c.h.rem_euclid(1.0),
+        c.s.clamp(0.0, 1.0),
+        c.l.clamp(0.0, 1.0),
+    );
+    let chroma = (1.0 - (2.0 * l - 1.0).abs()) * s;
+    let hp = h * 6.0;
+    let x = chroma * (1.0 - (hp % 2.0 - 1.0).abs());
+    let (r1, g1, b1) = match (hp as i32).min(5) {
+        0 => (chroma, x, 0.0),
+        1 => (x, chroma, 0.0),
+        2 => (0.0, chroma, x),
+        3 => (0.0, x, chroma),
+        4 => (x, 0.0, chroma),
+        _ => (chroma, 0.0, x),
+    };
+    let m = l - chroma / 2.0;
+    let to = |v: f32| ((v + m).clamp(0.0, 1.0) * 255.0).round() as u32;
+    format!("#{:02x}{:02x}{:02x}", to(r1), to(g1), to(b1))
 }
 
 /// Which side of `rect` the cursor `pos` is nearest — the side a dropped pane
@@ -2210,27 +2361,15 @@ impl Render for Workspace {
                     }),
                 ));
             }
-            for &hex in SEED_SWATCHES {
-                let active = cur.seed.as_deref() == Some(hex);
-                let swatch = theme::parse_hex(hex);
-                let id = cur.id.clone();
-                seed_row = seed_row.child(seed_swatch(swatch, active).on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
-                        cx.stop_propagation();
-                        ws.set_menu_choice(
-                            Some(ThemeChoice {
-                                id: id.clone(),
-                                seed: Some(hex.to_string()),
-                                color,
-                                syntax,
-                                grade,
-                            }),
-                            cx,
-                        );
-                    }),
-                ));
-            }
+            // a tiny "default" caption sits next to the rainbow dot; the wheel
+            // (added below the row) is the continuous seed picker.
+            seed_row = seed_row.child(
+                div()
+                    .text_size(px(9.))
+                    .text_color(th.text.alpha(0.5))
+                    .child("default"),
+            );
+            let wheel = self.color_wheel(cur.seed.as_deref().and_then(theme::parse_hex), cx);
             let mut color_row = div().flex().flex_row().gap_2();
             for mode in theme::ColorMode::ALL {
                 let active = cur.color == mode;
@@ -2292,7 +2431,7 @@ impl Render for Workspace {
             // on-screen. The global/outer menu (menu_at == None) keeps its fixed
             // top-right anchor under the titlebar control.
             const PANEL_W: f32 = 286.;
-            const PANEL_H_EST: f32 = 296.; // generous, incl. syntax row + follow-outer
+            const PANEL_H_EST: f32 = 440.; // generous, incl. colour wheel + follow-outer
             let mut panel = div().absolute().w(px(PANEL_W));
             panel = match self.menu_at {
                 Some(at) => {
@@ -2334,6 +2473,7 @@ impl Render for Workspace {
                 .child(theme_row)
                 .child(label("SEED COLOUR"))
                 .child(seed_row)
+                .child(div().flex().justify_center().py_1().child(wheel))
                 .child(label("TEXT — SOURCE"))
                 .child(color_row)
                 .child(label("SYNTAX"))
@@ -2678,6 +2818,23 @@ mod tests {
         let mut v = vec![];
         t.leaves(&mut v);
         v.into_iter().copied().collect()
+    }
+
+    #[test]
+    fn hsla_to_hex_matches_known_colours_and_round_trips() {
+        // primaries + a grey land on their exact hex
+        assert_eq!(hsla_to_hex(hsla(0.0, 1.0, 0.5, 1.0)), "#ff0000");
+        assert_eq!(hsla_to_hex(hsla(1.0 / 3.0, 1.0, 0.5, 1.0)), "#00ff00");
+        assert_eq!(hsla_to_hex(hsla(2.0 / 3.0, 1.0, 0.5, 1.0)), "#0000ff");
+        assert_eq!(hsla_to_hex(hsla(0.0, 0.0, 0.5, 1.0)), "#808080");
+        // hex -> hsla -> hex is stable (the wheel stores what it reads back)
+        for hexs in ["#2f6fdd", "#31d7ff", "#00ff9c", "#ff8a3d", "#872d73"] {
+            let c = theme::parse_hex(hexs).unwrap();
+            let back = theme::parse_hex(&hsla_to_hex(c)).unwrap();
+            assert!((c.h - back.h).abs() < 0.01 || (c.s < 0.02));
+            assert!((c.s - back.s).abs() < 0.02);
+            assert!((c.l - back.l).abs() < 0.02);
+        }
     }
 
     #[test]
