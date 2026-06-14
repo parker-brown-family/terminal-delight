@@ -302,6 +302,10 @@ struct LeafState {
     name: Option<String>,
 }
 
+// A transient (de)serialization DTO for the layout tree — built, written, and
+// dropped, never held hot in a Vec — so the Leaf/Split size gap is fine; boxing
+// the leaf payload would only fight serde's `skip_serializing_if`.
+#[allow(clippy::large_enum_variant)]
 #[derive(Serialize)]
 enum SavedNode {
     Leaf {
@@ -518,6 +522,16 @@ enum MenuScope {
     Pane(Entity<TerminalView>),
 }
 
+/// Which colour the breakout's wheel currently edits. The seed drives the whole
+/// palette; `Text` and `Complement` are explicit overrides of the body text and
+/// the title's complement colour respectively.
+#[derive(Clone, Copy, PartialEq)]
+enum WheelTarget {
+    Seed,
+    Text,
+    Complement,
+}
+
 /// Which side of the pane under the cursor a dragged sub-tab will split.
 #[derive(Clone, Copy, PartialEq)]
 enum Zone {
@@ -571,8 +585,11 @@ struct Workspace {
     slider_drag: Option<theme::GradeKey>,
     /// Live per-slider track rects for ratio math during a drag.
     slider_bounds: Arc<Mutex<std::collections::HashMap<theme::GradeKey, Bounds<Pixels>>>>,
-    /// True while the seed colour-wheel is being dragged.
+    /// True while the colour-wheel is being dragged.
     wheel_drag: bool,
+    /// Which colour the wheel currently edits — seed, body text, or the title
+    /// complement (transient UI state, not persisted).
+    wheel_target: WheelTarget,
     /// Live colour-wheel rect, for polar hit-testing during a drag.
     wheel_bounds: Arc<Mutex<Option<Bounds<Pixels>>>>,
     scrubbing: bool,
@@ -735,6 +752,7 @@ impl Workspace {
             slider_drag: None,
             slider_bounds: Arc::new(Mutex::new(std::collections::HashMap::new())),
             wheel_drag: false,
+            wheel_target: WheelTarget::Seed,
             wheel_bounds: Arc::new(Mutex::new(None)),
             scrubbing: false,
             scrub_bounds: Arc::new(Mutex::new(None)),
@@ -1189,7 +1207,7 @@ impl Workspace {
         }
         if self.wheel_drag && ev.pressed_button == Some(MouseButton::Left) {
             if let Some(hex) = self.wheel_seed_from_pos(ev.position.x, ev.position.y) {
-                self.set_seed(Some(hex), cx);
+                self.set_wheel_color(Some(hex), cx);
             }
         }
     }
@@ -1655,10 +1673,16 @@ impl Workspace {
             )
     }
 
-    /// Write a seed colour to the open theme breakout's scope (None = clear).
-    fn set_seed(&mut self, hex: Option<String>, cx: &mut Context<Self>) {
+    /// Write a colour from the wheel to whichever target it's editing (seed, body
+    /// text, or the title complement) in the open breakout's scope. `None` clears
+    /// that target (back to theme/dynamic-derived).
+    fn set_wheel_color(&mut self, hex: Option<String>, cx: &mut Context<Self>) {
         let mut choice = self.menu_choice(cx);
-        choice.seed = hex;
+        match self.wheel_target {
+            WheelTarget::Seed => choice.seed = hex,
+            WheelTarget::Text => choice.text = hex,
+            WheelTarget::Complement => choice.complement = hex,
+        }
         self.set_menu_choice(choice, cx);
     }
 
@@ -1705,7 +1729,7 @@ impl Workspace {
                     cx.stop_propagation();
                     ws.wheel_drag = true;
                     if let Some(hex) = ws.wheel_seed_from_pos(ev.position.x, ev.position.y) {
-                        ws.set_seed(Some(hex), cx);
+                        ws.set_wheel_color(Some(hex), cx);
                     }
                 }),
             )
@@ -1950,29 +1974,6 @@ fn color_mode_btn(th: &theme::Theme, icon: &str, caption: &str, active: bool) ->
             .border_color(th.accent.alpha(0.35))
             .text_color(th.text)
             .child(inner)
-    }
-}
-
-/// Seed-colour swatch. `color: None` renders the rainbow "theme default" dot.
-fn seed_swatch(color: Option<Hsla>, active: bool) -> gpui::Div {
-    let b = div()
-        .w(px(20.))
-        .h(px(20.))
-        .rounded_full()
-        .cursor_pointer()
-        .border_2();
-    let b = match color {
-        Some(c) => b.bg(c),
-        None => b.bg(linear_gradient(
-            135.,
-            linear_color_stop(hsla(0., 0.9, 0.6, 1.), 0.),
-            linear_color_stop(hsla(0.75, 0.9, 0.6, 1.), 1.),
-        )),
-    };
-    if active {
-        b.border_color(white().alpha(0.92))
-    } else {
-        b.border_color(hsla(0., 0., 0., 0.45))
     }
 }
 
@@ -2510,9 +2511,13 @@ impl Render for Workspace {
                             .child("▸ TERMINAL-DELIGHT"),
                     )
                     .child(
+                        // The title's complement colour (the wheel's `C` target /
+                        // the active dynamic's complement) reads here beside the
+                        // accent title — a deliberate two-tone in the mother bar.
                         div()
                             .text_size(px(9.))
-                            .text_color(th.text.alpha(0.4))
+                            .font_weight(gpui::FontWeight::BOLD)
+                            .text_color(th.complement.alpha(0.9))
                             .child("// SUB-TERMINAL"),
                     )
                     .child(tab_strip),
@@ -2582,10 +2587,7 @@ impl Render for Workspace {
         let menu_overlay = self.theme_menu.clone().map(|scope| {
             let is_pane = matches!(scope, MenuScope::Pane(_));
             let cur = self.menu_choice(cx);
-            let color = cur.color;
-            let syntax = cur.syntax;
-            let grade = cur.grade; // preserved across theme edits (OSD owns it)
-                                   // Theme-group "follow outer" state — only panes can inherit.
+            // Theme-group "follow outer" state — only panes can inherit.
             let following = match &scope {
                 MenuScope::Pane(p) => p.read(cx).appearance.inherit_theme,
                 MenuScope::Outer => false,
@@ -2638,43 +2640,81 @@ impl Render for Workspace {
                     }),
                 ));
             }
+            // Wheel-target selector: the wheel below edits whichever of these is
+            // active. ◉ = seed (drives the whole palette), T = body text colour,
+            // C = the title's complement. Each box tints to its current value.
+            let seed_val = cur.seed.as_deref().and_then(theme::parse_hex);
+            let text_val = cur.text.as_deref().and_then(theme::parse_hex);
+            let comp_val = cur.complement.as_deref().and_then(theme::parse_hex);
             let mut seed_row = div().flex().flex_row().items_center().gap_2();
-            {
-                let id = cur.id.clone();
-                let dynamic = cur.dynamic.clone();
-                seed_row = seed_row.child(seed_swatch(None, cur.seed.is_none()).on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
-                        cx.stop_propagation();
-                        ws.set_menu_choice(
-                            ThemeChoice {
-                                id: id.clone(),
-                                seed: None,
-                                color,
-                                syntax,
-                                grade,
-                                dynamic: dynamic.clone(),
-                            },
-                            cx,
-                        );
-                    }),
-                ));
+            for (target, idn, glyph, val) in [
+                (WheelTarget::Seed, "wt-seed", "◉", seed_val),
+                (WheelTarget::Text, "wt-text", "T", text_val),
+                (WheelTarget::Complement, "wt-comp", "C", comp_val),
+            ] {
+                let active = self.wheel_target == target;
+                seed_row = seed_row.child(
+                    div()
+                        .id(idn)
+                        .w(px(30.))
+                        .h(px(28.))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .rounded_md()
+                        .border_1()
+                        .border_color(if active {
+                            th.accent
+                        } else {
+                            th.faint.alpha(0.5)
+                        })
+                        .bg(if active {
+                            th.accent.alpha(0.16)
+                        } else {
+                            darken(th.surface, 0.3)
+                        })
+                        .text_size(px(13.))
+                        .font_weight(gpui::FontWeight::BOLD)
+                        .text_color(val.unwrap_or(th.text.alpha(0.7)))
+                        .cursor_pointer()
+                        .child(glyph)
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                                cx.stop_propagation();
+                                ws.wheel_target = target;
+                                cx.notify();
+                            }),
+                        ),
+                );
             }
-            // a tiny "default" caption sits next to the rainbow dot; the wheel
-            // (added below the row) is the continuous seed picker.
+            // Clears the ACTIVE target back to theme/dynamic-derived.
             seed_row = seed_row.child(
                 div()
+                    .id("wt-reset")
                     .text_size(px(9.))
                     .text_color(th.text.alpha(0.5))
-                    .child("default"),
+                    .cursor_pointer()
+                    .child("reset")
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                            cx.stop_propagation();
+                            ws.set_wheel_color(None, cx);
+                        }),
+                    ),
             );
-            let wheel = self.color_wheel(cur.seed.as_deref().and_then(theme::parse_hex), cx);
+            // The wheel reflects (and edits) the active target's current colour.
+            let wheel_val = match self.wheel_target {
+                WheelTarget::Seed => seed_val,
+                WheelTarget::Text => text_val,
+                WheelTarget::Complement => comp_val,
+            };
+            let wheel = self.color_wheel(wheel_val, cx);
             let mut color_row = div().flex().flex_row().gap_2();
             for mode in theme::ColorMode::ALL {
                 let active = cur.color == mode;
-                let id = cur.id.clone();
-                let seed = cur.seed.clone();
-                let dynamic = cur.dynamic.clone();
+                let cur_c = cur.clone();
                 color_row = color_row.child(
                     color_mode_btn(&th, mode.icon(), mode.caption(), active).on_mouse_down(
                         MouseButton::Left,
@@ -2682,12 +2722,8 @@ impl Render for Workspace {
                             cx.stop_propagation();
                             ws.set_menu_choice(
                                 ThemeChoice {
-                                    id: id.clone(),
-                                    seed: seed.clone(),
                                     color: mode,
-                                    syntax,
-                                    grade,
-                                    dynamic: dynamic.clone(),
+                                    ..cur_c.clone()
                                 },
                                 cx,
                             );
@@ -2701,9 +2737,7 @@ impl Render for Workspace {
             let mut syntax_row = div().flex().flex_row().gap_2();
             for (on, icon, caption) in [(false, "○", "off"), (true, "◆", "code")] {
                 let active = cur.syntax == on;
-                let id = cur.id.clone();
-                let seed = cur.seed.clone();
-                let dynamic = cur.dynamic.clone();
+                let cur_c = cur.clone();
                 syntax_row =
                     syntax_row.child(color_mode_btn(&th, icon, caption, active).on_mouse_down(
                         MouseButton::Left,
@@ -2711,12 +2745,8 @@ impl Render for Workspace {
                             cx.stop_propagation();
                             ws.set_menu_choice(
                                 ThemeChoice {
-                                    id: id.clone(),
-                                    seed: seed.clone(),
-                                    color,
                                     syntax: on,
-                                    grade,
-                                    dynamic: dynamic.clone(),
+                                    ..cur_c.clone()
                                 },
                                 cx,
                             );
@@ -2811,7 +2841,7 @@ impl Render for Workspace {
                 )
                 .child(label("THEME"))
                 .child(theme_row)
-                .child(label("SEED COLOUR"))
+                .child(label("WHEEL  ◉ seed · T text · C comp"))
                 .child(seed_row)
                 .child(div().flex().justify_center().py_1().child(wheel))
                 .child(label("TEXT — SOURCE"))

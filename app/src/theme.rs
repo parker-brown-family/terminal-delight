@@ -92,6 +92,10 @@ pub struct Theme {
     pub surface: Hsla,
     pub text: Hsla,
     pub accent: Hsla,
+    /// The title's complement colour — a second hue shown alongside the accent in
+    /// the mother bar. Defaults to the accent's complement; a dynamic sets it from
+    /// its harmony, and the breakout's `C` wheel target overrides it explicitly.
+    pub complement: Hsla,
     pub faint: Hsla,
     pub cursor: Hsla,
     pub ansi: [Hsla; 16],
@@ -368,6 +372,14 @@ pub struct ThemeChoice {
     /// the theme group; `Plain` (single-hue tint) by default for back-compat.
     #[serde(default, skip_serializing_if = "Dynamic::is_plain")]
     pub dynamic: Dynamic,
+    /// Explicit body-text colour override ("#rrggbb"), set by the wheel's `T`
+    /// target. `None` = let the theme/dynamic decide the text colour.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    /// Explicit title-complement colour override, set by the wheel's `C` target.
+    /// `None` = derive it from the theme/dynamic.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub complement: Option<String>,
 }
 
 impl Default for ThemeChoice {
@@ -379,6 +391,8 @@ impl Default for ThemeChoice {
             syntax: false,
             grade: Grade::default(),
             dynamic: Dynamic::default(),
+            text: None,
+            complement: None,
         }
     }
 }
@@ -398,6 +412,10 @@ pub struct ThemeGroup {
     pub syntax: bool,
     #[serde(default, skip_serializing_if = "Dynamic::is_plain")]
     pub dynamic: Dynamic,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub complement: Option<String>,
 }
 
 impl Default for ThemeGroup {
@@ -408,6 +426,8 @@ impl Default for ThemeGroup {
             color: ColorMode::default(),
             syntax: false,
             dynamic: Dynamic::default(),
+            text: None,
+            complement: None,
         }
     }
 }
@@ -421,6 +441,8 @@ impl ThemeGroup {
             color: c.color,
             syntax: c.syntax,
             dynamic: c.dynamic.clone(),
+            text: c.text.clone(),
+            complement: c.complement.clone(),
         }
     }
 }
@@ -487,6 +509,8 @@ impl PaneTheme {
             syntax: g.syntax,
             grade,
             dynamic: g.dynamic,
+            text: g.text,
+            complement: g.complement,
         }
     }
 
@@ -822,8 +846,10 @@ pub fn apply_dynamic(base: &Theme, anchor: Hsla, d: &Dynamic) -> Theme {
     }
     let r = roles(anchor, d);
     let mut th = base.clone();
-    // Title (accent), body text and cursor take the dynamic's relationship…
+    // Title (accent), its complement, body text and cursor take the dynamic's
+    // relationship…
     th.accent = r.primary;
+    th.complement = r.secondary;
     th.text = r.text;
     th.cursor = Hsla {
         l: (r.primary.l + 0.12).min(0.9),
@@ -885,8 +911,12 @@ pub fn resolve(cx: &App, choice: &ThemeChoice) -> Arc<Theme> {
             .unwrap_or_else(|| reg.custom.clone())
     };
     let seed = choice.seed.as_deref().and_then(hex);
-    // A Plain dynamic with no seed leaves the theme's colours untouched.
-    let identity_colour = choice.dynamic.is_plain() && seed.is_none();
+    let text_over = choice.text.as_deref().and_then(hex);
+    let comp_over = choice.complement.as_deref().and_then(hex);
+    // A Plain dynamic with no seed/text/complement override leaves the theme's
+    // colours untouched.
+    let identity_colour =
+        choice.dynamic.is_plain() && seed.is_none() && text_over.is_none() && comp_over.is_none();
     // Fast path: stock theme, no recolour, default mode, no syntax, neutral grade.
     if identity_colour && choice.color.is_default() && !choice.syntax && choice.grade.is_neutral() {
         return base;
@@ -903,6 +933,15 @@ pub fn resolve(cx: &App, choice: &ThemeChoice) -> Arc<Theme> {
     if !choice.dynamic.is_plain() {
         let anchor = seed.unwrap_or(base.accent);
         th = apply_dynamic(&th, anchor, &choice.dynamic);
+    }
+    // Layer 3 — explicit per-colour overrides from the wheel's T/C targets. These
+    // win over whatever the theme + dynamic derived.
+    if let Some(t) = text_over {
+        th.text = t;
+        th.ansi[7] = t;
+    }
+    if let Some(c) = comp_over {
+        th.complement = c;
     }
     th.color_mode = choice.color;
     th.syntax = choice.syntax;
@@ -957,6 +996,12 @@ pub(crate) fn parse(source: &str) -> Result<Theme, String> {
         surface: need(&c.surface, "surface")?,
         text: need(&c.text, "text")?,
         accent,
+        // Default complement = the accent's opposite hue; resolve() may restate it
+        // from the active dynamic or an explicit `C` override.
+        complement: Hsla {
+            h: (accent.h + 0.5).rem_euclid(1.0),
+            ..accent
+        },
         faint: need(&c.faint, "faint")?,
         cursor: c.cursor.as_ref().and_then(|s| hex(s)).unwrap_or(accent),
         ansi,
@@ -1223,6 +1268,31 @@ mod tests {
         assert_eq!(plain.accent, base.accent);
         assert_eq!(plain.text, base.text);
         assert_eq!(plain.bg, base.bg);
+    }
+
+    #[test]
+    fn text_and_complement_overrides_round_trip_and_ride_the_theme_group() {
+        let c = ThemeChoice {
+            text: Some("#ff8800".into()),
+            complement: Some("#0088ff".into()),
+            ..Default::default()
+        };
+        // wire round-trip
+        let back: ThemeChoice = toml::from_str(&toml::to_string(&c).unwrap()).unwrap();
+        assert_eq!(back.text.as_deref(), Some("#ff8800"));
+        assert_eq!(back.complement.as_deref(), Some("#0088ff"));
+        // omitted from the wire when unset
+        let d = toml::to_string(&ThemeChoice::default()).unwrap();
+        assert!(!d.contains("text") && !d.contains("complement"));
+        // they travel with the theme group, so a pane override carries them
+        let pane = PaneTheme {
+            theme: Some(ThemeGroup::of(&c)),
+            inherit_theme: false,
+            ..Default::default()
+        };
+        let eff = pane.effective(&ThemeChoice::default());
+        assert_eq!(eff.text.as_deref(), Some("#ff8800"));
+        assert_eq!(eff.complement.as_deref(), Some("#0088ff"));
     }
 
     #[test]
