@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en" data-theme="hacker">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>terminal-delight</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700;800&family=Inter:wght@400;600;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="src/styles/theme.css" />
+  <link rel="stylesheet" href="src/styles/workspace.css" />
+</head>
+<body>
+  <div class="workspace">
+    <div class="topbar">
+      <div class="brand">▸ terminal-delight<span class="blink">_</span></div>
+      <div class="tabstrip" id="tabstrip"></div>
+
+      <!-- theme selector — same data-* contract as the IMT engine -->
+      <div class="theme-menu" data-theme-menu>
+        <button type="button" class="theme-menu-trigger" data-theme-menu-trigger
+                aria-haspopup="true" aria-expanded="false" title="Theme & seed colour"></button>
+        <div class="theme-menu-panel" data-theme-menu-panel hidden>
+          <div class="tm-label">Theme</div>
+          <div class="theme-row">
+            <button type="button" class="theme-switcher-btn" data-theme-value="quiet-command" title="quiet-command">☼</button>
+            <button type="button" class="theme-switcher-btn" data-theme-value="field-command" title="field-command">≋</button>
+            <button type="button" class="theme-switcher-btn" data-theme-value="tactical-overdrive" title="tactical-overdrive">⌁</button>
+            <button type="button" class="theme-switcher-btn" data-theme-value="hacker" title="hacker">&gt;_</button>
+          </div>
+          <div class="tm-label">Seed colour</div>
+          <div class="seed-row">
+            <input type="color" value="#22c55e" data-theme-accent aria-label="Custom seed colour" />
+            <button type="button" class="palette-switcher-btn" data-palette-value="#22c55e" style="background:#22c55e" title="green"></button>
+            <button type="button" class="palette-switcher-btn" data-palette-value="#31d7ff" style="background:#31d7ff" title="cyan"></button>
+            <button type="button" class="palette-switcher-btn" data-palette-value="#ff8a3d" style="background:#ff8a3d" title="amber"></button>
+            <button type="button" class="palette-switcher-btn" data-palette-value="#8fa85f" style="background:#8fa85f" title="olive"></button>
+            <button type="button" class="palette-switcher-btn" data-palette-value="#872d73" style="background:#872d73" title="violet"></button>
+            <button type="button" class="palette-switcher-btn" data-palette-value="#2f6fdd" style="background:#2f6fdd" title="blue"></button>
+          </div>
+          <div class="tm-label">UI size</div>
+          <div class="scale-row">
+            <input type="range" min="0.9" max="1.35" step="0.05" value="1" data-ui-scale aria-label="UI size" />
+            <span class="ui-scale-value" data-ui-scale-value>100%</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="panes" id="panes"></div>
+  </div>
+
+  <script type="module" src="src/js/main.js"></script>
+</body>
+</html>
