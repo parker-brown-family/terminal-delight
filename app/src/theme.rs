@@ -974,8 +974,14 @@ pub fn theme_path() -> PathBuf {
 /// Open a path in the user's default handler (their editor, for a `.toml`).
 /// Best-effort and detached — the spawned process outlives this call, and any
 /// failure (no `xdg-open`, no handler) is swallowed so the UI never blocks.
+/// Linux-only: terminal-delight targets the freedesktop desktop, so the opener
+/// is `xdg-open` (macOS would want `open`, Windows `start`). The `cfg` lives in
+/// the body — mirroring `apply_warp` — so the signature exists on every target.
 pub fn open_in_default_app(path: &std::path::Path) {
+    #[cfg(target_os = "linux")]
     let _ = std::process::Command::new("xdg-open").arg(path).spawn();
+    #[cfg(not(target_os = "linux"))]
+    let _ = path; // other platforms: no-op (see doc note)
 }
 
 fn mtime(path: &PathBuf) -> Option<SystemTime> {

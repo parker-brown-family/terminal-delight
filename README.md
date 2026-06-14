@@ -11,19 +11,24 @@ does the VT emulation; your real shell runs on a real PTY.
 
 ![two panes: vim + top](assets/mvp-vim-top.png)
 
-## Status — MVP 0.1 (two-pane real terminal)
+**Platform:** Linux only (X11 & Wayland, via gpui's wgpu renderer). Not macOS/Windows.
+
+## Status — 0.1 (multi-pane tiling terminal)
 
 | Capability | State |
 |---|---|
 | Real shells (PTY + full VT emulation) — bash, vim, top, tmux verified | ✅ |
-| Two split panes, per-pane grids, focus borders | ✅ |
-| `ctrl+alt+r` / `ctrl+alt+d` split · `alt+←/→` switch panes | ✅ |
+| Tiling-tree splits + tabs, per-pane grids, focus borders | ✅ |
+| `ctrl+alt+r` / `ctrl+alt+d` split · `alt+←/→` switch panes · sub-tab drag-to-split · window pop-out | ✅ |
 | Pane closes when its shell exits; last one quits the app | ✅ |
-| Layout (pane count) restores on launch | ✅ |
+| Layout + per-pane appearance restore on launch | ✅ |
 | Live resize → SIGWINCH (verified against `tput`) | ✅ |
 | Full ANSI color (16 themed + 256 + truecolor), bold/underline/inverse/dim | ✅ |
 | Scrollback (wheel), mouse selection (click/word/line), `ctrl+shift+c/v`, bracketed paste | ✅ |
 | **Hot-reload themes** — edit `~/.config/terminal-delight/theme.toml`, no restart | ✅ |
+| 4 built-in themes + live-editable `custom`; picker with hover captions/tooltips | ✅ |
+| Per-pane appearance: theme & monitor-OSD **grade** groups inherit the workspace independently, each with a live "follow outer" toggle | ✅ |
+| Monitor-OSD tray: brightness/contrast/colour/text/background/gamma **+ text size**, global or per-pane | ✅ |
 | CRT-lite effects: scanlines, vignette, glow — per-theme dials, fully off in light theme | ✅ |
 | Latency probe (`TD_LATENCY=1`): key→echo→parsed **p50 121µs / p99 169µs**; `seq 1 100000` in **0.089s** | ✅ |
 
