@@ -3,6 +3,9 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <!-- Defense in depth: no third-party frames/plugins can ever load on this page,
+       images are self-only, fonts limited to Google. Locks in the "no embeds" call. -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; script-src 'self' 'unsafe-inline'; frame-src 'none'; object-src 'none'; base-uri 'self'; form-action 'none'" />
   <title>terminal-delight — GPU-native Linux terminal</title>
   <meta name="description" content="A GPU-native Linux terminal in Rust (gpui + alacritty_terminal): hot-reloadable CRT-flavored themes, tiling multi-pane, per-pane monitor-OSD grading. Source-only, MIT." />
 
@@ -132,20 +135,11 @@
     #lightbox .lb-close:hover { transform: scale(1.06); }
     @media (max-width: 600px) { #lightbox .lb-prev, #lightbox .lb-next { width: 40px; height: 40px; } #lightbox .lb-prev{ left: 6px; } #lightbox .lb-next{ right: 6px; } }
 
-    /* ---- shell toy ---- */
-    .toy { border: 1px solid var(--line); border-radius: 14px; overflow: hidden; background: var(--bg-2); }
-    .toy .head { padding: 16px 20px; }
-    .toy .head h3 { margin: 0 0 6px; color: #eafff2; }
-    .toy .disclaimer { font-size: 14px; color: var(--text-dim); }
-    .toy .disclaimer b { color: var(--warn); }
-    .toy .stage { position: relative; aspect-ratio: 16/9; background:
-      repeating-linear-gradient(0deg, rgba(0,0,0,0.25) 0 1px, transparent 1px 3px), #04100a;
-      display: flex; align-items: center; justify-content: center; border-top: 1px solid var(--line); }
-    .toy .stage .poster { text-align: center; padding: 24px; }
-    .toy .stage .poster .prompt { font-family: var(--mono); color: var(--accent); font-size: clamp(20px, 4vw, 30px); }
-    .toy .stage .poster .prompt .blink { animation: blink 1.1s steps(1) infinite; }
-    .toy .stage iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
-    .toy .stage .fallback { margin-top: 14px; font-size: 13px; color: var(--text-dim); }
+    /* ---- run callout ---- */
+    .runcard { border: 1px solid var(--line); border-radius: 14px; background: var(--bg-2); padding: 26px; display: grid; grid-template-columns: 1fr auto; gap: 22px; align-items: center; }
+    .runcard h3 { margin: 0 0 6px; color: #eafff2; }
+    .runcard p { margin: 0; color: var(--text-dim); font-size: 14.5px; }
+    @media (max-width: 640px) { .runcard { grid-template-columns: 1fr; } }
 
     /* ---- prose ---- */
     .prose { max-width: 760px; }
@@ -172,7 +166,7 @@
       <span class="links">
         <a href="#features" class="hide-sm">features</a>
         <a href="#gallery" class="hide-sm">gallery</a>
-        <a href="#try">try a shell</a>
+        <a href="#vision">vision</a>
         <a href="#build">build</a>
         <a href="https://github.com/parker-brown-family/terminal-delight">GitHub ↗</a>
       </span>
@@ -243,26 +237,18 @@
     </div>
   </section>
 
-  <section id="try">
+  <section id="run">
     <div class="wrap">
-      <div class="eyebrow">Try a shell</div>
-      <h2>Play with a Linux shell — in your own browser tab</h2>
-      <div class="toy">
-        <div class="head">
-          <h3>Browser Linux sandbox (a toy, not the engine)</h3>
-          <p class="disclaimer">
-            This runs a full Linux entirely <b>client-side</b> via WebAssembly — on <b>your</b> machine, in <b>your</b> tab.
-            Fork-bomb it, fill the disk, <code>:(){ :|:&amp; };:</code> to your heart's content: the only thing you can crash is this tab. Reload and it's back.
-            <br><br>
-            It is <b>generic web-Linux</b> for fun — <em>not</em> terminal-delight's gpui/wgpu renderer (that's a native app; see the gallery above and <a href="#build">Build</a>).
-          </p>
+      <div class="eyebrow">Run it</div>
+      <h2>It's a real native terminal — run the real thing.</h2>
+      <div class="runcard">
+        <div>
+          <h3>No web demo, on purpose.</h3>
+          <p>terminal-delight renders on the GPU through gpui/wgpu — it isn't a webpage and a browser shell wouldn't be the real engine. So instead of a fake terminal, grab the source and run the actual app on your Linux box. The gallery above is all real captures; a recorded clip of the live warp is coming to the hero.</p>
         </div>
-        <div class="stage" id="shell-stage">
-          <div class="poster" id="shell-poster">
-            <div class="prompt">$ <span class="blink">_</span></div>
-            <button class="btn primary" style="margin-top:18px" id="shell-launch">▶ Launch browser Linux shell</button>
-            <div class="fallback">Loads a few MB of WASM on click. Or <a href="https://webvm.io/" target="_blank" rel="noopener">open it in a new tab ↗</a> if your browser blocks the embed.</div>
-          </div>
+        <div class="cta" style="justify-content:flex-end">
+          <a class="btn primary" href="#build">⌨ Build &amp; run</a>
+          <a class="btn" href="https://github.com/parker-brown-family/terminal-delight/releases/tag/v0.1.0">v0.1.0 ↗</a>
         </div>
       </div>
     </div>
@@ -337,27 +323,6 @@ cd app &amp;&amp; cargo run</pre>
   </footer>
 
   <script>
-    // Click-to-load the browser-Linux toy: heavy WASM only loads on intent, and
-    // a blocked embed (some browsers/X-Frame-Options) degrades to the new-tab link.
-    document.getElementById('shell-launch').addEventListener('click', function () {
-      var stage = document.getElementById('shell-stage');
-      var poster = document.getElementById('shell-poster');
-      poster.style.display = 'none';
-      var f = document.createElement('iframe');
-      f.src = 'https://webvm.io/';
-      f.setAttribute('title', 'Browser Linux shell (WebVM, client-side)');
-      f.setAttribute('allow', 'cross-origin-isolated');
-      stage.appendChild(f);
-      // If the embed is frame-blocked it stays blank; surface the escape hatch.
-      setTimeout(function () {
-        var note = document.createElement('div');
-        note.className = 'fallback';
-        note.style.cssText = 'position:absolute;left:0;right:0;bottom:8px;text-align:center';
-        note.innerHTML = 'Embed blank? <a href="https://webvm.io/" target="_blank" rel="noopener">Open the shell in a new tab ↗</a>';
-        stage.appendChild(note);
-      }, 4000);
-    });
-
     // Gallery lightbox: click a shot to zoom; ← / → cycle, Esc or backdrop closes.
     (function () {
       var figs = Array.prototype.slice.call(document.querySelectorAll('.gallery figure'));
