@@ -1472,14 +1472,13 @@ impl Render for TerminalView {
         let grid_label = format!("{}×{}", self.grid.cols, self.grid.rows);
         let glow = th.glow;
 
-        // Sub-tab header text + glow: the complement of the theme seed
-        // (accent), the opposite hue but kept legible. ~30% more vibrant than
-        // the old muting (s 0.55→0.72, l 0.8→0.9) so the bar reads less faded.
+        // The sub-tab header is this pane's TITLE — painted in the theme's
+        // complement (the wheel's `C` target; defaults to the accent's opposite
+        // hue, or the active dynamic's complement). Lightness is floored so a
+        // dark complement override stays legible on the header.
         let bar_fg = Hsla {
-            h: wrap01(th.accent.h + 0.5),
-            s: (th.accent.s * 0.72).clamp(0., 1.),
-            l: (th.accent.l * 0.9).clamp(0., 1.),
-            a: th.accent.a,
+            l: th.complement.l.clamp(0.5, 0.92),
+            ..th.complement
         };
 
         // solid, reflective header: gradient face + crisp top reflection line
