@@ -555,6 +555,30 @@ pub fn parse_hex(value: &str) -> Option<Hsla> {
     hex(value)
 }
 
+/// (id, icon, label) for the theme picker, in display order. The label is a
+/// short caption shown under the glyph; it disambiguates glyph collisions — an
+/// unedited `custom` file still carries the `>_` glyph it was seeded from
+/// (hacker), so glyph alone can't tell the two apart, but "hacker" vs "custom"
+/// can.
+pub fn all_themes(cx: &App) -> Vec<(String, String, String)> {
+    let reg = cx.global::<ThemeRegistry>();
+    let mut out: Vec<_> = reg
+        .builtins
+        .iter()
+        .map(|(id, t)| (id.clone(), t.icon.clone(), short_label(id)))
+        .collect();
+    // The hot-reloaded user file: always labelled "custom" so it reads as the
+    // live-editable slot even when it's still a verbatim copy of a built-in.
+    out.push(("custom".into(), reg.custom.icon.clone(), "custom".into()));
+    out
+}
+
+/// Short picker caption for a theme id: the segment before the first '-'
+/// ("tactical-overdrive" → "tactical"), which is unique across the built-ins.
+fn short_label(id: &str) -> String {
+    id.split('-').next().unwrap_or(id).to_string()
+}
+
 /// Hand-picked roles for the [`Dynamic::Custom`] dynamic. Each is an optional
 /// "#rrggbb"; an empty slot falls back to a seed-derived default, so a partially
 /// filled custom palette still renders coherently.
@@ -660,14 +684,14 @@ struct Spec {
 }
 
 /// The four coordinated roles a dynamic derives from an anchor (seed) colour,
-/// plus the readable text and the screen background that go with them.
+/// plus the readable text that goes with them. (The screen background is the
+/// theme's, not the dynamic's — see [`apply_dynamic`].)
 pub struct Roles {
     pub primary: Hsla,
     pub secondary: Hsla,
     pub tertiary: Hsla,
     pub quaternary: Hsla,
     pub text: Hsla,
-    pub bg: Hsla,
 }
 
 /// Resolve a dynamic + anchor (seed) into concrete role colours. This is the
@@ -687,11 +711,6 @@ pub fn roles(anchor: Hsla, d: &Dynamic) -> Roles {
             quaternary: pick(&c.quaternary, derived.quaternary),
             text: Hsla {
                 l: (primary.l + 0.28).min(0.92),
-                ..primary
-            },
-            bg: Hsla {
-                s: (primary.s * 0.45).min(0.35),
-                l: 0.035,
                 ..primary
             },
             primary,
@@ -782,47 +801,41 @@ pub fn roles(anchor: Hsla, d: &Dynamic) -> Roles {
         l: spec.text_l,
         a: 1.,
     };
-    let bg = Hsla {
-        h: anchor.h,
-        s: if spec.mono { 0.0 } else { (s * 0.5).min(0.35) },
-        l: 0.035,
-        a: 1.,
-    };
     Roles {
         primary,
         secondary,
         tertiary,
         quaternary,
         text,
-        bg,
     }
 }
 
-/// Paint a theme from a dynamic + anchor: derive the harmony roles and assign
-/// them to the chrome (title/accent, text, background, surface, cursor). The CRT
-/// effects and structural geometry of `base` are kept; only colour is restated.
+/// Layer a dynamic over an already-resolved theme. A dynamic is an **orthogonal
+/// dimension on top of the base theme**: it re-maps the *relationship* between the
+/// seed and the title/text/accents, while the theme's own screen — bg, surface,
+/// CRT effects, structural geometry — is left exactly as the theme defines it.
+/// `Plain` is the identity (the theme is unchanged), so the four built-in themes
+/// keep their default look until a dynamic dimension is chosen.
 pub fn apply_dynamic(base: &Theme, anchor: Hsla, d: &Dynamic) -> Theme {
+    if d.is_plain() {
+        return base.clone();
+    }
     let r = roles(anchor, d);
     let mut th = base.clone();
+    // Title (accent), body text and cursor take the dynamic's relationship…
     th.accent = r.primary;
     th.text = r.text;
-    th.bg = r.bg;
-    th.surface = Hsla {
-        l: 0.075,
-        ..r.tertiary
-    };
-    th.faint = Hsla {
-        l: 0.32,
-        ..r.tertiary
-    };
     th.cursor = Hsla {
         l: (r.primary.l + 0.12).min(0.9),
         ..r.primary
     };
+    th.faint = Hsla {
+        l: r.tertiary.l.clamp(0.22, 0.40),
+        ..r.tertiary
+    };
     th.ansi[7] = r.text;
-    // Echo the harmony into the chrome ANSI slots used for accents/links so the
-    // relationship reads even before program colour: green→secondary,
-    // yellow→tertiary, cyan→quaternary.
+    // …and the harmony echoes into the accent/link ANSI slots so the seed→colour
+    // relationship reads. bg/surface (the theme's screen) are deliberately kept.
     th.ansi[2] = r.secondary;
     th.ansi[3] = r.tertiary;
     th.ansi[6] = r.quaternary;
@@ -872,25 +885,25 @@ pub fn resolve(cx: &App, choice: &ThemeChoice) -> Arc<Theme> {
             .unwrap_or_else(|| reg.custom.clone())
     };
     let seed = choice.seed.as_deref().and_then(hex);
-    // A Plain dynamic with no seed is the identity recolour (today's behaviour);
-    // any named dynamic always restates the palette around its anchor.
+    // A Plain dynamic with no seed leaves the theme's colours untouched.
     let identity_colour = choice.dynamic.is_plain() && seed.is_none();
     // Fast path: stock theme, no recolour, default mode, no syntax, neutral grade.
     if identity_colour && choice.color.is_default() && !choice.syntax && choice.grade.is_neutral() {
         return base;
     }
-    let mut th = if identity_colour {
-        (*base).clone()
-    } else {
-        // No explicit seed → anchor the dynamic on the base theme's own accent.
-        let anchor = seed.unwrap_or(base.accent);
-        match &choice.dynamic {
-            // Plain keeps the original single-hue tint so existing seeded themes
-            // render exactly as before.
-            Dynamic::Plain => apply_seed(&base, anchor),
-            d => apply_dynamic(&base, anchor, d),
-        }
+    // Layer 1 — the THEME: its own seed recolour (the theme's built-in
+    // seed→palette behaviour). No seed → the theme as authored.
+    let mut th = match seed {
+        Some(seed) => apply_seed(&base, seed),
+        None => (*base).clone(),
     };
+    // Layer 2 — the DYNAMIC dimension: an orthogonal modifier that re-maps the
+    // seed→title/text relationship on top of the theme, keeping its screen.
+    // `Plain` is the identity, so a theme with no dynamic looks exactly as before.
+    if !choice.dynamic.is_plain() {
+        let anchor = seed.unwrap_or(base.accent);
+        th = apply_dynamic(&th, anchor, &choice.dynamic);
+    }
     th.color_mode = choice.color;
     th.syntax = choice.syntax;
     th.grade = choice.grade;
@@ -1188,6 +1201,31 @@ mod tests {
     }
 
     #[test]
+    fn a_dynamic_is_a_layer_that_keeps_the_theme_screen() {
+        // The blunder-fix invariant: a dynamic is an orthogonal dimension ON TOP
+        // of the theme — it re-maps title/text/accents but must NOT touch the
+        // theme's own screen (bg/surface), and Plain must be the identity.
+        let base = parse(DEFAULT_THEME_TOML).unwrap();
+        let gold = hex("#ffcc00").unwrap();
+        let dynamic = apply_dynamic(&base, gold, &Dynamic::Pineapple);
+        assert_eq!(
+            dynamic.bg, base.bg,
+            "dynamic must keep the theme background"
+        );
+        assert_eq!(
+            dynamic.surface, base.surface,
+            "dynamic must keep the theme surface"
+        );
+        assert_ne!(dynamic.accent, base.accent, "but the title is re-mapped");
+        assert_ne!(dynamic.text, base.text, "and the body text is re-mapped");
+        // Plain leaves the theme exactly itself.
+        let plain = apply_dynamic(&base, gold, &Dynamic::Plain);
+        assert_eq!(plain.accent, base.accent);
+        assert_eq!(plain.text, base.text);
+        assert_eq!(plain.bg, base.bg);
+    }
+
+    #[test]
     fn dynamic_round_trips_and_plain_is_omitted() {
         // Plain is the default → skipped on the wire (old state files unchanged)
         let plain = toml::to_string(&ThemeChoice::default()).unwrap();
@@ -1347,6 +1385,16 @@ pub fn theme_path() -> PathBuf {
 /// Open a path in the user's default handler (their editor, for a `.toml`).
 /// Best-effort and detached — the spawned process outlives this call, and any
 /// failure (no `xdg-open`, no handler) is swallowed so the UI never blocks.
+/// Linux-only: terminal-delight targets the freedesktop desktop, so the opener
+/// is `xdg-open` (macOS would want `open`, Windows `start`). The `cfg` lives in
+/// the body — mirroring `apply_warp` — so the signature exists on every target.
+pub fn open_in_default_app(path: &std::path::Path) {
+    #[cfg(target_os = "linux")]
+    let _ = std::process::Command::new("xdg-open").arg(path).spawn();
+    #[cfg(not(target_os = "linux"))]
+    let _ = path; // other platforms: no-op (see doc note)
+}
+
 fn mtime(path: &PathBuf) -> Option<SystemTime> {
     fs::metadata(path).and_then(|m| m.modified()).ok()
 }
