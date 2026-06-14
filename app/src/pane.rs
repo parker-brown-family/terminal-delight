@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 use crate::crt;
 use crate::term;
-use crate::theme::{self, Theme, ThemeChoice};
+use crate::theme::{self, PaneTheme, Theme};
 use alacritty_terminal::{
     event::{Event as TermEvent, Notify},
     grid::Scroll,
@@ -521,8 +521,9 @@ pub struct TerminalView {
     /// GPUI builds keep this at zero so mouse hit testing stays linear.
     warp_k: (f32, f32),
     pub mode: PaneMode,
-    /// Explicit per-pane appearance; None = follow the outer theme (+ mode tint).
-    pub theme_override: Option<ThemeChoice>,
+    /// Per-pane appearance: retained theme/grade overrides plus two independent
+    /// follow-outer switches. A pristine pane inherits both groups (+ mode tint).
+    pub appearance: PaneTheme,
     /// Debounced PTY resize: (target grid, when it stabilized).
     pending_grid: Option<(term::GridSize, Instant)>,
 }
@@ -561,12 +562,22 @@ pub struct PaneRenamed;
 impl gpui::EventEmitter<PaneRenamed> for TerminalView {}
 
 impl TerminalView {
-    /// The theme this pane actually renders with: an explicit override wins;
-    /// otherwise the outer theme tinted by what's running (mode).
+    /// The theme this pane actually renders with: each appearance group
+    /// (theme, grade) resolved to the pane's own override or the live outer
+    /// scope, then — when the theme group follows outer — tinted by what's
+    /// running (mode).
     pub fn resolved_theme(&self, cx: &App) -> Theme {
-        match &self.theme_override {
-            Some(choice) => (*theme::resolve(cx, choice)).clone(),
-            None => mode_theme(&theme::theme(cx), &self.mode),
+        let outer = theme::outer_choice(cx);
+        let eff = self.appearance.effective(&outer);
+        let base = (*theme::resolve(cx, &eff)).clone();
+        // The mode tint (what's running in the pane) applies only while the
+        // theme group follows outer — an explicit per-pane theme is a deliberate
+        // look the tint shouldn't stomp. The grade rides along untouched either
+        // way (mode_theme leaves `grade`/`color_mode` alone).
+        if self.appearance.inherit_theme {
+            mode_theme(&base, &self.mode)
+        } else {
+            base
         }
     }
 
@@ -690,7 +701,7 @@ impl TerminalView {
             fx: crt::Fx::new(seed),
             warp_k: (0., 0.),
             mode: PaneMode::Shell,
-            theme_override: None,
+            appearance: PaneTheme::default(),
             pending_grid: None,
         }
     }
@@ -1212,10 +1223,13 @@ impl Focusable for TerminalView {
 impl Render for TerminalView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let th = self.resolved_theme(cx);
-        let scale = cx
-            .try_global::<crate::UiScale>()
-            .map(|s| s.0)
-            .unwrap_or(1.0);
+        // Text size rides the grade group: a pane uses its own scale when its
+        // grade is detached, else the live outer (Mother) scale.
+        let scale = self
+            .appearance
+            .effective(&theme::outer_choice(cx))
+            .grade
+            .scale;
         self.sync_size(&th, scale, window);
         self.warp_k = (th.curvature * 0.14, th.curvature * 0.06);
         let lines = self.styled_lines(&th);

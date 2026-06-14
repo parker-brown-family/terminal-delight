@@ -198,10 +198,27 @@ fn is_false(b: &bool) -> bool {
     !*b
 }
 
+/// serde `default` for the two `PaneTheme` inherit flags — a fresh pane follows
+/// outer for both groups, so an absent flag means "inheriting".
+fn yes() -> bool {
+    true
+}
+
+/// serde `skip_serializing_if` for the inherit flags — omit them when on (the
+/// default), so a pristine pane serialises to nothing.
+fn is_true(b: &bool) -> bool {
+    *b
+}
+
 /// The neutral slider position. Every [`Grade`] channel reads 0.5 = no-op, so a
 /// fresh grade is the identity transform and serialises to nothing.
 fn half() -> f32 {
     0.5
+}
+
+/// The neutral text-size multiplier — `1.0×`, the [`GradeKey::Scale`] no-op.
+fn one() -> f32 {
+    1.0
 }
 
 /// One channel of the monitor OSD — the address of a slider, used both to drive
@@ -214,6 +231,22 @@ pub enum GradeKey {
     Text,
     Background,
     Gamma,
+    /// Text-size multiplier. Unlike the colour channels this is not a paint-time
+    /// grade — it scales the pane's font/cell metrics — but it rides the grade
+    /// group so it inherits the same per-pane override + "follow outer" rules.
+    Scale,
+}
+
+impl GradeKey {
+    /// `(min, max, neutral)` in stored units. The colour channels live in
+    /// `0..1` with `0.5` neutral; the text-size channel lives in `0.7..1.6×`
+    /// with `1.0` neutral. Used to map slider position ↔ stored value.
+    pub fn range(self) -> (f32, f32, f32) {
+        match self {
+            GradeKey::Scale => (0.7, 1.6, 1.0),
+            _ => (0.0, 1.0, 0.5),
+        }
+    }
 }
 
 /// Per-scope "monitor controls": real-display grading applied to the pane's
@@ -236,6 +269,11 @@ pub struct Grade {
     pub background: f32,
     #[serde(default = "half")]
     pub gamma: f32,
+    /// Text-size multiplier (`0.7..1.6`, neutral `1.0`). Scales the pane's font
+    /// and cell metrics rather than its colours; omitted from the wire form when
+    /// neutral (see [`Grade::is_neutral`]).
+    #[serde(default = "one")]
+    pub scale: f32,
 }
 
 impl Default for Grade {
@@ -247,19 +285,21 @@ impl Default for Grade {
             text: 0.5,
             background: 0.5,
             gamma: 0.5,
+            scale: 1.0,
         }
     }
 }
 
 impl Grade {
     /// Picker order: (channel, label) for the OSD slider rows.
-    pub const CHANNELS: [(GradeKey, &'static str); 6] = [
+    pub const CHANNELS: [(GradeKey, &'static str); 7] = [
         (GradeKey::Brightness, "brightness"),
         (GradeKey::Contrast, "contrast"),
         (GradeKey::Colour, "colour"),
         (GradeKey::Text, "text"),
         (GradeKey::Background, "background"),
         (GradeKey::Gamma, "gamma"),
+        (GradeKey::Scale, "text size"),
     ];
 
     /// True when every channel sits at neutral — the grade is the identity and
@@ -276,6 +316,7 @@ impl Grade {
         ]
         .iter()
         .all(|v| (v - 0.5).abs() < EPS)
+            && (self.scale - 1.0).abs() < EPS
     }
 
     pub fn get(&self, k: GradeKey) -> f32 {
@@ -286,11 +327,13 @@ impl Grade {
             GradeKey::Text => self.text,
             GradeKey::Background => self.background,
             GradeKey::Gamma => self.gamma,
+            GradeKey::Scale => self.scale,
         }
     }
 
     pub fn set(&mut self, k: GradeKey, v: f32) {
-        let v = v.clamp(0.0, 1.0);
+        let (min, max, _) = k.range();
+        let v = v.clamp(min, max);
         match k {
             GradeKey::Brightness => self.brightness = v,
             GradeKey::Contrast => self.contrast = v,
@@ -298,6 +341,7 @@ impl Grade {
             GradeKey::Text => self.text = v,
             GradeKey::Background => self.background = v,
             GradeKey::Gamma => self.gamma = v,
+            GradeKey::Scale => self.scale = v,
         }
     }
 }
@@ -330,6 +374,154 @@ impl Default for ThemeChoice {
             color: ColorMode::default(),
             syntax: false,
             grade: Grade::default(),
+        }
+    }
+}
+
+/// The "theme" half of a [`ThemeChoice`] — everything except the monitor-OSD
+/// `grade`: theme id, seed override, colour mode and the syntax overlay. Split
+/// out so a pane can pin (or inherit) this group independently of its grade,
+/// which is what the theme tray's "follow outer" toggle governs.
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+pub struct ThemeGroup {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seed: Option<String>,
+    #[serde(default, skip_serializing_if = "ColorMode::is_default")]
+    pub color: ColorMode,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub syntax: bool,
+}
+
+impl Default for ThemeGroup {
+    fn default() -> Self {
+        Self {
+            id: "custom".into(),
+            seed: None,
+            color: ColorMode::default(),
+            syntax: false,
+        }
+    }
+}
+
+impl ThemeGroup {
+    /// Lift the theme-group fields out of a full choice (drops `grade`).
+    pub fn of(c: &ThemeChoice) -> Self {
+        Self {
+            id: c.id.clone(),
+            seed: c.seed.clone(),
+            color: c.color,
+            syntax: c.syntax,
+        }
+    }
+}
+
+/// A pane's appearance: its retained per-group overrides plus two independent
+/// "follow the outer scope" switches — one for the theme group, one for the
+/// grade group. Inheriting is a **live link**: [`PaneTheme::effective`] is
+/// recomputed every paint from the current [`OuterChoice`], so editing the outer
+/// theme (or nudging one OSD slider) flows into every pane that inherits that
+/// group, with no per-pane bookkeeping. A switch is a *non-destructive* toggle:
+/// turning "follow outer" on keeps the pane's retained override, so turning it
+/// back off restores the pane's own look rather than re-copying outer.
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+pub struct PaneTheme {
+    /// Retained theme-group override (id/seed/colour/syntax). Kept even while
+    /// `inherit_theme` is on; `None` only before the group has ever diverged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub theme: Option<ThemeGroup>,
+    /// Retained grade-group override (the six OSD sliders). Same retention rule.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grade: Option<Grade>,
+    /// Follow the outer scope's theme group. Default `true` (a fresh pane inherits).
+    #[serde(default = "yes", skip_serializing_if = "is_true")]
+    pub inherit_theme: bool,
+    /// Follow the outer scope's grade group. Default `true`.
+    #[serde(default = "yes", skip_serializing_if = "is_true")]
+    pub inherit_grade: bool,
+}
+
+impl Default for PaneTheme {
+    fn default() -> Self {
+        Self {
+            theme: None,
+            grade: None,
+            inherit_theme: true,
+            inherit_grade: true,
+        }
+    }
+}
+
+impl PaneTheme {
+    /// True when the pane carries nothing of its own — both groups follow outer
+    /// and no override is retained. Such a pane is omitted from the state file.
+    pub fn is_pristine(&self) -> bool {
+        self.inherit_theme && self.inherit_grade && self.theme.is_none() && self.grade.is_none()
+    }
+
+    /// The choice this pane actually renders with: each group resolved
+    /// independently to the outer scope's value (when inheriting, or before it
+    /// has diverged) or the pane's own retained override.
+    pub fn effective(&self, outer: &ThemeChoice) -> ThemeChoice {
+        let g = match (self.inherit_theme, &self.theme) {
+            (false, Some(g)) => g.clone(),
+            _ => ThemeGroup::of(outer),
+        };
+        let grade = match (self.inherit_grade, self.grade) {
+            (false, Some(grade)) => grade,
+            _ => outer.grade,
+        };
+        ThemeChoice {
+            id: g.id,
+            seed: g.seed,
+            color: g.color,
+            syntax: g.syntax,
+            grade,
+        }
+    }
+
+    /// Pin the theme group to `g` and stop following outer (a theme-tray edit).
+    pub fn set_theme(&mut self, g: ThemeGroup) {
+        self.theme = Some(g);
+        self.inherit_theme = false;
+    }
+
+    /// Pin the grade group to `grade` and stop following outer (an OSD edit).
+    pub fn set_grade(&mut self, grade: Grade) {
+        self.grade = Some(grade);
+        self.inherit_grade = false;
+    }
+
+    /// Flip the theme group's follow-outer switch. On the *first* detach (no
+    /// override retained yet) freeze the current outer look so the pane doesn't
+    /// visually jump; on later detaches the retained override is restored.
+    pub fn toggle_theme(&mut self, outer: &ThemeChoice) {
+        if self.inherit_theme {
+            self.theme.get_or_insert_with(|| ThemeGroup::of(outer));
+            self.inherit_theme = false;
+        } else {
+            self.inherit_theme = true;
+        }
+    }
+
+    /// Flip the grade group's follow-outer switch (see [`Self::toggle_theme`]).
+    pub fn toggle_grade(&mut self, outer: &ThemeChoice) {
+        if self.inherit_grade {
+            self.grade.get_or_insert(outer.grade);
+            self.inherit_grade = false;
+        } else {
+            self.inherit_grade = true;
+        }
+    }
+
+    /// Migrate a legacy single full-pane override: it pinned *both* groups and
+    /// followed outer for neither.
+    pub fn from_legacy(c: ThemeChoice) -> Self {
+        Self {
+            theme: Some(ThemeGroup::of(&c)),
+            grade: Some(c.grade),
+            inherit_theme: false,
+            inherit_grade: false,
         }
     }
 }
@@ -545,6 +737,90 @@ mod tests {
         );
     }
 
+    fn outer_named(id: &str, brightness: f32) -> ThemeChoice {
+        ThemeChoice {
+            id: id.into(),
+            grade: Grade {
+                brightness,
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn pane_theme_inherits_each_group_independently() {
+        let outer = outer_named("field-command", 0.8);
+        // Inherit theme, but pin a divergent grade.
+        let mut p = PaneTheme::default();
+        p.set_grade(Grade {
+            brightness: 0.2,
+            ..Default::default()
+        });
+        let eff = p.effective(&outer);
+        assert_eq!(eff.id, "field-command", "theme group still follows outer");
+        assert!(!p.inherit_theme || (eff.grade.brightness - 0.2).abs() < 1e-6);
+        assert!(
+            (eff.grade.brightness - 0.2).abs() < 1e-6,
+            "grade group uses the pane's own pin"
+        );
+        // Now also pin a divergent theme; both groups are the pane's own.
+        p.set_theme(ThemeGroup {
+            id: "hacker".into(),
+            ..Default::default()
+        });
+        let eff = p.effective(&outer);
+        assert_eq!(eff.id, "hacker");
+        assert!((eff.grade.brightness - 0.2).abs() < 1e-6);
+    }
+
+    #[test]
+    fn pane_theme_follows_outer_live_until_it_diverges() {
+        let p = PaneTheme::default();
+        assert!(p.is_pristine());
+        // A pristine pane mirrors whatever outer currently is — the link is live.
+        assert_eq!(p.effective(&outer_named("hacker", 0.5)).id, "hacker");
+        assert_eq!(
+            p.effective(&outer_named("field-command", 0.5)).id,
+            "field-command"
+        );
+    }
+
+    #[test]
+    fn follow_outer_toggle_is_non_destructive() {
+        let outer = outer_named("field-command", 0.5);
+        let mut p = PaneTheme::default();
+        // Diverge to an explicit theme.
+        p.set_theme(ThemeGroup {
+            id: "hacker".into(),
+            ..Default::default()
+        });
+        assert_eq!(p.effective(&outer).id, "hacker");
+        // Toggle ON: follows outer live, but the pick is RETAINED, not discarded.
+        p.toggle_theme(&outer);
+        assert!(p.inherit_theme);
+        assert_eq!(p.effective(&outer).id, "field-command");
+        assert_eq!(
+            p.theme.as_ref().unwrap().id,
+            "hacker",
+            "retained, not wiped"
+        );
+        // Toggle OFF again: the pane's own theme returns — nothing was lost.
+        p.toggle_theme(&outer);
+        assert!(!p.inherit_theme);
+        assert_eq!(p.effective(&outer).id, "hacker");
+    }
+
+    #[test]
+    fn first_detach_freezes_the_current_outer_look() {
+        let mut p = PaneTheme::default();
+        // Detaching a pristine group freezes outer-at-that-moment so nothing jumps.
+        p.toggle_theme(&outer_named("hacker", 0.5));
+        assert!(!p.inherit_theme);
+        // A later outer change no longer affects this now-detached pane.
+        assert_eq!(p.effective(&outer_named("field-command", 0.5)).id, "hacker");
+    }
+
     #[test]
     fn hex_accepts_themed_forms_and_rejects_junk() {
         assert!(hex("#22c55e").is_some());
@@ -627,6 +903,54 @@ mod tests {
     }
 
     #[test]
+    fn text_size_rides_the_grade_group_under_its_own_range() {
+        // Neutral scale is 1.0×, not 0.5, and a default grade stays neutral.
+        assert!((Grade::default().scale - 1.0).abs() < 1e-6);
+        assert!(Grade::default().is_neutral());
+
+        // Stored in real units, clamped to 0.7..1.6 (not the colour 0..1).
+        let mut g = Grade::default();
+        g.set(GradeKey::Scale, 1.3);
+        assert!((g.get(GradeKey::Scale) - 1.3).abs() < 1e-6);
+        assert!(!g.is_neutral(), "a non-1.0 scale breaks neutrality");
+        g.set(GradeKey::Scale, 9.0);
+        assert!((g.scale - 1.6).abs() < 1e-6, "clamps to the 1.6 ceiling");
+        g.set(GradeKey::Scale, 0.0);
+        assert!((g.scale - 0.7).abs() < 1e-6, "clamps to the 0.7 floor");
+        assert_eq!(GradeKey::Scale.range(), (0.7, 1.6, 1.0));
+
+        // A non-neutral scale survives a round-trip; an absent `scale` (legacy
+        // state written before this channel existed) defaults to 1.0×.
+        let c = ThemeChoice {
+            grade: g,
+            ..Default::default()
+        };
+        let back: ThemeChoice = toml::from_str(&toml::to_string(&c).unwrap()).unwrap();
+        assert!((back.grade.scale - 0.7).abs() < 1e-6);
+        let legacy: ThemeChoice =
+            toml::from_str("id = \"hacker\"\n[grade]\nbrightness = 0.9\n").unwrap();
+        assert!(
+            (legacy.grade.scale - 1.0).abs() < 1e-6,
+            "absent scale = 1.0×"
+        );
+
+        // A pristine pane inherits the outer text size live (the "Mother" rule);
+        // a detached grade keeps its own.
+        let mut outer = ThemeChoice::default();
+        outer.grade.scale = 1.45;
+        let pristine = PaneTheme::default();
+        assert!((pristine.effective(&outer).grade.scale - 1.45).abs() < 1e-6);
+        let mut own = Grade::default();
+        own.set(GradeKey::Scale, 0.85);
+        let detached = PaneTheme {
+            grade: Some(own),
+            inherit_grade: false,
+            ..Default::default()
+        };
+        assert!((detached.effective(&outer).grade.scale - 0.85).abs() < 1e-6);
+    }
+
+    #[test]
     fn legacy_syntax_colour_mode_folds_to_mono() {
         // Old state files stored the retired `color = "syntax"` mode; it must
         // still load (folding onto the monochrome default) rather than erroring.
@@ -636,12 +960,22 @@ mod tests {
     }
 }
 
-fn theme_path() -> PathBuf {
+/// Absolute path of the hot-reloaded "custom" theme file for THIS machine —
+/// `$TD_THEME` if set, else `~/.config/terminal-delight/theme.toml`. Public so
+/// the UI can show the user exactly where their editable theme lives and open it.
+pub fn theme_path() -> PathBuf {
     if let Ok(p) = std::env::var("TD_THEME") {
         return PathBuf::from(p);
     }
     let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
     PathBuf::from(home).join(".config/terminal-delight/theme.toml")
+}
+
+/// Open a path in the user's default handler (their editor, for a `.toml`).
+/// Best-effort and detached — the spawned process outlives this call, and any
+/// failure (no `xdg-open`, no handler) is swallowed so the UI never blocks.
+pub fn open_in_default_app(path: &std::path::Path) {
+    let _ = std::process::Command::new("xdg-open").arg(path).spawn();
 }
 
 fn mtime(path: &PathBuf) -> Option<SystemTime> {
