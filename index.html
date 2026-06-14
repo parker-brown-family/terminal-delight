@@ -13,7 +13,8 @@
   <meta property="og:title" content="terminal-delight" />
   <meta property="og:description" content="GPU-native Linux terminal with hot-reloadable CRT-flavored themes and tiling multi-pane." />
   <meta property="og:type" content="website" />
-  <meta name="twitter:card" content="summary" />
+  <meta property="og:image" content="assets/showcase-themes.png" />
+  <meta name="twitter:card" content="summary_large_image" />
 
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -189,20 +190,14 @@
         <a class="btn" href="#build">⌨ Build from source</a>
       </div>
 
-      <!-- HERO DEMO. A leak-safe stylized mock (demo content only — never a capture
-           of a real machine). To swap in a live recording, drop an asciinema cast at
+      <!-- HERO. A real capture, staged with demo content only (no real paths /
+           usernames). To swap in a live recording later, drop an asciinema cast at
            assets/demo.cast and uncomment the asciinema-player block at the bottom of
-           this file (it replaces #hero-demo's body), OR drop in a <video> mp4 — but
-           ONLY of a session staged with demo content (no real paths / usernames). -->
+           this file — but ONLY of a demo-staged session. -->
       <div class="screen" id="hero-demo">
-        <div class="bar"><span class="dot"></span> terminal-delight — hacker theme · live CRT warp</div>
-        <pre class="mock" aria-label="terminal-delight demo session"><span class="p">demo@terminal-delight</span>:<span class="d">~/project</span>$ cargo run
-   <span class="g">Compiling</span> terminal-delight v0.1.0
-    <span class="g">Finished</span> release [optimized] target(s)
-<span class="p">demo@terminal-delight</span>:<span class="d">~/project</span>$ echo "the glass is curved now"
-the glass is curved now
-<span class="p">demo@terminal-delight</span>:<span class="d">~/project</span>$ <span class="cur">█</span></pre>
-        <div class="playnote">▶ Stylized preview. A live recording of the real warp + theme-switching is coming.</div>
+        <div class="bar"><span class="dot"></span> terminal-delight — four themes, four sizes, one window</div>
+        <img src="assets/showcase-themes.png" alt="terminal-delight: four tiled panes each running a different theme (hacker, tactical-overdrive, field-command, quiet-command) at different text sizes, with tabs aurora/logs/build/shaders" />
+        <div class="playnote">▶ Real capture — four panes, four built-in themes, exaggerated text sizes. A live recording of the warp + theme-switching is coming.</div>
       </div>
     </div>
   </header>
@@ -232,14 +227,15 @@ the glass is curved now
 
   <section id="gallery">
     <div class="wrap">
-      <div class="eyebrow">Gallery</div>
-      <h2>Fresh captures incoming</h2>
-      <!-- Gallery images intentionally removed: the prior captures showed a real
-           shell prompt (username + local paths). All demo media must use staged
-           demo content only — no real paths, usernames, or directory trees. New
-           lipsum-staged captures will be dropped back into the .gallery grid. -->
-      <p class="prose" style="color:var(--text-dim)">We pulled the old screenshots while we re-shoot them with clean demo content. In the meantime, the feature list above and the build steps below tell the story — and the real app is one <code>cargo run</code> away.</p>
-      <div class="gallery"><!-- staged demo captures go here --></div>
+      <div class="eyebrow">Gallery · click any shot to zoom</div>
+      <h2>Real captures — staged with demo content</h2>
+      <div class="gallery">
+        <figure><img loading="lazy" src="assets/showcase-themes.png" alt="four panes, four themes, four text sizes"><figcaption>four themes · four sizes · one window</figcaption></figure>
+        <figure><img loading="lazy" src="assets/terminal-clean.png" alt="a single full terminal pane"><figcaption>one clean pane, hacker theme</figcaption></figure>
+        <figure><img loading="lazy" src="assets/theme-hacker.png" alt="hacker theme at large text size"><figcaption>hacker — exaggerated text size</figcaption></figure>
+        <figure><img loading="lazy" src="assets/theme-tactical.png" alt="tactical-overdrive theme"><figcaption>tactical-overdrive — amber HUD</figcaption></figure>
+        <figure><img loading="lazy" src="assets/theme-quiet.png" alt="quiet-command light theme"><figcaption>quiet-command — light phosphor</figcaption></figure>
+      </div>
     </div>
   </section>
 
