@@ -79,6 +79,176 @@ fn foreground_mode(master: &std::fs::File, shell_pid: u32) -> PaneMode {
     PaneMode::classify(&comm, &cmdline)
 }
 
+/// A shift-clickable target lifted out of the grid: a web/file URL handed
+/// straight to the system opener, or a filesystem path resolved against the
+/// pane's cwd before opening.
+#[derive(Debug, PartialEq)]
+enum Link {
+    Url(String),
+    Path(String),
+}
+
+/// Peel wrapping brackets/quotes and trailing sentence punctuation off a token
+/// so `(https://x.com),` clicks as `https://x.com`.
+fn trim_link_delims(s: &str) -> String {
+    let mut s = s.trim().to_string();
+    loop {
+        let before = s.clone();
+        // a fully-wrapping pair: ( … ), " … ", etc.
+        let ch: Vec<char> = s.chars().collect();
+        if ch.len() >= 2
+            && matches!(
+                (ch[0], ch[ch.len() - 1]),
+                ('(', ')') | ('[', ']') | ('{', '}') | ('<', '>') | ('"', '"') | ('\'', '\'')
+            )
+        {
+            s = ch[1..ch.len() - 1].iter().collect();
+        }
+        // trailing sentence punctuation
+        while matches!(s.chars().last(), Some('.' | ',' | ';' | ':' | '!' | '?')) {
+            s.pop();
+        }
+        // a stray closing bracket with no opener left inside (e.g. "x)" once the
+        // comma is gone) — but keep balanced ones like a wikipedia "(foo)" URL
+        while let Some(c) = s.chars().last() {
+            let opener = match c {
+                ')' => '(',
+                ']' => '[',
+                '}' => '{',
+                '>' => '<',
+                _ => break,
+            };
+            if s.contains(opener) {
+                break;
+            }
+            s.pop();
+        }
+        if s == before {
+            break;
+        }
+    }
+    s
+}
+
+/// Collapse `.`/`..` segments lexically (no filesystem touch) so a joined
+/// relative link is a clean absolute path.
+fn lexical_normalize(path: &str) -> String {
+    use std::path::{Component, PathBuf};
+    let mut out = PathBuf::new();
+    for comp in std::path::Path::new(path).components() {
+        match comp {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                out.pop();
+            }
+            c => out.push(c.as_os_str()),
+        }
+    }
+    out.to_string_lossy().into_owned()
+}
+
+/// The link sitting under column `col` of a row of terminal text, if any. Pure:
+/// expands the whitespace-delimited token, trims delimiters, then classifies it
+/// as a URL (known scheme or `www.`) or a filesystem path (`/`, `~/`, `./`, `..`).
+fn link_at(line: &str, col: usize) -> Option<Link> {
+    let chars: Vec<char> = line.chars().collect();
+    if chars.is_empty() {
+        return None;
+    }
+    let col = col.min(chars.len() - 1);
+    if chars[col].is_whitespace() {
+        return None;
+    }
+    let mut start = col;
+    while start > 0 && !chars[start - 1].is_whitespace() {
+        start -= 1;
+    }
+    let mut end = col;
+    while end + 1 < chars.len() && !chars[end + 1].is_whitespace() {
+        end += 1;
+    }
+    let tok = trim_link_delims(&chars[start..=end].iter().collect::<String>());
+    if tok.is_empty() {
+        return None;
+    }
+    let lower = tok.to_ascii_lowercase();
+    const SCHEMES: &[&str] = &[
+        "http://", "https://", "file://", "ftp://", "ftps://", "mailto:",
+    ];
+    if SCHEMES.iter().any(|s| lower.starts_with(s)) {
+        return Some(Link::Url(tok));
+    }
+    if let Some(rest) = lower.strip_prefix("www.") {
+        if rest.contains('.') {
+            return Some(Link::Url(format!("https://{tok}")));
+        }
+    }
+    if tok.starts_with('/')
+        || tok.starts_with("~/")
+        || tok.starts_with("./")
+        || tok.starts_with("../")
+    {
+        return Some(Link::Path(tok));
+    }
+    None
+}
+
+/// Turn a path link into an absolute path: expand a leading `~`, and join a
+/// relative `./`/`../` onto the pane's cwd. Returns None if it can't be anchored.
+fn resolve_path(p: &str, cwd: Option<&str>) -> Option<String> {
+    let expanded = if p == "~" {
+        std::env::var("HOME").ok()?
+    } else if let Some(rest) = p.strip_prefix("~/") {
+        format!("{}/{}", std::env::var("HOME").ok()?, rest)
+    } else {
+        p.to_string()
+    };
+    let full = if expanded.starts_with('/') {
+        expanded
+    } else {
+        let base = cwd?;
+        std::path::Path::new(base)
+            .join(&expanded)
+            .to_string_lossy()
+            .into_owned()
+    };
+    Some(lexical_normalize(&full))
+}
+
+/// Hand a URL/path to the system default tool (`xdg-open`), detached so it
+/// outlives the click and never blocks the UI.
+fn open_with_system(target: &str) {
+    use std::os::unix::process::CommandExt;
+    use std::process::{Command, Stdio};
+    let mut cmd = Command::new("xdg-open");
+    cmd.arg(target)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    unsafe {
+        cmd.pre_exec(|| {
+            libc::setsid();
+            Ok(())
+        });
+    }
+    let _ = cmd.spawn();
+}
+
+/// Screen→content barrel map — identical to the per-rect warp in
+/// `gpui_wgpu/src/crt_pass.wgsl` (`fs_crt`): the content displayed at a
+/// rect-local screen point `(sx, sy)` ∈ [0,1]² is sampled from
+/// `0.5 + (s − 0.5)·f`, with `f = 1 + k1·r² + k2·r⁴` and `r²` in that same
+/// rect-local space. The shader is a *gather*, so hit-testing applies the SAME
+/// forward map (no inverse) to land a click on the exact cell shown under it.
+/// `f == 1` when curvature is zero, so this is the identity for a flat pane.
+fn warp_screen_to_content(sx: f32, sy: f32, k1: f32, k2: f32) -> (f32, f32) {
+    let cu = sx - 0.5;
+    let cv = sy - 0.5;
+    let r2 = cu * cu + cv * cv;
+    let f = 1.0 + k1 * r2 + k2 * r2 * r2;
+    (0.5 + cu * f, 0.5 + cv * f)
+}
+
 /// Apply the mode's screen colour over the structural theme.
 fn mode_theme(base: &Theme, mode: &PaneMode) -> Theme {
     let mut th = base.clone();
@@ -772,7 +942,10 @@ impl TerminalView {
         }
     }
 
-    fn cell_at(&self, pos: gpui::Point<Pixels>, display_offset: usize) -> (TermPoint, Side) {
+    /// Map a screen point to a viewport cell (row, col in 0..rows/cols) plus the
+    /// side of the cell, inverting the tube's barrel warp so hit-testing follows
+    /// the curved glass. Shared by selection (`cell_at`) and link hit-testing.
+    fn viewport_cell(&self, pos: gpui::Point<Pixels>) -> (usize, usize, Side) {
         let bounds = *self.content_bounds.lock().unwrap();
         let (bx, by, bw, bh) = match bounds {
             Some(b) => (
@@ -783,32 +956,84 @@ impl TerminalView {
             ),
             None => (0., HEADER_H, 1000., 1000.),
         };
-        // Invert the tube's barrel warp: a screen point displays content
-        // sampled from warped(point), so selection must follow the glass.
-        let mut sx = f32::from(pos.x) - bx;
-        let mut sy = f32::from(pos.y) - by;
+        // Normalise the click into rect-local [0,1], apply the SAME barrel map
+        // the shader gathers with, then convert content-local back to a cell.
         let (k1, k2) = self.warp_k;
-        if k1.abs() > 0.0005 {
-            let cu = sx / bw - 0.5;
-            let cv = sy / bh - 0.5;
-            let r2 = cu * cu + cv * cv;
-            let f = 1.0 + k1 * r2 + k2 * r2 * r2;
-            sx = (0.5 + cu * f) * bw;
-            sy = (0.5 + cv * f) * bh;
-        }
-        let fx = (sx - PAD_X) / self.cell_w;
-        let y = ((sy - PAD_Y) / self.cell_h).max(0.) as usize;
+        let (lx, ly) = warp_screen_to_content(
+            (f32::from(pos.x) - bx) / bw,
+            (f32::from(pos.y) - by) / bh,
+            k1,
+            k2,
+        );
+        let fx = (lx * bw - PAD_X) / self.cell_w;
+        let y = ((ly * bh - PAD_Y) / self.cell_h).max(0.) as usize;
         let col = (fx.max(0.) as usize).min(self.grid.cols.saturating_sub(1));
         let row = y.min(self.grid.rows.saturating_sub(1));
+        if std::env::var("TD_HITDEBUG").is_ok() {
+            eprintln!(
+                "hit pos=({:.0},{:.0}) rect=({:.0},{:.0},{:.0},{:.0}) k={:?} local=({:.3},{:.3}) cell=(r{row},c{col})",
+                f32::from(pos.x),
+                f32::from(pos.y),
+                bx,
+                by,
+                bw,
+                bh,
+                self.warp_k,
+                lx,
+                ly,
+            );
+        }
         let side = if fx.fract() < 0.5 {
             Side::Left
         } else {
             Side::Right
         };
+        (row, col, side)
+    }
+
+    fn cell_at(&self, pos: gpui::Point<Pixels>, display_offset: usize) -> (TermPoint, Side) {
+        let (row, col, side) = self.viewport_cell(pos);
         (
             viewport_to_point(display_offset, TermPoint::new(row, Column(col))),
             side,
         )
+    }
+
+    /// The shift-clickable link under a screen point, if any: read the clicked
+    /// row out of the visible grid, scan around the column, and resolve a path
+    /// against the pane's cwd (only returning paths that actually exist).
+    fn link_under(&self, pos: gpui::Point<Pixels>) -> Option<String> {
+        let (vrow, vcol, _) = self.viewport_cell(pos);
+        let line = {
+            let term = self.session.term.lock();
+            let content = term.renderable_content();
+            let display_offset = content.display_offset;
+            let mut row = vec![' '; self.grid.cols];
+            for indexed in content.display_iter {
+                if indexed.point.line.0 + display_offset as i32 != vrow as i32 {
+                    continue;
+                }
+                if indexed.cell.flags.contains(Flags::WIDE_CHAR_SPACER) {
+                    continue;
+                }
+                let c = indexed.point.column.0;
+                if c < row.len() {
+                    row[c] = if indexed.cell.c == '\0' {
+                        ' '
+                    } else {
+                        indexed.cell.c
+                    };
+                }
+            }
+            row.into_iter().collect::<String>()
+        };
+        match link_at(&line, vcol)? {
+            Link::Url(u) => Some(u),
+            Link::Path(p) => {
+                let cwd = self.runtime().cwd;
+                resolve_path(&p, cwd.as_deref()).filter(|a| std::path::Path::new(a).exists())
+            }
+        }
     }
 
     /// While drag-selecting, the signed scroll rate (lines/tick) for cursor
@@ -980,6 +1205,16 @@ impl TerminalView {
         // the split buttons (which target the focused pane) follow the pane the
         // user is actually working in — not whichever pane happened to start focused.
         window.focus(&self.focus_handle, cx);
+        // Shift-click opens a link/path under the cursor with the system default
+        // tool, instead of starting a selection. A shift-click that isn't on a
+        // link falls through to normal selection behaviour.
+        if ev.modifiers.shift && ev.button == MouseButton::Left {
+            if let Some(target) = self.link_under(ev.position) {
+                open_with_system(&target);
+                cx.notify();
+                return;
+            }
+        }
         let offset = self.session.term.lock().grid().display_offset();
         let (point, side) = self.cell_at(ev.position, offset);
         let ty = match ev.click_count {
@@ -1480,6 +1715,92 @@ impl Render for TerminalView {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn warp_matches_the_shader_and_is_identity_when_flat() {
+        // a flat pane (k = 0) maps screen→content 1:1 everywhere
+        assert_eq!(warp_screen_to_content(0.3, 0.7, 0.0, 0.0), (0.3, 0.7));
+
+        // the centre is a fixed point under any curvature
+        let (cx, cy) = warp_screen_to_content(0.5, 0.5, 0.14, 0.06);
+        assert!((cx - 0.5).abs() < 1e-6 && (cy - 0.5).abs() < 1e-6);
+
+        // a known off-centre point, recomputed straight from the shader's own
+        // `l2 = 0.5 + c*(1 + k1*r2 + k2*r2*r2)` (crt_pass.wgsl fs_crt)
+        let (k1, k2) = (0.14, 0.06);
+        let (sx, sy) = (0.85, 0.65);
+        let (cu, cv) = (sx - 0.5, sy - 0.5);
+        let r2 = cu * cu + cv * cv;
+        let f = 1.0 + k1 * r2 + k2 * r2 * r2;
+        let (gx, gy) = warp_screen_to_content(sx, sy, k1, k2);
+        assert!((gx - (0.5 + cu * f)).abs() < 1e-6);
+        assert!((gy - (0.5 + cv * f)).abs() < 1e-6);
+
+        // curvature pushes the sampled content outward (so a click near the edge
+        // resolves to a cell further from centre — matching what's drawn there)
+        let (ex, _) = warp_screen_to_content(0.8, 0.5, 0.14, 0.06);
+        assert!(ex > 0.8);
+    }
+
+    #[test]
+    fn link_at_finds_urls_and_paths_and_trims_delimiters() {
+        // a URL mid-line, clicked anywhere inside it
+        let line = "see (https://example.com/x), and more";
+        assert_eq!(
+            link_at(line, 8),
+            Some(Link::Url("https://example.com/x".into()))
+        );
+        // trailing sentence punctuation is peeled off
+        assert_eq!(
+            link_at("go to https://a.dev.", 10),
+            Some(Link::Url("https://a.dev".into()))
+        );
+        // www. is promoted to https
+        assert_eq!(
+            link_at("visit www.brownfamilysports.com today", 8),
+            Some(Link::Url("https://www.brownfamilysports.com".into()))
+        );
+        // absolute + ~ + relative paths are paths
+        assert_eq!(
+            link_at("open /home/user/notes.md now", 8),
+            Some(Link::Path("/home/user/notes.md".into()))
+        );
+        assert_eq!(
+            link_at("~/todo.md", 0),
+            Some(Link::Path("~/todo.md".into()))
+        );
+        assert_eq!(
+            link_at("./README.md", 2),
+            Some(Link::Path("./README.md".into()))
+        );
+        // plain words and whitespace are not links
+        assert_eq!(link_at("just some words", 5), None);
+        assert_eq!(link_at("a b", 1), None); // the space
+        assert_eq!(link_at("", 0), None);
+    }
+
+    #[test]
+    fn resolve_path_expands_home_and_anchors_relatives() {
+        // absolute passes through
+        assert_eq!(
+            resolve_path("/etc/hosts", None).as_deref(),
+            Some("/etc/hosts")
+        );
+        // relative needs a cwd; without one it can't anchor
+        assert_eq!(resolve_path("./x.md", None), None);
+        assert_eq!(
+            resolve_path("./x.md", Some("/home/user/proj")).as_deref(),
+            Some("/home/user/proj/x.md")
+        );
+        // ~ expands against HOME
+        let home = std::env::var("HOME").unwrap_or_default();
+        if !home.is_empty() {
+            assert_eq!(
+                resolve_path("~/a.md", None).as_deref(),
+                Some(format!("{home}/a.md").as_str())
+            );
+        }
+    }
 
     #[test]
     fn classify_recognises_the_phosphor_quartet() {
