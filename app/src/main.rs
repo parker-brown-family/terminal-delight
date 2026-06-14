@@ -1817,110 +1817,6 @@ impl Workspace {
 }
 
 /// Seed-colour presets for the breakout menu (IMT picker set).
-/// Theme-icon button for the breakout menu: glyph over a tiny caption. The
-/// caption names the slot so two themes that share a glyph (e.g. an unedited
-/// `custom` slot still carrying hacker's `>_`) stay tellable apart.
-/// Hover popup for a theme button. Always shows the full theme name (the
-/// in-button caption is truncated — e.g. `tactical` for `tactical-overdrive`).
-/// For the hot-reloaded `custom` slot it also shows the resolved file path on
-/// THIS machine and a clickable "Open in editor" line, so the user never has to
-/// hunt for where their editable theme lives.
-struct ThemeTooltip {
-    name: SharedString,
-    /// `Some` only for the custom slot — the file to reveal/open.
-    path: Option<PathBuf>,
-    bg: Hsla,
-    text: Hsla,
-    accent: Hsla,
-    faint: Hsla,
-}
-
-impl Render for ThemeTooltip {
-    fn render(&mut self, _w: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        let mut card = div()
-            .flex()
-            .flex_col()
-            .gap(px(3.))
-            .px(px(9.))
-            .py(px(6.))
-            .rounded_md()
-            .border_1()
-            .border_color(self.accent.alpha(0.5))
-            .bg(self.bg)
-            .shadow(vec![BoxShadow {
-                color: hsla(0., 0., 0., 0.45),
-                offset: point(px(0.), px(2.)),
-                blur_radius: px(8.),
-                spread_radius: px(0.),
-                inset: false,
-            }])
-            .text_color(self.text)
-            .child(div().text_size(px(12.)).child(self.name.clone()));
-        if let Some(path) = self.path.clone() {
-            card = card
-                .child(
-                    div()
-                        .text_size(px(10.))
-                        .text_color(self.faint)
-                        .child(path.display().to_string()),
-                )
-                .child(
-                    div()
-                        .id("open-theme-file")
-                        .mt(px(2.))
-                        .text_size(px(11.))
-                        .text_color(self.accent)
-                        .cursor_pointer()
-                        .child("▸ Open in editor  ⧉")
-                        .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                            cx.stop_propagation();
-                            theme::open_in_default_app(&path);
-                        }),
-                );
-        }
-        card
-    }
-}
-
-fn theme_icon_btn(th: &theme::Theme, icon: &str, label: &str, active: bool) -> gpui::Div {
-    let inner = div()
-        .flex()
-        .flex_col()
-        .items_center()
-        .gap_0()
-        .child(div().text_size(px(14.)).child(icon.to_string()))
-        .child(
-            div()
-                .text_size(px(8.))
-                .text_color(th.text.alpha(if active { 0.85 } else { 0.6 }))
-                .child(label.to_string()),
-        );
-    let b = div()
-        .w(px(46.))
-        .h(px(40.))
-        .flex()
-        .items_center()
-        .justify_center()
-        .rounded_md()
-        .border_1()
-        .cursor_pointer();
-    if active {
-        b.bg(linear_gradient(
-            135.,
-            linear_color_stop(th.accent.alpha(0.45), 0.),
-            linear_color_stop(th.accent.alpha(0.15), 1.),
-        ))
-        .border_color(th.accent)
-        .text_color(white().alpha(0.95))
-        .child(inner)
-    } else {
-        b.bg(darken(th.surface, 0.8))
-            .border_color(th.accent.alpha(0.35))
-            .text_color(th.text)
-            .child(inner)
-    }
-}
-
 /// Text-colour-mode button for the breakout menu: glyph over a tiny caption.
 fn color_mode_btn(th: &theme::Theme, icon: &str, caption: &str, active: bool) -> gpui::Div {
     let inner = div()
@@ -2488,7 +2384,7 @@ impl Render for Workspace {
             ));
 
         let bezel_top = div()
-            .h(px(34.))
+            .h(px(43.))
             .flex_none()
             .flex()
             .flex_row()
@@ -2503,10 +2399,13 @@ impl Render for Workspace {
                     .items_center()
                     .gap_2()
                     .child(
+                        // The app title: brightened off the accent and bumped a
+                        // size so it reads/pops against the bezel instead of the
+                        // drab on-theme green.
                         div()
-                            .text_size(px(12.))
+                            .text_size(px(14.))
                             .font_weight(gpui::FontWeight::EXTRA_BOLD)
-                            .text_color(th.accent)
+                            .text_color(brighten(th.accent, 1.35))
                             .child("▸ TERMINAL-DELIGHT"),
                     )
                     .child(
@@ -2590,58 +2489,6 @@ impl Render for Workspace {
                 MenuScope::Pane(p) => p.read(cx).appearance.inherit_theme,
                 MenuScope::Outer => false,
             };
-            let mut theme_row = div().flex().flex_row().gap_2();
-            for (id, icon, lbl) in theme::all_themes(cx) {
-                let active = cur.id == id;
-                let seed = cur.seed.clone();
-                let dynamic = cur.dynamic.clone();
-                // Tooltip data (1.5s hover): full name for every slot; the custom
-                // slot also carries its resolved on-disk path + an "open" action.
-                let tip_name: SharedString = id.clone().into();
-                let tip_path = (id == "custom").then(theme::theme_path);
-                let (tip_bg, tip_text, tip_accent, tip_faint) =
-                    (darken(th.surface, 0.85), th.text, th.accent, th.faint);
-                let mk_tip = move |_w: &mut Window, cx: &mut App| -> gpui::AnyView {
-                    cx.new(|_| ThemeTooltip {
-                        name: tip_name.clone(),
-                        path: tip_path.clone(),
-                        bg: tip_bg,
-                        text: tip_text,
-                        accent: tip_accent,
-                        faint: tip_faint,
-                    })
-                    .into()
-                };
-                let btn = theme_icon_btn(&th, &icon, &lbl, active)
-                    .id(SharedString::from(format!("theme-btn-{id}")))
-                    .tooltip_show_delay(Duration::from_millis(1500))
-                    // Hoverable only for custom, so the mouse can travel into the
-                    // popup to click "Open"; others are plain name labels.
-                    .map(|b| {
-                        if id == "custom" {
-                            b.hoverable_tooltip(mk_tip)
-                        } else {
-                            b.tooltip(mk_tip)
-                        }
-                    });
-                theme_row = theme_row.child(btn.on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
-                        cx.stop_propagation();
-                        ws.set_menu_choice(
-                            ThemeChoice {
-                                id: id.clone(),
-                                seed: seed.clone(),
-                                color,
-                                syntax,
-                                grade,
-                                dynamic: dynamic.clone(),
-                            },
-                            cx,
-                        );
-                    }),
-                ));
-            }
             let mut seed_row = div().flex().flex_row().items_center().gap_2();
             {
                 let id = cur.id.clone();
@@ -2733,12 +2580,117 @@ impl Render for Workspace {
                     .text_color(th.text.alpha(0.55))
                     .child(s.to_string())
             };
+            // ---- dynamics glyph column: the theme tray is a vertical box of
+            // dynamics (glyph only — no caption, no hover). The seed wheel below
+            // stays the colour knob; the dynamic decides how that seed becomes the
+            // palette. Overflow wraps into more columns to the right.
+            let mut dyn_entries: Vec<(theme::Dynamic, bool)> = theme::Dynamic::NAMED
+                .iter()
+                .cloned()
+                .map(|d| {
+                    let active = cur.dynamic.same_kind(&d);
+                    (d, active)
+                })
+                .collect();
+            dyn_entries.push((
+                theme::Dynamic::Custom(Box::default()),
+                matches!(cur.dynamic, theme::Dynamic::Custom(_)),
+            ));
+            const PER_COL: usize = 6; // wrap past this many into a new column
+            let mut dyn_cols = div().flex().flex_row().gap_2();
+            for chunk in dyn_entries.chunks(PER_COL) {
+                let mut col = div().flex().flex_col().gap_2();
+                for (d, active) in chunk {
+                    let active = *active;
+                    let glyph = d.glyph().to_string();
+                    let box_id = SharedString::from(format!("dyn-{}", d.label()));
+                    let d_click = d.clone();
+                    let cur_c = cur.clone();
+                    col = col.child(
+                        div()
+                            .id(box_id)
+                            .w(px(40.))
+                            .h(px(40.))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .rounded_md()
+                            .border_1()
+                            .border_color(if active {
+                                th.accent
+                            } else {
+                                th.faint.alpha(0.5)
+                            })
+                            .bg(if active {
+                                th.accent.alpha(0.16)
+                            } else {
+                                darken(th.surface, 0.3)
+                            })
+                            .text_size(px(18.))
+                            .text_color(if active { th.text } else { th.text.alpha(0.7) })
+                            .cursor_pointer()
+                            .child(glyph)
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                                    cx.stop_propagation();
+                                    ws.set_menu_choice(
+                                        ThemeChoice {
+                                            dynamic: d_click.clone(),
+                                            ..cur_c.clone()
+                                        },
+                                        cx,
+                                    );
+                                }),
+                            ),
+                    );
+                }
+                dyn_cols = dyn_cols.child(col);
+            }
+            // The right-hand controls: seed wheel + text axes + the follow-outer
+            // toggle, stacked. A tiny scope hint replaces the old text title.
+            let mut controls = div()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .flex_1()
+                .child(
+                    div()
+                        .text_size(px(8.5))
+                        .text_color(th.text.alpha(0.45))
+                        .child(if is_pane { "THIS PANE" } else { "OUTER" }),
+                )
+                .child(label("SEED COLOUR"))
+                .child(seed_row)
+                .child(div().flex().justify_center().py_1().child(wheel))
+                .child(label("TEXT — SOURCE"))
+                .child(color_row)
+                .child(label("SYNTAX"))
+                .child(syntax_row);
+            if is_pane {
+                // Per-group toggle: on = this pane's theme follows the outer scope
+                // live; off = it keeps its own retained theme. Non-destructive.
+                let lbl = if following {
+                    "◉ follow outer"
+                } else {
+                    "◯ follow outer"
+                };
+                controls = controls.child(Self::bezel_btn(&th, lbl, following).on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                        cx.stop_propagation();
+                        if let Some(scope) = ws.theme_menu.clone() {
+                            ws.toggle_theme_inherit(&scope, cx);
+                        }
+                    }),
+                ));
+            }
             // A sub-tab icon click anchors the tray at the click (right edge at
             // the cursor, opening down-left like the global menu); clamp it fully
             // on-screen. The global/outer menu (menu_at == None) keeps its fixed
             // top-right anchor under the titlebar control.
-            const PANEL_W: f32 = 286.;
-            const PANEL_H_EST: f32 = 440.; // generous, incl. colour wheel + follow-outer
+            const PANEL_W: f32 = 344.; // wider: glyph column + controls side by side
+            const PANEL_H_EST: f32 = 430.; // generous, incl. colour wheel + follow-outer
             let mut panel = div().absolute().w(px(PANEL_W));
             panel = match self.menu_at {
                 Some(at) => {
@@ -2764,46 +2716,18 @@ impl Render for Workspace {
                     inset: false,
                 }])
                 .flex()
-                .flex_col()
-                .gap_2()
+                .flex_row()
+                .gap_3()
                 .text_size(px(10.))
                 .text_color(th.text)
                 .on_mouse_down(
                     MouseButton::Left,
                     cx.listener(|_, _: &MouseDownEvent, _w, cx| cx.stop_propagation()),
                 )
-                .child(label(if is_pane {
-                    "THEME — THIS PANE"
-                } else {
-                    "THEME — OUTER"
-                }))
-                .child(theme_row)
-                .child(label("SEED COLOUR"))
-                .child(seed_row)
-                .child(div().flex().justify_center().py_1().child(wheel))
-                .child(label("TEXT — SOURCE"))
-                .child(color_row)
-                .child(label("SYNTAX"))
-                .child(syntax_row);
-            if is_pane {
-                // A per-group toggle: on = this pane's theme follows the outer
-                // scope live; off = it keeps its own retained theme. Flipping it
-                // never discards the pane's pick (see PaneTheme::toggle_theme).
-                let lbl = if following {
-                    "◉ follow outer"
-                } else {
-                    "◯ follow outer"
-                };
-                panel = panel.child(Self::bezel_btn(&th, lbl, following).on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                        cx.stop_propagation();
-                        if let Some(scope) = ws.theme_menu.clone() {
-                            ws.toggle_theme_inherit(&scope, cx);
-                        }
-                    }),
-                ));
-            }
+                // Left: the vertical dynamics glyph column(s). Right: seed wheel +
+                // text axes + follow-outer (built above as `controls`).
+                .child(dyn_cols)
+                .child(controls);
             // full-screen scrim: click anywhere outside closes
             div()
                 .absolute()
@@ -3062,6 +2986,8 @@ impl Render for Workspace {
             .border_1()
             .border_color(darken(th.surface, 0.3))
             .mx_2()
+            // Doubled black bezel gap between the mother bar and the screen.
+            .mt(px(7.))
             .child(pane_area);
 
         div()
