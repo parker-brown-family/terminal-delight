@@ -374,30 +374,16 @@ fn idx_color(i: u8) -> Hsla {
     rgb(r << 16 | g << 8 | b).into()
 }
 
-/// The colour unstyled, default-foreground text takes — the bulk of the
-/// screen. It varies by mode so each [`ColorMode`] has a distinct identity even
-/// on plain text, not only on programs that emit ANSI colour:
-/// - `Default` — the honest xterm default foreground (light grey).
-/// - `Monochrome` — the theme's phosphor (`text`), the classic look.
-/// - `OnTheme` — the seed accent, so plain text glows on-theme too.
-///
-/// (When the `syntax` overlay is on, default-fg text is instead recoloured by
-/// token class in [`syntax_colors`]; this is the no-overlay fallback.)
-fn default_fg(mode: crate::theme::ColorMode, text: Hsla, accent: Hsla) -> Hsla {
-    use crate::theme::ColorMode;
-    match mode {
-        ColorMode::Default => rgb(0xe5e5e5).into(),
-        ColorMode::Monochrome => text,
-        ColorMode::OnTheme => accent,
-    }
-}
-
 fn ansi_to_hsla(color: AnsiColor, th: &Theme, default: Hsla) -> Hsla {
     match color {
         AnsiColor::Named(named) => match named {
-            // unstyled text follows the active mode (honest grey / phosphor /
-            // seed); bg + cursor stay structural so the UI never loses contrast
-            NamedColor::Foreground => default_fg(th.color_mode, th.text, th.accent),
+            // Unstyled text is always the theme's text colour (the wheel's `T`
+            // target). The ColorMode axis governs *program-emitted* colour only,
+            // not default-fg — so `T` reads in every mode (ansi/mono/theme),
+            // resolving the old collision where the mode picked this colour. The
+            // `code`/syntax overlay layers on top of this (see the loop above).
+            // bg + cursor stay structural so the UI never loses contrast.
+            NamedColor::Foreground => th.text,
             NamedColor::Background => th.bg,
             NamedColor::Cursor => th.cursor,
             n => {
@@ -1847,27 +1833,24 @@ mod tests {
     }
 
     #[test]
-    fn default_foreground_is_distinct_per_mode() {
+    fn default_foreground_is_the_text_colour_in_every_mode() {
         use crate::theme::ColorMode;
-        let text: Hsla = rgb(0x33ff66).into(); // a theme phosphor
-        let accent: Hsla = rgb(0x00ffaa).into(); // its seed
-        let ansi = default_fg(ColorMode::Default, text, accent);
-        let mono = default_fg(ColorMode::Monochrome, text, accent);
-        let ontheme = default_fg(ColorMode::OnTheme, text, accent);
-        // The fix: plain text used to be `text` in EVERY mode, so ansi/mono/
-        // theme looked identical and only the syntax overlay appeared to work.
-        assert_eq!(
-            ansi,
-            Hsla::from(rgb(0xe5e5e5)),
-            "ansi shows honest xterm grey"
-        );
-        assert_eq!(mono, text, "mono keeps the classic phosphor look");
-        assert_eq!(ontheme, accent, "on-theme paints plain text in the seed");
-        assert_ne!(ansi, mono, "ansi must differ from mono on plain text");
-        assert_ne!(
-            ansi, ontheme,
-            "ansi must differ from on-theme on plain text"
-        );
+        // The collision fix: default-fg is the theme's text colour (the wheel's
+        // `T` target) in EVERY mode — the mode axis governs program colour only,
+        // so an explicit text colour reads in ansi/mono/theme alike.
+        let mut th = crate::theme::parse(crate::theme::DEFAULT_THEME_TOML).unwrap();
+        let fg = AnsiColor::Named(NamedColor::Foreground);
+        for mode in [
+            ColorMode::Default,
+            ColorMode::Monochrome,
+            ColorMode::OnTheme,
+        ] {
+            th.color_mode = mode;
+            assert_eq!(ansi_to_hsla(fg, &th, th.text), th.text);
+        }
+        // a fresh `T` colour flows straight through, whatever the mode
+        th.text = rgb(0xff8800).into();
+        assert_eq!(ansi_to_hsla(fg, &th, th.text), th.text);
     }
 
     #[test]

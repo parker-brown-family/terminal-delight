@@ -585,11 +585,9 @@ struct Workspace {
     slider_drag: Option<theme::GradeKey>,
     /// Live per-slider track rects for ratio math during a drag.
     slider_bounds: Arc<Mutex<std::collections::HashMap<theme::GradeKey, Bounds<Pixels>>>>,
-    /// True while the colour-wheel is being dragged.
-    wheel_drag: bool,
-    /// Which colour the wheel currently edits — seed, body text, or the title
-    /// complement (transient UI state, not persisted).
-    wheel_target: WheelTarget,
+    /// Which wheel marker (seed / text / complement) is being dragged, if any.
+    /// The three markers live on the wheel; you grab one and drag it around.
+    wheel_drag: Option<WheelTarget>,
     /// Live colour-wheel rect, for polar hit-testing during a drag.
     wheel_bounds: Arc<Mutex<Option<Bounds<Pixels>>>>,
     scrubbing: bool,
@@ -751,8 +749,7 @@ impl Workspace {
             osd_at: None,
             slider_drag: None,
             slider_bounds: Arc::new(Mutex::new(std::collections::HashMap::new())),
-            wheel_drag: false,
-            wheel_target: WheelTarget::Seed,
+            wheel_drag: None,
             wheel_bounds: Arc::new(Mutex::new(None)),
             scrubbing: false,
             scrub_bounds: Arc::new(Mutex::new(None)),
@@ -1205,17 +1202,18 @@ impl Workspace {
                 }
             }
         }
-        if self.wheel_drag && ev.pressed_button == Some(MouseButton::Left) {
-            if let Some(hex) = self.wheel_seed_from_pos(ev.position.x, ev.position.y) {
-                self.set_wheel_color(Some(hex), cx);
+        if let Some(target) = self.wheel_drag {
+            if ev.pressed_button == Some(MouseButton::Left) {
+                if let Some(hex) = self.wheel_seed_from_pos(ev.position.x, ev.position.y) {
+                    self.set_wheel_color_for(target, Some(hex), cx);
+                }
             }
         }
     }
 
     fn on_mouse_up(&mut self, ev: &MouseUpEvent, window: &mut Window, cx: &mut Context<Self>) {
         self.scrubbing = false;
-        if self.wheel_drag {
-            self.wheel_drag = false;
+        if self.wheel_drag.take().is_some() {
             self.save(cx);
             cx.notify();
             return;
@@ -1673,17 +1671,64 @@ impl Workspace {
             )
     }
 
-    /// Write a colour from the wheel to whichever target it's editing (seed, body
-    /// text, or the title complement) in the open breakout's scope. `None` clears
-    /// that target (back to theme/dynamic-derived).
-    fn set_wheel_color(&mut self, hex: Option<String>, cx: &mut Context<Self>) {
+    /// Write a colour to one wheel target (seed / text / complement) in the open
+    /// breakout's scope. `None` clears that target (back to theme/dynamic-derived).
+    fn set_wheel_color_for(
+        &mut self,
+        target: WheelTarget,
+        hex: Option<String>,
+        cx: &mut Context<Self>,
+    ) {
         let mut choice = self.menu_choice(cx);
-        match self.wheel_target {
+        match target {
             WheelTarget::Seed => choice.seed = hex,
             WheelTarget::Text => choice.text = hex,
             WheelTarget::Complement => choice.complement = hex,
         }
         self.set_menu_choice(choice, cx);
+    }
+
+    /// The three marker colours on the wheel for the open scope: each is its
+    /// explicit override if set, else the value the theme/dynamic currently
+    /// derives — so a marker always sits where its colour really is.
+    fn wheel_markers(&self, cx: &App) -> [(WheelTarget, &'static str, Hsla); 3] {
+        let choice = self.menu_choice(cx);
+        let resolved = theme::resolve(cx, &choice);
+        let pick = |o: &Option<String>, derived: Hsla| {
+            o.as_deref().and_then(theme::parse_hex).unwrap_or(derived)
+        };
+        [
+            (WheelTarget::Seed, "◉", pick(&choice.seed, resolved.accent)),
+            (WheelTarget::Text, "T", pick(&choice.text, resolved.text)),
+            (
+                WheelTarget::Complement,
+                "C",
+                pick(&choice.complement, resolved.complement),
+            ),
+        ]
+    }
+
+    /// Which of the three markers is nearest the click — the one you grabbed.
+    fn wheel_grab(&self, x: Pixels, y: Pixels, cx: &App) -> Option<WheelTarget> {
+        let b = (*self.wheel_bounds.lock().unwrap())?;
+        let rad = f32::from(b.size.width).min(f32::from(b.size.height)) / 2.0;
+        if rad <= 0.0 {
+            return None;
+        }
+        let cx0 = f32::from(b.origin.x) + f32::from(b.size.width) / 2.0;
+        let cy0 = f32::from(b.origin.y) + f32::from(b.size.height) / 2.0;
+        let (px_, py_) = (f32::from(x), f32::from(y));
+        self.wheel_markers(cx)
+            .into_iter()
+            .map(|(t, _, c)| {
+                let ang = c.h.rem_euclid(1.0) * std::f32::consts::TAU;
+                let sat = c.s.clamp(0.0, 1.0);
+                let mx = cx0 + ang.cos() * sat * rad;
+                let my = cy0 + ang.sin() * sat * rad;
+                (t, (mx - px_).powi(2) + (my - py_).powi(2))
+            })
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+            .map(|(t, _)| t)
     }
 
     /// Map a window-space point on the colour wheel to a seed hex: angle → hue,
@@ -1704,19 +1749,18 @@ impl Workspace {
         Some(hsla_to_hex(hsla(hue, sat, 0.55, 1.0)))
     }
 
-    /// The seed colour wheel: a canvas-painted HSV disk (hue = angle, saturation
-    /// = radius) with a draggable selector ring at the current seed. Drives the
-    /// same scope as the theme breakout it lives in.
-    fn color_wheel(&self, seed: Option<Hsla>, cx: &mut Context<Self>) -> gpui::Div {
+    /// The colour wheel: a canvas-painted HSV disk (hue = angle, saturation =
+    /// radius) carrying THREE draggable markers — ◉ seed, T text, C complement.
+    /// You grab whichever marker is nearest the press and drag it around to set
+    /// that colour. Drives the same scope as the theme breakout it lives in.
+    fn color_wheel(
+        &self,
+        markers: [(WheelTarget, &'static str, Hsla); 3],
+        cx: &mut Context<Self>,
+    ) -> gpui::Div {
         const D: f32 = 132.0;
         let r = D / 2.0;
         let store = self.wheel_bounds.clone();
-        // selector position from the current seed's hue + saturation
-        let dot = seed.map(|c| {
-            let ang = c.h.rem_euclid(1.0) * std::f32::consts::TAU;
-            let sat = c.s.clamp(0.0, 1.0);
-            (r + ang.cos() * sat * r, r + ang.sin() * sat * r)
-        });
         let mut wheel = div()
             .w(px(D))
             .h(px(D))
@@ -1727,9 +1771,11 @@ impl Workspace {
                 MouseButton::Left,
                 cx.listener(|ws, ev: &MouseDownEvent, _w, cx| {
                     cx.stop_propagation();
-                    ws.wheel_drag = true;
-                    if let Some(hex) = ws.wheel_seed_from_pos(ev.position.x, ev.position.y) {
-                        ws.set_wheel_color(Some(hex), cx);
+                    if let Some(t) = ws.wheel_grab(ev.position.x, ev.position.y, cx) {
+                        ws.wheel_drag = Some(t);
+                        if let Some(hex) = ws.wheel_seed_from_pos(ev.position.x, ev.position.y) {
+                            ws.set_wheel_color_for(t, Some(hex), cx);
+                        }
                     }
                 }),
             )
@@ -1771,24 +1817,41 @@ impl Workspace {
                 )
                 .size_full(),
             );
-        if let Some((dx, dy)) = dot {
+        for (_, glyph, c) in markers {
+            let ang = c.h.rem_euclid(1.0) * std::f32::consts::TAU;
+            let sat = c.s.clamp(0.0, 1.0);
+            let (dx, dy) = (r + ang.cos() * sat * r, r + ang.sin() * sat * r);
+            // dark glyph on a light marker, light glyph on a dark one
+            let glyph_col = if c.l > 0.55 {
+                hsla(0., 0., 0.08, 0.95)
+            } else {
+                white()
+            };
             wheel = wheel.child(
                 div()
                     .absolute()
-                    .left(px(dx - 7.0))
-                    .top(px(dy - 7.0))
-                    .w(px(14.))
-                    .h(px(14.))
+                    .left(px(dx - 9.0))
+                    .top(px(dy - 9.0))
+                    .w(px(18.))
+                    .h(px(18.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
                     .rounded_full()
                     .border_2()
                     .border_color(white())
+                    .bg(c)
+                    .text_size(px(10.))
+                    .font_weight(gpui::FontWeight::EXTRA_BOLD)
+                    .text_color(glyph_col)
                     .shadow(vec![BoxShadow {
                         color: hsla(0., 0., 0., 0.7),
                         offset: point(px(0.), px(0.)),
                         blur_radius: px(2.),
                         spread_radius: px(1.),
                         inset: false,
-                    }]),
+                    }])
+                    .child(glyph),
             );
         }
         wheel
@@ -2637,77 +2700,37 @@ impl Render for Workspace {
                     }),
                 ));
             }
-            // Wheel-target selector: the wheel below edits whichever of these is
-            // active. ◉ = seed (drives the whole palette), T = body text colour,
-            // C = the title's complement. Each box tints to its current value.
-            let seed_val = cur.seed.as_deref().and_then(theme::parse_hex);
-            let text_val = cur.text.as_deref().and_then(theme::parse_hex);
-            let comp_val = cur.complement.as_deref().and_then(theme::parse_hex);
-            let mut seed_row = div().flex().flex_row().items_center().gap_2();
-            for (target, idn, glyph, val) in [
-                (WheelTarget::Seed, "wt-seed", "◉", seed_val),
-                (WheelTarget::Text, "wt-text", "T", text_val),
-                (WheelTarget::Complement, "wt-comp", "C", comp_val),
+            // The three colours live as draggable markers ON the wheel — ◉ seed,
+            // T text, C complement. Grab one and drag it around to set it.
+            let wheel = self.color_wheel(self.wheel_markers(cx), cx);
+            // Small chips to clear an override back to theme/dynamic-derived.
+            let mut seed_row = div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .justify_center()
+                .gap_2()
+                .text_size(px(9.));
+            for (target, idn, lbl) in [
+                (WheelTarget::Seed, "wr-seed", "↺◉"),
+                (WheelTarget::Text, "wr-text", "↺T"),
+                (WheelTarget::Complement, "wr-comp", "↺C"),
             ] {
-                let active = self.wheel_target == target;
                 seed_row = seed_row.child(
                     div()
                         .id(idn)
-                        .w(px(30.))
-                        .h(px(28.))
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .rounded_md()
-                        .border_1()
-                        .border_color(if active {
-                            th.accent
-                        } else {
-                            th.faint.alpha(0.5)
-                        })
-                        .bg(if active {
-                            th.accent.alpha(0.16)
-                        } else {
-                            darken(th.surface, 0.3)
-                        })
-                        .text_size(px(13.))
-                        .font_weight(gpui::FontWeight::BOLD)
-                        .text_color(val.unwrap_or(th.text.alpha(0.7)))
+                        .text_color(th.text.alpha(0.5))
                         .cursor_pointer()
-                        .child(glyph)
+                        .child(lbl)
                         .on_mouse_down(
                             MouseButton::Left,
                             cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
                                 cx.stop_propagation();
-                                ws.wheel_target = target;
-                                cx.notify();
+                                ws.set_wheel_color_for(target, None, cx);
                             }),
                         ),
                 );
             }
-            // Clears the ACTIVE target back to theme/dynamic-derived.
-            seed_row = seed_row.child(
-                div()
-                    .id("wt-reset")
-                    .text_size(px(9.))
-                    .text_color(th.text.alpha(0.5))
-                    .cursor_pointer()
-                    .child("reset")
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                            cx.stop_propagation();
-                            ws.set_wheel_color(None, cx);
-                        }),
-                    ),
-            );
-            // The wheel reflects (and edits) the active target's current colour.
-            let wheel_val = match self.wheel_target {
-                WheelTarget::Seed => seed_val,
-                WheelTarget::Text => text_val,
-                WheelTarget::Complement => comp_val,
-            };
-            let wheel = self.color_wheel(wheel_val, cx);
             let mut color_row = div().flex().flex_row().gap_2();
             for mode in theme::ColorMode::ALL {
                 let active = cur.color == mode;
@@ -2838,12 +2861,12 @@ impl Render for Workspace {
                 )
                 .child(label("THEME"))
                 .child(theme_row)
-                .child(label("WHEEL  ◉ seed · T text · C comp"))
-                .child(seed_row)
+                .child(label("WHEEL — drag ◉ seed · T text · C comp"))
                 .child(div().flex().justify_center().py_1().child(wheel))
-                .child(label("TEXT — SOURCE"))
+                .child(seed_row)
+                .child(label("PROGRAM COLOUR"))
                 .child(color_row)
-                .child(label("SYNTAX"))
+                .child(label("CODE"))
                 .child(syntax_row);
             if is_pane {
                 // Per-group toggle: on = this pane's theme follows the outer scope
