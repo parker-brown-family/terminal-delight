@@ -23,17 +23,14 @@ use gpui::{
     canvas, div, fill, hsla, linear_color_stop, linear_gradient, point, prelude::*, px, size,
     white, App, Bounds, BoxShadow, Context, Entity, EntityId, Focusable, Hsla, KeyDownEvent,
     MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, ScrollWheelEvent,
-    TitlebarOptions, Window, WindowBounds, WindowOptions,
+    SharedString, TitlebarOptions, Window, WindowBounds, WindowOptions,
 };
 use gpui_platform::application;
 use pane::{ClosePane, DragPaneStart, OpenDisplayMenu, OpenThemeMenu, PaneRenamed, TerminalView};
 use serde::{Deserialize, Serialize};
-use theme::ThemeChoice;
+use theme::{PaneTheme, ThemeChoice};
 
 const MAX_PANES: usize = 8;
-
-pub struct UiScale(pub f32);
-impl gpui::Global for UiScale {}
 
 #[derive(Clone, Copy, PartialEq, Debug, Serialize, Deserialize)]
 enum SplitDir {
@@ -256,7 +253,7 @@ impl<L: Clone> Tree<L> {
             Tree::Leaf(e) => {
                 let s = leaf_state(e);
                 SavedNode::Leaf {
-                    theme: s.theme,
+                    appearance: s.appearance,
                     cwd: s.cwd,
                     resume: s.resume,
                     name: s.name,
@@ -286,7 +283,7 @@ impl Node {
             let view = e.read(cx);
             let rt = view.runtime();
             LeafState {
-                theme: view.theme_override.clone(),
+                appearance: view.appearance.clone(),
                 cwd: rt.cwd,
                 resume: rt.resume,
                 name: view.name.clone(),
@@ -299,7 +296,7 @@ impl Node {
 /// (cwd and a resumable agent session, captured from the kernel at save time).
 #[derive(Default)]
 struct LeafState {
-    theme: Option<ThemeChoice>,
+    appearance: PaneTheme,
     cwd: Option<String>,
     resume: Option<String>,
     name: Option<String>,
@@ -308,8 +305,8 @@ struct LeafState {
 #[derive(Serialize)]
 enum SavedNode {
     Leaf {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        theme: Option<ThemeChoice>,
+        #[serde(default, skip_serializing_if = "PaneTheme::is_pristine")]
+        appearance: PaneTheme,
         #[serde(skip_serializing_if = "Option::is_none")]
         cwd: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -332,6 +329,10 @@ impl<'de> Deserialize<'de> for SavedNode {
         #[derive(Deserialize, Default)]
         struct LeafFields {
             #[serde(default)]
+            appearance: Option<PaneTheme>,
+            /// Legacy single full-pane override (pre per-group inherit). Read for
+            /// migration only; never written — see [`PaneTheme::from_legacy`].
+            #[serde(default)]
             theme: Option<ThemeChoice>,
             #[serde(default)]
             cwd: Option<String>,
@@ -339,6 +340,14 @@ impl<'de> Deserialize<'de> for SavedNode {
             resume: Option<String>,
             #[serde(default)]
             name: Option<String>,
+        }
+        // A leaf's appearance: the new per-group form if present, else migrate a
+        // legacy `theme` override, else pristine (follows outer for everything).
+        fn leaf_appearance(f: &mut LeafFields) -> PaneTheme {
+            f.appearance
+                .take()
+                .or_else(|| f.theme.take().map(PaneTheme::from_legacy))
+                .unwrap_or_default()
         }
         #[derive(Deserialize)]
         struct SplitFields {
@@ -357,7 +366,7 @@ impl<'de> Deserialize<'de> for SavedNode {
             fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<SavedNode, E> {
                 match v {
                     "Leaf" => Ok(SavedNode::Leaf {
-                        theme: None,
+                        appearance: PaneTheme::default(),
                         cwd: None,
                         resume: None,
                         name: None,
@@ -375,12 +384,12 @@ impl<'de> Deserialize<'de> for SavedNode {
                 };
                 match key.as_str() {
                     "Leaf" => {
-                        let f: LeafFields = map.next_value()?;
+                        let mut f: LeafFields = map.next_value()?;
                         Ok(SavedNode::Leaf {
-                            theme: f.theme,
-                            cwd: f.cwd,
-                            resume: f.resume,
-                            name: f.name,
+                            appearance: leaf_appearance(&mut f),
+                            cwd: f.cwd.take(),
+                            resume: f.resume.take(),
+                            name: f.name.take(),
                         })
                     }
                     "Split" => {
@@ -407,6 +416,20 @@ fn default_ratio() -> f32 {
 struct Tab {
     root: Node,
     name: Option<String>,
+    /// The pane that last held focus in this tab — so revisiting the tab (a
+    /// mother-bar click) lands on the terminal you were last in, not always the
+    /// first. Refreshed each render from the live focus; never persisted.
+    focused: Option<EntityId>,
+}
+
+impl Tab {
+    fn new(root: Node, name: Option<String>) -> Self {
+        Self {
+            root,
+            name,
+            focused: None,
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Default)]
@@ -523,6 +546,9 @@ struct PaneDrag {
     at: Point<Pixels>,
     /// True once the cursor moved far enough to be a drag, not a stray click.
     engaged: bool,
+    /// True while the cursor is currently outside the window — a release there
+    /// tears the pane off into a brand-new window of its own.
+    left_window: bool,
 }
 
 struct Workspace {
@@ -566,6 +592,10 @@ struct Workspace {
     pane_bounds: Arc<Mutex<std::collections::HashMap<EntityId, Bounds<Pixels>>>>,
     /// Live per-tab button rects (index → box) for "drop onto a main tab".
     tab_bounds: Arc<Mutex<std::collections::HashMap<usize, Bounds<Pixels>>>>,
+    /// A scratch window (opened while another instance is already running, or a
+    /// torn-off pane): one fresh terminal, never restores or persists session
+    /// state — so it can't clobber the primary window's saved layout.
+    scratch: bool,
 }
 
 fn make_pane(window: &mut Window, cx: &mut Context<Workspace>) -> Entity<TerminalView> {
@@ -600,6 +630,7 @@ fn make_pane_restored(
             start,
             at: start,
             engaged: false,
+            left_window: false,
         });
         ws.drop_target = None;
         cx.notify();
@@ -622,7 +653,7 @@ fn make_pane_restored(
 fn build_node(saved: &SavedNode, window: &mut Window, cx: &mut Context<Workspace>) -> Node {
     match saved {
         SavedNode::Leaf {
-            theme,
+            appearance,
             cwd,
             resume,
             name,
@@ -635,11 +666,11 @@ fn build_node(saved: &SavedNode, window: &mut Window, cx: &mut Context<Workspace
                 window,
                 cx,
             );
-            if theme.is_some() || name.is_some() {
-                let choice = theme.clone();
+            if !appearance.is_pristine() || name.is_some() {
+                let appearance = appearance.clone();
                 let name = name.clone();
                 pane.update(cx, |view, _| {
-                    view.theme_override = choice;
+                    view.appearance = appearance;
                     if name.is_some() {
                         view.name = name;
                     }
@@ -658,12 +689,39 @@ fn build_node(saved: &SavedNode, window: &mut Window, cx: &mut Context<Workspace
 }
 
 impl Workspace {
+    /// The primary window: restore the saved layout (or open a single fresh tab)
+    /// and persist changes back to disk.
     fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        Self::build(false, None, window, cx)
+    }
+
+    /// A scratch window: one fresh terminal (optionally seeded with a cwd/agent
+    /// session for a torn-off pane), no restore, no persistence. Opened when the
+    /// hotkey fires while a primary is already running, or on a drag-out pop-out.
+    fn new_scratch(
+        seed: Option<session::PaneRestore>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        Self::build(true, seed, window, cx)
+    }
+
+    fn build(
+        scratch: bool,
+        seed: Option<session::PaneRestore>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let saved = load_state();
-        cx.set_global(UiScale(saved.scale.unwrap_or(1.0).clamp(0.7, 1.6)));
-        if let Some(choice) = saved.theme.clone() {
-            theme::select_outer(cx, choice);
+        // scale + theme are read even in scratch mode so a quick window still
+        // looks like the rest of the session; only the *layout* is skipped.
+        // Text size now lives in the outer grade (`grade.scale`); fold a legacy
+        // top-level `scale` from older state files into it on load.
+        let mut outer = saved.theme.clone().unwrap_or_default();
+        if let Some(s) = saved.scale {
+            outer.grade.scale = s.clamp(0.7, 1.6);
         }
+        theme::select_outer(cx, outer);
         let mut ws = Self {
             tabs: vec![],
             active: 0,
@@ -689,16 +747,23 @@ impl Workspace {
             drop_target: None,
             pane_bounds: Arc::new(Mutex::new(std::collections::HashMap::new())),
             tab_bounds: Arc::new(Mutex::new(std::collections::HashMap::new())),
+            scratch,
         };
-        if saved.tabs.is_empty() {
+        if scratch {
+            // one terminal, seeded if this is a torn-off pane
+            let pane = match seed {
+                Some(restore) => make_pane_restored(restore, window, cx),
+                None => make_pane(window, cx),
+            };
+            ws.tabs.push(Tab::new(Node::Leaf(pane), None));
+            ws.active = 0;
+            ws.focus_active(window, cx);
+        } else if saved.tabs.is_empty() {
             ws.new_tab(window, cx);
         } else {
             for t in &saved.tabs {
                 let root = build_node(&t.node, window, cx);
-                ws.tabs.push(Tab {
-                    root,
-                    name: t.name.clone(),
-                });
+                ws.tabs.push(Tab::new(root, t.name.clone()));
             }
             ws.active = saved.active.min(ws.tabs.len() - 1);
             ws.focus_active(window, cx);
@@ -718,18 +783,21 @@ impl Workspace {
         // session checkpoint: live state (pane cwds, agent sessions, window
         // bounds) changes without structural events, so re-snapshot every 5
         // minutes — a crash loses at most that much recency, never the layout.
-        cx.spawn(async move |this, cx| loop {
-            cx.background_executor()
-                .timer(Duration::from_secs(300))
-                .await;
-            if this
-                .update(cx, |ws: &mut Workspace, cx| ws.save(cx))
-                .is_err()
-            {
-                break;
-            }
-        })
-        .detach();
+        // Scratch windows never persist, so they skip the checkpoint entirely.
+        if !scratch {
+            cx.spawn(async move |this, cx| loop {
+                cx.background_executor()
+                    .timer(Duration::from_secs(300))
+                    .await;
+                if this
+                    .update(cx, |ws: &mut Workspace, cx| ws.save(cx))
+                    .is_err()
+                {
+                    break;
+                }
+            })
+            .detach();
+        }
         ws
     }
 
@@ -744,10 +812,16 @@ impl Workspace {
     }
 
     fn save(&self, cx: &App) {
+        // a scratch / torn-off window must never overwrite the primary's layout
+        if self.scratch {
+            return;
+        }
         let state = StateFile {
             active: self.active,
             win: self.last_win,
-            scale: Some(cx.global::<UiScale>().0),
+            // Kept for backward-compat with readers of the old top-level field;
+            // the source of truth is now `theme.grade.scale`.
+            scale: Some(theme::outer_choice(cx).grade.scale),
             theme: Some(theme::outer_choice(cx)),
             tabs: self
                 .tabs
@@ -781,11 +855,12 @@ impl Workspace {
             eprintln!("new_tab");
         }
         let pane = make_pane(window, cx);
-        self.tabs.push(Tab {
-            root: Node::Leaf(pane),
-            name: None,
-        });
+        self.tabs.push(Tab::new(Node::Leaf(pane), None));
         self.active = self.tabs.len() - 1;
+        // make_pane focuses the pane at creation, but that doesn't stick before
+        // it's mounted under the new tab — re-assert focus now so the very next
+        // keystroke lands in the fresh terminal (matches activate_tab/split).
+        self.focus_active(window, cx);
         self.save(cx);
         cx.notify();
     }
@@ -831,9 +906,13 @@ impl Workspace {
     fn activate_tab(&mut self, i: usize, window: &mut Window, cx: &mut Context<Self>) {
         if i < self.tabs.len() {
             self.active = i;
-            self.focus_active(window, cx);
             self.save(cx);
             cx.notify();
+            // Defer the focus: a mother-bar click is still being dispatched, and
+            // the root container's tracked focus handle would otherwise grab
+            // focus back as the event bubbles. Running after the event settles
+            // makes the pane focus stick so the next keystroke lands in it.
+            cx.defer_in(window, |ws, window, cx| ws.focus_active(window, cx));
         }
     }
 
@@ -886,14 +965,24 @@ impl Workspace {
         if let Some(tab) = self.tabs.get(self.active) {
             let mut leaves = vec![];
             tab.root.leaves(&mut leaves);
-            if let Some(p) = leaves.first() {
-                window.focus(&p.focus_handle(cx), cx);
+            // land on the pane last focused in this tab if it's still here,
+            // otherwise the first — so a tab with one terminal just lets you type
+            let ids: Vec<EntityId> = leaves.iter().map(|p| p.entity_id()).collect();
+            if let Some(target) = pick_focus_target(tab.focused, &ids) {
+                if let Some(p) = leaves.iter().find(|p| p.entity_id() == target) {
+                    window.focus(&p.focus_handle(cx), cx);
+                }
             }
         }
     }
 
+    /// Set the *outer* (Mother) text size — the bezel scrubber and ctrl+scroll.
+    /// Panes that follow outer (the default) pick this up live; a pane that has
+    /// detached its grade keeps its own size.
     fn set_scale(&mut self, value: f32, cx: &mut Context<Self>) {
-        cx.set_global(UiScale(value.clamp(0.7, 1.6)));
+        let mut choice = theme::outer_choice(cx);
+        choice.grade.scale = value.clamp(0.7, 1.6);
+        theme::select_outer(cx, choice);
         self.save(cx);
         cx.refresh_windows();
     }
@@ -1009,7 +1098,7 @@ impl Workspace {
             gpui::ScrollDelta::Lines(l) => l.y,
             gpui::ScrollDelta::Pixels(p) => f32::from(p.y) / 20.,
         };
-        let cur = cx.global::<UiScale>().0;
+        let cur = theme::outer_choice(cx).grade.scale;
         self.set_scale(cur + dy * 0.05, cx);
     }
 
@@ -1037,7 +1126,17 @@ impl Workspace {
                 }
                 d.engaged
             };
-            self.drop_target = if engaged {
+            // dragged past the window edge → arm the tear-off (and stop showing
+            // in-window drop landings, since the release won't land on one)
+            let (ow, oh) = self
+                .last_win
+                .map(|(_, _, w, h)| (w, h))
+                .unwrap_or((0.0, 0.0));
+            let outside = engaged && outside_bounds(f32::from(pos.x), f32::from(pos.y), ow, oh);
+            if let Some(d) = self.drag_pane.as_mut() {
+                d.left_window = outside;
+            }
+            self.drop_target = if engaged && !outside {
                 let id = self.drag_pane.as_ref().unwrap().id;
                 self.resolve_drop(pos, id)
             } else {
@@ -1095,7 +1194,7 @@ impl Workspace {
         }
     }
 
-    fn on_mouse_up(&mut self, _ev: &MouseUpEvent, window: &mut Window, cx: &mut Context<Self>) {
+    fn on_mouse_up(&mut self, ev: &MouseUpEvent, window: &mut Window, cx: &mut Context<Self>) {
         self.scrubbing = false;
         if self.wheel_drag {
             self.wheel_drag = false;
@@ -1111,11 +1210,21 @@ impl Workspace {
         if let Some(drag) = self.drag_pane.take() {
             let target = self.drop_target.take();
             if drag.engaged {
+                let (ow, oh) = self
+                    .last_win
+                    .map(|(_, _, w, h)| (w, h))
+                    .unwrap_or((0.0, 0.0));
+                let outside = drag.left_window
+                    || outside_bounds(f32::from(ev.position.x), f32::from(ev.position.y), ow, oh);
                 if let Some(target) = target {
                     self.perform_drop(drag.id, target, window, cx);
+                } else if outside && self.pane_count() > 1 {
+                    // released past the window edge → tear this pane off into a
+                    // brand-new window. Guarded so you can't pop out your only
+                    // terminal (which would just empty this window).
+                    self.pop_out(drag.id, window, cx);
                 }
-                // a release over empty space is a no-op for now; out-to-new-
-                // window pop-out is the remaining piece (needs gpui multi-window).
+                // a release over empty space *inside* the window stays a no-op.
             }
             cx.notify();
             return;
@@ -1142,7 +1251,7 @@ impl Workspace {
         // dropping the taken Entity releases its PTY (SIGHUP) — that's the close
         let (_taken, remaining) = tab.root.remove_leaf(&pred);
         if let Some(root) = remaining {
-            self.tabs.insert(from, Tab { root, name });
+            self.tabs.insert(from, Tab::new(root, name));
         }
         if self.tabs.is_empty() {
             cx.quit();
@@ -1152,6 +1261,27 @@ impl Workspace {
         self.focus_active(window, cx);
         self.save(cx);
         cx.notify();
+    }
+
+    /// Tear a pane off into its own new window: snapshot what it's running
+    /// (cwd + resumable agent session), remove it here (which SIGHUPs the old
+    /// shell), then launch a fresh seeded window. A live PTY can't be teleported
+    /// across processes, so the new window re-spawns the shell in the same cwd
+    /// and resumes a claude/codex session if there was one.
+    fn pop_out(&mut self, id: EntityId, window: &mut Window, cx: &mut Context<Self>) {
+        // find the pane and snapshot its runtime BEFORE we drop it
+        let seed = self.tabs.iter().find_map(|t| {
+            let mut v = vec![];
+            t.root.leaves(&mut v);
+            v.into_iter()
+                .find(|e| e.entity_id() == id)
+                .map(|p| p.read(cx).runtime())
+        });
+        let Some(rt) = seed else { return };
+        // remove the leaf from its tab (same collapse-onto-sibling path as a
+        // header-× close); dropping the entity releases its PTY.
+        self.close_pane(id, window, cx);
+        spawn_seeded_window(&rt);
     }
 
     /// What a release at `pos` would land on, ignoring the dragged pane itself.
@@ -1204,25 +1334,13 @@ impl Workspace {
         let (taken, remaining) = src.root.remove_leaf(&pred);
         let Some(pane) = taken else {
             if let Some(root) = remaining {
-                self.tabs.insert(
-                    from,
-                    Tab {
-                        root,
-                        name: src_name,
-                    },
-                );
+                self.tabs.insert(from, Tab::new(root, src_name));
             }
             return;
         };
         let source_emptied = remaining.is_none();
         if let Some(root) = remaining {
-            self.tabs.insert(
-                from,
-                Tab {
-                    root,
-                    name: src_name,
-                },
-            );
+            self.tabs.insert(from, Tab::new(root, src_name));
         }
 
         let landed = match target {
@@ -1268,10 +1386,7 @@ impl Workspace {
             }
         };
         let landed = landed.unwrap_or_else(|| {
-            self.tabs.push(Tab {
-                root: Node::Leaf(pane.clone()),
-                name: None,
-            });
+            self.tabs.push(Tab::new(Node::Leaf(pane.clone()), None));
             self.tabs.len() - 1
         });
 
@@ -1292,7 +1407,7 @@ impl Workspace {
         let tabs = std::mem::take(&mut self.tabs);
         self.tabs = tabs
             .into_iter()
-            .filter_map(|t| t.root.reap(cx).map(|root| Tab { root, name: t.name }))
+            .filter_map(|t| t.root.reap(cx).map(|root| Tab::new(root, t.name)))
             .collect();
         if self.pane_count() != had {
             if self.tabs.is_empty() {
@@ -1305,42 +1420,63 @@ impl Workspace {
         }
     }
 
-    /// The current choice for a given scope (pane override → fall back to outer).
-    /// Shared by the theme breakout and the monitor-OSD tray.
+    /// The *effective* choice for a scope: a pane resolves each group to its own
+    /// override or the live outer (see [`PaneTheme::effective`]); outer is itself.
+    /// Shared by the theme breakout and the monitor-OSD tray — what each tray
+    /// shows is what the scope currently renders with.
     fn choice_for(&self, scope: &MenuScope, cx: &App) -> ThemeChoice {
         match scope {
-            MenuScope::Pane(p) => p
-                .read(cx)
-                .theme_override
-                .clone()
-                .unwrap_or_else(|| theme::outer_choice(cx)),
+            MenuScope::Pane(p) => p.read(cx).appearance.effective(&theme::outer_choice(cx)),
             MenuScope::Outer => theme::outer_choice(cx),
         }
     }
 
-    /// Write a choice back to a scope. None clears a pane override (back to
-    /// "follow outer"). Shared by both trays.
-    fn set_choice_for(
-        &mut self,
-        scope: &MenuScope,
-        choice: Option<ThemeChoice>,
-        cx: &mut Context<Self>,
-    ) {
+    /// Apply a theme-group edit (id/seed/colour/syntax) to a scope. For a pane
+    /// this pins *only* the theme group and detaches it from outer; the grade
+    /// group's inherit state is untouched. `edited` is the full effective choice
+    /// with the changed field — its `grade` is ignored here.
+    fn set_theme_group(&mut self, scope: &MenuScope, edited: ThemeChoice, cx: &mut Context<Self>) {
         match scope {
             MenuScope::Pane(pane) => {
+                let g = theme::ThemeGroup::of(&edited);
                 pane.update(cx, |view, cx| {
-                    view.theme_override = choice;
+                    view.appearance.set_theme(g);
                     cx.notify();
                 });
             }
-            MenuScope::Outer => {
-                if let Some(choice) = choice {
-                    theme::select_outer(cx, choice);
-                }
-            }
+            MenuScope::Outer => theme::select_outer(cx, edited),
         }
         self.save(cx);
         cx.notify();
+    }
+
+    /// Flip a pane's theme-group "follow outer" switch (no-op for the outer
+    /// scope, which has nothing to follow). Non-destructive: the pane's retained
+    /// override survives, so re-detaching restores it.
+    fn toggle_theme_inherit(&mut self, scope: &MenuScope, cx: &mut Context<Self>) {
+        if let MenuScope::Pane(pane) = scope {
+            let outer = theme::outer_choice(cx);
+            pane.update(cx, |view, cx| {
+                view.appearance.toggle_theme(&outer);
+                cx.notify();
+            });
+            self.save(cx);
+            cx.notify();
+        }
+    }
+
+    /// Flip a pane's grade-group "follow outer" switch (see
+    /// [`Self::toggle_theme_inherit`]).
+    fn toggle_grade_inherit(&mut self, scope: &MenuScope, cx: &mut Context<Self>) {
+        if let MenuScope::Pane(pane) = scope {
+            let outer = theme::outer_choice(cx);
+            pane.update(cx, |view, cx| {
+                view.appearance.toggle_grade(&outer);
+                cx.notify();
+            });
+            self.save(cx);
+            cx.notify();
+        }
     }
 
     /// The choice the open theme breakout is editing (pane override or outer).
@@ -1351,10 +1487,10 @@ impl Workspace {
         }
     }
 
-    /// Apply a choice to the open theme breakout's scope.
-    fn set_menu_choice(&mut self, choice: Option<ThemeChoice>, cx: &mut Context<Self>) {
+    /// Apply a theme-group edit to the open theme breakout's scope.
+    fn set_menu_choice(&mut self, choice: ThemeChoice, cx: &mut Context<Self>) {
         if let Some(scope) = self.theme_menu.clone() {
-            self.set_choice_for(&scope, choice, cx);
+            self.set_theme_group(&scope, choice, cx);
         }
     }
 
@@ -1369,23 +1505,47 @@ impl Workspace {
     }
 
     /// Set one channel of the active OSD scope's grade to `v` (live, persisted).
-    fn apply_grade(&mut self, key: theme::GradeKey, v: f32, cx: &mut Context<Self>) {
+    /// For a pane this pins *only* the grade group (seeding from the currently
+    /// shown grade) and detaches it from outer; the theme group is untouched.
+    fn apply_grade(&mut self, key: theme::GradeKey, ratio: f32, cx: &mut Context<Self>) {
         let Some(scope) = self.osd_menu.clone() else {
             return;
         };
-        let mut choice = self.choice_for(&scope, cx);
-        choice.grade.set(key, v);
-        self.set_choice_for(&scope, Some(choice), cx);
+        // `ratio` is the 0..1 track position; map it into the channel's stored
+        // units (colour channels are 0..1; text size is 0.7..1.6).
+        let (min, max, _) = key.range();
+        let mut grade = self.choice_for(&scope, cx).grade;
+        grade.set(key, min + ratio * (max - min));
+        self.write_grade(&scope, grade, cx);
     }
 
-    /// Reset the active OSD scope's grade to neutral.
+    /// Reset the active OSD scope's grade to neutral (a pane stays detached;
+    /// "follow outer" re-inherits).
     fn reset_grade(&mut self, cx: &mut Context<Self>) {
         let Some(scope) = self.osd_menu.clone() else {
             return;
         };
-        let mut choice = self.choice_for(&scope, cx);
-        choice.grade = theme::Grade::default();
-        self.set_choice_for(&scope, Some(choice), cx);
+        self.write_grade(&scope, theme::Grade::default(), cx);
+    }
+
+    /// Commit a grade to a scope: pin it on a pane (grade group only), or set it
+    /// on the outer choice.
+    fn write_grade(&mut self, scope: &MenuScope, grade: theme::Grade, cx: &mut Context<Self>) {
+        match scope {
+            MenuScope::Pane(pane) => {
+                pane.update(cx, |view, cx| {
+                    view.appearance.set_grade(grade);
+                    cx.notify();
+                });
+            }
+            MenuScope::Outer => {
+                let mut choice = theme::outer_choice(cx);
+                choice.grade = grade;
+                theme::select_outer(cx, choice);
+            }
+        }
+        self.save(cx);
+        cx.notify();
     }
 
     /// One OSD slider: label + draggable track + a centre-relative readout
@@ -1400,7 +1560,12 @@ impl Workspace {
     ) -> gpui::Div {
         const TRACK: f32 = 150.;
         let store = self.slider_bounds.clone();
-        let v = value.clamp(0.0, 1.0);
+        // `value` is in the channel's stored units; normalise to a 0..1 track
+        // fraction so colour channels (0..1) and text size (0.7..1.6) share the
+        // same slider geometry.
+        let (min, max, neutral) = key.range();
+        let v = value.clamp(min, max);
+        let frac = ((v - min) / (max - min)).clamp(0., 1.);
         div()
             .flex()
             .flex_row()
@@ -1456,14 +1621,14 @@ impl Workspace {
                             .left_0()
                             .top(px(6.))
                             .h(px(3.))
-                            .w(px(TRACK * v))
+                            .w(px(TRACK * frac))
                             .rounded_full()
                             .bg(th.accent),
                     )
                     .child(
                         div()
                             .absolute()
-                            .left(px((TRACK * v - 5.).max(0.)))
+                            .left(px((TRACK * frac - 5.).max(0.)))
                             .top(px(2.))
                             .w(px(10.))
                             .h(px(10.))
@@ -1480,7 +1645,13 @@ impl Workspace {
                     .w(px(28.))
                     .text_size(px(9.))
                     .text_color(th.accent)
-                    .child(format!("{:+}", ((v - 0.5) * 100.).round() as i32)),
+                    // Text size reads as an absolute "110%"; colour channels read
+                    // as a signed offset from neutral ("-12", "+0").
+                    .child(if matches!(key, theme::GradeKey::Scale) {
+                        format!("{}%", (v * 100.).round() as i32)
+                    } else {
+                        format!("{:+}", ((v - neutral) * 100.).round() as i32)
+                    }),
             )
     }
 
@@ -1488,7 +1659,7 @@ impl Workspace {
     fn set_seed(&mut self, hex: Option<String>, cx: &mut Context<Self>) {
         let mut choice = self.menu_choice(cx);
         choice.seed = hex;
-        self.set_menu_choice(Some(choice), cx);
+        self.set_menu_choice(choice, cx);
     }
 
     /// Map a window-space point on the colour wheel to a seed hex: angle → hue,
@@ -1649,6 +1820,68 @@ impl Workspace {
 /// Theme-icon button for the breakout menu: glyph over a tiny caption. The
 /// caption names the slot so two themes that share a glyph (e.g. an unedited
 /// `custom` slot still carrying hacker's `>_`) stay tellable apart.
+/// Hover popup for a theme button. Always shows the full theme name (the
+/// in-button caption is truncated — e.g. `tactical` for `tactical-overdrive`).
+/// For the hot-reloaded `custom` slot it also shows the resolved file path on
+/// THIS machine and a clickable "Open in editor" line, so the user never has to
+/// hunt for where their editable theme lives.
+struct ThemeTooltip {
+    name: SharedString,
+    /// `Some` only for the custom slot — the file to reveal/open.
+    path: Option<PathBuf>,
+    bg: Hsla,
+    text: Hsla,
+    accent: Hsla,
+    faint: Hsla,
+}
+
+impl Render for ThemeTooltip {
+    fn render(&mut self, _w: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        let mut card = div()
+            .flex()
+            .flex_col()
+            .gap(px(3.))
+            .px(px(9.))
+            .py(px(6.))
+            .rounded_md()
+            .border_1()
+            .border_color(self.accent.alpha(0.5))
+            .bg(self.bg)
+            .shadow(vec![BoxShadow {
+                color: hsla(0., 0., 0., 0.45),
+                offset: point(px(0.), px(2.)),
+                blur_radius: px(8.),
+                spread_radius: px(0.),
+                inset: false,
+            }])
+            .text_color(self.text)
+            .child(div().text_size(px(12.)).child(self.name.clone()));
+        if let Some(path) = self.path.clone() {
+            card = card
+                .child(
+                    div()
+                        .text_size(px(10.))
+                        .text_color(self.faint)
+                        .child(path.display().to_string()),
+                )
+                .child(
+                    div()
+                        .id("open-theme-file")
+                        .mt(px(2.))
+                        .text_size(px(11.))
+                        .text_color(self.accent)
+                        .cursor_pointer()
+                        .child("▸ Open in editor  ⧉")
+                        .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                            cx.stop_propagation();
+                            theme::open_in_default_app(&path);
+                        }),
+                );
+        }
+        card
+    }
+}
+
 fn theme_icon_btn(th: &theme::Theme, icon: &str, label: &str, active: bool) -> gpui::Div {
     let inner = div()
         .flex()
@@ -2005,7 +2238,23 @@ impl Render for Workspace {
         if self.tabs.is_empty() {
             return div();
         }
-        let scale = cx.global::<UiScale>().0;
+        // remember which pane currently holds focus in the active tab, so a later
+        // mother-bar click returns to that exact terminal (the "most recent" one)
+        let active = self.active;
+        let focused_id = self.tabs.get(active).and_then(|tab| {
+            let mut leaves = vec![];
+            tab.root.leaves(&mut leaves);
+            leaves
+                .iter()
+                .find(|p| p.focus_handle(cx).is_focused(window))
+                .map(|p| p.entity_id())
+        });
+        if let Some(id) = focused_id {
+            if let Some(tab) = self.tabs.get_mut(active) {
+                tab.focused = Some(id);
+            }
+        }
+        let scale = theme::outer_choice(cx).grade.scale;
         let bezel = darken(th.surface, 0.55);
         let tab = &self.tabs[self.active];
         let mut leaves = vec![];
@@ -2076,6 +2325,9 @@ impl Render for Workspace {
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
+                            // don't let the click bubble to the root's focus
+                            // handle, which would steal focus from the pane
+                            cx.stop_propagation();
                             ws.activate_tab(i, window, cx)
                         }),
                     )
@@ -2333,31 +2585,60 @@ impl Render for Workspace {
             let color = cur.color;
             let syntax = cur.syntax;
             let grade = cur.grade; // preserved across theme edits (OSD owns it)
-            let has_override = match &scope {
-                MenuScope::Pane(p) => p.read(cx).theme_override.is_some(),
-                MenuScope::Outer => true,
+                                   // Theme-group "follow outer" state — only panes can inherit.
+            let following = match &scope {
+                MenuScope::Pane(p) => p.read(cx).appearance.inherit_theme,
+                MenuScope::Outer => false,
             };
             let mut theme_row = div().flex().flex_row().gap_2();
             for (id, icon, lbl) in theme::all_themes(cx) {
                 let active = cur.id == id;
                 let seed = cur.seed.clone();
-                theme_row =
-                    theme_row.child(theme_icon_btn(&th, &icon, &lbl, active).on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
-                            cx.stop_propagation();
-                            ws.set_menu_choice(
-                                Some(ThemeChoice {
-                                    id: id.clone(),
-                                    seed: seed.clone(),
-                                    color,
-                                    syntax,
-                                    grade,
-                                }),
-                                cx,
-                            );
-                        }),
-                    ));
+                // Tooltip data (1.5s hover): full name for every slot; the custom
+                // slot also carries its resolved on-disk path + an "open" action.
+                let tip_name: SharedString = id.clone().into();
+                let tip_path = (id == "custom").then(theme::theme_path);
+                let (tip_bg, tip_text, tip_accent, tip_faint) =
+                    (darken(th.surface, 0.85), th.text, th.accent, th.faint);
+                let mk_tip = move |_w: &mut Window, cx: &mut App| -> gpui::AnyView {
+                    cx.new(|_| ThemeTooltip {
+                        name: tip_name.clone(),
+                        path: tip_path.clone(),
+                        bg: tip_bg,
+                        text: tip_text,
+                        accent: tip_accent,
+                        faint: tip_faint,
+                    })
+                    .into()
+                };
+                let btn = theme_icon_btn(&th, &icon, &lbl, active)
+                    .id(SharedString::from(format!("theme-btn-{id}")))
+                    .tooltip_show_delay(Duration::from_millis(1500))
+                    // Hoverable only for custom, so the mouse can travel into the
+                    // popup to click "Open"; others are plain name labels.
+                    .map(|b| {
+                        if id == "custom" {
+                            b.hoverable_tooltip(mk_tip)
+                        } else {
+                            b.tooltip(mk_tip)
+                        }
+                    });
+                theme_row = theme_row.child(btn.on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                        cx.stop_propagation();
+                        ws.set_menu_choice(
+                            ThemeChoice {
+                                id: id.clone(),
+                                seed: seed.clone(),
+                                color,
+                                syntax,
+                                grade,
+                            },
+                            cx,
+                        );
+                    }),
+                ));
             }
             let mut seed_row = div().flex().flex_row().items_center().gap_2();
             {
@@ -2367,13 +2648,13 @@ impl Render for Workspace {
                     cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
                         cx.stop_propagation();
                         ws.set_menu_choice(
-                            Some(ThemeChoice {
+                            ThemeChoice {
                                 id: id.clone(),
                                 seed: None,
                                 color,
                                 syntax,
                                 grade,
-                            }),
+                            },
                             cx,
                         );
                     }),
@@ -2399,13 +2680,13 @@ impl Render for Workspace {
                         cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
                             cx.stop_propagation();
                             ws.set_menu_choice(
-                                Some(ThemeChoice {
+                                ThemeChoice {
                                     id: id.clone(),
                                     seed: seed.clone(),
                                     color: mode,
                                     syntax,
                                     grade,
-                                }),
+                                },
                                 cx,
                             );
                         }),
@@ -2426,13 +2707,13 @@ impl Render for Workspace {
                         cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
                             cx.stop_propagation();
                             ws.set_menu_choice(
-                                Some(ThemeChoice {
+                                ThemeChoice {
                                     id: id.clone(),
                                     seed: seed.clone(),
                                     color,
                                     syntax: on,
                                     grade,
-                                }),
+                                },
                                 cx,
                             );
                         }),
@@ -2497,15 +2778,23 @@ impl Render for Workspace {
                 .child(label("SYNTAX"))
                 .child(syntax_row);
             if is_pane {
-                panel = panel.child(
-                    Self::bezel_btn(&th, "follow outer", !has_override).on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                            cx.stop_propagation();
-                            ws.set_menu_choice(None, cx);
-                        }),
-                    ),
-                );
+                // A per-group toggle: on = this pane's theme follows the outer
+                // scope live; off = it keeps its own retained theme. Flipping it
+                // never discards the pane's pick (see PaneTheme::toggle_theme).
+                let lbl = if following {
+                    "◉ follow outer"
+                } else {
+                    "◯ follow outer"
+                };
+                panel = panel.child(Self::bezel_btn(&th, lbl, following).on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                        cx.stop_propagation();
+                        if let Some(scope) = ws.theme_menu.clone() {
+                            ws.toggle_theme_inherit(&scope, cx);
+                        }
+                    }),
+                ));
             }
             // full-screen scrim: click anywhere outside closes
             div()
@@ -2526,9 +2815,10 @@ impl Render for Workspace {
             let is_pane = matches!(scope, MenuScope::Pane(_));
             let cur = self.choice_for(&scope, cx);
             let grade = cur.grade;
-            let has_override = match &scope {
-                MenuScope::Pane(p) => p.read(cx).theme_override.is_some(),
-                MenuScope::Outer => true,
+            // Grade-group "follow outer" state — independent of the theme tray.
+            let following = match &scope {
+                MenuScope::Pane(p) => p.read(cx).appearance.inherit_grade,
+                MenuScope::Outer => false,
             };
             let label = |s: &str| {
                 div()
@@ -2541,7 +2831,7 @@ impl Render for Workspace {
                 rows = rows.child(self.slider_row(key, name, grade.get(key), &th, cx));
             }
             const PANEL_W: f32 = 300.;
-            const PANEL_H_EST: f32 = 280.;
+            const PANEL_H_EST: f32 = 306.; // 7 slider rows + reset + follow-outer
             let mut panel = div().absolute().w(px(PANEL_W));
             panel = match self.osd_at {
                 Some(at) => {
@@ -2591,17 +2881,23 @@ impl Render for Workspace {
                     ),
                 );
             if is_pane {
-                panel = panel.child(
-                    Self::bezel_btn(&th, "follow outer", !has_override).on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                            cx.stop_propagation();
-                            if let Some(scope) = ws.osd_menu.clone() {
-                                ws.set_choice_for(&scope, None, cx);
-                            }
-                        }),
-                    ),
-                );
+                // Grade-group toggle, independent of the theme tray's: on = this
+                // pane's monitor grade tracks the outer sliders live; off = it
+                // keeps its own. Non-destructive (PaneTheme::toggle_grade).
+                let lbl = if following {
+                    "◉ follow outer"
+                } else {
+                    "◯ follow outer"
+                };
+                panel = panel.child(Self::bezel_btn(&th, lbl, following).on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                        cx.stop_propagation();
+                        if let Some(scope) = ws.osd_menu.clone() {
+                            ws.toggle_grade_inherit(&scope, cx);
+                        }
+                    }),
+                ));
             }
             // full-screen scrim: click anywhere outside closes
             div()
@@ -2839,6 +3135,68 @@ mod tests {
     }
 
     #[test]
+    fn tab_focus_prefers_the_remembered_pane_then_falls_back() {
+        let leaves = [10u32, 20, 30];
+        // remembered pane still open → focus it
+        assert_eq!(pick_focus_target(Some(20), &leaves), Some(20));
+        // remembered pane was closed → fall back to the first
+        assert_eq!(pick_focus_target(Some(99), &leaves), Some(10));
+        // nothing remembered (fresh tab) → first pane, so a 1-pane tab just types
+        assert_eq!(pick_focus_target(None, &leaves), Some(10));
+        // empty tab → nothing to focus
+        assert_eq!(pick_focus_target::<u32>(Some(1), &[]), None);
+        assert_eq!(pick_focus_target::<u32>(None, &[]), None);
+    }
+
+    #[test]
+    fn outside_bounds_fires_only_past_the_window_edge() {
+        // inside (and on the edge) is not a tear-off
+        assert!(!outside_bounds(0.0, 0.0, 800.0, 600.0));
+        assert!(!outside_bounds(400.0, 300.0, 800.0, 600.0));
+        assert!(!outside_bounds(800.0, 600.0, 800.0, 600.0));
+        // any axis past the edge is
+        assert!(outside_bounds(-1.0, 300.0, 800.0, 600.0));
+        assert!(outside_bounds(400.0, -1.0, 800.0, 600.0));
+        assert!(outside_bounds(801.0, 300.0, 800.0, 600.0));
+        assert!(outside_bounds(400.0, 601.0, 800.0, 600.0));
+    }
+
+    #[test]
+    fn comm_truncates_to_the_kernel_15_char_limit() {
+        // "terminal-delight" is 16 chars; /proc/<pid>/comm shows only 15
+        assert_eq!(truncated_comm("terminal-delight"), "terminal-deligh");
+        assert_eq!(truncated_comm("short"), "short");
+    }
+
+    #[test]
+    fn scratch_decision_covers_force_seed_and_peer() {
+        // lone launch, nothing running → primary restore, no seed
+        let (scratch, seed) = scratch_decision(false, false, None, None);
+        assert!(!scratch);
+        assert!(seed.is_none());
+
+        // a sibling is already running → scratch, still no seed
+        let (scratch, seed) = scratch_decision(false, true, None, None);
+        assert!(scratch);
+        assert!(seed.is_none());
+
+        // forced scratch with no peer (TD_SCRATCH=1)
+        assert!(scratch_decision(true, false, None, None).0);
+
+        // a torn-off pane seeds cwd/resume and is always scratch
+        let (scratch, seed) = scratch_decision(
+            false,
+            false,
+            Some("/tmp/work".into()),
+            Some("claude --resume x".into()),
+        );
+        assert!(scratch);
+        let seed = seed.expect("seeded");
+        assert_eq!(seed.cwd.as_deref(), Some("/tmp/work"));
+        assert_eq!(seed.resume.as_deref(), Some("claude --resume x"));
+    }
+
+    #[test]
     fn hsla_to_hex_matches_known_colours_and_round_trips() {
         // primaries + a grey land on their exact hex
         assert_eq!(hsla_to_hex(hsla(0.0, 1.0, 0.5, 1.0)), "#ff0000");
@@ -2911,21 +3269,32 @@ mod tests {
         let mut t: Tree<u32> = Tree::Leaf(1);
         t.split_leaf(&|l| *l == 1, SplitDir::Col, 2);
         let saved = t.to_saved_with(&|l| LeafState {
-            theme: (*l == 2).then(|| ThemeChoice {
-                id: "hacker".into(),
-                seed: None,
-                ..Default::default()
-            }),
+            appearance: if *l == 2 {
+                PaneTheme::from_legacy(ThemeChoice {
+                    id: "hacker".into(),
+                    seed: None,
+                    ..Default::default()
+                })
+            } else {
+                PaneTheme::default()
+            },
             ..Default::default()
         });
         let SavedNode::Split { a, b, .. } = &saved else {
             panic!("split expected");
         };
-        assert!(matches!(**a, SavedNode::Leaf { theme: None, .. }));
-        let SavedNode::Leaf { theme: Some(t), .. } = &**b else {
+        let SavedNode::Leaf { appearance, .. } = &**a else {
+            panic!("leaf expected");
+        };
+        assert!(appearance.is_pristine(), "leaf 1 should follow outer");
+        let SavedNode::Leaf { appearance, .. } = &**b else {
             panic!("override lost");
         };
-        assert_eq!(t.id, "hacker");
+        assert_eq!(appearance.theme.as_ref().unwrap().id, "hacker");
+        assert!(
+            !appearance.inherit_theme,
+            "an override pins the theme group"
+        );
     }
 
     #[test]
@@ -2968,10 +3337,31 @@ b = "Leaf"
 "#;
         let state: StateFile = toml::from_str(legacy).expect("legacy state parses");
         assert_eq!(state.tabs.len(), 2);
-        assert!(matches!(
-            state.tabs[0].node,
-            SavedNode::Leaf { theme: None, .. }
-        ));
+        let SavedNode::Leaf { appearance, .. } = &state.tabs[0].node else {
+            panic!("string leaf should parse to a Leaf");
+        };
+        assert!(appearance.is_pristine(), "a bare string leaf follows outer");
+    }
+
+    #[test]
+    fn legacy_per_pane_theme_override_migrates_to_full_override() {
+        // Pre-per-group state files wrote a single `theme` table under a leaf,
+        // meaning "this pane overrides everything and follows outer for nothing".
+        let legacy = r#"
+active = 0
+[[tabs]]
+[tabs.node.Leaf.theme]
+id = "hacker"
+"#;
+        let state: StateFile = toml::from_str(legacy).expect("legacy leaf parses");
+        let SavedNode::Leaf { appearance, .. } = &state.tabs[0].node else {
+            panic!("leaf expected");
+        };
+        assert_eq!(appearance.theme.as_ref().unwrap().id, "hacker");
+        assert!(
+            !appearance.inherit_theme && !appearance.inherit_grade,
+            "a legacy override follows outer for neither group"
+        );
     }
 
     #[test]
@@ -2988,7 +3378,7 @@ b = "Leaf"
             tabs: vec![SavedTab {
                 name: None,
                 node: SavedNode::Leaf {
-                    theme: Some(ThemeChoice {
+                    appearance: PaneTheme::from_legacy(ThemeChoice {
                         id: "hacker".into(),
                         seed: None,
                         ..Default::default()
@@ -3003,10 +3393,11 @@ b = "Leaf"
         let back: StateFile = toml::from_str(&body).expect("round-trips");
         assert_eq!(back.theme.as_ref().unwrap().id, "tactical-overdrive");
         assert_eq!(back.win, Some((12.0, 34.0, 1280.0, 720.0)));
-        let SavedNode::Leaf { theme: Some(t), .. } = &back.tabs[0].node else {
+        let SavedNode::Leaf { appearance, .. } = &back.tabs[0].node else {
             panic!("leaf override lost");
         };
-        assert_eq!(t.id, "hacker");
+        assert_eq!(appearance.theme.as_ref().unwrap().id, "hacker");
+        assert!(!appearance.inherit_theme);
     }
 
     #[test]
@@ -3019,7 +3410,7 @@ b = "Leaf"
             tabs: vec![SavedTab {
                 name: Some("agents".into()),
                 node: SavedNode::Leaf {
-                    theme: None,
+                    appearance: PaneTheme::default(),
                     cwd: Some("/home/user/proj".into()),
                     resume: Some("claude --resume 48be90b8-5777-44b6-bb6f-1c6069205c0d".into()),
                     name: None,
@@ -3111,7 +3502,7 @@ b = "Leaf"
     fn nested_layout_round_trips_and_legacy_split_defaults_ratio() {
         // a 3-deep tree: Row( Col(leaf,leaf) @0.7 , leaf ) @0.3
         let leaf = || SavedNode::Leaf {
-            theme: None,
+            appearance: PaneTheme::default(),
             cwd: None,
             resume: None,
             name: None,
@@ -3161,17 +3552,138 @@ b = "Leaf"
     }
 }
 
-fn main() {
-    application().run(|cx: &mut App| {
-        theme::init(cx);
-        // reboot into the exact window the user closed (or crashed) from
-        let bounds = match load_state().win {
-            Some((x, y, w, h)) => Bounds {
-                origin: point(px(x), px(y)),
-                size: size(px(w.max(480.)), px(h.max(320.))),
-            },
-            None => Bounds::centered(None, size(px(1280.), px(720.)), cx),
+/// Which pane a tab should focus when you switch to it: the one you were last in
+/// (if it's still open), else the first. Pure so the precedence is testable.
+fn pick_focus_target<T: PartialEq + Copy>(remembered: Option<T>, leaves: &[T]) -> Option<T> {
+    remembered
+        .filter(|id| leaves.contains(id))
+        .or_else(|| leaves.first().copied())
+}
+
+/// True when the cursor sits outside the `w`×`h` window content box. During an
+/// X11 header drag the implicit pointer grab keeps delivering positions past the
+/// edge, so this is how we notice a pane being dragged out for a tear-off.
+fn outside_bounds(x: f32, y: f32, w: f32, h: f32) -> bool {
+    x < 0.0 || y < 0.0 || x > w || y > h
+}
+
+/// `/proc/<pid>/comm` truncates the process name to 15 visible chars; mirror that
+/// so the running-instance check compares like with like.
+fn truncated_comm(name: &str) -> String {
+    name.chars().take(15).collect()
+}
+
+/// Resolve scratch-mode + an optional seed from the inputs. Factored out (pure)
+/// so the env/proc plumbing in `main` stays testable.
+fn scratch_decision(
+    force: bool,
+    peer_running: bool,
+    cwd: Option<String>,
+    resume: Option<String>,
+) -> (bool, Option<session::PaneRestore>) {
+    let seeded = cwd.is_some() || resume.is_some();
+    let seed = if seeded {
+        Some(session::PaneRestore { cwd, resume })
+    } else {
+        None
+    };
+    (force || seeded || peer_running, seed)
+}
+
+/// Is another terminal-delight process already alive? Cheap, permissionless
+/// `/proc` comm scan — no lockfile to leak. Drives the conditional boot: a second
+/// launch (e.g. the Ctrl+Alt+T hotkey) opens a quick scratch window instead of
+/// re-restoring the whole saved session.
+fn another_instance_running() -> bool {
+    let me = std::process::id();
+    let want = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.file_name().map(|s| s.to_string_lossy().into_owned()))
+        .map(|n| truncated_comm(&n));
+    let Some(want) = want else { return false };
+    let Ok(entries) = std::fs::read_dir("/proc") else {
+        return false;
+    };
+    for e in entries.flatten() {
+        let Some(pid) = e.file_name().to_str().and_then(|s| s.parse::<u32>().ok()) else {
+            continue;
         };
+        if pid == me {
+            continue;
+        }
+        if let Ok(comm) = std::fs::read_to_string(e.path().join("comm")) {
+            if comm.trim() == want {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Launch a fresh, detached terminal-delight seeded with a torn-off pane's cwd
+/// and agent session. The child sees a peer (us) running, so it boots as a
+/// scratch window automatically; the seed env tells it what to reopen.
+fn spawn_seeded_window(rt: &session::PaneRuntime) {
+    let Ok(exe) = std::env::current_exe() else {
+        return;
+    };
+    let mut cmd = std::process::Command::new(exe);
+    cmd.env("TD_SCRATCH", "1");
+    if let Some(cwd) = &rt.cwd {
+        cmd.env("TD_SEED_CWD", cwd);
+    }
+    if let Some(resume) = &rt.resume {
+        cmd.env("TD_SEED_RESUME", resume);
+    }
+    // detach into its own session so it outlives us and ignores our signals
+    use std::os::unix::process::CommandExt;
+    unsafe {
+        cmd.pre_exec(|| {
+            libc::setsid();
+            Ok(())
+        });
+    }
+    let _ = cmd.spawn();
+}
+
+fn main() {
+    // Decide boot mode before the window opens: forced scratch (TD_SCRATCH),
+    // a seeded tear-off (TD_SEED_*), or "a sibling is already running" all open
+    // a small single-terminal window; a lone launch restores the full session.
+    let force = std::env::var_os("TD_SCRATCH").is_some();
+    let seed_cwd = std::env::var("TD_SEED_CWD").ok().filter(|s| !s.is_empty());
+    let seed_resume = std::env::var("TD_SEED_RESUME")
+        .ok()
+        .filter(|s| !s.is_empty());
+    let (scratch, seed) =
+        scratch_decision(force, another_instance_running(), seed_cwd, seed_resume);
+
+    application().run(move |cx: &mut App| {
+        theme::init(cx);
+        let bounds = if scratch {
+            // a quick window: ~45% of the display wide, ~20% tall, centred
+            let size_px = cx
+                .primary_display()
+                .map(|d| d.bounds().size)
+                .map(|s| {
+                    size(
+                        px((f32::from(s.width) * 0.45).max(480.0)),
+                        px((f32::from(s.height) * 0.20).max(240.0)),
+                    )
+                })
+                .unwrap_or_else(|| size(px(860.), px(320.)));
+            Bounds::centered(None, size_px, cx)
+        } else {
+            // reboot into the exact window the user closed (or crashed) from
+            match load_state().win {
+                Some((x, y, w, h)) => Bounds {
+                    origin: point(px(x), px(y)),
+                    size: size(px(w.max(480.)), px(h.max(320.))),
+                },
+                None => Bounds::centered(None, size(px(1280.), px(720.)), cx),
+            }
+        };
+        let seed = seed.clone();
         cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
@@ -3184,7 +3696,13 @@ fn main() {
                 app_id: Some("terminal-delight".into()),
                 ..Default::default()
             },
-            |window, cx| cx.new(|cx| Workspace::new(window, cx)),
+            move |window, cx| {
+                if scratch {
+                    cx.new(|cx| Workspace::new_scratch(seed.clone(), window, cx))
+                } else {
+                    cx.new(|cx| Workspace::new(window, cx))
+                }
+            },
         )
         .expect("open window");
         cx.activate(true);
