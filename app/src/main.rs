@@ -2501,23 +2501,20 @@ impl Render for Workspace {
                     .items_center()
                     .gap_2()
                     .child(
-                        // The app title: brightened off the accent and bumped a
-                        // size so it reads/pops against the bezel instead of the
-                        // drab on-theme green.
+                        // The mother TITLE — painted in the complement colour (the
+                        // wheel's `C` target; defaults to the accent's complement /
+                        // the active dynamic's complement).
                         div()
                             .text_size(px(14.))
                             .font_weight(gpui::FontWeight::EXTRA_BOLD)
-                            .text_color(brighten(th.accent, 1.35))
+                            .text_color(th.complement)
                             .child("▸ TERMINAL-DELIGHT"),
                     )
                     .child(
-                        // The title's complement colour (the wheel's `C` target /
-                        // the active dynamic's complement) reads here beside the
-                        // accent title — a deliberate two-tone in the mother bar.
+                        // Decoration only — stays a dim foreground tint.
                         div()
                             .text_size(px(9.))
-                            .font_weight(gpui::FontWeight::BOLD)
-                            .text_color(th.complement.alpha(0.9))
+                            .text_color(th.text.alpha(0.4))
                             .child("// SUB-TERMINAL"),
                     )
                     .child(tab_strip),
