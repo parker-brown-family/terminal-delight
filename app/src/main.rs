@@ -3595,17 +3595,17 @@ fn main() {
     application().run(move |cx: &mut App| {
         theme::init(cx);
         let bounds = if scratch {
-            // a quick window: ~45% of the display wide, ~20% tall, centred
+            // a quick window: ~45% of the display wide, ~40% tall, centred
             let size_px = cx
                 .primary_display()
                 .map(|d| d.bounds().size)
                 .map(|s| {
                     size(
                         px((f32::from(s.width) * 0.45).max(480.0)),
-                        px((f32::from(s.height) * 0.20).max(240.0)),
+                        px((f32::from(s.height) * 0.40).max(480.0)),
                     )
                 })
-                .unwrap_or_else(|| size(px(860.), px(320.)));
+                .unwrap_or_else(|| size(px(860.), px(640.)));
             Bounds::centered(None, size_px, cx)
         } else {
             // reboot into the exact window the user closed (or crashed) from
