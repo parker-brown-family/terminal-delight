@@ -2594,6 +2594,7 @@ impl Render for Workspace {
             for (id, icon, lbl) in theme::all_themes(cx) {
                 let active = cur.id == id;
                 let seed = cur.seed.clone();
+                let dynamic = cur.dynamic.clone();
                 // Tooltip data (1.5s hover): full name for every slot; the custom
                 // slot also carries its resolved on-disk path + an "open" action.
                 let tip_name: SharedString = id.clone().into();
@@ -2634,6 +2635,7 @@ impl Render for Workspace {
                                 color,
                                 syntax,
                                 grade,
+                                dynamic: dynamic.clone(),
                             },
                             cx,
                         );
@@ -2643,6 +2645,7 @@ impl Render for Workspace {
             let mut seed_row = div().flex().flex_row().items_center().gap_2();
             {
                 let id = cur.id.clone();
+                let dynamic = cur.dynamic.clone();
                 seed_row = seed_row.child(seed_swatch(None, cur.seed.is_none()).on_mouse_down(
                     MouseButton::Left,
                     cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
@@ -2654,6 +2657,7 @@ impl Render for Workspace {
                                 color,
                                 syntax,
                                 grade,
+                                dynamic: dynamic.clone(),
                             },
                             cx,
                         );
@@ -2674,6 +2678,7 @@ impl Render for Workspace {
                 let active = cur.color == mode;
                 let id = cur.id.clone();
                 let seed = cur.seed.clone();
+                let dynamic = cur.dynamic.clone();
                 color_row = color_row.child(
                     color_mode_btn(&th, mode.icon(), mode.caption(), active).on_mouse_down(
                         MouseButton::Left,
@@ -2686,6 +2691,7 @@ impl Render for Workspace {
                                     color: mode,
                                     syntax,
                                     grade,
+                                    dynamic: dynamic.clone(),
                                 },
                                 cx,
                             );
@@ -2701,6 +2707,7 @@ impl Render for Workspace {
                 let active = cur.syntax == on;
                 let id = cur.id.clone();
                 let seed = cur.seed.clone();
+                let dynamic = cur.dynamic.clone();
                 syntax_row =
                     syntax_row.child(color_mode_btn(&th, icon, caption, active).on_mouse_down(
                         MouseButton::Left,
@@ -2713,6 +2720,7 @@ impl Render for Workspace {
                                     color,
                                     syntax: on,
                                     grade,
+                                    dynamic: dynamic.clone(),
                                 },
                                 cx,
                             );
