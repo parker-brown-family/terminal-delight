@@ -551,30 +551,6 @@ pub fn outer_choice(cx: &App) -> ThemeChoice {
     cx.global::<OuterChoice>().0.clone()
 }
 
-/// (id, icon, label) for the picker, in display order. The label is a short
-/// caption shown under the glyph; it disambiguates glyph collisions — an
-/// unedited `custom` file still carries the `>_` glyph it was seeded from
-/// (hacker), so glyph alone can't tell the two apart, but "hacker" vs "custom"
-/// can.
-pub fn all_themes(cx: &App) -> Vec<(String, String, String)> {
-    let reg = cx.global::<ThemeRegistry>();
-    let mut out: Vec<_> = reg
-        .builtins
-        .iter()
-        .map(|(id, t)| (id.clone(), t.icon.clone(), short_label(id)))
-        .collect();
-    // The hot-reloaded user file: always labelled "custom" so it reads as the
-    // live-editable slot even when it's still a verbatim copy of a built-in.
-    out.push(("custom".into(), reg.custom.icon.clone(), "custom".into()));
-    out
-}
-
-/// Short picker caption for a theme id: the segment before the first '-'
-/// ("tactical-overdrive" → "tactical"), which is unique across the built-ins.
-fn short_label(id: &str) -> String {
-    id.split('-').next().unwrap_or(id).to_string()
-}
-
 pub fn parse_hex(value: &str) -> Option<Hsla> {
     hex(value)
 }
@@ -618,7 +594,8 @@ pub enum Dynamic {
     /// Triadic: seed and ±120°, three balanced hues.
     Prism,
     /// User-defined relationship: explicit primary/secondary/tertiary/quaternary.
-    Custom(CustomPalette),
+    /// Boxed so the rare custom palette doesn't bloat every `ThemeChoice` clone.
+    Custom(Box<CustomPalette>),
 }
 
 impl Dynamic {
@@ -1012,23 +989,25 @@ mod tests {
     }
 
     #[test]
-    fn picker_labels_are_distinct_so_glyph_collisions_stay_tellable_apart() {
-        // The custom slot is seeded from a built-in (hacker) and so shares its
-        // glyph; the picker leans on these captions to keep the entries apart.
-        let mut labels: Vec<String> = BUILTIN_THEMES
-            .iter()
-            .map(|(id, _)| short_label(id))
-            .collect();
-        labels.push("custom".into());
-        for l in &labels {
-            assert!(!l.is_empty(), "every picker entry needs a caption");
-        }
-        let unique: std::collections::HashSet<_> = labels.iter().collect();
+    fn dynamic_tray_entries_have_distinct_glyphs_and_labels() {
+        // The tray is glyph-only (no captions/hover), so each entry must be
+        // visually distinct — the cog (Custom) is appended after the named four.
+        let mut entries: Vec<&Dynamic> = Dynamic::NAMED.iter().collect();
+        let custom = Dynamic::Custom(Box::default());
+        entries.push(&custom);
+        let glyphs: std::collections::HashSet<_> = entries.iter().map(|d| d.glyph()).collect();
+        let labels: std::collections::HashSet<_> = entries.iter().map(|d| d.label()).collect();
         assert_eq!(
-            unique.len(),
-            labels.len(),
-            "picker labels must be unique: {labels:?}"
+            glyphs.len(),
+            entries.len(),
+            "every dynamic needs its own glyph"
         );
+        assert_eq!(
+            labels.len(),
+            entries.len(),
+            "every dynamic needs its own label"
+        );
+        assert_eq!(entries.len(), 5, "four named dynamics plus the custom cog");
     }
 
     fn outer_named(id: &str, brightness: f32) -> ThemeChoice {
@@ -1189,7 +1168,7 @@ mod tests {
             tertiary: None,
             quaternary: None,
         };
-        let r = roles(hex("#888888").unwrap(), &Dynamic::Custom(c));
+        let r = roles(hex("#888888").unwrap(), &Dynamic::Custom(Box::new(c)));
         assert!(hue_deg_gap(r.primary.h, hex("#ff0000").unwrap().h) < 1.0);
         assert!(hue_deg_gap(r.secondary.h, hex("#00ff00").unwrap().h) < 1.0);
         // an empty slot falls back to a derived role — not the explicit red
@@ -1225,10 +1204,10 @@ mod tests {
         assert_eq!(back.dynamic, Dynamic::Pineapple);
         // a custom palette round-trips with its slots intact
         let cust = ThemeChoice {
-            dynamic: Dynamic::Custom(CustomPalette {
+            dynamic: Dynamic::Custom(Box::new(CustomPalette {
                 primary: Some("#abcdef".into()),
                 ..Default::default()
-            }),
+            })),
             ..Default::default()
         };
         let back: ThemeChoice = toml::from_str(&toml::to_string(&cust).unwrap()).unwrap();
@@ -1368,16 +1347,6 @@ pub fn theme_path() -> PathBuf {
 /// Open a path in the user's default handler (their editor, for a `.toml`).
 /// Best-effort and detached — the spawned process outlives this call, and any
 /// failure (no `xdg-open`, no handler) is swallowed so the UI never blocks.
-/// Linux-only: terminal-delight targets the freedesktop desktop, so the opener
-/// is `xdg-open` (macOS would want `open`, Windows `start`). The `cfg` lives in
-/// the body — mirroring `apply_warp` — so the signature exists on every target.
-pub fn open_in_default_app(path: &std::path::Path) {
-    #[cfg(target_os = "linux")]
-    let _ = std::process::Command::new("xdg-open").arg(path).spawn();
-    #[cfg(not(target_os = "linux"))]
-    let _ = path; // other platforms: no-op (see doc note)
-}
-
 fn mtime(path: &PathBuf) -> Option<SystemTime> {
     fs::metadata(path).and_then(|m| m.modified()).ok()
 }
