@@ -1574,7 +1574,10 @@ impl Render for TerminalView {
         // solid, reflective header: gradient face + crisp top reflection line
         let mut lighter = th.surface;
         lighter.l = (lighter.l * 1.9).min(0.9);
+        // a per-pane hover group so the ✎ affordance only reveals for THIS header
+        let hdr_grp = gpui::SharedString::from(format!("pane-hdr-{}", cx.entity_id()));
         let mut header = div()
+            .group(hdr_grp.clone())
             .h(px(HEADER_H))
             .flex()
             .flex_row()
@@ -1611,13 +1614,37 @@ impl Render for TerminalView {
                     .flex_1()
                     .overflow_hidden()
                     .whitespace_nowrap()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_1()
                     .cursor_pointer()
                     .child(format!("▸ {} · {label}", self.mode.label()))
+                    // hover-revealed ✎ affordance (invites the rename)
+                    .child(
+                        div()
+                            .text_size(px(11.))
+                            .text_color(Hsla {
+                                h: 0.,
+                                s: 0.,
+                                l: 0.,
+                                a: 0.,
+                            })
+                            .group_hover(hdr_grp.clone(), move |s| s.text_color(bar_fg.alpha(0.85)))
+                            .child("✎"),
+                    )
                     .on_mouse_down(
                         MouseButton::Left,
-                        cx.listener(|_, ev: &MouseDownEvent, _w, cx| {
+                        cx.listener(|view, ev: &MouseDownEvent, window, cx| {
                             cx.stop_propagation();
-                            cx.emit(DragPaneStart { at: ev.position });
+                            if ev.click_count >= 2 {
+                                // double-click to rename (the file-manager gesture)
+                                view.renaming = Some(view.name.clone().unwrap_or_default());
+                                window.focus(&view.focus_handle, cx);
+                                cx.notify();
+                            } else {
+                                cx.emit(DragPaneStart { at: ev.position });
+                            }
                         }),
                     )
                     .on_mouse_down(

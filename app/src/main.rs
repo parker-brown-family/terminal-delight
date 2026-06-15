@@ -675,7 +675,11 @@ struct Workspace {
 }
 
 fn make_pane(window: &mut Window, cx: &mut Context<Workspace>) -> Entity<TerminalView> {
-    make_pane_restored(session::PaneRestore::default(), window, cx)
+    // A brand-new terminal ships as the green phosphor CRT, pinned so it does not
+    // follow the warm outer cabinet (green screens in a wooden cabinet).
+    let pane = make_pane_restored(session::PaneRestore::default(), window, cx);
+    pane.update(cx, |view, _| view.appearance = PaneTheme::house());
+    pane
 }
 
 fn make_pane_restored(
@@ -793,7 +797,7 @@ impl Workspace {
         // looks like the rest of the session; only the *layout* is skipped.
         // Text size now lives in the outer grade (`grade.scale`); fold a legacy
         // top-level `scale` from older state files into it on load.
-        let mut outer = saved.theme.clone().unwrap_or_default();
+        let mut outer = saved.theme.clone().unwrap_or_else(theme::house_outer);
         if let Some(s) = saved.scale {
             outer.grade.scale = s.clamp(0.7, 1.6);
         }
@@ -2780,8 +2784,29 @@ impl Render for Workspace {
                         ws.request_close_tab(i, window, cx);
                     }),
                 );
+            let tab_grp = SharedString::from(format!("tab-grp-{i}"));
+            let pencil_col = th.text.alpha(0.8);
+            // hover-revealed ✎ affordance: invites the rename without a word
+            let pencil = div()
+                .id(SharedString::from(format!("tab-pencil-{i}")))
+                .text_size(px(10.))
+                .text_color(hsla(0., 0., 0., 0.)) // hidden until the tab is hovered
+                .group_hover(tab_grp.clone(), move |s| s.text_color(pencil_col))
+                .cursor_pointer()
+                .child("✎")
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
+                        cx.stop_propagation();
+                        let seed = ws.tabs[i].name.clone().unwrap_or_default();
+                        ws.renaming = Some((i, seed));
+                        window.focus(&ws.focus_handle, cx);
+                        cx.notify();
+                    }),
+                );
             tab_strip = tab_strip.child(
                 Self::bezel_btn(&th, &label, is_active)
+                    .group(tab_grp)
                     .relative()
                     .flex()
                     .flex_row()
@@ -2789,11 +2814,19 @@ impl Render for Workspace {
                     .gap_1()
                     .on_mouse_down(
                         MouseButton::Left,
-                        cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
+                        cx.listener(move |ws, ev: &MouseDownEvent, window, cx| {
                             // don't let the click bubble to the root's focus
                             // handle, which would steal focus from the pane
                             cx.stop_propagation();
-                            ws.activate_tab(i, window, cx)
+                            if ev.click_count >= 2 {
+                                // double-click to rename (the file-manager gesture)
+                                let seed = ws.tabs[i].name.clone().unwrap_or_default();
+                                ws.renaming = Some((i, seed));
+                                window.focus(&ws.focus_handle, cx);
+                                cx.notify();
+                            } else {
+                                ws.activate_tab(i, window, cx);
+                            }
                         }),
                     )
                     .on_mouse_down(
@@ -2832,6 +2865,7 @@ impl Render for Workspace {
                             )
                         },
                     )
+                    .child(pencil)
                     .child(close_x),
             );
         }
