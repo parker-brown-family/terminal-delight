@@ -309,7 +309,7 @@ fn mode_theme(base: &Theme, mode: &PaneMode) -> Theme {
     th
 }
 
-const HEADER_H: f32 = 28.0;
+const HEADER_H: f32 = 34.0;
 const PAD_X: f32 = 8.0;
 const PAD_Y: f32 = 4.0;
 
@@ -2120,6 +2120,10 @@ impl Render for TerminalView {
                             .border_1()
                             .border_color(th.accent.alpha(0.5))
                             .cursor_pointer()
+                            // 2–3× the surrounding header glyphs — the FOCUS lens
+                            // should read as the prominent "read me" affordance.
+                            .text_size(px(26.))
+                            .line_height(px(26.))
                             .child("👓")
                             .on_mouse_down(
                                 MouseButton::Left,
