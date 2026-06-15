@@ -619,6 +619,8 @@ struct Workspace {
     renaming: Option<(usize, String)>,
     /// Tab index awaiting a "close all its panes?" confirmation, if any.
     confirm_close: Option<usize>,
+    /// The ? help modal is open (keys/commands reference), themed by the outer.
+    help_open: bool,
     /// Open theme breakout menu, if any.
     theme_menu: Option<MenuScope>,
     /// Window-space point to anchor the open tray at (a sub-tab icon click).
@@ -810,6 +812,7 @@ impl Workspace {
             focus_handle: cx.focus_handle(),
             renaming: None,
             confirm_close: None,
+            help_open: false,
             theme_menu: None,
             menu_at: None,
             osd_menu: None,
@@ -1101,6 +1104,11 @@ impl Workspace {
     fn on_key(&mut self, ev: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         let ks = &ev.keystroke;
         let m = &ks.modifiers;
+        if self.help_open && ks.key.as_str() == "escape" {
+            self.help_open = false;
+            cx.notify();
+            return;
+        }
         if self.theme_menu.is_some() && ks.key.as_str() == "escape" {
             self.theme_menu = None;
             cx.notify();
@@ -2690,7 +2698,10 @@ impl Render for Workspace {
                              // the warp is a pixel post-process, so a panel over a tube would bow out
                              // of reach of its own flat hit box. Suppress so the menu reads true.
         warp::set_suppressed(
-            self.theme_menu.is_some() || self.osd_menu.is_some() || self.confirm_close.is_some(),
+            self.theme_menu.is_some()
+                || self.osd_menu.is_some()
+                || self.confirm_close.is_some()
+                || self.help_open,
         );
         // drop-hit-test rects are rebuilt every frame by the canvases below, so
         // a closed pane / removed tab never leaves a stale target behind.
@@ -3046,6 +3057,17 @@ impl Render for Workspace {
                                 cx.stop_propagation();
                                 ws.osd_menu = Some(MenuScope::Outer);
                                 ws.osd_at = None; // global tray uses the fixed anchor
+                                cx.notify();
+                            }),
+                        ),
+                    )
+                    .child(
+                        // help: keys + commands reference, themed by the outer
+                        Self::bezel_btn(&th, "?", self.help_open).on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                                cx.stop_propagation();
+                                ws.help_open = true;
                                 cx.notify();
                             }),
                         ),
@@ -3613,6 +3635,178 @@ impl Render for Workspace {
             )
         });
 
+        // ---- ? help modal: keys + commands, themed by the outer, over a dim scrim ----
+        let help_overlay = self.help_open.then(|| {
+            let (kc, dc, hc) = (th.accent, th.text.alpha(0.85), th.complement);
+            let row = move |k: &str, d: &str| {
+                div()
+                    .flex()
+                    .flex_row()
+                    .gap_2()
+                    .items_center()
+                    .child(
+                        div()
+                            .min_w(px(150.))
+                            .flex_none()
+                            .text_color(kc)
+                            .text_size(px(11.5))
+                            .child(k.to_string()),
+                    )
+                    .child(
+                        div()
+                            .text_color(dc)
+                            .text_size(px(11.5))
+                            .child(d.to_string()),
+                    )
+            };
+            let section = move |title: &str, rows: Vec<gpui::Div>| {
+                let mut s = div().flex().flex_col().gap_1().child(
+                    div()
+                        .text_color(hc)
+                        .text_size(px(10.5))
+                        .font_weight(gpui::FontWeight::BOLD)
+                        .child(title.to_string()),
+                );
+                for r in rows {
+                    s = s.child(r);
+                }
+                s
+            };
+            let col_a = div()
+                .flex()
+                .flex_col()
+                .gap_4()
+                .child(section(
+                    "TABS & PANES",
+                    vec![
+                        row("Ctrl+Shift+T", "New tab"),
+                        row("Ctrl+PgUp / PgDn", "Switch tabs"),
+                        row("Ctrl+Alt+R / D", "Split ↔ / ↕"),
+                        row("Alt + arrows", "Move focus between panes"),
+                        row("drag a sub-tab", "Move / split · drag out = new window"),
+                    ],
+                ))
+                .child(section(
+                    "EDITING & CLIPBOARD",
+                    vec![
+                        row("right-click", "Copy · Paste · Open link · Clear"),
+                        row("Ctrl+Shift+C / V", "Copy / Paste"),
+                        row("double / triple-click", "Select word / line"),
+                        row("Shift+Enter", "Newline (multiline in claude/codex)"),
+                    ],
+                ))
+                .child(section(
+                    "LINKS",
+                    vec![row("Shift- or Ctrl-click", "Open a URL or file path")],
+                ));
+            let col_b = div()
+                .flex()
+                .flex_col()
+                .gap_4()
+                .child(section(
+                    "SCROLLBACK",
+                    vec![
+                        row("scroll wheel", "Scroll history"),
+                        row("Ctrl+Shift+K", "Clear scrollback (not Ctrl+L)"),
+                    ],
+                ))
+                .child(section(
+                    "LOOK & FEEL",
+                    vec![
+                        row("theme icon (top-right)", "Themes & colour wheel"),
+                        row("⛭", "Monitor grade (brightness, contrast…)"),
+                        row("A──A · Ctrl+wheel", "Text size"),
+                    ],
+                ))
+                .child(section(
+                    "AGENTS",
+                    vec![row("bell on finish", "Pane shows ● done + a per-agent sound")],
+                ))
+                .child(section(
+                    "WINDOW",
+                    vec![row("Ctrl+Alt+T", "New window (quick scratch)")],
+                ));
+            let close_x = div()
+                .px_2()
+                .py_0p5()
+                .rounded_sm()
+                .cursor_pointer()
+                .text_color(th.text)
+                .text_size(px(14.))
+                .child("✕")
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                        cx.stop_propagation();
+                        ws.help_open = false;
+                        cx.notify();
+                    }),
+                );
+            let panel = div()
+                .w(gpui::relative(0.84))
+                .max_w(px(840.))
+                .max_h(gpui::relative(0.88))
+                .overflow_hidden()
+                .p_5()
+                .rounded_lg()
+                .border_1()
+                .border_color(th.accent.alpha(0.6))
+                .bg(darken(th.surface, 0.45))
+                .text_color(th.text)
+                .font_family(th.font_family.clone())
+                .shadow(vec![BoxShadow {
+                    color: hsla(0., 0., 0., 0.6),
+                    offset: point(px(0.), px(8.)),
+                    blur_radius: px(30.),
+                    spread_radius: px(0.),
+                    inset: false,
+                }])
+                .flex()
+                .flex_col()
+                .gap_4()
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|_, _: &MouseDownEvent, _w, cx| cx.stop_propagation()),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .justify_between()
+                        .child(
+                            div()
+                                .text_size(px(13.))
+                                .font_weight(gpui::FontWeight::EXTRA_BOLD)
+                                .text_color(th.complement)
+                                .child("▸ TERMINAL-DELIGHT · HELP"),
+                        )
+                        .child(close_x),
+                )
+                .child(div().flex().flex_row().gap_8().child(col_a).child(col_b))
+                .child(
+                    div()
+                        .text_size(px(10.))
+                        .text_color(th.text.alpha(0.5))
+                        .child("Esc or click outside to close · themes are live-editable TOML while it runs"),
+                );
+            div()
+                .absolute()
+                .inset_0()
+                .bg(th.bg.alpha(0.74))
+                .flex()
+                .items_center()
+                .justify_center()
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                        ws.help_open = false;
+                        cx.notify();
+                    }),
+                )
+                .child(panel)
+        });
+
         // a small chip trails the cursor while a sub-tab is being dragged
         let drag_chip = self.drag_pane.as_ref().filter(|d| d.engaged).map(|d| {
             div()
@@ -3720,6 +3914,7 @@ impl Render for Workspace {
                     .children(menu_overlay)
                     .children(osd_overlay)
                     .children(confirm_overlay)
+                    .children(help_overlay)
                     .children(drag_chip),
             )
     }
