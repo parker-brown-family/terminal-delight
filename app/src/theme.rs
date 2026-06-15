@@ -32,6 +32,7 @@ const BUILTIN_THEMES: &[(&str, &str)] = &[
         "tactical-overdrive",
         include_str!("../themes/tactical-overdrive.toml"),
     ),
+    ("gamba", include_str!("../themes/gamba.toml")),
     ("hacker", DEFAULT_THEME_TOML),
 ];
 
@@ -745,6 +746,10 @@ pub enum Dynamic {
     /// Gold→green→brown harmony: the seed is the gold anchor; green sits at a
     /// fixed +offset, light brown at a −offset — applied wherever the seed lands.
     Pineapple,
+    /// RETRO: a 1970s game-show / slot-machine palette — warm amber-gold anchor,
+    /// robin-egg teal complement, vivid game-board greens and cinnabar reds.
+    /// Maximum good vibes; the colour half of the GAMBA look (theme `gamba`).
+    Retro,
     /// User-defined palette: explicit primary/secondary/tertiary/quaternary.
     /// Boxed so the rare custom palette doesn't bloat every `ThemeChoice` clone.
     Custom(Box<CustomPalette>),
@@ -753,11 +758,12 @@ pub enum Dynamic {
 impl Dynamic {
     /// The named colour sets shown in the tray, in display order (Custom is
     /// appended separately as the cog).
-    pub const NAMED: [Dynamic; 4] = [
+    pub const NAMED: [Dynamic; 5] = [
         Dynamic::Greenworks,
         Dynamic::Bolt,
         Dynamic::Amber,
         Dynamic::Pineapple,
+        Dynamic::Retro,
     ];
 
     /// Glyph shown in the tray's vertical box for this colour set.
@@ -768,6 +774,7 @@ impl Dynamic {
             Dynamic::Bolt => "⚡",
             Dynamic::Amber => "☼",
             Dynamic::Pineapple => "🍍",
+            Dynamic::Retro => "🎰",
             Dynamic::Custom(_) => "⚙",
         }
     }
@@ -780,6 +787,7 @@ impl Dynamic {
             Dynamic::Bolt => "bolt",
             Dynamic::Amber => "amber",
             Dynamic::Pineapple => "pineapple",
+            Dynamic::Retro => "retro",
             Dynamic::Custom(_) => "custom",
         }
     }
@@ -814,6 +822,14 @@ impl Dynamic {
                 seed: "#ffcc00",
                 text: None,
                 complement: None,
+                mode: ColorMode::OnTheme,
+            },
+            // retro game-show: warm amber-gold anchor, cream text, teal title.
+            // OnTheme so the vivid ANSI board colours flow through unmolested.
+            Dynamic::Retro => SetSig {
+                seed: "#f5a623",
+                text: Some("#fff1c9"),
+                complement: Some("#43c6c3"),
                 mode: ColorMode::OnTheme,
             },
             _ => return None,
@@ -890,6 +906,17 @@ pub fn roles(anchor: Hsla, d: &Dynamic) -> Roles {
             text_s: 0.55,
             prim_l: 0.62,
             prim_s_floor: 0.70,
+        },
+        // retro game-show harmony: amber anchor, robin-egg teal at the far
+        // complement, a game-board green between them — saturated, lively.
+        Dynamic::Retro => Spec {
+            sec_deg: 168.,
+            ter_deg: 92.,
+            mono: false,
+            text_l: 0.86,
+            text_s: 0.50,
+            prim_l: 0.60,
+            prim_s_floor: 0.66,
         },
         // The monochrome colour sets — one hue, bright high-intensity text.
         Dynamic::Greenworks | Dynamic::Bolt | Dynamic::Amber => Spec {
@@ -1288,13 +1315,13 @@ mod tests {
             assert_eq!(&th.name, id, "theme file name must match registry id");
             icons.push(th.icon);
         }
-        assert_eq!(BUILTIN_THEMES.len(), 4);
+        assert_eq!(BUILTIN_THEMES.len(), 5);
     }
 
     #[test]
     fn dynamic_tray_entries_have_distinct_glyphs_and_labels() {
         // The tray is glyph-only (no captions/hover), so each entry must be
-        // visually distinct — the cog (Custom) is appended after the named four.
+        // visually distinct — the cog (Custom) is appended after the named five.
         let mut entries: Vec<&Dynamic> = Dynamic::NAMED.iter().collect();
         let custom = Dynamic::Custom(Box::default());
         entries.push(&custom);
@@ -1310,7 +1337,7 @@ mod tests {
             entries.len(),
             "every dynamic needs its own label"
         );
-        assert_eq!(entries.len(), 5, "four named dynamics plus the custom cog");
+        assert_eq!(entries.len(), 6, "five named dynamics plus the custom cog");
     }
 
     fn outer_named(id: &str, brightness: f32) -> ThemeChoice {

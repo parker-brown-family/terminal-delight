@@ -1,0 +1,41 @@
+# terminal-delight theme — gamba (1970s slot-machine cabinet)
+# A loud, glitzy game-show texture: warm gold cabinet, cream reel-faces, a fat
+# raised bezel and glassy glare. Pair it with the RETRO colour set (🎰) and your
+# agent's "thinking" turns into a slot-machine pull. Satire. Hot-reloads.
+name = "gamba"
+icon = "$$"
+
+[colors]
+bg      = "#1c1206"   # dark walnut cabinet
+surface = "#2a1c0a"   # lit cabinet interior
+text    = "#ffe9b8"   # warm cream reel-face
+accent  = "#ffc01e"   # casino gold
+faint   = "#5a3a16"   # recessed brown trim
+cursor  = "#ff7a1a"   # cinnabar pull-handle
+human   = "#43c6c3"   # robin-egg teal — your own turns pop
+# ANSI 16 — vivid game-board colours (Price-is-Right wheel energy)
+ansi = [
+  "#241608", "#f75a33", "#5fcf6b", "#f2c749",
+  "#336b8b", "#d4639a", "#43c6c3", "#f5e6c0",
+  "#5a3a16", "#ff8a5c", "#8fe39a", "#ffd76b",
+  "#5fa8c9", "#f08ab8", "#7fe0dd", "#fff6e0",
+]
+
+[effects]
+scanline_opacity = 0.10    # faint — it's a glitzy cabinet, not a dead CRT
+scanline_step    = 5.0
+vignette         = 0.55    # cabinet falloff
+glow             = 0.95    # everything glows; full send
+bloom            = 0.85    # warm center bloom
+tracking         = 0.22    # gentle marquee shimmer
+tracking_period  = 12.0
+tracking_sweep   = 6.0
+flicker          = 0.20    # subtle neon buzz
+screen_glare     = 0.50    # glassy cabinet shine
+jiggle           = 0.0     # the reels do the moving, not the screen
+bezel            = 0.95    # FAT raised chrome bezel — the chunky cabinet edge
+
+[font]
+family      = "JetBrains Mono"
+size        = 14.0
+cell_height = 20.0

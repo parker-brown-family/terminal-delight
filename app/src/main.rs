@@ -10,6 +10,7 @@
 
 mod bell;
 mod crt;
+mod gamba;
 mod pane;
 mod session;
 mod term;
