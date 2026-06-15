@@ -577,6 +577,8 @@ enum WheelTarget {
     Seed,
     Text,
     Complement,
+    /// The colour of the user's own input in an agent (claude/codex) session.
+    Human,
 }
 
 /// Which side of the pane under the cursor a dragged sub-tab will split.
@@ -1805,6 +1807,7 @@ impl Workspace {
             WheelTarget::Seed => choice.seed = hex,
             WheelTarget::Text => choice.text = hex,
             WheelTarget::Complement => choice.complement = hex,
+            WheelTarget::Human => choice.human = hex,
         }
         self.set_menu_choice(choice, cx);
     }
@@ -1812,7 +1815,7 @@ impl Workspace {
     /// The three marker colours on the wheel for the open scope: each is its
     /// explicit override if set, else the value the theme/dynamic currently
     /// derives — so a marker always sits where its colour really is.
-    fn wheel_markers(&self, cx: &App) -> [(WheelTarget, &'static str, Hsla); 3] {
+    fn wheel_markers(&self, cx: &App) -> [(WheelTarget, &'static str, Hsla); 4] {
         let choice = self.menu_choice(cx);
         let resolved = theme::resolve(cx, &choice);
         let pick = |o: &Option<String>, derived: Hsla| {
@@ -1826,6 +1829,7 @@ impl Workspace {
                 "C",
                 pick(&choice.complement, resolved.complement),
             ),
+            (WheelTarget::Human, "☻", pick(&choice.human, resolved.human)),
         ]
     }
 
@@ -2104,12 +2108,12 @@ impl Workspace {
     }
 
     /// The colour wheel: a canvas-painted HSV disk (hue = angle, saturation =
-    /// radius) carrying THREE draggable markers — ◉ seed, T text, C complement.
-    /// You grab whichever marker is nearest the press and drag it around to set
-    /// that colour. Drives the same scope as the theme breakout it lives in.
+    /// radius) carrying FOUR draggable markers — ◉ seed, T text, C complement,
+    /// ☻ human (your-input). You grab whichever marker is nearest the press and
+    /// drag it around to set that colour. Drives the same scope as the breakout.
     fn color_wheel(
         &self,
-        markers: [(WheelTarget, &'static str, Hsla); 3],
+        markers: [(WheelTarget, &'static str, Hsla); 4],
         cx: &mut Context<Self>,
     ) -> gpui::Div {
         const D: f32 = 132.0;
@@ -3176,6 +3180,7 @@ impl Render for Workspace {
                 (WheelTarget::Seed, "wr-seed", "↺◉"),
                 (WheelTarget::Text, "wr-text", "↺T"),
                 (WheelTarget::Complement, "wr-comp", "↺C"),
+                (WheelTarget::Human, "wr-human", "↺☻"),
             ] {
                 seed_row = seed_row.child(
                     div()

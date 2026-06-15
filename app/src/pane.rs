@@ -9,8 +9,8 @@ use crate::term;
 use crate::theme::{self, PaneTheme, Theme};
 use alacritty_terminal::{
     event::{Event as TermEvent, Notify},
-    grid::Scroll,
-    index::{Column, Point as TermPoint, Side},
+    grid::{Dimensions, Scroll},
+    index::{Column, Line, Point as TermPoint, Side},
     selection::{Selection, SelectionType},
     term::{cell::Flags, viewport_to_point, TermMode},
     vte::ansi::{Color as AnsiColor, NamedColor},
@@ -59,6 +59,35 @@ impl PaneMode {
             PaneMode::Remote => "REMOTE",
             PaneMode::Other(name) => name,
         }
+    }
+
+    /// True when this pane is running a conversational agent (Claude or Codex) —
+    /// the modes where "your own input" is a meaningful, navigable, colourable
+    /// thing distinct from the agent's replies.
+    pub fn is_agent(&self) -> bool {
+        matches!(self, PaneMode::Claude | PaneMode::Codex)
+    }
+}
+
+/// Does this rendered grid row look like one of *the user's own* input lines in
+/// an agent (claude/codex) TUI? Heuristic: agent TUIs echo the human's submitted
+/// turn behind a prompt caret — `❯ `/`> ` (Claude Code) or `▌ ` (some Codex
+/// builds). We match the first non-blank glyph so indentation/box-drawing around
+/// the prompt doesn't fool it. Pure + cheap so it's unit-testable and runs per
+/// row per paint only while a pane is in agent mode.
+pub fn is_human_input_line(text: &str) -> bool {
+    let mut chars = text.trim_start().chars();
+    match chars.next() {
+        // The prompt caret glyphs agent CLIs use for the human's turn.
+        Some('❯') | Some('▌') | Some('»') => {
+            // Require a space (or end) after the caret so we don't catch e.g. a
+            // `❯`-decorated banner with no following text.
+            matches!(chars.next(), Some(' ') | None)
+        }
+        // Plain ASCII '>' is also a quote/redirect marker, so require "> " AND
+        // that what follows isn't another '>' (avoids `>>` heredocs / git diffs).
+        Some('>') => matches!(chars.next(), Some(' ')) && chars.next() != Some('>'),
+        _ => false,
     }
 }
 
@@ -1215,6 +1244,60 @@ impl TerminalView {
         }
     }
 
+    /// Part 1: grid-line indices (alacritty `Line.0`) of the user's own input
+    /// lines across the full scrollback + screen, oldest→newest. Only the first
+    /// columns are read (the prompt caret sits at the line start), so a scan is
+    /// cheap even on deep history. Agent panes only — call sites gate on mode.
+    fn human_line_indices(&self) -> Vec<i32> {
+        let term = self.session.term.lock();
+        let grid = term.grid();
+        let cols = grid.columns().min(24); // prompt caret is near the start
+        let mut out = Vec::new();
+        for l in grid.topmost_line().0..=grid.bottommost_line().0 {
+            let row = &grid[Line(l)];
+            let mut s = String::with_capacity(cols);
+            for c in 0..cols {
+                let ch = row[Column(c)].c;
+                s.push(if ch == '\0' { ' ' } else { ch });
+            }
+            if is_human_input_line(&s) {
+                out.push(l);
+            }
+        }
+        out
+    }
+
+    /// Part 1: jump the viewport to the previous (`next = false`) or next
+    /// (`next = true`) of *your own* messages. The viewport top is grid line
+    /// `-display_offset`; we step to the nearest human line above/below it and
+    /// scroll so it lands at the top. Stepping past the newest snaps to live.
+    fn scroll_to_human(&mut self, next: bool, cx: &mut Context<Self>) {
+        let idx = self.human_line_indices();
+        if idx.is_empty() {
+            return;
+        }
+        let mut term = self.session.term.lock();
+        let top = -(term.grid().display_offset() as i32);
+        let target = if next {
+            idx.iter().copied().filter(|&l| l > top).min()
+        } else {
+            idx.iter().copied().filter(|&l| l < top).max()
+        };
+        match target {
+            Some(l) => {
+                let hist = term.grid().history_size() as i32;
+                let off = (-l).clamp(0, hist);
+                let cur = term.grid().display_offset() as i32;
+                term.scroll_display(Scroll::Delta(off - cur));
+            }
+            // Already at/below the newest message → snap to the live bottom.
+            None if next => term.scroll_display(Scroll::Bottom),
+            None => {}
+        }
+        drop(term);
+        cx.notify();
+    }
+
     /// Copy the current selection to the system clipboard (no-op if empty).
     fn copy_selection(&self, cx: &mut Context<Self>) {
         if let Some(text) = self.session.term.lock().selection_to_string() {
@@ -1344,7 +1427,12 @@ impl TerminalView {
         // with pass one (identical row-clamp + spacer skip ⇒ ordinals line up).
         let cells: Vec<_> = content.display_iter.collect();
         let syntax = th.syntax;
-        let palettes: Vec<Vec<Hsla>> = if syntax {
+        // In an agent (claude/codex) pane, the user's own input lines are painted
+        // in `th.human` so they stand out from the agent's replies (Part 2).
+        let agent = self.mode.is_agent();
+        // Build per-row literal text once if either the syntax overlay or the
+        // human-input highlighting needs it.
+        let rows_text: Vec<String> = if syntax || agent {
             let mut rows_text = vec![String::new(); self.grid.rows];
             for indexed in &cells {
                 let row = indexed.point.line.0 + display_offset as i32;
@@ -1357,7 +1445,18 @@ impl TerminalView {
                 }
                 rows_text[row as usize].push(if cell.c == '\0' { ' ' } else { cell.c });
             }
+            rows_text
+        } else {
+            Vec::new()
+        };
+        let palettes: Vec<Vec<Hsla>> = if syntax {
             rows_text.iter().map(|t| syntax_colors(t, th)).collect()
+        } else {
+            Vec::new()
+        };
+        // Which rows are the user's own input (only computed in agent mode).
+        let human_rows: Vec<bool> = if agent {
+            rows_text.iter().map(|t| is_human_input_line(t)).collect()
         } else {
             Vec::new()
         };
@@ -1388,6 +1487,12 @@ impl TerminalView {
             } else {
                 ansi_to_hsla(cell.fg, th, th.text)
             };
+            // Part 2: your own input in an agent session is recoloured to
+            // `th.human` (whole-line), overriding syntax/ANSI so your turns pop.
+            // Selection-inverse and the cursor below still apply on top.
+            if agent && human_rows.get(row as usize).copied().unwrap_or(false) {
+                fg = th.human;
+            }
             let mut bg: Option<Hsla> = match cell.bg {
                 AnsiColor::Named(NamedColor::Background) => None,
                 other => Some(ansi_to_hsla(other, th, th.bg)),
@@ -1760,6 +1865,28 @@ impl Render for TerminalView {
                     .items_center()
                     .gap_2()
                     .child(grid_label)
+                    // Part 1: only in an agent (claude/codex) pane — jump between
+                    // *your own* messages. Coloured like your input (`th.human`).
+                    .when(self.mode.is_agent(), |row| {
+                        let mk = |glyph: &'static str, next: bool, cx: &mut Context<Self>| {
+                            div()
+                                .px_1()
+                                .rounded_sm()
+                                .border_1()
+                                .border_color(th.human.alpha(0.6))
+                                .text_color(th.human)
+                                .cursor_pointer()
+                                .child(glyph)
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(move |view, _ev: &MouseDownEvent, _w, cx| {
+                                        cx.stop_propagation();
+                                        view.scroll_to_human(next, cx);
+                                    }),
+                                )
+                        };
+                        row.child(mk("▲", false, cx)).child(mk("▼", true, cx))
+                    })
                     .child(
                         // the theme icon IS the theme UI: click for the breakout
                         div()
@@ -2039,6 +2166,36 @@ mod tests {
             PaneMode::classify("htop\n", ""),
             PaneMode::Other("htop".into())
         );
+    }
+
+    #[test]
+    fn is_agent_is_true_only_for_claude_and_codex() {
+        assert!(PaneMode::Claude.is_agent());
+        assert!(PaneMode::Codex.is_agent());
+        assert!(!PaneMode::Shell.is_agent());
+        assert!(!PaneMode::Remote.is_agent());
+        assert!(!PaneMode::Other("vim".into()).is_agent());
+    }
+
+    #[test]
+    fn human_input_line_detects_the_prompt_caret_only() {
+        // the agent CLIs' human-turn carets, with leading indentation tolerated
+        assert!(is_human_input_line("❯ hi there"));
+        assert!(is_human_input_line("  ❯ tell me the weather"));
+        assert!(is_human_input_line("> what is 2+2"));
+        assert!(is_human_input_line("▌ codex-style prompt"));
+        assert!(is_human_input_line("» fish-ish caret"));
+        // a bare caret with nothing after still counts (the live empty input box)
+        assert!(is_human_input_line("❯"));
+        // NOT human input: the agent's replies, plain output, shell redirects
+        assert!(!is_human_input_line(
+            "● Hi Parker! What are you working on?"
+        ));
+        assert!(!is_human_input_line("Compiling aurora v0.3.0"));
+        assert!(!is_human_input_line(">> heredoc body")); // doubled '>' is not a prompt
+        assert!(!is_human_input_line("cat file > out.txt")); // '>' mid-line
+        assert!(!is_human_input_line(""));
+        assert!(!is_human_input_line("    "));
     }
 
     #[test]
