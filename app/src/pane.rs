@@ -731,6 +731,9 @@ pub struct TerminalView {
     gamba: crate::gamba::Reels,
     /// Throttle for the (cheap) grid scan that detects the agent spinner.
     last_think_scan: Instant,
+    /// True while this pane is the one mirrored in the FOCUS modal — a plain Esc
+    /// then closes the modal instead of reaching the PTY. Set by the workspace.
+    being_read: bool,
 }
 
 /// Click on the header's theme icon — the workspace opens the breakout menu.
@@ -766,6 +769,38 @@ impl gpui::EventEmitter<ClosePane> for TerminalView {}
 pub struct PaneRenamed;
 impl gpui::EventEmitter<PaneRenamed> for TerminalView {}
 
+/// The 👓 (reading-glasses) icon on this sub-tab's header was clicked — the
+/// workspace opens a FOCUS modal: an 80%-of-window mirror of this pane's live
+/// screen, with the rest of the window dimmed back. No anchor: the modal is
+/// always centred in the window.
+pub struct OpenFocusRead;
+impl gpui::EventEmitter<OpenFocusRead> for TerminalView {}
+
+/// Esc was pressed while this pane is the one being focus-read — close the
+/// modal. Routed through the pane (not the workspace) because the mirrored pane
+/// keeps keyboard focus so you can keep typing into it while you read.
+pub struct CloseFocusRead;
+impl gpui::EventEmitter<CloseFocusRead> for TerminalView {}
+
+/// A read-only snapshot the workspace paints into the FOCUS modal. It's just the
+/// same styled rows [`styled_lines`] already builds for the live pane, plus the
+/// metrics needed to scale them up to fill the modal — so the mirror costs one
+/// extra (cheap) grid scan of a single pane, never a second terminal or PTY.
+pub struct MirrorSnapshot {
+    pub lines: Vec<(String, Vec<TextRun>)>,
+    pub bg: Hsla,
+    pub text: Hsla,
+    pub accent: Hsla,
+    pub font_family: String,
+    /// The live base glyph size (font_size × the pane's effective scale).
+    pub base_size: f32,
+    pub cell_w: f32,
+    pub cell_h: f32,
+    pub cols: usize,
+    pub rows: usize,
+    pub title: String,
+}
+
 impl TerminalView {
     /// The theme this pane actually renders with: each appearance group
     /// (theme, grade) resolved to the pane's own override or the live outer
@@ -784,6 +819,39 @@ impl TerminalView {
         } else {
             base
         }
+    }
+
+    /// Build the read-only [`MirrorSnapshot`] the workspace paints into the
+    /// FOCUS modal. Reuses the exact same styled rows the live pane renders, so
+    /// the mirror is pixel-identical and stays live (the workspace re-renders
+    /// whenever this pane notifies). No second terminal, no extra PTY work.
+    pub fn mirror_snapshot(&self, cx: &App) -> MirrorSnapshot {
+        let th = self.resolved_theme(cx);
+        let scale = self
+            .appearance
+            .effective(&theme::outer_choice(cx))
+            .grade
+            .scale;
+        let lines = self.styled_lines(&th);
+        MirrorSnapshot {
+            lines,
+            bg: th.bg,
+            text: th.text,
+            accent: th.accent,
+            font_family: th.font_family.clone(),
+            base_size: th.font_size * scale,
+            cell_w: self.cell_w,
+            cell_h: self.cell_h,
+            cols: self.grid.cols,
+            rows: self.grid.rows,
+            title: self.name.clone().unwrap_or_else(|| self.title.clone()),
+        }
+    }
+
+    /// Toggle whether this pane is the one currently mirrored in the FOCUS modal.
+    /// When set, a plain Esc closes the modal instead of reaching the PTY.
+    pub fn set_being_read(&mut self, on: bool) {
+        self.being_read = on;
     }
 
     /// What this pane is doing right now — cwd + resumable agent session —
@@ -931,6 +999,7 @@ impl TerminalView {
             last_think_scan: Instant::now()
                 .checked_sub(std::time::Duration::from_secs(1))
                 .unwrap_or_else(Instant::now),
+            being_read: false,
         }
     }
 
@@ -1205,6 +1274,14 @@ impl TerminalView {
         if self.ctx_menu.is_some() && ks.key.as_str() == "escape" {
             self.ctx_menu = None;
             cx.notify();
+            return;
+        }
+        // While this pane is mirrored in the FOCUS modal, a plain Esc closes the
+        // modal (the workspace handles it) rather than reaching the PTY — every
+        // OTHER keystroke still flows straight to this terminal, so you keep
+        // directing the agent while you read it big.
+        if self.being_read && ks.key.as_str() == "escape" {
+            cx.emit(CloseFocusRead);
             return;
         }
         // The inline rename box owns the keyboard while open — keystrokes edit
@@ -2033,6 +2110,25 @@ impl Render for TerminalView {
                         };
                         row.child(mk("▲", false, cx)).child(mk("▼", true, cx))
                     })
+                    .child(
+                        // 👓 FOCUS: mirror just this pane, big, with the rest of
+                        // the window dimmed back — for when one agent strikes a
+                        // goldmine and you need to actually READ it. Esc closes.
+                        div()
+                            .px_1()
+                            .rounded_sm()
+                            .border_1()
+                            .border_color(th.accent.alpha(0.5))
+                            .cursor_pointer()
+                            .child("👓")
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|_, _ev: &MouseDownEvent, _w, cx| {
+                                    cx.stop_propagation();
+                                    cx.emit(OpenFocusRead);
+                                }),
+                            ),
+                    )
                     .child(
                         // the theme icon IS the theme UI: click for the breakout
                         div()

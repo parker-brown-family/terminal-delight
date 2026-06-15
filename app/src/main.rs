@@ -4,6 +4,7 @@
 //! other pane keeps its exact place. ctrl+shift+t / [+]: new tab ·
 //! ctrl+pgup/pgdn: switch · right-click tab: rename · alt+arrows: pane focus
 //! drag a tab to reorder · ctrl+click a tab: set its binder-divider colour
+//! 👓 on a sub-tab header: FOCUS — mirror that pane big, rest dimmed, esc closes
 //! (alt+↑/↓ jumps between your messages in a claude/codex pane) ·
 //! ctrl+scroll or the bezel scrubber: text size.
 //!
@@ -30,7 +31,10 @@ use gpui::{
     SharedString, TitlebarOptions, Window, WindowBounds, WindowOptions,
 };
 use gpui_platform::application;
-use pane::{ClosePane, DragPaneStart, OpenDisplayMenu, OpenThemeMenu, PaneRenamed, TerminalView};
+use pane::{
+    CloseFocusRead, ClosePane, DragPaneStart, OpenDisplayMenu, OpenFocusRead, OpenThemeMenu,
+    PaneRenamed, TerminalView,
+};
 use serde::{Deserialize, Serialize};
 use theme::{PaneTheme, ThemeChoice};
 
@@ -723,6 +727,9 @@ struct Workspace {
     tab_color_edit: Option<usize>,
     /// Window-space anchor for the open colour tray (the ctrl+click point).
     tab_color_at: Option<Point<Pixels>>,
+    /// The pane currently mirrored in the FOCUS reading modal, if any. Weak so a
+    /// closed pane (its × / shell exit) drops normally — the modal just vanishes.
+    focus_read: Option<gpui::WeakEntity<TerminalView>>,
     /// A scratch window (opened while another instance is already running, or a
     /// torn-off pane): one fresh terminal, never restores or persists session
     /// state — so it can't clobber the primary window's saved layout.
@@ -755,6 +762,21 @@ fn make_pane_restored(
         ws.osd_menu = Some(MenuScope::Pane(pane));
         ws.osd_at = Some(ev.at);
         cx.notify();
+    })
+    .detach();
+    // the header 👓 → open the FOCUS reading modal mirroring this pane (and keep
+    // typing into it: we focus the pane so keystrokes still land in the original)
+    cx.subscribe_in(
+        &pane,
+        window,
+        |ws, pane, _ev: &OpenFocusRead, window, cx| {
+            ws.open_focus_read(pane.clone(), window, cx);
+        },
+    )
+    .detach();
+    // Esc inside the modal (routed up from the mirrored pane) → close it
+    cx.subscribe(&pane, |ws, _pane, _ev: &CloseFocusRead, cx| {
+        ws.close_focus_read(cx);
     })
     .detach();
     // grab the header → begin a sub-tab drag (the workspace drives it from here)
@@ -896,6 +918,7 @@ impl Workspace {
             tab_drop: None,
             tab_color_edit: None,
             tab_color_at: None,
+            focus_read: None,
             scratch,
         };
         if scratch {
@@ -1108,6 +1131,32 @@ impl Workspace {
         self.tabs.insert(dest, tab);
         self.active = new_active;
         self.save(cx);
+        cx.notify();
+    }
+
+    /// Open the FOCUS reading modal on `pane`: flag it read (so Esc closes the
+    /// modal), and focus it so every keystroke still lands in the real terminal
+    /// while you read it blown up. Replaces any previously-read pane.
+    fn open_focus_read(
+        &mut self,
+        pane: Entity<TerminalView>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(prev) = self.focus_read.take().and_then(|w| w.upgrade()) {
+            prev.update(cx, |v, _| v.set_being_read(false));
+        }
+        pane.update(cx, |v, _| v.set_being_read(true));
+        window.focus(&pane.focus_handle(cx), cx);
+        self.focus_read = Some(pane.downgrade());
+        cx.notify();
+    }
+
+    /// Close the FOCUS modal and clear the read flag on its pane (if still open).
+    fn close_focus_read(&mut self, cx: &mut Context<Self>) {
+        if let Some(pane) = self.focus_read.take().and_then(|w| w.upgrade()) {
+            pane.update(cx, |v, _| v.set_being_read(false));
+        }
         cx.notify();
     }
 
@@ -2861,7 +2910,8 @@ impl Render for Workspace {
                 || self.osd_menu.is_some()
                 || self.confirm_close.is_some()
                 || self.help_open
-                || self.tab_color_edit.is_some(),
+                || self.tab_color_edit.is_some()
+                || self.focus_read.as_ref().and_then(|w| w.upgrade()).is_some(),
         );
         // drop-hit-test rects are rebuilt every frame by the canvases below, so
         // a closed pane / removed tab never leaves a stale target behind.
@@ -4122,6 +4172,115 @@ impl Render for Workspace {
             )
         });
 
+        // ---- FOCUS reading modal: an 80%-of-window mirror of one pane ----
+        // Everything else dims back. The body is the SAME styled rows the live
+        // pane builds, just scaled to fill the modal — so it's a true live
+        // mirror (no second terminal) and keystrokes still reach the original.
+        let focus_overlay = self
+            .focus_read
+            .as_ref()
+            .and_then(|w| w.upgrade())
+            .map(|pane| {
+                let snap = pane.update(cx, |v, cx| v.mirror_snapshot(cx));
+                let (ww, wh) = self
+                    .last_win
+                    .map(|(_, _, w, h)| (w, h))
+                    .unwrap_or((1200., 800.));
+                let panel_w = (ww * 0.8).max(320.);
+                let panel_h = (wh * 0.8).max(240.);
+                let pad = 16.0_f32;
+                let hdr_h = 30.0_f32;
+                let avail_w = (panel_w - pad * 2.).max(1.);
+                let avail_h = (panel_h - hdr_h - pad * 2.).max(1.);
+                let content_w = (snap.cols as f32 * snap.cell_w).max(1.);
+                let content_h = (snap.rows as f32 * snap.cell_h).max(1.);
+                // scale the whole grid to fit the modal (tighter axis wins so the
+                // entire screen stays visible); never shrink past ~0.7×.
+                let ms = (avail_w / content_w)
+                    .min(avail_h / content_h)
+                    .clamp(0.7, 6.0);
+                let cell_h = snap.cell_h * ms;
+                let body = div()
+                    .flex()
+                    .flex_col()
+                    .text_size(px(snap.base_size * ms))
+                    .text_color(snap.text)
+                    .font_family(snap.font_family.clone())
+                    .children(snap.lines.into_iter().map(move |(text, runs)| {
+                        let line = div().h(px(cell_h)).whitespace_nowrap();
+                        if text.is_empty() {
+                            line
+                        } else {
+                            line.child(gpui::StyledText::new(text).with_runs(runs))
+                        }
+                    }));
+                let header = div()
+                    .h(px(hdr_h))
+                    .flex_none()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .justify_between()
+                    .px_3()
+                    .text_size(px(12.))
+                    .text_color(snap.accent)
+                    .child(format!("👓  FOCUS · {}", snap.title))
+                    .child(div().text_color(snap.text.alpha(0.6)).child("esc to close"));
+                let panel = div()
+                    .w(px(panel_w))
+                    .h(px(panel_h))
+                    .flex()
+                    .flex_col()
+                    .rounded(px(12.))
+                    .overflow_hidden()
+                    .bg(snap.bg)
+                    .border_2()
+                    .border_color(snap.accent.alpha(0.7))
+                    .shadow(vec![
+                        BoxShadow {
+                            color: hsla(0., 0., 0., 0.7),
+                            offset: point(px(0.), px(10.)),
+                            blur_radius: px(40.),
+                            spread_radius: px(2.),
+                            inset: false,
+                        },
+                        BoxShadow {
+                            color: snap.accent.alpha(0.18),
+                            offset: point(px(0.), px(0.)),
+                            blur_radius: px(48.),
+                            spread_radius: px(2.),
+                            inset: false,
+                        },
+                    ])
+                    .child(header)
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_h_0()
+                            .overflow_hidden()
+                            .p(px(pad))
+                            .child(body),
+                    )
+                    // clicks inside the panel must not fall through to the scrim
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|_, _: &MouseDownEvent, _w, cx| cx.stop_propagation()),
+                    );
+                // dim scrim over the whole window; a click outside the panel closes it
+                div()
+                    .absolute()
+                    .inset_0()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .bg(hsla(0., 0., 0., 0.62))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|ws, _: &MouseDownEvent, _w, cx| ws.close_focus_read(cx)),
+                    )
+                    .child(panel)
+            });
+
         let drag_chip = self.drag_pane.as_ref().filter(|d| d.engaged).map(|d| {
             div()
                 .absolute()
@@ -4230,7 +4389,9 @@ impl Render for Workspace {
                     .children(confirm_overlay)
                     .children(help_overlay)
                     .children(tab_color_overlay)
-                    .children(drag_chip),
+                    .children(drag_chip)
+                    // the FOCUS reading modal rides above everything else
+                    .children(focus_overlay),
             )
     }
 }
