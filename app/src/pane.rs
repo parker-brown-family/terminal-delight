@@ -1271,7 +1271,8 @@ impl TerminalView {
     /// (`next = true`) of *your own* messages. The viewport top is grid line
     /// `-display_offset`; we step to the nearest human line above/below it and
     /// scroll so it lands at the top. Stepping past the newest snaps to live.
-    fn scroll_to_human(&mut self, next: bool, cx: &mut Context<Self>) {
+    /// Driven by the ▲/▼ header buttons and the `Alt+↑/↓` hotkeys (Workspace).
+    pub fn scroll_to_human(&mut self, next: bool, cx: &mut Context<Self>) {
         let idx = self.human_line_indices();
         if idx.is_empty() {
             return;
