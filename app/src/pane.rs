@@ -1,7 +1,7 @@
 //! TerminalView — one pane: a real shell with themed rendering, selection,
 //! scrollback, clipboard, CRT-lite effects, and the TD_LATENCY probe.
 
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use crate::crt;
@@ -1294,7 +1294,10 @@ impl TerminalView {
     fn copy_selection(&self, cx: &mut Context<Self>) {
         if let Some(text) = self.session.term.lock().selection_to_string() {
             if !text.is_empty() {
-                cx.write_to_clipboard(ClipboardItem::new_string(text));
+                cx.write_to_clipboard(ClipboardItem::new_string(text.clone()));
+                // Mirror to the X11 PRIMARY selection so middle-click paste works
+                // in other apps. No-op on platforms without a primary selection.
+                cx.write_to_primary(ClipboardItem::new_string(text));
             }
         }
     }
@@ -1427,9 +1430,17 @@ impl TerminalView {
         cx.notify();
     }
 
-    fn on_mouse_up(&mut self, _ev: &MouseUpEvent, _w: &mut Window, _cx: &mut Context<Self>) {
+    fn on_mouse_up(&mut self, _ev: &MouseUpEvent, _w: &mut Window, cx: &mut Context<Self>) {
         self.selecting = false;
         self.autoscroll = 0.;
+        // Finishing a drag publishes the selection to the X11 PRIMARY selection
+        // (classic select-to-copy → middle-click paste). Empty selections (plain
+        // clicks) are skipped; no-op on platforms without a primary selection.
+        if let Some(text) = self.session.term.lock().selection_to_string() {
+            if !text.is_empty() {
+                cx.write_to_primary(ClipboardItem::new_string(text));
+            }
+        }
     }
 
     /// Snapshot the viewport into one styled line per row.
@@ -1587,8 +1598,69 @@ impl TerminalView {
     }
 }
 
+/// Font families installed on this system, captured once at startup so the grid
+/// can fall back deliberately instead of letting gpui pick a silent substitute
+/// (a past bug shipped DejaVu Sans without anyone noticing).
+static AVAILABLE_FONTS: OnceLock<Vec<String>> = OnceLock::new();
+
+/// Common monospace families to try, in order, when the requested one is absent.
+const MONO_FALLBACKS: &[&str] = &[
+    "JetBrains Mono",
+    "DejaVu Sans Mono",
+    "Liberation Mono",
+    "Noto Sans Mono",
+    "Source Code Pro",
+    "Ubuntu Mono",
+    "monospace",
+];
+
+/// Record the system's available font families. Call once at startup with
+/// `cx.text_system().all_font_names()`.
+pub fn init_font_registry(names: Vec<String>) {
+    let _ = AVAILABLE_FONTS.set(names);
+}
+
+fn font_available(name: &str) -> bool {
+    match AVAILABLE_FONTS.get() {
+        Some(list) => list.iter().any(|n| n.eq_ignore_ascii_case(name)),
+        // Registry not populated (e.g. unit tests) — assume present, don't rewrite.
+        None => true,
+    }
+}
+
+/// Resolve the requested family against what's actually installed, falling back
+/// through a chain of common monospace families. Returns the family to request.
+pub fn resolve_family(requested: &str) -> String {
+    if font_available(requested) {
+        return requested.to_string();
+    }
+    for fb in MONO_FALLBACKS {
+        if !fb.eq_ignore_ascii_case(requested) && font_available(fb) {
+            return (*fb).to_string();
+        }
+    }
+    // Nothing matched; hand back the request and let gpui do its own fallback.
+    requested.to_string()
+}
+
+/// Startup diagnostic: if the ship-default family isn't installed, describe the
+/// fallback that will be used (so a silent substitution can never hide again).
+/// Returns None when the default is present. Call after `init_font_registry`.
+pub fn font_diagnostic() -> Option<String> {
+    let want = "JetBrains Mono";
+    let got = resolve_family(want);
+    if got == want {
+        return None;
+    }
+    let n = AVAILABLE_FONTS.get().map(|v| v.len()).unwrap_or(0);
+    Some(format!(
+        "font '{want}' not installed; falling back to '{got}' ({n} families available). \
+         Install JetBrains Mono for the intended look."
+    ))
+}
+
 fn grid_font(th: &Theme, weight: FontWeight) -> Font {
-    let mut f = font(th.font_family.clone());
+    let mut f = font(resolve_family(&th.font_family));
     f.weight = weight;
     f
 }

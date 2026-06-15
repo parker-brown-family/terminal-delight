@@ -32,7 +32,7 @@ jobs:
         with:
           components: clippy, rustfmt
 
-      - name: Prepare patched gpui (td-crt-pass)
+      - name: Prepare patched gpui (td-crt-pass + sever-gpl)
         run: ../scripts/prepare-gpui.sh
 
       - name: Cache cargo artifacts
@@ -81,7 +81,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - name: Prepare patched gpui (td-crt-pass)
+      - name: Prepare patched gpui (td-crt-pass + sever-gpl)
         run: ../scripts/prepare-gpui.sh
       - uses: taiki-e/install-action@cargo-audit
       - uses: taiki-e/install-action@cargo-deny
@@ -89,3 +89,47 @@ jobs:
         run: cargo audit
       - name: Check licenses and sources
         run: cargo deny check
+
+  package:
+    name: AppImage (artifact)
+    # Build the distributable MIT-clean AppImage on pushes to main and tags,
+    # not on every PR. Non-blocking signal; downloadable from the run's artifacts.
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libasound2-dev \
+            libfontconfig1-dev \
+            libwayland-dev \
+            libx11-dev \
+            libxcb1-dev \
+            libxkbcommon-dev \
+            libxkbcommon-x11-dev \
+            pkg-config
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Prepare patched gpui (td-crt-pass + sever-gpl)
+        run: ./scripts/prepare-gpui.sh
+
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: app
+
+      - uses: taiki-e/install-action@cargo-about
+
+      - name: Build AppImage
+        run: ./scripts/build-appimage.sh
+
+      - name: Upload AppImage
+        uses: actions/upload-artifact@v4
+        with:
+          name: terminal-delight-x86_64.AppImage
+          path: dist/terminal-delight-x86_64.AppImage
+          if-no-files-found: error

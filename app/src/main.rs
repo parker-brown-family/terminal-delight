@@ -4553,6 +4553,26 @@ fn main() {
                 ..Default::default()
             },
             move |window, cx| {
+                // First-run self-diagnostics for untested boxes (AMD/Intel,
+                // Wayland, fractional scaling): record installed fonts so the grid
+                // can fall back deliberately, and surface the GPU/driver gpui chose.
+                pane::init_font_registry(cx.text_system().all_font_names());
+                if let Some(msg) = pane::font_diagnostic() {
+                    eprintln!("terminal-delight: {msg}");
+                }
+                if let Some(g) = window.gpu_specs() {
+                    eprintln!(
+                        "terminal-delight: GPU {} (driver {} {}){}",
+                        g.device_name,
+                        g.driver_name,
+                        g.driver_info,
+                        if g.is_software_emulated {
+                            " [SOFTWARE renderer — expect low FPS]"
+                        } else {
+                            ""
+                        },
+                    );
+                }
                 if scratch {
                     cx.new(|cx| Workspace::new_scratch(seed.clone(), window, cx))
                 } else {

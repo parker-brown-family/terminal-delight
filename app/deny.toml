@@ -1,10 +1,12 @@
 # cargo-deny policy. The dependency graph cargo-deny sees is the *binary's*
-# graph — it includes the pinned Zed/gpui workspace we build from source. So
-# this file encodes two things at once: (1) terminal-delight's own MIT/permissive
-# license posture, and (2) an explicit, named acknowledgement of the GPL crates
-# the Zed graph links in (the reason binaries can't ship MIT — see
-# THIRD-PARTY-LICENSES.md and docs/PLAN.md §2). Anything *not* enumerated here
-# still fails, so a newly-introduced copyleft dep can't slip in unnoticed.
+# graph — it includes the pinned Zed/gpui workspace we build from source. The
+# Zed graph would otherwise link three GPL-3.0 crates (ztracing, zlog,
+# ztracing_macro) into the binary via gpui -> sum_tree, which is why earlier
+# builds were source-only. docs/patches/0002-sever-gpl-crates.patch severs that
+# edge (the macros/log calls were trace-only), so the *distributed binary* is now
+# MIT/permissive-clean and these crates no longer appear in the graph at all.
+# This file therefore encodes one thing: terminal-delight's permissive license
+# posture, kept strict so any newly-introduced copyleft dep fails the gate.
 
 [licenses]
 allow = [
@@ -24,15 +26,12 @@ allow = [
 ]
 confidence-threshold = 0.8
 
-# Per-crate license grants. The three GPL-3.0 crates are the documented binary
-# boundary: they are linked into the built binary (so a redistributed binary is
-# GPL-3.0-or-later), but they are NOT redistributed in this source tree. Naming
-# them here keeps the gate green while still failing on any *other* copyleft dep.
+# Per-crate license grants. The GPL-3.0 crates that used to live here (zlog,
+# ztracing, ztracing_macro) are gone — patch 0002 removed them from the graph,
+# so no GPL exception is needed and the binary is permissive-clean. The lone
+# remaining grant is a permissive-equivalent license-string clarification.
 exceptions = [
   { allow = ["Unicode-DFS-2016"], name = "unicode-ident" },
-  { allow = ["GPL-3.0-or-later"], name = "zlog" },
-  { allow = ["GPL-3.0-or-later"], name = "ztracing" },
-  { allow = ["GPL-3.0-or-later"], name = "ztracing_macro" },
 ]
 
 # First-party gpui workspace crates that ship without a `license` field. They are
