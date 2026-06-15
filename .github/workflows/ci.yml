@@ -125,11 +125,11 @@ jobs:
       - name: Prepare patched gpui (td-crt-pass + sever-gpl)
         run: ./scripts/prepare-gpui.sh
 
-      - name: Cache cargo artifacts
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: app
-
+      # No rust-cache here on purpose: this job runs on ubuntu-22.04 while the rust
+      # checks run on ubuntu-latest, and Swatinem/rust-cache doesn't key on the
+      # runner version — restoring 24.04-built rlibs here breaks the build
+      # ("can't find crate for ashpd"). A clean build keeps the release artifact
+      # correct and reproducible.
       # cargo-about is installed on demand by build-appimage.sh (no install-action
       # tag exists for it), so no separate setup step is needed here.
       - name: Build AppImage
