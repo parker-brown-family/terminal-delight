@@ -194,7 +194,7 @@ function drawScene(time){
 function drawBtn(b,i,bx,by,bw,bh,s){ const c=cur(); btnRects.push({x:bx,y:by,w:bw,h:bh,url:b.url}); const on=hover===i;
   x.fillStyle=b.primary?(on?c.dark2:c.dark):(on?c.dark:'rgba(255,255,255,0.05)'); rr(bx,by,bw,bh,9*dpr); x.fill();
   x.lineWidth=on?2.4*dpr:1.4*dpr; x.strokeStyle=(b.primary||on)?c.accent:c.dim; rr(bx,by,bw,bh,9*dpr); x.stroke();
-  x.fillStyle=b.primary?c.bright:c.phos; x.shadowColor=c.glow; x.shadowBlur=on?0:4*dpr; x.font=`700 ${15*s*dpr}px ui-monospace,monospace`;
+  x.fillStyle=b.primary?c.bright:c.phos; x.shadowColor=c.glow; x.shadowBlur=on?0:1.4*dpr; x.font=`700 ${15*s*dpr}px ui-monospace,monospace`;
   x.fillText(b.label,bx+bw/2,by+bh/2); x.shadowBlur=0; }
 function rr(rx,ry,rw,rh,r){x.beginPath();x.moveTo(rx+r,ry);x.arcTo(rx+rw,ry,rx+rw,ry+rh,r);x.arcTo(rx+rw,ry+rh,rx,ry+rh,r);x.arcTo(rx,ry+rh,rx,ry,r);x.arcTo(rx,ry,rx+rw,ry,r);x.closePath();}
 
