@@ -43,6 +43,9 @@ struct FileColors {
     accent: String,
     faint: String,
     cursor: Option<String>,
+    /// Optional colour for the user's own input in an agent (claude/codex)
+    /// session. Absent → derived from the accent's bright complement.
+    human: Option<String>,
     ansi: Vec<String>,
 }
 
@@ -95,6 +98,10 @@ pub struct Theme {
     /// the mother bar. Defaults to the accent's complement; a dynamic sets it from
     /// its harmony, and the breakout's `C` wheel target overrides it explicitly.
     pub complement: Hsla,
+    /// Colour the user's own input is painted in an agent (claude/codex) session,
+    /// so your turns stand out from the agent's replies. Set by the wheel's human
+    /// (`☻`) target; defaults to the bright complement of the palette.
+    pub human: Hsla,
     pub faint: Hsla,
     pub cursor: Hsla,
     pub ansi: [Hsla; 16],
@@ -401,6 +408,10 @@ pub struct ThemeChoice {
     /// `None` = derive it from the theme/dynamic.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub complement: Option<String>,
+    /// Explicit colour for the user's own input in an agent session, set by the
+    /// wheel's human (`☻`) target. `None` = derive it from the bright complement.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub human: Option<String>,
 }
 
 impl Default for ThemeChoice {
@@ -414,6 +425,7 @@ impl Default for ThemeChoice {
             dynamic: Dynamic::default(),
             text: None,
             complement: None,
+            human: None,
         }
     }
 }
@@ -445,6 +457,7 @@ pub fn house_outer() -> ThemeChoice {
         dynamic: Dynamic::Plain,
         text: None,
         complement: None,
+        human: None,
     }
 }
 
@@ -463,6 +476,7 @@ pub fn house_terminal() -> ThemeChoice {
         dynamic: Dynamic::Plain,
         text: None,
         complement: None,
+        human: None,
     }
 }
 
@@ -485,6 +499,8 @@ pub struct ThemeGroup {
     pub text: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub complement: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub human: Option<String>,
 }
 
 impl Default for ThemeGroup {
@@ -497,6 +513,7 @@ impl Default for ThemeGroup {
             dynamic: Dynamic::default(),
             text: None,
             complement: None,
+            human: None,
         }
     }
 }
@@ -512,6 +529,7 @@ impl ThemeGroup {
             dynamic: c.dynamic.clone(),
             text: c.text.clone(),
             complement: c.complement.clone(),
+            human: c.human.clone(),
         }
     }
 }
@@ -580,6 +598,7 @@ impl PaneTheme {
             dynamic: g.dynamic,
             text: g.text,
             complement: g.complement,
+            human: g.human,
         }
     }
 
@@ -1032,6 +1051,9 @@ pub fn resolve(cx: &App, choice: &ThemeChoice) -> Arc<Theme> {
         .as_deref()
         .or(sig.as_ref().and_then(|s| s.complement))
         .and_then(hex);
+    // The human (your-input) colour has no signature default — it's either an
+    // explicit wheel override or derived from the final palette below.
+    let human_over = choice.human.as_deref().and_then(hex);
     // Default colour mode → the set's signature mode (if any).
     let mode = if choice.color.is_default() {
         sig.as_ref().map(|s| s.mode).unwrap_or(choice.color)
@@ -1039,8 +1061,11 @@ pub fn resolve(cx: &App, choice: &ThemeChoice) -> Arc<Theme> {
         choice.color
     };
     // Plain with no overrides and no signature leaves the theme's colours alone.
-    let identity_colour =
-        choice.dynamic.is_plain() && seed.is_none() && text_over.is_none() && comp_over.is_none();
+    let identity_colour = choice.dynamic.is_plain()
+        && seed.is_none()
+        && text_over.is_none()
+        && comp_over.is_none()
+        && human_over.is_none();
     // Fast path: stock theme, no recolour, default mode, no syntax, neutral
     // grade, and no global tracking override.
     if identity_colour
@@ -1072,6 +1097,12 @@ pub fn resolve(cx: &App, choice: &ThemeChoice) -> Arc<Theme> {
     }
     if let Some(c) = comp_over {
         th.complement = c;
+    }
+    // Layer 3b — the human (your-input) colour: an explicit wheel override wins;
+    // otherwise keep the base theme's value (a file `human` or the bright
+    // complement parse() derives), so the file/default is honoured.
+    if let Some(h) = human_over {
+        th.human = h;
     }
     th.color_mode = mode;
     th.syntax = choice.syntax;
@@ -1209,6 +1240,14 @@ pub(crate) fn parse(source: &str) -> Result<Theme, String> {
             h: (accent.h + 0.5).rem_euclid(1.0),
             ..accent
         },
+        // Default human (your-input) colour: a bright, lively complement so the
+        // user's turns pop against the agent's text. A theme file may override it.
+        human: c.human.as_ref().and_then(|s| hex(s)).unwrap_or(Hsla {
+            h: (accent.h + 0.5).rem_euclid(1.0),
+            s: (accent.s * 0.8).clamp(0.45, 0.85),
+            l: 0.76,
+            a: 1.0,
+        }),
         faint: need(&c.faint, "faint")?,
         cursor: c.cursor.as_ref().and_then(|s| hex(s)).unwrap_or(accent),
         ansi,
@@ -1537,6 +1576,66 @@ mod tests {
         let eff = pane.effective(&ThemeChoice::default());
         assert_eq!(eff.text.as_deref(), Some("#ff8800"));
         assert_eq!(eff.complement.as_deref(), Some("#0088ff"));
+    }
+
+    #[test]
+    fn human_override_round_trips_and_rides_the_theme_group() {
+        let c = ThemeChoice {
+            human: Some("#22e0ff".into()),
+            ..Default::default()
+        };
+        // wire round-trip
+        let back: ThemeChoice = toml::from_str(&toml::to_string(&c).unwrap()).unwrap();
+        assert_eq!(back.human.as_deref(), Some("#22e0ff"));
+        // omitted from the wire when unset (no churn for the common case)
+        let d = toml::to_string(&ThemeChoice::default()).unwrap();
+        assert!(!d.contains("human"), "default human is omitted: {d}");
+        // an explicit override rides the theme group onto a pinned pane
+        let pinned = PaneTheme {
+            theme: Some(ThemeGroup::of(&c)),
+            inherit_theme: false,
+            ..Default::default()
+        };
+        assert_eq!(
+            pinned.effective(&ThemeChoice::default()).human.as_deref(),
+            Some("#22e0ff"),
+            "a pinned pane keeps its own human colour"
+        );
+        // …and a pane that follows outer INHERITS the outer human colour
+        let outer = ThemeChoice {
+            human: Some("#abcdef".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            PaneTheme::default().effective(&outer).human.as_deref(),
+            Some("#abcdef"),
+            "an inheriting pane takes the outer human colour"
+        );
+    }
+
+    #[test]
+    fn parsed_human_defaults_bright_and_honours_the_file() {
+        // No `human` key → derived as a bright complement of the accent so the
+        // user's input pops against the agent's text.
+        let th = parse(DEFAULT_THEME_TOML).expect("parses");
+        let comp_h = (th.accent.h + 0.5).rem_euclid(1.0);
+        assert!(
+            (th.human.h - comp_h).abs() < 1e-4,
+            "human takes the complement hue"
+        );
+        assert!(
+            th.human.l > 0.6,
+            "derived human is bright (l={})",
+            th.human.l
+        );
+        // A theme file may pin it explicitly under [colors].
+        let doctored = DEFAULT_THEME_TOML.replacen("[colors]", "[colors]\nhuman = \"#ff2299\"", 1);
+        let th2 = parse(&doctored).expect("parses with explicit human");
+        let want = hex("#ff2299").unwrap();
+        assert!(
+            (th2.human.h - want.h).abs() < 2e-3 && (th2.human.l - want.l).abs() < 2e-3,
+            "explicit file human is honoured"
+        );
     }
 
     #[test]
