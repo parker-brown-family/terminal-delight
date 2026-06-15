@@ -97,7 +97,11 @@ jobs:
     # tags. On a tag it is also attached to the GitHub Release (one-command install
     # for new users); on main it's just a downloadable run artifact.
     if: github.event_name == 'push'
-    runs-on: ubuntu-latest
+    # Pin to the OLDEST glibc we want to support: ubuntu-22.04 ships glibc 2.35, so
+    # the AppImage runs on glibc >= 2.35 (Ubuntu 22.04+, Debian 12+, etc.). Building
+    # on ubuntu-latest (24.04 / glibc 2.39) would make the binary refuse to start on
+    # any older system — glibc is the one lib an AppImage can't bundle.
+    runs-on: ubuntu-22.04
     permissions:
       contents: write   # needed to attach the AppImage to the release on tags
     steps:
