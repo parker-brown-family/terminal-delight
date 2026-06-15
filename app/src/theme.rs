@@ -616,52 +616,60 @@ pub struct CustomPalette {
     pub quaternary: Option<String>,
 }
 
-/// A **theme dynamic**: the rule that turns the single seed colour into a whole
-/// coordinated palette. The seed (set on the colour wheel) is the one knob; the
-/// dynamic decides how every other role — title, secondary/tertiary accents,
-/// text, background — *relates* to it. Picked by the glyph column in the theme
-/// tray; lives in the theme group, so it inherits/overrides per pane like the
-/// rest of the look.
+/// The signature palette of a named colour set: a default seed plus optional
+/// text / title (complement) colours and a program-colour mode. The wheel's
+/// seed/T/C overrides tweak on top; an empty slot falls back to the relationship.
+pub struct SetSig {
+    pub seed: &'static str,
+    pub text: Option<&'static str>,
+    pub complement: Option<&'static str>,
+    pub mode: ColorMode,
+}
+
+/// A **colour set**: the palette half of the look, ORTHOGONAL to the theme's
+/// texture. The seed (set on the wheel) is the anchor; the set decides how the
+/// other roles — title, text, accents — relate to it, and named sets carry a
+/// signature palette (a cultural touchstone). Picked by the glyph column in the
+/// theme tray; lives in the theme group, so it inherits/overrides per pane.
 #[derive(Clone, PartialEq, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Dynamic {
-    /// Single-hue tint — the original seed behaviour (chrome takes the seed hue,
-    /// structure keeps its own S/L). Default, so old state files are unchanged.
+    /// No colour set — the texture/theme shows its own authored colours. Default,
+    /// so old state files are unchanged.
     #[default]
     Plain,
+    /// Classic terminal green with a white title and high-contrast green text.
+    Greenworks,
+    /// Lightning: a deep-purple field with white-blue phosphor text + title.
+    Bolt,
+    /// Amber monochrome monitor — the warm CRT touchstone.
+    Amber,
     /// Gold→green→brown harmony: the seed is the gold anchor; green sits at a
-    /// fixed +offset, light brown at a −offset — the pineapple relationship,
-    /// applied wherever the seed lands.
+    /// fixed +offset, light brown at a −offset — applied wherever the seed lands.
     Pineapple,
-    /// Near-monochrome around the seed with bright, high-intensity text.
-    Lightning,
-    /// Seed plus its complement — a high-contrast duotone.
-    Eclipse,
-    /// Triadic: seed and ±120°, three balanced hues.
-    Prism,
-    /// User-defined relationship: explicit primary/secondary/tertiary/quaternary.
+    /// User-defined palette: explicit primary/secondary/tertiary/quaternary.
     /// Boxed so the rare custom palette doesn't bloat every `ThemeChoice` clone.
     Custom(Box<CustomPalette>),
 }
 
 impl Dynamic {
-    /// The named dynamics shown in the tray, in display order (Custom is appended
-    /// separately as the cog).
+    /// The named colour sets shown in the tray, in display order (Custom is
+    /// appended separately as the cog).
     pub const NAMED: [Dynamic; 4] = [
+        Dynamic::Greenworks,
+        Dynamic::Bolt,
+        Dynamic::Amber,
         Dynamic::Pineapple,
-        Dynamic::Lightning,
-        Dynamic::Eclipse,
-        Dynamic::Prism,
     ];
 
-    /// Glyph shown in the tray's vertical box for this dynamic.
+    /// Glyph shown in the tray's vertical box for this colour set.
     pub fn glyph(&self) -> &'static str {
         match self {
             Dynamic::Plain => "○",
+            Dynamic::Greenworks => "❖",
+            Dynamic::Bolt => "⚡",
+            Dynamic::Amber => "☼",
             Dynamic::Pineapple => "🍍",
-            Dynamic::Lightning => "⚡",
-            Dynamic::Eclipse => "◐",
-            Dynamic::Prism => "△",
             Dynamic::Custom(_) => "⚙",
         }
     }
@@ -670,15 +678,51 @@ impl Dynamic {
     pub fn label(&self) -> &'static str {
         match self {
             Dynamic::Plain => "plain",
+            Dynamic::Greenworks => "greenworks",
+            Dynamic::Bolt => "bolt",
+            Dynamic::Amber => "amber",
             Dynamic::Pineapple => "pineapple",
-            Dynamic::Lightning => "lightning",
-            Dynamic::Eclipse => "eclipse",
-            Dynamic::Prism => "prism",
             Dynamic::Custom(_) => "custom",
         }
     }
 
-    /// `true` for the serde/skip default — a plain single-hue tint.
+    /// The signature palette this colour set seeds, if it's a named one. The
+    /// wheel's seed/T/C overrides win over these; `Plain`/`Custom` have none.
+    pub fn signature(&self) -> Option<SetSig> {
+        Some(match self {
+            // classic green terminal: white title, bright high-contrast green text
+            Dynamic::Greenworks => SetSig {
+                seed: "#22c55e",
+                text: Some("#7dff9e"),
+                complement: Some("#ffffff"),
+                mode: ColorMode::Monochrome,
+            },
+            // lightning: deep purple field, white-blue phosphor letters + title
+            Dynamic::Bolt => SetSig {
+                seed: "#7c3aed",
+                text: Some("#cdd8ff"),
+                complement: Some("#eef2ff"),
+                mode: ColorMode::Monochrome,
+            },
+            // amber monochrome monitor
+            Dynamic::Amber => SetSig {
+                seed: "#ffb000",
+                text: Some("#ffce6b"),
+                complement: Some("#fff0d0"),
+                mode: ColorMode::Monochrome,
+            },
+            // pineapple gold anchor; text/title fall out of the harmony
+            Dynamic::Pineapple => SetSig {
+                seed: "#ffcc00",
+                text: None,
+                complement: None,
+                mode: ColorMode::OnTheme,
+            },
+            _ => return None,
+        })
+    }
+
+    /// `true` for the serde/skip default — no colour set.
     pub fn is_plain(&self) -> bool {
         matches!(self, Dynamic::Plain)
     }
@@ -722,7 +766,7 @@ pub struct Roles {
 /// to the Prism spread for any empty slot.
 pub fn roles(anchor: Hsla, d: &Dynamic) -> Roles {
     if let Dynamic::Custom(c) = d {
-        let derived = roles(anchor, &Dynamic::Prism);
+        let derived = roles(anchor, &Dynamic::Pineapple);
         let pick = |slot: &Option<String>, fallback: Hsla| {
             slot.as_deref().and_then(hex).unwrap_or(fallback)
         };
@@ -749,7 +793,8 @@ pub fn roles(anchor: Hsla, d: &Dynamic) -> Roles {
             prim_l: 0.62,
             prim_s_floor: 0.70,
         },
-        Dynamic::Lightning => Spec {
+        // The monochrome colour sets — one hue, bright high-intensity text.
+        Dynamic::Greenworks | Dynamic::Bolt | Dynamic::Amber => Spec {
             sec_deg: 0.,
             ter_deg: 0.,
             mono: true,
@@ -757,24 +802,6 @@ pub fn roles(anchor: Hsla, d: &Dynamic) -> Roles {
             text_s: 0.12,
             prim_l: 0.72,
             prim_s_floor: 0.30,
-        },
-        Dynamic::Eclipse => Spec {
-            sec_deg: 180.,
-            ter_deg: 180.,
-            mono: false,
-            text_l: 0.82,
-            text_s: 0.30,
-            prim_l: 0.64,
-            prim_s_floor: 0.65,
-        },
-        Dynamic::Prism => Spec {
-            sec_deg: 120.,
-            ter_deg: -120.,
-            mono: false,
-            text_l: 0.82,
-            text_s: 0.45,
-            prim_l: 0.62,
-            prim_s_floor: 0.60,
         },
         // Plain (and anything else) → single-hue tint, mono when the seed is grey.
         _ => Spec {
@@ -908,15 +935,35 @@ pub fn resolve(cx: &App, choice: &ThemeChoice) -> Arc<Theme> {
             .map(|(_, t)| t.clone())
             .unwrap_or_else(|| reg.custom.clone())
     };
-    let seed = choice.seed.as_deref().and_then(hex);
-    let text_over = choice.text.as_deref().and_then(hex);
-    let comp_over = choice.complement.as_deref().and_then(hex);
-    // A Plain dynamic with no seed/text/complement override leaves the theme's
-    // colours untouched.
+    // The colour set's signature supplies default seed/text/title/mode; the
+    // wheel's seed/T/C overrides win over it.
+    let sig = choice.dynamic.signature();
+    let seed = choice
+        .seed
+        .as_deref()
+        .or(sig.as_ref().map(|s| s.seed))
+        .and_then(hex);
+    let text_over = choice
+        .text
+        .as_deref()
+        .or(sig.as_ref().and_then(|s| s.text))
+        .and_then(hex);
+    let comp_over = choice
+        .complement
+        .as_deref()
+        .or(sig.as_ref().and_then(|s| s.complement))
+        .and_then(hex);
+    // Default colour mode → the set's signature mode (if any).
+    let mode = if choice.color.is_default() {
+        sig.as_ref().map(|s| s.mode).unwrap_or(choice.color)
+    } else {
+        choice.color
+    };
+    // Plain with no overrides and no signature leaves the theme's colours alone.
     let identity_colour =
         choice.dynamic.is_plain() && seed.is_none() && text_over.is_none() && comp_over.is_none();
     // Fast path: stock theme, no recolour, default mode, no syntax, neutral grade.
-    if identity_colour && choice.color.is_default() && !choice.syntax && choice.grade.is_neutral() {
+    if identity_colour && mode.is_default() && !choice.syntax && choice.grade.is_neutral() {
         return base;
     }
     // Layer 1 — the THEME: its own seed recolour (the theme's built-in
@@ -941,7 +988,7 @@ pub fn resolve(cx: &App, choice: &ThemeChoice) -> Arc<Theme> {
     if let Some(c) = comp_over {
         th.complement = c;
     }
-    th.color_mode = choice.color;
+    th.color_mode = mode;
     th.syntax = choice.syntax;
     th.grade = choice.grade;
     Arc::new(th)
@@ -1231,23 +1278,33 @@ mod tests {
     }
 
     #[test]
-    fn lightning_is_monochrome_with_blazing_text() {
-        let r = roles(hex("#22c55e").unwrap(), &Dynamic::Lightning);
-        assert!(
-            r.secondary.s < 0.02 && r.tertiary.s < 0.02,
-            "all roles mono"
-        );
-        assert!(r.text.l > 0.9 && r.text.s < 0.2, "high-intensity letters");
+    fn mono_colour_sets_are_single_hue_with_blazing_text() {
+        // Greenworks / Bolt / Amber all use the monochrome relationship.
+        for set in [Dynamic::Greenworks, Dynamic::Bolt, Dynamic::Amber] {
+            let r = roles(hex("#22c55e").unwrap(), &set);
+            assert!(
+                r.secondary.s < 0.02 && r.tertiary.s < 0.02,
+                "{} roles are mono",
+                set.label()
+            );
+            assert!(r.text.l > 0.9 && r.text.s < 0.2, "high-intensity letters");
+        }
     }
 
     #[test]
-    fn eclipse_is_a_complement_and_prism_is_triadic() {
-        let seed = hex("#e23d3d").unwrap();
-        let ecl = roles(seed, &Dynamic::Eclipse);
-        assert!((hue_deg_gap(ecl.secondary.h, seed.h) - 180.0).abs() < 3.0);
-        let pri = roles(seed, &Dynamic::Prism);
-        assert!((hue_deg_gap(pri.secondary.h, seed.h) - 120.0).abs() < 3.0);
-        assert!((hue_deg_gap(pri.tertiary.h, seed.h) - 120.0).abs() < 3.0);
+    fn named_colour_sets_carry_a_signature_palette() {
+        // Greenworks: green seed, white title, no signature mode change (mono).
+        let g = Dynamic::Greenworks.signature().unwrap();
+        assert_eq!(g.seed, "#22c55e");
+        assert_eq!(g.complement, Some("#ffffff"), "white title");
+        assert_eq!(g.mode, ColorMode::Monochrome);
+        // Bolt: deep purple seed, white-blue text.
+        let b = Dynamic::Bolt.signature().unwrap();
+        assert_eq!(b.seed, "#7c3aed");
+        assert_eq!(b.text, Some("#cdd8ff"));
+        // Plain / Custom carry no signature.
+        assert!(Dynamic::Plain.signature().is_none());
+        assert!(Dynamic::Custom(Box::default()).signature().is_none());
     }
 
     #[test]

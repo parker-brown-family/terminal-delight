@@ -2965,9 +2965,15 @@ impl Render for Workspace {
                                 MouseButton::Left,
                                 cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
                                     cx.stop_propagation();
+                                    // Picking a colour set clears the wheel
+                                    // overrides so its signature palette shows;
+                                    // the user then tweaks from there.
                                     ws.set_menu_choice(
                                         ThemeChoice {
                                             dynamic: d_click.clone(),
+                                            seed: None,
+                                            text: None,
+                                            complement: None,
                                             ..cur_c.clone()
                                         },
                                         cx,
