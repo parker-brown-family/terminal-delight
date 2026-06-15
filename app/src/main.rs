@@ -417,6 +417,11 @@ fn default_ratio() -> f32 {
     0.5
 }
 
+/// First-run invitation: a fresh window names its very first tab AND that tab's
+/// sole sub-terminal with this hint, so the right-click-to-rename gesture teaches
+/// itself. Every other tab / split opened afterwards gets the normal default.
+const FIRST_RUN_HINT: &str = "RIGHT CLICK TO RENAME";
+
 struct Tab {
     root: Node,
     name: Option<String>,
@@ -840,6 +845,19 @@ impl Workspace {
             ws.focus_active(window, cx);
         } else if saved.tabs.is_empty() {
             ws.new_tab(window, cx);
+            // Fresh window: seed the rename hint onto the first tab + its sole
+            // sub-terminal (and only those — later tabs/splits stay default).
+            let mut leaves: Vec<&Entity<TerminalView>> = vec![];
+            if let Some(tab) = ws.tabs.first() {
+                tab.root.leaves(&mut leaves);
+            }
+            let first_pane = leaves.first().map(|p| (*p).clone());
+            if let Some(tab) = ws.tabs.first_mut() {
+                tab.name = Some(FIRST_RUN_HINT.into());
+            }
+            if let Some(pane) = first_pane {
+                pane.update(cx, |v, _| v.name = Some(FIRST_RUN_HINT.into()));
+            }
         } else {
             for t in &saved.tabs {
                 let root = build_node(&t.node, window, cx);
