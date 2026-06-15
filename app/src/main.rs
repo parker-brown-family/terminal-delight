@@ -451,6 +451,10 @@ struct StateFile {
     /// Accepts a legacy bool (the old toggle: true→default dial, false→0).
     #[serde(default = "default_warp", deserialize_with = "de_warp")]
     warp: f32,
+    /// Global CRT tracking-band override `[intensity, speed, size]` in 0..1, or
+    /// absent = per-theme.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    track: Option<[f32; 3]>,
     tabs: Vec<SavedTab>,
 }
 
@@ -482,6 +486,7 @@ impl Default for StateFile {
             scale: None,
             theme: None,
             warp: theme::WARP_DEFAULT, // fresh install: the classic dial
+            track: None,
             tabs: Vec::new(),
         }
     }
@@ -635,6 +640,10 @@ struct Workspace {
     warp_drag: bool,
     /// Live warp-slider rect, for ratio math during a drag.
     warp_bounds: Arc<Mutex<Option<Bounds<Pixels>>>>,
+    /// Which tracking-band slider (0=intensity,1=speed,2=size) is being dragged.
+    track_drag: Option<usize>,
+    /// Live tracking-slider rects, for ratio math during a drag.
+    track_bounds: [Arc<Mutex<Option<Bounds<Pixels>>>>; 3],
     /// Live colour-wheel rect, for polar hit-testing during a drag.
     wheel_bounds: Arc<Mutex<Option<Bounds<Pixels>>>>,
     scrubbing: bool,
@@ -783,7 +792,8 @@ impl Workspace {
         if let Some(s) = saved.scale {
             outer.grade.scale = s.clamp(0.7, 1.6);
         }
-        theme::set_screen_warp(cx, saved.warp); // restore the global warp toggle
+        theme::set_screen_warp(cx, saved.warp); // restore the global warp dial
+        theme::set_tracking_dial(cx, saved.track); // restore the global tracking dial
         theme::select_outer(cx, outer);
         let mut ws = Self {
             tabs: vec![],
@@ -803,6 +813,8 @@ impl Workspace {
             light_bounds: Arc::new(Mutex::new(None)),
             warp_drag: false,
             warp_bounds: Arc::new(Mutex::new(None)),
+            track_drag: None,
+            track_bounds: Default::default(),
             wheel_bounds: Arc::new(Mutex::new(None)),
             scrubbing: false,
             scrub_bounds: Arc::new(Mutex::new(None)),
@@ -892,6 +904,7 @@ impl Workspace {
             scale: Some(theme::outer_choice(cx).grade.scale),
             theme: Some(theme::outer_choice(cx)),
             warp: theme::screen_warp(cx),
+            track: theme::tracking_dial(cx),
             tabs: self
                 .tabs
                 .iter()
@@ -1275,6 +1288,13 @@ impl Workspace {
                 theme::set_screen_warp(cx, a);
             }
         }
+        if let Some(idx) = self.track_drag {
+            if ev.pressed_button == Some(MouseButton::Left) {
+                if let Some(v) = self.track_from_pos(idx, ev.position.x) {
+                    self.apply_track(idx, v, cx);
+                }
+            }
+        }
     }
 
     fn on_mouse_up(&mut self, ev: &MouseUpEvent, window: &mut Window, cx: &mut Context<Self>) {
@@ -1282,6 +1302,7 @@ impl Workspace {
         if self.wheel_drag.take().is_some()
             || std::mem::take(&mut self.light_drag)
             || std::mem::take(&mut self.warp_drag)
+            || self.track_drag.take().is_some()
         {
             self.save(cx);
             cx.notify();
@@ -1848,6 +1869,113 @@ impl Workspace {
         }
         let frac = ((f32::from(x) - f32::from(b.origin.x)) / w).clamp(0.0, 1.0);
         Some(frac * theme::WARP_MAX)
+    }
+
+    /// Ratio `0..1` for tracking slider `idx` at window-x `x`.
+    fn track_from_pos(&self, idx: usize, x: Pixels) -> Option<f32> {
+        let b = (*self.track_bounds[idx].lock().unwrap())?;
+        let w = f32::from(b.size.width);
+        if w <= 0.0 {
+            return None;
+        }
+        Some(((f32::from(x) - f32::from(b.origin.x)) / w).clamp(0.0, 1.0))
+    }
+
+    /// Set tracking dial component `idx` (during a drag) and repaint.
+    fn apply_track(&mut self, idx: usize, v: f32, cx: &mut Context<Self>) {
+        let mut d = theme::tracking_dial(cx).unwrap_or([0.2, 0.5, 0.3]);
+        d[idx] = v.clamp(0.0, 1.0);
+        theme::set_tracking_dial(cx, Some(d));
+    }
+
+    /// One tracking-band slider (idx 0=intensity, 1=speed, 2=size). The global
+    /// tracking dial overrides every theme's roll bar; first drag seeds from the
+    /// current look so it starts where you are.
+    fn track_slider(
+        &self,
+        idx: usize,
+        label: &str,
+        th: &theme::Theme,
+        cx: &mut Context<Self>,
+    ) -> gpui::Div {
+        const TRACK: f32 = 108.;
+        let store = self.track_bounds[idx].clone();
+        let seed = theme::tracking_dials_of(cx, th);
+        let frac = seed[idx].clamp(0.0, 1.0);
+        div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap_2()
+            .child(
+                div()
+                    .w(px(58.))
+                    .text_size(px(10.))
+                    .text_color(th.text.alpha(0.8))
+                    .child(label.to_string()),
+            )
+            .child(
+                div()
+                    .w(px(TRACK))
+                    .h(px(14.))
+                    .relative()
+                    .cursor_pointer()
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |ws, ev: &MouseDownEvent, _w, cx| {
+                            cx.stop_propagation();
+                            ws.track_drag = Some(idx);
+                            if let Some(v) = ws.track_from_pos(idx, ev.position.x) {
+                                let mut d = seed;
+                                d[idx] = v;
+                                theme::set_tracking_dial(cx, Some(d));
+                            }
+                        }),
+                    )
+                    .child(
+                        canvas(
+                            move |b, _, _| {
+                                *store.lock().unwrap() = Some(b);
+                            },
+                            |_, _, _, _| {},
+                        )
+                        .size_full(),
+                    )
+                    .child(
+                        div()
+                            .absolute()
+                            .left_0()
+                            .right_0()
+                            .top(px(6.))
+                            .h(px(3.))
+                            .rounded_full()
+                            .bg(darken(th.surface, 0.4))
+                            .border_1()
+                            .border_color(th.faint),
+                    )
+                    .child(
+                        div()
+                            .absolute()
+                            .left_0()
+                            .top(px(6.))
+                            .h(px(3.))
+                            .w(px(TRACK * frac))
+                            .rounded_full()
+                            .bg(th.accent),
+                    )
+                    .child(
+                        div()
+                            .absolute()
+                            .left(px((TRACK * frac - 5.0).max(0.0)))
+                            .top(px(2.))
+                            .w(px(10.))
+                            .h(px(10.))
+                            .rounded_full()
+                            .border_2()
+                            .border_color(white())
+                            .bg(th.accent),
+                    ),
+            )
     }
 
     /// The global screen-warp dial — a 0→WARP_MAX slider (0 = dead flat). Drag to
@@ -3279,7 +3407,26 @@ impl Render for Workspace {
                         }),
                     ),
                 )
-                .child(self.warp_slider(&th, cx));
+                .child(self.warp_slider(&th, cx))
+                .child(self.track_slider(0, "roll", &th, cx))
+                .child(self.track_slider(1, "roll spd", &th, cx))
+                .child(self.track_slider(2, "roll size", &th, cx))
+                .child(
+                    div()
+                        .id("track-reset")
+                        .text_size(px(9.))
+                        .text_color(th.text.alpha(0.5))
+                        .cursor_pointer()
+                        .child("↺ roll → per-theme")
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                                cx.stop_propagation();
+                                theme::set_tracking_dial(cx, None);
+                                ws.save(cx);
+                            }),
+                        ),
+                );
             if is_pane {
                 // Grade-group toggle, independent of the theme tray's: on = this
                 // pane's monitor grade tracks the outer sliders live; off = it
@@ -3805,6 +3952,7 @@ id = "hacker"
                 ..Default::default()
             }),
             warp: theme::WARP_DEFAULT,
+            track: None,
             tabs: vec![SavedTab {
                 name: None,
                 node: SavedNode::Leaf {
@@ -3838,6 +3986,7 @@ id = "hacker"
             scale: None,
             theme: None,
             warp: theme::WARP_DEFAULT,
+            track: None,
             tabs: vec![SavedTab {
                 name: Some("agents".into()),
                 node: SavedNode::Leaf {
@@ -3955,6 +4104,7 @@ id = "hacker"
             scale: None,
             theme: None,
             warp: theme::WARP_DEFAULT,
+            track: None,
             tabs: vec![SavedTab { name: None, node }],
         };
         let body = toml::to_string(&state).expect("serializes");
