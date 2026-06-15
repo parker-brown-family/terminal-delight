@@ -18,19 +18,22 @@ ansi = [
   "#9cb8d6", "#cfa6c4", "#aad4c6", "#f6f8ef",
 ]
 
+# TEXTURE: flat, matte, solid/robust — a rugged field kit. Minimal shine (low
+# glow/bloom, no raised bezel), a grounding vignette, a touch of grain for the
+# "rough polish" feel, and rock-steady (no jiggle). Screen warp is a global
+# toggle now, independent of this texture.
 [effects]
-scanline_opacity = 0.025
+scanline_opacity = 0.020
 scanline_step    = 3.0
-vignette         = 0.18
-glow             = 0.3
-
-bloom            = 0.2
-tracking         = 0.15
-tracking_period  = 30.0
-tracking_sweep   = 10.0
-flicker          = 0.15
-curvature        = 0.0      # barrel warp — off; only the hacker theme curves (needs td-crt-pass renderer patch)
+vignette         = 0.30
+glow             = 0.10
+bloom            = 0.06
+tracking         = 0.10
+tracking_period  = 40.0
+tracking_sweep   = 8.0
+flicker          = 0.10
 jiggle           = 0.0
+bezel            = 0.0
 
 [font]
 family      = "JetBrains Mono"

@@ -18,20 +18,22 @@ ansi = [
   "#91f6ff", "#d0b3ff", "#a5f3fc", "#f2fbff",
 ]
 
+# TEXTURE: high-tech command HQ — holographic shine but ULTIMATELY CLEAN. Bright
+# glow + bloom and a crisp raised bezel give the glassy/holographic edge; the
+# noisy CRT tells (flicker/jiggle/roll) are dialled right down so it reads as a
+# sophisticated, futuristic, *clean* surface rather than a grungy tube.
 [effects]
-scanline_opacity = 0.035
+scanline_opacity = 0.028
 scanline_step    = 3.0
-vignette         = 0.25
-glow             = 0.6
-
-bloom            = 0.35
-tracking         = 0.35
-tracking_period  = 20.0
-tracking_sweep   = 8.0
-flicker          = 0.3
-curvature        = 0.0     # barrel warp — off; only the hacker theme curves (needs td-crt-pass renderer patch)
-jiggle           = 0.3
-bezel            = 0.85    # raised metallic frame around the pane edge
+vignette         = 0.18
+glow             = 0.78
+bloom            = 0.55
+tracking         = 0.08
+tracking_period  = 26.0
+tracking_sweep   = 5.0
+flicker          = 0.05
+jiggle           = 0.04
+bezel            = 0.98    # crisp raised metallic/holographic frame
 
 [font]
 family      = "JetBrains Mono"
