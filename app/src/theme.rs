@@ -1002,46 +1002,44 @@ pub fn select_outer(cx: &mut App, choice: ThemeChoice) {
     cx.refresh_windows();
 }
 
-/// The screen-warp (CRT barrel) toggle — a single global switch, ORTHOGONAL to
-/// the theme. Any texture can curve or stay flat; warp is no longer a property
-/// of the theme. The barrel coefficient when on (the old hacker dial).
-pub const WARP_CURVATURE: f32 = 0.42;
+/// Screen-warp (CRT barrel) is a single global DIAL, ORTHOGONAL to the theme:
+/// any texture curves by `amount` (0 = dead flat). The default is the old
+/// hacker dial; the slider runs up to [`WARP_MAX`] for a full fishbowl.
+pub const WARP_DEFAULT: f32 = 0.42;
+pub const WARP_MAX: f32 = 1.5;
 
-pub struct ScreenWarp(pub bool);
+pub struct ScreenWarp(pub f32);
 impl Global for ScreenWarp {}
 
-/// Is the global screen-warp on? Defaults to on (the classic curved tube) until
+/// The global screen-warp amount (0 = flat). Defaults to [`WARP_DEFAULT`] until
 /// state restore says otherwise.
-pub fn screen_warp(cx: &App) -> bool {
-    cx.try_global::<ScreenWarp>().map(|w| w.0).unwrap_or(true)
+pub fn screen_warp(cx: &App) -> f32 {
+    cx.try_global::<ScreenWarp>()
+        .map(|w| w.0)
+        .unwrap_or(WARP_DEFAULT)
 }
 
-/// The barrel coefficients `(k1, k2)` the renderer + hit-testing use — zero when
-/// warp is off, so the pane is geometrically flat.
+/// The barrel coefficients `(k1, k2)` the renderer + hit-testing use — scaled
+/// from the warp amount, so geometry stays in sync with the shader.
 pub fn warp_k(cx: &App) -> (f32, f32) {
-    if screen_warp(cx) {
-        (WARP_CURVATURE * 0.14, WARP_CURVATURE * 0.06)
-    } else {
-        (0.0, 0.0)
-    }
+    let w = screen_warp(cx);
+    (w * 0.14, w * 0.06)
 }
 
-/// Flip the global screen-warp toggle and repaint.
-pub fn set_screen_warp(cx: &mut App, on: bool) {
-    cx.set_global(ScreenWarp(on));
-    apply_warp(on);
+/// Set the global screen-warp amount (clamped to `0..=WARP_MAX`) and repaint.
+pub fn set_screen_warp(cx: &mut App, amount: f32) {
+    let a = amount.clamp(0.0, WARP_MAX);
+    cx.set_global(ScreenWarp(a));
+    apply_warp(a);
     cx.refresh_windows();
 }
 
-/// Push the warp toggle into the renderer's CRT warp pass (td-crt-pass patch).
-fn apply_warp(on: bool) {
+/// Push the warp amount into the renderer's CRT warp pass (td-crt-pass patch).
+fn apply_warp(amount: f32) {
     #[cfg(target_os = "linux")]
-    {
-        let k = if on { WARP_CURVATURE } else { 0.0 };
-        gpui_wgpu::set_crt_warp(k * 0.14, k * 0.06);
-    }
+    gpui_wgpu::set_crt_warp(amount * 0.14, amount * 0.06);
     #[cfg(not(target_os = "linux"))]
-    let _ = on;
+    let _ = amount;
 }
 
 fn hex(value: &str) -> Option<Hsla> {
@@ -1587,8 +1585,8 @@ pub fn init(cx: &mut App) {
         custom: custom.clone(),
     });
     cx.set_global(OuterChoice(ThemeChoice::default()));
-    cx.set_global(ScreenWarp(true)); // default on; state restore may flip it
-    apply_warp(true);
+    cx.set_global(ScreenWarp(WARP_DEFAULT)); // default dial; state restore may change it
+    apply_warp(WARP_DEFAULT);
     cx.set_global(ActiveTheme(custom));
 
     let mut last = mtime(&path);

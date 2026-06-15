@@ -447,18 +447,31 @@ struct StateFile {
     /// Outer (workspace) theme choice; panes may carry their own override.
     #[serde(default)]
     theme: Option<ThemeChoice>,
-    /// Global screen-warp (CRT barrel) toggle — orthogonal to the theme. Absent
-    /// in old state files → defaults to on (the classic curved tube).
-    #[serde(default = "yes_warp", skip_serializing_if = "is_on")]
-    warp: bool,
+    /// Global screen-warp (CRT barrel) amount — orthogonal to the theme, 0 = flat.
+    /// Accepts a legacy bool (the old toggle: true→default dial, false→0).
+    #[serde(default = "default_warp", deserialize_with = "de_warp")]
+    warp: f32,
     tabs: Vec<SavedTab>,
 }
 
-fn yes_warp() -> bool {
-    true
+fn default_warp() -> f32 {
+    theme::WARP_DEFAULT
 }
-fn is_on(b: &bool) -> bool {
-    *b
+
+/// Lenient warp deserialize: a number is the dial; an old bool toggle maps
+/// true→the default dial, false→flat. Keeps pre-slider state files loading.
+fn de_warp<'de, D: serde::Deserializer<'de>>(d: D) -> Result<f32, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum BoolOrF32 {
+        B(bool),
+        F(f32),
+    }
+    Ok(match BoolOrF32::deserialize(d)? {
+        BoolOrF32::B(true) => theme::WARP_DEFAULT,
+        BoolOrF32::B(false) => 0.0,
+        BoolOrF32::F(f) => f.clamp(0.0, theme::WARP_MAX),
+    })
 }
 
 impl Default for StateFile {
@@ -468,7 +481,7 @@ impl Default for StateFile {
             win: None,
             scale: None,
             theme: None,
-            warp: true, // fresh install: classic curved tube on
+            warp: theme::WARP_DEFAULT, // fresh install: the classic dial
             tabs: Vec::new(),
         }
     }
@@ -618,6 +631,10 @@ struct Workspace {
     light_drag: bool,
     /// Live lightness-slider rect, for ratio math during a drag.
     light_bounds: Arc<Mutex<Option<Bounds<Pixels>>>>,
+    /// True while the global screen-warp slider is being dragged.
+    warp_drag: bool,
+    /// Live warp-slider rect, for ratio math during a drag.
+    warp_bounds: Arc<Mutex<Option<Bounds<Pixels>>>>,
     /// Live colour-wheel rect, for polar hit-testing during a drag.
     wheel_bounds: Arc<Mutex<Option<Bounds<Pixels>>>>,
     scrubbing: bool,
@@ -784,6 +801,8 @@ impl Workspace {
             wheel_active: WheelTarget::Seed,
             light_drag: false,
             light_bounds: Arc::new(Mutex::new(None)),
+            warp_drag: false,
+            warp_bounds: Arc::new(Mutex::new(None)),
             wheel_bounds: Arc::new(Mutex::new(None)),
             scrubbing: false,
             scrub_bounds: Arc::new(Mutex::new(None)),
@@ -1251,11 +1270,19 @@ impl Workspace {
                 self.set_active_lightness(l, cx);
             }
         }
+        if self.warp_drag && ev.pressed_button == Some(MouseButton::Left) {
+            if let Some(a) = self.warp_from_pos(ev.position.x) {
+                theme::set_screen_warp(cx, a);
+            }
+        }
     }
 
     fn on_mouse_up(&mut self, ev: &MouseUpEvent, window: &mut Window, cx: &mut Context<Self>) {
         self.scrubbing = false;
-        if self.wheel_drag.take().is_some() || std::mem::take(&mut self.light_drag) {
+        if self.wheel_drag.take().is_some()
+            || std::mem::take(&mut self.light_drag)
+            || std::mem::take(&mut self.warp_drag)
+        {
             self.save(cx);
             cx.notify();
             return;
@@ -1809,6 +1836,105 @@ impl Workspace {
             return None;
         }
         Some(((f32::from(x) - f32::from(b.origin.x)) / w).clamp(0.0, 1.0))
+    }
+
+    /// Warp amount `0..=WARP_MAX` for the screen-warp slider at window-x `x`.
+    fn warp_from_pos(&self, x: Pixels) -> Option<f32> {
+        let b = (*self.warp_bounds.lock().unwrap())?;
+        let w = f32::from(b.size.width);
+        if w <= 0.0 {
+            return None;
+        }
+        let frac = ((f32::from(x) - f32::from(b.origin.x)) / w).clamp(0.0, 1.0);
+        Some(frac * theme::WARP_MAX)
+    }
+
+    /// The global screen-warp dial — a 0→WARP_MAX slider (0 = dead flat). Drag to
+    /// find your fishbowl; a readout shows the live amount. Orthogonal to theme.
+    fn warp_slider(&self, th: &theme::Theme, cx: &mut Context<Self>) -> gpui::Div {
+        const TRACK: f32 = 132.;
+        let store = self.warp_bounds.clone();
+        let amount = theme::screen_warp(cx);
+        let frac = (amount / theme::WARP_MAX).clamp(0.0, 1.0);
+        div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap_2()
+            .child(
+                div()
+                    .w(px(64.))
+                    .text_size(px(10.))
+                    .text_color(th.text.alpha(0.8))
+                    .child("screen warp"),
+            )
+            .child(
+                div()
+                    .w(px(TRACK))
+                    .h(px(14.))
+                    .relative()
+                    .cursor_pointer()
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|ws, ev: &MouseDownEvent, _w, cx| {
+                            cx.stop_propagation();
+                            ws.warp_drag = true;
+                            if let Some(a) = ws.warp_from_pos(ev.position.x) {
+                                theme::set_screen_warp(cx, a);
+                            }
+                        }),
+                    )
+                    .child(
+                        canvas(
+                            move |bounds, _, _| {
+                                *store.lock().unwrap() = Some(bounds);
+                            },
+                            |_, _, _, _| {},
+                        )
+                        .size_full(),
+                    )
+                    .child(
+                        div()
+                            .absolute()
+                            .left_0()
+                            .right_0()
+                            .top(px(6.))
+                            .h(px(3.))
+                            .rounded_full()
+                            .bg(darken(th.surface, 0.4))
+                            .border_1()
+                            .border_color(th.faint),
+                    )
+                    .child(
+                        div()
+                            .absolute()
+                            .left_0()
+                            .top(px(6.))
+                            .h(px(3.))
+                            .w(px(TRACK * frac))
+                            .rounded_full()
+                            .bg(th.accent),
+                    )
+                    .child(
+                        div()
+                            .absolute()
+                            .left(px((TRACK * frac - 5.0).max(0.0)))
+                            .top(px(2.))
+                            .w(px(10.))
+                            .h(px(10.))
+                            .rounded_full()
+                            .border_2()
+                            .border_color(white())
+                            .bg(th.accent),
+                    ),
+            )
+            .child(
+                div()
+                    .w(px(28.))
+                    .text_size(px(9.))
+                    .text_color(th.accent)
+                    .child(format!("{amount:.2}")),
+            )
     }
 
     /// Set the lightness of the active marker (keeping its hue + saturation).
@@ -3152,25 +3278,7 @@ impl Render for Workspace {
                         }),
                     ),
                 )
-                .child({
-                    // Screen warp — a single GLOBAL toggle (orthogonal to the
-                    // theme): any texture can curve the tube or stay flat.
-                    let on = theme::screen_warp(cx);
-                    let lbl = if on {
-                        "◉ screen warp"
-                    } else {
-                        "◯ screen warp"
-                    };
-                    Self::bezel_btn(&th, lbl, on).on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                            cx.stop_propagation();
-                            let now = theme::screen_warp(cx);
-                            theme::set_screen_warp(cx, !now);
-                            ws.save(cx);
-                        }),
-                    )
-                });
+                .child(self.warp_slider(&th, cx));
             if is_pane {
                 // Grade-group toggle, independent of the theme tray's: on = this
                 // pane's monitor grade tracks the outer sliders live; off = it
@@ -3658,23 +3766,30 @@ id = "hacker"
     }
 
     #[test]
-    fn screen_warp_defaults_on_and_round_trips_off() {
-        // old state files (no `warp` key) default to on — the classic curved tube
+    fn screen_warp_is_a_dial_that_round_trips_and_migrates_legacy_bool() {
+        // absent `warp` → the default dial
         let legacy: StateFile = toml::from_str("active = 0\n[[tabs]]\nnode = \"Leaf\"\n").unwrap();
-        assert!(legacy.warp, "absent warp → on");
-        // a saved warp=false survives the wire
+        assert!(
+            (legacy.warp - theme::WARP_DEFAULT).abs() < 1e-6,
+            "absent → default"
+        );
+        // a float dial survives the wire
         let s = StateFile {
-            warp: false,
+            warp: 1.2,
             ..Default::default()
         };
         let back: StateFile = toml::from_str(&toml::to_string(&s).unwrap()).unwrap();
-        assert!(!back.warp, "warp=false round-trips");
-        // on is the default → omitted from the serialized form
-        let on = toml::to_string(&StateFile::default()).unwrap();
+        assert!((back.warp - 1.2).abs() < 1e-6, "dial round-trips");
+        // legacy bool toggle migrates: true → default dial, false → flat
+        let on: StateFile =
+            toml::from_str("active = 0\nwarp = true\n[[tabs]]\nnode = \"Leaf\"\n").unwrap();
         assert!(
-            !on.contains("warp"),
-            "default warp=on is skipped on the wire"
+            (on.warp - theme::WARP_DEFAULT).abs() < 1e-6,
+            "true → default dial"
         );
+        let off: StateFile =
+            toml::from_str("active = 0\nwarp = false\n[[tabs]]\nnode = \"Leaf\"\n").unwrap();
+        assert_eq!(off.warp, 0.0, "false → flat");
     }
 
     #[test]
@@ -3688,7 +3803,7 @@ id = "hacker"
                 seed: Some("#31d7ff".into()),
                 ..Default::default()
             }),
-            warp: true,
+            warp: theme::WARP_DEFAULT,
             tabs: vec![SavedTab {
                 name: None,
                 node: SavedNode::Leaf {
@@ -3721,7 +3836,7 @@ id = "hacker"
             win: None,
             scale: None,
             theme: None,
-            warp: true,
+            warp: theme::WARP_DEFAULT,
             tabs: vec![SavedTab {
                 name: Some("agents".into()),
                 node: SavedNode::Leaf {
@@ -3838,7 +3953,7 @@ id = "hacker"
             win: None,
             scale: None,
             theme: None,
-            warp: true,
+            warp: theme::WARP_DEFAULT,
             tabs: vec![SavedTab { name: None, node }],
         };
         let body = toml::to_string(&state).expect("serializes");
