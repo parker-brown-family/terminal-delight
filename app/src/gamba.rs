@@ -1,11 +1,10 @@
 //! 🎰 GAMBA — the slot-machine "thinking" overlay.
 //!
 //! Pure satire: when an AI agent in a pane is *thinking* (its "esc to
-//! interrupt" spinner is up), the wait becomes a slot machine. A 3-wide grid
-//! grows downward, one **wheel block** (a row of three) landing on an
-//! escalating schedule — **5s, 15s, 45s, 2m, 5m, 10m, then every 10m** — each
-//! row spinning down and clunking into place. Landings are snappy: the first
-//! block lands twice as fast, the second 1.5× as fast, the rest at that speed.
+//! interrupt" spinner is up), the wait becomes a slot machine — a 3×3 grid that
+//! **rerolls every 10 seconds** for as long as the agent keeps cooking. On each
+//! roll the reels land left→right on a fast fixed timer (0.3s / 0.8s / 1.2s),
+//! the last column easing in slowest for the hopeful slot-machine pause.
 //!
 //! Three matching glyphs in a row / column / diagonal (or a full blackout) pay
 //! out **10 / 100 / 1000** in bouncing Sonic-ring tokens, set off a glitter
@@ -16,8 +15,8 @@
 //! straight through to the shell.
 //!
 //! Gated to the GAMBA look (theme `gamba` / the RETRO colour set); `TD_GAMBA=1`
-//! forces it on any theme, `TD_GAMBA_DEMO=1` rolls on a compressed schedule
-//! (with a rigged early win) for demos/screenshots.
+//! forces it on any theme, `TD_GAMBA_DEMO=1` rerolls faster + rigs the first
+//! roll to a jackpot for demos/screenshots.
 
 use std::time::Instant;
 
@@ -29,37 +28,23 @@ use crate::theme::Theme;
 /// matches land often. Swap freely; matches and scoring adapt to the length.
 const LIB: &[&str] = &["🚀", "✨", "🔥", "🧠"];
 
-/// How many wheel-block rows the grid grows to (it caps so a marathon turn
-/// doesn't run off the pane — by row 7 you're 20 minutes deep anyway).
-const MAX_ROWS: usize = 7;
-/// Symbols rolled through during a wheel's deceleration window.
+/// Symbols rolled through during a reel's deceleration window.
 const SPINS: f32 = 11.0;
-/// Free-spin speed (symbols/sec) before a wheel enters its decel window.
+/// Free-spin speed (symbols/sec) before a reel enters its decel window.
 const FREE_SPEED: f32 = 9.0;
 /// Glitter bomb / token spray lifetime (seconds).
 const FX_LIFE: f32 = 2.6;
 /// A win rumbles the terminal this long while the coins spill.
 const RUMBLE_SECS: f32 = 3.0;
+/// The 3×3 grid rerolls this often (seconds). Flat — no escalation.
+const ROLL_PERIOD: f32 = 10.0;
 
-/// The "big timer" — when wheel-block `r` STARTS spinning (seconds since
-/// thinking started). An immediate first pull, then 5s, 15s, 45s, 2m, 5m, 10m,
-/// then +10m each block after. Each block only spins for ~1.2s (see `REEL_AT`)
-/// — it does NOT keep rolling until the next block.
-fn block_start(r: usize) -> f32 {
-    const BASE: [f32; 7] = [0.5, 5.0, 15.0, 45.0, 120.0, 300.0, 600.0];
-    if r < BASE.len() {
-        BASE[r]
-    } else {
-        600.0 + (r - (BASE.len() - 1)) as f32 * 600.0
-    }
-}
-
-/// Within a block the three reels lock left→right on a fast, fixed timer
-/// (seconds after the block starts). The last reel lands at 1.2s — and lingers
-/// (see `REEL_WIN`) for the hopeful slot-machine pause.
+/// Within a roll the three columns lock left→right on this fast fixed timer
+/// (seconds after the roll starts) — the last column lands at 1.2s and lingers
+/// (see `REEL_WIN`) for the hopeful pause.
 const REEL_AT: [f32; 3] = [0.3, 0.8, 1.2];
-/// Per-reel deceleration window. The last reel eases in slowly — that's the
-/// drawn-out "is it gonna hit?" tease on the final icon.
+/// Per-column deceleration window. The last column eases in slowest — that's
+/// the drawn-out "is it gonna hit?" tease on the final reel.
 const REEL_WIN: [f32; 3] = [0.22, 0.30, 0.65];
 
 /// A sprayed Sonic-ring token, in normalised 0..1 pane space.
@@ -90,11 +75,13 @@ pub struct Reels {
     thinking_since: Option<Instant>,
     rng: u64,
     last_t: f32,
-    /// Final symbols for every row, fixed up front so the wheels land on them.
-    rows: [[usize; 3]; MAX_ROWS],
-    /// How many rows have locked + been scored.
-    scored: usize,
-    /// Winning cells, bit `r*3+c` set.
+    /// The current roll's 9 symbols, row-major.
+    grid: [usize; 9],
+    /// Which reroll we're on (0-based; `floor(elapsed / period)`).
+    roll: usize,
+    /// The last roll that was scored (-1 = none yet).
+    scored_roll: i64,
+    /// Winning cells of the current roll, bit `r*3+c`.
     winners: u32,
     tokens: Vec<Token>,
     glints: Vec<Glint>,
@@ -102,8 +89,8 @@ pub struct Reels {
     /// The terminal rumbles until this time (set on a win).
     rumble_until: f32,
     demo: bool,
-    /// Schedule time-scale (1.0 prod; compressed for demos).
-    scale: f32,
+    /// Reroll period (seconds) — shorter for demos.
+    period: f32,
 }
 
 impl Reels {
@@ -113,15 +100,16 @@ impl Reels {
             thinking_since: None,
             rng: 0x9E3779B97F4A7C15 ^ seed.wrapping_mul(0xD1B54A32D192ED03).max(1),
             last_t: 0.0,
-            rows: [[0; 3]; MAX_ROWS],
-            scored: 0,
+            grid: [0; 9],
+            roll: 0,
+            scored_roll: -1,
             winners: 0,
             tokens: Vec::new(),
             glints: Vec::new(),
             splashes: Vec::new(),
             rumble_until: -1.0,
             demo,
-            scale: if demo { 0.18 } else { 1.0 },
+            period: if demo { 4.0 } else { ROLL_PERIOD },
         }
     }
 
@@ -139,34 +127,38 @@ impl Reels {
         self.thinking_since.is_some()
     }
 
-    /// Flip the thinking state. On → fix a fresh grid of final symbols; off →
-    /// clear everything so the next think starts clean.
+    /// Roll fresh symbols into the grid. Demo's first roll is rigged to a
+    /// full-board jackpot so the win FX + rumble fire on screen reliably.
+    fn gen_grid(&mut self, roll: usize) {
+        let mut g = [0usize; 9];
+        for cell in g.iter_mut() {
+            *cell = (self.rand() as usize) % LIB.len();
+        }
+        // demo's first roll is rigged to a full-board jackpot so the win FX +
+        // rumble fire on screen reliably; every other roll is random.
+        if self.demo && roll == 0 {
+            g = [g[0]; 9];
+        }
+        self.grid = g;
+    }
+
+    /// Flip the thinking state. On → roll the first 3×3; off → clear everything.
     pub fn set_thinking(&mut self, on: bool) {
         match (on, self.thinking_since.is_some()) {
             (true, false) => {
                 self.thinking_since = Some(Instant::now());
                 self.last_t = 0.0;
-                self.scored = 0;
+                self.roll = 0;
+                self.scored_roll = -1;
                 self.winners = 0;
                 self.rumble_until = -1.0;
                 self.tokens.clear();
                 self.glints.clear();
                 self.splashes.clear();
-                for r in 0..MAX_ROWS {
-                    for c in 0..3 {
-                        self.rows[r][c] = (self.rand() as usize) % LIB.len();
-                    }
-                }
-                // demo's first block is rigged to a guaranteed line so the win
-                // FX + rumble fire early for screenshots; prod is all random.
-                if self.demo {
-                    let s = self.rows[0][0];
-                    self.rows[0] = [s, s, s];
-                }
+                self.gen_grid(0);
             }
             (false, true) => {
                 self.thinking_since = None;
-                self.scored = 0;
                 self.winners = 0;
                 self.tokens.clear();
                 self.glints.clear();
@@ -182,8 +174,8 @@ impl Reels {
             .unwrap_or(0.0)
     }
 
-    /// Advance the grid (score newly-locked rows) and the token/glitter physics.
-    /// Returns true while thinking (the overlay animates → always redraw).
+    /// Advance: reroll the grid every period, score it once its reels land, and
+    /// step the token/glitter physics. True while thinking (always redraw).
     pub fn tick(&mut self) -> bool {
         if self.thinking_since.is_none() {
             return false;
@@ -192,16 +184,24 @@ impl Reels {
         let dt = (t - self.last_t).clamp(0.0, 0.05);
         self.last_t = t;
 
-        // score each wheel block once its last reel has landed (only the big
-        // timer scales for demos; the within-block reel stagger stays fixed)
-        while self.scored < MAX_ROWS && t >= block_start(self.scored) * self.scale + REEL_AT[2] {
-            let r = self.scored;
-            if let Some((value, wbits)) = self.evaluate(r) {
-                self.winners |= wbits;
+        // reroll on the flat 10s timer
+        let cur = (t / self.period) as usize;
+        if cur != self.roll {
+            self.roll = cur;
+            self.winners = 0;
+            self.gen_grid(cur);
+        }
+
+        // score this roll once its last reel has landed (once per roll)
+        let roll_start = self.roll as f32 * self.period;
+        if t >= roll_start + REEL_AT[2] && self.scored_roll != self.roll as i64 {
+            self.scored_roll = self.roll as i64;
+            let (w8, value) = score(&self.grid);
+            if value > 0 {
+                self.winners = w8 as u32;
                 self.celebrate(value, t);
                 self.rumble_until = t + RUMBLE_SECS;
             }
-            self.scored += 1;
         }
 
         // physics: gravity + floor/wall bounce for the ring tokens
@@ -227,56 +227,6 @@ impl Reels {
         self.splashes.retain(|s| t - s.born < 1.7);
 
         true
-    }
-
-    /// Score the grid as row `r` locks: a single all-matching row is a line
-    /// (10); the bottom 3×3 window's columns/diagonals add up to a compound
-    /// (100); the whole locked grid identical is a blackout (1000). Returns the
-    /// payout and the winning-cell bitmask, or None.
-    fn evaluate(&self, r: usize) -> Option<(u32, u32)> {
-        let mut value = 0u32;
-        let mut wbits = 0u32;
-        if r < 2 {
-            let row = self.rows[r];
-            if row[0] == row[1] && row[1] == row[2] {
-                value = 10;
-                for c in 0..3 {
-                    wbits |= 1 << (r * 3 + c);
-                }
-            }
-        } else {
-            let mut cells = [0usize; 9];
-            for j in 0..3 {
-                for c in 0..3 {
-                    cells[j * 3 + c] = self.rows[r - 2 + j][c];
-                }
-            }
-            let (w8, v) = score(&cells);
-            if v > 0 {
-                value = v;
-                for b in 0..9 {
-                    if w8 & (1 << b) != 0 {
-                        let (j, c) = (b / 3, b % 3);
-                        wbits |= 1 << ((r - 2 + j) * 3 + c);
-                    }
-                }
-            }
-        }
-        // whole-grid blackout (every locked cell identical) trumps everything
-        let n = r + 1;
-        if n >= 3 {
-            let first = self.rows[0][0];
-            if (0..n).all(|rr| self.rows[rr].iter().all(|&x| x == first)) {
-                value = 1000;
-                wbits = 0;
-                for rr in 0..n {
-                    for c in 0..3 {
-                        wbits |= 1 << (rr * 3 + c);
-                    }
-                }
-            }
-        }
-        (value > 0).then_some((value, wbits))
     }
 
     /// Spray tokens + glitter for a win; the splash shows the value.
@@ -328,7 +278,7 @@ impl Reels {
     }
 }
 
-/// Score a 3×3 window: 10 = one line · 100 = two+ lines (X / L / multi) ·
+/// Score a 3×3 grid: 10 = one line · 100 = two+ lines (X / L / multi) ·
 /// 1000 = all nine identical. Returns (winning-cell bitmask 0..8, value).
 fn score(cells: &[usize; 9]) -> (u16, u32) {
     const LINES: [[usize; 3]; 8] = [
@@ -375,17 +325,14 @@ const CELL_W: f32 = 56.0;
 const CELL_H: f32 = 56.0;
 const CELL_GAP: f32 = 6.0;
 
-/// The full overlay: the growing wheel grid, the glitter bomb, the bouncing
-/// tokens, and the payout splash. Covers the whole pane; no mouse handlers.
+/// The full overlay: the 3×3 reel grid, the glitter bomb, the bouncing tokens,
+/// and the payout splash. Covers the whole pane; no mouse handlers.
 pub fn overlay(reels: &Reels, th: &Theme) -> Option<Div> {
     if !reels.is_thinking() {
         return None;
     }
     let t = reels.elapsed();
-    let scale = reels.scale;
-    if t < block_start(0) * scale {
-        return None;
-    }
+    let roll_start = reels.roll as f32 * reels.period;
     let gold = th.accent;
     let face = Hsla {
         h: th.surface.h,
@@ -397,23 +344,17 @@ pub fn overlay(reels: &Reels, th: &Theme) -> Option<Div> {
     let cabinet_hi = hsla(40. / 360., 0.85, 0.30, 0.97);
     let any_win = reels.winners != 0;
 
-    // the growing grid: rows appear in order as their time comes
+    // the fixed 3×3 grid; columns land left→right (REEL_AT), last column teases
     let mut grid = div().flex().flex_col().items_center().gap(px(CELL_GAP));
-    for r in 0..MAX_ROWS {
-        let bs = block_start(r) * scale;
-        if t < bs {
-            break;
-        }
+    for r in 0..3 {
         let mut row = div().flex().flex_row().gap(px(CELL_GAP));
         for c in 0..3 {
             let idx = r * 3 + c;
             let win = reels.winners & (1 << idx) != 0;
-            // each reel locks left→right on the fast within-block timer; the
-            // last reel eases in slowly (REEL_WIN[2]) for the tease.
-            let lock = bs + REEL_AT[c];
+            let lock = roll_start + REEL_AT[c];
             let window = REEL_WIN[c];
             row = row.child(render_cell(
-                reels.rows[r][c],
+                reels.grid[idx],
                 t,
                 lock,
                 window,
@@ -556,7 +497,7 @@ pub fn overlay(reels: &Reels, th: &Theme) -> Option<Div> {
     Some(root)
 }
 
-/// One wheel cell: a recessed window with a vertically scrolling strip of glyphs
+/// One reel cell: a recessed window with a vertically scrolling strip of glyphs
 /// that decelerates and clunks onto its final symbol.
 #[allow(clippy::too_many_arguments)]
 fn render_cell(
@@ -701,16 +642,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn big_timer_schedule() {
-        // immediate first pull, then 5, 15, 45, 120, 300, 600, +600 (10m) after.
-        let got: Vec<f32> = (0..8).map(block_start).collect();
-        assert_eq!(got, vec![0.5, 5., 15., 45., 120., 300., 600., 1200.]);
+    fn flat_reroll_period() {
+        // a fixed 3×3 that rerolls on a flat 10s timer — no escalation.
+        assert_eq!(ROLL_PERIOD, 10.0);
     }
 
     #[test]
     fn reels_land_fast_left_to_right_with_a_last_reel_tease() {
-        // three reels lock at 0.3/0.8/1.2s after the block starts — snappy —
-        // and the last reel eases in slowest (the hopeful pause).
+        // columns lock at 0.3/0.8/1.2s after the roll — snappy — and the last
+        // column eases in slowest (the hopeful pause).
         assert_eq!(REEL_AT, [0.3, 0.8, 1.2]);
         assert!(REEL_AT[0] < REEL_AT[1] && REEL_AT[1] < REEL_AT[2]);
         assert!(REEL_WIN[2] > REEL_WIN[0] && REEL_WIN[2] > REEL_WIN[1]);
