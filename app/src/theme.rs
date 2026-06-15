@@ -58,7 +58,6 @@ struct FileEffects {
     tracking_sweep: Option<f32>,
     flicker: Option<f32>,
     jiggle: Option<f32>,
-    curvature: Option<f32>,
     screen_glare: Option<f32>,
     bezel: Option<f32>,
 }
@@ -119,7 +118,6 @@ pub struct Theme {
     pub tracking_sweep: f32,
     pub flicker: f32,
     pub jiggle: f32,
-    pub curvature: f32,
     pub screen_glare: f32,
     /// Raised metallic frame around the pane edge (0 = flat). 0..1 strength.
     pub bezel: f32,
@@ -952,16 +950,51 @@ pub fn resolve(cx: &App, choice: &ThemeChoice) -> Arc<Theme> {
 /// Set the outer (workspace) theme and repaint everything.
 pub fn select_outer(cx: &mut App, choice: ThemeChoice) {
     let th = resolve(cx, &choice);
-    apply_warp(&th);
     cx.set_global(ActiveTheme(th));
     cx.set_global(OuterChoice(choice));
     cx.refresh_windows();
 }
 
-/// Push the curvature dial into the renderer's CRT warp pass (td-crt-pass patch).
-fn apply_warp(theme: &Theme) {
+/// The screen-warp (CRT barrel) toggle — a single global switch, ORTHOGONAL to
+/// the theme. Any texture can curve or stay flat; warp is no longer a property
+/// of the theme. The barrel coefficient when on (the old hacker dial).
+pub const WARP_CURVATURE: f32 = 0.42;
+
+pub struct ScreenWarp(pub bool);
+impl Global for ScreenWarp {}
+
+/// Is the global screen-warp on? Defaults to on (the classic curved tube) until
+/// state restore says otherwise.
+pub fn screen_warp(cx: &App) -> bool {
+    cx.try_global::<ScreenWarp>().map(|w| w.0).unwrap_or(true)
+}
+
+/// The barrel coefficients `(k1, k2)` the renderer + hit-testing use — zero when
+/// warp is off, so the pane is geometrically flat.
+pub fn warp_k(cx: &App) -> (f32, f32) {
+    if screen_warp(cx) {
+        (WARP_CURVATURE * 0.14, WARP_CURVATURE * 0.06)
+    } else {
+        (0.0, 0.0)
+    }
+}
+
+/// Flip the global screen-warp toggle and repaint.
+pub fn set_screen_warp(cx: &mut App, on: bool) {
+    cx.set_global(ScreenWarp(on));
+    apply_warp(on);
+    cx.refresh_windows();
+}
+
+/// Push the warp toggle into the renderer's CRT warp pass (td-crt-pass patch).
+fn apply_warp(on: bool) {
     #[cfg(target_os = "linux")]
-    gpui_wgpu::set_crt_warp(theme.curvature * 0.14, theme.curvature * 0.06);
+    {
+        let k = if on { WARP_CURVATURE } else { 0.0 };
+        gpui_wgpu::set_crt_warp(k * 0.14, k * 0.06);
+    }
+    #[cfg(not(target_os = "linux"))]
+    let _ = on;
 }
 
 fn hex(value: &str) -> Option<Hsla> {
@@ -1018,7 +1051,6 @@ pub(crate) fn parse(source: &str) -> Result<Theme, String> {
         tracking_sweep: file.effects.tracking_sweep.unwrap_or(7.).clamp(1., 30.),
         flicker: file.effects.flicker.unwrap_or(0.).clamp(0., 1.),
         jiggle: file.effects.jiggle.unwrap_or(0.).clamp(0., 1.),
-        curvature: file.effects.curvature.unwrap_or(0.).clamp(0., 1.),
         screen_glare: file
             .effects
             .screen_glare
@@ -1498,7 +1530,8 @@ pub fn init(cx: &mut App) {
         custom: custom.clone(),
     });
     cx.set_global(OuterChoice(ThemeChoice::default()));
-    apply_warp(&custom);
+    cx.set_global(ScreenWarp(true)); // default on; state restore may flip it
+    apply_warp(true);
     cx.set_global(ActiveTheme(custom));
 
     let mut last = mtime(&path);
@@ -1512,7 +1545,8 @@ pub fn init(cx: &mut App) {
             if let Ok(source) = fs::read_to_string(&path) {
                 match parse(&source) {
                     Ok(theme) => {
-                        apply_warp(&theme);
+                        // Warp is a global toggle now, independent of the theme —
+                        // a hot-reload only restates colours/effects.
                         cx.update(|cx| {
                             // the user file is the "custom" registry slot; any
                             // scope pointing at it re-resolves on repaint

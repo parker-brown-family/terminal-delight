@@ -1452,7 +1452,9 @@ impl Render for TerminalView {
             .grade
             .scale;
         self.sync_size(&th, scale, window);
-        self.warp_k = (th.curvature * 0.14, th.curvature * 0.06);
+        // Warp curvature is a global toggle now (not per-theme); keep this pane's
+        // hit-test coefficients in sync with it.
+        self.warp_k = theme::warp_k(cx);
         let lines = self.styled_lines(&th);
         let status = if self.exited { "exited" } else { "live" };
         let grid_label = format!("{}×{}", self.grid.cols, self.grid.rows);
@@ -1642,6 +1644,10 @@ impl Render for TerminalView {
                             canvas(
                                 move |bounds, window, cx| {
                                     let sf = window.scale_factor();
+                                    // Warp is a single global toggle now, not a
+                                    // theme property — read it here so hit-testing
+                                    // matches the shader.
+                                    let (k1, k2) = crate::theme::warp_k(cx);
                                     crate::warp::register_tube(
                                         [
                                             f32::from(bounds.origin.x) * sf,
@@ -1650,8 +1656,8 @@ impl Render for TerminalView {
                                             f32::from(bounds.size.height) * sf,
                                         ],
                                         th.screen_glare,
-                                        th.curvature * 0.14,
-                                        th.curvature * 0.06,
+                                        k1,
+                                        k2,
                                     );
                                     let changed = {
                                         let mut slot = store.lock().unwrap();

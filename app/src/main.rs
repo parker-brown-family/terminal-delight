@@ -436,7 +436,7 @@ impl Tab {
     }
 }
 
-#[derive(Serialize, Deserialize, Default)]
+#[derive(Serialize, Deserialize)]
 struct StateFile {
     active: usize,
     /// Window origin + size (x, y, w, h) for exact-place reboot.
@@ -447,7 +447,31 @@ struct StateFile {
     /// Outer (workspace) theme choice; panes may carry their own override.
     #[serde(default)]
     theme: Option<ThemeChoice>,
+    /// Global screen-warp (CRT barrel) toggle — orthogonal to the theme. Absent
+    /// in old state files → defaults to on (the classic curved tube).
+    #[serde(default = "yes_warp", skip_serializing_if = "is_on")]
+    warp: bool,
     tabs: Vec<SavedTab>,
+}
+
+fn yes_warp() -> bool {
+    true
+}
+fn is_on(b: &bool) -> bool {
+    *b
+}
+
+impl Default for StateFile {
+    fn default() -> Self {
+        Self {
+            active: 0,
+            win: None,
+            scale: None,
+            theme: None,
+            warp: true, // fresh install: classic curved tube on
+            tabs: Vec::new(),
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -736,6 +760,7 @@ impl Workspace {
         if let Some(s) = saved.scale {
             outer.grade.scale = s.clamp(0.7, 1.6);
         }
+        theme::set_screen_warp(cx, saved.warp); // restore the global warp toggle
         theme::select_outer(cx, outer);
         let mut ws = Self {
             tabs: vec![],
@@ -838,6 +863,7 @@ impl Workspace {
             // the source of truth is now `theme.grade.scale`.
             scale: Some(theme::outer_choice(cx).grade.scale),
             theme: Some(theme::outer_choice(cx)),
+            warp: theme::screen_warp(cx),
             tabs: self
                 .tabs
                 .iter()
@@ -3012,7 +3038,26 @@ impl Render for Workspace {
                             ws.reset_grade(cx);
                         }),
                     ),
-                );
+                )
+                .child({
+                    // Screen warp — a single GLOBAL toggle (orthogonal to the
+                    // theme): any texture can curve the tube or stay flat.
+                    let on = theme::screen_warp(cx);
+                    let lbl = if on {
+                        "◉ screen warp"
+                    } else {
+                        "◯ screen warp"
+                    };
+                    Self::bezel_btn(&th, lbl, on).on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                            cx.stop_propagation();
+                            let now = theme::screen_warp(cx);
+                            theme::set_screen_warp(cx, !now);
+                            ws.save(cx);
+                        }),
+                    )
+                });
             if is_pane {
                 // Grade-group toggle, independent of the theme tray's: on = this
                 // pane's monitor grade tracks the outer sliders live; off = it
@@ -3500,6 +3545,26 @@ id = "hacker"
     }
 
     #[test]
+    fn screen_warp_defaults_on_and_round_trips_off() {
+        // old state files (no `warp` key) default to on — the classic curved tube
+        let legacy: StateFile = toml::from_str("active = 0\n[[tabs]]\nnode = \"Leaf\"\n").unwrap();
+        assert!(legacy.warp, "absent warp → on");
+        // a saved warp=false survives the wire
+        let s = StateFile {
+            warp: false,
+            ..Default::default()
+        };
+        let back: StateFile = toml::from_str(&toml::to_string(&s).unwrap()).unwrap();
+        assert!(!back.warp, "warp=false round-trips");
+        // on is the default → omitted from the serialized form
+        let on = toml::to_string(&StateFile::default()).unwrap();
+        assert!(
+            !on.contains("warp"),
+            "default warp=on is skipped on the wire"
+        );
+    }
+
+    #[test]
     fn state_with_pane_theme_round_trips() {
         let state = StateFile {
             active: 0,
@@ -3510,6 +3575,7 @@ id = "hacker"
                 seed: Some("#31d7ff".into()),
                 ..Default::default()
             }),
+            warp: true,
             tabs: vec![SavedTab {
                 name: None,
                 node: SavedNode::Leaf {
@@ -3542,6 +3608,7 @@ id = "hacker"
             win: None,
             scale: None,
             theme: None,
+            warp: true,
             tabs: vec![SavedTab {
                 name: Some("agents".into()),
                 node: SavedNode::Leaf {
@@ -3658,6 +3725,7 @@ id = "hacker"
             win: None,
             scale: None,
             theme: None,
+            warp: true,
             tabs: vec![SavedTab { name: None, node }],
         };
         let body = toml::to_string(&state).expect("serializes");
