@@ -234,6 +234,25 @@ fn open_with_system(target: &str) {
     let _ = cmd.spawn();
 }
 
+/// Play a per-agent completion sound (the bell). Each agent kind maps to a distinct
+/// XDG sound-theme event so you can tell by ear which pane finished. Detached, and
+/// silently no-ops if no player / sound theme is installed.
+fn ring_bell(mode: PaneMode) {
+    use std::process::{Command, Stdio};
+    let event = match mode {
+        PaneMode::Claude => "complete",
+        PaneMode::Codex => "message",
+        PaneMode::Remote => "device-added",
+        _ => "bell",
+    };
+    let _ = Command::new("canberra-gtk-play")
+        .args(["-i", event])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn();
+}
+
 /// Screen→content barrel map — identical to the per-rect warp in
 /// `gpui_wgpu/src/crt_pass.wgsl` (`fs_crt`): the content displayed at a
 /// rect-local screen point `(sx, sy)` ∈ [0,1]² is sampled from
@@ -684,6 +703,11 @@ pub struct TerminalView {
     pending_grid: Option<(term::GridSize, Instant)>,
     /// Right-click context menu (Copy / Paste / Open link) anchor, window-space.
     ctx_menu: Option<gpui::Point<Pixels>>,
+    /// A bell rang (agent finished) and the pane hasn't been looked at yet —
+    /// shows a "done" glyph in the header; cleared on focus or keypress.
+    bell: bool,
+    /// Last-known OS focus, for edge-detected focus reporting (CSI I / CSI O).
+    was_focused: bool,
 }
 
 /// Click on the header's theme icon — the workspace opens the breakout menu.
@@ -861,6 +885,8 @@ impl TerminalView {
             mode: PaneMode::Shell,
             appearance: PaneTheme::default(),
             ctx_menu: None,
+            bell: false,
+            was_focused: false,
             pending_grid: None,
         }
     }
@@ -878,6 +904,13 @@ impl TerminalView {
             TermEvent::PtyWrite(text) => self.session.notifier.notify(text.into_bytes()),
             TermEvent::Title(title) => {
                 self.title = title;
+                cx.notify();
+            }
+            TermEvent::Bell => {
+                // an agent (or any program) rang the bell — flag the pane "done"
+                // and play a per-agent sound so you know which one finished.
+                self.bell = true;
+                ring_bell(self.mode.clone());
                 cx.notify();
             }
             TermEvent::Exit | TermEvent::ChildExit(_) => {
@@ -1141,9 +1174,15 @@ impl TerminalView {
                     self.paste_clipboard(cx);
                     return;
                 }
+                "k" => {
+                    self.clear_scrollback(cx);
+                    return;
+                }
                 _ => {}
             }
         }
+        // any key that reaches the shell clears the "agent done" bell flag
+        self.bell = false;
         if let Some(bytes) = keystroke_bytes(ks) {
             {
                 let mut term = self.session.term.lock();
@@ -1209,6 +1248,16 @@ impl TerminalView {
             .map(|s| !s.is_empty())
             .unwrap_or(false)
     }
+    /// Clear the saved scrollback history. This is NOT the shell's Ctrl+L (which
+    /// just clears the visible screen) — it drops the lines you scroll back to.
+    fn clear_scrollback(&self, cx: &mut Context<Self>) {
+        {
+            let mut term = self.session.term.lock();
+            term.grid_mut().clear_history();
+            term.scroll_display(Scroll::Bottom);
+        }
+        cx.notify();
+    }
 
     fn on_mouse_down(&mut self, ev: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         if std::env::var("TD_KEYDEBUG").is_ok() {
@@ -1228,10 +1277,10 @@ impl TerminalView {
         if self.ctx_menu.take().is_some() {
             cx.notify();
         }
-        // Shift-click opens a link/path under the cursor with the system default
-        // tool, instead of starting a selection. A shift-click that isn't on a
-        // link falls through to normal selection behaviour.
-        if ev.modifiers.shift && ev.button == MouseButton::Left {
+        // Shift- or Ctrl-click opens a link/path under the cursor with the system
+        // default tool, instead of starting a selection. A modified click that
+        // isn't on a link falls through to normal selection behaviour.
+        if (ev.modifiers.shift || ev.modifiers.control) && ev.button == MouseButton::Left {
             if let Some(target) = self.link_under(ev.position) {
                 open_with_system(&target);
                 cx.notify();
@@ -1418,6 +1467,15 @@ fn grid_font(th: &Theme, weight: FontWeight) -> Font {
 /// gpui Keystroke → PTY bytes.
 fn keystroke_bytes(ks: &Keystroke) -> Option<Vec<u8>> {
     let m = &ks.modifiers;
+    // Enter: plain submits (CR); shift/alt+enter sends a literal newline (LF) so
+    // multi-line input in claude/codex inserts a line break instead of submitting.
+    if ks.key.as_str() == "enter" && !m.control {
+        return Some(if m.shift || m.alt {
+            vec![b'\n']
+        } else {
+            vec![b'\r']
+        });
+    }
     if m.alt {
         // alt+arrows switch panes; ctrl+alt chords split — both owned by Workspace
         if matches!(ks.key.as_str(), "left" | "right" | "up" | "down") || m.control {
@@ -1543,6 +1601,15 @@ impl Render for TerminalView {
                         cx.stop_propagation();
                         cx.notify();
                     }),
+                ))
+                .child(row("Clear scrollback", true).on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|v, _, _, cx| {
+                        v.clear_scrollback(cx);
+                        v.ctx_menu = None;
+                        cx.stop_propagation();
+                        cx.notify();
+                    }),
                 ));
             deferred(anchored().position(pos).snap_to_window().child(menu))
         });
@@ -1557,8 +1624,36 @@ impl Render for TerminalView {
         // Warp curvature is a global toggle now (not per-theme); keep this pane's
         // hit-test coefficients in sync with it.
         self.warp_k = theme::warp_k(cx);
+        // edge-detected focus reporting (CSI I / CSI O) for apps that ask for it,
+        // and clear the "agent done" bell as soon as you look at the pane.
+        let focused_now = self.focus_handle(cx).is_focused(window);
+        if focused_now != self.was_focused {
+            self.was_focused = focused_now;
+            if focused_now {
+                self.bell = false;
+            }
+            if self
+                .session
+                .term
+                .lock()
+                .mode()
+                .contains(TermMode::FOCUS_IN_OUT)
+            {
+                self.session.notifier.notify(if focused_now {
+                    b"\x1b[I".to_vec()
+                } else {
+                    b"\x1b[O".to_vec()
+                });
+            }
+        }
         let lines = self.styled_lines(&th);
-        let status = if self.exited { "exited" } else { "live" };
+        let status = if self.bell {
+            "● done"
+        } else if self.exited {
+            "exited"
+        } else {
+            "live"
+        };
         let grid_label = format!("{}×{}", self.grid.cols, self.grid.rows);
         let glow = th.glow;
 
@@ -2068,6 +2163,9 @@ mod tests {
         let bytes = |s: &str| keystroke_bytes(&Keystroke::parse(s).unwrap());
         assert_eq!(bytes("ctrl-c"), Some(vec![3]));
         assert_eq!(bytes("enter"), Some(b"\r".to_vec()));
+        // shift/alt+enter = literal newline (line break) for claude/codex multiline
+        assert_eq!(bytes("shift-enter"), Some(b"\n".to_vec()));
+        assert_eq!(bytes("alt-enter"), Some(b"\n".to_vec()));
         assert_eq!(bytes("up"), Some(b"\x1b[A".to_vec()));
         assert_eq!(bytes("escape"), Some(vec![0x1b]));
         // ctrl+arrows skip by word (xterm CSI 1;5 form)
