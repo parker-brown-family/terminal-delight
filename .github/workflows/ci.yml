@@ -4,6 +4,7 @@ on:
   pull_request:
   push:
     branches: [main]
+    tags: ['v*']
 
 jobs:
   rust:
@@ -92,10 +93,13 @@ jobs:
 
   package:
     name: AppImage (artifact)
-    # Build the distributable MIT-clean AppImage on pushes to main and tags,
-    # not on every PR. Non-blocking signal; downloadable from the run's artifacts.
+    # Build the distributable MIT-clean AppImage on pushes to main and on version
+    # tags. On a tag it is also attached to the GitHub Release (one-command install
+    # for new users); on main it's just a downloadable run artifact.
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
+    permissions:
+      contents: write   # needed to attach the AppImage to the release on tags
     steps:
       - uses: actions/checkout@v4
 
@@ -127,9 +131,17 @@ jobs:
       - name: Build AppImage
         run: ./scripts/build-appimage.sh
 
-      - name: Upload AppImage
+      - name: Upload AppImage (run artifact)
         uses: actions/upload-artifact@v4
         with:
           name: terminal-delight-x86_64.AppImage
           path: dist/terminal-delight-x86_64.AppImage
           if-no-files-found: error
+
+      - name: Attach AppImage to the GitHub Release (tags only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/terminal-delight-x86_64.AppImage
+          generate_release_notes: true
+          fail_on_unmatched_files: true

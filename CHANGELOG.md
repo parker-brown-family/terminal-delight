@@ -7,25 +7,42 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ## [Unreleased]
 
+_Nothing yet._
+
+## [0.2.0] — 2026-06-15
+
+The "now you can actually download it" release: a single MIT-licensed AppImage,
+no more source-only. Plus a per-pane agent-finished bell and richer agent panes.
+
 ### Added
 
 - **Prebuilt, MIT-clean AppImage.** `scripts/build-appimage.sh` produces a single
   self-contained `terminal-delight-x86_64.AppImage`, bundling a `cargo about`
-  third-party license notice; CI builds it as an artifact on push. Graphics
-  libraries are loaded from the host (a GPU app must use the host driver stack).
+  third-party license notice; CI builds it on every `main` push and **attaches it
+  to the GitHub Release on version tags** (one-command install). Graphics libraries
+  are loaded from the host (a GPU app must use the host driver stack).
+- **Per-pane agent bell.** When a program rings the terminal bell (BEL) — as
+  Claude/Codex do when they finish — the pane plays a configurable sound (trimmed
+  clip, optional loop), raises a SNOOZE bar, and shows an always-visible `♪` mute.
+  Five PD/CC0 default sounds are bundled and seeded on first run; playback is via
+  the host `ffplay` (degrades silently without `ffmpeg`). See `BELL_SOUNDS.md`.
+- **Agent panes.** Your own messages get their own colour (👤 colour-wheel pip) and
+  `Alt+↑/↓` / ▲▼ jump between them; an agentic help section in the `?` modal.
 - **Portability hardening** (toward running on untested boxes — AMD/Intel,
   Wayland, fractional scaling): vendor-agnostic GPU check in `scripts/setup-deps.sh`;
   an explicit monospace **font fallback chain** with a startup diagnostic when the
   default isn't installed (no more silent substitution); a startup log of the
   wgpu **GPU/driver** gpui selected; and **X11 PRIMARY-selection** copy
   (select-to-copy + write-on-copy, so middle-click paste works in other apps).
+- Right-click context menu (Copy / Paste / Open link); `?` help modal; a split now
+  inherits the seed terminal's working directory.
 
 ### Changed
 
-- **Binaries are now MIT-distributable.** `docs/patches/0002-sever-gpl-crates.patch`
-  removes the GPL-3.0 crates (`ztracing`, `zlog`, `ztracing_macro`) that the Zed
-  graph linked via `gpui -> sum_tree`; they were trace-only. `app/deny.toml` now
-  passes with **no GPL exceptions**, and the project is no longer source-only.
+- **Binaries are now MIT-distributable** — the project is **no longer source-only**.
+  `docs/patches/0002-sever-gpl-crates.patch` removes the GPL-3.0 crates (`ztracing`,
+  `zlog`, `ztracing_macro`) that the Zed graph linked via `gpui -> sum_tree`; they
+  were trace-only. `app/deny.toml` now passes with **no GPL exceptions**.
   `scripts/prepare-gpui.sh` applies both patches.
 
 ## [0.1.0] — 2026-06-14
@@ -75,5 +92,6 @@ First public, source-only release. A GPU-native Linux terminal (Rust + gpui +
 
 - Linux only (X11 & Wayland via gpui's wgpu renderer). Not macOS/Windows.
 
-[Unreleased]: https://github.com/parker-brown-family/terminal-delight/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/parker-brown-family/terminal-delight/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/parker-brown-family/terminal-delight/releases/tag/v0.2.0
 [0.1.0]: https://github.com/parker-brown-family/terminal-delight/releases/tag/v0.1.0
