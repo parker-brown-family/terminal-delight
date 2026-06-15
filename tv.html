@@ -1,0 +1,275 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>terminal-delight — on a 1950s television</title>
+<meta name="description" content="terminal-delight, presented on a mid-century console television: a GPU-native Linux terminal in Rust with a hot-reloadable CRT visual identity.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' rx='3' fill='%23021107'/><text y='12' x='2' font-size='11' fill='%2336ff7e'>▌</text></svg>">
+<style>
+  :root{ --wood1:#5a3320; --wood2:#3c2013; --wood3:#74442a; --brass:#caa84e; --brass-d:#8a6f2b; }
+  *{box-sizing:border-box} html,body{margin:0;height:100%}
+  body{
+    background:
+      radial-gradient(120% 80% at 50% 18%, #1a1712 0%, #0c0a08 60%, #050403 100%),
+      #060504;
+    color:#d8c9b0; font-family:ui-monospace,monospace; min-height:100%;
+    display:flex; align-items:center; justify-content:center; overflow:hidden;
+  }
+  /* faint wooden floor */
+  body::after{content:"";position:fixed;left:0;right:0;bottom:0;height:34%;pointer-events:none;
+    background:linear-gradient(#0000, #1d130a55 40%, #2a1a0e88);
+    -webkit-mask:linear-gradient(#0000,#000 60%);mask:linear-gradient(#0000,#000 60%);}
+
+  .stage{ transform-origin:center; }
+
+  /* ---- the console television ---- */
+  .tv{ position:relative; width:min(92vw, 920px); }
+  .cabinet{
+    position:relative; border-radius:26px 26px 16px 16px; padding:30px;
+    background:
+      repeating-linear-gradient(91deg, #00000018 0 3px, #ffffff08 3px 6px, #00000010 6px 11px),
+      linear-gradient(160deg, var(--wood3), var(--wood1) 42%, var(--wood2));
+    box-shadow:
+      0 2px 0 #ffffff1f inset, 0 -18px 40px #00000066 inset,
+      0 40px 70px -20px #000a, 0 14px 30px #0008;
+    display:grid; grid-template-columns: 1fr 150px; gap:24px;
+  }
+  .cabinet::before{ /* darker recessed face plate */
+    content:""; position:absolute; inset:14px; border-radius:18px;
+    box-shadow:0 0 0 2px #00000033, 0 0 26px #0006 inset; pointer-events:none;
+  }
+
+  /* screen housing: deep bezel + rounded CRT glass */
+  .screen-housing{ position:relative; border-radius:50px/40px; padding:20px;
+    background:linear-gradient(150deg,#14110d,#241a12);
+    box-shadow:0 0 0 3px #0006, 0 10px 30px #000a inset, 0 2px 0 #ffffff14 inset,
+      0 0 60px -6px rgba(40,255,130,.18); }
+  /* phosphor light spilling onto the cabinet face around the tube */
+  .screen-housing::after{ content:""; position:absolute; inset:-6px; border-radius:54px/44px; pointer-events:none;
+    box-shadow:0 0 50px 4px rgba(36,255,126,.12) inset; mix-blend-mode:screen; }
+  .screen{ position:relative; aspect-ratio:4/3; border-radius:46px/36px; overflow:hidden;
+    background:#020a06; box-shadow:0 0 60px #0008 inset, 0 0 0 6px #0b0907; }
+  .screen canvas{ position:absolute; inset:0; width:100%; height:100%; display:block; cursor:default; }
+  /* glass sheen on top of the tube */
+  .screen .sheen{ position:absolute; inset:0; pointer-events:none; border-radius:46px/36px;
+    background:
+      radial-gradient(120% 80% at 30% 12%, #ffffff22, #ffffff00 38%),
+      radial-gradient(120% 120% at 50% 50%, #0000 60%, #00000055);
+    mix-blend-mode:screen; }
+
+  /* right control column: brand, knobs, speaker grille */
+  .panel{ display:flex; flex-direction:column; align-items:center; gap:14px; padding-top:4px; }
+  .brand{ font-weight:800; letter-spacing:.12em; font-size:12px; color:#f0dca6;
+    text-shadow:0 1px 0 #0008; text-align:center; }
+  .brand small{ display:block; font-weight:600; font-size:9px; letter-spacing:.22em; color:#caa84ecc; }
+
+  .knob-wrap{ display:flex; flex-direction:column; align-items:center; gap:3px; }
+  .knob{ width:62px; height:62px; border-radius:50%; position:relative; cursor:ns-resize;
+    background:
+      radial-gradient(circle at 38% 32%, #f6e7b0, #c8a64a 46%, #6f5117 100%);
+    box-shadow:0 4px 8px #000a, 0 0 0 4px #2a1c0e, 0 0 0 6px #0006, inset 0 -3px 6px #00000066, inset 0 2px 3px #ffffff66;
+    touch-action:none; }
+  .knob::after{ content:""; position:absolute; left:50%; top:7px; width:4px; height:18px; margin-left:-2px;
+    border-radius:2px; background:linear-gradient(#3a2a10,#1c1407); box-shadow:0 0 2px #000; }
+  .knob.detent{ width:46px; height:46px; }
+  .knob-label{ font-size:9.5px; letter-spacing:.14em; color:#e9d6a8; font-weight:700; }
+  .knob-val{ font-size:9px; color:#caa84e; height:11px; }
+
+  .grille{ margin-top:auto; width:128px; height:120px; border-radius:8px;
+    background:
+      repeating-linear-gradient(0deg, #2a1a0e 0 3px, #0b0805 3px 6px),
+      linear-gradient(160deg, #3a2616, #241509);
+    box-shadow:0 0 0 2px #00000044, 0 4px 10px #0008 inset, 0 1px 0 #ffffff10 inset; }
+
+  /* tapered mid-century legs */
+  .legs{ position:absolute; left:0; right:0; bottom:-54px; height:64px; display:flex; justify-content:space-between; padding:0 60px; }
+  .legs i{ display:block; width:16px; height:64px; transform-origin:top center;
+    background:linear-gradient(#3c2414,#1c1107); border-radius:0 0 6px 6px; box-shadow:0 8px 14px #0009; }
+  .legs i:first-child{ transform:rotate(9deg); } .legs i:last-child{ transform:rotate(-9deg); }
+  .legs i:nth-child(2){ transform:rotate(4deg);} .legs i:nth-child(3){ transform:rotate(-4deg);}
+
+  .hint{ position:fixed; bottom:14px; left:0; right:0; text-align:center; font-size:11px; color:#7a6b52; }
+  .hint b{ color:#caa84e; }
+
+  /* ---- mobile / portrait: stack the panel under the screen, knobs in a row ---- */
+  @media (max-width:760px){
+    body{ overflow:auto; flex-direction:column; align-items:center; padding:14px 0 64px; -webkit-text-size-adjust:100%; }
+    body::after{ height:22%; }
+    .tv{ width:94vw; }
+    .cabinet{ grid-template-columns:1fr; gap:14px; padding:15px; border-radius:20px 20px 12px 12px; }
+    .cabinet::before{ inset:9px; border-radius:13px; }
+    .screen-housing{ padding:12px; border-radius:38px/30px; }
+    .screen{ border-radius:34px/26px; }
+    .panel{ flex-direction:row; flex-wrap:wrap; justify-content:center; align-items:flex-start; gap:4px 14px; }
+    .brand{ width:100%; order:-1; }
+    .knob{ width:52px; height:52px; } .knob.detent{ width:48px; height:48px; }
+    .knob::after{ top:6px; height:15px; }
+    .grille{ width:100%; height:38px; order:9; margin-top:2px; }
+    .legs{ padding:0 22px; bottom:-38px; } .legs i{ height:46px; width:13px; }
+    .hint{ position:static; margin:16px auto 0; max-width:90%; }
+  }
+  /* honour reduced-motion: the screen still warps, just calmer flicker handled in JS */
+</style></head>
+<body>
+  <div class="stage">
+  <div class="tv">
+    <div class="cabinet">
+      <div class="screen-housing">
+        <div class="screen"><canvas id="gl"></canvas><div class="sheen"></div></div>
+      </div>
+      <div class="panel">
+        <div class="brand">DELIGHT-O-MATIC<small>MODEL TD-1950</small></div>
+        <div class="knob-wrap"><div class="knob" id="k-barrel"></div><div class="knob-label">BARREL</div><div class="knob-val" id="v-barrel"></div></div>
+        <div class="knob-wrap"><div class="knob" id="k-fade"></div><div class="knob-label">FADE</div><div class="knob-val" id="v-fade"></div></div>
+        <div class="knob-wrap"><div class="knob" id="k-track"></div><div class="knob-label">TRACKING</div><div class="knob-val" id="v-track"></div></div>
+        <div class="knob-wrap"><div class="knob detent" id="k-chan"></div><div class="knob-label">CHANNEL</div></div>
+        <div class="grille"></div>
+      </div>
+    </div>
+    <div class="legs"><i></i><i></i><i></i><i></i></div>
+  </div>
+  </div>
+  <div class="hint">turn the <b>knobs</b> — BARREL warp · TEXT FADE · TRACKING — and click a button on the screen. Built in Rust; this is the web tribute.</div>
+
+<script>
+const cv=document.getElementById('gl'); const gl=cv.getContext('webgl2',{antialias:false,alpha:false});
+let W,H, dpr=Math.min(2,window.devicePixelRatio||1);
+const scene=document.createElement('canvas'); const x=scene.getContext('2d');
+// CHANNELS = terminal-delight colour palettes; the CHANNEL knob flips through them.
+const CHANNELS=[
+ {name:'PHOSPHOR', phos:'#36ff7e',dim:'#1f9f57',bright:'#bfffd8',accent:'#36ff7e',bg:'#020a06',dark:'#0a4d28',dark2:'#0d6630',tint:[0.5,1.0,0.6],glow:'#0f8'},
+ {name:'PINEAPPLE',phos:'#ffe14d',dim:'#9c861c',bright:'#fff6c0',accent:'#ffd21a',bg:'#0a0902',dark:'#4d3f0a',dark2:'#6d5a0d',tint:[1.0,0.88,0.35],glow:'#fd0'},
+ {name:'BOLT',     phos:'#38e1ff',dim:'#1f86a8',bright:'#cbf6ff',accent:'#22d3ee',bg:'#02080c',dark:'#0a3d4d',dark2:'#0d5a6d',tint:[0.4,0.9,1.0],glow:'#0df'},
+ {name:'RUST',     phos:'#ff8a3c',dim:'#a85420',bright:'#ffd9b0',accent:'#f59e0b',bg:'#0a0502',dark:'#4d2a0a',dark2:'#6d3d0d',tint:[1.0,0.58,0.28],glow:'#f73'},
+ {name:'ECLIPSE',  phos:'#c084fc',dim:'#6f47a0',bright:'#ead9fc',accent:'#c084fc',bg:'#07040c',dark:'#3a2454',dark2:'#52336f',tint:[0.78,0.52,1.0],glow:'#a6f'},
+ {name:'PRISM',    phos:'#ff5ed0',dim:'#a83a8a',bright:'#ffd0f0',accent:'#ff5ed0',bg:'#0a0208',dark:'#4d0a3a',dark2:'#6d0d52',tint:[1.0,0.4,0.85],glow:'#f5c'},
+ {name:'AMBER',    phos:'#ffb000',dim:'#a87600',bright:'#ffe0a0',accent:'#ffb000',bg:'#0a0700',dark:'#4d3300',dark2:'#6d4a00',tint:[1.0,0.7,0.2],glow:'#fb0'},
+];
+let chan=0; const cur=()=>CHANNELS[chan];
+let snow=0, osdUntil=0;               // CRT static burst + on-screen channel readout
+const rgba=(t,a)=>`rgba(${Math.round(t[0]*120)},${Math.round(t[1]*150)},${Math.round(t[2]*120)},${a})`;
+const BTNS=[
+  {label:'▾ Get v0.1.0', url:'https://github.com/parker-brown-family/terminal-delight/releases', primary:true},
+  {label:'★ GitHub', url:'https://github.com/parker-brown-family/terminal-delight'},
+  {label:'Docs', url:'https://github.com/parker-brown-family/terminal-delight#readme'},
+  {label:'▸ Explore the full site', url:'index.html', wide:true},
+];
+let btnRects=[], hover=-1;
+// knob state 0..1
+const K={barrel:0.62, fade:0.86, track:0.66};
+function layout(){ const r=cv.getBoundingClientRect(); W=Math.max(2,Math.round(r.width*dpr)); H=Math.max(2,Math.round(r.height*dpr)); cv.width=W;cv.height=H;scene.width=W;scene.height=H; }
+function fit(px){ return px*dpr*(W/ (900*dpr)); } // scale text to screen size
+function drawScene(time){
+  const c=cur(), cx=W/2, s=Math.max(0.5, W/900), narrow=W < 560*dpr;
+  x.fillStyle=c.bg; x.fillRect(0,0,W,H);
+  const g=x.createRadialGradient(cx,H*0.40,0,cx,H*0.40,H*0.95); g.addColorStop(0,rgba(c.tint,0.5)); g.addColorStop(1,'rgba(0,0,0,0)'); x.fillStyle=g; x.fillRect(0,0,W,H);
+  x.textAlign='center'; x.textBaseline='middle';
+  if(!narrow){ x.fillStyle=c.dim; x.font=`${12*s*dpr}px ui-monospace,monospace`;
+    x.fillText('A · G P U - N A T I V E · L I N U X · T E R M I N A L', cx, H*0.14); }
+  x.shadowColor=c.glow; x.shadowBlur=20*s*dpr; x.fillStyle=c.phos;
+  x.font=`800 ${(narrow?38:60)*s*dpr}px ui-monospace,monospace`;
+  x.fillText('terminal-delight', cx, narrow?H*0.16:H*0.25); x.shadowBlur=0;
+  x.fillStyle=c.bright; x.font=`${(narrow?12:18)*s*dpr}px ui-monospace,monospace`;
+  x.fillText(narrow?'CRT-flavored · tiling · themeable':'Hot-reloadable · CRT-flavored · tiling · themeable at will', cx, narrow?H*0.26:H*0.35);
+  // buttons — stacked on narrow screens, row+wide on wide screens
+  btnRects=[]; const bh=(narrow?40:46)*s*dpr, gap=(narrow?10:13)*s*dpr;
+  if(narrow){
+    const bw=Math.min(W*0.84, 380*s*dpr); let by=H*0.36;
+    BTNS.forEach((b,i)=>{ drawBtn(b,i,cx-bw/2,by,bw,bh,s); by+=bh+gap; });
+  } else {
+    const row=BTNS.slice(0,3), bw=176*s*dpr, total=row.length*bw+(row.length-1)*gap; let bx=cx-total/2, by=H*0.48;
+    row.forEach((b,i)=>{ drawBtn(b,i,bx,by,bw,bh,s); bx+=bw+gap; });
+    drawBtn(BTNS[3],3,cx-total/2,by+bh+gap,total,bh,s);
+    // prompt line (wide only)
+    x.textAlign='left'; const py=H*0.82, lx=cx-300*s*dpr;
+    x.fillStyle=c.phos; x.font=`${14*s*dpr}px ui-monospace,monospace`; x.fillText('pbrown@web',lx,py);
+    x.fillStyle=c.dim; x.fillText(':~$ cargo run',lx+96*s*dpr,py);
+    x.fillStyle=c.bright; x.fillText('# 53 tests green · key→echo p50 121µs',lx+96*s*dpr,py+22*s*dpr);
+    if(Math.floor(time/550)%2===0){ x.fillStyle=c.phos; x.fillRect(lx+202*s*dpr,py-9*s*dpr,9*s*dpr,17*s*dpr); }
+    x.textAlign='center';
+  }
+  // channel OSD (classic top-corner readout) after a channel change
+  if(performance.now()<osdUntil){ x.textAlign=narrow?'center':'right'; x.fillStyle=c.bright; x.shadowColor=c.glow; x.shadowBlur=9*s*dpr;
+    x.font=`700 ${(narrow?13:15)*s*dpr}px ui-monospace,monospace`;
+    x.fillText('CH '+String(chan+1).padStart(2,'0')+' · '+c.name, narrow?cx:W-18*s*dpr, narrow?H*0.07:H*0.10); x.shadowBlur=0; x.textAlign='center'; }
+}
+function drawBtn(b,i,bx,by,bw,bh,s){ const c=cur(); btnRects.push({x:bx,y:by,w:bw,h:bh,url:b.url}); const on=hover===i;
+  x.fillStyle=b.primary?(on?c.dark2:c.dark):(on?c.dark:'rgba(255,255,255,0.05)'); rr(bx,by,bw,bh,9*dpr); x.fill();
+  x.lineWidth=on?2.4*dpr:1.4*dpr; x.strokeStyle=(b.primary||on)?c.accent:c.dim; rr(bx,by,bw,bh,9*dpr); x.stroke();
+  x.fillStyle=b.primary?c.bright:c.phos; x.shadowColor=c.glow; x.shadowBlur=on?0:4*dpr; x.font=`700 ${15*s*dpr}px ui-monospace,monospace`;
+  x.fillText(b.label,bx+bw/2,by+bh/2); x.shadowBlur=0; }
+function rr(rx,ry,rw,rh,r){x.beginPath();x.moveTo(rx+r,ry);x.arcTo(rx+rw,ry,rx+rw,ry+rh,r);x.arcTo(rx+rw,ry+rh,rx,ry+rh,r);x.arcTo(rx,ry+rh,rx,ry,r);x.arcTo(rx,ry,rx+rw,ry,r);x.closePath();}
+
+const vs=`#version 300 es
+void main(){vec2 p=vec2((gl_VertexID<<1)&2,gl_VertexID&2);gl_Position=vec4(p*2.0-1.0,0.,1.);}`;
+const fs=`#version 300 es
+precision highp float; uniform sampler2D tex; uniform vec2 res; uniform float k1,k2,time,fade,trackSpd,trackWob,snow; uniform vec3 tint;
+out vec4 o; float hash(float n){return fract(sin(n)*43758.5453);}
+vec2 warp(vec2 uv){vec2 c=uv-0.5;float r2=dot(c,c);return 0.5+c*(1.0+k1*r2+k2*r2*r2);}
+void main(){
+  vec2 uv0=gl_FragCoord.xy/res; uv0.y=1.0-uv0.y; vec2 uv=warp(uv0);
+  vec2 e=min(uv,1.0-uv); float edge=smoothstep(0.0,0.006,min(e.x,e.y));
+  if(edge<=0.0){o=vec4(0,0,0,1);return;} float r2=dot(uv-0.5,uv-0.5);
+  float barY=fract(time*trackSpd); float d=uv.y-barY; d-=step(0.5,d); d+=step(d,-0.5);
+  float band=smoothstep(0.07,0.0,abs(d));
+  uv.x+=band*trackWob*0.014*sin(uv.y*130.0+time*26.0);
+  float a=0.004*r2;
+  vec3 col=vec3(texture(tex,warp(uv0+vec2(a,0.))).r, texture(tex,uv).g, texture(tex,warp(uv0-vec2(a,0.))).b);
+  col+=band*(0.16+0.12*sin(time*38.0))*(0.4+trackWob)*tint;
+  col*=1.0-0.15*(0.5+0.5*sin(uv.y*res.y*0.9));
+  float ob=2.5/res.x; col+=0.09*(texture(tex,uv+vec2(ob,0.)).rgb+texture(tex,uv-vec2(ob,0.)).rgb+texture(tex,uv+vec2(0.,ob)).rgb+texture(tex,uv-vec2(0.,ob)).rgb);
+  // TEXT FADE: dial down brightness toward a dim, ghosted phosphor
+  col*=mix(0.22,1.18,fade);
+  // gentle flicker always on (period-TV vibe)
+  col*=1.0+0.03*(sin(time*48.0)*0.5+ (hash(floor(time*22.0))-0.5));
+  // CRT static burst on channel change
+  col=mix(col, vec3(hash(floor(gl_FragCoord.x)*3.1+floor(gl_FragCoord.y)*7.7+floor(time*45.0)*13.0)), clamp(snow,0.0,1.0)*0.85);
+  col*=1.0-0.5*r2; col*=edge; o=vec4(col,1.0);
+}`;
+function mk(t,s){const sh=gl.createShader(t);gl.shaderSource(sh,s);gl.compileShader(sh);if(!gl.getShaderParameter(sh,gl.COMPILE_STATUS))throw gl.getShaderInfoLog(sh);return sh;}
+const pr=gl.createProgram();gl.attachShader(pr,mk(35633,vs));gl.attachShader(pr,mk(35632,fs));gl.linkProgram(pr);gl.useProgram(pr);
+const tex=gl.createTexture();gl.bindTexture(3553,tex);[[10241,9729],[10240,9729],[10242,33071],[10243,33071]].forEach(([k,v])=>gl.texParameteri(3553,k,v));
+const U=n=>gl.getUniformLocation(pr,n);
+const t0=performance.now(); let lastKey='';
+function frame(now){ const time=(now-t0)/1000;
+  const key=Math.floor((now-t0)/550)+'|'+W+'|'+hover+'|'+chan+'|'+(now<osdUntil?Math.floor(now/120):0);
+  if(key!==lastKey){drawScene(now-t0);gl.bindTexture(3553,tex);gl.texImage2D(3553,0,6408,6408,5121,scene);lastKey=key;}
+  gl.viewport(0,0,W,H); const c=K.barrel*2.2, t=cur().tint;
+  gl.uniform2f(U('res'),W,H); gl.uniform1f(U('k1'),c*0.14); gl.uniform1f(U('k2'),c*0.06);
+  gl.uniform1f(U('time'),time); gl.uniform1f(U('fade'),K.fade);
+  gl.uniform1f(U('trackSpd'),0.04+K.track*0.30); gl.uniform1f(U('trackWob'),K.track);
+  gl.uniform1f(U('snow'),snow); gl.uniform3f(U('tint'),t[0],t[1],t[2]); gl.uniform1i(U('tex'),0);
+  gl.drawArrays(4,0,3); snow=snow>0.01?snow*0.90:0; window.__ready=true; requestAnimationFrame(frame);
+}
+// hit-test through the warp
+function hit(clientX,clientY){ const r=cv.getBoundingClientRect(); const sx=(clientX-r.left)/r.width, sy=(clientY-r.top)/r.height;
+  const c=K.barrel*2.2, cu=sx-0.5,cv2=sy-0.5,rr2=cu*cu+cv2*cv2,f=1+c*0.14*rr2+c*0.06*rr2*rr2;
+  const lx=(0.5+cu*f)*W, ly=(0.5+cv2*f)*H; return btnRects.findIndex(b=>lx>=b.x&&lx<=b.x+b.w&&ly>=b.y&&ly<=b.y+b.h); }
+cv.addEventListener('mousemove',e=>{const i=hit(e.clientX,e.clientY);if(i!==hover){hover=i;lastKey='';cv.style.cursor=i>=0?'pointer':'default';}});
+cv.addEventListener('click',e=>{const i=hit(e.clientX,e.clientY);if(i>=0){const u=btnRects[i].url;window.__lastClick=u; if(u.startsWith('http'))window.open(u,'_blank');else location.href=u;}});
+window.__hitTest=hit;
+
+// ---- knobs: drag (or wheel) to turn; rotate the indicator -135°..+135° ----
+function bindKnob(el,vEl,name,fmt){ const set=v=>{K[name]=Math.max(0,Math.min(1,v)); el.style.transform='rotate('+(K[name]*270-135)+'deg)'; if(vEl)vEl.textContent=fmt(K[name]); lastKey=''; };
+  set(K[name]);
+  let dragging=false,startY,startV;
+  el.addEventListener('pointerdown',e=>{dragging=true;startY=e.clientY;startV=K[name];el.setPointerCapture(e.pointerId);e.preventDefault();});
+  el.addEventListener('pointermove',e=>{if(!dragging)return; set(startV+(startY-e.clientY)/160);});
+  el.addEventListener('pointerup',()=>dragging=false); el.addEventListener('pointercancel',()=>dragging=false);
+  el.addEventListener('wheel',e=>{e.preventDefault();set(K[name]-Math.sign(e.deltaY)*0.06);},{passive:false});
+  el.__set=set;
+}
+bindKnob(document.getElementById('k-barrel'),document.getElementById('v-barrel'),'barrel',v=>Math.round(v*100)+'%');
+bindKnob(document.getElementById('k-fade'),document.getElementById('v-fade'),'fade',v=>Math.round(v*100)+'%');
+bindKnob(document.getElementById('k-track'),document.getElementById('v-track'),'track',v=>Math.round(v*100)+'%');
+// CHANNEL knob: each turn flips to the next colour palette, with a CRT static burst
+(function(){const el=document.getElementById('k-chan'); let a=0;
+  function go(d){ chan=(chan+d+CHANNELS.length)%CHANNELS.length; a+=d*(360/CHANNELS.length);
+    el.style.transform='rotate('+a+'deg)'; snow=1.0; osdUntil=performance.now()+1700; lastKey=''; }
+  el.addEventListener('pointerdown',e=>{e.preventDefault();go(1);});
+  el.addEventListener('wheel',e=>{e.preventDefault();go(Math.sign(e.deltaY)||1);},{passive:false});
+  window.__channel=(d)=>go(d);
+})();
+window.__setKnob=(n,v)=>document.getElementById('k-'+n).__set(v);
+
+addEventListener('resize',()=>{layout();lastKey='';});
+layout(); requestAnimationFrame(frame);
+</script></body></html>
