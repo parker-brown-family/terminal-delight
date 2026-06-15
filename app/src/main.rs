@@ -32,8 +32,8 @@ use gpui::{
 };
 use gpui_platform::application;
 use pane::{
-    CloseFocusRead, ClosePane, DragPaneStart, OpenDisplayMenu, OpenFocusRead, OpenThemeMenu,
-    PaneRenamed, TerminalView,
+    CloseFocusRead, ClosePane, DragPaneStart, OpenDisplayMenu, OpenFocusRead, OpenHelp,
+    OpenThemeMenu, PaneRenamed, TerminalView,
 };
 use serde::{Deserialize, Serialize};
 use theme::{PaneTheme, ThemeChoice};
@@ -779,6 +779,12 @@ fn make_pane_restored(
         ws.close_focus_read(cx);
     })
     .detach();
+    // F1 in any pane toggles the help modal
+    cx.subscribe(&pane, |ws, _pane, _ev: &OpenHelp, cx| {
+        ws.help_open = !ws.help_open;
+        cx.notify();
+    })
+    .detach();
     // grab the header → begin a sub-tab drag (the workspace drives it from here)
     cx.subscribe(&pane, |ws, pane, ev: &DragPaneStart, cx| {
         let start = ev.at;
@@ -1254,6 +1260,13 @@ impl Workspace {
     fn on_key(&mut self, ev: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         let ks = &ev.keystroke;
         let m = &ks.modifiers;
+        // F1 toggles help (fallback for when no terminal pane is focused; panes
+        // route F1 via the OpenHelp event).
+        if ks.key.as_str() == "f1" {
+            self.help_open = !self.help_open;
+            cx.notify();
+            return;
+        }
         if self.help_open && ks.key.as_str() == "escape" {
             self.help_open = false;
             cx.notify();
@@ -3924,6 +3937,8 @@ impl Render for Workspace {
             let col_a = div()
                 .flex()
                 .flex_col()
+                .flex_1()
+                .min_w(px(0.))
                 .gap_4()
                 .child(section(
                     "TABS & PANES",
@@ -3951,6 +3966,8 @@ impl Render for Workspace {
             let col_b = div()
                 .flex()
                 .flex_col()
+                .flex_1()
+                .min_w(px(0.))
                 .gap_4()
                 .child(section(
                     "SCROLLBACK",
@@ -3997,8 +4014,8 @@ impl Render for Workspace {
                     }),
                 );
             let panel = div()
-                .w(gpui::relative(0.84))
-                .max_w(px(840.))
+                .w(gpui::relative(0.9))
+                .max_w(px(940.))
                 .max_h(gpui::relative(0.88))
                 .overflow_hidden()
                 .p_5()
@@ -4037,7 +4054,15 @@ impl Render for Workspace {
                         )
                         .child(close_x),
                 )
-                .child(div().flex().flex_row().gap_8().child(col_a).child(col_b))
+                .child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .w_full()
+                        .gap_8()
+                        .child(col_a)
+                        .child(col_b),
+                )
                 .child(
                     div()
                         .text_size(px(10.))

@@ -734,6 +734,10 @@ pub struct TerminalView {
     /// True while this pane is the one mirrored in the FOCUS modal — a plain Esc
     /// then closes the modal instead of reaching the PTY. Set by the workspace.
     being_read: bool,
+    /// Which bell-trim pip is being dragged (false = start, true = end); None idle.
+    bell_drag: Option<bool>,
+    /// Window-space bounds of the bell trim track, for pip drag math.
+    bell_track_bounds: Arc<Mutex<Option<Bounds<Pixels>>>>,
 }
 
 /// Click on the header's theme icon — the workspace opens the breakout menu.
@@ -768,6 +772,10 @@ impl gpui::EventEmitter<ClosePane> for TerminalView {}
 /// persists the layout so the custom name survives a restart.
 pub struct PaneRenamed;
 impl gpui::EventEmitter<PaneRenamed> for TerminalView {}
+
+/// F1 was pressed in this pane — ask the workspace to open the help modal.
+pub struct OpenHelp;
+impl gpui::EventEmitter<OpenHelp> for TerminalView {}
 
 /// The 👓 (reading-glasses) icon on this sub-tab's header was clicked — the
 /// workspace opens a FOCUS modal: an 80%-of-window mirror of this pane's live
@@ -1000,6 +1008,8 @@ impl TerminalView {
                 .checked_sub(std::time::Duration::from_secs(1))
                 .unwrap_or_else(Instant::now),
             being_read: false,
+            bell_drag: None,
+            bell_track_bounds: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -1270,6 +1280,11 @@ impl TerminalView {
 
     fn on_key(&mut self, ev: &KeyDownEvent, _window: &mut Window, cx: &mut Context<Self>) {
         let ks = &ev.keystroke;
+        // F1 opens the help modal (handled by the workspace), never the PTY.
+        if ks.key.as_str() == "f1" {
+            cx.emit(OpenHelp);
+            return;
+        }
         // Escape closes the right-click menu before anything else.
         if self.ctx_menu.is_some() && ks.key.as_str() == "escape" {
             self.ctx_menu = None;
@@ -1540,7 +1555,39 @@ impl TerminalView {
         cx.notify();
     }
 
+    /// Map a window-space x to a clip time (seconds) over the bell trim track.
+    fn bell_time_from_pos(&self, x: Pixels) -> Option<f32> {
+        let b = (*self.bell_track_bounds.lock().unwrap())?;
+        let dur = self.bell_dur?;
+        let w = f32::from(b.size.width);
+        if dur <= 0.0 || w <= 0.0 {
+            return None;
+        }
+        let r = ((f32::from(x) - f32::from(b.origin.x)) / w).clamp(0.0, 1.0);
+        Some(r * dur)
+    }
+
     fn on_mouse_move(&mut self, ev: &MouseMoveEvent, _w: &mut Window, cx: &mut Context<Self>) {
+        // dragging a bell-trim pip: move start/end along the track, keep a gap
+        if let Some(is_end) = self.bell_drag {
+            if ev.pressed_button == Some(MouseButton::Left) {
+                if let Some(t) = self.bell_time_from_pos(ev.position.x) {
+                    let dur = self.bell_dur.unwrap_or(t);
+                    let end = if self.bell_cfg.end > self.bell_cfg.start {
+                        self.bell_cfg.end
+                    } else {
+                        dur
+                    };
+                    if is_end {
+                        self.bell_cfg.end = t.clamp(self.bell_cfg.start + 0.2, dur);
+                    } else {
+                        self.bell_cfg.start = t.clamp(0.0, (end - 0.2).max(0.0));
+                    }
+                    cx.notify();
+                }
+            }
+            return;
+        }
         if !self.selecting || ev.pressed_button != Some(MouseButton::Left) {
             return;
         }
@@ -1560,6 +1607,10 @@ impl TerminalView {
     }
 
     fn on_mouse_up(&mut self, _ev: &MouseUpEvent, _w: &mut Window, cx: &mut Context<Self>) {
+        if self.bell_drag.take().is_some() {
+            cx.notify();
+            return;
+        }
         self.selecting = false;
         self.autoscroll = 0.;
         // Finishing a drag publishes the selection to the X11 PRIMARY selection
@@ -2347,7 +2398,7 @@ impl Render for TerminalView {
                     .child(label)
             };
             // sound list (default alert + every file in the sounds dir)
-            let mut list = div().flex().flex_col().gap_1().max_h(px(150.)).child(
+            let mut list = div().flex().flex_col().gap_1().child(
                 div()
                     .px_2()
                     .py(px(3.))
@@ -2398,12 +2449,41 @@ impl Render for TerminalView {
                     0.0
                 }
             };
+            // dual-pip scrubber: drag the two pips; the highlighted span between
+            // them is the slice of the clip that plays. (Pip drag is handled in
+            // on_mouse_move via bell_track_bounds, captured by the canvas below.)
+            let track_store = self.bell_track_bounds.clone();
+            let pip_ring = th.surface;
+            let pip = move |at: f32, is_end: bool, cx: &mut Context<Self>| {
+                div()
+                    .absolute()
+                    .top(px(-5.))
+                    .left(gpui::relative(at))
+                    .ml(px(-8.))
+                    .w(px(16.))
+                    .h(px(16.))
+                    .rounded_full()
+                    .bg(acc)
+                    .border_2()
+                    .border_color(pip_ring)
+                    .cursor_pointer()
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |v, _: &MouseDownEvent, _w, cx| {
+                            cx.stop_propagation();
+                            v.bell_drag = Some(is_end);
+                            cx.notify();
+                        }),
+                    )
+            };
             let track = div()
                 .relative()
                 .w_full()
-                .h(px(10.))
+                .h(px(8.))
+                .my(px(8.))
                 .rounded_full()
                 .bg(faint.alpha(0.35))
+                // the play-span between the pips
                 .child(
                     div()
                         .absolute()
@@ -2412,8 +2492,21 @@ impl Render for TerminalView {
                         .rounded_full()
                         .bg(acc.alpha(0.7))
                         .left(gpui::relative(frac(s)))
-                        .w(gpui::relative((frac(e) - frac(s)).max(0.02))),
-                );
+                        .w(gpui::relative((frac(e) - frac(s)).max(0.01))),
+                )
+                // invisible canvas just to record the track's window-space bounds
+                .child(
+                    canvas(
+                        move |bounds, _, _| {
+                            *track_store.lock().unwrap() = Some(bounds);
+                        },
+                        |_, _, _, _| {},
+                    )
+                    .absolute()
+                    .size_full(),
+                )
+                .child(pip(frac(s), false, cx))
+                .child(pip(frac(e), true, cx));
             let labeled = move |lbl: &'static str, val: String| {
                 div()
                     .flex()
@@ -2476,59 +2569,10 @@ impl Render for TerminalView {
                         )),
                 )
                 .child(list)
+                // TRIM readout + the dual-pip scrubber (drag the pips; the lit
+                // span between them is what plays)
+                .child(labeled("TRIM", format!("{s:.1}s – {e:.1}s")))
                 .child(track)
-                // start stepper
-                .child(
-                    labeled("START", format!("{s:.1}s"))
-                        .child(mini("−".into()).on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(|v, _: &MouseDownEvent, _w, cx| {
-                                cx.stop_propagation();
-                                v.bell_cfg.start = (v.bell_cfg.start - 0.5).max(0.0);
-                                cx.notify();
-                            }),
-                        ))
-                        .child(mini("+".into()).on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(|v, _: &MouseDownEvent, _w, cx| {
-                                cx.stop_propagation();
-                                let cap = v.bell_dur.unwrap_or(600.0);
-                                v.bell_cfg.start = (v.bell_cfg.start + 0.5).min(cap);
-                                cx.notify();
-                            }),
-                        )),
-                )
-                // end stepper
-                .child(
-                    labeled("END", format!("{e:.1}s"))
-                        .child(mini("−".into()).on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(|v, _: &MouseDownEvent, _w, cx| {
-                                cx.stop_propagation();
-                                let base = if v.bell_cfg.end > 0.0 {
-                                    v.bell_cfg.end
-                                } else {
-                                    v.bell_dur.unwrap_or(0.0)
-                                };
-                                v.bell_cfg.end = (base - 0.5).max(v.bell_cfg.start + 0.5);
-                                cx.notify();
-                            }),
-                        ))
-                        .child(mini("+".into()).on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(|v, _: &MouseDownEvent, _w, cx| {
-                                cx.stop_propagation();
-                                let cap = v.bell_dur.unwrap_or(600.0);
-                                let base = if v.bell_cfg.end > 0.0 {
-                                    v.bell_cfg.end
-                                } else {
-                                    cap
-                                };
-                                v.bell_cfg.end = (base + 0.5).min(cap);
-                                cx.notify();
-                            }),
-                        )),
-                )
                 // loop + volume + preview row
                 .child(
                     div()
