@@ -17,7 +17,13 @@
     background:linear-gradient(#0000, #2a1a0e55 40%, #3a240e88);
     -webkit-mask:linear-gradient(#0000,#000 60%);mask:linear-gradient(#0000,#000 60%);}
 
-  .stage{ transform-origin:center; }
+  .stage{ transform-origin:center; position:relative; z-index:1; }
+
+  /* raining coins behind the cabinet (decorative) */
+  .rain{ position:fixed; inset:0; pointer-events:none; overflow:hidden; z-index:0; }
+  .rain i{ position:absolute; top:-44px; animation:coinfall linear infinite; opacity:.55;
+    filter:drop-shadow(0 0 6px #ffc01e88); }
+  @keyframes coinfall{ to{ transform:translateY(112vh) rotate(360deg); } }
 
   /* ---- the slot-machine cabinet ---- */
   .tv{ position:relative; width:min(92vw, 880px); }
@@ -108,6 +114,7 @@
   }
 </style></head>
 <body>
+  <div class="rain" id="rain"></div>
   <div class="stage">
   <div class="tv">
     <div class="cabinet">
@@ -146,7 +153,7 @@ const rgba=(t,a)=>`rgba(${Math.round(t[0]*120)},${Math.round(t[1]*150)},${Math.r
 const BTNS=[
   {label:'▾ Download', url:'https://github.com/parker-brown-family/terminal-delight/releases/latest', primary:true},
   {label:'★ GitHub', url:'https://github.com/parker-brown-family/terminal-delight'},
-  {label:'▸ the full set', url:'tv.html', wide:true},
+  {label:'▸ the full site', url:'info.html', wide:true},
 ];
 let btnRects=[], hover=-1;
 const K={barrel:0.58, fade:0.92};
@@ -339,6 +346,12 @@ bindKnob(document.getElementById('k-fade'),document.getElementById('v-fade'),'fa
 
 // fill the marquee with bulbs
 (function(){const m=document.getElementById('marquee'); const n=Math.max(10,Math.round((window.innerWidth*0.7)/26)); for(let i=0;i<n;i++){m.appendChild(document.createElement('i'));}})();
+// raining coins behind the cabinet
+(function(){const r=document.getElementById('rain'); const glyphs=['🪙','💰','🪙','✨'];
+  for(let i=0;i<22;i++){ const c=document.createElement('i'); c.textContent=glyphs[i%glyphs.length];
+    c.style.left=(Math.random()*100)+'vw'; c.style.fontSize=(16+Math.random()*20)+'px';
+    c.style.animationDuration=(4.5+Math.random()*6)+'s'; c.style.animationDelay=(-Math.random()*9)+'s';
+    r.appendChild(c);} })();
 
 addEventListener('resize',layout);
 layout(); requestAnimationFrame(frame);
