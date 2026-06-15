@@ -996,13 +996,19 @@ impl Workspace {
         if leaves.len() >= MAX_PANES {
             return;
         }
-        let target = leaves
+        let target_pane = leaves
             .iter()
             .find(|p| p.focus_handle(cx).is_focused(window))
             .or_else(|| leaves.first())
-            .map(|p| p.entity_id());
-        let Some(target) = target else { return };
-        let new_pane = make_pane(window, cx);
+            .cloned();
+        let Some(target_pane) = target_pane else {
+            return;
+        };
+        let target = target_pane.entity_id();
+        // inherit the split pane's live working directory — a split stays in the
+        // same project (TAB = project), instead of dropping back to $HOME.
+        let cwd = target_pane.read(cx).runtime().cwd;
+        let new_pane = make_pane_restored(session::PaneRestore { cwd, resume: None }, window, cx);
         // Keep a handle so we can focus it AFTER it's mounted in the tree —
         // make_pane's focus-at-creation doesn't stick before the split inserts it.
         let fresh = new_pane.clone();
