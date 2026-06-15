@@ -17,10 +17,10 @@ use alacritty_terminal::{
 };
 use futures::StreamExt;
 use gpui::{
-    canvas, div, font, linear_color_stop, linear_gradient, point, prelude::*, px, rgb, App, Bounds,
-    BoxShadow, ClipboardItem, Context, FocusHandle, Focusable, Font, FontWeight, Hsla,
-    KeyDownEvent, Keystroke, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
-    ScrollWheelEvent, StyledText, TextRun, UnderlineStyle, Window,
+    anchored, canvas, deferred, div, font, linear_color_stop, linear_gradient, point, prelude::*,
+    px, rgb, App, Bounds, BoxShadow, ClipboardItem, Context, FocusHandle, Focusable, Font,
+    FontWeight, Hsla, KeyDownEvent, Keystroke, MouseButton, MouseDownEvent, MouseMoveEvent,
+    MouseUpEvent, Pixels, ScrollWheelEvent, StyledText, TextRun, UnderlineStyle, Window,
 };
 
 /// What the tube is showing — drives the per-pane screen colour.
@@ -682,6 +682,8 @@ pub struct TerminalView {
     pub appearance: PaneTheme,
     /// Debounced PTY resize: (target grid, when it stabilized).
     pending_grid: Option<(term::GridSize, Instant)>,
+    /// Right-click context menu (Copy / Paste / Open link) anchor, window-space.
+    ctx_menu: Option<gpui::Point<Pixels>>,
 }
 
 /// Click on the header's theme icon — the workspace opens the breakout menu.
@@ -858,6 +860,7 @@ impl TerminalView {
             warp_k: (0., 0.),
             mode: PaneMode::Shell,
             appearance: PaneTheme::default(),
+            ctx_menu: None,
             pending_grid: None,
         }
     }
@@ -1091,6 +1094,12 @@ impl TerminalView {
 
     fn on_key(&mut self, ev: &KeyDownEvent, _window: &mut Window, cx: &mut Context<Self>) {
         let ks = &ev.keystroke;
+        // Escape closes the right-click menu before anything else.
+        if self.ctx_menu.is_some() && ks.key.as_str() == "escape" {
+            self.ctx_menu = None;
+            cx.notify();
+            return;
+        }
         // The inline rename box owns the keyboard while open — keystrokes edit
         // the name instead of reaching the PTY. Mirrors the main-tab rename.
         if let Some(mut buf) = self.renaming.take() {
@@ -1125,27 +1134,11 @@ impl TerminalView {
                 // workspace chords: new tab
                 "t" => return,
                 "c" => {
-                    let text = self.session.term.lock().selection_to_string();
-                    if let Some(text) = text {
-                        cx.write_to_clipboard(ClipboardItem::new_string(text));
-                    }
+                    self.copy_selection(cx);
                     return;
                 }
                 "v" => {
-                    if let Some(text) = cx.read_from_clipboard().and_then(|i| i.text()) {
-                        let bracketed = self
-                            .session
-                            .term
-                            .lock()
-                            .mode()
-                            .contains(TermMode::BRACKETED_PASTE);
-                        let bytes = if bracketed {
-                            [b"\x1b[200~", text.as_bytes(), b"\x1b[201~"].concat()
-                        } else {
-                            text.into_bytes()
-                        };
-                        self.session.notifier.notify(bytes);
-                    }
+                    self.paste_clipboard(cx);
                     return;
                 }
                 _ => {}
@@ -1183,6 +1176,40 @@ impl TerminalView {
         }
     }
 
+    /// Copy the current selection to the system clipboard (no-op if empty).
+    fn copy_selection(&self, cx: &mut Context<Self>) {
+        if let Some(text) = self.session.term.lock().selection_to_string() {
+            if !text.is_empty() {
+                cx.write_to_clipboard(ClipboardItem::new_string(text));
+            }
+        }
+    }
+    /// Paste the clipboard into the PTY, honouring bracketed-paste mode.
+    fn paste_clipboard(&self, cx: &mut Context<Self>) {
+        if let Some(text) = cx.read_from_clipboard().and_then(|i| i.text()) {
+            let bracketed = self
+                .session
+                .term
+                .lock()
+                .mode()
+                .contains(TermMode::BRACKETED_PASTE);
+            let bytes = if bracketed {
+                [b"\x1b[200~", text.as_bytes(), b"\x1b[201~"].concat()
+            } else {
+                text.into_bytes()
+            };
+            self.session.notifier.notify(bytes);
+        }
+    }
+    fn has_selection(&self) -> bool {
+        self.session
+            .term
+            .lock()
+            .selection_to_string()
+            .map(|s| !s.is_empty())
+            .unwrap_or(false)
+    }
+
     fn on_mouse_down(&mut self, ev: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         if std::env::var("TD_KEYDEBUG").is_ok() {
             eprintln!("pane mousedown at {:?}", ev.position);
@@ -1191,6 +1218,16 @@ impl TerminalView {
         // the split buttons (which target the focused pane) follow the pane the
         // user is actually working in — not whichever pane happened to start focused.
         window.focus(&self.focus_handle, cx);
+        // right-click → copy/paste context menu at the cursor
+        if ev.button == MouseButton::Right {
+            self.ctx_menu = Some(ev.position);
+            cx.notify();
+            return;
+        }
+        // any other click dismisses an open menu (then proceeds normally)
+        if self.ctx_menu.take().is_some() {
+            cx.notify();
+        }
         // Shift-click opens a link/path under the cursor with the system default
         // tool, instead of starting a selection. A shift-click that isn't on a
         // link falls through to normal selection behaviour.
@@ -1444,6 +1481,71 @@ impl Focusable for TerminalView {
 impl Render for TerminalView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let th = self.resolved_theme(cx);
+        // right-click context menu (Copy / Paste / Open link), anchored at the cursor
+        let ctx_menu_el = self.ctx_menu.map(|pos| {
+            let link = self.link_under(pos);
+            let has_sel = self.has_selection();
+            let (acc, surf, txt, faint, ff) = (
+                th.accent,
+                th.surface,
+                th.text,
+                th.faint,
+                th.font_family.clone(),
+            );
+            let row = |label: &str, lit: bool| {
+                div()
+                    .px(px(13.))
+                    .py(px(5.))
+                    .cursor_pointer()
+                    .text_color(if lit { txt } else { faint })
+                    .hover(move |s| s.bg(acc.alpha(0.22)))
+                    .child(label.to_string())
+            };
+            let mut menu = div()
+                .flex()
+                .flex_col()
+                .min_w(px(168.))
+                .py(px(4.))
+                .bg(surf)
+                .border_1()
+                .border_color(acc.alpha(0.55))
+                .rounded(px(8.))
+                .occlude()
+                .text_size(px(13.))
+                .font_family(ff)
+                .shadow_md();
+            if let Some(l) = link {
+                menu = menu.child(row("Open link  ↗", true).on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |v, _, _, cx| {
+                        open_with_system(&l);
+                        v.ctx_menu = None;
+                        cx.stop_propagation();
+                        cx.notify();
+                    }),
+                ));
+            }
+            menu = menu
+                .child(row("Copy", has_sel).on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|v, _, _, cx| {
+                        v.copy_selection(cx);
+                        v.ctx_menu = None;
+                        cx.stop_propagation();
+                        cx.notify();
+                    }),
+                ))
+                .child(row("Paste", true).on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|v, _, _, cx| {
+                        v.paste_clipboard(cx);
+                        v.ctx_menu = None;
+                        cx.stop_propagation();
+                        cx.notify();
+                    }),
+                ));
+            deferred(anchored().position(pos).snap_to_window().child(menu))
+        });
         // Text size rides the grade group: a pane uses its own scale when its
         // grade is detached, else the live outer (Mother) scale.
         let scale = self
@@ -1700,6 +1802,7 @@ impl Render for TerminalView {
             })
             // raised bezel frame sits above the glass, framing the whole pane
             .when(th.bezel > 0.001, |el| el.child(crt::bezel(&th)))
+            .children(ctx_menu_el)
     }
 }
 
