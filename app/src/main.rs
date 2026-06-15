@@ -612,6 +612,12 @@ struct Workspace {
     /// Which wheel marker (seed / text / complement) is being dragged, if any.
     /// The three markers live on the wheel; you grab one and drag it around.
     wheel_drag: Option<WheelTarget>,
+    /// The marker the lightness slider edits — the one most recently grabbed.
+    wheel_active: WheelTarget,
+    /// True while the lightness slider (white↔black) is being dragged.
+    light_drag: bool,
+    /// Live lightness-slider rect, for ratio math during a drag.
+    light_bounds: Arc<Mutex<Option<Bounds<Pixels>>>>,
     /// Live colour-wheel rect, for polar hit-testing during a drag.
     wheel_bounds: Arc<Mutex<Option<Bounds<Pixels>>>>,
     scrubbing: bool,
@@ -775,6 +781,9 @@ impl Workspace {
             slider_drag: None,
             slider_bounds: Arc::new(Mutex::new(std::collections::HashMap::new())),
             wheel_drag: None,
+            wheel_active: WheelTarget::Seed,
+            light_drag: false,
+            light_bounds: Arc::new(Mutex::new(None)),
             wheel_bounds: Arc::new(Mutex::new(None)),
             scrubbing: false,
             scrub_bounds: Arc::new(Mutex::new(None)),
@@ -1230,16 +1239,23 @@ impl Workspace {
         }
         if let Some(target) = self.wheel_drag {
             if ev.pressed_button == Some(MouseButton::Left) {
-                if let Some(hex) = self.wheel_seed_from_pos(ev.position.x, ev.position.y) {
+                // hue + saturation follow the cursor; keep the marker's lightness
+                let l = self.wheel_color(target, cx).l;
+                if let Some(hex) = self.wheel_color_at(ev.position.x, ev.position.y, l) {
                     self.set_wheel_color_for(target, Some(hex), cx);
                 }
+            }
+        }
+        if self.light_drag && ev.pressed_button == Some(MouseButton::Left) {
+            if let Some(l) = self.light_from_pos(ev.position.x) {
+                self.set_active_lightness(l, cx);
             }
         }
     }
 
     fn on_mouse_up(&mut self, ev: &MouseUpEvent, window: &mut Window, cx: &mut Context<Self>) {
         self.scrubbing = false;
-        if self.wheel_drag.take().is_some() {
+        if self.wheel_drag.take().is_some() || std::mem::take(&mut self.light_drag) {
             self.save(cx);
             cx.notify();
             return;
@@ -1757,9 +1773,10 @@ impl Workspace {
             .map(|(t, _)| t)
     }
 
-    /// Map a window-space point on the colour wheel to a seed hex: angle → hue,
-    /// radius → saturation (clamped to the rim), lightness fixed mid.
-    fn wheel_seed_from_pos(&self, x: Pixels, y: Pixels) -> Option<String> {
+    /// Map a wheel point to a hex at lightness `l`: angle → hue, radius →
+    /// saturation. Preserving the dragged marker's own `l` (instead of a fixed
+    /// mid) is what lets the lightness slider reach white/grey/black.
+    fn wheel_color_at(&self, x: Pixels, y: Pixels, l: f32) -> Option<String> {
         let b = (*self.wheel_bounds.lock().unwrap())?;
         let cx = f32::from(b.origin.x) + f32::from(b.size.width) / 2.0;
         let cy = f32::from(b.origin.y) + f32::from(b.size.height) / 2.0;
@@ -1772,7 +1789,33 @@ impl Workspace {
         let ang = dy.atan2(dx) / std::f32::consts::TAU;
         let hue = ang - ang.floor();
         let sat = (dist / rad).min(1.0);
-        Some(hsla_to_hex(hsla(hue, sat, 0.55, 1.0)))
+        Some(hsla_to_hex(hsla(hue, sat, l.clamp(0.0, 1.0), 1.0)))
+    }
+
+    /// The current effective colour of one wheel marker (override or derived).
+    fn wheel_color(&self, target: WheelTarget, cx: &App) -> Hsla {
+        self.wheel_markers(cx)
+            .into_iter()
+            .find(|(t, _, _)| *t == target)
+            .map(|(_, _, c)| c)
+            .unwrap_or_default()
+    }
+
+    /// Lightness `0..1` for the lightness slider at window-x `x`.
+    fn light_from_pos(&self, x: Pixels) -> Option<f32> {
+        let b = (*self.light_bounds.lock().unwrap())?;
+        let w = f32::from(b.size.width);
+        if w <= 0.0 {
+            return None;
+        }
+        Some(((f32::from(x) - f32::from(b.origin.x)) / w).clamp(0.0, 1.0))
+    }
+
+    /// Set the lightness of the active marker (keeping its hue + saturation).
+    fn set_active_lightness(&mut self, l: f32, cx: &mut Context<Self>) {
+        let t = self.wheel_active;
+        let c = self.wheel_color(t, cx);
+        self.set_wheel_color_for(t, Some(hsla_to_hex(hsla(c.h, c.s, l, 1.0))), cx);
     }
 
     /// The colour wheel: a canvas-painted HSV disk (hue = angle, saturation =
@@ -1799,7 +1842,9 @@ impl Workspace {
                     cx.stop_propagation();
                     if let Some(t) = ws.wheel_grab(ev.position.x, ev.position.y, cx) {
                         ws.wheel_drag = Some(t);
-                        if let Some(hex) = ws.wheel_seed_from_pos(ev.position.x, ev.position.y) {
+                        ws.wheel_active = t; // the lightness slider follows it
+                        let l = ws.wheel_color(t, cx).l;
+                        if let Some(hex) = ws.wheel_color_at(ev.position.x, ev.position.y, l) {
                             ws.set_wheel_color_for(t, Some(hex), cx);
                         }
                     }
@@ -1881,6 +1926,66 @@ impl Workspace {
             );
         }
         wheel
+    }
+
+    /// Lightness slider for the active wheel marker — a dark→light ramp of its
+    /// hue. Drag it to reach white / grey / black (pair with a low-saturation
+    /// marker near the wheel's centre for true neutrals). Industry-standard HSL:
+    /// hue + saturation on the disk, lightness here.
+    fn lightness_bar(&self, cx: &mut Context<Self>) -> gpui::Div {
+        const W: f32 = 132.0;
+        let store = self.light_bounds.clone();
+        let c = self.wheel_color(self.wheel_active, cx);
+        let l = c.l.clamp(0.0, 1.0);
+        div()
+            .w(px(W))
+            .h(px(14.))
+            .relative()
+            .cursor_pointer()
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|ws, ev: &MouseDownEvent, _w, cx| {
+                    cx.stop_propagation();
+                    ws.light_drag = true;
+                    if let Some(l) = ws.light_from_pos(ev.position.x) {
+                        ws.set_active_lightness(l, cx);
+                    }
+                }),
+            )
+            .child(
+                canvas(
+                    move |bounds, _, _| {
+                        *store.lock().unwrap() = Some(bounds);
+                    },
+                    |_, _, _, _| {},
+                )
+                .size_full(),
+            )
+            .child(
+                div()
+                    .absolute()
+                    .inset_0()
+                    .rounded_full()
+                    .border_1()
+                    .border_color(hsla(0., 0., 0., 0.4))
+                    .bg(linear_gradient(
+                        90.,
+                        linear_color_stop(hsla(c.h, c.s, 0.06, 1.), 0.),
+                        linear_color_stop(hsla(c.h, c.s, 0.97, 1.), 1.),
+                    )),
+            )
+            .child(
+                div()
+                    .absolute()
+                    .left(px((W * l - 6.0).clamp(0.0, W - 12.0)))
+                    .top(px(1.))
+                    .w(px(12.))
+                    .h(px(12.))
+                    .rounded_full()
+                    .border_2()
+                    .border_color(white())
+                    .bg(c),
+            )
     }
 
     /// Solid, reflective bezel button — light source upper-left.
@@ -2729,6 +2834,7 @@ impl Render for Workspace {
             // The three colours live as draggable markers ON the wheel — ◉ seed,
             // T text, C complement. Grab one and drag it around to set it.
             let wheel = self.color_wheel(self.wheel_markers(cx), cx);
+            let lbar = self.lightness_bar(cx);
             // Small chips to clear an override back to theme/dynamic-derived.
             let mut seed_row = div()
                 .flex()
@@ -2889,6 +2995,7 @@ impl Render for Workspace {
                 .child(theme_row)
                 .child(label("WHEEL — drag ◉ seed · T text · C comp"))
                 .child(div().flex().justify_center().py_1().child(wheel))
+                .child(div().flex().justify_center().child(lbar))
                 .child(seed_row)
                 .child(label("PROGRAM COLOUR"))
                 .child(color_row)
