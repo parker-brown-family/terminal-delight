@@ -154,7 +154,7 @@ const BTNS=[
 ];
 let btnRects=[], hover=-1;
 // knob state 0..1
-const K={barrel:0.62, fade:0.86, track:0.66};
+const K={barrel:1.0, fade:0.86, track:0.90};
 function layout(){ const r=cv.getBoundingClientRect(); W=Math.max(2,Math.round(r.width*dpr)); H=Math.max(2,Math.round(r.height*dpr)); cv.width=W;cv.height=H;scene.width=W;scene.height=H; }
 function fit(px){ return px*dpr*(W/ (900*dpr)); } // scale text to screen size
 function drawScene(time){
