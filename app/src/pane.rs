@@ -1889,26 +1889,26 @@ mod tests {
             l: 0.5,
             a: 1.0,
         };
-        // neutral grade leaves a colour untouched (the default render path)
-        let n = Grade::default();
+        // neutral grade leaves a colour untouched (the identity render path)
+        let n = Grade::neutral();
         assert_eq!(graded(c, &n, Channel::Text), c);
         assert_eq!(graded(c, &n, Channel::Bg), c);
 
         // brightness > 0.5 raises lightness, < 0.5 lowers it
-        let mut up = Grade::default();
+        let mut up = Grade::neutral();
         up.set(GradeKey::Brightness, 0.75);
         assert!(graded(c, &up, Channel::Text).l > c.l);
-        let mut down = Grade::default();
+        let mut down = Grade::neutral();
         down.set(GradeKey::Brightness, 0.25);
         assert!(graded(c, &down, Channel::Text).l < c.l);
 
         // colour = 0 desaturates to greyscale
-        let mut grey = Grade::default();
+        let mut grey = Grade::neutral();
         grey.set(GradeKey::Colour, 0.0);
         assert!(graded(c, &grey, Channel::Text).s.abs() < 1e-6);
 
         // text vs background are independent: the text slider moves fg only
-        let mut text_only = Grade::default();
+        let mut text_only = Grade::neutral();
         text_only.set(GradeKey::Text, 0.8);
         assert!(
             graded(c, &text_only, Channel::Text).l > c.l,
@@ -1922,12 +1922,12 @@ mod tests {
 
         // contrast > 0.5 widens the spread around mid-grey (a bright cell brightens)
         let bright = Hsla { l: 0.7, ..c };
-        let mut hi = Grade::default();
+        let mut hi = Grade::neutral();
         hi.set(GradeKey::Contrast, 0.75);
         assert!(graded(bright, &hi, Channel::Text).l > bright.l);
 
         // results always stay in gamut
-        let mut extreme = Grade::default();
+        let mut extreme = Grade::neutral();
         extreme.set(GradeKey::Brightness, 1.0);
         let g = graded(Hsla { l: 0.95, ..c }, &extreme, Channel::Text);
         assert!((0.0..=1.0).contains(&g.l) && (0.0..=1.0).contains(&g.s));
