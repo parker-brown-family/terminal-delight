@@ -36,17 +36,17 @@ const MAX_ROWS: usize = 7;
 const SPINS: f32 = 11.0;
 /// Free-spin speed (symbols/sec) before a wheel enters its decel window.
 const FREE_SPEED: f32 = 9.0;
-/// Base deceleration window (seconds) — scaled per block for "land faster".
-const SPIN_BASE: f32 = 1.8;
 /// Glitter bomb / token spray lifetime (seconds).
 const FX_LIFE: f32 = 2.6;
 /// A win rumbles the terminal this long while the coins spill.
 const RUMBLE_SECS: f32 = 3.0;
 
-/// When wheel-block row `r` locks (seconds since thinking started): 5, 15, 45,
-/// 120, 300, 600, then +600 (10 minutes) each row after.
-fn row_lock_time(r: usize) -> f32 {
-    const BASE: [f32; 6] = [5.0, 15.0, 45.0, 120.0, 300.0, 600.0];
+/// The "big timer" — when wheel-block `r` STARTS spinning (seconds since
+/// thinking started). An immediate first pull, then 5s, 15s, 45s, 2m, 5m, 10m,
+/// then +10m each block after. Each block only spins for ~1.2s (see `REEL_AT`)
+/// — it does NOT keep rolling until the next block.
+fn block_start(r: usize) -> f32 {
+    const BASE: [f32; 7] = [0.5, 5.0, 15.0, 45.0, 120.0, 300.0, 600.0];
     if r < BASE.len() {
         BASE[r]
     } else {
@@ -54,25 +54,13 @@ fn row_lock_time(r: usize) -> f32 {
     }
 }
 
-/// The deceleration window for row `r` — "land faster": block 0 is 2× as fast
-/// (half the window), block 1 is 1.5× as fast, the rest match block 1.
-fn spin_window(r: usize) -> f32 {
-    match r {
-        0 => SPIN_BASE / 2.0,
-        1 => SPIN_BASE / 1.5,
-        _ => SPIN_BASE / 1.5,
-    }
-}
-
-/// When row `r` first appears (starts spinning) — right as the previous one
-/// locks, so there's always exactly one row rolling into place.
-fn row_appear(r: usize) -> f32 {
-    if r == 0 {
-        0.0
-    } else {
-        row_lock_time(r - 1)
-    }
-}
+/// Within a block the three reels lock left→right on a fast, fixed timer
+/// (seconds after the block starts). The last reel lands at 1.2s — and lingers
+/// (see `REEL_WIN`) for the hopeful slot-machine pause.
+const REEL_AT: [f32; 3] = [0.3, 0.8, 1.2];
+/// Per-reel deceleration window. The last reel eases in slowly — that's the
+/// drawn-out "is it gonna hit?" tease on the final icon.
+const REEL_WIN: [f32; 3] = [0.22, 0.30, 0.65];
 
 /// A sprayed Sonic-ring token, in normalised 0..1 pane space.
 struct Token {
@@ -204,8 +192,9 @@ impl Reels {
         let dt = (t - self.last_t).clamp(0.0, 0.05);
         self.last_t = t;
 
-        // score each wheel block as it finishes landing
-        while self.scored < MAX_ROWS && t >= row_lock_time(self.scored) * self.scale {
+        // score each wheel block once its last reel has landed (only the big
+        // timer scales for demos; the within-block reel stagger stays fixed)
+        while self.scored < MAX_ROWS && t >= block_start(self.scored) * self.scale + REEL_AT[2] {
             let r = self.scored;
             if let Some((value, wbits)) = self.evaluate(r) {
                 self.winners |= wbits;
@@ -394,7 +383,7 @@ pub fn overlay(reels: &Reels, th: &Theme) -> Option<Div> {
     }
     let t = reels.elapsed();
     let scale = reels.scale;
-    if t < row_appear(0) {
+    if t < block_start(0) * scale {
         return None;
     }
     let gold = th.accent;
@@ -411,15 +400,18 @@ pub fn overlay(reels: &Reels, th: &Theme) -> Option<Div> {
     // the growing grid: rows appear in order as their time comes
     let mut grid = div().flex().flex_col().items_center().gap(px(CELL_GAP));
     for r in 0..MAX_ROWS {
-        if t < row_appear(r) * scale {
+        let bs = block_start(r) * scale;
+        if t < bs {
             break;
         }
-        let lock = row_lock_time(r) * scale;
-        let window = spin_window(r);
         let mut row = div().flex().flex_row().gap(px(CELL_GAP));
         for c in 0..3 {
             let idx = r * 3 + c;
             let win = reels.winners & (1 << idx) != 0;
+            // each reel locks left→right on the fast within-block timer; the
+            // last reel eases in slowly (REEL_WIN[2]) for the tease.
+            let lock = bs + REEL_AT[c];
+            let window = REEL_WIN[c];
             row = row.child(render_cell(
                 reels.rows[r][c],
                 t,
@@ -709,19 +701,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn escalating_lock_schedule() {
-        // 5, 15, 45, 120, 300, 600, then +600 (10 min) each row after.
-        let got: Vec<f32> = (0..8).map(row_lock_time).collect();
-        assert_eq!(got, vec![5., 15., 45., 120., 300., 600., 1200., 1800.]);
+    fn big_timer_schedule() {
+        // immediate first pull, then 5, 15, 45, 120, 300, 600, +600 (10m) after.
+        let got: Vec<f32> = (0..8).map(block_start).collect();
+        assert_eq!(got, vec![0.5, 5., 15., 45., 120., 300., 600., 1200.]);
     }
 
     #[test]
-    fn first_blocks_land_faster() {
-        // block 0 is 2× as fast (half window); block 1 (and on) is 1.5× as fast.
-        assert_eq!(spin_window(0), SPIN_BASE / 2.0);
-        assert_eq!(spin_window(1), SPIN_BASE / 1.5);
-        assert_eq!(spin_window(5), SPIN_BASE / 1.5);
-        assert!(spin_window(0) < spin_window(1));
+    fn reels_land_fast_left_to_right_with_a_last_reel_tease() {
+        // three reels lock at 0.3/0.8/1.2s after the block starts — snappy —
+        // and the last reel eases in slowest (the hopeful pause).
+        assert_eq!(REEL_AT, [0.3, 0.8, 1.2]);
+        assert!(REEL_AT[0] < REEL_AT[1] && REEL_AT[1] < REEL_AT[2]);
+        assert!(REEL_WIN[2] > REEL_WIN[0] && REEL_WIN[2] > REEL_WIN[1]);
     }
 
     #[test]
