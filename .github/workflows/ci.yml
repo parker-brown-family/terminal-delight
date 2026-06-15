@@ -122,8 +122,8 @@ jobs:
         with:
           workspaces: app
 
-      - uses: taiki-e/install-action@cargo-about
-
+      # cargo-about is installed on demand by build-appimage.sh (no install-action
+      # tag exists for it), so no separate setup step is needed here.
       - name: Build AppImage
         run: ./scripts/build-appimage.sh
 
