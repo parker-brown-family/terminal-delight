@@ -130,7 +130,7 @@
   <div class="hint">turn the <b>knobs</b> — BARREL warp · TEXT FADE · TRACKING — and click a button on the screen. Built in Rust; this is the web tribute.</div>
 
 <script>
-const cv=document.getElementById('gl'); const gl=cv.getContext('webgl2',{antialias:false,alpha:false});
+const cv=document.getElementById('gl'); let gl=cv.getContext('webgl2',{antialias:false,alpha:false}); let ctx2d=null;
 let W,H, dpr=Math.min(2,window.devicePixelRatio||1);
 const scene=document.createElement('canvas'); const x=scene.getContext('2d');
 // CHANNELS = terminal-delight colour palettes; the CHANNEL knob flips through them.
@@ -225,24 +225,41 @@ void main(){
   col*=1.0-0.5*r2; col*=edge; o=vec4(col,1.0);
 }`;
 function mk(t,s){const sh=gl.createShader(t);gl.shaderSource(sh,s);gl.compileShader(sh);if(!gl.getShaderParameter(sh,gl.COMPILE_STATUS))throw gl.getShaderInfoLog(sh);return sh;}
-const pr=gl.createProgram();gl.attachShader(pr,mk(35633,vs));gl.attachShader(pr,mk(35632,fs));gl.linkProgram(pr);gl.useProgram(pr);
-const tex=gl.createTexture();gl.bindTexture(3553,tex);[[10241,9729],[10240,9729],[10242,33071],[10243,33071]].forEach(([k,v])=>gl.texParameteri(3553,k,v));
+let pr=null, tex=null;
+if(gl){ try {
+  pr=gl.createProgram();gl.attachShader(pr,mk(35633,vs));gl.attachShader(pr,mk(35632,fs));gl.linkProgram(pr);
+  if(!gl.getProgramParameter(pr,gl.LINK_STATUS)) throw gl.getProgramInfoLog(pr);
+  gl.useProgram(pr);
+  tex=gl.createTexture();gl.bindTexture(3553,tex);[[10241,9729],[10240,9729],[10242,33071],[10243,33071]].forEach(([k,v])=>gl.texParameteri(3553,k,v));
+  gl.bindVertexArray(gl.createVertexArray()); // some drivers need a bound VAO for attribute-less draws
+} catch(e){ gl=null; } }
+// WebGL unavailable (e.g. Firefox WebGL blocklist) → flat, un-warped fallback so
+// the screen shows the terminal content + clickable links instead of going blank.
+if(!gl){ try { ctx2d=cv.getContext('2d'); } catch(e){} }
 const U=n=>gl.getUniformLocation(pr,n);
 const t0=performance.now(); let lastKey='';
 function frame(now){ const time=(now-t0)/1000;
+  // fallback redraws on every frame (no GPU loop); GL path redraws the scene only on change
   const key=Math.floor((now-t0)/550)+'|'+W+'|'+hover+'|'+chan+'|'+(now<osdUntil?Math.floor(now/120):0);
-  if(key!==lastKey){drawScene(now-t0);gl.bindTexture(3553,tex);gl.texImage2D(3553,0,6408,6408,5121,scene);lastKey=key;}
-  gl.viewport(0,0,W,H); const c=K.barrel*2.2, t=cur().tint;
-  gl.uniform2f(U('res'),W,H); gl.uniform1f(U('k1'),c*0.14); gl.uniform1f(U('k2'),c*0.06);
-  gl.uniform1f(U('time'),time); gl.uniform1f(U('fade'),K.fade);
-  gl.uniform1f(U('trackSpd'),0.04+K.track*0.30); gl.uniform1f(U('trackWob'),K.track);
-  gl.uniform1f(U('snow'),snow); gl.uniform3f(U('tint'),t[0],t[1],t[2]); gl.uniform1i(U('tex'),0);
-  gl.drawArrays(4,0,3); snow=snow>0.01?snow*0.90:0; window.__ready=true; requestAnimationFrame(frame);
+  if(gl){
+    if(key!==lastKey){drawScene(now-t0);gl.bindTexture(3553,tex);gl.texImage2D(3553,0,6408,6408,5121,scene);lastKey=key;}
+    gl.viewport(0,0,W,H); const c=K.barrel*2.2, t=cur().tint;
+    gl.uniform2f(U('res'),W,H); gl.uniform1f(U('k1'),c*0.14); gl.uniform1f(U('k2'),c*0.06);
+    gl.uniform1f(U('time'),time); gl.uniform1f(U('fade'),K.fade);
+    gl.uniform1f(U('trackSpd'),0.04+K.track*0.30); gl.uniform1f(U('trackWob'),K.track);
+    gl.uniform1f(U('snow'),snow); gl.uniform3f(U('tint'),t[0],t[1],t[2]); gl.uniform1i(U('tex'),0);
+    gl.drawArrays(4,0,3); snow=snow>0.01?snow*0.90:0;
+  } else if(ctx2d){
+    if(key!==lastKey){ drawScene(now-t0); ctx2d.clearRect(0,0,W,H); ctx2d.drawImage(scene,0,0,W,H); lastKey=key; }
+  }
+  window.__ready=true; requestAnimationFrame(frame);
 }
-// hit-test through the warp
+// hit-test: through the warp on the GL path, identity on the flat fallback
 function hit(clientX,clientY){ const r=cv.getBoundingClientRect(); const sx=(clientX-r.left)/r.width, sy=(clientY-r.top)/r.height;
-  const c=K.barrel*2.2, cu=sx-0.5,cv2=sy-0.5,rr2=cu*cu+cv2*cv2,f=1+c*0.14*rr2+c*0.06*rr2*rr2;
-  const lx=(0.5+cu*f)*W, ly=(0.5+cv2*f)*H; return btnRects.findIndex(b=>lx>=b.x&&lx<=b.x+b.w&&ly>=b.y&&ly<=b.y+b.h); }
+  let lx, ly;
+  if(gl){ const c=K.barrel*2.2, cu=sx-0.5,cv2=sy-0.5,rr2=cu*cu+cv2*cv2,f=1+c*0.14*rr2+c*0.06*rr2*rr2; lx=(0.5+cu*f)*W; ly=(0.5+cv2*f)*H; }
+  else { lx=sx*W; ly=sy*H; }
+  return btnRects.findIndex(b=>lx>=b.x&&lx<=b.x+b.w&&ly>=b.y&&ly<=b.y+b.h); }
 cv.addEventListener('mousemove',e=>{const i=hit(e.clientX,e.clientY);if(i!==hover){hover=i;lastKey='';cv.style.cursor=i>=0?'pointer':'default';}});
 cv.addEventListener('click',e=>{const i=hit(e.clientX,e.clientY);if(i>=0){const u=btnRects[i].url;window.__lastClick=u; if(u.startsWith('http'))window.open(u,'_blank');else location.href=u;}});
 window.__hitTest=hit;
