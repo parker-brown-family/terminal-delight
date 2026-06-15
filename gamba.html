@@ -1,0 +1,346 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>terminal-delight — GAMBA (vibe coding is gambling)</title>
+<meta name="description" content="GAMBA: terminal-delight's slot-machine theme. When your AI agent is 'thinking', the wait becomes a slot pull — reels stack on an every-other-Fibonacci timer. A satire on vibe coding, presented on a 1970s game-show slot cabinet.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' rx='3' fill='%231c1206'/><text y='12' x='1.5' font-size='10' font-weight='bold' fill='%23ffc01e'>$$</text></svg>">
+<style>
+  :root{ --gold:#ffc01e; --gold-d:#b8860b; --wood1:#5a3a16; --wood2:#2a1c0a; --wood3:#7a4e1e; --teal:#43c6c3; --red:#f75a33; }
+  *{box-sizing:border-box} html,body{margin:0;height:100%}
+  body{
+    background:
+      radial-gradient(120% 80% at 50% 14%, #2a1d0c 0%, #140d05 58%, #070502 100%),
+      #060402;
+    color:#ffe9b8; font-family:ui-monospace,monospace; min-height:100%;
+    display:flex; align-items:center; justify-content:center; overflow:hidden;
+  }
+  body::after{content:"";position:fixed;left:0;right:0;bottom:0;height:34%;pointer-events:none;
+    background:linear-gradient(#0000, #2a1a0e55 40%, #3a240e88);
+    -webkit-mask:linear-gradient(#0000,#000 60%);mask:linear-gradient(#0000,#000 60%);}
+
+  .stage{ transform-origin:center; }
+
+  /* ---- the slot-machine cabinet ---- */
+  .tv{ position:relative; width:min(92vw, 880px); }
+  .cabinet{
+    position:relative; border-radius:30px 30px 14px 14px; padding:26px 26px 30px;
+    background:
+      repeating-linear-gradient(90deg, #00000018 0 3px, #ffffff0a 3px 6px, #00000012 6px 11px),
+      linear-gradient(165deg, var(--wood3), var(--wood1) 46%, var(--wood2));
+    box-shadow:
+      0 2px 0 #ffffff22 inset, 0 -18px 40px #00000066 inset,
+      0 40px 70px -20px #000b, 0 14px 30px #0009,
+      0 0 0 3px var(--gold-d), 0 0 0 6px #1c1206;
+    display:grid; grid-template-columns: 1fr 130px; gap:22px;
+  }
+  /* marquee: a frame of chasing bulbs around the whole cabinet top */
+  .marquee{ position:absolute; left:14px; right:14px; top:8px; height:16px; display:flex; justify-content:space-between; pointer-events:none; }
+  .marquee i{ width:11px; height:11px; border-radius:50%;
+    background:radial-gradient(circle at 40% 35%, #fff8d8, var(--gold) 55%, var(--gold-d));
+    box-shadow:0 0 8px 2px #ffc01ecc; animation:chase 1s steps(1) infinite; }
+  .marquee i:nth-child(3n+1){ animation-delay:0s } .marquee i:nth-child(3n+2){ animation-delay:.33s } .marquee i:nth-child(3n){ animation-delay:.66s }
+  @keyframes chase{ 0%,100%{opacity:1} 34%,99%{opacity:.25} }
+
+  .brandtop{ grid-column:1 / -1; text-align:center; font-weight:900; letter-spacing:.18em;
+    font-size:30px; color:var(--gold); text-shadow:0 2px 0 #0008, 0 0 18px #ffc01e88; margin-top:6px; }
+  .brandtop small{ display:block; font-weight:700; font-size:10px; letter-spacing:.32em; color:#ffe9b8aa; margin-top:2px; }
+
+  /* screen housing: deep bezel + rounded glass holding the reels */
+  .screen-housing{ position:relative; border-radius:36px/30px; padding:18px;
+    background:linear-gradient(150deg,#1a120a,#2a1c0c);
+    box-shadow:0 0 0 3px #0007, 0 10px 30px #000a inset, 0 2px 0 #ffffff18 inset,
+      0 0 60px -6px rgba(255,192,30,.22); }
+  .screen-housing::after{ content:""; position:absolute; inset:-6px; border-radius:40px/34px; pointer-events:none;
+    box-shadow:0 0 50px 4px rgba(255,192,30,.14) inset; mix-blend-mode:screen; }
+  .screen{ position:relative; aspect-ratio:4/3; border-radius:32px/26px; overflow:hidden;
+    background:#0a0602; box-shadow:0 0 60px #0008 inset, 0 0 0 6px #120b05; }
+  .screen canvas{ position:absolute; inset:0; width:100%; height:100%; display:block; cursor:default; }
+  .screen .sheen{ position:absolute; inset:0; pointer-events:none; border-radius:32px/26px;
+    background:
+      radial-gradient(120% 80% at 30% 10%, #ffffff26, #ffffff00 38%),
+      radial-gradient(120% 120% at 50% 50%, #0000 60%, #00000055);
+    mix-blend-mode:screen; }
+
+  /* right control column: brand, knobs, lever */
+  .panel{ display:flex; flex-direction:column; align-items:center; gap:13px; padding-top:2px; }
+  .knob-wrap{ display:flex; flex-direction:column; align-items:center; gap:3px; }
+  .knob{ width:56px; height:56px; border-radius:50%; position:relative; cursor:ns-resize;
+    background:radial-gradient(circle at 38% 32%, #fff0c0, var(--gold) 46%, var(--gold-d) 100%);
+    box-shadow:0 4px 8px #000a, 0 0 0 4px #2a1c0e, 0 0 0 6px #0006, inset 0 -3px 6px #00000066, inset 0 2px 3px #ffffff88;
+    touch-action:none; }
+  .knob::after{ content:""; position:absolute; left:50%; top:6px; width:4px; height:16px; margin-left:-2px;
+    border-radius:2px; background:linear-gradient(#3a2a10,#1c1407); box-shadow:0 0 2px #000; }
+  .knob.detent{ width:44px; height:44px; }
+  .knob-label{ font-size:9px; letter-spacing:.14em; color:#ffe9b8; font-weight:800; }
+  .knob-val{ font-size:9px; color:var(--gold); height:11px; }
+
+  /* the pull lever */
+  .lever{ margin-top:6px; position:relative; width:60px; height:120px; cursor:pointer; touch-action:none; user-select:none; }
+  .lever .track{ position:absolute; left:27px; top:8px; width:6px; height:104px; border-radius:4px; background:linear-gradient(#0c0804,#241608); box-shadow:0 0 0 2px #00000055; }
+  .lever .ball{ position:absolute; left:8px; top:0; width:44px; height:44px; border-radius:50%;
+    background:radial-gradient(circle at 38% 32%, #ff9b6b, var(--red) 52%, #8a2a12);
+    box-shadow:0 6px 10px #000a, inset 0 -3px 6px #00000066, inset 0 3px 4px #ffffff66;
+    transition:top .12s cubic-bezier(.2,.8,.3,1); }
+  .lever.pulled .ball{ top:72px; }
+  .lever .cap{ font-size:8px; letter-spacing:.18em; color:var(--gold); font-weight:800; position:absolute; bottom:-2px; left:0; right:0; text-align:center; }
+
+  .legs{ position:absolute; left:0; right:0; bottom:-50px; height:60px; display:flex; justify-content:space-between; padding:0 56px; }
+  .legs i{ display:block; width:16px; height:60px; transform-origin:top center;
+    background:linear-gradient(#3c2414,#1c1107); border-radius:0 0 6px 6px; box-shadow:0 8px 14px #0009; }
+  .legs i:first-child{ transform:rotate(9deg); } .legs i:last-child{ transform:rotate(-9deg); }
+  .legs i:nth-child(2){ transform:rotate(4deg);} .legs i:nth-child(3){ transform:rotate(-4deg);}
+
+  .hint{ position:fixed; bottom:14px; left:0; right:0; text-align:center; font-size:11px; color:#a98a52; }
+  .hint b{ color:var(--gold); }
+
+  @media (max-width:760px){
+    body{ overflow:auto; flex-direction:column; align-items:center; padding:14px 0 64px; -webkit-text-size-adjust:100%; }
+    body::after{ height:22%; }
+    .tv{ width:94vw; }
+    .cabinet{ grid-template-columns:1fr; gap:14px; padding:18px 15px 22px; border-radius:22px 22px 12px 12px; }
+    .brandtop{ font-size:24px; }
+    .screen-housing{ padding:12px; border-radius:30px/24px; }
+    .screen{ border-radius:26px/20px; }
+    .panel{ flex-direction:row; flex-wrap:wrap; justify-content:center; align-items:flex-start; gap:6px 14px; }
+    .knob{ width:50px; height:50px; } .knob.detent{ width:46px; height:46px; }
+    .lever{ height:90px; } .lever .track{ height:78px } .lever.pulled .ball{ top:52px }
+    .legs{ padding:0 22px; bottom:-36px; } .legs i{ height:44px; width:13px; }
+    .hint{ position:static; margin:16px auto 0; max-width:90%; }
+  }
+</style></head>
+<body>
+  <div class="stage">
+  <div class="tv">
+    <div class="cabinet">
+      <div class="marquee" id="marquee"></div>
+      <div class="brandtop">🎰 GAMBA 🎰<small>VIBE&nbsp;CODING&nbsp;IS&nbsp;GAMBLING · MODEL&nbsp;TD-777</small></div>
+      <div class="screen-housing">
+        <div class="screen"><canvas id="gl"></canvas><div class="sheen"></div></div>
+      </div>
+      <div class="panel">
+        <div class="knob-wrap"><div class="knob" id="k-barrel"></div><div class="knob-label">BARREL</div><div class="knob-val" id="v-barrel"></div></div>
+        <div class="knob-wrap"><div class="knob" id="k-fade"></div><div class="knob-label">GLOW</div><div class="knob-val" id="v-fade"></div></div>
+        <div class="knob-wrap"><div class="knob detent" id="k-chan"></div><div class="knob-label">PALETTE</div></div>
+        <div class="lever" id="lever" title="PULL"><div class="track"></div><div class="ball"></div><div class="cap">PULL</div></div>
+      </div>
+    </div>
+    <div class="legs"><i></i><i></i><i></i><i></i></div>
+  </div>
+  </div>
+  <div class="hint">pull the <b>lever</b> (or click the screen) to spin · turn <b>PALETTE</b> for a new colour set · vibe coding, but honest about it. Built in Rust; this is the web tribute.</div>
+
+<script>
+const cv=document.getElementById('gl'); let gl=cv.getContext('webgl2',{antialias:false,alpha:false}); let ctx2d=null;
+let W,H, dpr=Math.min(2,window.devicePixelRatio||1);
+const scene=document.createElement('canvas'); const x=scene.getContext('2d');
+// PALETTES — the GAMBA colour sets the PALETTE knob flips through. RETRO leads.
+const CHANNELS=[
+ {name:'RETRO',    phos:'#ffc01e',dim:'#b8860b',bright:'#fff1c9',accent:'#ffc01e',bg:'#1c1206',cream:'#ffe9b8',tint:[1.0,0.78,0.22],glow:'#fc1'},
+ {name:'PINEAPPLE',phos:'#ffe14d',dim:'#9c861c',bright:'#fff6c0',accent:'#ffd21a',bg:'#0a0902',cream:'#fff6d8',tint:[1.0,0.88,0.35],glow:'#fd0'},
+ {name:'BOLT',     phos:'#38e1ff',dim:'#1f86a8',bright:'#cbf6ff',accent:'#22d3ee',bg:'#02080c',cream:'#e8fbff',tint:[0.4,0.9,1.0],glow:'#0df'},
+ {name:'CINNABAR', phos:'#ff6a3c',dim:'#a8431f',bright:'#ffd2b8',accent:'#f75a33',bg:'#100502',cream:'#ffe2cf',tint:[1.0,0.5,0.28],glow:'#f63'},
+ {name:'TEAL',     phos:'#43c6c3',dim:'#247c7a',bright:'#cdf5f3',accent:'#43c6c3',bg:'#03100f',cream:'#dffaf8',tint:[0.4,0.95,0.92],glow:'#3dd'},
+];
+let chan=0; const cur=()=>CHANNELS[chan];
+let snow=0, osdUntil=0;
+const rgba=(t,a)=>`rgba(${Math.round(t[0]*120)},${Math.round(t[1]*150)},${Math.round(t[2]*120)},${a})`;
+const BTNS=[
+  {label:'▾ Download', url:'https://github.com/parker-brown-family/terminal-delight/releases/latest', primary:true},
+  {label:'★ GitHub', url:'https://github.com/parker-brown-family/terminal-delight'},
+  {label:'▸ the full set', url:'tv.html', wide:true},
+];
+let btnRects=[], hover=-1;
+const K={barrel:0.58, fade:0.92};
+
+// ---- the reels: degen-finance / AI-hype slot symbols ----
+const SYM=['🍒','7️⃣','💰','💎','🚀','🤖','🤡','💀','🔥','🧠','🤑','📉','🃏','💸'];
+const JACK={'🍒':'🍒 JACKPOT 🍒','7️⃣':'LUCKY SEVENS','💰':'BIG MONEY','💎':'💎 DIAMOND HANDS','🚀':'TO THE MOON','🤖':'AGI ACHIEVED','🤡':'RUGGED','💀':'TOTALLY REKT','🔥':'ON TILT','🧠':'GALAXY BRAIN','🤑':'WHALE ALERT','📉':'NUMBER GO DOWN','🃏':'WILD CARD','💸':'TOKENS WAGERED'};
+const NREEL=3;
+let reels=[]; // {pos, vel, stopAt, final, locked}
+let jackUntil=0, jackText='', pulls=0;
+function newReels(){ reels=[]; for(let i=0;i<NREEL;i++) reels.push({pos:0,vel:0,stopAt:0,final:0,locked:true}); }
+newReels();
+function spin(){
+  pulls++;
+  const now=performance.now()/1000;
+  reels.forEach((r,i)=>{ r.locked=false; r.vel=26+Math.random()*8; r.stopAt=now+1.0+i*0.55; r.final=(Math.random()*SYM.length)|0; });
+  jackUntil=0;
+}
+function updateReels(){
+  const now=performance.now()/1000; let allLocked=true;
+  reels.forEach(r=>{
+    if(r.locked) return; allLocked=false;
+    if(now>=r.stopAt){ r.pos=r.final; r.locked=true; r.vel=0; }
+    else { r.pos=(r.pos+r.vel*0.016)%SYM.length; }
+  });
+  if(allLocked && reels.every(r=>r.locked) && jackUntil===0){
+    const f=reels.map(r=>r.final);
+    if(f[0]===f[1]&&f[1]===f[2]){ jackText=JACK[SYM[f[0]]]||'WINNER'; jackUntil=performance.now()+4000; }
+    else { jackUntil=-1; } // settled, no jackpot
+  }
+  return allLocked;
+}
+// auto-spin loop: pull, settle, pause, pull again
+let nextAuto=performance.now()+700;
+function autoSpin(){ const now=performance.now(); if(reels.every(r=>r.locked) && now>nextAuto){ spin(); nextAuto=now+5200; } }
+
+function layout(){ const r=cv.getBoundingClientRect(); W=Math.max(2,Math.round(r.width*dpr)); H=Math.max(2,Math.round(r.height*dpr)); cv.width=W;cv.height=H;scene.width=W;scene.height=H; }
+
+function roundRect(rx,ry,rw,rh,r){x.beginPath();x.moveTo(rx+r,ry);x.arcTo(rx+rw,ry,rx+rw,ry+rh,r);x.arcTo(rx+rw,ry+rh,rx,ry+rh,r);x.arcTo(rx,ry+rh,rx,ry,r);x.arcTo(rx,ry,rx+rw,ry,r);x.closePath();}
+
+function drawScene(time){
+  const c=cur(), cx=W/2, s=Math.max(0.5, W/900), narrow=W < 560*dpr;
+  x.fillStyle=c.bg; x.fillRect(0,0,W,H);
+  const g=x.createRadialGradient(cx,H*0.46,0,cx,H*0.46,H*1.0); g.addColorStop(0,rgba(c.tint,0.5)); g.addColorStop(1,'rgba(0,0,0,0)'); x.fillStyle=g; x.fillRect(0,0,W,H);
+  x.textAlign='center'; x.textBaseline='middle';
+
+  // title
+  x.shadowColor=c.glow; x.shadowBlur=22*s*dpr; x.fillStyle=c.phos;
+  x.font=`900 ${(narrow?40:58)*s*dpr}px ui-monospace,monospace`;
+  x.fillText('🎰 GAMBA 🎰', cx, H*0.13); x.shadowBlur=0;
+  x.fillStyle=c.bright; x.font=`${(narrow?11:15)*s*dpr}px ui-monospace,monospace`;
+  x.fillText(narrow?'your agent is thinking…':'WHILE YOUR AGENT THINKS · THE HOUSE ALWAYS WINS', cx, H*0.225);
+
+  // ---- the three reels ----
+  const rw=Math.min(W*0.20, 150*s*dpr), gap=rw*0.16, total=NREEL*rw+(NREEL-1)*gap;
+  const rh=rw*1.18, rx0=cx-total/2, ry=H*0.30, rowH=rh; // one symbol per window
+  for(let i=0;i<NREEL;i++){
+    const r=reels[i], bx=rx0+i*(rw+gap);
+    // reel face (cream, raised)
+    x.save();
+    roundRect(bx,ry,rw,rh,12*s*dpr); x.clip();
+    x.fillStyle=c.cream; x.fillRect(bx,ry,rw,rh);
+    // subtle vertical shade so the window looks recessed
+    const sg=x.createLinearGradient(0,ry,0,ry+rh); sg.addColorStop(0,'#00000033'); sg.addColorStop(.5,'#00000000'); sg.addColorStop(1,'#00000040'); x.fillStyle=sg; x.fillRect(bx,ry,rw,rh);
+    // symbols: draw current + neighbours, scrolling by fractional pos
+    const base=Math.floor(r.pos), frac=r.pos-base, es=rw*0.56;
+    x.font=`${es}px "Noto Color Emoji","Apple Color Emoji",ui-monospace,monospace`;
+    for(let k=-1;k<=1;k++){
+      const sym=SYM[((base+k)%SYM.length+SYM.length)%SYM.length];
+      const sy=ry+rh/2 + (k-frac)*rowH;
+      x.fillText(sym, bx+rw/2, sy);
+    }
+    x.restore();
+    // gold frame
+    x.lineWidth=3*s*dpr; x.strokeStyle=c.accent; x.shadowColor=c.glow; x.shadowBlur=r.locked?10*s*dpr:0;
+    roundRect(bx,ry,rw,rh,12*s*dpr); x.stroke(); x.shadowBlur=0;
+    // center payline tick
+    x.strokeStyle=c.accent+'88'; x.lineWidth=1.5*s*dpr; x.beginPath(); x.moveTo(bx-2,ry+rh/2); x.lineTo(bx+rw+2,ry+rh/2); x.stroke();
+  }
+  // payline arrows
+  x.fillStyle=c.accent; x.font=`${20*s*dpr}px ui-monospace,monospace`;
+  x.fillText('▶', rx0-rw*0.22, ry+rh/2); x.fillText('◀', rx0+total+rw*0.22, ry+rh/2);
+
+  // wager clock / pulls
+  x.fillStyle=c.dim; x.font=`${(narrow?10:12)*s*dpr}px ui-monospace,monospace`;
+  x.fillText(`feeding the machine · ${pulls} pull${pulls===1?'':'s'} · house edge ∞%`, cx, ry+rh+18*s*dpr);
+
+  // jackpot banner
+  if(jackUntil>0 && performance.now()<jackUntil){
+    const blink=Math.sin(time*0.012)>0; x.fillStyle=blink?c.accent:c.bright; x.shadowColor=c.glow; x.shadowBlur=18*s*dpr;
+    x.font=`900 ${(narrow?20:28)*s*dpr}px ui-monospace,monospace`; x.fillText(jackText, cx, ry+rh+44*s*dpr); x.shadowBlur=0;
+  }
+
+  // buttons (row of 2 + 1 wide), low on the screen
+  btnRects=[]; const bh=(narrow?38:44)*s*dpr, bgap=(narrow?9:12)*s*dpr;
+  if(narrow){
+    const bw=Math.min(W*0.84, 360*s*dpr); let by=H*0.74;
+    BTNS.forEach((b,i)=>{ drawBtn(b,i,cx-bw/2,by,bw,bh,s); by+=bh+bgap; });
+  } else {
+    const row=BTNS.slice(0,2), bw=200*s*dpr, total2=row.length*bw+(row.length-1)*bgap; let bx=cx-total2/2, by=H*0.80;
+    row.forEach((b,i)=>{ drawBtn(b,i,bx,by,bw,bh,s); bx+=bw+bgap; });
+    drawBtn(BTNS[2],2,cx-total2/2,by+bh+bgap,total2,bh,s);
+  }
+
+  if(performance.now()<osdUntil){ x.textAlign=narrow?'center':'right'; x.fillStyle=c.bright; x.shadowColor=c.glow; x.shadowBlur=9*s*dpr;
+    x.font=`700 ${(narrow?12:14)*s*dpr}px ui-monospace,monospace`;
+    x.fillText(c.name, narrow?cx:W-18*s*dpr, narrow?H*0.06:H*0.075); x.shadowBlur=0; x.textAlign='center'; }
+}
+function drawBtn(b,i,bx,by,bw,bh,s){ const c=cur(); btnRects.push({x:bx,y:by,w:bw,h:bh,url:b.url}); const on=hover===i;
+  x.fillStyle=b.primary?(on?c.dim:'rgba(255,192,30,0.18)'):(on?'rgba(255,192,30,0.18)':'rgba(255,255,255,0.05)'); roundRect(bx,by,bw,bh,9*dpr); x.fill();
+  x.lineWidth=on?2.4*dpr:1.4*dpr; x.strokeStyle=(b.primary||on)?c.accent:c.dim; roundRect(bx,by,bw,bh,9*dpr); x.stroke();
+  x.fillStyle=b.primary?c.bright:c.phos; x.shadowColor=c.glow; x.shadowBlur=on?0:1.4*dpr; x.font=`700 ${15*s*dpr}px ui-monospace,monospace`;
+  x.fillText(b.label,bx+bw/2,by+bh/2); x.shadowBlur=0; }
+
+const vs=`#version 300 es
+void main(){vec2 p=vec2((gl_VertexID<<1)&2,gl_VertexID&2);gl_Position=vec4(p*2.0-1.0,0.,1.);}`;
+const fs=`#version 300 es
+precision highp float; uniform sampler2D tex; uniform vec2 res; uniform float k1,k2,time,fade,snow; uniform vec3 tint;
+out vec4 o; float hash(float n){return fract(sin(n)*43758.5453);}
+vec2 warp(vec2 uv){vec2 c=uv-0.5;float r2=dot(c,c);return 0.5+c*(1.0+k1*r2+k2*r2*r2);}
+void main(){
+  vec2 uv0=gl_FragCoord.xy/res; uv0.y=1.0-uv0.y; vec2 uv=warp(uv0);
+  vec2 e=min(uv,1.0-uv); float edge=smoothstep(0.0,0.006,min(e.x,e.y));
+  if(edge<=0.0){o=vec4(0,0,0,1);return;} float r2=dot(uv-0.5,uv-0.5);
+  float a=0.004*r2;
+  vec3 col=vec3(texture(tex,warp(uv0+vec2(a,0.))).r, texture(tex,uv).g, texture(tex,warp(uv0-vec2(a,0.))).b);
+  col*=1.0-0.10*(0.5+0.5*sin(uv.y*res.y*0.9));
+  col*=mix(0.5,1.18,fade);
+  col*=1.0+0.025*(sin(time*40.0)*0.5+(hash(floor(time*22.0))-0.5));
+  col=mix(col, vec3(hash(floor(gl_FragCoord.x)*3.1+floor(gl_FragCoord.y)*7.7+floor(time*45.0)*13.0)), clamp(snow,0.0,1.0)*0.8);
+  col*=1.0-0.42*r2; col*=edge; o=vec4(col,1.0);
+}`;
+function mk(t,s){const sh=gl.createShader(t);gl.shaderSource(sh,s);gl.compileShader(sh);if(!gl.getShaderParameter(sh,gl.COMPILE_STATUS))throw gl.getShaderInfoLog(sh);return sh;}
+let pr=null, tex=null;
+if(gl){ try {
+  pr=gl.createProgram();gl.attachShader(pr,mk(35633,vs));gl.attachShader(pr,mk(35632,fs));gl.linkProgram(pr);
+  if(!gl.getProgramParameter(pr,gl.LINK_STATUS)) throw gl.getProgramInfoLog(pr);
+  gl.useProgram(pr);
+  tex=gl.createTexture();gl.bindTexture(3553,tex);[[10241,9729],[10240,9729],[10242,33071],[10243,33071]].forEach(([k,v])=>gl.texParameteri(3553,k,v));
+  gl.bindVertexArray(gl.createVertexArray());
+} catch(e){ gl=null; } }
+if(!gl){ try { ctx2d=cv.getContext('2d'); } catch(e){} }
+const U=n=>gl.getUniformLocation(pr,n);
+const t0=performance.now();
+function frame(now){ const time=now-t0;
+  autoSpin(); updateReels(); drawScene(time);
+  if(gl){
+    gl.bindTexture(3553,tex); gl.texImage2D(3553,0,6408,6408,5121,scene);
+    gl.viewport(0,0,W,H); const c=K.barrel*2.2;
+    gl.uniform2f(U('res'),W,H); gl.uniform1f(U('k1'),c*0.14); gl.uniform1f(U('k2'),c*0.06);
+    gl.uniform1f(U('time'),time/1000); gl.uniform1f(U('fade'),K.fade);
+    gl.uniform1f(U('snow'),snow); gl.uniform3f(U('tint'),cur().tint[0],cur().tint[1],cur().tint[2]); gl.uniform1i(U('tex'),0);
+    gl.drawArrays(4,0,3); snow=snow>0.01?snow*0.90:0;
+  } else if(ctx2d){ ctx2d.clearRect(0,0,W,H); ctx2d.drawImage(scene,0,0,W,H); }
+  window.__ready=true; requestAnimationFrame(frame);
+}
+function hit(clientX,clientY){ const r=cv.getBoundingClientRect(); const sx=(clientX-r.left)/r.width, sy=(clientY-r.top)/r.height;
+  let lx, ly;
+  if(gl){ const c=K.barrel*2.2, cu=sx-0.5,cv2=sy-0.5,rr2=cu*cu+cv2*cv2,f=1+c*0.14*rr2+c*0.06*rr2*rr2; lx=(0.5+cu*f)*W; ly=(0.5+cv2*f)*H; }
+  else { lx=sx*W; ly=sy*H; }
+  return btnRects.findIndex(b=>lx>=b.x&&lx<=b.x+b.w&&ly>=b.y&&ly<=b.y+b.h); }
+cv.addEventListener('mousemove',e=>{const i=hit(e.clientX,e.clientY);if(i!==hover){hover=i;cv.style.cursor=i>=0?'pointer':'default';}});
+cv.addEventListener('click',e=>{const i=hit(e.clientX,e.clientY);if(i>=0){const u=btnRects[i].url;window.__lastClick=u; if(u.startsWith('http'))window.open(u,'_blank');else location.href=u;} else { if(reels.every(r=>r.locked)){spin(); nextAuto=performance.now()+5200;} }});
+window.__hitTest=hit; window.__spin=spin;
+
+function bindKnob(el,vEl,name,fmt){ const set=v=>{K[name]=Math.max(0,Math.min(1,v)); el.style.transform='rotate('+(K[name]*270-135)+'deg)'; if(vEl)vEl.textContent=fmt(K[name]); };
+  set(K[name]); let dragging=false,startY,startV;
+  el.addEventListener('pointerdown',e=>{dragging=true;startY=e.clientY;startV=K[name];el.setPointerCapture(e.pointerId);e.preventDefault();});
+  el.addEventListener('pointermove',e=>{if(!dragging)return; set(startV+(startY-e.clientY)/160);});
+  el.addEventListener('pointerup',()=>dragging=false); el.addEventListener('pointercancel',()=>dragging=false);
+  el.addEventListener('wheel',e=>{e.preventDefault();set(K[name]-Math.sign(e.deltaY)*0.06);},{passive:false});
+  el.__set=set;
+}
+bindKnob(document.getElementById('k-barrel'),document.getElementById('v-barrel'),'barrel',v=>Math.round(v*100)+'%');
+bindKnob(document.getElementById('k-fade'),document.getElementById('v-fade'),'fade',v=>Math.round(v*100)+'%');
+(function(){const el=document.getElementById('k-chan'); let a=0;
+  function go(d){ chan=(chan+d+CHANNELS.length)%CHANNELS.length; a+=d*(360/CHANNELS.length);
+    el.style.transform='rotate('+a+'deg)'; snow=1.0; osdUntil=performance.now()+1700; }
+  el.addEventListener('pointerdown',e=>{e.preventDefault();go(1);});
+  el.addEventListener('wheel',e=>{e.preventDefault();go(Math.sign(e.deltaY)||1);},{passive:false});
+  window.__palette=(d)=>go(d);
+})();
+
+// the pull lever — yank it to spin
+(function(){const el=document.getElementById('lever');
+  function pull(){ if(!reels.every(r=>r.locked)) return; el.classList.add('pulled'); setTimeout(()=>el.classList.remove('pulled'),260); spin(); nextAuto=performance.now()+5200; }
+  el.addEventListener('pointerdown',e=>{e.preventDefault();pull();});
+  window.__pull=pull;
+})();
+
+// fill the marquee with bulbs
+(function(){const m=document.getElementById('marquee'); const n=Math.max(10,Math.round((window.innerWidth*0.7)/26)); for(let i=0;i<n;i++){m.appendChild(document.createElement('i'));}})();
+
+addEventListener('resize',layout);
+layout(); requestAnimationFrame(frame);
+setTimeout(spin,600);
+</script></body></html>

@@ -726,6 +726,11 @@ pub struct TerminalView {
     bell_dur: Option<f32>,
     /// Last-known OS focus, for edge-detected focus reporting (CSI I / CSI O).
     was_focused: bool,
+    /// 🎰 GAMBA slot-machine reels — rolled while an agent in this pane is
+    /// "thinking", on the gamba theme / retro colour set. Pure satire.
+    gamba: crate::gamba::Reels,
+    /// Throttle for the (cheap) grid scan that detects the agent spinner.
+    last_think_scan: Instant,
 }
 
 /// Click on the header's theme icon — the workspace opens the breakout menu.
@@ -854,6 +859,18 @@ impl TerminalView {
                         if view.fx.tick(&th) {
                             cx.notify();
                         }
+                        // 🎰 GAMBA: poll the grid (throttled) for the agent
+                        // spinner, then advance the reel stack while it rolls.
+                        if view.last_think_scan.elapsed() > std::time::Duration::from_millis(120) {
+                            view.last_think_scan = Instant::now();
+                            let thinking = view.agent_is_thinking();
+                            if thinking != view.gamba.is_thinking() {
+                                view.gamba.set_thinking(thinking);
+                            }
+                        }
+                        if view.gamba.tick() {
+                            cx.notify();
+                        }
                         // debounced PTY resize: fire once the drag settles
                         if let Some((grid, since)) = view.pending_grid {
                             if since.elapsed() > std::time::Duration::from_millis(140) {
@@ -864,7 +881,7 @@ impl TerminalView {
                                 cx.notify();
                             }
                         }
-                        view.fx.active()
+                        view.fx.active() || view.gamba.is_thinking()
                     })
                     .unwrap_or(false);
                 let ms = if active { 33 } else { 150 };
@@ -910,7 +927,42 @@ impl TerminalView {
             bell_dur: None,
             was_focused: false,
             pending_grid: None,
+            gamba: crate::gamba::Reels::new(seed),
+            last_think_scan: Instant::now()
+                .checked_sub(std::time::Duration::from_secs(1))
+                .unwrap_or_else(Instant::now),
         }
+    }
+
+    /// Is the agent in this pane "thinking" right now? We scan the visible grid
+    /// for the spinner hint Claude/Codex print while a turn runs ("esc to
+    /// interrupt"). `TD_GAMBA_DEMO=1` forces it on for demos/screenshots.
+    fn agent_is_thinking(&self) -> bool {
+        if std::env::var("TD_GAMBA_DEMO").is_ok() {
+            return true;
+        }
+        if !self.mode.is_agent() {
+            return false;
+        }
+        let term = self.session.term.lock();
+        let content = term.renderable_content();
+        let display_offset = content.display_offset;
+        let mut rows = vec![String::new(); self.grid.rows];
+        for indexed in content.display_iter {
+            let row = indexed.point.line.0 + display_offset as i32;
+            if row < 0 || row as usize >= self.grid.rows {
+                continue;
+            }
+            let cell = &indexed.cell;
+            if cell.flags.contains(Flags::WIDE_CHAR_SPACER) {
+                continue;
+            }
+            rows[row as usize].push(if cell.c == '\0' { ' ' } else { cell.c });
+        }
+        rows.iter().any(|line| {
+            let low = line.to_ascii_lowercase();
+            low.contains("esc to interrupt") || low.contains("interrupt)")
+        })
     }
 
     fn handle_term_event(&mut self, event: TermEvent, cx: &mut Context<Self>) -> bool {
@@ -2460,6 +2512,16 @@ impl Render for TerminalView {
         });
 
         let jiggle = self.fx.jiggle_px;
+        // 🎰 GAMBA reels — shown only on the gamba look while the agent thinks.
+        let gamba_overlay = {
+            let is_retro = matches!(
+                self.appearance.effective(&theme::outer_choice(cx)).dynamic,
+                theme::Dynamic::Retro
+            );
+            crate::gamba::look_active(&th, is_retro)
+                .then(|| crate::gamba::overlay(&self.gamba, &th))
+                .flatten()
+        };
         div()
             .track_focus(&self.focus_handle(cx))
             .on_key_down(cx.listener(Self::on_key))
@@ -2547,6 +2609,8 @@ impl Render for TerminalView {
             })
             // raised bezel frame sits above the glass, framing the whole pane
             .when(th.bezel > 0.001, |el| el.child(crt::bezel(&th)))
+            // 🎰 the slot reels ride above the bezel, below the bell modal
+            .children(gamba_overlay)
             .children(ctx_menu_el)
             .children(bell_tray)
     }
