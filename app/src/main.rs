@@ -1604,13 +1604,14 @@ impl Workspace {
         self.write_grade(&scope, grade, cx);
     }
 
-    /// Reset the active OSD scope's grade to neutral (a pane stays detached;
-    /// "follow outer" re-inherits).
+    /// Reset the active OSD scope's grade to the neutral identity — no monitor
+    /// grading at all (this clears the shipped house grade too, see
+    /// [`theme::Grade::neutral`]). A pane stays detached; "follow outer" re-inherits.
     fn reset_grade(&mut self, cx: &mut Context<Self>) {
         let Some(scope) = self.osd_menu.clone() else {
             return;
         };
-        self.write_grade(&scope, theme::Grade::default(), cx);
+        self.write_grade(&scope, theme::Grade::neutral(), cx);
     }
 
     /// Commit a grade to a scope: pin it on a pane (grade group only), or set it

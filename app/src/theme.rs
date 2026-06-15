@@ -212,17 +212,6 @@ fn is_true(b: &bool) -> bool {
     *b
 }
 
-/// The neutral slider position. Every [`Grade`] channel reads 0.5 = no-op, so a
-/// fresh grade is the identity transform and serialises to nothing.
-fn half() -> f32 {
-    0.5
-}
-
-/// The neutral text-size multiplier — `1.0×`, the [`GradeKey::Scale`] no-op.
-fn one() -> f32 {
-    1.0
-}
-
 /// One channel of the monitor OSD — the address of a slider, used both to drive
 /// the picker loop and to tag an in-flight slider drag.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -257,37 +246,38 @@ impl GradeKey {
 /// `gamma` grade both text and background, while `text`/`background` are the
 /// independent per-channel lightness levels. Rides on [`ThemeChoice`] so it
 /// follows the same outer-vs-pane scope and persistence as the theme.
+/// A partial `[theme.grade]` table fills any missing channel from
+/// [`Grade::default`] (the shipped house grade), not from the neutral
+/// identity — so an absent field means "the default for that channel".
 #[derive(Clone, Copy, PartialEq, Debug, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Grade {
-    #[serde(default = "half")]
     pub brightness: f32,
-    #[serde(default = "half")]
     pub contrast: f32,
-    #[serde(default = "half")]
     pub colour: f32,
-    #[serde(default = "half")]
     pub text: f32,
-    #[serde(default = "half")]
     pub background: f32,
-    #[serde(default = "half")]
     pub gamma: f32,
     /// Text-size multiplier (`0.7..1.6`, neutral `1.0`). Scales the pane's font
-    /// and cell metrics rather than its colours; omitted from the wire form when
-    /// neutral (see [`Grade::is_neutral`]).
-    #[serde(default = "one")]
+    /// and cell metrics rather than its colours.
     pub scale: f32,
 }
 
 impl Default for Grade {
+    /// The shipped "house" grade — Parker's personal monitor look, baked in as
+    /// the default for every fresh pane/window (see the breakout DISPLAY tray).
+    /// Channels are `0..1` with `0.5` = no-op; these sit deliberately off-neutral.
+    /// The *identity* (no grading) is [`Grade::neutral`], which is what `reset`
+    /// returns to.
     fn default() -> Self {
         Self {
-            brightness: 0.5,
-            contrast: 0.5,
-            colour: 0.5,
-            text: 0.5,
-            background: 0.5,
-            gamma: 0.5,
-            scale: 1.0,
+            brightness: 0.33, // −17
+            contrast: 0.25,   // −25
+            colour: 0.69,     // +19
+            text: 0.67,       // +17
+            background: 0.81, // +31
+            gamma: 0.76,      // +26
+            scale: 0.99,      // 99%
         }
     }
 }
@@ -304,8 +294,23 @@ impl Grade {
         (GradeKey::Scale, "text size"),
     ];
 
+    /// The identity grade: every channel at its no-op (`0.5`, scale `1.0`), i.e.
+    /// no monitor grading at all. This is what `reset` returns to — distinct
+    /// from [`Grade::default`], the off-neutral house look a fresh scope starts at.
+    pub fn neutral() -> Self {
+        Self {
+            brightness: 0.5,
+            contrast: 0.5,
+            colour: 0.5,
+            text: 0.5,
+            background: 0.5,
+            gamma: 0.5,
+            scale: 1.0,
+        }
+    }
+
     /// True when every channel sits at neutral — the grade is the identity and
-    /// is omitted from the serialised form / takes `resolve`'s fast path.
+    /// takes `resolve`'s fast path.
     pub fn is_neutral(&self) -> bool {
         const EPS: f32 = 1e-3;
         [
@@ -319,6 +324,23 @@ impl Grade {
         .iter()
         .all(|v| (v - 0.5).abs() < EPS)
             && (self.scale - 1.0).abs() < EPS
+    }
+
+    /// True when this grade equals the shipped [`Grade::default`]. Used as the
+    /// `skip_serializing_if` for a scope's grade: omit it only when it matches
+    /// the compiled default (which reload reconstructs), so a user grade that
+    /// happens to be *neutral* still round-trips instead of springing back to
+    /// the house default.
+    pub fn is_default(&self) -> bool {
+        const EPS: f32 = 1e-3;
+        let d = Grade::default();
+        (self.brightness - d.brightness).abs() < EPS
+            && (self.contrast - d.contrast).abs() < EPS
+            && (self.colour - d.colour).abs() < EPS
+            && (self.text - d.text).abs() < EPS
+            && (self.background - d.background).abs() < EPS
+            && (self.gamma - d.gamma).abs() < EPS
+            && (self.scale - d.scale).abs() < EPS
     }
 
     pub fn get(&self, k: GradeKey) -> f32 {
@@ -362,9 +384,10 @@ pub struct ThemeChoice {
     /// flows through `color`. (Was the retired `ColorMode::Syntax` mode.)
     #[serde(default, skip_serializing_if = "is_false")]
     pub syntax: bool,
-    /// Monitor-OSD grading for this scope. Neutral by default and omitted from
-    /// the wire form when so (see [`Grade::is_neutral`]).
-    #[serde(default, skip_serializing_if = "Grade::is_neutral")]
+    /// Monitor-OSD grading for this scope. Starts at the house [`Grade::default`]
+    /// and is omitted from the wire form only while it still matches it (see
+    /// [`Grade::is_default`]), so a hand-tuned grade — even a neutral one — persists.
+    #[serde(default, skip_serializing_if = "Grade::is_default")]
     pub grade: Grade,
     /// How the seed propagates into the palette (the theme-tray glyph). Part of
     /// the theme group; `Plain` (single-hue tint) by default for back-compat.
@@ -386,7 +409,7 @@ impl Default for ThemeChoice {
             id: "custom".into(),
             seed: None,
             color: ColorMode::default(),
-            syntax: false,
+            syntax: true,
             grade: Grade::default(),
             dynamic: Dynamic::default(),
             text: None,
@@ -422,7 +445,7 @@ impl Default for ThemeGroup {
             id: "custom".into(),
             seed: None,
             color: ColorMode::default(),
-            syntax: false,
+            syntax: true,
             dynamic: Dynamic::default(),
             text: None,
             complement: None,
@@ -1003,9 +1026,10 @@ pub fn select_outer(cx: &mut App, choice: ThemeChoice) {
 }
 
 /// Screen-warp (CRT barrel) is a single global DIAL, ORTHOGONAL to the theme:
-/// any texture curves by `amount` (0 = dead flat). The default is the old
-/// hacker dial; the slider runs up to [`WARP_MAX`] for a full fishbowl.
-pub const WARP_DEFAULT: f32 = 0.42;
+/// any texture curves by `amount` (0 = dead flat). The default is a deliberately
+/// heavy, near-fishbowl bend (the house look); the slider runs from 0 up to
+/// [`WARP_MAX`] for a full fishbowl.
+pub const WARP_DEFAULT: f32 = 1.43;
 pub const WARP_MAX: f32 = 1.5;
 
 pub struct ScreenWarp(pub f32);
@@ -1426,27 +1450,50 @@ mod tests {
         assert_eq!(back.color, ColorMode::OnTheme);
         assert!(back.syntax, "syntax flag survives a round-trip");
 
-        // off is the default, so it is omitted from the wire form
-        let off = toml::to_string(&ThemeChoice::default()).unwrap();
-        assert!(!off.contains("syntax"), "default syntax=false is skipped");
+        // syntax=false is omitted from the wire form (the serde skip), even
+        // though the shipped default is now on
+        let off = toml::to_string(&ThemeChoice {
+            syntax: false,
+            ..Default::default()
+        })
+        .unwrap();
+        assert!(!off.contains("syntax"), "syntax=false is skipped");
     }
 
     #[test]
-    fn grade_neutral_is_default_and_omitted_from_the_wire() {
+    fn default_grade_is_omitted_but_a_neutral_override_persists() {
+        // the shipped house grade is deliberately off-neutral, yet it is the
+        // default — so it is omitted from the wire form (the is_default skip)
         assert!(
-            Grade::default().is_neutral(),
-            "a fresh grade is the identity"
+            !Grade::default().is_neutral(),
+            "the house grade is off-neutral"
         );
+        assert!(Grade::default().is_default());
         let off = toml::to_string(&ThemeChoice::default()).unwrap();
         assert!(
             !off.contains("grade"),
-            "neutral grade is skipped on the wire"
+            "the default grade is skipped on the wire"
+        );
+
+        // a user who resets to the neutral identity has DIVERGED from the
+        // default, so the grade MUST be written — otherwise reload would spring
+        // back to the house grade
+        let neutral = ThemeChoice {
+            grade: Grade::neutral(),
+            ..Default::default()
+        };
+        let wire = toml::to_string(&neutral).unwrap();
+        assert!(wire.contains("grade"), "a neutral override is persisted");
+        let back: ThemeChoice = toml::from_str(&wire).unwrap();
+        assert!(
+            back.grade.is_neutral(),
+            "neutral round-trips, not the house default"
         );
     }
 
     #[test]
-    fn grade_round_trips_and_partial_toml_fills_neutral() {
-        // a non-neutral grade survives a round-trip on ThemeChoice
+    fn grade_round_trips_and_partial_toml_fills_default() {
+        // a hand-tuned grade survives a round-trip on ThemeChoice
         let mut g = Grade::default();
         g.set(GradeKey::Brightness, 0.8);
         g.set(GradeKey::Gamma, 0.3);
@@ -1458,26 +1505,31 @@ mod tests {
         let back: ThemeChoice = toml::from_str(&toml::to_string(&c).unwrap()).unwrap();
         assert!((back.grade.brightness - 0.8).abs() < 1e-6);
         assert!((back.grade.gamma - 0.3).abs() < 1e-6);
-        // a partial [grade] table must fill the *missing* channels with 0.5, not
-        // f32's 0.0 default — this guards the per-field `default = "half"` wiring.
+        // a partial [grade] table fills the *missing* channels from the house
+        // default (Grade::default), not f32's 0.0 — guards the container
+        // `#[serde(default)]` wiring.
         let partial: ThemeChoice =
             toml::from_str("id = \"hacker\"\n[grade]\nbrightness = 0.9\n").unwrap();
+        let d = Grade::default();
         assert!((partial.grade.brightness - 0.9).abs() < 1e-6);
         assert!(
-            (partial.grade.contrast - 0.5).abs() < 1e-6,
-            "omitted channel = neutral"
+            (partial.grade.contrast - d.contrast).abs() < 1e-6,
+            "omitted channel = house default"
         );
-        assert!((partial.grade.colour - 0.5).abs() < 1e-6);
+        assert!((partial.grade.colour - d.colour).abs() < 1e-6);
     }
 
     #[test]
     fn text_size_rides_the_grade_group_under_its_own_range() {
-        // Neutral scale is 1.0×, not 0.5, and a default grade stays neutral.
-        assert!((Grade::default().scale - 1.0).abs() < 1e-6);
-        assert!(Grade::default().is_neutral());
+        // The identity scale is 1.0× (Grade::neutral); the shipped house grade
+        // sits just under at 0.99× and is the default, not the identity.
+        assert!((Grade::neutral().scale - 1.0).abs() < 1e-6);
+        assert!(Grade::neutral().is_neutral());
+        assert!((Grade::default().scale - 0.99).abs() < 1e-6);
+        assert!(!Grade::default().is_neutral());
 
         // Stored in real units, clamped to 0.7..1.6 (not the colour 0..1).
-        let mut g = Grade::default();
+        let mut g = Grade::neutral();
         g.set(GradeKey::Scale, 1.3);
         assert!((g.get(GradeKey::Scale) - 1.3).abs() < 1e-6);
         assert!(!g.is_neutral(), "a non-1.0 scale breaks neutrality");
@@ -1498,8 +1550,8 @@ mod tests {
         let legacy: ThemeChoice =
             toml::from_str("id = \"hacker\"\n[grade]\nbrightness = 0.9\n").unwrap();
         assert!(
-            (legacy.grade.scale - 1.0).abs() < 1e-6,
-            "absent scale = 1.0×"
+            (legacy.grade.scale - Grade::default().scale).abs() < 1e-6,
+            "absent scale = house default"
         );
 
         // A pristine pane inherits the outer text size live (the "Mother" rule);
