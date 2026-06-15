@@ -1,6 +1,7 @@
 # Agent-finished bell — per-terminal sound system
 
-Branch `feat/agent-bell-sounds` (worktree `td-bell`). **Not merged to `main`, not pushed.**
+Shipped in **0.2.0**. Default sounds are bundled in the AppImage and seeded on
+first run; playback is via the host `ffplay` (install `ffmpeg` to hear it).
 
 When a program rings the terminal bell (BEL) — which agents like Claude/Codex do
 when they finish — the pane:

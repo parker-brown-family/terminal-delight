@@ -39,8 +39,8 @@ does the VT emulation; your real shell runs on a real PTY.
 
 ## Install
 
-**Prebuilt AppImage (x86_64):** grab `terminal-delight-x86_64.AppImage` from the
-[latest release](https://github.com/parker-brown-family/terminal-delight/releases),
+**Prebuilt AppImage (x86_64):** download `terminal-delight-x86_64.AppImage` from the
+[latest release](https://github.com/parker-brown-family/terminal-delight/releases/latest),
 then:
 
 ```bash
@@ -97,6 +97,7 @@ app/src/pane.rs   TerminalView: grid render (styled runs), input→PTY bytes,
 app/src/term.rs   the seam: alacritty_terminal tty+EventLoop (clean-room, Apache-2.0 API)
 app/src/theme.rs  TOML themes, hot-reload watcher, gpui Global
 app/src/warp.rs   per-pane warp registry feeding the td-crt-pass renderer patch
+app/src/bell.rs   per-pane agent-finished bell (sound pick/trim, ffplay playback)
 app/themes/       shipped themes (data files — the no-Rust contribution path)
 docs/PLAN.md      the adversarially-hardened plan, gates G0a–G0e + milestones
 index.html, src/  original browser design prototype (kept as design reference)

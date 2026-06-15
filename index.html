@@ -7,7 +7,7 @@
        images are self-only, fonts limited to Google. Locks in the "no embeds" call. -->
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; script-src 'self' 'unsafe-inline'; frame-src 'none'; object-src 'none'; base-uri 'self'; form-action 'none'" />
   <title>terminal-delight — GPU-native Linux terminal</title>
-  <meta name="description" content="A GPU-native Linux terminal in Rust (gpui + alacritty_terminal): hot-reloadable CRT-flavored themes, tiling multi-pane, per-pane monitor-OSD grading. Source-only, MIT." />
+  <meta name="description" content="A GPU-native Linux terminal in Rust (gpui + alacritty_terminal): hot-reloadable CRT-flavored themes, tiling multi-pane, per-pane monitor-OSD grading. MIT — download the AppImage or build from source." />
 
   <!-- Open Graph / social cards -->
   <meta property="og:title" content="terminal-delight" />
@@ -185,7 +185,7 @@
       <p class="tag">A GPU-native Linux terminal with a hot-reloadable, CRT-flavored visual identity.</p>
       <p class="sub">Rust end-to-end: <a href="https://github.com/zed-industries/zed/tree/main/crates/gpui">gpui</a> renders every pixel on the GPU, <code>alacritty_terminal</code> does the VT emulation, your real shell runs on a real PTY. Tiling multi-pane, per-pane theming &amp; monitor-OSD grading, scanlines and a real barrel warp.</p>
       <div class="cta">
-        <a class="btn primary" href="https://github.com/parker-brown-family/terminal-delight/releases/tag/v0.1.0">▾ Get v0.1.0</a>
+        <a class="btn primary" href="https://github.com/parker-brown-family/terminal-delight/releases/latest">▾ Download the AppImage</a>
         <a class="btn" href="https://github.com/parker-brown-family/terminal-delight">★ Star on GitHub</a>
         <a class="btn" href="#build">⌨ Build from source</a>
       </div>
@@ -251,7 +251,7 @@
         </div>
         <div class="cta" style="justify-content:flex-end">
           <a class="btn primary" href="#build">⌨ Build &amp; run</a>
-          <a class="btn" href="https://github.com/parker-brown-family/terminal-delight/releases/tag/v0.1.0">v0.1.0 ↗</a>
+          <a class="btn" href="https://github.com/parker-brown-family/terminal-delight/releases/latest">v0.2.0 ↗</a>
         </div>
       </div>
     </div>
@@ -272,10 +272,10 @@
       </div>
       <div class="prose">
         <div class="eyebrow">Honesty</div>
-        <h2>Source-only. Linux-only. On purpose.</h2>
-        <p>terminal-delight's own code is <b>MIT</b>. But it builds against a pinned Zed/gpui graph that links <b>GPL-3.0</b> crates — so a redistributed <em>binary</em> would be GPL-3.0. We don't ship binaries; you build from source, and the GPL crates are yours, built locally.</p>
+        <h2>MIT binary. Linux-only. On purpose.</h2>
+        <p>terminal-delight is <b>MIT</b> — and so is the <b>prebuilt AppImage</b>. The pinned Zed/gpui graph <em>would</em> have linked <b>GPL-3.0</b> crates into the binary, so we sever that edge at build time (<code>docs/patches/0002</code>); <code>cargo&nbsp;deny</code> passes with no GPL exceptions, so a redistributed binary carries no copyleft. Download it, or build from source — your choice.</p>
         <p>It targets the freedesktop Linux desktop (X11 &amp; Wayland) via gpui's wgpu renderer. <b>Not</b> macOS or Windows.</p>
-        <p><a href="https://github.com/parker-brown-family/terminal-delight/blob/main/THIRD-PARTY-LICENSES.md">License boundary, in detail ↗</a></p>
+        <p><a href="https://github.com/parker-brown-family/terminal-delight/blob/main/THIRD-PARTY-LICENSES.md">How the binary stays MIT, in detail ↗</a></p>
       </div>
     </div>
   </section>
@@ -292,7 +292,7 @@ bash scripts/prepare-gpui.sh
 cd app &amp;&amp; cargo run</pre>
       <p>gpui is consumed from a pinned Zed checkout carrying the <code>td-crt-pass</code> renderer patch (the per-pane barrel warp) — set up as a sibling <code>zed-upstream/</code> directory, same as CI. Full instructions, the CI bar, and the clean-room rule are in <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/CONTRIBUTING.md">CONTRIBUTING.md ↗</a>.</p>
       <div class="cta" style="justify-content:flex-start">
-        <a class="btn primary" href="https://github.com/parker-brown-family/terminal-delight/releases/tag/v0.1.0">Release notes</a>
+        <a class="btn primary" href="https://github.com/parker-brown-family/terminal-delight/releases/latest">Release notes</a>
         <a class="btn" href="https://github.com/parker-brown-family/terminal-delight">Source ↗</a>
       </div>
     </div>
@@ -311,12 +311,12 @@ cd app &amp;&amp; cargo run</pre>
     <div class="wrap cols">
       <div>
         <div class="brand">▸ terminal-delight<span class="blink">_</span></div>
-        <div style="margin-top:8px">MIT source · GPL-3.0 binary boundary · Linux only</div>
+        <div style="margin-top:8px">MIT source &amp; binary · Linux only</div>
         <div style="margin-top:10px"><span class="pill">rust</span> <span class="pill">gpui</span> <span class="pill">crt</span> <span class="pill">v0.1.0</span></div>
       </div>
       <div>
         <div><a href="https://github.com/parker-brown-family/terminal-delight">GitHub repository ↗</a></div>
-        <div><a href="https://github.com/parker-brown-family/terminal-delight/releases/tag/v0.1.0">Releases</a></div>
+        <div><a href="https://github.com/parker-brown-family/terminal-delight/releases/latest">Releases</a></div>
         <div><a href="https://github.com/parker-brown-family/terminal-delight/blob/main/CHANGELOG.md">Changelog</a></div>
         <div><a href="https://github.com/parker-brown-family/terminal-delight/blob/main/CONTRIBUTING.md">Contributing</a></div>
         <div><a href="https://github.com/parker-brown-family/terminal-delight/blob/main/SECURITY.md">Security</a></div>
