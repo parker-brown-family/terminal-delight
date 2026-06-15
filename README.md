@@ -9,8 +9,11 @@ does the VT emulation; your real shell runs on a real PTY.
 > modify-at-will themes · open source.** See [docs/PLAN.md](docs/PLAN.md) for the
 > gated build plan (all five G0 risk gates + MVP 0.1: **passed**).
 
-<!-- Screenshots temporarily removed: the prior captures showed a real shell
-     prompt (username + local paths). Clean demo-content captures coming. -->
+![A curved wall of CRT-warped terminal panes in different theme colours](assets/crt-wall.png)
+
+<p align="center"><em>One window, many real shells — each pane its own tube, theme, and curvature.</em></p>
+
+> Screenshots use staged demo content (a throwaway home + fake prompt), never a real shell.
 
 **Platform:** Linux only (X11 & Wayland, via gpui's wgpu renderer). Not macOS/Windows.
 
@@ -34,25 +37,45 @@ does the VT emulation; your real shell runs on a real PTY.
 | CRT-lite effects: scanlines, vignette, glow — per-theme dials, fully off in light theme | ✅ |
 | Latency probe (`TD_LATENCY=1`): key→echo→parsed **p50 121µs / p99 169µs**; `seq 1 100000` in **0.089s** | ✅ |
 
-## Build & run
+## Install
+
+**Prebuilt AppImage (x86_64):** grab `terminal-delight-x86_64.AppImage` from the
+[latest release](https://github.com/parker-brown-family/terminal-delight/releases),
+then:
+
+```bash
+chmod +x terminal-delight-x86_64.AppImage
+./terminal-delight-x86_64.AppImage
+```
+
+It's a single self-contained file and **MIT-licensed** (see [License](#license)).
+Graphics drivers (Vulkan/OpenGL, Wayland/X11) are used from your system, like any
+native app. The optional agent-finished **bell** plays through your system
+`ffplay` (install `ffmpeg` to hear it) and stays silent if it's absent; the
+PD/CC0 default sounds are bundled and seeded on first run.
+
+## Build from source
 
 ```bash
 # deps (Ubuntu): bash scripts/setup-deps.sh   (Vulkan + build libs)
-bash scripts/prepare-gpui.sh   # clone pinned Zed + apply the td-crt-pass patch
+bash scripts/prepare-gpui.sh   # clone pinned Zed + apply the td patches
 cd app && cargo run
 ```
 
 gpui is consumed from a pinned Zed checkout
 (`abbe85a3321bf6cb7f5b241e623d9c2e16c29187`, post-wgpu-Linux-renderer) carrying
-the `td-crt-pass` renderer patch (`docs/patches/0001-td-crt-pass.patch`) — the
-per-pane CRT barrel warp. `scripts/prepare-gpui.sh` sets the checkout up as a
-sibling `zed-upstream/` directory; CI does the same. The crates.io gpui release
-still ships the older blade renderer with known NVIDIA/X11 issues.
+two small patches (`docs/patches/`): `0001-td-crt-pass` (the per-pane CRT barrel
+warp) and `0002-sever-gpl-crates` (removes the GPL crates the Zed graph would
+otherwise link — see [License](#license)). `scripts/prepare-gpui.sh` sets the
+checkout up as a sibling `zed-upstream/` directory and applies both; CI does the
+same. The crates.io gpui release still ships the older blade renderer with known
+NVIDIA/X11 issues.
 
-Release smoke:
+Build the AppImage yourself, or run the full pre-release smoke:
 
 ```bash
-bash scripts/release-smoke.sh
+bash scripts/build-appimage.sh    # → dist/terminal-delight-x86_64.AppImage
+bash scripts/release-smoke.sh     # fmt + clippy + tests + deny + AppImage check
 ```
 
 ## Theming — edit while it runs
@@ -62,6 +85,8 @@ colors, the 16 ANSI slots, `scanline_opacity`, `vignette`, `glow`, font — and 
 app picks it up in ~300ms. Four themes ship in [`app/themes/`](app/themes/):
 **hacker** (phosphor green) · **tactical-overdrive** (cyan) · **field-command** (olive) ·
 **quiet-command** (light, effects off). Copy one over your config file to switch.
+
+![The four built-in themes side by side](assets/showcase-themes.png)
 
 ## Architecture
 
@@ -79,22 +104,24 @@ index.html, src/  original browser design prototype (kept as design reference)
 
 ## License
 
-terminal-delight's own source is **MIT** (see `LICENSE`). It links `gpui` and
-`alacritty_terminal`, both **Apache-2.0**.
+terminal-delight's own source is **MIT** (see `LICENSE`), and so are its
+distributed binaries. Every linked dependency is used under a permissive license
+(MIT / Apache-2.0 / BSD-class) — the binary carries **no copyleft obligations**.
 
-**This is a source-only project — please do not redistribute prebuilt binaries.**
-The pinned Zed graph pulls **GPL-3.0-or-later** crates (`ztracing`, `zlog`,
-`ztracing_macro`) into the linked binary through `gpui -> sum_tree`, so a
-*distributed binary* is a derivative work that would have to ship under
-GPL-3.0-or-later. The source tree stays cleanly MIT precisely because those GPL
-crates are never redistributed here — you build them yourself from your own Zed
-checkout via `scripts/prepare-gpui.sh`. Relicensing to GPL-3.0-or-later, or
-severing the `sum_tree -> ztracing` edge in the fork, is what would unlock MIT
-binaries later.
+This took one deliberate move. The pinned Zed graph *would* otherwise pull three
+**GPL-3.0-or-later** crates (`ztracing`, `zlog`, `ztracing_macro`) into the linked
+binary via `gpui -> sum_tree` — they were only used for trace spans and a test
+logger. `docs/patches/0002-sever-gpl-crates.patch` removes those uses and drops
+the dependencies, so they never reach the binary. With that edge severed, a
+*distributed* build is cleanly MIT-compatible, which is what makes the prebuilt
+AppImage redistributable. The full third-party license bundle is generated by
+[`cargo about`](app/about.toml) and shipped inside each AppImage (and in
+[`THIRD-PARTY-LICENSES.md`](THIRD-PARTY-LICENSES.md)).
 
-`cargo deny check` enforces this license/source policy (`app/deny.toml`), and CI
-also runs formatting, strict Clippy, tests, the release build, and an advisory
-audit. The clean-room rule for Zed reference is in docs/PLAN.md §2.
+`cargo deny check` enforces this with **no GPL exceptions** (`app/deny.toml`) — any
+newly-introduced copyleft dependency fails CI. CI also runs formatting, strict
+Clippy, tests, the release build, an advisory audit, and (on push) builds the
+AppImage. The clean-room rule for Zed reference is in docs/PLAN.md §2.
 
 ### Privacy
 
@@ -105,6 +132,13 @@ so it can reopen your work after a restart. That file is written owner-only
 
 ## Roadmap
 
-**0.2** tabs · up to 5 panes · drag splitters · packaging smoke test (AppImage/Flatpak) ·
-**0.3** detach pane → own window · **0.4** true post-process CRT shader (wgpu pass — fork
-gate per PLAN R1) · **1.0** 20 panes · rigorous latency rig vs Alacritty · theme gallery.
+**Shipped since 0.1** — tabs · tiling-tree splits (well past 5 panes) · sub-tab
+drag-to-split + window pop-out (the 0.3 detach goal) · the **true post-process CRT
+shader** (the 0.4 wgpu barrel-warp pass — PLAN R1's fork gate, now landed) ·
+**MIT-clean prebuilt AppImage** (0.2 packaging) · portability hardening (vendor-
+agnostic GPU setup, explicit font fallback + startup GPU/font diagnostics, X11
+PRIMARY-selection copy).
+
+**Next** — Flatpak alongside the AppImage · broader Linux matrix (AMD/Intel ·
+Wayland · fractional scaling) · 20-pane stress + rigorous latency rig vs Alacritty ·
+a theme gallery. See [docs/PLAN.md](docs/PLAN.md) for the gated plan.

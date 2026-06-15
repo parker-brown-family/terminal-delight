@@ -70,6 +70,15 @@ terminal-delight (single Rust process, MIT)
   may not. Write the seam from docs.rs API docs (Apache), not with Zed source open.
   Obligations: ship `THIRD-PARTY-LICENSES` (cargo-about) in binaries; `cargo deny check
   licenses` in CI with MIT/Apache/BSD-class allowlist.
+- **License strategy: EXTENDED (2026-06-15) — MIT *binaries* now ship too.** The one
+  thing that kept the project source-only was the GPL-3.0 crates the Zed graph linked
+  into the binary via `gpui -> sum_tree` (`ztracing`, `zlog`, `ztracing_macro`). They
+  were used only for trace-span attributes + a test logger. `docs/patches/0002-sever-gpl-crates.patch`
+  removes those uses and drops the deps; `cargo deny check` then passes with **zero GPL
+  exceptions**, so a *distributed binary* is fully permissive. We ship a prebuilt
+  AppImage (`scripts/build-appimage.sh`) with a `cargo about` notice bundle. This is the
+  "sever the `sum_tree -> ztracing` edge" path the original R3 note flagged as the way to
+  unlock MIT binaries — now taken.
 
 ### Visuals: two tracks (de-risked per critique)
 - **Track 1 — CRT-lite (MVP):** palette + glow-like primitives + scanline overlays + strong
@@ -178,5 +187,20 @@ mouse-origin offset in right pane, stray key leak on split (spawn guard), DejaVu
 silent font fallback. Known quirk: xdotool synthetic typing races `windowactivate`
 (test-harness artifact, not app input path).
 
-Next: **0.2** (tabs, 5 panes, drag splitters, packaging smoke test) per §3.
+### Post-0.1 progress (2026-06-15)
+
+Much of the 0.2–0.4 roadmap has since landed on `main`:
+
+| Milestone | Plan scope | Status |
+|---|---|---|
+| 0.2 | tabs · ≥5 panes · drag splitters · packaging | ✅ tabs + full tiling tree + sub-tab drag-to-split; ✅ **MIT-clean AppImage** (`scripts/build-appimage.sh`) — supersedes the "smoke test" with a real distributable |
+| 0.3 | detach pane → own window | ✅ sub-tab tear-off + pop-out scratch window (cross-window drag-*in* infeasible: gpui home-window pin) |
+| 0.4 | true post-process CRT shader (R1 fork gate) | ✅ `td-crt-pass` wgpu barrel-warp pass landed (`docs/patches/0001`) |
+| — | **MIT binary distribution** | ✅ GPL edge severed (`docs/patches/0002`); `cargo deny` clean with no GPL exceptions (§2) |
+| — | portability hardening | ✅ vendor-agnostic GPU setup · explicit font fallback + startup GPU/font diagnostics · X11 PRIMARY-selection copy |
+
+Next toward **1.0**: Flatpak alongside AppImage · broader Linux matrix (AMD/Intel ·
+Wayland · fractional scaling) — the app now self-reports GPU/driver + font fallback at
+startup to aid first-run on untested boxes · 20-pane stress + rigorous latency rig vs
+Alacritty · theme gallery.
 - Browser demo (`index.html`, `src/`) remains the design reference.
