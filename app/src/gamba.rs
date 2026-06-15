@@ -1,23 +1,23 @@
 //! 🎰 GAMBA — the slot-machine "thinking" overlay.
 //!
 //! Pure satire: when an AI agent in a pane is *thinking* (its "esc to
-//! interrupt" spinner is up), the wait becomes a slot machine. A 3×3 board of
-//! wheels fills **row by row** on an every-other-Fibonacci timer — top row
-//! locks at 5s, middle at 13s, bottom at 34s — each wheel spinning down and
-//! clunking into place left-to-right. A minute after a board resolves, a fresh
-//! board rolls beside it (bounded to the pane width).
+//! interrupt" spinner is up), the wait becomes a slot machine. A 3-wide grid
+//! grows downward, one **wheel block** (a row of three) landing on an
+//! escalating schedule — **5s, 15s, 45s, 2m, 5m, 10m, then every 10m** — each
+//! row spinning down and clunking into place. Landings are snappy: the first
+//! block lands twice as fast, the second 1.5× as fast, the rest at that speed.
 //!
-//! Lines / X / L of three matching glyphs **blink → WINNER → lock with a gold
-//! border** while the losing wheels fade; the pattern sprays bouncing Sonic-ring
-//! tokens and a **10 / 100 / 1000** splash (a single line is 10, a compound
-//! pattern 100, a full-board blackout 1000) and sets off a glitter bomb across
-//! the whole sub-terminal. The library is tiny (4 glyphs) so you hit often.
+//! Three matching glyphs in a row / column / diagonal (or a full blackout) pay
+//! out **10 / 100 / 1000** in bouncing Sonic-ring tokens, set off a glitter
+//! bomb across the sub-terminal, light the winning glyphs gold — and the whole
+//! terminal **rumbles for 3 seconds** as the coins spill.
 //!
 //! All GPU quads/text, non-occluding (no mouse handlers) — input passes
 //! straight through to the shell.
 //!
 //! Gated to the GAMBA look (theme `gamba` / the RETRO colour set); `TD_GAMBA=1`
-//! forces it on any theme, `TD_GAMBA_DEMO=1` rolls without a live agent.
+//! forces it on any theme, `TD_GAMBA_DEMO=1` rolls on a compressed schedule
+//! (with a rigged early win) for demos/screenshots.
 
 use std::time::Instant;
 
@@ -29,68 +29,49 @@ use crate::theme::Theme;
 /// matches land often. Swap freely; matches and scoring adapt to the length.
 const LIB: &[&str] = &["🚀", "✨", "🔥", "🧠"];
 
-/// Row lock times (seconds from a board's start): every OTHER Fibonacci number.
-const ROW_AT: [f32; 3] = [5.0, 13.0, 34.0];
-/// Within a row, wheels lock left→right with this stagger (the slot-machine clunk).
-const COL_STAGGER: f32 = 0.8;
-/// A wheel decelerates over this window (seconds) before its lock time.
-const SPIN_WINDOW: f32 = 2.4;
-/// Symbols rolled through during the deceleration window.
+/// How many wheel-block rows the grid grows to (it caps so a marathon turn
+/// doesn't run off the pane — by row 7 you're 20 minutes deep anyway).
+const MAX_ROWS: usize = 7;
+/// Symbols rolled through during a wheel's deceleration window.
 const SPINS: f32 = 11.0;
 /// Free-spin speed (symbols/sec) before a wheel enters its decel window.
 const FREE_SPEED: f32 = 9.0;
-/// A board is fully locked at this time from its start.
-const RESOLVE_AT: f32 = ROW_AT[2] + 2.0 * COL_STAGGER + 0.25;
-/// "BLINK BLINK BLINK WINNER" runs for this long after a board resolves.
-const BLINK_DUR: f32 = 1.5;
-/// Wait this long after a board resolves before the next board rolls.
-const NEXT_BOARD_GAP: f32 = 60.0;
-/// Boards laid across the pane — capped so a row of them stays within the width.
-const MAX_BOARDS: usize = 2;
+/// Base deceleration window (seconds) — scaled per block for "land faster".
+const SPIN_BASE: f32 = 1.8;
 /// Glitter bomb / token spray lifetime (seconds).
 const FX_LIFE: f32 = 2.6;
+/// A win rumbles the terminal this long while the coins spill.
+const RUMBLE_SECS: f32 = 3.0;
 
-/// Board phase timing. Production matches the brief (rows at 5/13/34s, a fresh
-/// board a minute after each resolves). `TD_GAMBA_DEMO=1` uses a compressed
-/// schedule so the whole 3×3 fills in seconds — for screenshots and quick looks.
-#[derive(Clone, Copy)]
-struct Timing {
-    row_at: [f32; 3],
-    stagger: f32,
-    spin_window: f32,
-    resolve_at: f32,
-    next_gap: f32,
-}
-impl Timing {
-    fn production() -> Self {
-        Self {
-            row_at: ROW_AT,
-            stagger: COL_STAGGER,
-            spin_window: SPIN_WINDOW,
-            resolve_at: RESOLVE_AT,
-            next_gap: NEXT_BOARD_GAP,
-        }
-    }
-    fn demo() -> Self {
-        let row_at = [1.6, 3.2, 5.2];
-        let stagger = 0.5;
-        Self {
-            row_at,
-            stagger,
-            spin_window: 1.1,
-            resolve_at: row_at[2] + 2.0 * stagger + 0.2,
-            next_gap: 7.0,
-        }
+/// When wheel-block row `r` locks (seconds since thinking started): 5, 15, 45,
+/// 120, 300, 600, then +600 (10 minutes) each row after.
+fn row_lock_time(r: usize) -> f32 {
+    const BASE: [f32; 6] = [5.0, 15.0, 45.0, 120.0, 300.0, 600.0];
+    if r < BASE.len() {
+        BASE[r]
+    } else {
+        600.0 + (r - (BASE.len() - 1)) as f32 * 600.0
     }
 }
 
-/// One 3×3 board (a single "pull").
-struct Board {
-    start: f32,
-    cells: [usize; 9], // final symbol index per cell, row-major
-    scored: bool,
-    winners: u16, // bitmask of cells that are part of a winning line
-    value: u32,   // 0 / 10 / 100 / 1000
+/// The deceleration window for row `r` — "land faster": block 0 is 2× as fast
+/// (half the window), block 1 is 1.5× as fast, the rest match block 1.
+fn spin_window(r: usize) -> f32 {
+    match r {
+        0 => SPIN_BASE / 2.0,
+        1 => SPIN_BASE / 1.5,
+        _ => SPIN_BASE / 1.5,
+    }
+}
+
+/// When row `r` first appears (starts spinning) — right as the previous one
+/// locks, so there's always exactly one row rolling into place.
+fn row_appear(r: usize) -> f32 {
+    if r == 0 {
+        0.0
+    } else {
+        row_lock_time(r - 1)
+    }
 }
 
 /// A sprayed Sonic-ring token, in normalised 0..1 pane space.
@@ -121,13 +102,20 @@ pub struct Reels {
     thinking_since: Option<Instant>,
     rng: u64,
     last_t: f32,
-    boards: Vec<Board>,
-    next_board_at: f32,
+    /// Final symbols for every row, fixed up front so the wheels land on them.
+    rows: [[usize; 3]; MAX_ROWS],
+    /// How many rows have locked + been scored.
+    scored: usize,
+    /// Winning cells, bit `r*3+c` set.
+    winners: u32,
     tokens: Vec<Token>,
     glints: Vec<Glint>,
     splashes: Vec<Splash>,
+    /// The terminal rumbles until this time (set on a win).
+    rumble_until: f32,
     demo: bool,
-    tm: Timing,
+    /// Schedule time-scale (1.0 prod; compressed for demos).
+    scale: f32,
 }
 
 impl Reels {
@@ -137,17 +125,15 @@ impl Reels {
             thinking_since: None,
             rng: 0x9E3779B97F4A7C15 ^ seed.wrapping_mul(0xD1B54A32D192ED03).max(1),
             last_t: 0.0,
-            boards: Vec::new(),
-            next_board_at: 0.0,
+            rows: [[0; 3]; MAX_ROWS],
+            scored: 0,
+            winners: 0,
             tokens: Vec::new(),
             glints: Vec::new(),
             splashes: Vec::new(),
+            rumble_until: -1.0,
             demo,
-            tm: if demo {
-                Timing::demo()
-            } else {
-                Timing::production()
-            },
+            scale: if demo { 0.18 } else { 1.0 },
         }
     }
 
@@ -165,22 +151,35 @@ impl Reels {
         self.thinking_since.is_some()
     }
 
-    /// Flip the thinking state. On → start a fresh first board; off → clear all.
+    /// Flip the thinking state. On → fix a fresh grid of final symbols; off →
+    /// clear everything so the next think starts clean.
     pub fn set_thinking(&mut self, on: bool) {
         match (on, self.thinking_since.is_some()) {
             (true, false) => {
                 self.thinking_since = Some(Instant::now());
                 self.last_t = 0.0;
-                self.boards.clear();
+                self.scored = 0;
+                self.winners = 0;
+                self.rumble_until = -1.0;
                 self.tokens.clear();
                 self.glints.clear();
                 self.splashes.clear();
-                self.spawn_board(0.0);
-                self.next_board_at = self.tm.resolve_at + BLINK_DUR + self.tm.next_gap;
+                for r in 0..MAX_ROWS {
+                    for c in 0..3 {
+                        self.rows[r][c] = (self.rand() as usize) % LIB.len();
+                    }
+                }
+                // demo's first block is rigged to a guaranteed line so the win
+                // FX + rumble fire early for screenshots; prod is all random.
+                if self.demo {
+                    let s = self.rows[0][0];
+                    self.rows[0] = [s, s, s];
+                }
             }
             (false, true) => {
                 self.thinking_since = None;
-                self.boards.clear();
+                self.scored = 0;
+                self.winners = 0;
                 self.tokens.clear();
                 self.glints.clear();
                 self.splashes.clear();
@@ -189,36 +188,14 @@ impl Reels {
         }
     }
 
-    fn spawn_board(&mut self, start: f32) {
-        let mut cells = [0usize; 9];
-        // demo's first board is rigged to a full-board jackpot so the win FX
-        // (gold highlights + token spray + glitter bomb + 1000 splash) reliably
-        // shows; every other board, and all of production, is random.
-        if self.demo && self.boards.is_empty() {
-            let s = (self.rand() as usize) % LIB.len();
-            cells = [s; 9];
-        } else {
-            for c in cells.iter_mut() {
-                *c = (self.rand() as usize) % LIB.len();
-            }
-        }
-        self.boards.push(Board {
-            start,
-            cells,
-            scored: false,
-            winners: 0,
-            value: 0,
-        });
-    }
-
     fn elapsed(&self) -> f32 {
         self.thinking_since
             .map(|s| s.elapsed().as_secs_f32())
             .unwrap_or(0.0)
     }
 
-    /// Advance boards, scoring, and token/glitter physics. Returns true while
-    /// thinking (the overlay animates continuously → always redraw).
+    /// Advance the grid (score newly-locked rows) and the token/glitter physics.
+    /// Returns true while thinking (the overlay animates → always redraw).
     pub fn tick(&mut self) -> bool {
         if self.thinking_since.is_none() {
             return false;
@@ -226,36 +203,22 @@ impl Reels {
         let t = self.elapsed();
         let dt = (t - self.last_t).clamp(0.0, 0.05);
         self.last_t = t;
-        let tm = self.tm;
 
-        // roll the next board in once the timer comes due (bounded count)
-        if self.boards.len() < MAX_BOARDS && t >= self.next_board_at {
-            self.spawn_board(t);
-            self.next_board_at = t + tm.resolve_at + BLINK_DUR + tm.next_gap;
-        }
-
-        // score any board that just finished locking + settled past the blink
-        let mut payouts: Vec<(usize, u32)> = Vec::new();
-        for (bi, b) in self.boards.iter_mut().enumerate() {
-            if !b.scored && t - b.start >= tm.resolve_at {
-                let (winners, value) = score(&b.cells);
-                b.winners = winners;
-                b.value = value;
-                b.scored = true;
-                if value > 0 {
-                    payouts.push((bi, value));
-                }
+        // score each wheel block as it finishes landing
+        while self.scored < MAX_ROWS && t >= row_lock_time(self.scored) * self.scale {
+            let r = self.scored;
+            if let Some((value, wbits)) = self.evaluate(r) {
+                self.winners |= wbits;
+                self.celebrate(value, t);
+                self.rumble_until = t + RUMBLE_SECS;
             }
-        }
-        // spawn the celebration for each fresh payout
-        for (bi, value) in payouts {
-            self.celebrate(bi, value, t);
+            self.scored += 1;
         }
 
         // physics: gravity + floor/wall bounce for the ring tokens
         self.tokens.retain(|tk| t - tk.born < FX_LIFE);
         for tk in self.tokens.iter_mut() {
-            tk.vy += 2.0 * dt; // gravity (normalised units/s²)
+            tk.vy += 2.0 * dt;
             tk.x += tk.vx * dt;
             tk.y += tk.vy * dt;
             if tk.y > 0.94 {
@@ -277,27 +240,74 @@ impl Reels {
         true
     }
 
-    /// Spray tokens + glitter for a winning board.
-    fn celebrate(&mut self, board_idx: usize, value: u32, t: f32) {
+    /// Score the grid as row `r` locks: a single all-matching row is a line
+    /// (10); the bottom 3×3 window's columns/diagonals add up to a compound
+    /// (100); the whole locked grid identical is a blackout (1000). Returns the
+    /// payout and the winning-cell bitmask, or None.
+    fn evaluate(&self, r: usize) -> Option<(u32, u32)> {
+        let mut value = 0u32;
+        let mut wbits = 0u32;
+        if r < 2 {
+            let row = self.rows[r];
+            if row[0] == row[1] && row[1] == row[2] {
+                value = 10;
+                for c in 0..3 {
+                    wbits |= 1 << (r * 3 + c);
+                }
+            }
+        } else {
+            let mut cells = [0usize; 9];
+            for j in 0..3 {
+                for c in 0..3 {
+                    cells[j * 3 + c] = self.rows[r - 2 + j][c];
+                }
+            }
+            let (w8, v) = score(&cells);
+            if v > 0 {
+                value = v;
+                for b in 0..9 {
+                    if w8 & (1 << b) != 0 {
+                        let (j, c) = (b / 3, b % 3);
+                        wbits |= 1 << ((r - 2 + j) * 3 + c);
+                    }
+                }
+            }
+        }
+        // whole-grid blackout (every locked cell identical) trumps everything
+        let n = r + 1;
+        if n >= 3 {
+            let first = self.rows[0][0];
+            if (0..n).all(|rr| self.rows[rr].iter().all(|&x| x == first)) {
+                value = 1000;
+                wbits = 0;
+                for rr in 0..n {
+                    for c in 0..3 {
+                        wbits |= 1 << (rr * 3 + c);
+                    }
+                }
+            }
+        }
+        (value > 0).then_some((value, wbits))
+    }
+
+    /// Spray tokens + glitter for a win; the splash shows the value.
+    fn celebrate(&mut self, value: u32, t: f32) {
         let n_tokens = match value {
             1000 => 40,
             100 => 16,
-            _ => 6,
+            _ => 7,
         };
-        // tokens erupt from roughly where the board sits (centred-ish, lower half)
-        let bx = board_center_x(board_idx, self.boards.len());
         for _ in 0..n_tokens {
             let (rx, ry, rvx, rvy) = (self.randf(), self.randf(), self.randf(), self.randf());
             self.tokens.push(Token {
-                x: (bx + (rx - 0.5) * 0.18).clamp(0.04, 0.96),
-                y: 0.55 + ry * 0.1,
-                vx: (rvx - 0.5) * 0.9,
-                vy: -(0.5 + rvy * 0.7),
+                x: (0.5 + (rx - 0.5) * 0.4).clamp(0.04, 0.96),
+                y: 0.42 + ry * 0.18,
+                vx: (rvx - 0.5) * 1.0,
+                vy: -(0.5 + rvy * 0.8),
                 born: t,
             });
         }
-        // glitter bomb across the whole sub-terminal
-        let n_glints = if value >= 100 { 70 } else { 36 };
+        let n_glints = if value >= 100 { 70 } else { 38 };
         for _ in 0..n_glints {
             let (gx, gy, gp) = (
                 self.randf(),
@@ -313,30 +323,34 @@ impl Reels {
         }
         self.splashes.push(Splash { value, born: t });
     }
-}
 
-/// Where a board's centre sits horizontally (0..1), for token origin.
-fn board_center_x(idx: usize, total: usize) -> f32 {
-    if total <= 1 {
-        0.5
-    } else {
-        // boards laid in a centred row; idx 0 left, idx 1 right
-        0.34 + (idx as f32) * 0.32
+    /// The terminal-shake offset (px) while a win is rumbling — decays over
+    /// [`RUMBLE_SECS`] to zero, then returns (0, 0).
+    pub fn rumble_offset(&self) -> (f32, f32) {
+        if self.thinking_since.is_none() {
+            return (0.0, 0.0);
+        }
+        let t = self.elapsed();
+        if t >= self.rumble_until {
+            return (0.0, 0.0);
+        }
+        let amp = 6.0 * ((self.rumble_until - t) / RUMBLE_SECS).clamp(0.0, 1.0);
+        ((t * 46.0).sin() * amp, (t * 38.0).cos() * amp)
     }
 }
 
-/// Score a 3×3 board: returns (winning-cell bitmask, payout value).
-/// 10 = one line · 100 = two or more lines (X / L / multi) · 1000 = full blackout.
+/// Score a 3×3 window: 10 = one line · 100 = two+ lines (X / L / multi) ·
+/// 1000 = all nine identical. Returns (winning-cell bitmask 0..8, value).
 fn score(cells: &[usize; 9]) -> (u16, u32) {
     const LINES: [[usize; 3]; 8] = [
         [0, 1, 2],
         [3, 4, 5],
-        [6, 7, 8], // rows
+        [6, 7, 8],
         [0, 3, 6],
         [1, 4, 7],
-        [2, 5, 8], // cols
+        [2, 5, 8],
         [0, 4, 8],
-        [2, 4, 6], // diagonals
+        [2, 4, 6],
     ];
     let mut winners: u16 = 0;
     let mut lines = 0;
@@ -369,18 +383,21 @@ pub fn look_active(th: &Theme, dynamic_is_retro: bool) -> bool {
 // ---- rendering --------------------------------------------------------------
 
 const CELL_W: f32 = 56.0;
-const CELL_H: f32 = 60.0;
+const CELL_H: f32 = 56.0;
 const CELL_GAP: f32 = 6.0;
 
-/// The full overlay: the board grid(s), the glitter bomb, the bouncing tokens,
-/// and the payout splash. Covers the whole pane; carries no mouse handlers.
+/// The full overlay: the growing wheel grid, the glitter bomb, the bouncing
+/// tokens, and the payout splash. Covers the whole pane; no mouse handlers.
 pub fn overlay(reels: &Reels, th: &Theme) -> Option<Div> {
-    if !reels.is_thinking() || reels.boards.is_empty() {
+    if !reels.is_thinking() {
         return None;
     }
     let t = reels.elapsed();
+    let scale = reels.scale;
+    if t < row_appear(0) {
+        return None;
+    }
     let gold = th.accent;
-    // a glassy reel face tinted to the theme (the "spinner background")
     let face = Hsla {
         h: th.surface.h,
         s: (th.surface.s + 0.05).min(0.5),
@@ -389,19 +406,34 @@ pub fn overlay(reels: &Reels, th: &Theme) -> Option<Div> {
     };
     let cabinet_lo = hsla(28. / 360., 0.72, 0.16, 0.97);
     let cabinet_hi = hsla(40. / 360., 0.85, 0.30, 0.97);
+    let any_win = reels.winners != 0;
 
-    // a row of boards, centred
-    let mut boards_row = div()
-        .flex()
-        .flex_row()
-        .items_start()
-        .justify_center()
-        .gap(px(26.));
-    for b in reels.boards.iter() {
-        boards_row = boards_row.child(render_board(b, t, reels.tm, gold, face));
+    // the growing grid: rows appear in order as their time comes
+    let mut grid = div().flex().flex_col().items_center().gap(px(CELL_GAP));
+    for r in 0..MAX_ROWS {
+        if t < row_appear(r) * scale {
+            break;
+        }
+        let lock = row_lock_time(r) * scale;
+        let window = spin_window(r);
+        let mut row = div().flex().flex_row().gap(px(CELL_GAP));
+        for c in 0..3 {
+            let idx = r * 3 + c;
+            let win = reels.winners & (1 << idx) != 0;
+            row = row.child(render_cell(
+                reels.rows[r][c],
+                t,
+                lock,
+                window,
+                gold,
+                face,
+                win,
+                any_win,
+            ));
+        }
+        grid = grid.child(row);
     }
 
-    // the cabinet card framing the board(s) — black trim + gold + raised shadow
     let card = div()
         .flex()
         .flex_col()
@@ -414,11 +446,9 @@ pub fn overlay(reels: &Reels, th: &Theme) -> Option<Div> {
             gpui::linear_color_stop(cabinet_hi, 0.),
             gpui::linear_color_stop(cabinet_lo, 1.),
         ))
-        // black trim ring outside the gold for depth
-        .border_color(hsla(0., 0., 0.02, 1.0))
+        .border_color(hsla(0., 0., 0.02, 1.0)) // black trim ring for depth
         .border_2()
         .shadow(vec![
-            // bright gold top rail (raised)
             BoxShadow {
                 color: gold.alpha(0.55),
                 offset: point(px(0.), px(1.5)),
@@ -426,7 +456,6 @@ pub fn overlay(reels: &Reels, th: &Theme) -> Option<Div> {
                 spread_radius: px(1.),
                 inset: true,
             },
-            // deep black recess at the base
             BoxShadow {
                 color: hsla(0., 0., 0., 0.7),
                 offset: point(px(0.), px(-3.)),
@@ -434,7 +463,6 @@ pub fn overlay(reels: &Reels, th: &Theme) -> Option<Div> {
                 spread_radius: px(0.),
                 inset: true,
             },
-            // gold halo
             BoxShadow {
                 color: gold.alpha(0.5),
                 offset: point(px(0.), px(0.)),
@@ -442,7 +470,6 @@ pub fn overlay(reels: &Reels, th: &Theme) -> Option<Div> {
                 spread_radius: px(2.),
                 inset: false,
             },
-            // black drop so the whole cabinet stands proud
             BoxShadow {
                 color: hsla(0., 0., 0., 0.75),
                 offset: point(px(0.), px(10.)),
@@ -452,9 +479,8 @@ pub fn overlay(reels: &Reels, th: &Theme) -> Option<Div> {
             },
         ])
         .child(marquee(t, gold, th.cursor))
-        .child(boards_row);
+        .child(grid);
 
-    // bottom-anchored cabinet band
     let cabinet = div()
         .absolute()
         .left_0()
@@ -467,12 +493,10 @@ pub fn overlay(reels: &Reels, th: &Theme) -> Option<Div> {
 
     let mut root = div().absolute().inset_0().child(cabinet);
 
-    // glitter bomb — bright flecks across the whole sub-terminal
     if !reels.glints.is_empty() {
         let mut layer = div().absolute().inset_0();
         for g in reels.glints.iter() {
-            let age = t - g.born;
-            let life = (1.0 - age / FX_LIFE).clamp(0.0, 1.0);
+            let life = (1.0 - (t - g.born) / FX_LIFE).clamp(0.0, 1.0);
             let tw = (0.5 + 0.5 * (t * 9.0 + g.phase).sin()) * life;
             layer = layer.child(
                 div()
@@ -492,7 +516,6 @@ pub fn overlay(reels: &Reels, th: &Theme) -> Option<Div> {
         root = root.child(layer);
     }
 
-    // bouncing Sonic-ring tokens
     if !reels.tokens.is_empty() {
         let mut layer = div().absolute().inset_0();
         for tk in reels.tokens.iter() {
@@ -508,10 +531,8 @@ pub fn overlay(reels: &Reels, th: &Theme) -> Option<Div> {
         root = root.child(layer);
     }
 
-    // payout splash, centred over the cabinet
     if let Some(s) = reels.splashes.last() {
-        let age = t - s.born;
-        let rise = (age / 1.7).clamp(0.0, 1.0);
+        let rise = ((t - s.born) / 1.7).clamp(0.0, 1.0);
         let life = 1.0 - rise;
         let label = match s.value {
             1000 => "💥 1000 💥",
@@ -523,7 +544,7 @@ pub fn overlay(reels: &Reels, th: &Theme) -> Option<Div> {
                 .absolute()
                 .left_0()
                 .right_0()
-                .bottom(relative(0.42 + rise * 0.12))
+                .bottom(relative(0.45 + rise * 0.12))
                 .flex()
                 .justify_center()
                 .child(
@@ -543,90 +564,36 @@ pub fn overlay(reels: &Reels, th: &Theme) -> Option<Div> {
     Some(root)
 }
 
-/// A 3×3 board: three rows of three wheels.
-fn render_board(b: &Board, t: f32, tm: Timing, gold: Hsla, face: Hsla) -> Div {
-    let bt = t - b.start;
-    let resolved = bt >= tm.resolve_at;
-    let blinking = resolved && (bt - tm.resolve_at) < BLINK_DUR;
-    let blink_on = (t * 7.0).sin() > 0.0;
-    let mut col = div().flex().flex_col().gap(px(CELL_GAP));
-    for r in 0..3usize {
-        let mut row = div().flex().flex_row().gap(px(CELL_GAP));
-        for c in 0..3usize {
-            let idx = r * 3 + c;
-            let is_winner = b.winners & (1 << idx) != 0;
-            row = row.child(render_cell(
-                b, bt, tm, r, c, gold, face, resolved, blinking, blink_on, is_winner,
-            ));
-        }
-        col = col.child(row);
-    }
-    // a WINNER ribbon during the blink phase
-    if blinking && b.value > 0 {
-        col = col.child(
-            div().mt(px(4.)).flex().justify_center().child(
-                div()
-                    .px(px(8.))
-                    .rounded(px(5.))
-                    .bg(if blink_on {
-                        gold
-                    } else {
-                        hsla(0., 0., 0.1, 1.0)
-                    })
-                    .text_color(hsla(0., 0., 0.06, 1.0))
-                    .font_weight(FontWeight::EXTRA_BOLD)
-                    .text_size(px(13.))
-                    .child("WINNER"),
-            ),
-        );
-    }
-    col
-}
-
 /// One wheel cell: a recessed window with a vertically scrolling strip of glyphs
 /// that decelerates and clunks onto its final symbol.
 #[allow(clippy::too_many_arguments)]
 fn render_cell(
-    b: &Board,
-    bt: f32,
-    tm: Timing,
-    r: usize,
-    c: usize,
+    final_sym: usize,
+    t: f32,
+    lock: f32,
+    window: f32,
     gold: Hsla,
     face: Hsla,
-    resolved: bool,
-    blinking: bool,
-    blink_on: bool,
-    is_winner: bool,
+    win: bool,
+    any_win: bool,
 ) -> Div {
-    let idx = r * 3 + c;
-    let final_sym = b.cells[idx];
-    let lock = tm.row_at[r] + c as f32 * tm.stagger;
-    let rem = lock - bt;
+    let rem = lock - t;
     let locked = rem <= 0.0;
-
-    // wheel position in symbol units: free-spin → ease-out → land on final
     let pos = if locked {
         final_sym as f32
-    } else if rem <= tm.spin_window {
-        final_sym as f32 + SPINS * (rem / tm.spin_window).powf(1.6)
+    } else if rem <= window {
+        final_sym as f32 + SPINS * (rem / window).powf(1.6)
     } else {
-        final_sym as f32 + SPINS + (rem - tm.spin_window) * FREE_SPEED
+        final_sym as f32 + SPINS + (rem - window) * FREE_SPEED
     };
     let base = pos.floor();
     let frac = pos - base;
 
-    // win highlight vs losing-cell fade, once the board has resolved
-    let winner_glow = resolved && is_winner;
-    let loser_fade = resolved && b.value > 0 && !is_winner;
-    let border = if winner_glow {
-        if blinking && !blink_on {
-            gold.alpha(0.25)
-        } else {
-            gold
-        }
+    let loser_fade = locked && any_win && !win;
+    let border = if locked && win {
+        gold
     } else {
-        hsla(0., 0., 0.02, 1.0) // black trim
+        hsla(0., 0., 0.02, 1.0)
     };
 
     let mut cell = div()
@@ -639,7 +606,6 @@ fn render_cell(
         .border_2()
         .border_color(border)
         .shadow(vec![
-            // recessed top shadow (the window is sunk into the cabinet)
             BoxShadow {
                 color: hsla(0., 0., 0., 0.55),
                 offset: point(px(0.), px(2.)),
@@ -647,7 +613,6 @@ fn render_cell(
                 spread_radius: px(0.),
                 inset: true,
             },
-            // bottom-edge highlight
             BoxShadow {
                 color: gpui::white().alpha(0.10),
                 offset: point(px(0.), px(-1.5)),
@@ -656,9 +621,9 @@ fn render_cell(
                 inset: true,
             },
         ]);
-    if winner_glow {
+    if locked && win {
         cell = cell.shadow(vec![BoxShadow {
-            color: gold.alpha(if blinking && !blink_on { 0.2 } else { 0.85 }),
+            color: gold.alpha(0.85),
             offset: point(px(0.), px(0.)),
             blur_radius: px(16.),
             spread_radius: px(1.),
@@ -666,11 +631,9 @@ fn render_cell(
         }]);
     }
 
-    // the scrolling strip: three glyphs offset by the fractional position
     for k in -1i32..=1 {
         let sym_idx = ((base as i32 + k).rem_euclid(LIB.len() as i32)) as usize;
         let top = (k as f32 - frac) * CELL_H;
-        // a locked symbol gets a raised disc behind it so it pops off the face
         let mut slot = div()
             .absolute()
             .top(px(top))
@@ -680,16 +643,17 @@ fn render_cell(
             .flex()
             .items_center()
             .justify_center()
-            .text_size(px(if locked { 34. } else { 30. }));
+            .text_size(px(if locked { 32. } else { 28. }));
         if locked && k == 0 {
+            // a locked symbol sits proud on a gold disc so it pops off the face
             slot = slot.child(
                 div()
                     .flex()
                     .items_center()
                     .justify_center()
-                    .w(px(42.))
-                    .h(px(42.))
-                    .rounded(px(21.))
+                    .w(px(40.))
+                    .h(px(40.))
+                    .rounded(px(20.))
                     .bg(gpui::linear_gradient(
                         160.,
                         gpui::linear_color_stop(gold.alpha(0.45), 0.),
@@ -702,7 +666,7 @@ fn render_cell(
                         spread_radius: px(0.),
                         inset: false,
                     }])
-                    .text_size(px(34.))
+                    .text_size(px(32.))
                     .child(LIB[final_sym]),
             );
         } else {
@@ -711,7 +675,6 @@ fn render_cell(
         cell = cell.child(slot);
     }
 
-    // fade the losing wheels with a dark scrim over the glass
     if loser_fade {
         cell = cell.child(div().absolute().inset_0().bg(hsla(0., 0., 0.04, 0.62)));
     }
@@ -746,35 +709,41 @@ mod tests {
     use super::*;
 
     #[test]
-    fn row_lock_times_are_every_other_fibonacci() {
-        assert_eq!(ROW_AT, [5.0, 13.0, 34.0]);
+    fn escalating_lock_schedule() {
+        // 5, 15, 45, 120, 300, 600, then +600 (10 min) each row after.
+        let got: Vec<f32> = (0..8).map(row_lock_time).collect();
+        assert_eq!(got, vec![5., 15., 45., 120., 300., 600., 1200., 1800.]);
+    }
+
+    #[test]
+    fn first_blocks_land_faster() {
+        // block 0 is 2× as fast (half window); block 1 (and on) is 1.5× as fast.
+        assert_eq!(spin_window(0), SPIN_BASE / 2.0);
+        assert_eq!(spin_window(1), SPIN_BASE / 1.5);
+        assert_eq!(spin_window(5), SPIN_BASE / 1.5);
+        assert!(spin_window(0) < spin_window(1));
     }
 
     #[test]
     fn scoring_lines_x_and_blackout() {
-        // one row of three → a single line, 10
-        let (_, v) = score(&[0, 0, 0, 1, 2, 3, 3, 2, 1]);
-        assert_eq!(v, 10);
-        // both diagonals share the centre (an X) of the same glyph → 2 lines, 100
-        let (_, v) = score(&[0, 1, 0, 1, 0, 1, 0, 1, 0]);
-        assert_eq!(v, 100);
-        // every cell identical → full blackout, 1000
+        assert_eq!(score(&[0, 0, 0, 1, 2, 3, 3, 2, 1]).1, 10);
+        assert_eq!(score(&[0, 1, 0, 1, 0, 1, 0, 1, 0]).1, 100);
         let (w, v) = score(&[2; 9]);
         assert_eq!(v, 1000);
         assert_eq!(w, 0b1_1111_1111);
-        // nothing lines up → no payout
-        let (_, v) = score(&[0, 1, 2, 3, 2, 1, 1, 3, 0]);
-        assert_eq!(v, 0);
+        assert_eq!(score(&[0, 1, 2, 3, 2, 1, 1, 3, 0]).1, 0);
     }
 
     #[test]
-    fn idle_machine_does_not_roll() {
+    fn idle_machine_does_not_roll_and_no_rumble() {
         let mut r = Reels::new(7);
         assert!(!r.is_thinking());
         assert!(!r.tick());
+        assert_eq!(r.rumble_offset(), (0.0, 0.0));
         r.set_thinking(true);
-        assert!(r.is_thinking() && r.boards.len() == 1);
+        assert!(r.is_thinking());
         r.set_thinking(false);
-        assert!(!r.is_thinking() && r.boards.is_empty());
+        assert!(!r.is_thinking());
+        assert_eq!(r.rumble_offset(), (0.0, 0.0));
     }
 }

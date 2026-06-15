@@ -2609,15 +2609,23 @@ impl Render for TerminalView {
 
         let jiggle = self.fx.jiggle_px;
         // 🎰 GAMBA reels — shown only on the gamba look while the agent thinks.
-        let gamba_overlay = {
+        let gamba_look = {
             let is_retro = matches!(
                 self.appearance.effective(&theme::outer_choice(cx)).dynamic,
                 theme::Dynamic::Retro
             );
             crate::gamba::look_active(&th, is_retro)
-                .then(|| crate::gamba::overlay(&self.gamba, &th))
-                .flatten()
         };
+        let gamba_overlay = gamba_look
+            .then(|| crate::gamba::overlay(&self.gamba, &th))
+            .flatten();
+        // a win rumbles the whole terminal for 3s as the coins spill
+        let (rumble_dx, rumble_dy) = if gamba_look {
+            self.gamba.rumble_offset()
+        } else {
+            (0.0, 0.0)
+        };
+        let shake_y = jiggle + rumble_dy;
         div()
             .track_focus(&self.focus_handle(cx))
             .on_key_down(cx.listener(Self::on_key))
@@ -2633,8 +2641,10 @@ impl Render for TerminalView {
             .font_family(th.font_family.clone())
             .text_size(px(th.font_size * scale))
             .text_color(th.text)
-            .pt(px(jiggle.max(0.)))
-            .pb(px((-jiggle).max(0.)))
+            .pt(px(shake_y.max(0.)))
+            .pb(px((-shake_y).max(0.)))
+            .pl(px(rumble_dx.max(0.)))
+            .pr(px((-rumble_dx).max(0.)))
             .child(header)
             .children(snooze_bar)
             .child(
