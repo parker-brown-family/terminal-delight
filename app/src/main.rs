@@ -2,7 +2,8 @@
 //!
 //! Splits divide ONLY the focused terminal's space (true tiling tree); every
 //! other pane keeps its exact place. ctrl+shift+t / [+]: new tab ·
-//! ctrl+pgup/pgdn: switch · right-click tab: rename · alt+arrows: pane focus ·
+//! ctrl+pgup/pgdn: switch · right-click tab: rename · alt+arrows: pane focus
+//! (alt+↑/↓ jumps between your messages in a claude/codex pane) ·
 //! ctrl+scroll or the bezel scrubber: text size.
 //!
 //! TODO(os-chrome): client-side window decorations (WindowDecorations::Client).
@@ -1186,17 +1187,27 @@ impl Workspace {
             };
             let mut leaves = vec![];
             tab.root.leaves(&mut leaves);
+            let cur = leaves
+                .iter()
+                .position(|p| p.focus_handle(cx).is_focused(window))
+                .unwrap_or(0);
+            // In an agent (claude/codex) pane, Alt+↑/↓ navigate between YOUR
+            // messages in the chat instead of moving pane focus — same as the
+            // ▲/▼ header buttons. Alt+←/→ still move focus everywhere.
+            if matches!(ks.key.as_str(), "up" | "down") {
+                if let Some(p) = leaves.get(cur).filter(|p| p.read(cx).mode.is_agent()) {
+                    let next = ks.key.as_str() == "down";
+                    p.update(cx, |view, cx| view.scroll_to_human(next, cx));
+                    return;
+                }
+            }
             if leaves.len() > 1 {
                 let dir: i32 = match ks.key.as_str() {
                     "left" | "up" => -1,
                     "right" | "down" => 1,
                     _ => return,
                 };
-                let cur = leaves
-                    .iter()
-                    .position(|p| p.focus_handle(cx).is_focused(window))
-                    .unwrap_or(0) as i32;
-                let next = (cur + dir).rem_euclid(leaves.len() as i32) as usize;
+                let next = (cur as i32 + dir).rem_euclid(leaves.len() as i32) as usize;
                 window.focus(&leaves[next].focus_handle(cx), cx);
                 cx.notify();
             }
@@ -3728,8 +3739,13 @@ impl Render for Workspace {
                     ],
                 ))
                 .child(section(
-                    "AGENTS",
-                    vec![row("bell on finish", "Pane shows ● done + a per-agent sound")],
+                    "AGENTS · claude / codex",
+                    vec![
+                        row("Alt + ↑ / ↓", "Jump to your previous / next message"),
+                        row("▲ ▼ (pane header)", "Same — navigate your own messages"),
+                        row("your input colour", "Your turns stand out (set via the 👤 wheel pip)"),
+                        row("bell on finish", "Pane shows ● done + a per-agent sound"),
+                    ],
                 ))
                 .child(section(
                     "WINDOW",

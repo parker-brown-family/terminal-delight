@@ -30,6 +30,7 @@ does the VT emulation; your real shell runs on a real PTY.
 | 4 built-in themes + live-editable `custom`; picker with hover captions/tooltips | ✅ |
 | Per-pane appearance: theme & monitor-OSD **grade** groups inherit the workspace independently, each with a live "follow outer" toggle | ✅ |
 | Monitor-OSD tray: brightness/contrast/colour/text/background/gamma **+ text size**, global or per-pane | ✅ |
+| **Agent panes** (claude/codex): your own messages get their own colour (👤 wheel pip) + `Alt+↑/↓` / ▲▼ to jump between them | ✅ |
 | CRT-lite effects: scanlines, vignette, glow — per-theme dials, fully off in light theme | ✅ |
 | Latency probe (`TD_LATENCY=1`): key→echo→parsed **p50 121µs / p99 169µs**; `seq 1 100000` in **0.089s** | ✅ |
 
