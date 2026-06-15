@@ -1829,7 +1829,11 @@ impl Workspace {
                 "C",
                 pick(&choice.complement, resolved.complement),
             ),
-            (WheelTarget::Human, "☻", pick(&choice.human, resolved.human)),
+            (
+                WheelTarget::Human,
+                "👤",
+                pick(&choice.human, resolved.human),
+            ),
         ]
     }
 
@@ -2109,7 +2113,7 @@ impl Workspace {
 
     /// The colour wheel: a canvas-painted HSV disk (hue = angle, saturation =
     /// radius) carrying FOUR draggable markers — ◉ seed, T text, C complement,
-    /// ☻ human (your-input). You grab whichever marker is nearest the press and
+    /// 👤 human (your-input). You grab whichever marker is nearest the press and
     /// drag it around to set that colour. Drives the same scope as the breakout.
     fn color_wheel(
         &self,
@@ -3180,7 +3184,7 @@ impl Render for Workspace {
                 (WheelTarget::Seed, "wr-seed", "↺◉"),
                 (WheelTarget::Text, "wr-text", "↺T"),
                 (WheelTarget::Complement, "wr-comp", "↺C"),
-                (WheelTarget::Human, "wr-human", "↺☻"),
+                (WheelTarget::Human, "wr-human", "↺👤"),
             ] {
                 seed_row = seed_row.child(
                     div()

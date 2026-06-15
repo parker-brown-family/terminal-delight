@@ -100,7 +100,7 @@ pub struct Theme {
     pub complement: Hsla,
     /// Colour the user's own input is painted in an agent (claude/codex) session,
     /// so your turns stand out from the agent's replies. Set by the wheel's human
-    /// (`☻`) target; defaults to the bright complement of the palette.
+    /// (`👤`) target; defaults to the bright complement of the palette.
     pub human: Hsla,
     pub faint: Hsla,
     pub cursor: Hsla,
@@ -409,7 +409,7 @@ pub struct ThemeChoice {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub complement: Option<String>,
     /// Explicit colour for the user's own input in an agent session, set by the
-    /// wheel's human (`☻`) target. `None` = derive it from the bright complement.
+    /// wheel's human (`👤`) target. `None` = derive it from the bright complement.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub human: Option<String>,
 }
