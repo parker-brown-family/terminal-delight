@@ -4,7 +4,9 @@
 <meta name="description" content="terminal-delight, presented on a mid-century console television: a GPU-native Linux terminal in Rust with a hot-reloadable CRT visual identity.">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' rx='3' fill='%23021107'/><text y='12' x='2' font-size='11' fill='%2336ff7e'>▌</text></svg>">
 <style>
-  :root{ --wood1:#5a3320; --wood2:#3c2013; --wood3:#74442a; --brass:#caa84e; --brass-d:#8a6f2b; }
+  :root{ --wood1:#5a3320; --wood2:#3c2013; --wood3:#74442a; --brass:#caa84e; --brass-d:#8a6f2b;
+    /* cabinet phosphor spill — JS sets these to the current channel's PICTURE glow colour */
+    --spill:rgba(255,154,60,.18); --spill-soft:rgba(255,154,60,.28); }
   *{box-sizing:border-box} html,body{margin:0;height:100%}
   body{
     background:
@@ -41,10 +43,10 @@
   .screen-housing{ position:relative; border-radius:50px/40px; padding:20px;
     background:linear-gradient(150deg,#14110d,#241a12);
     box-shadow:0 0 0 3px #0006, 0 10px 30px #000a inset, 0 2px 0 #ffffff14 inset,
-      0 0 60px -6px rgba(40,255,130,.18); }
+      0 0 60px -6px var(--spill-soft); }
   /* phosphor light spilling onto the cabinet face around the tube */
   .screen-housing::after{ content:""; position:absolute; inset:-6px; border-radius:54px/44px; pointer-events:none;
-    box-shadow:0 0 50px 4px rgba(36,255,126,.12) inset; mix-blend-mode:screen; }
+    box-shadow:0 0 50px 4px var(--spill) inset; mix-blend-mode:screen; }
   .screen{ position:relative; aspect-ratio:4/3; border-radius:46px/36px; overflow:hidden;
     background:#020a06; box-shadow:0 0 60px #0008 inset, 0 0 0 6px #0b0907; }
   .screen canvas{ position:absolute; inset:0; width:100%; height:100%; display:block; cursor:default; }
@@ -133,17 +135,25 @@
 const cv=document.getElementById('gl'); let gl=cv.getContext('webgl2',{antialias:false,alpha:false}); let ctx2d=null;
 let W,H, dpr=Math.min(2,window.devicePixelRatio||1);
 const scene=document.createElement('canvas'); const x=scene.getContext('2d');
-// CHANNELS = terminal-delight colour palettes; the CHANNEL knob flips through them.
+// CHANNELS — each pairs a SCREEN BACKGROUND hue (bg + bgTint wash) with a
+// DIFFERENT PICTURE GLOW hue (phos/dim/bright/accent/glow/tint + spill, which
+// also lights the wooden cabinet). The CHANNEL knob flips through them.
 const CHANNELS=[
- {name:'PHOSPHOR', phos:'#36ff7e',dim:'#1f9f57',bright:'#bfffd8',accent:'#36ff7e',bg:'#020a06',dark:'#0a4d28',dark2:'#0d6630',tint:[0.5,1.0,0.6],glow:'#0f8'},
- {name:'PINEAPPLE',phos:'#ffe14d',dim:'#9c861c',bright:'#fff6c0',accent:'#ffd21a',bg:'#0a0902',dark:'#4d3f0a',dark2:'#6d5a0d',tint:[1.0,0.88,0.35],glow:'#fd0'},
- {name:'BOLT',     phos:'#38e1ff',dim:'#1f86a8',bright:'#cbf6ff',accent:'#22d3ee',bg:'#02080c',dark:'#0a3d4d',dark2:'#0d5a6d',tint:[0.4,0.9,1.0],glow:'#0df'},
- {name:'RUST',     phos:'#ff8a3c',dim:'#a85420',bright:'#ffd9b0',accent:'#f59e0b',bg:'#0a0502',dark:'#4d2a0a',dark2:'#6d3d0d',tint:[1.0,0.58,0.28],glow:'#f73'},
- {name:'ECLIPSE',  phos:'#c084fc',dim:'#6f47a0',bright:'#ead9fc',accent:'#c084fc',bg:'#07040c',dark:'#3a2454',dark2:'#52336f',tint:[0.78,0.52,1.0],glow:'#a6f'},
- {name:'PRISM',    phos:'#ff5ed0',dim:'#a83a8a',bright:'#ffd0f0',accent:'#ff5ed0',bg:'#0a0208',dark:'#4d0a3a',dark2:'#6d0d52',tint:[1.0,0.4,0.85],glow:'#f5c'},
- {name:'AMBER',    phos:'#ffb000',dim:'#a87600',bright:'#ffe0a0',accent:'#ffb000',bg:'#0a0700',dark:'#4d3300',dark2:'#6d4a00',tint:[1.0,0.7,0.2],glow:'#fb0'},
+ // blue background · orange picture glow
+ {name:'TIDE',   bg:'#06122e',bgTint:[0.22,0.42,1.0], phos:'#ff9a3c',dim:'#b3611c',bright:'#ffd8b0',accent:'#ff9a3c',dark:'#4d2f0a',dark2:'#6d420d',tint:[1.0,0.6,0.25], glow:'#ff9a3c',spill:'255,154,60'},
+ // green background · purple picture glow
+ {name:'ORCHARD',bg:'#06160c',bgTint:[0.30,1.0,0.5],  phos:'#c084fc',dim:'#7a4fb0',bright:'#ead9fc',accent:'#c084fc',dark:'#3a2454',dark2:'#52336f',tint:[0.78,0.52,1.0],glow:'#c084fc',spill:'192,132,252'},
+ // purple background · white picture glow
+ {name:'NOVA',   bg:'#120726',bgTint:[0.70,0.45,1.0], phos:'#f5f7ff',dim:'#aeb3c8',bright:'#ffffff',accent:'#f5f7ff',dark:'#2a2740',dark2:'#3a3656',tint:[0.95,0.96,1.0],glow:'#f5f7ff',spill:'245,247,255'},
+ // pink background · yellow picture glow
+ {name:'BUBBLE', bg:'#1e0614',bgTint:[1.0,0.38,0.78], phos:'#ffe14d',dim:'#b39a1c',bright:'#fff6c0',accent:'#ffe14d',dark:'#4d3f0a',dark2:'#6d5a0d',tint:[1.0,0.88,0.35],glow:'#ffe14d',spill:'255,225,77'},
+ // gold background · olive-drab picture glow
+ {name:'BULLION',bg:'#1a1402',bgTint:[1.0,0.78,0.22], phos:'#aebb4f',dim:'#6b7726',bright:'#dfe6a8',accent:'#aebb4f',dark:'#3a3d18',dark2:'#50561f',tint:[0.68,0.74,0.30],glow:'#aebb4f',spill:'174,187,79'},
 ];
 let chan=0; const cur=()=>CHANNELS[chan];
+// push the current channel's PICTURE glow onto the cabinet (CSS spill vars)
+function setSpill(){ const sp=cur().spill, rs=document.documentElement.style;
+  rs.setProperty('--spill', `rgba(${sp},0.18)`); rs.setProperty('--spill-soft', `rgba(${sp},0.28)`); }
 let snow=0, osdUntil=0;               // CRT static burst + on-screen channel readout
 const rgba=(t,a)=>`rgba(${Math.round(t[0]*120)},${Math.round(t[1]*150)},${Math.round(t[2]*120)},${a})`;
 const BTNS=[
@@ -160,7 +170,8 @@ function fit(px){ return px*dpr*(W/ (900*dpr)); } // scale text to screen size
 function drawScene(time){
   const c=cur(), cx=W/2, s=Math.max(0.5, W/900), narrow=W < 560*dpr;
   x.fillStyle=c.bg; x.fillRect(0,0,W,H);
-  const g=x.createRadialGradient(cx,H*0.40,0,cx,H*0.40,H*0.95); g.addColorStop(0,rgba(c.tint,0.5)); g.addColorStop(1,'rgba(0,0,0,0)'); x.fillStyle=g; x.fillRect(0,0,W,H);
+  // the screen-background wash uses the BACKGROUND hue (bgTint), distinct from the picture glow
+  const g=x.createRadialGradient(cx,H*0.40,0,cx,H*0.40,H*0.95); g.addColorStop(0,rgba(c.bgTint,0.5)); g.addColorStop(1,'rgba(0,0,0,0)'); x.fillStyle=g; x.fillRect(0,0,W,H);
   x.textAlign='center'; x.textBaseline='middle';
   if(!narrow){ x.fillStyle=c.dim; x.font=`${12*s*dpr}px ui-monospace,monospace`;
     x.fillText('A · G P U - N A T I V E · L I N U X · T E R M I N A L', cx, H*0.14); }
@@ -280,7 +291,7 @@ bindKnob(document.getElementById('k-track'),document.getElementById('v-track'),'
 // CHANNEL knob: each turn flips to the next colour palette, with a CRT static burst
 (function(){const el=document.getElementById('k-chan'); let a=0;
   function go(d){ chan=(chan+d+CHANNELS.length)%CHANNELS.length; a+=d*(360/CHANNELS.length);
-    el.style.transform='rotate('+a+'deg)'; snow=1.0; osdUntil=performance.now()+1700; lastKey=''; }
+    el.style.transform='rotate('+a+'deg)'; snow=1.0; osdUntil=performance.now()+1700; lastKey=''; setSpill(); }
   el.addEventListener('pointerdown',e=>{e.preventDefault();go(1);});
   el.addEventListener('wheel',e=>{e.preventDefault();go(Math.sign(e.deltaY)||1);},{passive:false});
   window.__channel=(d)=>go(d);
@@ -288,5 +299,5 @@ bindKnob(document.getElementById('k-track'),document.getElementById('v-track'),'
 window.__setKnob=(n,v)=>document.getElementById('k-'+n).__set(v);
 
 addEventListener('resize',()=>{layout();lastKey='';});
-layout(); requestAnimationFrame(frame);
+layout(); setSpill(); requestAnimationFrame(frame);
 </script></body></html>
