@@ -985,8 +985,14 @@ pub fn resolve(cx: &App, choice: &ThemeChoice) -> Arc<Theme> {
     // Plain with no overrides and no signature leaves the theme's colours alone.
     let identity_colour =
         choice.dynamic.is_plain() && seed.is_none() && text_over.is_none() && comp_over.is_none();
-    // Fast path: stock theme, no recolour, default mode, no syntax, neutral grade.
-    if identity_colour && mode.is_default() && !choice.syntax && choice.grade.is_neutral() {
+    // Fast path: stock theme, no recolour, default mode, no syntax, neutral
+    // grade, and no global tracking override.
+    if identity_colour
+        && mode.is_default()
+        && !choice.syntax
+        && choice.grade.is_neutral()
+        && tracking_dial(cx).is_none()
+    {
         return base;
     }
     // Layer 1 — the THEME: its own seed recolour (the theme's built-in
@@ -1014,6 +1020,10 @@ pub fn resolve(cx: &App, choice: &ThemeChoice) -> Arc<Theme> {
     th.color_mode = mode;
     th.syntax = choice.syntax;
     th.grade = choice.grade;
+    // The global tracking dial (DISPLAY tray) overrides every theme's roll bar.
+    if let Some(dial) = tracking_dial(cx) {
+        apply_tracking(&mut th, dial);
+    }
     Arc::new(th)
 }
 
@@ -1064,6 +1074,45 @@ fn apply_warp(amount: f32) {
     gpui_wgpu::set_crt_warp(amount * 0.14, amount * 0.06);
     #[cfg(not(target_os = "linux"))]
     let _ = amount;
+}
+
+/// Global override for the CRT tracking band (the horizontal roll bar), as three
+/// normalised dials `[intensity, speed, size]` in `0..1`. `None` = use whatever
+/// each theme authored; `Some` = override every scope (like the warp dial). Set
+/// from the DISPLAY tray.
+pub struct TrackingDial(pub Option<[f32; 3]>);
+impl Global for TrackingDial {}
+
+/// The global tracking override, if any (`None` = per-theme).
+pub fn tracking_dial(cx: &App) -> Option<[f32; 3]> {
+    cx.try_global::<TrackingDial>().and_then(|d| d.0)
+}
+
+/// Set (or clear, with `None`) the global tracking override and repaint.
+pub fn set_tracking_dial(cx: &mut App, v: Option<[f32; 3]>) {
+    cx.set_global(TrackingDial(v));
+    cx.refresh_windows();
+}
+
+/// Map the three normalised tracking dials to concrete `Theme` fields:
+/// intensity 0..1, speed (high = faster roll = shorter period, 60→6), size →
+/// sweep 1..30.
+pub fn apply_tracking(th: &mut Theme, dial: [f32; 3]) {
+    let [i, sp, sz] = dial;
+    th.tracking = i.clamp(0.0, 1.0);
+    th.tracking_period = (60.0 - sp.clamp(0.0, 1.0) * 54.0).max(2.0);
+    th.tracking_sweep = (1.0 + sz.clamp(0.0, 1.0) * 29.0).max(1.0);
+}
+
+/// The current effective tracking dials for a theme, as normalised `0..1` — the
+/// global override if set, else `th`'s own values inverted back to dial space.
+/// Lets a slider start from where the look currently is.
+pub fn tracking_dials_of(cx: &App, th: &Theme) -> [f32; 3] {
+    tracking_dial(cx).unwrap_or([
+        th.tracking.clamp(0.0, 1.0),
+        ((60.0 - th.tracking_period) / 54.0).clamp(0.0, 1.0),
+        ((th.tracking_sweep - 1.0) / 29.0).clamp(0.0, 1.0),
+    ])
 }
 
 fn hex(value: &str) -> Option<Hsla> {
@@ -1310,6 +1359,34 @@ mod tests {
                 set.label()
             );
             assert!(r.text.l > 0.9 && r.text.s < 0.2, "high-intensity letters");
+        }
+    }
+
+    #[test]
+    fn tracking_dial_maps_normalised_dials_to_theme_fields() {
+        let mut th = parse(DEFAULT_THEME_TOML).unwrap();
+        apply_tracking(&mut th, [1.0, 1.0, 1.0]);
+        assert!((th.tracking - 1.0).abs() < 1e-6, "intensity 1");
+        assert!(th.tracking_period <= 6.5, "max speed → short period");
+        assert!(
+            (th.tracking_sweep - 30.0).abs() < 0.5,
+            "max size → 30 sweep"
+        );
+        apply_tracking(&mut th, [0.0, 0.0, 0.0]);
+        assert_eq!(th.tracking, 0.0, "intensity 0 = roll off");
+        assert!(
+            (th.tracking_period - 60.0).abs() < 0.5,
+            "speed 0 → long period"
+        );
+        // round-trips back to dial space (invert)
+        apply_tracking(&mut th, [0.4, 0.6, 0.5]);
+        let back = [
+            th.tracking,
+            (60.0 - th.tracking_period) / 54.0,
+            (th.tracking_sweep - 1.0) / 29.0,
+        ];
+        for (a, b) in back.iter().zip([0.4, 0.6, 0.5]) {
+            assert!((a - b).abs() < 0.02, "dial round-trips: {a} vs {b}");
         }
     }
 
