@@ -418,6 +418,54 @@ impl Default for ThemeChoice {
     }
 }
 
+/// The shipped **OUTER** (mother cabinet) look — Parker's "wooden TV set": the
+/// warm amber colour set layered over the green `custom` base, which seeds the
+/// dark screen into warm brown and paints amber/cream chrome. Used for a fresh
+/// install's outer scope (see `main::build`). Real ANSI + code highlighting on;
+/// a gentle darken/de-contrast grade and a slightly larger UI. The terminal
+/// screens inside stay green — see [`house_terminal`] / [`PaneTheme::house`].
+pub fn house_outer() -> ThemeChoice {
+    ThemeChoice {
+        id: "custom".into(),
+        // A warm amber seed tints the dark green base into warm brown chrome with
+        // an amber accent and tan text — the "wooden TV" cabinet. (Seed, not the
+        // mono Amber colour set, so the accent stays amber rather than greying.)
+        seed: Some("#e0913a".into()),
+        color: ColorMode::Default, // "ansi"
+        syntax: true,
+        grade: Grade {
+            brightness: 0.38, // −12
+            contrast: 0.21,   // −29
+            colour: 0.5,
+            text: 0.5,
+            background: 0.5,
+            gamma: 0.5,
+            scale: 1.16, // 116%
+        },
+        dynamic: Dynamic::Plain,
+        text: None,
+        complement: None,
+    }
+}
+
+/// The shipped **INNER** (terminal screen) look — the green phosphor CRT: the
+/// `custom` base as authored, real ANSI + code highlighting, and the green
+/// [`Grade::default`] house grade. Fresh panes pin this and deliberately do NOT
+/// follow the warm outer cabinet (green screens in a wooden cabinet), see
+/// [`PaneTheme::house`].
+pub fn house_terminal() -> ThemeChoice {
+    ThemeChoice {
+        id: "custom".into(),
+        seed: None,
+        color: ColorMode::Default, // "ansi"
+        syntax: true,
+        grade: Grade::default(), // the green house grade
+        dynamic: Dynamic::Plain,
+        text: None,
+        complement: None,
+    }
+}
+
 /// The "theme" half of a [`ThemeChoice`] — everything except the monitor-OSD
 /// `grade`: theme id, seed override, colour mode and the syntax overlay. Split
 /// out so a pane can pin (or inherit) this group independently of its grade,
@@ -578,6 +626,14 @@ impl PaneTheme {
             inherit_theme: false,
             inherit_grade: false,
         }
+    }
+
+    /// A brand-new terminal pane's shipped appearance: pin the green
+    /// [`house_terminal`] look and do NOT follow the warm outer cabinet, so a
+    /// fresh terminal is the green phosphor CRT regardless of the mother theme.
+    /// The "follow outer" toggle still re-attaches it on demand.
+    pub fn house() -> Self {
+        Self::from_legacy(house_terminal())
     }
 }
 
@@ -1484,6 +1540,58 @@ mod tests {
     }
 
     #[test]
+    fn house_outer_resolves_to_a_warm_amber_cabinet() {
+        // The shipped outer is the green base seeded amber — the resolved chrome
+        // must be WARM (amber accent, dark warm bg), never grey or green.
+        let base = parse(DEFAULT_THEME_TOML).expect("embedded theme parses");
+        let c = house_outer();
+        assert_eq!(c.color, ColorMode::Default, "ansi");
+        assert!(c.syntax, "code highlighting on");
+        assert!(
+            c.dynamic.is_plain(),
+            "warmth is from the seed, not a colour set"
+        );
+        let warm = |h: f32| (15.0..=55.0).contains(&(h * 360.0)); // orange/amber band
+        let seed = hex(c.seed.as_deref().expect("outer carries an amber seed")).unwrap();
+        assert!(warm(seed.h), "seed is amber, got {}°", seed.h * 360.0);
+        let th = apply_seed(&base, seed);
+        assert!(warm(th.accent.h), "accent warms to amber (was green)");
+        assert!(th.accent.s > 0.3, "accent stays saturated, not grey");
+        assert!(
+            warm(th.bg.h) && th.bg.l < 0.22,
+            "cabinet bg is warm and dark"
+        );
+        // the warm outer grade differs from the green house default, so it persists
+        assert!(
+            !c.grade.is_default(),
+            "outer grade is the warm cabinet grade"
+        );
+    }
+
+    #[test]
+    fn house_terminal_is_green_and_a_fresh_pane_does_not_follow_the_warm_outer() {
+        let t = house_terminal();
+        assert_eq!(t.id, "custom");
+        assert!(t.seed.is_none(), "green base — no warm seed");
+        assert_eq!(t.color, ColorMode::Default, "ansi");
+        assert!(t.syntax && t.dynamic.is_plain());
+
+        let p = PaneTheme::house();
+        assert!(
+            !p.inherit_theme && !p.inherit_grade,
+            "a fresh terminal is pinned, NOT following the warm cabinet"
+        );
+        assert!(!p.is_pristine());
+        // rendered against the amber cabinet, the pane keeps the green look
+        let eff = p.effective(&house_outer());
+        assert!(
+            eff.seed.is_none() && eff.dynamic.is_plain(),
+            "green screen inside the wooden cabinet"
+        );
+        assert!(eff.grade.is_default(), "pane keeps the green house grade");
+    }
+
+    #[test]
     fn dynamic_round_trips_and_plain_is_omitted() {
         // Plain is the default → skipped on the wire (old state files unchanged)
         let plain = toml::to_string(&ThemeChoice::default()).unwrap();
@@ -1713,7 +1821,7 @@ pub fn init(cx: &mut App) {
         builtins,
         custom: custom.clone(),
     });
-    cx.set_global(OuterChoice(ThemeChoice::default()));
+    cx.set_global(OuterChoice(house_outer())); // warm cabinet; state restore may change it
     cx.set_global(ScreenWarp(WARP_DEFAULT)); // default dial; state restore may change it
     apply_warp(WARP_DEFAULT);
     cx.set_global(ActiveTheme(custom));
