@@ -263,25 +263,6 @@ fn open_with_system(target: &str) {
     let _ = cmd.spawn();
 }
 
-/// Play a per-agent completion sound (the bell). Each agent kind maps to a distinct
-/// XDG sound-theme event so you can tell by ear which pane finished. Detached, and
-/// silently no-ops if no player / sound theme is installed.
-fn ring_bell(mode: PaneMode) {
-    use std::process::{Command, Stdio};
-    let event = match mode {
-        PaneMode::Claude => "complete",
-        PaneMode::Codex => "message",
-        PaneMode::Remote => "device-added",
-        _ => "bell",
-    };
-    let _ = Command::new("canberra-gtk-play")
-        .args(["-i", event])
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn();
-}
-
 /// Screen→content barrel map — identical to the per-rect warp in
 /// `gpui_wgpu/src/crt_pass.wgsl` (`fs_crt`): the content displayed at a
 /// rect-local screen point `(sx, sy)` ∈ [0,1]² is sampled from
@@ -732,9 +713,17 @@ pub struct TerminalView {
     pending_grid: Option<(term::GridSize, Instant)>,
     /// Right-click context menu (Copy / Paste / Open link) anchor, window-space.
     ctx_menu: Option<gpui::Point<Pixels>>,
-    /// A bell rang (agent finished) and the pane hasn't been looked at yet —
-    /// shows a "done" glyph in the header; cleared on focus or keypress.
+    /// A bell rang (agent finished): a SNOOZE bar shows across the pane top and
+    /// the configured sound plays, until SNOOZE or the always-visible bell-off.
     bell: bool,
+    /// Per-pane bell settings (sound file, trim window, loop, volume, on/off).
+    bell_cfg: crate::bell::BellConfig,
+    /// The live ffplay child for this pane (hard-killed on stop/drop).
+    bell_player: crate::bell::BellPlayer,
+    /// The BELL+ config tray is open.
+    bell_menu: bool,
+    /// Cached duration (s) of the selected sound, for the scrubber track.
+    bell_dur: Option<f32>,
     /// Last-known OS focus, for edge-detected focus reporting (CSI I / CSI O).
     was_focused: bool,
 }
@@ -915,6 +904,10 @@ impl TerminalView {
             appearance: PaneTheme::default(),
             ctx_menu: None,
             bell: false,
+            bell_cfg: crate::bell::BellConfig::default(),
+            bell_player: crate::bell::BellPlayer::default(),
+            bell_menu: false,
+            bell_dur: None,
             was_focused: false,
             pending_grid: None,
         }
@@ -935,11 +928,11 @@ impl TerminalView {
                 self.title = title;
                 cx.notify();
             }
-            TermEvent::Bell => {
-                // an agent (or any program) rang the bell — flag the pane "done"
-                // and play a per-agent sound so you know which one finished.
+            // an agent (or any program) rang the bell — raise the SNOOZE bar and
+            // play this pane's configured sound, unless its bell is muted.
+            TermEvent::Bell if self.bell_cfg.enabled => {
                 self.bell = true;
-                ring_bell(self.mode.clone());
+                self.bell_player.play(&self.bell_cfg);
                 cx.notify();
             }
             TermEvent::Exit | TermEvent::ChildExit(_) => {
@@ -1210,8 +1203,6 @@ impl TerminalView {
                 _ => {}
             }
         }
-        // any key that reaches the shell clears the "agent done" bell flag
-        self.bell = false;
         if let Some(bytes) = keystroke_bytes(ks) {
             {
                 let mut term = self.session.term.lock();
@@ -1341,6 +1332,38 @@ impl TerminalView {
             term.scroll_display(Scroll::Bottom);
         }
         cx.notify();
+    }
+
+    // ---- bell controls -------------------------------------------------------
+    /// SNOOZE: silence the current sound and drop the bar (bell stays enabled).
+    fn snooze_bell(&mut self, cx: &mut Context<Self>) {
+        self.bell = false;
+        self.bell_player.stop();
+        cx.notify();
+    }
+    /// The always-visible bell toggle: mute/unmute this pane's bell and stop any
+    /// sound that's ringing right now.
+    fn toggle_bell_enabled(&mut self, cx: &mut Context<Self>) {
+        self.bell_cfg.enabled = !self.bell_cfg.enabled;
+        if !self.bell_cfg.enabled {
+            self.bell = false;
+            self.bell_player.stop();
+        }
+        cx.notify();
+    }
+    /// Choose this pane's sound; caches the clip length and resets the trim window.
+    fn set_bell_file(&mut self, file: Option<std::path::PathBuf>, cx: &mut Context<Self>) {
+        self.bell_dur = file.as_deref().and_then(crate::bell::duration);
+        self.bell_cfg.start = 0.0;
+        self.bell_cfg.end = self.bell_dur.unwrap_or(0.0);
+        self.bell_cfg.file = file;
+        cx.notify();
+    }
+    /// Preview the current clip once (ignores loop so the button can't run away).
+    fn preview_bell(&mut self) {
+        let mut c = self.bell_cfg.clone();
+        c.looping = false;
+        self.bell_player.play(&c);
     }
 
     fn on_mouse_down(&mut self, ev: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
@@ -1730,14 +1753,12 @@ impl Render for TerminalView {
         // Warp curvature is a global toggle now (not per-theme); keep this pane's
         // hit-test coefficients in sync with it.
         self.warp_k = theme::warp_k(cx);
-        // edge-detected focus reporting (CSI I / CSI O) for apps that ask for it,
-        // and clear the "agent done" bell as soon as you look at the pane.
+        // edge-detected focus reporting (CSI I / CSI O) for apps that ask for it.
+        // The bell intentionally persists until SNOOZE / bell-off (so you never
+        // miss which agent finished while you were away).
         let focused_now = self.focus_handle(cx).is_focused(window);
         if focused_now != self.was_focused {
             self.was_focused = focused_now;
-            if focused_now {
-                self.bell = false;
-            }
             if self
                 .session
                 .term
@@ -1922,6 +1943,54 @@ impl Render for TerminalView {
                                 }),
                             ),
                     )
+                    .child(
+                        // always-visible bell: one click mutes/unmutes this pane
+                        div()
+                            .px_1()
+                            .rounded_sm()
+                            .border_1()
+                            .border_color(if self.bell_cfg.enabled {
+                                th.accent.alpha(0.5)
+                            } else {
+                                th.faint
+                            })
+                            .text_color(if self.bell {
+                                th.accent
+                            } else if self.bell_cfg.enabled {
+                                bar_fg
+                            } else {
+                                th.faint
+                            })
+                            .cursor_pointer()
+                            .child("♪")
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|v, _: &MouseDownEvent, _w, cx| {
+                                    cx.stop_propagation();
+                                    v.toggle_bell_enabled(cx);
+                                }),
+                            ),
+                    )
+                    .child(
+                        // BELL+ : open this pane's sound config tray
+                        div()
+                            .px_1()
+                            .rounded_sm()
+                            .border_1()
+                            .border_color(th.accent.alpha(0.5))
+                            .cursor_pointer()
+                            .child("+")
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|v, _: &MouseDownEvent, _w, cx| {
+                                    cx.stop_propagation();
+                                    v.bell_dur =
+                                        v.bell_cfg.file.as_deref().and_then(crate::bell::duration);
+                                    v.bell_menu = true;
+                                    cx.notify();
+                                }),
+                            ),
+                    )
                     .child(status)
                     .child(
                         // close just this sub-tab (×): ends this pane's shell
@@ -1965,6 +2034,359 @@ impl Render for TerminalView {
             header = header.shadow(shadows);
         }
 
+        // ---- SNOOZE bar: spans the top of the pane while the bell is ringing ----
+        let (acc, txt, faint) = (th.accent, th.text, th.faint);
+        let ff = th.font_family.clone();
+        let snooze_bar = self.bell.then(|| {
+            let name = self
+                .bell_cfg
+                .file
+                .as_deref()
+                .map(crate::bell::display_name)
+                .unwrap_or_else(|| "alert".to_string());
+            let bigbtn = move |label: &'static str| {
+                div()
+                    .px_3()
+                    .py(px(2.))
+                    .rounded_md()
+                    .border_1()
+                    .border_color(acc)
+                    .bg(acc.alpha(0.30))
+                    .text_color(txt)
+                    .cursor_pointer()
+                    .child(label)
+            };
+            div()
+                .w_full()
+                .flex_none()
+                .flex()
+                .flex_row()
+                .items_center()
+                .justify_between()
+                .px_3()
+                .py(px(5.))
+                .bg(acc.alpha(0.20))
+                .text_color(txt)
+                .text_size(px(12.))
+                .font_family(ff.clone())
+                .child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap_2()
+                        .child(
+                            div()
+                                .text_color(acc)
+                                .font_weight(gpui::FontWeight::BOLD)
+                                .child("♪ ▸"),
+                        )
+                        .child(format!("agent finished · {name}")),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .gap_2()
+                        .child(bigbtn("SNOOZE").on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|v, _: &MouseDownEvent, _w, cx| {
+                                cx.stop_propagation();
+                                v.snooze_bell(cx);
+                            }),
+                        ))
+                        .child(bigbtn("MUTE").on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|v, _: &MouseDownEvent, _w, cx| {
+                                cx.stop_propagation();
+                                v.toggle_bell_enabled(cx);
+                            }),
+                        )),
+                )
+        });
+
+        // ---- BELL+ config tray: pick a sound, trim it, loop, volume, preview ----
+        let bell_tray = self.bell_menu.then(|| {
+            let cfg = self.bell_cfg.clone();
+            let dur = self.bell_dur.unwrap_or(0.0);
+            let s = cfg.start;
+            let e = if cfg.end > cfg.start { cfg.end } else { dur };
+            let mini = move |label: String| {
+                div()
+                    .px(px(7.))
+                    .py(px(1.))
+                    .rounded_sm()
+                    .border_1()
+                    .border_color(acc.alpha(0.55))
+                    .text_color(txt)
+                    .cursor_pointer()
+                    .child(label)
+            };
+            // sound list (default alert + every file in the sounds dir)
+            let mut list = div().flex().flex_col().gap_1().max_h(px(150.)).child(
+                div()
+                    .px_2()
+                    .py(px(3.))
+                    .rounded_sm()
+                    .cursor_pointer()
+                    .bg(if cfg.file.is_none() {
+                        acc.alpha(0.25)
+                    } else {
+                        acc.alpha(0.0)
+                    })
+                    .text_color(txt)
+                    .child("◦ default alert")
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|v, _: &MouseDownEvent, _w, cx| {
+                            cx.stop_propagation();
+                            v.set_bell_file(None, cx);
+                        }),
+                    ),
+            );
+            for path in crate::bell::list_sounds() {
+                let sel = cfg.file.as_deref() == Some(path.as_path());
+                let nm = crate::bell::display_name(&path);
+                let p = path.clone();
+                list = list.child(
+                    div()
+                        .px_2()
+                        .py(px(3.))
+                        .rounded_sm()
+                        .cursor_pointer()
+                        .bg(if sel { acc.alpha(0.25) } else { acc.alpha(0.0) })
+                        .text_color(if sel { txt } else { txt.alpha(0.85) })
+                        .child(format!("♪ {nm}"))
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |v, _: &MouseDownEvent, _w, cx| {
+                                cx.stop_propagation();
+                                v.set_bell_file(Some(p.clone()), cx);
+                            }),
+                        ),
+                );
+            }
+            // visual trim track: highlight the [start,end] window over the clip
+            let frac = |t: f32| {
+                if dur > 0.0 {
+                    (t / dur).clamp(0.0, 1.0)
+                } else {
+                    0.0
+                }
+            };
+            let track = div()
+                .relative()
+                .w_full()
+                .h(px(10.))
+                .rounded_full()
+                .bg(faint.alpha(0.35))
+                .child(
+                    div()
+                        .absolute()
+                        .top_0()
+                        .bottom_0()
+                        .rounded_full()
+                        .bg(acc.alpha(0.7))
+                        .left(gpui::relative(frac(s)))
+                        .w(gpui::relative((frac(e) - frac(s)).max(0.02))),
+                );
+            let labeled = move |lbl: &'static str, val: String| {
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        div()
+                            .w(px(52.))
+                            .text_color(faint)
+                            .text_size(px(10.))
+                            .child(lbl),
+                    )
+                    .child(
+                        div()
+                            .min_w(px(52.))
+                            .text_color(txt)
+                            .text_size(px(11.))
+                            .child(val),
+                    )
+            };
+            let panel = div()
+                .w(px(330.))
+                .p_3()
+                .rounded_md()
+                .border_1()
+                .border_color(acc.alpha(0.6))
+                .bg(th.surface)
+                .text_color(txt)
+                .text_size(px(11.))
+                .font_family(ff.clone())
+                .flex()
+                .flex_col()
+                .gap_2()
+                .occlude()
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|_, _: &MouseDownEvent, _w, cx| cx.stop_propagation()),
+                )
+                // header
+                .child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .justify_between()
+                        .child(
+                            div()
+                                .font_weight(gpui::FontWeight::BOLD)
+                                .text_color(acc)
+                                .child("BELL · sound"),
+                        )
+                        .child(mini("done".into()).on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|v, _: &MouseDownEvent, _w, cx| {
+                                cx.stop_propagation();
+                                v.bell_menu = false;
+                                cx.notify();
+                            }),
+                        )),
+                )
+                .child(list)
+                .child(track)
+                // start stepper
+                .child(
+                    labeled("START", format!("{s:.1}s"))
+                        .child(mini("−".into()).on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|v, _: &MouseDownEvent, _w, cx| {
+                                cx.stop_propagation();
+                                v.bell_cfg.start = (v.bell_cfg.start - 0.5).max(0.0);
+                                cx.notify();
+                            }),
+                        ))
+                        .child(mini("+".into()).on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|v, _: &MouseDownEvent, _w, cx| {
+                                cx.stop_propagation();
+                                let cap = v.bell_dur.unwrap_or(600.0);
+                                v.bell_cfg.start = (v.bell_cfg.start + 0.5).min(cap);
+                                cx.notify();
+                            }),
+                        )),
+                )
+                // end stepper
+                .child(
+                    labeled("END", format!("{e:.1}s"))
+                        .child(mini("−".into()).on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|v, _: &MouseDownEvent, _w, cx| {
+                                cx.stop_propagation();
+                                let base = if v.bell_cfg.end > 0.0 {
+                                    v.bell_cfg.end
+                                } else {
+                                    v.bell_dur.unwrap_or(0.0)
+                                };
+                                v.bell_cfg.end = (base - 0.5).max(v.bell_cfg.start + 0.5);
+                                cx.notify();
+                            }),
+                        ))
+                        .child(mini("+".into()).on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|v, _: &MouseDownEvent, _w, cx| {
+                                cx.stop_propagation();
+                                let cap = v.bell_dur.unwrap_or(600.0);
+                                let base = if v.bell_cfg.end > 0.0 {
+                                    v.bell_cfg.end
+                                } else {
+                                    cap
+                                };
+                                v.bell_cfg.end = (base + 0.5).min(cap);
+                                cx.notify();
+                            }),
+                        )),
+                )
+                // loop + volume + preview row
+                .child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap_2()
+                        .child(
+                            mini(if cfg.looping {
+                                "↻ loop on".into()
+                            } else {
+                                "↻ loop off".into()
+                            })
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|v, _: &MouseDownEvent, _w, cx| {
+                                    cx.stop_propagation();
+                                    v.bell_cfg.looping = !v.bell_cfg.looping;
+                                    cx.notify();
+                                }),
+                            ),
+                        )
+                        .child(mini("vol −".into()).on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|v, _: &MouseDownEvent, _w, cx| {
+                                cx.stop_propagation();
+                                v.bell_cfg.volume = (v.bell_cfg.volume - 0.1).max(0.0);
+                                cx.notify();
+                            }),
+                        ))
+                        .child(
+                            div()
+                                .min_w(px(34.))
+                                .text_color(txt)
+                                .child(format!("{}%", (cfg.volume * 100.0).round() as i32)),
+                        )
+                        .child(mini("vol +".into()).on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|v, _: &MouseDownEvent, _w, cx| {
+                                cx.stop_propagation();
+                                v.bell_cfg.volume = (v.bell_cfg.volume + 0.1).min(1.5);
+                                cx.notify();
+                            }),
+                        )),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .gap_2()
+                        .child(mini("▶ preview".into()).on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|v, _: &MouseDownEvent, _w, cx| {
+                                cx.stop_propagation();
+                                v.preview_bell();
+                            }),
+                        ))
+                        .child(mini("■ stop".into()).on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|v, _: &MouseDownEvent, _w, cx| {
+                                cx.stop_propagation();
+                                v.bell_player.stop();
+                            }),
+                        )),
+                );
+            div()
+                .absolute()
+                .inset_0()
+                .flex()
+                .items_center()
+                .justify_center()
+                .bg(th.bg.alpha(0.55))
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|v, _: &MouseDownEvent, _w, cx| {
+                        v.bell_menu = false;
+                        cx.notify();
+                    }),
+                )
+                .child(panel)
+        });
+
         let jiggle = self.fx.jiggle_px;
         div()
             .track_focus(&self.focus_handle(cx))
@@ -1984,6 +2406,7 @@ impl Render for TerminalView {
             .pt(px(jiggle.max(0.)))
             .pb(px((-jiggle).max(0.)))
             .child(header)
+            .children(snooze_bar)
             .child(
                 div()
                     .relative()
@@ -2053,6 +2476,7 @@ impl Render for TerminalView {
             // raised bezel frame sits above the glass, framing the whole pane
             .when(th.bezel > 0.001, |el| el.child(crt::bezel(&th)))
             .children(ctx_menu_el)
+            .children(bell_tray)
     }
 }
 

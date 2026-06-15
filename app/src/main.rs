@@ -8,6 +8,7 @@
 //!
 //! TODO(os-chrome): client-side window decorations (WindowDecorations::Client).
 
+mod bell;
 mod crt;
 mod pane;
 mod session;
@@ -4514,6 +4515,7 @@ fn main() {
 
     application().run(move |cx: &mut App| {
         theme::init(cx);
+        bell::ensure_seeded(); // populate the sounds dir from bundled defaults if empty
         let bounds = if scratch {
             // a quick window: ~45% of the display wide, ~40% tall, centred
             let size_px = cx
