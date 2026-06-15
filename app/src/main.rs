@@ -3,6 +3,7 @@
 //! Splits divide ONLY the focused terminal's space (true tiling tree); every
 //! other pane keeps its exact place. ctrl+shift+t / [+]: new tab ·
 //! ctrl+pgup/pgdn: switch · right-click tab: rename · alt+arrows: pane focus
+//! drag a tab to reorder · ctrl+click a tab: set its binder-divider colour
 //! (alt+↑/↓ jumps between your messages in a claude/codex pane) ·
 //! ctrl+scroll or the bezel scrubber: text size.
 //!
@@ -425,6 +426,21 @@ fn default_ratio() -> f32 {
 /// itself. Every other tab / split opened afterwards gets the normal default.
 const FIRST_RUN_HINT: &str = "RIGHT CLICK TO RENAME";
 
+/// The fixed "binder divider" palette offered in a tab's colour tray — (hue,
+/// saturation, lightness). Saturated-but-muted so white outer-bar text stays
+/// legible on top. A stable, named set keeps tabs consistent: pink stays pink.
+const TAB_SWATCHES: &[(f32, f32, f32)] = &[
+    (0.00, 0.58, 0.50), // red
+    (0.06, 0.62, 0.50), // orange
+    (0.13, 0.62, 0.46), // amber
+    (0.33, 0.50, 0.42), // green
+    (0.47, 0.48, 0.42), // teal
+    (0.57, 0.55, 0.48), // blue
+    (0.68, 0.45, 0.52), // indigo
+    (0.78, 0.42, 0.52), // violet
+    (0.92, 0.55, 0.55), // pink
+];
+
 struct Tab {
     root: Node,
     name: Option<String>,
@@ -432,6 +448,11 @@ struct Tab {
     /// mother-bar click) lands on the terminal you were last in, not always the
     /// first. Refreshed each render from the live focus; never persisted.
     focused: Option<EntityId>,
+    /// The "binder divider" colour for THIS tab's button — a stable property of
+    /// the tab itself, NOT derived from any pane's theme. Set via ctrl+click, it
+    /// never shifts when a sub-terminal overrides its look. `None` = the plain
+    /// bezel button. Persisted as a hex string in the state file.
+    color: Option<Hsla>,
 }
 
 impl Tab {
@@ -440,6 +461,7 @@ impl Tab {
             root,
             name,
             focused: None,
+            color: None,
         }
     }
 }
@@ -504,6 +526,10 @@ impl Default for StateFile {
 struct SavedTab {
     #[serde(default)]
     name: Option<String>,
+    /// Per-tab "binder divider" colour as a hex string (e.g. `#3a8f4d`).
+    /// Absent on pre-feature state files → the tab is uncoloured.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    color: Option<String>,
     node: SavedNode,
 }
 
@@ -617,6 +643,20 @@ struct PaneDrag {
     left_window: bool,
 }
 
+/// An OUTER tab being dragged along the mother bar to reorder it. Distinct from
+/// `PaneDrag` (which moves a terminal between tabs); this just slides a tab
+/// button left/right to a new slot in the strip.
+struct TabDrag {
+    /// The index of the tab grabbed when the drag began.
+    from: usize,
+    /// Where the grab started (window space) — engages past a small threshold.
+    start: Point<Pixels>,
+    /// Latest cursor position, for the floating drag chip.
+    at: Point<Pixels>,
+    /// True once the cursor moved far enough to be a drag, not a stray click.
+    engaged: bool,
+}
+
 struct Workspace {
     tabs: Vec<Tab>,
     active: usize,
@@ -675,6 +715,14 @@ struct Workspace {
     pane_bounds: Arc<Mutex<std::collections::HashMap<EntityId, Bounds<Pixels>>>>,
     /// Live per-tab button rects (index → box) for "drop onto a main tab".
     tab_bounds: Arc<Mutex<std::collections::HashMap<usize, Bounds<Pixels>>>>,
+    /// An outer tab being dragged along the strip to reorder it, if any.
+    tab_drag: Option<TabDrag>,
+    /// The insertion slot (0..=len) a tab-reorder release would land in.
+    tab_drop: Option<usize>,
+    /// Which tab's colour tray is open, if any (ctrl+click a tab opens it).
+    tab_color_edit: Option<usize>,
+    /// Window-space anchor for the open colour tray (the ctrl+click point).
+    tab_color_at: Option<Point<Pixels>>,
     /// A scratch window (opened while another instance is already running, or a
     /// torn-off pane): one fresh terminal, never restores or persists session
     /// state — so it can't clobber the primary window's saved layout.
@@ -844,6 +892,10 @@ impl Workspace {
             drop_target: None,
             pane_bounds: Arc::new(Mutex::new(std::collections::HashMap::new())),
             tab_bounds: Arc::new(Mutex::new(std::collections::HashMap::new())),
+            tab_drag: None,
+            tab_drop: None,
+            tab_color_edit: None,
+            tab_color_at: None,
             scratch,
         };
         if scratch {
@@ -873,7 +925,9 @@ impl Workspace {
         } else {
             for t in &saved.tabs {
                 let root = build_node(&t.node, window, cx);
-                ws.tabs.push(Tab::new(root, t.name.clone()));
+                let mut tab = Tab::new(root, t.name.clone());
+                tab.color = t.color.as_deref().and_then(theme::parse_hex);
+                ws.tabs.push(tab);
             }
             ws.active = saved.active.min(ws.tabs.len() - 1);
             ws.focus_active(window, cx);
@@ -940,6 +994,7 @@ impl Workspace {
                 .iter()
                 .map(|t| SavedTab {
                     name: t.name.clone(),
+                    color: t.color.map(hsla_to_hex),
                     node: t.root.to_saved(cx),
                 })
                 .collect(),
@@ -1017,6 +1072,41 @@ impl Workspace {
             .root
             .split_leaf(&|p| p.entity_id() == target, dir, new_pane);
         window.focus(&fresh.focus_handle(cx), cx);
+        self.save(cx);
+        cx.notify();
+    }
+
+    /// Which insertion slot (0..=len) a tab-reorder release at window-x `x` would
+    /// land in: count the tab buttons whose horizontal centre sits left of the
+    /// cursor. Reads the same live `tab_bounds` rects the pane-drop uses.
+    fn resolve_tab_slot(&self, x: Pixels) -> usize {
+        let map = self.tab_bounds.lock().unwrap();
+        let mut slot = 0;
+        for i in 0..self.tabs.len() {
+            if let Some(r) = map.get(&i) {
+                let mid = f32::from(r.origin.x) + f32::from(r.size.width) / 2.0;
+                if f32::from(x) > mid {
+                    slot = i + 1;
+                }
+            }
+        }
+        slot
+    }
+
+    /// Slide outer tab `from` to insertion slot `to` (in the pre-removal index
+    /// space, 0..=len). Keeps `self.active` pointing at the very same tab it did
+    /// before, whether or not the moved tab was the active one.
+    fn move_tab(&mut self, from: usize, to: usize, cx: &mut Context<Self>) {
+        if from >= self.tabs.len() {
+            return;
+        }
+        let (dest, new_active) = reorder_indices(from, to, self.tabs.len(), self.active);
+        if dest == from {
+            return; // no-op: dropped back into its own slot
+        }
+        let tab = self.tabs.remove(from);
+        self.tabs.insert(dest, tab);
+        self.active = new_active;
         self.save(cx);
         cx.notify();
     }
@@ -1236,6 +1326,37 @@ impl Workspace {
     }
 
     fn on_mouse_move(&mut self, ev: &MouseMoveEvent, _w: &mut Window, cx: &mut Context<Self>) {
+        // an outer-tab reorder in flight owns the move: track the cursor, engage
+        // past a small threshold (so a plain tab click still activates), and
+        // resolve which slot a release would drop the tab into.
+        if self.tab_drag.is_some() {
+            if ev.pressed_button != Some(MouseButton::Left) {
+                self.tab_drag = None;
+                self.tab_drop = None;
+                cx.notify();
+                return;
+            }
+            let pos = ev.position;
+            let engaged = {
+                let d = self.tab_drag.as_mut().unwrap();
+                d.at = pos;
+                if !d.engaged {
+                    let dx = f32::from(pos.x) - f32::from(d.start.x);
+                    let dy = f32::from(pos.y) - f32::from(d.start.y);
+                    if (dx * dx + dy * dy).sqrt() > 6.0 {
+                        d.engaged = true;
+                    }
+                }
+                d.engaged
+            };
+            self.tab_drop = if engaged {
+                Some(self.resolve_tab_slot(pos.x))
+            } else {
+                None
+            };
+            cx.notify();
+            return;
+        }
         // a sub-tab drag in flight owns the move: track the cursor, engage past
         // a small threshold (so a plain header click still focuses), and resolve
         // the drop landing under the cursor for the overlay.
@@ -1361,6 +1482,17 @@ impl Workspace {
         }
         if self.slider_drag.take().is_some() {
             self.save(cx);
+            cx.notify();
+            return;
+        }
+        // a tab reorder: drop the grabbed tab into its resolved slot
+        if let Some(drag) = self.tab_drag.take() {
+            let slot = self.tab_drop.take();
+            if drag.engaged {
+                if let Some(to) = slot {
+                    self.move_tab(drag.from, to, cx);
+                }
+            }
             cx.notify();
             return;
         }
@@ -2728,7 +2860,8 @@ impl Render for Workspace {
             self.theme_menu.is_some()
                 || self.osd_menu.is_some()
                 || self.confirm_close.is_some()
-                || self.help_open,
+                || self.help_open
+                || self.tab_color_edit.is_some(),
         );
         // drop-hit-test rects are rebuilt every frame by the canvases below, so
         // a closed pane / removed tab never leaves a stale target behind.
@@ -2783,7 +2916,14 @@ impl Render for Workspace {
         // ---- tabs (right-click renames) ----
         let renaming = self.renaming.clone();
         let mut tab_strip = div().flex().flex_row().gap_1().items_center();
+        // while a tab is being dragged, an accent bar marks the slot it'd land in
+        let dragging_tab = self.tab_drag.as_ref().is_some_and(|d| d.engaged);
+        let drop_slot = self.tab_drop;
+        let drop_marker = || div().w(px(3.)).h(px(18.)).rounded_full().bg(th.accent);
         for i in 0..tab_count {
+            if dragging_tab && drop_slot == Some(i) {
+                tab_strip = tab_strip.child(drop_marker());
+            }
             let is_active = i == self.active;
             if let Some((_, buf)) = renaming.as_ref().filter(|(ri, _)| *ri == i) {
                 tab_strip = tab_strip.child(
@@ -2842,9 +2982,20 @@ impl Render for Workspace {
                         cx.notify();
                     }),
                 );
+            // tint the tab to its binder-divider colour (a property of the tab,
+            // never inherited from a pane) — text stays the outer-bar text colour
+            let mut btn = Self::bezel_btn(&th, &label, is_active);
+            if let Some(c) = self.tabs[i].color {
+                btn = btn
+                    .bg(linear_gradient(
+                        135.,
+                        linear_color_stop(brighten(c, 1.35), 0.),
+                        linear_color_stop(darken(c, 0.6), 1.),
+                    ))
+                    .border_color(if is_active { th.accent } else { c });
+            }
             tab_strip = tab_strip.child(
-                Self::bezel_btn(&th, &label, is_active)
-                    .group(tab_grp)
+                btn.group(tab_grp)
                     .relative()
                     .flex()
                     .flex_row()
@@ -2856,14 +3007,31 @@ impl Render for Workspace {
                             // don't let the click bubble to the root's focus
                             // handle, which would steal focus from the pane
                             cx.stop_propagation();
-                            if ev.click_count >= 2 {
+                            if ev.modifiers.control {
+                                // ctrl+click → open this tab's colour tray (just
+                                // this tab; never touches a pane's theme)
+                                ws.tab_color_edit = Some(i);
+                                ws.tab_color_at = Some(ev.position);
+                                ws.tab_drag = None;
+                                cx.notify();
+                            } else if ev.click_count >= 2 {
                                 // double-click to rename (the file-manager gesture)
                                 let seed = ws.tabs[i].name.clone().unwrap_or_default();
                                 ws.renaming = Some((i, seed));
                                 window.focus(&ws.focus_handle, cx);
                                 cx.notify();
                             } else {
+                                // select now; arm a reorder drag that engages only
+                                // if the cursor travels far enough (else it stays a
+                                // plain click)
                                 ws.activate_tab(i, window, cx);
+                                ws.tab_drag = Some(TabDrag {
+                                    from: i,
+                                    start: ev.position,
+                                    at: ev.position,
+                                    engaged: false,
+                                });
+                                ws.tab_drop = None;
                             }
                         }),
                     )
@@ -2906,6 +3074,9 @@ impl Render for Workspace {
                     .child(pencil)
                     .child(close_x),
             );
+        }
+        if dragging_tab && drop_slot == Some(tab_count) {
+            tab_strip = tab_strip.child(drop_marker());
         }
         tab_strip = tab_strip.child(Self::bezel_btn(&th, "+", false).on_mouse_down(
             MouseButton::Left,
@@ -3840,7 +4011,117 @@ impl Render for Workspace {
                 .child(panel)
         });
 
-        // a small chip trails the cursor while a sub-tab is being dragged
+        // ---- per-tab colour tray (ctrl+click a tab) — a small swatch popover ----
+        let tab_color_overlay = self.tab_color_edit.and_then(|i| {
+            let tab = self.tabs.get(i)?;
+            let current = tab.color;
+            let label = tab.name.clone().unwrap_or_else(|| format!("tab {}", i + 1));
+            let at = self.tab_color_at.unwrap_or_default();
+            let mut swatches = div().flex().flex_row().flex_wrap().gap_1().max_w(px(184.));
+            for &(h, s, l) in TAB_SWATCHES {
+                let c = hsla(h, s, l, 1.);
+                let selected = current.is_some_and(|cc| {
+                    (cc.h - h).abs() < 0.001 && (cc.s - s).abs() < 0.001 && (cc.l - l).abs() < 0.001
+                });
+                swatches = swatches.child(
+                    div()
+                        .id(SharedString::from(format!(
+                            "tab-swatch-{i}-{}",
+                            (h * 1000.) as i32
+                        )))
+                        .w(px(22.))
+                        .h(px(22.))
+                        .rounded_full()
+                        .bg(c)
+                        .cursor_pointer()
+                        .when(selected, |d| d.border_2().border_color(white()))
+                        .when(!selected, |d| {
+                            d.border_1().border_color(hsla(0., 0., 0., 0.5))
+                        })
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                                cx.stop_propagation();
+                                if let Some(t) = ws.tabs.get_mut(i) {
+                                    t.color = Some(c);
+                                }
+                                ws.tab_color_edit = None;
+                                ws.save(cx);
+                                cx.notify();
+                            }),
+                        ),
+                );
+            }
+            let clear = div()
+                .id(SharedString::from(format!("tab-swatch-clear-{i}")))
+                .px_2()
+                .py_0p5()
+                .rounded_sm()
+                .border_1()
+                .border_color(th.accent.alpha(0.5))
+                .text_size(px(10.))
+                .text_color(th.text)
+                .cursor_pointer()
+                .child("clear")
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                        cx.stop_propagation();
+                        if let Some(t) = ws.tabs.get_mut(i) {
+                            t.color = None;
+                        }
+                        ws.tab_color_edit = None;
+                        ws.save(cx);
+                        cx.notify();
+                    }),
+                );
+            let panel = div()
+                .absolute()
+                .left(px(f32::from(at.x)))
+                .top(px(f32::from(at.y) + 8.))
+                .p_2()
+                .rounded_md()
+                .border_1()
+                .border_color(th.accent.alpha(0.6))
+                .bg(darken(th.surface, 0.6))
+                .shadow(vec![BoxShadow {
+                    color: hsla(0., 0., 0., 0.55),
+                    offset: point(px(3.), px(5.)),
+                    blur_radius: px(16.),
+                    spread_radius: px(0.),
+                    inset: false,
+                }])
+                .flex()
+                .flex_col()
+                .gap_2()
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|_, _: &MouseDownEvent, _w, cx| cx.stop_propagation()),
+                )
+                .child(
+                    div()
+                        .text_size(px(10.))
+                        .text_color(th.text.alpha(0.8))
+                        .child(format!("\u{201c}{label}\u{201d} tab colour")),
+                )
+                .child(swatches)
+                .child(div().flex().flex_row().justify_end().child(clear));
+            // full-window scrim: a click anywhere else dismisses the tray
+            Some(
+                div()
+                    .absolute()
+                    .inset_0()
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                            ws.tab_color_edit = None;
+                            cx.notify();
+                        }),
+                    )
+                    .child(panel),
+            )
+        });
+
         let drag_chip = self.drag_pane.as_ref().filter(|d| d.engaged).map(|d| {
             div()
                 .absolute()
@@ -3948,6 +4229,7 @@ impl Render for Workspace {
                     .children(osd_overlay)
                     .children(confirm_overlay)
                     .children(help_overlay)
+                    .children(tab_color_overlay)
                     .children(drag_chip),
             )
     }
@@ -3988,6 +4270,37 @@ mod tests {
         assert!(outside_bounds(400.0, -1.0, 800.0, 600.0));
         assert!(outside_bounds(801.0, 300.0, 800.0, 600.0));
         assert!(outside_bounds(400.0, 601.0, 800.0, 600.0));
+    }
+
+    #[test]
+    fn reorder_matches_a_real_remove_then_insert_and_follows_active() {
+        // For every small strip, every grab, every drop slot, and every active
+        // selection: the (dest, new_active) math must agree with actually doing
+        // the remove+insert on a labelled vec — i.e. `active` keeps pointing at
+        // the SAME tab id after the move.
+        for len in 1..=6usize {
+            for from in 0..len {
+                for to in 0..=len {
+                    for active in 0..len {
+                        let (dest, new_active) = reorder_indices(from, to, len, active);
+                        // simulate on ids 0..len
+                        let mut v: Vec<usize> = (0..len).collect();
+                        let was_active_id = v[active];
+                        let t = v.remove(from);
+                        v.insert(dest, t);
+                        assert!(dest < len, "dest in range");
+                        assert_eq!(
+                            v[new_active], was_active_id,
+                            "active still points at its tab (len={len} from={from} to={to} active={active})"
+                        );
+                    }
+                }
+            }
+        }
+        // a couple of explicit landmarks
+        assert_eq!(reorder_indices(0, 3, 4, 0), (2, 2)); // drag tab0 right two slots
+        assert_eq!(reorder_indices(3, 0, 4, 3), (0, 0)); // drag last tab to front
+        assert_eq!(reorder_indices(1, 1, 4, 2).0, 1); // drop in own slot → no-op dest
     }
 
     #[test]
@@ -4141,6 +4454,7 @@ mod tests {
         );
         let toml = toml::to_string(&SavedTab {
             name: None,
+            color: None,
             node: saved,
         })
         .expect("serialize");
@@ -4235,6 +4549,7 @@ id = "hacker"
             track: None,
             tabs: vec![SavedTab {
                 name: None,
+                color: None,
                 node: SavedNode::Leaf {
                     appearance: PaneTheme::from_legacy(ThemeChoice {
                         id: "hacker".into(),
@@ -4269,6 +4584,7 @@ id = "hacker"
             track: None,
             tabs: vec![SavedTab {
                 name: Some("agents".into()),
+                color: None,
                 node: SavedNode::Leaf {
                     appearance: PaneTheme::default(),
                     cwd: Some("/home/user/proj".into()),
@@ -4385,7 +4701,11 @@ id = "hacker"
             theme: None,
             warp: theme::WARP_DEFAULT,
             track: None,
-            tabs: vec![SavedTab { name: None, node }],
+            tabs: vec![SavedTab {
+                name: None,
+                color: None,
+                node,
+            }],
         };
         let body = toml::to_string(&state).expect("serializes");
         let back: StateFile = toml::from_str(&body).expect("round-trips");
@@ -4427,6 +4747,30 @@ fn pick_focus_target<T: PartialEq + Copy>(remembered: Option<T>, leaves: &[T]) -
 /// edge, so this is how we notice a pane being dragged out for a tear-off.
 fn outside_bounds(x: f32, y: f32, w: f32, h: f32) -> bool {
     x < 0.0 || y < 0.0 || x > w || y > h
+}
+
+/// Pure index math for an outer-tab reorder. Moving the tab at `from` into the
+/// insertion slot `to` (pre-removal space, 0..=len) lands it at `dest`; the
+/// `active` selection is remapped so it keeps pointing at the very same tab.
+/// Returns `(dest, new_active)`. `dest == from` means a no-op (dropped back in
+/// its own slot).
+fn reorder_indices(from: usize, to: usize, len: usize, active: usize) -> (usize, usize) {
+    let to = to.min(len);
+    // removal then insertion shifts the destination one left when moving right
+    let dest = if to > from { to - 1 } else { to };
+    let new_active = if active == from {
+        dest
+    } else {
+        let mut a = active;
+        if a > from {
+            a -= 1; // the removal pulled it left
+        }
+        if a >= dest {
+            a += 1; // the insertion pushed it right
+        }
+        a
+    };
+    (dest, new_active)
 }
 
 /// `/proc/<pid>/comm` truncates the process name to 15 visible chars; mirror that
