@@ -108,6 +108,18 @@ fn foreground_mode(master: &std::fs::File, shell_pid: u32) -> PaneMode {
     PaneMode::classify(&comm, &cmdline)
 }
 
+/// New value for a dragged bell-trim pip: move start or end to time `t`, keeping
+/// a 0.2s gap and staying within [0, dur]. `end <= start` means "to the clip
+/// end", so the effective end is `dur`. Pure so the drag math is unit-testable.
+fn trim_drag_value(is_end: bool, t: f32, start: f32, end: f32, dur: f32) -> f32 {
+    let eff_end = if end > start { end } else { dur };
+    if is_end {
+        t.clamp(start + 0.2, dur.max(start + 0.2))
+    } else {
+        t.clamp(0.0, (eff_end - 0.2).max(0.0))
+    }
+}
+
 /// A shift-clickable target lifted out of the grid: a web/file URL handed
 /// straight to the system opener, or a filesystem path resolved against the
 /// pane's cwd before opening.
@@ -734,6 +746,9 @@ pub struct TerminalView {
     /// True while this pane is the one mirrored in the FOCUS modal — a plain Esc
     /// then closes the modal instead of reaching the PTY. Set by the workspace.
     being_read: bool,
+    /// When the current agent "thinking" spell began — used to ring the bell on
+    /// the thinking→done edge (agents don't reliably emit a terminal BEL).
+    think_since: Option<Instant>,
     /// Which bell-trim pip is being dragged (false = start, true = end); None idle.
     bell_drag: Option<bool>,
     /// Window-space bounds of the bell trim track, for pip drag math.
@@ -942,6 +957,21 @@ impl TerminalView {
                             let thinking = view.agent_is_thinking();
                             if thinking != view.gamba.is_thinking() {
                                 view.gamba.set_thinking(thinking);
+                                if thinking {
+                                    view.think_since = Some(Instant::now());
+                                } else {
+                                    // agent finished a real turn (not a blip) →
+                                    // ring the completion bell ourselves, since
+                                    // agents don't reliably emit a terminal BEL.
+                                    let real = view.think_since.take().is_some_and(|t| {
+                                        t.elapsed() > std::time::Duration::from_millis(1200)
+                                    });
+                                    if real && view.mode.is_agent() && view.bell_cfg.enabled {
+                                        view.bell = true;
+                                        view.bell_player.play(&view.bell_cfg);
+                                        cx.notify();
+                                    }
+                                }
                             }
                         }
                         if view.gamba.tick() {
@@ -1008,6 +1038,7 @@ impl TerminalView {
                 .checked_sub(std::time::Duration::from_secs(1))
                 .unwrap_or_else(Instant::now),
             being_read: false,
+            think_since: None,
             bell_drag: None,
             bell_track_bounds: Arc::new(Mutex::new(None)),
         }
@@ -1573,15 +1604,11 @@ impl TerminalView {
             if ev.pressed_button == Some(MouseButton::Left) {
                 if let Some(t) = self.bell_time_from_pos(ev.position.x) {
                     let dur = self.bell_dur.unwrap_or(t);
-                    let end = if self.bell_cfg.end > self.bell_cfg.start {
-                        self.bell_cfg.end
-                    } else {
-                        dur
-                    };
+                    let v = trim_drag_value(is_end, t, self.bell_cfg.start, self.bell_cfg.end, dur);
                     if is_end {
-                        self.bell_cfg.end = t.clamp(self.bell_cfg.start + 0.2, dur);
+                        self.bell_cfg.end = v;
                     } else {
-                        self.bell_cfg.start = t.clamp(0.0, (end - 0.2).max(0.0));
+                        self.bell_cfg.start = v;
                     }
                     cx.notify();
                 }
@@ -2479,10 +2506,37 @@ impl Render for TerminalView {
             let track = div()
                 .relative()
                 .w_full()
-                .h(px(8.))
+                .h(px(12.))
                 .my(px(8.))
                 .rounded_full()
                 .bg(faint.alpha(0.35))
+                .cursor_pointer()
+                // click anywhere on the track → grab the nearer pip and start a drag
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|v, ev: &MouseDownEvent, _w, cx| {
+                        cx.stop_propagation();
+                        if let Some(t) = v.bell_time_from_pos(ev.position.x) {
+                            let dur = v.bell_dur.unwrap_or(t);
+                            let end = if v.bell_cfg.end > v.bell_cfg.start {
+                                v.bell_cfg.end
+                            } else {
+                                dur
+                            };
+                            // grab whichever pip is nearer the click, then drag it
+                            let is_end = (t - v.bell_cfg.start).abs() > (t - end).abs();
+                            v.bell_drag = Some(is_end);
+                            let nv =
+                                trim_drag_value(is_end, t, v.bell_cfg.start, v.bell_cfg.end, dur);
+                            if is_end {
+                                v.bell_cfg.end = nv;
+                            } else {
+                                v.bell_cfg.start = nv;
+                            }
+                            cx.notify();
+                        }
+                    }),
+                )
                 // the play-span between the pips
                 .child(
                     div()
@@ -2546,6 +2600,10 @@ impl Render for TerminalView {
                     MouseButton::Left,
                     cx.listener(|_, _: &MouseDownEvent, _w, cx| cx.stop_propagation()),
                 )
+                // the panel occludes the pane, so the trim-pip drag is driven from
+                // here (move + release) rather than the pane root behind it
+                .on_mouse_move(cx.listener(Self::on_mouse_move))
+                .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
                 // header
                 .child(
                     div()
@@ -2557,7 +2615,7 @@ impl Render for TerminalView {
                             div()
                                 .font_weight(gpui::FontWeight::BOLD)
                                 .text_color(acc)
-                                .child("BELL · sound"),
+                                .child("AGENT BELL"),
                         )
                         .child(mini("done".into()).on_mouse_down(
                             MouseButton::Left,
@@ -2773,6 +2831,20 @@ impl Render for TerminalView {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn trim_drag_clamps_and_keeps_a_gap() {
+        // drag END: lands on t, but never below start+0.2, never above dur
+        assert_eq!(trim_drag_value(true, 7.0, 2.0, 10.0, 12.0), 7.0);
+        assert_eq!(trim_drag_value(true, 99.0, 2.0, 10.0, 12.0), 12.0); // clamp to dur
+        assert_eq!(trim_drag_value(true, 1.0, 5.0, 10.0, 12.0), 5.2); // keep gap above start
+                                                                      // drag START: lands on t, but never above end-0.2, never below 0
+        assert_eq!(trim_drag_value(false, 3.0, 0.0, 10.0, 12.0), 3.0);
+        assert_eq!(trim_drag_value(false, -5.0, 0.0, 10.0, 12.0), 0.0); // clamp to 0
+        assert_eq!(trim_drag_value(false, 11.0, 0.0, 10.0, 12.0), 9.8); // keep gap below end
+                                                                        // end<=start means "to the clip end" → start clamps against dur
+        assert_eq!(trim_drag_value(false, 20.0, 0.0, 0.0, 12.0), 11.8);
+    }
 
     #[test]
     fn warp_matches_the_shader_and_is_identity_when_flat() {
