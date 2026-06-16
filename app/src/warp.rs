@@ -163,6 +163,9 @@ mod tests {
         assert!(just_in > just_out, "mask falls off across the panel edge");
         // the rounded corner clips OUTSIDE (a hard rect would read this as inside)
         let corner_pt = rounded_box_mask(499.0, 399.0, rect, corner, feather);
-        assert!(corner_pt < 0.5, "rounded corner reads as outside, got {corner_pt}");
+        assert!(
+            corner_pt < 0.5,
+            "rounded corner reads as outside, got {corner_pt}"
+        );
     }
 }

@@ -28,9 +28,9 @@ use std::time::{Duration, Instant};
 use gpui::{
     canvas, div, fill, hsla, linear_color_stop, linear_gradient, point, prelude::*, px, size,
     white, App, Bounds, BoxShadow, Context, Decorations, Entity, EntityId, Focusable, Hsla,
-    KeyDownEvent,
-    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, ScrollWheelEvent,
-    SharedString, TitlebarOptions, Window, WindowBounds, WindowDecorations, WindowOptions,
+    KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point,
+    ScrollWheelEvent, SharedString, TitlebarOptions, Window, WindowBounds, WindowDecorations,
+    WindowOptions,
 };
 use gpui_platform::application;
 use pane::{
@@ -145,13 +145,7 @@ impl<L: Clone> Tree<L> {
     /// than just one leaf. This is the "drag to the field edge → resplit the
     /// entire field" gesture: it fractals, because every nesting level is a
     /// container with its own id. `new_first` puts `new` on the leading side.
-    fn split_node_at(
-        &mut self,
-        target: u64,
-        dir: SplitDir,
-        new: L,
-        new_first: bool,
-    ) -> bool {
+    fn split_node_at(&mut self, target: u64, dir: SplitDir, new: L, new_first: bool) -> bool {
         match self {
             Tree::Split { id, .. } if *id == target => {
                 // momentary placeholder while we re-parent the matched subtree
@@ -1843,7 +1837,10 @@ impl Workspace {
                 // became — that's the "resplit the entire field" fallback.
                 let (dir, new_first) = split_for(zone);
                 self.tabs.get_mut(from).map(|tab| {
-                    if !tab.root.split_node_at(container, dir, pane.clone(), new_first) {
+                    if !tab
+                        .root
+                        .split_node_at(container, dir, pane.clone(), new_first)
+                    {
                         let old = std::mem::replace(&mut tab.root, Node::Leaf(pane.clone()));
                         let (a, b) = if new_first {
                             (Node::Leaf(pane.clone()), old)
@@ -3482,7 +3479,11 @@ impl Render for Workspace {
         // never arms the drag-to-move latch.
         let is_client = matches!(window.window_decorations(), Decorations::Client { .. });
         let win_btn = |glyph: &'static str, danger: bool| {
-            let hover = if danger { hsla(0., 0.7, 0.55, 1.) } else { th.accent };
+            let hover = if danger {
+                hsla(0., 0.7, 0.55, 1.)
+            } else {
+                th.accent
+            };
             div()
                 .id(SharedString::from(format!("winctl-{glyph}")))
                 .w(px(20.))
@@ -4626,7 +4627,7 @@ impl Render for Workspace {
                                         28.0 * sf * focus_ramp, // blur radius (eases in)
                                         16.0 * sf,              // feather across the panel edge
                                         focus_ramp,             // frosted-glass tint (eases in)
-                                        12.0 * sf,              // corner radius — matches rounded(12)
+                                        12.0 * sf, // corner radius — matches rounded(12)
                                     );
                                 },
                                 |_, _, _, _| {},
@@ -4662,9 +4663,7 @@ impl Render for Workspace {
                     // Scrolling anywhere over the modal (panel or dimmed surround)
                     // drives the read pane — you never lose the wheel while reading.
                     .on_scroll_wheel(cx.listener(|ws, ev: &ScrollWheelEvent, _w, cx| {
-                        if let Some(pane) =
-                            ws.focus_read.as_ref().and_then(|w| w.upgrade())
-                        {
+                        if let Some(pane) = ws.focus_read.as_ref().and_then(|w| w.upgrade()) {
                             pane.update(cx, |v, cx| v.scroll_by_wheel(ev, cx));
                             cx.notify();
                         }

@@ -174,7 +174,9 @@ pub fn decorate(content: impl IntoElement, window: &mut Window) -> Stateful<Div>
                         window.set_cursor_style(
                             match edge {
                                 ResizeEdge::Top | ResizeEdge::Bottom => CursorStyle::ResizeUpDown,
-                                ResizeEdge::Left | ResizeEdge::Right => CursorStyle::ResizeLeftRight,
+                                ResizeEdge::Left | ResizeEdge::Right => {
+                                    CursorStyle::ResizeLeftRight
+                                }
                                 ResizeEdge::TopLeft | ResizeEdge::BottomRight => {
                                     CursorStyle::ResizeUpLeftDownRight
                                 }
