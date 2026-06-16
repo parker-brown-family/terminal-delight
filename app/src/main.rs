@@ -4657,6 +4657,18 @@ impl Render for Workspace {
                         MouseButton::Left,
                         cx.listener(|ws, _: &MouseDownEvent, _w, cx| ws.close_focus_read(cx)),
                     )
+                    // The scrim occludes the pane behind it, so route the wheel back
+                    // to the focused terminal's scrollback and re-paint the mirror.
+                    // Scrolling anywhere over the modal (panel or dimmed surround)
+                    // drives the read pane — you never lose the wheel while reading.
+                    .on_scroll_wheel(cx.listener(|ws, ev: &ScrollWheelEvent, _w, cx| {
+                        if let Some(pane) =
+                            ws.focus_read.as_ref().and_then(|w| w.upgrade())
+                        {
+                            pane.update(cx, |v, cx| v.scroll_by_wheel(ev, cx));
+                            cx.notify();
+                        }
+                    }))
                     .child(panel)
             });
 

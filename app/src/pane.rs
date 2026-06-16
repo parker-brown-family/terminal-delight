@@ -1416,6 +1416,14 @@ impl TerminalView {
     }
 
     fn on_wheel(&mut self, ev: &ScrollWheelEvent, _w: &mut Window, cx: &mut Context<Self>) {
+        self.scroll_by_wheel(ev, cx);
+    }
+
+    /// Scroll the terminal scrollback from a wheel event. Public so the FOCUS
+    /// reading modal (rendered by the Workspace) can route its wheel events here:
+    /// the modal's locking scrim `.occlude()`s the pane behind it and would
+    /// otherwise swallow the wheel, leaving the mirror un-scrollable.
+    pub fn scroll_by_wheel(&mut self, ev: &ScrollWheelEvent, cx: &mut Context<Self>) {
         if ev.modifiers.control {
             return; // workspace handles ctrl+wheel = text-size scrub
         }
