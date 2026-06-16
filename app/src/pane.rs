@@ -750,6 +750,9 @@ pub struct TerminalView {
     bell_player: crate::bell::BellPlayer,
     /// The BELL+ config tray is open.
     bell_menu: bool,
+    /// Responsive header: when the pane narrows, controls tuck into a ⋯ overflow
+    /// menu. `Some(pos)` = that menu is open, anchored at the ⋯ click. None = shut.
+    hdr_overflow: Option<gpui::Point<Pixels>>,
     /// Cached duration (s) of the selected sound, for the scrubber track.
     bell_dur: Option<f32>,
     /// Last-known OS focus, for edge-detected focus reporting (CSI I / CSI O).
@@ -1048,6 +1051,7 @@ impl TerminalView {
             bell_cfg: crate::bell::BellConfig::default(),
             bell_player: crate::bell::BellPlayer::default(),
             bell_menu: false,
+            hdr_overflow: None,
             bell_dur: None,
             was_focused: false,
             pending_grid: None,
@@ -1337,6 +1341,12 @@ impl TerminalView {
         // Escape closes the right-click menu before anything else.
         if self.ctx_menu.is_some() && ks.key.as_str() == "escape" {
             self.ctx_menu = None;
+            cx.notify();
+            return;
+        }
+        // Escape closes the ⋯ header overflow menu before reaching the PTY.
+        if self.hdr_overflow.is_some() && ks.key.as_str() == "escape" {
+            self.hdr_overflow = None;
             cx.notify();
             return;
         }
@@ -1654,6 +1664,9 @@ impl TerminalView {
         }
         // any other click dismisses an open menu (then proceeds normally)
         if self.ctx_menu.take().is_some() {
+            cx.notify();
+        }
+        if self.hdr_overflow.take().is_some() {
             cx.notify();
         }
         // Shift- or Ctrl-click opens a link/path under the cursor with the system
@@ -2157,6 +2170,150 @@ impl Render for TerminalView {
         let grid_label = format!("{}×{}", self.grid.cols, self.grid.rows);
         let glow = th.glow;
 
+        // ── Responsive header ────────────────────────────────────────────────
+        // As the pane narrows, the right-side controls tuck into a ⋯ overflow
+        // menu in priority order. The × (close) NEVER collapses; 👓 FOCUS is the
+        // LAST to go. Driven by the measured content width (one frame stale —
+        // imperceptible) so the header reflows live as panes split/resize.
+        let pane_w = self
+            .content_bounds
+            .lock()
+            .unwrap()
+            .map(|b| f32::from(b.size.width))
+            .unwrap_or(f32::MAX);
+        let show_human = pane_w >= 470.; // 1st to hide: 👤 ▲▼ message-nav
+        let show_eq = pane_w >= 410.; //    2nd: EQ / display
+        let show_theme = pane_w >= 360.; //  3rd: 🎨 theme
+        let show_bell = pane_w >= 310.; //   4th: 🔔 notifications
+        let show_focus = pane_w >= 264.; //  5th & last: 👓 FOCUS
+        // ⋯ shows only once something is actually tucked (👤-nav is agent-only).
+        let overflow = !show_focus
+            || !show_bell
+            || !show_theme
+            || !show_eq
+            || (!show_human && self.mode.is_agent());
+
+        // The ⋯ overflow menu lists exactly the controls hidden at this width, in
+        // the same order they collapse. Mirrors the right-click menu's look.
+        let overflow_el = self.hdr_overflow.map(|pos| {
+            let (acc, surf, txt, human, ff) = (
+                th.accent,
+                th.surface,
+                th.text,
+                th.human,
+                th.font_family.clone(),
+            );
+            let item = move |icon: &str, label: &str| {
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_2()
+                    .px(px(12.))
+                    .py(px(6.))
+                    .cursor_pointer()
+                    .text_color(txt)
+                    .hover(move |s| s.bg(acc.alpha(0.22)))
+                    .child(div().w(px(22.)).child(icon.to_string()))
+                    .child(label.to_string())
+            };
+            let mut menu = div()
+                .flex()
+                .flex_col()
+                .min_w(px(196.))
+                .py(px(4.))
+                .bg(surf)
+                .border_1()
+                .border_color(acc.alpha(0.55))
+                .rounded(px(8.))
+                .occlude()
+                .text_size(px(13.))
+                .font_family(ff)
+                .shadow_md();
+            // 👤 ▲▼ message-nav keeps its live steppers inline so you can step
+            // repeatedly; this row does not dismiss the menu.
+            if !show_human && self.mode.is_agent() {
+                let step = |glyph: &'static str, next: bool, cx: &mut Context<Self>| {
+                    div()
+                        .px(px(7.))
+                        .py(px(1.))
+                        .rounded_sm()
+                        .border_1()
+                        .border_color(human.alpha(0.6))
+                        .text_color(human)
+                        .cursor_pointer()
+                        .child(glyph)
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |view, _ev: &MouseDownEvent, _w, cx| {
+                                cx.stop_propagation();
+                                view.scroll_to_human(next, cx);
+                            }),
+                        )
+                };
+                menu = menu.child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap_2()
+                        .px(px(12.))
+                        .py(px(6.))
+                        .child(div().w(px(22.)).child("👤"))
+                        .child("Your messages")
+                        .child(div().flex_1())
+                        .child(step("▲", false, cx))
+                        .child(step("▼", true, cx)),
+                );
+            }
+            if !show_eq {
+                menu = menu.child(item("📊", "Display").on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |v, _ev: &MouseDownEvent, _w, cx| {
+                        cx.stop_propagation();
+                        v.hdr_overflow = None;
+                        cx.emit(OpenDisplayMenu { at: pos });
+                        cx.notify();
+                    }),
+                ));
+            }
+            if !show_theme {
+                menu = menu.child(item("🎨", "Theme").on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |v, _ev: &MouseDownEvent, _w, cx| {
+                        cx.stop_propagation();
+                        v.hdr_overflow = None;
+                        cx.emit(OpenThemeMenu { at: pos });
+                        cx.notify();
+                    }),
+                ));
+            }
+            if !show_bell {
+                menu = menu.child(item("🔔", "Notifications").on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |v, _ev: &MouseDownEvent, _w, cx| {
+                        cx.stop_propagation();
+                        v.bell_dur = v.bell_cfg.file.as_deref().and_then(crate::bell::duration);
+                        v.bell_menu = true;
+                        v.hdr_overflow = None;
+                        cx.notify();
+                    }),
+                ));
+            }
+            if !show_focus {
+                menu = menu.child(item("👓", "Focus — read this pane").on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |v, _ev: &MouseDownEvent, _w, cx| {
+                        cx.stop_propagation();
+                        v.hdr_overflow = None;
+                        cx.emit(OpenFocusRead);
+                        cx.notify();
+                    }),
+                ));
+            }
+            deferred(anchored().position(pos).snap_to_window().child(menu))
+        });
+
         // The sub-tab header is this pane's TITLE — painted in the theme's
         // complement (the wheel's `C` target; defaults to the accent's opposite
         // hue, or the active dynamic's complement). Lightness is floored so a
@@ -2192,6 +2349,10 @@ impl Render for TerminalView {
                 // focus loss is not wired, so enter/escape (in on_key) close it
                 div()
                     .flex_1()
+                    // min-width:0 lets the title actually shrink (a nowrap flex
+                    // child keeps min-width:auto otherwise) — so it clips instead
+                    // of shoving the controls (and the ×) off the right edge.
+                    .min_w(px(0.))
                     .overflow_hidden()
                     .whitespace_nowrap()
                     .flex()
@@ -2207,6 +2368,10 @@ impl Render for TerminalView {
                 let label = self.name.clone().unwrap_or_else(|| self.title.clone());
                 div()
                     .flex_1()
+                    // min-width:0 lets the title actually shrink (a nowrap flex
+                    // child keeps min-width:auto otherwise) — so it clips instead
+                    // of shoving the controls (and the ×) off the right edge.
+                    .min_w(px(0.))
                     .overflow_hidden()
                     .whitespace_nowrap()
                     .flex()
@@ -2258,12 +2423,16 @@ impl Render for TerminalView {
                     .flex()
                     .flex_row()
                     .items_center()
+                    // the control cluster keeps its natural width — only the title
+                    // (min-w:0) shrinks, so these controls never get squeezed off.
+                    .flex_shrink_0()
                     // roomier spacing between the consistent 2× header glyphs
                     .gap_3()
                     .child(grid_label)
                     // Part 1: only in an agent (claude/codex) pane — jump between
                     // *your own* messages. Coloured like your input (`th.human`).
-                    .when(self.mode.is_agent(), |row| {
+                    // FIRST control to tuck into the ⋯ overflow as the pane narrows.
+                    .when(show_human && self.mode.is_agent(), |row| {
                         // jump between YOUR messages: a 👤 bust groups the ▲/▼
                         // steppers into one unit so it reads as "your turns",
                         // not two stray arrows.
@@ -2304,100 +2473,138 @@ impl Render for TerminalView {
                                 .child(step("▼", true, cx)),
                         )
                     })
-                    .child(
-                        // 👓 FOCUS: mirror just this pane, big, with the rest of
-                        // the window dimmed back — for when one agent strikes a
-                        // goldmine and you need to actually READ it. Esc closes.
-                        div()
-                            .px_1()
-                            .rounded_sm()
-                            .border_1()
-                            .border_color(th.accent.alpha(0.5))
-                            .cursor_pointer()
-                            // the FOCUS lens reads +50% over the other 2× glyphs
-                            .text_size(px(HICON * 1.5))
-                            .line_height(px(HICON * 1.5))
-                            .child("👓")
-                            .on_mouse_down(
-                                MouseButton::Left,
-                                cx.listener(|_, _ev: &MouseDownEvent, _w, cx| {
-                                    cx.stop_propagation();
-                                    cx.emit(OpenFocusRead);
-                                }),
-                            ),
-                    )
-                    .child(
-                        // theme: a consistent 🎨 (click for the theme breakout)
-                        div()
-                            .px_1()
-                            .rounded_sm()
-                            .border_1()
-                            .border_color(th.accent.alpha(0.5))
-                            .cursor_pointer()
-                            .text_size(px(HICON))
-                            .line_height(px(HICON))
-                            .child("🎨")
-                            .on_mouse_down(
-                                MouseButton::Left,
-                                cx.listener(|_, ev: &MouseDownEvent, _w, cx| {
-                                    cx.stop_propagation();
-                                    cx.emit(OpenThemeMenu { at: ev.position });
-                                }),
-                            ),
-                    )
-                    .child(
-                        // display: a consistent EQ-waveform (click for monitor-OSD)
-                        div()
-                            .px_1()
-                            .flex()
-                            .items_center()
-                            .rounded_sm()
-                            .border_1()
-                            .border_color(th.accent.alpha(0.5))
-                            .cursor_pointer()
-                            .child(eq_icon(th.accent))
-                            .on_mouse_down(
-                                MouseButton::Left,
-                                cx.listener(|_, ev: &MouseDownEvent, _w, cx| {
-                                    cx.stop_propagation();
-                                    cx.emit(OpenDisplayMenu { at: ev.position });
-                                }),
-                            ),
-                    )
-                    .child(
-                        // notification bell 🔔 (click → config tray; the ENABLE
-                        // toggle and trim live in there). Lights when ringing.
-                        div()
-                            .px_1()
-                            .rounded_sm()
-                            .border_1()
-                            .border_color(if self.bell_cfg.enabled {
-                                th.accent.alpha(0.5)
-                            } else {
-                                th.faint
-                            })
-                            .text_color(if self.bell {
-                                th.accent
-                            } else if self.bell_cfg.enabled {
-                                bar_fg
-                            } else {
-                                th.faint
-                            })
-                            .cursor_pointer()
-                            .text_size(px(HICON))
-                            .line_height(px(HICON))
-                            .child("🔔")
-                            .on_mouse_down(
-                                MouseButton::Left,
-                                cx.listener(|v, _: &MouseDownEvent, _w, cx| {
-                                    cx.stop_propagation();
-                                    v.bell_dur =
-                                        v.bell_cfg.file.as_deref().and_then(crate::bell::duration);
-                                    v.bell_menu = true;
-                                    cx.notify();
-                                }),
-                            ),
-                    )
+                    // 👓 FOCUS: mirror just this pane, big, with the rest of the
+                    // window dimmed back. The LAST control to collapse (kept the
+                    // longest, per the tuck order) — only hides on the narrowest panes.
+                    .when(show_focus, |row| {
+                        row.child(
+                            div()
+                                .px_1()
+                                .rounded_sm()
+                                .border_1()
+                                .border_color(th.accent.alpha(0.5))
+                                .cursor_pointer()
+                                // the FOCUS lens reads +50% over the other 2× glyphs
+                                .text_size(px(HICON * 1.5))
+                                .line_height(px(HICON * 1.5))
+                                .child("👓")
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(|_, _ev: &MouseDownEvent, _w, cx| {
+                                        cx.stop_propagation();
+                                        cx.emit(OpenFocusRead);
+                                    }),
+                                ),
+                        )
+                    })
+                    // theme: a consistent 🎨 (click for the theme breakout)
+                    .when(show_theme, |row| {
+                        row.child(
+                            div()
+                                .px_1()
+                                .rounded_sm()
+                                .border_1()
+                                .border_color(th.accent.alpha(0.5))
+                                .cursor_pointer()
+                                .text_size(px(HICON))
+                                .line_height(px(HICON))
+                                .child("🎨")
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(|_, ev: &MouseDownEvent, _w, cx| {
+                                        cx.stop_propagation();
+                                        cx.emit(OpenThemeMenu { at: ev.position });
+                                    }),
+                                ),
+                        )
+                    })
+                    // display: a consistent EQ-waveform (click for monitor-OSD)
+                    .when(show_eq, |row| {
+                        row.child(
+                            div()
+                                .px_1()
+                                .flex()
+                                .items_center()
+                                .rounded_sm()
+                                .border_1()
+                                .border_color(th.accent.alpha(0.5))
+                                .cursor_pointer()
+                                .child(eq_icon(th.accent))
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(|_, ev: &MouseDownEvent, _w, cx| {
+                                        cx.stop_propagation();
+                                        cx.emit(OpenDisplayMenu { at: ev.position });
+                                    }),
+                                ),
+                        )
+                    })
+                    // notification bell 🔔 (click → config tray; the ENABLE
+                    // toggle and trim live in there). Lights when ringing.
+                    .when(show_bell, |row| {
+                        row.child(
+                            div()
+                                .px_1()
+                                .rounded_sm()
+                                .border_1()
+                                .border_color(if self.bell_cfg.enabled {
+                                    th.accent.alpha(0.5)
+                                } else {
+                                    th.faint
+                                })
+                                .text_color(if self.bell {
+                                    th.accent
+                                } else if self.bell_cfg.enabled {
+                                    bar_fg
+                                } else {
+                                    th.faint
+                                })
+                                .cursor_pointer()
+                                .text_size(px(HICON))
+                                .line_height(px(HICON))
+                                .child("🔔")
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(|v, _: &MouseDownEvent, _w, cx| {
+                                        cx.stop_propagation();
+                                        v.bell_dur = v
+                                            .bell_cfg
+                                            .file
+                                            .as_deref()
+                                            .and_then(crate::bell::duration);
+                                        v.bell_menu = true;
+                                        cx.notify();
+                                    }),
+                                ),
+                        )
+                    })
+                    // ⋯ overflow: appears once anything has been tucked away. Tap to
+                    // open the menu of hidden controls (built above as overflow_el).
+                    .when(overflow, |row| {
+                        row.child(
+                            div()
+                                .px_1()
+                                .rounded_sm()
+                                .border_1()
+                                .border_color(th.accent.alpha(0.5))
+                                .cursor_pointer()
+                                .text_size(px(HICON))
+                                .line_height(px(HICON))
+                                .child("⋯")
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(|v, ev: &MouseDownEvent, _w, cx| {
+                                        cx.stop_propagation();
+                                        v.hdr_overflow = if v.hdr_overflow.is_some() {
+                                            None
+                                        } else {
+                                            Some(ev.position)
+                                        };
+                                        cx.notify();
+                                    }),
+                                ),
+                        )
+                    })
                     .child(status)
                     .child(
                         // close just this sub-tab (×): ends this pane's shell.
@@ -3004,6 +3211,7 @@ impl Render for TerminalView {
             // the "agent finished" card floats above the content, top-centre
             .children(agent_alert)
             .children(ctx_menu_el)
+            .children(overflow_el)
             .children(bell_tray)
     }
 }
