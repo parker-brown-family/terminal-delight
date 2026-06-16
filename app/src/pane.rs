@@ -963,58 +963,62 @@ impl TerminalView {
         // per-pane effects clock
         cx.spawn(async move |this, cx| {
             loop {
-                let active = this
-                    .update(cx, |view: &mut TerminalView, cx| {
-                        let th = theme::theme(cx);
-                        if view.fx.tick(&th) {
-                            cx.notify();
-                        }
-                        // 🎰 GAMBA: poll the grid (throttled) for the agent
-                        // spinner, then advance the reel stack while it rolls.
-                        if view.last_think_scan.elapsed() > std::time::Duration::from_millis(120) {
-                            view.last_think_scan = Instant::now();
-                            let thinking = view.agent_is_thinking();
-                            if thinking != view.gamba.is_thinking() {
-                                view.gamba.set_thinking(thinking);
-                                if thinking {
-                                    view.think_since = Some(Instant::now());
-                                } else {
-                                    // agent finished a real turn (not a blip) →
-                                    // ring the completion bell ourselves, since
-                                    // agents don't reliably emit a terminal BEL.
-                                    let real = view.think_since.take().is_some_and(|t| {
-                                        t.elapsed() > std::time::Duration::from_millis(1200)
-                                    });
-                                    if real && view.mode.is_agent() && view.bell_cfg.enabled {
-                                        view.bell = true;
-                                        view.bell_player.play(&view.bell_cfg);
-                                        cx.notify();
-                                    }
+                let active = this.update(cx, |view: &mut TerminalView, cx| {
+                    let th = theme::theme(cx);
+                    if view.fx.tick(&th) {
+                        cx.notify();
+                    }
+                    // 🎰 GAMBA: poll the grid (throttled) for the agent
+                    // spinner, then advance the reel stack while it rolls.
+                    if view.last_think_scan.elapsed() > std::time::Duration::from_millis(120) {
+                        view.last_think_scan = Instant::now();
+                        let thinking = view.agent_is_thinking();
+                        if thinking != view.gamba.is_thinking() {
+                            view.gamba.set_thinking(thinking);
+                            if thinking {
+                                view.think_since = Some(Instant::now());
+                            } else {
+                                // agent finished a real turn (not a blip) →
+                                // ring the completion bell ourselves, since
+                                // agents don't reliably emit a terminal BEL.
+                                let real = view.think_since.take().is_some_and(|t| {
+                                    t.elapsed() > std::time::Duration::from_millis(1200)
+                                });
+                                if real && view.mode.is_agent() && view.bell_cfg.enabled {
+                                    view.bell = true;
+                                    view.bell_player.play(&view.bell_cfg);
+                                    cx.notify();
                                 }
                             }
                         }
-                        if view.gamba.tick() {
+                    }
+                    if view.gamba.tick() {
+                        cx.notify();
+                    }
+                    // reap a finished bell clip so ffplay zombies don't pile up
+                    view.bell_player.reap();
+                    // debounced PTY resize: fire once the drag settles
+                    if let Some((grid, since)) = view.pending_grid {
+                        if since.elapsed() > std::time::Duration::from_millis(140) {
+                            view.pending_grid = None;
+                            view.grid = grid;
+                            view.session
+                                .resize(grid, view.cell_w as u16, view.cell_h as u16);
                             cx.notify();
                         }
-                        // reap a finished bell clip so ffplay zombies don't pile up
-                        view.bell_player.reap();
-                        // debounced PTY resize: fire once the drag settles
-                        if let Some((grid, since)) = view.pending_grid {
-                            if since.elapsed() > std::time::Duration::from_millis(140) {
-                                view.pending_grid = None;
-                                view.grid = grid;
-                                view.session
-                                    .resize(grid, view.cell_w as u16, view.cell_h as u16);
-                                cx.notify();
-                            }
-                        }
-                        // Stay at frame-rate only while something is actually
-                        // moving — CRT fx, or GAMBA reels/FX/rumble in motion.
-                        // A landed-but-thinking board falls through to the idle
-                        // cadence (no 30fps repaint of a static slot grid).
-                        view.fx.active() || view.gamba.is_animating()
-                    })
-                    .unwrap_or(false);
+                    }
+                    // Stay at frame-rate only while something is actually
+                    // moving — CRT fx, or GAMBA reels/FX/rumble in motion.
+                    // A landed-but-thinking board falls through to the idle
+                    // cadence (no 30fps repaint of a static slot grid).
+                    view.fx.active() || view.gamba.is_animating()
+                });
+                // `this` is weak: once this pane's TerminalView is dropped (close
+                // a pane / tab / window) the update errors — break so the ticker
+                // ends instead of waking forever on a dead entity. Without this,
+                // every closed pane leaks a permanent background loop and idle
+                // CPU climbs over a session.
+                let Ok(active) = active else { break };
                 let ms = if active { 33 } else { 150 };
                 cx.background_executor()
                     .timer(std::time::Duration::from_millis(ms))

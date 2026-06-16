@@ -1037,16 +1037,24 @@ impl Workspace {
             ws.active = saved.active.min(ws.tabs.len() - 1);
             ws.focus_active(window, cx);
         }
-        // frame jiggle clock (cheap idle poll)
+        // frame jiggle clock (cheap idle poll). MUST stop when this window's
+        // Workspace is dropped — otherwise every opened-then-closed window
+        // (scratch, tear-off) leaves an orphan 60ms task waking forever on a
+        // dead entity, and idle CPU climbs over a session.
         cx.spawn(async move |this, cx| loop {
             cx.background_executor()
                 .timer(Duration::from_millis(60))
                 .await;
-            let _ = this.update(cx, |ws: &mut Workspace, cx| {
-                if ws.jiggle.tick() {
-                    cx.notify();
-                }
-            });
+            if this
+                .update(cx, |ws: &mut Workspace, cx| {
+                    if ws.jiggle.tick() {
+                        cx.notify();
+                    }
+                })
+                .is_err()
+            {
+                break;
+            }
         })
         .detach();
         // session checkpoint: live state (pane cwds, agent sessions, window
