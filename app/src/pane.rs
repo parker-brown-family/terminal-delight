@@ -2306,9 +2306,9 @@ impl Render for TerminalView {
                             .border_1()
                             .border_color(th.accent.alpha(0.5))
                             .cursor_pointer()
-                            // consistent 2× header-glyph size — the FOCUS lens
-                            .text_size(px(HICON))
-                            .line_height(px(HICON))
+                            // the FOCUS lens reads +50% over the other 2× glyphs
+                            .text_size(px(HICON * 1.5))
+                            .line_height(px(HICON * 1.5))
                             .child("👓")
                             .on_mouse_down(
                                 MouseButton::Left,
