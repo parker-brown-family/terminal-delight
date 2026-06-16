@@ -3080,6 +3080,17 @@ fn render_node(
     }
 }
 
+// Capture/demo hook: when TD_FOCUS_DEMO is set, the workspace auto-opens the
+// FOCUS reading modal on the first pane at first render, so headless screenshot
+// tooling can frame the frosted-glass backdrop without a synthetic mouse click
+// on the 👓 glyph. Inert (never armed) unless the env var is present.
+static FOCUS_DEMO_ARMED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+// When the FOCUS modal opened — drives a ~220ms ease-in of the dim + frosted
+// blur so the backdrop melts behind the panel instead of snapping. Set lazily
+// in render while the modal is open, cleared when it closes.
+static FOCUS_OPEN_AT: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
+
 impl Render for Workspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.reap(window, cx);
@@ -3109,6 +3120,26 @@ impl Render for Workspace {
         let th = theme::theme(cx);
         if self.tabs.is_empty() {
             return csd::decorate(div(), window);
+        }
+        // demo/capture hook (TD_FOCUS_DEMO): auto-open FOCUS on the first pane once,
+        // so the frosted backdrop can be screenshotted without a mouse. Arms only
+        // ON SUCCESS (retries each render until a leaf exists), and sets the flag
+        // directly rather than calling window.focus mid-render.
+        if std::env::var("TD_FOCUS_DEMO").is_ok()
+            && !FOCUS_DEMO_ARMED.load(std::sync::atomic::Ordering::Relaxed)
+        {
+            let first = self.tabs.get(self.active).and_then(|tab| {
+                let mut leaves = vec![];
+                tab.root.leaves(&mut leaves);
+                leaves.first().cloned()
+            });
+            if let Some(pane) = first {
+                FOCUS_DEMO_ARMED.store(true, std::sync::atomic::Ordering::Relaxed);
+                eprintln!("terminal-delight: TD_FOCUS_DEMO — auto-opening FOCUS modal");
+                pane.update(cx, |v, _| v.set_being_read(true));
+                self.focus_read = Some(pane.downgrade());
+                cx.notify();
+            }
         }
         // remember which pane currently holds focus in the active tab, so a later
         // mother-bar click returns to that exact terminal (the "most recent" one)
@@ -4453,6 +4484,25 @@ impl Render for Workspace {
         // Everything else dims back. The body is the SAME styled rows the live
         // pane builds, just scaled to fill the modal — so it's a true live
         // mirror (no second terminal) and keystrokes still reach the original.
+        // FOCUS ease-in: a smoothstep ramp (0→1 over ~220ms) the dim + blur ride
+        // on, so the frosted backdrop melts in. Kept alive by requesting frames
+        // until it settles; reset when the modal closes.
+        let focus_on = self.focus_read.as_ref().and_then(|w| w.upgrade()).is_some();
+        let focus_ramp = {
+            let mut guard = FOCUS_OPEN_AT.lock().unwrap();
+            if focus_on {
+                let t0 = *guard.get_or_insert_with(std::time::Instant::now);
+                let e = t0.elapsed().as_secs_f32();
+                let f = (e / 0.22).clamp(0.0, 1.0);
+                f * f * (3.0 - 2.0 * f) // smoothstep
+            } else {
+                *guard = None;
+                0.0
+            }
+        };
+        if focus_on && focus_ramp < 1.0 {
+            window.request_animation_frame();
+        }
         let focus_overlay = self
             .focus_read
             .as_ref()
@@ -4538,19 +4588,53 @@ impl Render for Workspace {
                             .p(px(pad))
                             .child(body),
                     )
+                    // Measure the panel's exact on-screen box (physical px) and arm
+                    // the FOCUS backdrop blur: the CRT post-pass frosts everything
+                    // outside this rect while the panel itself stays razor-sharp.
+                    // Using the real prepaint bounds (not an analytic centre) keeps
+                    // the sharp/blur edge pixel-aligned through the CSD shadow margin.
+                    .child(
+                        div().absolute().inset_0().child(
+                            gpui::canvas(
+                                move |bounds, window, _cx| {
+                                    let sf = window.scale_factor();
+                                    crate::warp::set_focus_blur(
+                                        [
+                                            f32::from(bounds.origin.x) * sf,
+                                            f32::from(bounds.origin.y) * sf,
+                                            f32::from(bounds.size.width) * sf,
+                                            f32::from(bounds.size.height) * sf,
+                                        ],
+                                        28.0 * sf * focus_ramp, // blur radius (eases in)
+                                        16.0 * sf,              // feather across the panel edge
+                                        focus_ramp,             // frosted-glass tint (eases in)
+                                        12.0 * sf,              // corner radius — matches rounded(12)
+                                    );
+                                },
+                                |_, _, _, _| {},
+                            )
+                            .size_full(),
+                        ),
+                    )
                     // clicks inside the panel must not fall through to the scrim
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(|_, _: &MouseDownEvent, _w, cx| cx.stop_propagation()),
                     );
-                // dim scrim over the whole window; a click outside the panel closes it
+                // Dim + LOCK scrim over the whole window. `.occlude()` makes it
+                // swallow every mouse event (clicks AND scroll) so nothing behind
+                // the modal can be focused, scrolled, or typed into — you stay in
+                // the FOCUS pane. The 0.60 dim rides UNDER the frosted backdrop the
+                // CRT pass paints (the shader blurs these dimmed pixels). A click on
+                // the dimmed area outside the panel closes it; esc closes too.
                 div()
                     .absolute()
                     .inset_0()
+                    .occlude()
                     .flex()
                     .items_center()
                     .justify_center()
-                    .bg(hsla(0., 0., 0., 0.62))
+                    .bg(hsla(0., 0., 0., 0.6 * focus_ramp))
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(|ws, _: &MouseDownEvent, _w, cx| ws.close_focus_read(cx)),

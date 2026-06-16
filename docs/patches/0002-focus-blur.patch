@@ -1,0 +1,193 @@
+# terminal-delight FOCUS frosted-glass blur — delta on top of 0001-td-crt-pass.patch
+# Apply AFTER 0001. Touches only crates/gpui_wgpu (crt_pass.wgsl, wgpu_renderer.rs, gpui_wgpu.rs).
+# Authoritative working tree: Software/zed-upstream-blur (isolated from the shared fork).
+
+diff --git a/crates/gpui_wgpu/src/crt_pass.wgsl b/crates/gpui_wgpu/src/crt_pass.wgsl
+index ae12dd1..4257883 100644
+--- a/crates/gpui_wgpu/src/crt_pass.wgsl
++++ b/crates/gpui_wgpu/src/crt_pass.wgsl
+@@ -1,4 +1,4 @@
+-// terminal-delight CRT post-pass v2: PER-RECT barrel distortion.
++// terminal-delight CRT post-pass v3: PER-RECT barrel distortion + FOCUS blur.
+ // The app registers up to 8 "tube" rectangles (terminal content areas, in
+ // physical px). Pixels inside a rect warp in rect-local space; everything
+ // else (bezel, buttons, chrome) passes through untouched, so hit-testing
+@@ -6,11 +6,21 @@
+ // glare.yz), so a pane on a bent theme bows even when the window theme is
+ // flat, and a flat pane stays flat next to a bent neighbour. rects + glare
+ // come from gpui_wgpu::set_crt_rects_tubes; k.z carries the rect count.
++//
++// FOCUS frosted glass: while the 👓 reading modal is up, warp is suppressed
++// (rect_count → 0) and `focus_params.x` (blur radius, physical px) goes
++// positive. The backdrop OUTSIDE the panel rect is blurred with a golden-angle
++// disk + per-pixel dither (creamy, no banding); the panel itself stays pristine
++// sharp. focus_rect = panel (x,y,w,h px); focus_params = (radius, feather,
++// tint, corner_radius). Fed by gpui_wgpu::set_focus_blur. The pass is modal-
++// gated, so the blur cost is paid only while you're reading.
+ 
+ struct CrtParams {
+     k: vec4<f32>,                  // global k1, k2 (gate only), rect_count, _pad
+     rects: array<vec4<f32>, 8>,    // x, y, w, h (physical px)
+     glare: array<vec4<f32>, 8>,    // strength, k1, k2, _pad (per-rect curvature)
++    focus_rect: vec4<f32>,         // x, y, w, h (physical px) — the sharp panel
++    focus_params: vec4<f32>,       // blur_radius_px, feather_px, tint, corner_radius_px
+ }
+ 
+ @group(0) @binding(0) var<uniform> crt: CrtParams;
+@@ -31,6 +41,18 @@ fn vs_crt(@builtin(vertex_index) vi: u32) -> CrtVsOut {
+     return out;
+ }
+ 
++// Signed distance to a rounded box, then a smoothstep feather across the edge.
++// Returns 1.0 fully INSIDE the panel, 0.0 fully OUTSIDE, smooth between — so the
++// sharp region follows the panel's rounded corners instead of a hard rectangle.
++fn panel_mask(p: vec2<f32>, rect: vec4<f32>, corner: f32, feather: f32) -> f32 {
++    let center = rect.xy + rect.zw * 0.5;
++    let half = rect.zw * 0.5;
++    let q = abs(p - center) - half + vec2<f32>(corner, corner);
++    let sdf = min(max(q.x, q.y), 0.0) + length(max(q, vec2<f32>(0.0))) - corner;
++    let f = max(feather, 1e-4);
++    return 1.0 - smoothstep(-f * 0.5, f * 0.5, sdf);
++}
++
+ @fragment
+ fn fs_crt(in: CrtVsOut) -> @location(0) vec4<f32> {
+     let dims = vec2<f32>(textureDimensions(screen_tex));
+@@ -77,6 +99,47 @@ fn fs_crt(in: CrtVsOut) -> @location(0) vec4<f32> {
+             return vec4<f32>(tube * inb, 1.0);
+         }
+     }
++
++    // ---- FOCUS frosted-glass backdrop (active while the reading modal is up) ----
++    let fb_radius = crt.focus_params.x;
++    if (fb_radius > 0.5) {
++        let sharp = textureSampleLevel(screen_tex, screen_samp, in.uv, 0.0);
++        let m = panel_mask(p, crt.focus_rect, crt.focus_params.w, crt.focus_params.y);
++        if (m > 0.999) {
++            // inside the panel: pristine, skip the blur taps entirely
++            return vec4<f32>(sharp.rgb, 1.0);
++        }
++        // Golden-angle (Vogel) disk blur with a per-pixel dither rotation. The
++        // spiral spreads samples evenly; rotating per pixel trades banding for
++        // fine dithered noise that the dim backdrop swallows — reads as smooth,
++        // creamy frosted glass rather than a cheap N-tap disk.
++        let TAPS = 32;
++        let GOLDEN = 2.3999632;
++        let ign = fract(52.9829189 * fract(dot(p, vec2<f32>(0.06711056, 0.00583715))));
++        let rot = ign * 6.2831853;
++        var acc = vec3<f32>(0.0);
++        var wsum = 0.0;
++        for (var t = 0; t < TAPS; t = t + 1) {
++            let ft = f32(t) + 0.5;
++            let rr = sqrt(ft / f32(TAPS));               // denser toward the centre
++            let ang = ft * GOLDEN + rot;
++            let off = vec2<f32>(cos(ang), sin(ang)) * rr * fb_radius;
++            let suv = clamp((p + off) / dims, vec2<f32>(0.0), vec2<f32>(1.0));
++            let w = exp(-rr * rr * 1.8);                 // gaussian-ish falloff
++            acc = acc + textureSampleLevel(screen_tex, screen_samp, suv, 0.0).rgb * w;
++            wsum = wsum + w;
++        }
++        var frost = acc / max(wsum, 1e-4);
++        // Frosted glass: a faint cool-white lift + a touch of extra depth-darken,
++        // both scaled by the tint knob, so the backdrop reads as glass, not just
++        // an out-of-focus photo.
++        let tint = crt.focus_params.z;
++        frost = mix(frost, vec3<f32>(0.80, 0.85, 0.93), 0.06 * tint);
++        frost = frost * (1.0 - 0.10 * tint);
++        // composite: sharp inside the panel, frosted outside, feathered across.
++        return vec4<f32>(mix(frost, sharp.rgb, m), 1.0);
++    }
++
+     let col = textureSampleLevel(screen_tex, screen_samp, in.uv, 0.0);
+     return vec4<f32>(col.rgb, col.a);
+ }
+diff --git a/crates/gpui_wgpu/src/wgpu_renderer.rs b/crates/gpui_wgpu/src/wgpu_renderer.rs
+index ace3728..f8eabe3 100644
+--- a/crates/gpui_wgpu/src/wgpu_renderer.rs
++++ b/crates/gpui_wgpu/src/wgpu_renderer.rs
+@@ -166,6 +166,30 @@ fn crt_rects() -> ([[f32; 4]; 8], [[f32; 4]; 8], u32, f32) {
+     (rects, glare, guard.len().min(8) as u32, max_k)
+ }
+ 
++// ---- terminal-delight FOCUS frosted-glass backdrop ----
++// While the 👓 reading modal is up, the panel rect (physical px) stays sharp and
++// everything outside it is blurred by the same CRT post-pass. Stored as
++// [x, y, w, h, blur_radius, feather, tint, corner_radius]; a radius <= 0.5
++// disables the effect (and gates the whole pass off when warp is also idle).
++static FOCUS_BLUR: std::sync::Mutex<[f32; 8]> = std::sync::Mutex::new([0.0; 8]);
++
++/// Set the FOCUS modal backdrop blur. `rect` is the panel (physical px) that
++/// stays sharp; everything outside it is frosted. `radius`/`feather`/`corner`
++/// are physical px, `tint` is 0..1. Pass radius <= 0.5 to disable.
++pub fn set_focus_blur(rect: [f32; 4], radius: f32, feather: f32, tint: f32, corner: f32) {
++    let mut g = FOCUS_BLUR.lock().unwrap();
++    *g = [
++        rect[0], rect[1], rect[2], rect[3], radius, feather, tint, corner,
++    ];
++}
++
++/// Returns (rect, radius, feather, tint, corner, active).
++fn focus_blur() -> ([f32; 4], f32, f32, f32, f32, bool) {
++    let g = FOCUS_BLUR.lock().unwrap();
++    let active = g[4] > 0.5;
++    ([g[0], g[1], g[2], g[3]], g[4], g[5], g[6], g[7], active)
++}
++
+ /// Lazily-built resources for the CRT post pass.
+ struct CrtPass {
+     pipeline: wgpu::RenderPipeline,
+@@ -262,7 +286,8 @@ impl CrtPass {
+         });
+         let params_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+             label: Some("crt_pass_params"),
+-            size: 16 + 8 * 16 + 8 * 16,
++            // k(16) + rects(8*16) + glare(8*16) + focus_rect(16) + focus_params(16)
++            size: 16 + 8 * 16 + 8 * 16 + 32,
+             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+             mapped_at_creation: false,
+         });
+@@ -1371,8 +1396,10 @@ impl WgpuRenderer {
+         // final barrel-distortion pass writes the swapchain.
+         let (crt_k1, crt_k2) = crt_warp();
+         let (crt_rect_arr, crt_glare_arr, crt_rect_count, crt_max_rect_k) = crt_rects();
+-        let crt_active = crt_rect_count > 0
+-            && (crt_k1.abs() > 0.0005 || crt_k2.abs() > 0.0005 || crt_max_rect_k > 0.0005);
++        let (fb_rect, fb_radius, fb_feather, fb_tint, fb_corner, fb_active) = focus_blur();
++        let crt_active = (crt_rect_count > 0
++            && (crt_k1.abs() > 0.0005 || crt_k2.abs() > 0.0005 || crt_max_rect_k > 0.0005))
++            || fb_active;
+         let crt_scene_view: Option<wgpu::TextureView> = if crt_active {
+             if self.crt.is_none() {
+                 let pass = CrtPass::new(&self.resources().device, self.surface_config.format);
+@@ -1571,7 +1598,7 @@ impl WgpuRenderer {
+             if let (true, Some(scene_view)) = (crt_active, crt_scene_view.as_ref()) {
+                 if let Some(crt) = self.crt.as_ref() {
+                     let resources = self.resources();
+-                    let mut params = [0.0f32; 4 + 32 + 32];
++                    let mut params = [0.0f32; 4 + 32 + 32 + 8];
+                     params[0] = crt_k1;
+                     params[1] = crt_k2;
+                     params[2] = crt_rect_count as f32;
+@@ -1581,6 +1608,12 @@ impl WgpuRenderer {
+                     for (i, g) in crt_glare_arr.iter().enumerate() {
+                         params[4 + 32 + i * 4..4 + 32 + i * 4 + 4].copy_from_slice(g);
+                     }
++                    // focus_rect (panel, physical px) + focus_params
++                    params[68..72].copy_from_slice(&fb_rect);
++                    params[72] = fb_radius;
++                    params[73] = fb_feather;
++                    params[74] = fb_tint;
++                    params[75] = fb_corner;
+                     resources.queue.write_buffer(
+                         &crt.params_buffer,
+                         0,
+diff --git a/crates/gpui_wgpu/src/gpui_wgpu.rs b/crates/gpui_wgpu/src/gpui_wgpu.rs
+index 58e1c1d..bc912f8 100644
+--- a/crates/gpui_wgpu/src/gpui_wgpu.rs
++++ b/crates/gpui_wgpu/src/gpui_wgpu.rs
+@@ -11,4 +11,5 @@ pub use wgpu_renderer::set_crt_warp;
+ pub use wgpu_renderer::set_crt_rects;
+ pub use wgpu_renderer::set_crt_rects_tubes;
+ pub use wgpu_renderer::set_crt_rects_with_glare;
++pub use wgpu_renderer::set_focus_blur;
+ pub use wgpu_renderer::{GpuContext, WgpuRenderer, WgpuSurfaceConfig};
