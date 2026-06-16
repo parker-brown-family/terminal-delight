@@ -108,6 +108,22 @@ fn foreground_mode(master: &std::fs::File, shell_pid: u32) -> PaneMode {
     PaneMode::classify(&comm, &cmdline)
 }
 
+/// The consistent header icon size (≈2× the old glyphs).
+pub const HICON: f32 = 24.0;
+
+/// A small EQ-waveform glyph — a row of bars at varying heights — used as the
+/// consistent monitor/display icon. Drawn (not an emoji) so it can be wider than
+/// a square and read as "the screen / levels" control.
+pub fn eq_icon(accent: gpui::Hsla) -> gpui::Div {
+    use gpui::{div, px};
+    let bars = [8.0f32, 17.0, 12.0, 22.0, 14.0, 19.0, 9.0];
+    let mut row = div().flex().flex_row().items_end().gap(px(2.)).h(px(HICON));
+    for h in bars {
+        row = row.child(div().w(px(3.)).h(px(h)).rounded_sm().bg(accent));
+    }
+    row
+}
+
 /// New value for a dragged bell-trim pip: move start or end to time `t`, keeping
 /// a 0.2s gap and staying within [0, dur]. `end <= start` means "to the clip
 /// end", so the effective end is `dur`. Pure so the drag math is unit-testable.
@@ -2200,10 +2216,9 @@ impl Render for TerminalView {
                             .border_1()
                             .border_color(th.accent.alpha(0.5))
                             .cursor_pointer()
-                            // 2–3× the surrounding header glyphs — the FOCUS lens
-                            // should read as the prominent "read me" affordance.
-                            .text_size(px(26.))
-                            .line_height(px(26.))
+                            // consistent 2× header-glyph size — the FOCUS lens
+                            .text_size(px(HICON))
+                            .line_height(px(HICON))
                             .child("👓")
                             .on_mouse_down(
                                 MouseButton::Left,
@@ -2214,14 +2229,16 @@ impl Render for TerminalView {
                             ),
                     )
                     .child(
-                        // the theme icon IS the theme UI: click for the breakout
+                        // theme: a consistent 🎨 (click for the theme breakout)
                         div()
                             .px_1()
                             .rounded_sm()
                             .border_1()
                             .border_color(th.accent.alpha(0.5))
                             .cursor_pointer()
-                            .child(th.icon.clone())
+                            .text_size(px(HICON))
+                            .line_height(px(HICON))
+                            .child("🎨")
                             .on_mouse_down(
                                 MouseButton::Left,
                                 cx.listener(|_, ev: &MouseDownEvent, _w, cx| {
@@ -2231,14 +2248,16 @@ impl Render for TerminalView {
                             ),
                     )
                     .child(
-                        // the display icon: click for this pane's monitor-OSD tray
+                        // display: a consistent EQ-waveform (click for monitor-OSD)
                         div()
                             .px_1()
+                            .flex()
+                            .items_center()
                             .rounded_sm()
                             .border_1()
                             .border_color(th.accent.alpha(0.5))
                             .cursor_pointer()
-                            .child("⛭")
+                            .child(eq_icon(th.accent))
                             .on_mouse_down(
                                 MouseButton::Left,
                                 cx.listener(|_, ev: &MouseDownEvent, _w, cx| {
@@ -2248,7 +2267,8 @@ impl Render for TerminalView {
                             ),
                     )
                     .child(
-                        // always-visible bell: one click mutes/unmutes this pane
+                        // notification bell 🔔 (click → config tray; the ENABLE
+                        // toggle and trim live in there). Lights when ringing.
                         div()
                             .px_1()
                             .rounded_sm()
@@ -2266,24 +2286,9 @@ impl Render for TerminalView {
                                 th.faint
                             })
                             .cursor_pointer()
-                            .child("♪")
-                            .on_mouse_down(
-                                MouseButton::Left,
-                                cx.listener(|v, _: &MouseDownEvent, _w, cx| {
-                                    cx.stop_propagation();
-                                    v.toggle_bell_enabled(cx);
-                                }),
-                            ),
-                    )
-                    .child(
-                        // BELL+ : open this pane's sound config tray
-                        div()
-                            .px_1()
-                            .rounded_sm()
-                            .border_1()
-                            .border_color(th.accent.alpha(0.5))
-                            .cursor_pointer()
-                            .child("+")
+                            .text_size(px(HICON))
+                            .line_height(px(HICON))
+                            .child("🔔")
                             .on_mouse_down(
                                 MouseButton::Left,
                                 cx.listener(|v, _: &MouseDownEvent, _w, cx| {
@@ -2388,24 +2393,15 @@ impl Render for TerminalView {
                         .child(format!("agent finished · {name}")),
                 )
                 .child(
-                    div()
-                        .flex()
-                        .flex_row()
-                        .gap_2()
-                        .child(bigbtn("SNOOZE").on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(|v, _: &MouseDownEvent, _w, cx| {
-                                cx.stop_propagation();
-                                v.snooze_bell(cx);
-                            }),
-                        ))
-                        .child(bigbtn("MUTE").on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(|v, _: &MouseDownEvent, _w, cx| {
-                                cx.stop_propagation();
-                                v.toggle_bell_enabled(cx);
-                            }),
-                        )),
+                    // a single acknowledge: silence + dismiss the bar (the bell
+                    // stays enabled for the next turn). Mute lives in the 🔔 tray.
+                    bigbtn("✓ ACKNOWLEDGED").on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|v, _: &MouseDownEvent, _w, cx| {
+                            cx.stop_propagation();
+                            v.snooze_bell(cx);
+                        }),
+                    ),
                 )
         });
 
@@ -2617,7 +2613,7 @@ impl Render for TerminalView {
                             div()
                                 .font_weight(gpui::FontWeight::BOLD)
                                 .text_color(acc)
-                                .child("AGENT BELL"),
+                                .child("🔔 NOTIFICATION BELL"),
                         )
                         .child(mini("done".into()).on_mouse_down(
                             MouseButton::Left,
@@ -2627,6 +2623,35 @@ impl Render for TerminalView {
                                 cx.notify();
                             }),
                         )),
+                )
+                // ENABLE toggle — was the header ♪; styled like the display-config
+                // "follow outer" toggle (filled when on)
+                .child(
+                    div()
+                        .px_2()
+                        .py(px(3.))
+                        .rounded_sm()
+                        .border_1()
+                        .border_color(acc.alpha(0.6))
+                        .bg(if cfg.enabled {
+                            acc.alpha(0.22)
+                        } else {
+                            acc.alpha(0.0)
+                        })
+                        .text_color(if cfg.enabled { txt } else { faint })
+                        .cursor_pointer()
+                        .child(if cfg.enabled {
+                            "🔔 notifications ON — ring on agent completion"
+                        } else {
+                            "🔕 notifications OFF — click to enable"
+                        })
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|v, _: &MouseDownEvent, _w, cx| {
+                                cx.stop_propagation();
+                                v.toggle_bell_enabled(cx);
+                            }),
+                        ),
                 )
                 .child(list)
                 // TRIM readout + the dual-pip scrubber (drag the pips; the lit

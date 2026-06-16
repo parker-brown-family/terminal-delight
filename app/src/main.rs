@@ -2495,6 +2495,22 @@ impl Workspace {
     }
 
     /// Solid, reflective bezel button — light source upper-left.
+    /// A consistent header icon button (≈2× glyphs). The caller adds the glyph
+    /// child (an emoji via `.child("…")` or `pane::eq_icon`) and `on_mouse_down`.
+    fn hicon(th: &theme::Theme, active: bool) -> gpui::Div {
+        div()
+            .px_1()
+            .rounded_sm()
+            .border_1()
+            .border_color(th.accent.alpha(0.5))
+            .bg(if active {
+                th.accent.alpha(0.2)
+            } else {
+                th.accent.alpha(0.0)
+            })
+            .cursor_pointer()
+    }
+
     fn bezel_btn(th: &theme::Theme, label: &str, active: bool) -> gpui::Div {
         let glint = BoxShadow {
             color: white().alpha(0.22),
@@ -3299,39 +3315,51 @@ impl Render for Workspace {
                     .items_center()
                     .gap_3()
                     .child(
-                        // outer theme: the icon is the trigger for the breakout
-                        Self::bezel_btn(&th, &th.icon, self.theme_menu.is_some()).on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                                cx.stop_propagation();
-                                ws.theme_menu = Some(MenuScope::Outer);
-                                ws.menu_at = None; // global menu uses the fixed anchor
-                                cx.notify();
-                            }),
-                        ),
+                        // outer theme: a consistent 🎨 (trigger for the breakout)
+                        Self::hicon(&th, self.theme_menu.is_some())
+                            .text_size(px(pane::HICON))
+                            .line_height(px(pane::HICON))
+                            .child("🎨")
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                                    cx.stop_propagation();
+                                    ws.theme_menu = Some(MenuScope::Outer);
+                                    ws.menu_at = None;
+                                    cx.notify();
+                                }),
+                            ),
                     )
                     .child(
-                        // outer display: the monitor-OSD trigger (global grade)
-                        Self::bezel_btn(&th, "⛭", self.osd_menu.is_some()).on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                                cx.stop_propagation();
-                                ws.osd_menu = Some(MenuScope::Outer);
-                                ws.osd_at = None; // global tray uses the fixed anchor
-                                cx.notify();
-                            }),
-                        ),
+                        // outer display: a consistent EQ-waveform (monitor-OSD)
+                        Self::hicon(&th, self.osd_menu.is_some())
+                            .flex()
+                            .items_center()
+                            .child(pane::eq_icon(th.accent))
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                                    cx.stop_propagation();
+                                    ws.osd_menu = Some(MenuScope::Outer);
+                                    ws.osd_at = None;
+                                    cx.notify();
+                                }),
+                            ),
                     )
                     .child(
                         // help: keys + commands reference, themed by the outer
-                        Self::bezel_btn(&th, "?", self.help_open).on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                                cx.stop_propagation();
-                                ws.help_open = true;
-                                cx.notify();
-                            }),
-                        ),
+                        Self::hicon(&th, self.help_open)
+                            .text_size(px(pane::HICON))
+                            .line_height(px(pane::HICON))
+                            .child("❔")
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                                    cx.stop_propagation();
+                                    ws.help_open = true;
+                                    cx.notify();
+                                }),
+                            ),
                     )
                     .child(scrubber)
                     .child(cluster),
@@ -3347,7 +3375,7 @@ impl Render for Workspace {
             .px_3()
             .text_size(px(10.5))
             .text_color(th.text)
-            .child(div().child(format!("{} · {}", th.icon, focused_title)))
+            .child(div().child(format!("🎨 · {}", focused_title)))
             .child(
                 div()
                     .flex()
