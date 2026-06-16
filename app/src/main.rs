@@ -2205,17 +2205,29 @@ impl Workspace {
         let cx0 = f32::from(b.origin.x) + f32::from(b.size.width) / 2.0;
         let cy0 = f32::from(b.origin.y) + f32::from(b.size.height) / 2.0;
         let (px_, py_) = (f32::from(x), f32::from(y));
-        self.wheel_markers(cx)
+        let d2 = |c: Hsla| {
+            let ang = c.h.rem_euclid(1.0) * std::f32::consts::TAU;
+            let sat = c.s.clamp(0.0, 1.0);
+            let mx = cx0 + ang.cos() * sat * rad;
+            let my = cy0 + ang.sin() * sat * rad;
+            (mx - px_).powi(2) + (my - py_).powi(2)
+        };
+        let nearest = self
+            .wheel_markers(cx)
             .into_iter()
-            .map(|(t, _, c)| {
-                let ang = c.h.rem_euclid(1.0) * std::f32::consts::TAU;
-                let sat = c.s.clamp(0.0, 1.0);
-                let mx = cx0 + ang.cos() * sat * rad;
-                let my = cy0 + ang.sin() * sat * rad;
-                (t, (mx - px_).powi(2) + (my - py_).powi(2))
-            })
-            .min_by(|a, b| a.1.total_cmp(&b.1))
-            .map(|(t, _)| t)
+            .map(|(t, _, c)| (t, d2(c)))
+            .min_by(|a, b| a.1.total_cmp(&b.1))?;
+        // When markers stack (a greyscale palette piles them all at the centre)
+        // the nearest is ambiguous and the same pip always wins — you can never
+        // drag the others out. So if the user-selected (active, front-most) pip
+        // sits within a marker's width of the press, grab that one. The PICK row
+        // promotes a pip to active; elsewhere the literal nearest still wins.
+        const TIE: f32 = 16.0; // px — a marker is 18px wide
+        let active_d2 = d2(self.wheel_color(self.wheel_active, cx));
+        if active_d2 <= nearest.1 + TIE * TIE {
+            return Some(self.wheel_active);
+        }
+        Some(nearest.0)
     }
 
     /// Map a wheel point to a hex at lightness `l`: angle → hue, radius →
@@ -2539,13 +2551,25 @@ impl Workspace {
                 )
                 .size_full(),
             );
-        for (_, glyph, c) in markers {
+        // Paint the active (selected) marker LAST so it sits on top of any pile —
+        // when a greyscale palette stacks every pip at the centre, the one the
+        // PICK row promoted is the visible, grabbable one.
+        let active = self.wheel_active;
+        let mut ordered: Vec<_> = markers.into_iter().collect();
+        ordered.sort_by_key(|(t, _, _)| *t == active);
+        for (t, glyph, c) in ordered {
             let ang = c.h.rem_euclid(1.0) * std::f32::consts::TAU;
             let sat = c.s.clamp(0.0, 1.0);
             let (dx, dy) = (r + ang.cos() * sat * r, r + ang.sin() * sat * r);
             // dark glyph on a light marker, light glyph on a dark one
             let glyph_col = if c.l > 0.55 {
                 hsla(0., 0., 0.08, 0.95)
+            } else {
+                white()
+            };
+            // the active pip wears an amber ring so the front-most is obvious
+            let ring = if t == active {
+                hsla(0.09, 0.9, 0.6, 1.0)
             } else {
                 white()
             };
@@ -2561,7 +2585,7 @@ impl Workspace {
                     .justify_center()
                     .rounded_full()
                     .border_2()
-                    .border_color(white())
+                    .border_color(ring)
                     .bg(c)
                     .text_size(px(10.))
                     .font_weight(gpui::FontWeight::EXTRA_BOLD)
@@ -3726,6 +3750,62 @@ impl Render for Workspace {
             // T text, C complement. Grab one and drag it around to set it.
             let wheel = self.color_wheel(self.wheel_markers(cx), cx);
             let lbar = self.lightness_bar(cx);
+            // PICK row — promote a pip to the front. With a greyscale palette every
+            // marker stacks at the wheel's centre, so the same one always grabs;
+            // clicking a chip here makes that pip active (front-most + amber ring)
+            // and a centre-drag then pulls *it* out. Also what the lightness bar
+            // follows. Each chip wears its marker's colour for at-a-glance ID.
+            let active_t = self.wheel_active;
+            let mut pick_row = div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .justify_center()
+                .gap_2()
+                .text_size(px(9.));
+            for (target, glyph, col) in self.wheel_markers(cx) {
+                let on = target == active_t;
+                let gcol = if col.l > 0.55 {
+                    hsla(0., 0., 0.08, 0.95)
+                } else {
+                    white()
+                };
+                let idn = match target {
+                    WheelTarget::Seed => "pick-seed",
+                    WheelTarget::Text => "pick-text",
+                    WheelTarget::Complement => "pick-comp",
+                    WheelTarget::Human => "pick-human",
+                };
+                pick_row = pick_row.child(
+                    div()
+                        .id(idn)
+                        .w(px(18.))
+                        .h(px(18.))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .rounded_full()
+                        .border_2()
+                        .border_color(if on {
+                            hsla(0.09, 0.9, 0.6, 1.0)
+                        } else {
+                            th.text.alpha(0.25)
+                        })
+                        .bg(col)
+                        .text_color(gcol)
+                        .font_weight(gpui::FontWeight::EXTRA_BOLD)
+                        .cursor_pointer()
+                        .child(glyph)
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                                cx.stop_propagation();
+                                ws.wheel_active = target;
+                                cx.notify();
+                            }),
+                        ),
+                );
+            }
             // Small chips to clear an override back to theme/dynamic-derived.
             let mut seed_row = div()
                 .flex()
@@ -3891,9 +3971,10 @@ impl Render for Workspace {
                 )
                 .child(label("THEME"))
                 .child(theme_row)
-                .child(label("WHEEL — drag ◉ seed · T text · C comp"))
+                .child(label("WHEEL — pick a pip, drag it out · ◉ seed T text C comp"))
                 .child(div().flex().justify_center().py_1().child(wheel))
                 .child(div().flex().justify_center().child(lbar))
+                .child(div().flex().justify_center().pt_1().child(pick_row))
                 .child(seed_row)
                 .child(label("PROGRAM COLOUR"))
                 .child(color_row)
@@ -3922,7 +4003,7 @@ impl Render for Workspace {
             // on-screen. The global/outer menu (menu_at == None) keeps its fixed
             // top-right anchor under the titlebar control.
             const PANEL_W: f32 = 344.; // wider: glyph column + controls side by side
-            const PANEL_H_EST: f32 = 430.; // generous, incl. colour wheel + follow-outer
+            const PANEL_H_EST: f32 = 458.; // generous, incl. colour wheel + pick row + follow-outer
             let mut panel = div().absolute().w(px(PANEL_W));
             panel = match self.menu_at {
                 Some(at) => {
@@ -4657,6 +4738,18 @@ impl Render for Workspace {
                         MouseButton::Left,
                         cx.listener(|ws, _: &MouseDownEvent, _w, cx| ws.close_focus_read(cx)),
                     )
+                    // The scrim occludes the pane behind it, so route the wheel back
+                    // to the focused terminal's scrollback and re-paint the mirror.
+                    // Scrolling anywhere over the modal (panel or dimmed surround)
+                    // drives the read pane — you never lose the wheel while reading.
+                    .on_scroll_wheel(cx.listener(|ws, ev: &ScrollWheelEvent, _w, cx| {
+                        if let Some(pane) =
+                            ws.focus_read.as_ref().and_then(|w| w.upgrade())
+                        {
+                            pane.update(cx, |v, cx| v.scroll_by_wheel(ev, cx));
+                            cx.notify();
+                        }
+                    }))
                     .child(panel)
             });
 
