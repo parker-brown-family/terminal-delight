@@ -1205,7 +1205,25 @@ pub fn tracking_dial(cx: &App) -> Option<[f32; 3]> {
 /// Set (or clear, with `None`) the global tracking override and repaint.
 pub fn set_tracking_dial(cx: &mut App, v: Option<[f32; 3]>) {
     cx.set_global(TrackingDial(v));
+    bump_theme_gen(cx);
     cx.refresh_windows();
+}
+
+/// Monotonic counter bumped whenever a global input to [`resolve`] changes that a
+/// `ThemeChoice` does NOT itself carry — the custom theme (hot-reload) or the
+/// tracking override. Per-pane theme memos key on this (plus the choice/mode) so
+/// they recompute exactly when an input changed and can never serve a stale look.
+#[derive(Default)]
+pub struct ThemeGen(pub u64);
+impl Global for ThemeGen {}
+
+/// Current theme generation (0 if never bumped).
+pub fn theme_gen(cx: &App) -> u64 {
+    cx.try_global::<ThemeGen>().map(|g| g.0).unwrap_or(0)
+}
+fn bump_theme_gen(cx: &mut App) {
+    let n = theme_gen(cx).wrapping_add(1);
+    cx.set_global(ThemeGen(n));
 }
 
 /// Map the three normalised tracking dials to concrete `Theme` fields:
@@ -1969,6 +1987,7 @@ pub fn init(cx: &mut App) {
                             // the user file is the "custom" registry slot; any
                             // scope pointing at it re-resolves on repaint
                             cx.global_mut::<ThemeRegistry>().custom = Arc::new(theme);
+                            bump_theme_gen(cx); // invalidate per-pane theme memos
                             let outer = outer_choice(cx);
                             if outer.id == "custom" {
                                 let th = resolve(cx, &outer);

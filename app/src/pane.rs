@@ -1,6 +1,7 @@
 //! TerminalView — one pane: a real shell with themed rendering, selection,
 //! scrollback, clipboard, CRT-lite effects, and the TD_LATENCY probe.
 
+use std::cell::RefCell;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -700,6 +701,10 @@ fn graded(c: Hsla, g: &crate::theme::Grade, ch: Channel) -> Hsla {
     }
 }
 
+/// Cached `resolved_theme` result + the inputs it was computed from
+/// (effective choice, mode, inherit_theme, theme generation).
+type ThemeMemo = Option<(theme::ThemeChoice, PaneMode, bool, u64, Theme)>;
+
 pub struct TerminalView {
     focus_handle: FocusHandle,
     session: term::Session,
@@ -742,6 +747,11 @@ pub struct TerminalView {
     /// Scroll-settle debounce: (display_offset, when last seen). Prevents spurious
     /// agent-done notifications when Alt+up/down navigation scrolls away from the prompt.
     last_scroll_offset: Option<(i32, Instant)>,
+    /// Per-pane memo for `resolved_theme`, keyed on (effective choice, mode,
+    /// inherit_theme, theme generation). resolve() deep-clones, recolours and
+    /// grade-transforms the palette, and render() calls it every frame; this
+    /// reuses the last result until one of those inputs actually changes.
+    theme_cache: RefCell<ThemeMemo>,
     /// Right-click context menu (Copy / Paste / Open link) anchor, window-space.
     ctx_menu: Option<gpui::Point<Pixels>>,
     /// A bell rang (agent finished): a SNOOZE bar shows across the pane top and
@@ -854,16 +864,30 @@ impl TerminalView {
     pub fn resolved_theme(&self, cx: &App) -> Theme {
         let outer = theme::outer_choice(cx);
         let eff = self.appearance.effective(&outer);
+        let inherit = self.appearance.inherit_theme;
+        let gen = theme::theme_gen(cx);
+        // Per-frame memo: resolve() deep-clones + recolours + grade-transforms the
+        // palette and render() calls this every frame, so reuse the last result
+        // while every input is unchanged. The generation counter covers the two
+        // global inputs a ThemeChoice doesn't carry (custom hot-reload, tracking
+        // override), so this can't serve a stale look.
+        if let Some((k_eff, k_mode, k_inherit, k_gen, th)) = &*self.theme_cache.borrow() {
+            if *k_gen == gen && *k_inherit == inherit && *k_mode == self.mode && *k_eff == eff {
+                return th.clone();
+            }
+        }
         let base = (*theme::resolve(cx, &eff)).clone();
         // The mode tint (what's running in the pane) applies only while the
         // theme group follows outer — an explicit per-pane theme is a deliberate
         // look the tint shouldn't stomp. The grade rides along untouched either
         // way (mode_theme leaves `grade`/`color_mode` alone).
-        if self.appearance.inherit_theme {
+        let out = if inherit {
             mode_theme(&base, &self.mode)
         } else {
             base
-        }
+        };
+        *self.theme_cache.borrow_mut() = Some((eff, self.mode.clone(), inherit, gen, out.clone()));
+        out
     }
 
     /// Build the read-only [`MirrorSnapshot`] the workspace paints into the
@@ -979,8 +1003,7 @@ impl TerminalView {
                         // moves the "esc to interrupt" line off-screen and would trip
                         // a false agent-done bell. Only run the thinking-scan once the
                         // display offset has held steady for 200ms.
-                        let cur_offset =
-                            view.session.term.lock().grid().display_offset() as i32;
+                        let cur_offset = view.session.term.lock().grid().display_offset() as i32;
                         let scroll_settled = match view.last_scroll_offset {
                             Some((off, since)) if off == cur_offset => {
                                 since.elapsed() > std::time::Duration::from_millis(200)
@@ -1084,6 +1107,7 @@ impl TerminalView {
             was_focused: false,
             pending_grid: None,
             last_scroll_offset: None,
+            theme_cache: RefCell::new(None),
             gamba: crate::gamba::Reels::new(seed),
             last_think_scan: Instant::now()
                 .checked_sub(std::time::Duration::from_secs(1))
