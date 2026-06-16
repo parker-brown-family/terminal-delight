@@ -2392,17 +2392,23 @@ impl Render for TerminalView {
                     )
                     .child(status)
                     .child(
-                        // close just this sub-tab (×): ends this pane's shell
+                        // close just this sub-tab (×): ends this pane's shell.
+                        // Big, borderless, full-height — a generous click target;
+                        // a soft hover tint stands in for the dropped border.
                         div()
-                            .px_1()
-                            .rounded_sm()
-                            .border_1()
-                            .border_color(th.accent.alpha(0.3))
+                            .id("close-pane")
+                            .h_full()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .px_4()
+                            .rounded_md()
                             .text_color(bar_fg)
                             .cursor_pointer()
-                            // join the consistent 2× header-glyph set
-                            .text_size(px(HICON))
-                            .line_height(px(HICON))
+                            // much bigger than the 2× header glyphs
+                            .text_size(px(HICON + 10.))
+                            .line_height(px(HICON + 10.))
+                            .hover(|s| s.bg(bar_fg.alpha(0.18)))
                             .child("×")
                             .on_mouse_down(
                                 MouseButton::Left,
