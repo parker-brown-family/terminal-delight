@@ -739,6 +739,9 @@ pub struct TerminalView {
     pub appearance: PaneTheme,
     /// Debounced PTY resize: (target grid, when it stabilized).
     pending_grid: Option<(term::GridSize, Instant)>,
+    /// Scroll-settle debounce: (display_offset, when last seen). Prevents spurious
+    /// agent-done notifications when Alt+up/down navigation scrolls away from the prompt.
+    last_scroll_offset: Option<(i32, Instant)>,
     /// Right-click context menu (Copy / Paste / Open link) anchor, window-space.
     ctx_menu: Option<gpui::Point<Pixels>>,
     /// A bell rang (agent finished): a SNOOZE bar shows across the pane top and
@@ -972,22 +975,39 @@ impl TerminalView {
                     // spinner, then advance the reel stack while it rolls.
                     if view.last_think_scan.elapsed() > std::time::Duration::from_millis(120) {
                         view.last_think_scan = Instant::now();
-                        let thinking = view.agent_is_thinking();
-                        if thinking != view.gamba.is_thinking() {
-                            view.gamba.set_thinking(thinking);
-                            if thinking {
-                                view.think_since = Some(Instant::now());
-                            } else {
-                                // agent finished a real turn (not a blip) →
-                                // ring the completion bell ourselves, since
-                                // agents don't reliably emit a terminal BEL.
-                                let real = view.think_since.take().is_some_and(|t| {
-                                    t.elapsed() > std::time::Duration::from_millis(1200)
-                                });
-                                if real && view.mode.is_agent() && view.bell_cfg.enabled {
-                                    view.bell = true;
-                                    view.bell_player.play(&view.bell_cfg);
-                                    cx.notify();
+                        // Scroll-settle debounce: Alt+up/down scrollback navigation
+                        // moves the "esc to interrupt" line off-screen and would trip
+                        // a false agent-done bell. Only run the thinking-scan once the
+                        // display offset has held steady for 200ms.
+                        let cur_offset =
+                            view.session.term.lock().grid().display_offset() as i32;
+                        let scroll_settled = match view.last_scroll_offset {
+                            Some((off, since)) if off == cur_offset => {
+                                since.elapsed() > std::time::Duration::from_millis(200)
+                            }
+                            _ => {
+                                view.last_scroll_offset = Some((cur_offset, Instant::now()));
+                                false
+                            }
+                        };
+                        if scroll_settled {
+                            let thinking = view.agent_is_thinking();
+                            if thinking != view.gamba.is_thinking() {
+                                view.gamba.set_thinking(thinking);
+                                if thinking {
+                                    view.think_since = Some(Instant::now());
+                                } else {
+                                    // agent finished a real turn (not a blip) →
+                                    // ring the completion bell ourselves, since
+                                    // agents don't reliably emit a terminal BEL.
+                                    let real = view.think_since.take().is_some_and(|t| {
+                                        t.elapsed() > std::time::Duration::from_millis(1200)
+                                    });
+                                    if real && view.mode.is_agent() && view.bell_cfg.enabled {
+                                        view.bell = true;
+                                        view.bell_player.play(&view.bell_cfg);
+                                        cx.notify();
+                                    }
                                 }
                             }
                         }
@@ -1063,6 +1083,7 @@ impl TerminalView {
             bell_dur: None,
             was_focused: false,
             pending_grid: None,
+            last_scroll_offset: None,
             gamba: crate::gamba::Reels::new(seed),
             last_think_scan: Instant::now()
                 .checked_sub(std::time::Duration::from_secs(1))
