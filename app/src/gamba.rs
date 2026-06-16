@@ -174,8 +174,34 @@ impl Reels {
             .unwrap_or(0.0)
     }
 
+    /// True while something is *visibly moving* this instant: the reels are still
+    /// spinning/landing, win FX (tokens/glitter/splash) are in flight, or the win
+    /// rumble is shaking the terminal. Between those the 3×3 board just sits there
+    /// landed until the next 10s reroll — no repaint needed. The pane ticker uses
+    /// this to stop driving the render loop at 30fps for the ~6-8s static tail of
+    /// every period, which is the bulk of a long agent "think".
+    fn moving_at(&self, t: f32) -> bool {
+        let roll_start = self.roll as f32 * self.period;
+        (t - roll_start) < REEL_AT[2] + REEL_WIN[2]
+            || !self.tokens.is_empty()
+            || !self.glints.is_empty()
+            || !self.splashes.is_empty()
+            || t < self.rumble_until
+    }
+
+    /// Whether the overlay needs frame-rate repaints right now (thinking AND a
+    /// visual is actually in motion). Drives the pane ticker's active cadence.
+    pub fn is_animating(&self) -> bool {
+        match self.thinking_since {
+            Some(s) => self.moving_at(s.elapsed().as_secs_f32()),
+            None => false,
+        }
+    }
+
     /// Advance: reroll the grid every period, score it once its reels land, and
-    /// step the token/glitter physics. True while thinking (always redraw).
+    /// step the token/glitter physics. Returns true only while a visual is in
+    /// motion (see `moving_at`) so a landed, static board isn't repainted for the
+    /// rest of its 10s period.
     pub fn tick(&mut self) -> bool {
         if self.thinking_since.is_none() {
             return false;
@@ -226,7 +252,10 @@ impl Reels {
         self.glints.retain(|g| t - g.born < FX_LIFE);
         self.splashes.retain(|s| t - s.born < 1.7);
 
-        true
+        // Repaint only while the reels are landing, FX are in flight, or the
+        // rumble is running; the static landed board between rerolls holds its
+        // last frame instead of redrawing 30×/s for the rest of the period.
+        self.moving_at(t)
     }
 
     /// Spray tokens + glitter for a win; the splash shows the value.

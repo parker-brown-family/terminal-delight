@@ -1008,7 +1008,11 @@ impl TerminalView {
                                 cx.notify();
                             }
                         }
-                        view.fx.active() || view.gamba.is_thinking()
+                        // Stay at frame-rate only while something is actually
+                        // moving — CRT fx, or GAMBA reels/FX/rumble in motion.
+                        // A landed-but-thinking board falls through to the idle
+                        // cadence (no 30fps repaint of a static slot grid).
+                        view.fx.active() || view.gamba.is_animating()
                     })
                     .unwrap_or(false);
                 let ms = if active { 33 } else { 150 };
