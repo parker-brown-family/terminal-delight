@@ -3972,7 +3972,9 @@ impl Render for Workspace {
                 )
                 .child(label("THEME"))
                 .child(theme_row)
-                .child(label("WHEEL — pick a pip, drag it out · ◉ seed T text C comp"))
+                .child(label(
+                    "WHEEL — pick a pip, drag it out · ◉ seed T text C comp",
+                ))
                 .child(div().flex().justify_center().py_1().child(wheel))
                 .child(div().flex().justify_center().child(lbar))
                 .child(div().flex().justify_center().pt_1().child(pick_row))

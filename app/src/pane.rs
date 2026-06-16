@@ -2186,7 +2186,7 @@ impl Render for TerminalView {
         let show_theme = pane_w >= 360.; //  3rd: 🎨 theme
         let show_bell = pane_w >= 310.; //   4th: 🔔 notifications
         let show_focus = pane_w >= 264.; //  5th & last: 👓 FOCUS
-        // ⋯ shows only once something is actually tucked (👤-nav is agent-only).
+                                         // ⋯ shows only once something is actually tucked (👤-nav is agent-only).
         let overflow = !show_focus
             || !show_bell
             || !show_theme
