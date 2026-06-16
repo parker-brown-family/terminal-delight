@@ -12,6 +12,7 @@
 
 mod bell;
 mod crt;
+mod csd;
 mod gamba;
 mod pane;
 mod session;
@@ -26,9 +27,10 @@ use std::time::{Duration, Instant};
 
 use gpui::{
     canvas, div, fill, hsla, linear_color_stop, linear_gradient, point, prelude::*, px, size,
-    white, App, Bounds, BoxShadow, Context, Entity, EntityId, Focusable, Hsla, KeyDownEvent,
+    white, App, Bounds, BoxShadow, Context, Decorations, Entity, EntityId, Focusable, Hsla,
+    KeyDownEvent,
     MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, ScrollWheelEvent,
-    SharedString, TitlebarOptions, Window, WindowBounds, WindowOptions,
+    SharedString, TitlebarOptions, Window, WindowBounds, WindowDecorations, WindowOptions,
 };
 use gpui_platform::application;
 use pane::{
@@ -134,6 +136,44 @@ impl<L: Clone> Tree<L> {
             Tree::Split { a, b, .. } => {
                 a.split_leaf_dir(target, dir, new.clone(), new_first)
                     || b.split_leaf_dir(target, dir, new, new_first)
+            }
+        }
+    }
+
+    /// Wrap the *container* (split) whose id is `target` in a new directional
+    /// split with `new` — i.e. re-frame a whole sub-region (or the root) rather
+    /// than just one leaf. This is the "drag to the field edge → resplit the
+    /// entire field" gesture: it fractals, because every nesting level is a
+    /// container with its own id. `new_first` puts `new` on the leading side.
+    fn split_node_at(
+        &mut self,
+        target: u64,
+        dir: SplitDir,
+        new: L,
+        new_first: bool,
+    ) -> bool {
+        match self {
+            Tree::Split { id, .. } if *id == target => {
+                // momentary placeholder while we re-parent the matched subtree
+                let old = std::mem::replace(self, Tree::Leaf(new.clone()));
+                let (a, b) = if new_first {
+                    (Tree::Leaf(new), old)
+                } else {
+                    (old, Tree::Leaf(new))
+                };
+                *self = Tree::Split {
+                    id: next_split_id(),
+                    dir,
+                    ratio: 0.5,
+                    a: Box::new(a),
+                    b: Box::new(b),
+                };
+                true
+            }
+            Tree::Leaf(_) => false,
+            Tree::Split { a, b, .. } => {
+                a.split_node_at(target, dir, new.clone(), new_first)
+                    || b.split_node_at(target, dir, new, new_first)
             }
         }
     }
@@ -626,10 +666,47 @@ enum Zone {
 /// Where a dragged sub-tab will land when released.
 #[derive(Clone)]
 enum DropTarget {
-    /// Split the pane `pane` on its `zone` side.
+    /// Split the pane `pane` on its `zone` side (an interior, leaf-level drop).
     Split { pane: EntityId, zone: Zone },
+    /// Re-frame a whole container (the split id `container`, which may be the
+    /// root) on its `zone` side — the "drag to the field edge" gesture. Fractals
+    /// down the nesting because every level is a container with its own id.
+    Edge { container: u64, zone: Zone },
     /// Move the dragged pane into main tab `index`.
     Tab { index: usize },
+}
+
+/// How a `Zone` maps to a split: which axis, and whether the dropped pane takes
+/// the leading (left / top) side. Shared by leaf splits and container re-frames.
+fn split_for(zone: Zone) -> (SplitDir, bool) {
+    match zone {
+        Zone::Left => (SplitDir::Row, true),
+        Zone::Right => (SplitDir::Row, false),
+        Zone::Top => (SplitDir::Col, true),
+        Zone::Bottom => (SplitDir::Col, false),
+    }
+}
+
+/// True when `pos` sits within the outer `band` (px) of `rect`'s perimeter —
+/// the frame where a drop re-frames that whole container instead of splitting a
+/// leaf. The band is clamped so a small container keeps a usable interior.
+fn near_perimeter(rect: Bounds<Pixels>, pos: Point<Pixels>, band: f32) -> bool {
+    let w = f32::from(rect.size.width).max(1.);
+    let h = f32::from(rect.size.height).max(1.);
+    let m = band.min(0.45 * w).min(0.45 * h);
+    let l = f32::from(pos.x) - f32::from(rect.origin.x);
+    let r = w - l;
+    let t = f32::from(pos.y) - f32::from(rect.origin.y);
+    let b = h - t;
+    l.min(r).min(t).min(b) <= m
+}
+
+/// The re-frame band width (px) for the outer-edge gesture, scaled to the
+/// container so the field gets a generous frame and small splits a thin one.
+fn edge_band(rect: Bounds<Pixels>) -> f32 {
+    let w = f32::from(rect.size.width).max(1.);
+    let h = f32::from(rect.size.height).max(1.);
+    (0.18 * w.min(h)).clamp(12., 34.)
 }
 
 /// A sub-tab being dragged by its header.
@@ -734,6 +811,10 @@ struct Workspace {
     /// torn-off pane): one fresh terminal, never restores or persists session
     /// state — so it can't clobber the primary window's saved layout.
     scratch: bool,
+    /// Frameless drag latch: a mousedown on the mother bar arms it; the first
+    /// mouse-move while armed hands off to the compositor's window-move (so a
+    /// plain click on the bar doesn't get eaten). Cleared on mouse-up.
+    should_move: bool,
 }
 
 fn make_pane(window: &mut Window, cx: &mut Context<Workspace>) -> Entity<TerminalView> {
@@ -926,6 +1007,7 @@ impl Workspace {
             tab_color_at: None,
             focus_read: None,
             scratch,
+            should_move: false,
         };
         if scratch {
             // one terminal, seeded if this is a torn-off pane
@@ -1643,6 +1725,25 @@ impl Workspace {
                 return Some(DropTarget::Tab { index });
             }
         }
+        // Re-frame band: the cursor is hugging some container's perimeter. The
+        // OUTERMOST (largest) qualifying container wins, so hugging the field
+        // edge re-splits the whole field; hugging an inner divider re-splits
+        // just that sub-region. This is what fractals the gesture down.
+        let mut best: Option<(f32, u64, Bounds<Pixels>)> = None;
+        for (&id, &rect) in self.split_bounds.lock().unwrap().iter() {
+            if rect.contains(&pos) && near_perimeter(rect, pos, edge_band(rect)) {
+                let area = f32::from(rect.size.width) * f32::from(rect.size.height);
+                if best.is_none_or(|(a, ..)| area > a) {
+                    best = Some((area, id, rect));
+                }
+            }
+        }
+        if let Some((_, id, rect)) = best {
+            return Some(DropTarget::Edge {
+                container: id,
+                zone: zone_of(rect, pos),
+            });
+        }
         for (&id, &rect) in self.pane_bounds.lock().unwrap().iter() {
             if id != dragged && rect.contains(&pos) {
                 return Some(DropTarget::Split {
@@ -1700,12 +1801,7 @@ impl Workspace {
                 zone,
                 ..
             } => {
-                let (dir, new_first) = match zone {
-                    Zone::Left => (SplitDir::Row, true),
-                    Zone::Right => (SplitDir::Row, false),
-                    Zone::Top => (SplitDir::Col, true),
-                    Zone::Bottom => (SplitDir::Col, false),
-                };
+                let (dir, new_first) = split_for(zone);
                 let tgt = |e: &Entity<TerminalView>| e.entity_id() == target_id;
                 let mut hit = None;
                 for (i, tab) in self.tabs.iter_mut().enumerate() {
@@ -1715,6 +1811,32 @@ impl Workspace {
                     }
                 }
                 hit
+            }
+            DropTarget::Edge { container, zone } => {
+                // re-frame a whole container (or the field). The dragged pane is
+                // always pulled from the active tab, so the re-frame applies
+                // there. If the removal collapsed the targeted container away
+                // (e.g. it held the dragged pane), wrap whatever the field
+                // became — that's the "resplit the entire field" fallback.
+                let (dir, new_first) = split_for(zone);
+                self.tabs.get_mut(from).map(|tab| {
+                    if !tab.root.split_node_at(container, dir, pane.clone(), new_first) {
+                        let old = std::mem::replace(&mut tab.root, Node::Leaf(pane.clone()));
+                        let (a, b) = if new_first {
+                            (Node::Leaf(pane.clone()), old)
+                        } else {
+                            (old, Node::Leaf(pane.clone()))
+                        };
+                        tab.root = Node::Split {
+                            id: next_split_id(),
+                            dir,
+                            ratio: 0.5,
+                            a: Box::new(a),
+                            b: Box::new(b),
+                        };
+                    }
+                    from
+                })
             }
             DropTarget::Tab { index, .. } => {
                 // a source-tab removal shifts later indices down by one
@@ -2836,6 +2958,12 @@ fn render_node(
             let id = *id;
             let dir = *dir;
             let is_dragging = dragging == Some(id);
+            // is a dragged pane hugging THIS container's edge (a whole-region
+            // re-frame)? which side will it split toward?
+            let edge_zone = match drop {
+                Some(DropTarget::Edge { container, zone }) if *container == id => Some(*zone),
+                _ => None,
+            };
             let store = registry.clone();
             // measure this split's container so drags map to a ratio
             let measure = div().absolute().inset_0().child(
@@ -2922,7 +3050,24 @@ fn render_node(
                 SplitDir::Row => base.flex_row(),
                 SplitDir::Col => base.flex_col(),
             };
-            base.child(measure).child(first).child(handle).child(second)
+            let base = base.child(measure).child(first).child(handle).child(second);
+            // re-frame preview: a heavier accent slab spanning HALF this whole
+            // container (the field, for the root) — reads bolder than a leaf
+            // split's soft slab so the gesture is unmistakable.
+            base.when_some(edge_zone, |d, zone| {
+                let slab = div()
+                    .absolute()
+                    .bg(th.accent.alpha(0.28))
+                    .border_2()
+                    .border_color(th.accent.alpha(0.85));
+                let slab = match zone {
+                    Zone::Left => slab.left_0().top_0().bottom_0().w(gpui::relative(0.5)),
+                    Zone::Right => slab.right_0().top_0().bottom_0().w(gpui::relative(0.5)),
+                    Zone::Top => slab.top_0().left_0().right_0().h(gpui::relative(0.5)),
+                    Zone::Bottom => slab.bottom_0().left_0().right_0().h(gpui::relative(0.5)),
+                };
+                d.child(slab)
+            })
         }
     }
 }
@@ -2955,7 +3100,7 @@ impl Render for Workspace {
         ));
         let th = theme::theme(cx);
         if self.tabs.is_empty() {
-            return div();
+            return csd::decorate(div(), window);
         }
         // remember which pane currently holds focus in the active tab, so a later
         // mother-bar click returns to that exact terminal (the "most recent" one)
@@ -3274,6 +3419,56 @@ impl Render for Workspace {
                 }),
             ));
 
+        // Frameless window controls — only when the OS gave us none (client-side
+        // decorations). A small minimize / maximize-toggle / close cluster that
+        // lives at the right end of the mother bar; each stops propagation so it
+        // never arms the drag-to-move latch.
+        let is_client = matches!(window.window_decorations(), Decorations::Client { .. });
+        let win_btn = |glyph: &'static str, danger: bool| {
+            let hover = if danger { hsla(0., 0.7, 0.55, 1.) } else { th.accent };
+            div()
+                .id(SharedString::from(format!("winctl-{glyph}")))
+                .w(px(20.))
+                .h(px(20.))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded_sm()
+                .text_size(px(12.))
+                .text_color(th.text.alpha(0.7))
+                .cursor_pointer()
+                .hover(move |s| s.bg(hover.alpha(0.9)).text_color(white()))
+                .child(glyph)
+        };
+        let win_controls = div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap_1()
+            .when(is_client, |row| {
+                row.child(win_btn("—", false).on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|_ws, _: &MouseDownEvent, window, cx| {
+                        cx.stop_propagation();
+                        window.minimize_window();
+                    }),
+                ))
+                .child(win_btn("☐", false).on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|_ws, _: &MouseDownEvent, window, cx| {
+                        cx.stop_propagation();
+                        window.zoom_window();
+                    }),
+                ))
+                .child(win_btn("✕", true).on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|_ws, _: &MouseDownEvent, window, cx| {
+                        cx.stop_propagation();
+                        window.remove_window();
+                    }),
+                ))
+            });
+
         let bezel_top = div()
             .h(px(43.))
             .flex_none()
@@ -3283,6 +3478,26 @@ impl Render for Workspace {
             .justify_between()
             .px_3()
             .gap_3()
+            // the mother bar is the move handle: arm on press, hand off to the
+            // compositor on the first drag (a plain click stays a click).
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|ws, _: &MouseDownEvent, _w, _cx| {
+                    ws.should_move = true;
+                }),
+            )
+            .on_mouse_move(cx.listener(|ws, _: &MouseMoveEvent, window, _cx| {
+                if ws.should_move {
+                    ws.should_move = false;
+                    window.start_window_move();
+                }
+            }))
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|ws, _: &MouseUpEvent, _w, _cx| {
+                    ws.should_move = false;
+                }),
+            )
             .child(
                 div()
                     .flex()
@@ -3362,7 +3577,8 @@ impl Render for Workspace {
                             ),
                     )
                     .child(scrubber)
-                    .child(cluster),
+                    .child(cluster)
+                    .child(win_controls),
             );
 
         let bezel_bottom = div()
@@ -4377,7 +4593,7 @@ impl Render for Workspace {
             .mt(px(7.))
             .child(pane_area);
 
-        div()
+        let root = div()
             .size_full()
             .bg(darken(bezel, 0.5))
             .px(px(5.))
@@ -4445,7 +4661,10 @@ impl Render for Workspace {
                     .children(drag_chip)
                     // the FOCUS reading modal rides above everything else
                     .children(focus_overlay),
-            )
+            );
+        // Frameless: wrap the cabinet in client-side decorations (shadow margin,
+        // rounded clip, live resize edges) so it runs with no system titlebar.
+        csd::decorate(root, window)
     }
 }
 
@@ -4844,6 +5063,60 @@ id = "hacker"
     }
 
     #[test]
+    fn split_node_at_reframes_a_whole_container() {
+        // build a row of two: 1 | 2
+        let mut t: Tree<u32> = Tree::Leaf(1);
+        t.split_leaf(&|l| *l == 1, SplitDir::Row, 2);
+        let root_id = match &t {
+            Tree::Split { id, .. } => *id,
+            _ => panic!("expected a split root"),
+        };
+        // re-frame the ENTIRE container as a column, dropped pane trailing
+        // (a Bottom drop on the field) → Col( Row(1,2), 3 )
+        assert!(t.split_node_at(root_id, SplitDir::Col, 3, false));
+        let Tree::Split {
+            a,
+            b,
+            dir: SplitDir::Col,
+            ..
+        } = &t
+        else {
+            panic!("the whole field should now be a column");
+        };
+        assert!(matches!(**a, Tree::Split { .. }), "old row stays intact");
+        assert!(matches!(**b, Tree::Leaf(3)), "dropped pane trails");
+        assert_eq!(leaf_ids(&t), vec![1, 2, 3]);
+        // a miss on an unknown container id changes nothing
+        assert!(!t.split_node_at(999_999, SplitDir::Row, 4, true));
+        assert_eq!(leaf_ids(&t), vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn near_perimeter_is_the_outer_frame_only() {
+        let rect = Bounds {
+            origin: point(px(0.), px(0.)),
+            size: size(px(400.), px(300.)),
+        };
+        let band = edge_band(rect); // 0.18 * 300 = 54 → clamped to 34
+        assert!((band - 34.).abs() < 0.01);
+        // dead center is interior → a leaf split, not a re-frame
+        assert!(!near_perimeter(rect, point(px(200.), px(150.)), band));
+        // hugging each edge → re-frame
+        assert!(near_perimeter(rect, point(px(4.), px(150.)), band));
+        assert!(near_perimeter(rect, point(px(398.), px(150.)), band));
+        assert!(near_perimeter(rect, point(px(200.), px(2.)), band));
+        assert!(near_perimeter(rect, point(px(200.), px(298.)), band));
+    }
+
+    #[test]
+    fn split_for_maps_edges_to_axes() {
+        assert!(matches!(split_for(Zone::Left), (SplitDir::Row, true)));
+        assert!(matches!(split_for(Zone::Right), (SplitDir::Row, false)));
+        assert!(matches!(split_for(Zone::Top), (SplitDir::Col, true)));
+        assert!(matches!(split_for(Zone::Bottom), (SplitDir::Col, false)));
+    }
+
+    #[test]
     fn remove_leaf_collapses_the_parent_onto_the_sibling() {
         let mut t: Tree<u32> = Tree::Leaf(1);
         t.split_leaf(&|l| *l == 1, SplitDir::Row, 2);
@@ -5115,6 +5388,10 @@ fn main() {
                 // WM_CLASS / Wayland app_id — must match terminal-delight.desktop
                 // (packaging/) for the dock to pick up our icon.
                 app_id: Some("terminal-delight".into()),
+                // Frameless: no OS titlebar — the cabinet IS the chrome. We draw
+                // our own move handle (the mother bar), resize edges + window
+                // controls (see `csd` + the bezel_top control cluster).
+                window_decorations: Some(WindowDecorations::Client),
                 ..Default::default()
             },
             move |window, cx| {

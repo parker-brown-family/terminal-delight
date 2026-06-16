@@ -196,6 +196,16 @@ impl BellPlayer {
             let _ = c.wait();
         }
     }
+    /// Reap a clip that finished on its own (e.g. `-autoexit` after the trim),
+    /// so a long session doesn't accumulate `<defunct>` ffplay zombies. Cheap;
+    /// call it from the per-pane tick.
+    pub fn reap(&mut self) {
+        if let Some(c) = self.child.as_mut() {
+            if matches!(c.try_wait(), Ok(Some(_))) {
+                self.child = None;
+            }
+        }
+    }
 }
 impl Drop for BellPlayer {
     fn drop(&mut self) {
