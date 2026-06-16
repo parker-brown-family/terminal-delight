@@ -1340,6 +1340,13 @@ impl TerminalView {
             cx.notify();
             return;
         }
+        // Escape closes the bell/sound config tray instead of reaching the PTY —
+        // otherwise the ESC byte hits the running agent and kills it.
+        if self.bell_menu && ks.key.as_str() == "escape" {
+            self.bell_menu = false;
+            cx.notify();
+            return;
+        }
         // While this pane is mirrored in the FOCUS modal, a plain Esc closes the
         // modal (the workspace handles it) rather than reaching the PTY — every
         // OTHER keystroke still flows straight to this terminal, so you keep

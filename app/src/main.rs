@@ -1182,7 +1182,15 @@ impl Workspace {
         self.tabs[self.active]
             .root
             .split_leaf(&|p| p.entity_id() == target, dir, new_pane);
-        window.focus(&fresh.focus_handle(cx), cx);
+        // Defer the focus: a bezel "split" click is still being dispatched, and
+        // the root container's tracked focus handle would otherwise grab focus
+        // back as the event bubbles (same race as activate_tab). Running after
+        // the event settles makes the NEW pane focus stick — so it lights up as
+        // the active terminal and the next keystroke lands in it.
+        cx.defer_in(window, move |_ws, window, cx| {
+            window.focus(&fresh.focus_handle(cx), cx);
+            cx.notify();
+        });
         self.save(cx);
         cx.notify();
     }
