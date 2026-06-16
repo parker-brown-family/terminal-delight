@@ -109,7 +109,7 @@ fn foreground_mode(master: &std::fs::File, shell_pid: u32) -> PaneMode {
 }
 
 /// The consistent header icon size (≈2× the old glyphs).
-pub const HICON: f32 = 24.0;
+pub const HICON: f32 = 28.0;
 
 /// A small EQ-waveform glyph — a row of bars at varying heights — used as the
 /// consistent monitor/display icon. Drawn (not an emoji) so it can be wider than
@@ -337,7 +337,7 @@ fn mode_theme(base: &Theme, mode: &PaneMode) -> Theme {
     th
 }
 
-const HEADER_H: f32 = 34.0;
+const HEADER_H: f32 = 40.0;
 const PAD_X: f32 = 8.0;
 const PAD_Y: f32 = 4.0;
 
@@ -993,6 +993,8 @@ impl TerminalView {
                         if view.gamba.tick() {
                             cx.notify();
                         }
+                        // reap a finished bell clip so ffplay zombies don't pile up
+                        view.bell_player.reap();
                         // debounced PTY resize: fire once the drag settles
                         if let Some((grid, since)) = view.pending_grid {
                             if since.elapsed() > std::time::Duration::from_millis(140) {
@@ -1559,7 +1561,58 @@ impl TerminalView {
     fn preview_bell(&mut self) {
         let mut c = self.bell_cfg.clone();
         c.looping = false;
+        // a preview should always be audible even if the pane's bell is muted
+        c.enabled = true;
         self.bell_player.play(&c);
+    }
+
+    /// "+ Add": open a native file picker (zenity), copy the chosen audio into
+    /// the user sounds dir so it persists + shows up in the picker, then select
+    /// it. The dialog runs off the UI thread so the window keeps painting.
+    fn import_bell_file(&mut self, cx: &mut Context<Self>) {
+        cx.spawn(async move |this, cx| {
+            let picked = cx
+                .background_executor()
+                .spawn(async {
+                    use std::process::Command;
+                    let out = Command::new("zenity")
+                        .args([
+                            "--file-selection",
+                            "--title=Add a notification sound",
+                            "--file-filter=Audio | *.mp3 *.ogg *.oga *.wav *.flac *.m4a *.opus *.aac *.MP3 *.WAV *.FLAC *.OGG",
+                            "--file-filter=All files | *",
+                        ])
+                        .output()
+                        .ok()?;
+                    if !out.status.success() {
+                        return None; // user cancelled
+                    }
+                    let p = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                    (!p.is_empty()).then(|| std::path::PathBuf::from(p))
+                })
+                .await;
+            let Some(src) = picked else { return };
+            // copy into the sounds dir (best-effort) so it persists across runs
+            let dest = cx
+                .background_executor()
+                .spawn(async move {
+                    let dir = crate::bell::sounds_dir();
+                    let _ = std::fs::create_dir_all(&dir);
+                    let name = src.file_name()?;
+                    let dest = dir.join(name);
+                    if dest != src {
+                        std::fs::copy(&src, &dest).ok()?;
+                    }
+                    Some(dest)
+                })
+                .await;
+            if let Some(dest) = dest {
+                let _ = this.update(cx, |view, cx| {
+                    view.set_bell_file(Some(dest), cx);
+                });
+            }
+        })
+        .detach();
     }
 
     fn on_mouse_down(&mut self, ev: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
@@ -1570,6 +1623,14 @@ impl TerminalView {
         // the split buttons (which target the focused pane) follow the pane the
         // user is actually working in — not whichever pane happened to start focused.
         window.focus(&self.focus_handle, cx);
+        // A ringing "agent finished" alert is acknowledged by clicking anywhere
+        // in this pane: stop the sound and dismiss the card — no button to chase.
+        // The click is consumed (it doesn't also start a selection) so it reads
+        // purely as "dismiss". Left-click only; right-click still opens the menu.
+        if self.bell && ev.button == MouseButton::Left {
+            self.snooze_bell(cx);
+            return;
+        }
         // right-click → copy/paste context menu at the cursor
         if ev.button == MouseButton::Right {
             self.ctx_menu = Some(ev.position);
@@ -2182,18 +2243,19 @@ impl Render for TerminalView {
                     .flex()
                     .flex_row()
                     .items_center()
-                    .gap_2()
+                    // roomier spacing between the consistent 2× header glyphs
+                    .gap_3()
                     .child(grid_label)
                     // Part 1: only in an agent (claude/codex) pane — jump between
                     // *your own* messages. Coloured like your input (`th.human`).
                     .when(self.mode.is_agent(), |row| {
-                        let mk = |glyph: &'static str, next: bool, cx: &mut Context<Self>| {
+                        // jump between YOUR messages: a 👤 bust groups the ▲/▼
+                        // steppers into one unit so it reads as "your turns",
+                        // not two stray arrows.
+                        let step = |glyph: &'static str, next: bool, cx: &mut Context<Self>| {
                             div()
-                                .px_1()
+                                .px(px(2.))
                                 .rounded_sm()
-                                .border_1()
-                                .border_color(th.human.alpha(0.6))
-                                .text_color(th.human)
                                 .cursor_pointer()
                                 .child(glyph)
                                 .on_mouse_down(
@@ -2204,7 +2266,28 @@ impl Render for TerminalView {
                                     }),
                                 )
                         };
-                        row.child(mk("▲", false, cx)).child(mk("▼", true, cx))
+                        row.child(
+                            div()
+                                .flex()
+                                .flex_row()
+                                .items_center()
+                                .gap(px(1.))
+                                .px_1()
+                                .rounded_sm()
+                                .border_1()
+                                .border_color(th.human.alpha(0.6))
+                                .text_color(th.human)
+                                // the bust matches the consistent 2× glyph set
+                                .child(
+                                    div()
+                                        .text_size(px(HICON))
+                                        .line_height(px(HICON))
+                                        .mr(px(1.))
+                                        .child("👤"),
+                                )
+                                .child(step("▲", false, cx))
+                                .child(step("▼", true, cx)),
+                        )
                     })
                     .child(
                         // 👓 FOCUS: mirror just this pane, big, with the rest of
@@ -2310,6 +2393,9 @@ impl Render for TerminalView {
                             .border_color(th.accent.alpha(0.3))
                             .text_color(bar_fg)
                             .cursor_pointer()
+                            // join the consistent 2× header-glyph set
+                            .text_size(px(HICON))
+                            .line_height(px(HICON))
                             .child("×")
                             .on_mouse_down(
                                 MouseButton::Left,
@@ -2346,62 +2432,87 @@ impl Render for TerminalView {
         // ---- SNOOZE bar: spans the top of the pane while the bell is ringing ----
         let (acc, txt, faint) = (th.accent, th.text, th.faint);
         let ff = th.font_family.clone();
-        let snooze_bar = self.bell.then(|| {
+        // ---- "agent finished" alert: a flat, bordered card floating at the top-
+        // centre of the pane (mirrors the HELP box look). There is NO button —
+        // clicking anywhere in this terminal acknowledges it (see on_mouse_down):
+        // the sound stops and the card disappears. The bell stays enabled for the
+        // next turn; mute lives in the 🔔 tray.
+        let agent_alert = self.bell.then(|| {
             let name = self
                 .bell_cfg
                 .file
                 .as_deref()
                 .map(crate::bell::display_name)
                 .unwrap_or_else(|| "alert".to_string());
-            let bigbtn = move |label: &'static str| {
-                div()
-                    .px_3()
-                    .py(px(2.))
-                    .rounded_md()
-                    .border_1()
-                    .border_color(acc)
-                    .bg(acc.alpha(0.30))
-                    .text_color(txt)
-                    .cursor_pointer()
-                    .child(label)
+            // solid dark surface, same recipe as the HELP panel (surface · 0.45)
+            let panel_bg = Hsla {
+                l: th.surface.l * 0.45,
+                ..th.surface
             };
             div()
-                .w_full()
-                .flex_none()
+                // a full-width, click-through positioning layer: the card is
+                // centred horizontally and sits just below the header. Mouse
+                // events fall through to the pane's own handler, which is what
+                // acknowledges the bell.
+                .absolute()
+                .top(px(HEADER_H + 16.))
+                .left_0()
+                .right_0()
                 .flex()
                 .flex_row()
-                .items_center()
-                .justify_between()
-                .px_3()
-                .py(px(5.))
-                .bg(acc.alpha(0.20))
-                .text_color(txt)
-                .text_size(px(12.))
-                .font_family(ff.clone())
+                .justify_center()
                 .child(
                     div()
+                        .px_4()
+                        .py(px(8.))
+                        .rounded_lg()
+                        .border_1()
+                        .border_color(acc.alpha(0.7))
+                        .bg(panel_bg)
+                        .text_color(txt)
+                        .text_size(px(12.))
+                        .font_family(ff.clone())
+                        .shadow(vec![BoxShadow {
+                            color: Hsla {
+                                h: 0.,
+                                s: 0.,
+                                l: 0.,
+                                a: 0.55,
+                            },
+                            offset: point(px(0.), px(6.)),
+                            blur_radius: px(22.),
+                            spread_radius: px(0.),
+                            inset: false,
+                        }])
                         .flex()
-                        .flex_row()
+                        .flex_col()
                         .items_center()
-                        .gap_2()
+                        .gap_1()
                         .child(
                             div()
-                                .text_color(acc)
-                                .font_weight(gpui::FontWeight::BOLD)
-                                .child("♪ ▸"),
+                                .flex()
+                                .flex_row()
+                                .items_center()
+                                .gap_2()
+                                .child(
+                                    div()
+                                        .text_color(acc)
+                                        .font_weight(FontWeight::BOLD)
+                                        .child("♪ ▸"),
+                                )
+                                .child(
+                                    div()
+                                        .font_weight(FontWeight::BOLD)
+                                        .text_color(th.complement)
+                                        .child(format!("AGENT FINISHED · {name}")),
+                                ),
                         )
-                        .child(format!("agent finished · {name}")),
-                )
-                .child(
-                    // a single acknowledge: silence + dismiss the bar (the bell
-                    // stays enabled for the next turn). Mute lives in the 🔔 tray.
-                    bigbtn("✓ ACKNOWLEDGED").on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(|v, _: &MouseDownEvent, _w, cx| {
-                            cx.stop_propagation();
-                            v.snooze_bell(cx);
-                        }),
-                    ),
+                        .child(
+                            div()
+                                .text_size(px(10.5))
+                                .text_color(txt.alpha(0.6))
+                                .child("click anywhere in this terminal to acknowledge"),
+                        ),
                 )
         });
 
@@ -2613,7 +2724,7 @@ impl Render for TerminalView {
                             div()
                                 .font_weight(gpui::FontWeight::BOLD)
                                 .text_color(acc)
-                                .child("🔔 NOTIFICATION BELL"),
+                                .child("🔔 NOTIFICATIONS"),
                         )
                         .child(mini("done".into()).on_mouse_down(
                             MouseButton::Left,
@@ -2654,6 +2765,26 @@ impl Render for TerminalView {
                         ),
                 )
                 .child(list)
+                // bring your own: pick any audio file → copied into the sounds
+                // dir and selected (full-width, dashed-feel "add" affordance)
+                .child(
+                    div()
+                        .px_2()
+                        .py(px(3.))
+                        .rounded_sm()
+                        .border_1()
+                        .border_color(acc.alpha(0.5))
+                        .text_color(acc)
+                        .cursor_pointer()
+                        .child("＋ Add audio file…")
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|v, _: &MouseDownEvent, _w, cx| {
+                                cx.stop_propagation();
+                                v.import_bell_file(cx);
+                            }),
+                        ),
+                )
                 // TRIM readout + the dual-pip scrubber (drag the pips; the lit
                 // span between them is what plays)
                 .child(labeled("TRIM", format!("{s:.1}s – {e:.1}s")))
@@ -2779,7 +2910,6 @@ impl Render for TerminalView {
             .pl(px(rumble_dx.max(0.)))
             .pr(px((-rumble_dx).max(0.)))
             .child(header)
-            .children(snooze_bar)
             .child(
                 div()
                     .relative()
@@ -2850,6 +2980,8 @@ impl Render for TerminalView {
             .when(th.bezel > 0.001, |el| el.child(crt::bezel(&th)))
             // 🎰 the slot reels ride above the bezel, below the bell modal
             .children(gamba_overlay)
+            // the "agent finished" card floats above the content, top-centre
+            .children(agent_alert)
             .children(ctx_menu_el)
             .children(bell_tray)
     }
