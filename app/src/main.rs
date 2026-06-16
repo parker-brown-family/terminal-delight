@@ -1568,6 +1568,29 @@ impl Workspace {
             cx.notify();
             return;
         }
+        // A release that landed OUTSIDE the window never fires on_mouse_up, so a
+        // continuous-adjust drag can stick "on" and re-grab the cursor on the next
+        // move. The button is up here, so clear any stuck drag. (tab_drag/drag_pane
+        // self-clear above, with their own drop teardown.)
+        if ev.pressed_button != Some(MouseButton::Left)
+            && (self.scrubbing
+                || self.wheel_drag.is_some()
+                || self.light_drag
+                || self.warp_drag
+                || self.slider_drag.is_some()
+                || self.track_drag.is_some()
+                || self.drag_split.is_some())
+        {
+            self.scrubbing = false;
+            self.wheel_drag = None;
+            self.light_drag = false;
+            self.warp_drag = false;
+            self.slider_drag = None;
+            self.track_drag = None;
+            self.drag_split = None;
+            cx.notify();
+            return;
+        }
         if ev.pressed_button == Some(MouseButton::Left) {
             if let Some(split_id) = self.drag_split {
                 let bounds = self.split_bounds.lock().unwrap().get(&split_id).copied();
