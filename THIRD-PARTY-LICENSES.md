@@ -42,3 +42,21 @@ cargo about generate about.hbs > THIRD-PARTY-LICENSES.txt
 
 The generated bundle is intentionally not hand-maintained; `app/about.toml`
 configures it (accepted licenses mirror `deny.toml`, scoped to the Linux target).
+
+## Bundled audio (agent-bell sounds)
+
+The default agent-bell clips in `app/assets/sounds/` (also seeded into
+`~/.config/terminal-delight/sounds/` and bundled in the AppImage) are recordings
+of public-domain compositions. All are format-converted to mp3 and some are
+length-capped; the underlying compositions are public domain.
+
+| File | Source recording | License | Attribution |
+|------|------------------|---------|-------------|
+| `alert.mp3` | generated two-tone chime | public domain (original) | — |
+| `fate.mp3` | Beethoven, Symphony No. 5, i. — Musopen, via Wikimedia Commons | **Public domain** | — |
+| `moonlight.mp3` | Beethoven, Sonata No. 14, i. — Musopen, via Wikimedia Commons | **Public domain** | — |
+| `bald-mountain.mp3` | Mussorgsky, Night on Bald Mountain — Musopen, via Wikimedia Commons | **Public domain** | — |
+| `fur-elise.mp3` | "Fur Elise.ogg", Wikimedia Commons | **CC BY-SA 3.0** (https://creativecommons.org/licenses/by-sa/3.0) | © Wikimedia Commons user **Sebion7125**; converted to mp3. Shared under the same CC BY-SA 3.0. |
+
+`wild-eep.mp3` (classic Mac OS alert) is **Apple-owned and never bundled or
+committed** — it exists only in a user's local sounds dir for personal use.

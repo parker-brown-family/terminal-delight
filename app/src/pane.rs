@@ -1529,11 +1529,13 @@ impl TerminalView {
         }
         cx.notify();
     }
-    /// Choose this pane's sound; caches the clip length and resets the trim window.
+    /// Choose this pane's sound; caches the clip length and resets the trim to a
+    /// short opening sample (full tracks are minutes long — the scrubber widens it).
     fn set_bell_file(&mut self, file: Option<std::path::PathBuf>, cx: &mut Context<Self>) {
         self.bell_dur = file.as_deref().and_then(crate::bell::duration);
         self.bell_cfg.start = 0.0;
-        self.bell_cfg.end = self.bell_dur.unwrap_or(0.0);
+        // default to the first ~12s (or the whole clip if it's shorter)
+        self.bell_cfg.end = self.bell_dur.map(|d| d.min(12.0)).unwrap_or(0.0);
         self.bell_cfg.file = file;
         cx.notify();
     }
