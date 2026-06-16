@@ -1329,6 +1329,21 @@ impl Workspace {
         }
     }
 
+    /// Commit an in-progress tab rename (if any) and leave edit mode — the
+    /// "click off saves" behaviour. Returns true if a rename was open. An empty
+    /// name clears back to the auto-numbered label, matching the Enter path.
+    fn commit_rename(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some((tab_i, buf)) = self.renaming.take() else {
+            return false;
+        };
+        if let Some(tab) = self.tabs.get_mut(tab_i) {
+            tab.name = (!buf.trim().is_empty()).then(|| buf.trim().to_string());
+        }
+        self.save(cx);
+        cx.notify();
+        true
+    }
+
     /// Set the *outer* (Mother) text size — the bezel scrubber and ctrl+scroll.
     /// Panes that follow outer (the default) pick this up live; a pane that has
     /// detached its grade keeps its own size.
@@ -3171,6 +3186,9 @@ impl Render for Workspace {
                         .flex()
                         .flex_row()
                         .items_center()
+                        // clicking the edit box itself keeps editing (don't let
+                        // it bubble to the root's commit-on-click-off handler)
+                        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                         .child(buf.clone())
                         .child(div().w(px(6.)).h(px(13.)).bg(th.cursor)),
                 );
@@ -4613,6 +4631,17 @@ impl Render for Workspace {
             .on_scroll_wheel(cx.listener(Self::on_wheel))
             .on_mouse_move(cx.listener(Self::on_mouse_move))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
+            // Click anywhere outside an open tab-rename box (a terminal, the
+            // bezel, empty space) saves the rename — the edit no longer eats
+            // keystrokes meant for the pane you just clicked into. The tab /
+            // pencil / rename-box handlers stop_propagation, so they don't trip
+            // this; a click ON the edit box keeps editing.
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                    ws.commit_rename(cx);
+                }),
+            )
             .child(
                 div()
                     .size_full()
