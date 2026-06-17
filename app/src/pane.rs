@@ -781,6 +781,10 @@ pub struct TerminalView {
     /// When the current agent "thinking" spell began — used to ring the bell on
     /// the thinking→done edge (agents don't reliably emit a terminal BEL).
     think_since: Option<Instant>,
+    /// When the agent transitioned to not-thinking; used to debounce false positives
+    /// from transient state changes (e.g., error messages clearing). Only ring the bell
+    /// if not-thinking persists for at least 300ms.
+    not_thinking_since: Option<Instant>,
     /// Which bell-trim pip is being dragged (false = start, true = end); None idle.
     bell_drag: Option<bool>,
     /// Window-space bounds of the bell trim track, for pip drag math.
@@ -1019,17 +1023,28 @@ impl TerminalView {
                                 view.gamba.set_thinking(thinking);
                                 if thinking {
                                     view.think_since = Some(Instant::now());
+                                    view.not_thinking_since = None;
                                 } else {
-                                    // agent finished a real turn (not a blip) →
-                                    // ring the completion bell ourselves, since
-                                    // agents don't reliably emit a terminal BEL.
-                                    let real = view.think_since.take().is_some_and(|t| {
-                                        t.elapsed() > std::time::Duration::from_millis(1200)
-                                    });
-                                    if real && view.mode.is_agent() && view.bell_cfg.enabled {
-                                        view.bell = true;
-                                        view.bell_player.play(&view.bell_cfg);
-                                        cx.notify();
+                                    // Transitioned to not-thinking; debounce to avoid false
+                                    // positives from transient state changes (error messages, etc).
+                                    view.not_thinking_since = Some(Instant::now());
+                                }
+                            }
+                            // Only ring the bell if we've been not-thinking for 300ms+ AND
+                            // the original thinking period was real (> 1200ms).
+                            if !thinking && view.bell_cfg.enabled && view.mode.is_agent() {
+                                if let Some(not_since) = view.not_thinking_since {
+                                    if not_since.elapsed() > std::time::Duration::from_millis(300) {
+                                        let real = view.think_since.as_ref().is_some_and(|t| {
+                                            t.elapsed() > std::time::Duration::from_millis(1200)
+                                        });
+                                        if real && !view.bell {
+                                            view.bell = true;
+                                            view.bell_player.play(&view.bell_cfg);
+                                            view.think_since = None;
+                                            view.not_thinking_since = None;
+                                            cx.notify();
+                                        }
                                     }
                                 }
                             }
@@ -1114,6 +1129,7 @@ impl TerminalView {
                 .unwrap_or_else(Instant::now),
             being_read: false,
             think_since: None,
+            not_thinking_since: None,
             bell_drag: None,
             bell_track_bounds: Arc::new(Mutex::new(None)),
         }
@@ -1613,6 +1629,7 @@ impl TerminalView {
     fn snooze_bell(&mut self, cx: &mut Context<Self>) {
         self.bell = false;
         self.bell_player.stop();
+        self.not_thinking_since = None;
         cx.notify();
     }
     /// The always-visible bell toggle: mute/unmute this pane's bell and stop any

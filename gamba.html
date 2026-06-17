@@ -201,7 +201,7 @@ function drawScene(time){
   x.textAlign='center'; x.textBaseline='middle';
 
   // title
-  x.shadowColor=c.glow; x.shadowBlur=22*s*dpr; x.fillStyle=c.phos;
+  x.shadowColor=c.glow; x.shadowBlur=12*s*dpr; x.fillStyle=c.phos;
   x.font=`900 ${(narrow?40:58)*s*dpr}px ui-monospace,monospace`;
   x.fillText('🎰 GAMBA 🎰', cx, H*0.13); x.shadowBlur=0;
   x.fillStyle=c.bright; x.font=`${(narrow?11:15)*s*dpr}px ui-monospace,monospace`;
@@ -228,7 +228,7 @@ function drawScene(time){
     }
     x.restore();
     // gold frame
-    x.lineWidth=3*s*dpr; x.strokeStyle=c.accent; x.shadowColor=c.glow; x.shadowBlur=r.locked?10*s*dpr:0;
+    x.lineWidth=3*s*dpr; x.strokeStyle=c.accent; x.shadowColor=c.glow; x.shadowBlur=r.locked?6*s*dpr:0;
     roundRect(bx,ry,rw,rh,12*s*dpr); x.stroke(); x.shadowBlur=0;
     // center payline tick
     x.strokeStyle=c.accent+'88'; x.lineWidth=1.5*s*dpr; x.beginPath(); x.moveTo(bx-2,ry+rh/2); x.lineTo(bx+rw+2,ry+rh/2); x.stroke();
@@ -243,7 +243,7 @@ function drawScene(time){
 
   // jackpot banner
   if(jackUntil>0 && performance.now()<jackUntil){
-    const blink=Math.sin(time*0.012)>0; x.fillStyle=blink?c.accent:c.bright; x.shadowColor=c.glow; x.shadowBlur=18*s*dpr;
+    const blink=Math.sin(time*0.012)>0; x.fillStyle=blink?c.accent:c.bright; x.shadowColor=c.glow; x.shadowBlur=10*s*dpr;
     x.font=`900 ${(narrow?20:28)*s*dpr}px ui-monospace,monospace`; x.fillText(jackText, cx, ry+rh+44*s*dpr); x.shadowBlur=0;
   }
 
@@ -258,14 +258,14 @@ function drawScene(time){
     drawBtn(BTNS[2],2,cx-total2/2,by+bh+bgap,total2,bh,s);
   }
 
-  if(performance.now()<osdUntil){ x.textAlign=narrow?'center':'right'; x.fillStyle=c.bright; x.shadowColor=c.glow; x.shadowBlur=9*s*dpr;
+  if(performance.now()<osdUntil){ x.textAlign=narrow?'center':'right'; x.fillStyle=c.bright; x.shadowColor=c.glow; x.shadowBlur=5*s*dpr;
     x.font=`700 ${(narrow?12:14)*s*dpr}px ui-monospace,monospace`;
     x.fillText(c.name, narrow?cx:W-18*s*dpr, narrow?H*0.06:H*0.075); x.shadowBlur=0; x.textAlign='center'; }
 }
 function drawBtn(b,i,bx,by,bw,bh,s){ const c=cur(); btnRects.push({x:bx,y:by,w:bw,h:bh,url:b.url}); const on=hover===i;
   x.fillStyle=b.primary?(on?c.dim:'rgba(255,192,30,0.18)'):(on?'rgba(255,192,30,0.18)':'rgba(255,255,255,0.05)'); roundRect(bx,by,bw,bh,9*dpr); x.fill();
   x.lineWidth=on?2.4*dpr:1.4*dpr; x.strokeStyle=(b.primary||on)?c.accent:c.dim; roundRect(bx,by,bw,bh,9*dpr); x.stroke();
-  x.fillStyle=b.primary?c.bright:c.phos; x.shadowColor=c.glow; x.shadowBlur=on?0:1.4*dpr; x.font=`700 ${15*s*dpr}px ui-monospace,monospace`;
+  x.fillStyle=b.primary?c.bright:c.phos; x.shadowColor=c.glow; x.shadowBlur=0; x.font=`700 ${15*s*dpr}px ui-monospace,monospace`;
   x.fillText(b.label,bx+bw/2,by+bh/2); x.shadowBlur=0; }
 
 const vs=`#version 300 es
@@ -298,10 +298,16 @@ if(gl){ try {
 if(!gl){ try { ctx2d=cv.getContext('2d'); } catch(e){} }
 const U=n=>gl.getUniformLocation(pr,n);
 const t0=performance.now();
+let lastReelPos=[...reels.map(r=>r.pos)], lastChan=chan, lastHover=hover;
+let textureInitialized=false;
 function frame(now){ const time=now-t0;
   autoSpin(); updateReels(); drawScene(time);
+  // Only upload texture if reels, palette, or hover state changed
+  const reelChanged=reels.some((r,i)=>(r.pos|0)!==(lastReelPos[i]|0)), chanChanged=chan!==lastChan, hoverChanged=hover!==lastHover;
+  if(reelChanged||chanChanged||hoverChanged||!textureInitialized){ lastReelPos=[...reels.map(r=>r.pos)]; lastChan=chan; lastHover=hover; textureInitialized=true; }
   if(gl){
-    gl.bindTexture(3553,tex); gl.texImage2D(3553,0,6408,6408,5121,scene);
+    gl.bindTexture(3553,tex);
+    if(reelChanged||chanChanged||hoverChanged||!textureInitialized) gl.texImage2D(3553,0,6408,6408,5121,scene);
     gl.viewport(0,0,W,H); const c=K.barrel*2.2;
     gl.uniform2f(U('res'),W,H); gl.uniform1f(U('k1'),c*0.14); gl.uniform1f(U('k2'),c*0.06);
     gl.uniform1f(U('time'),time/1000); gl.uniform1f(U('fade'),K.fade);
