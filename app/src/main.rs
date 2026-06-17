@@ -1142,12 +1142,15 @@ impl Workspace {
         let pane = make_pane(window, cx);
         self.tabs.push(Tab::new(Node::Leaf(pane), None));
         self.active = self.tabs.len() - 1;
-        // make_pane focuses the pane at creation, but that doesn't stick before
-        // it's mounted under the new tab — re-assert focus now so the very next
-        // keystroke lands in the fresh terminal (matches activate_tab/split).
-        self.focus_active(window, cx);
         self.save(cx);
         cx.notify();
+        // Defer the focus: new_tab fires from a mother-bar mouse-down listener, so
+        // the root container's tracked focus handle would grab focus back as the
+        // event bubbles (same race as activate_tab/split). A synchronous
+        // focus_active here never sticks — the new terminal opens unfocused. Running
+        // after the event settles makes the fresh pane light up as the active
+        // terminal so the very next keystroke lands in it.
+        cx.defer_in(window, |ws, window, cx| ws.focus_active(window, cx));
     }
 
     /// Split ONLY the focused terminal; everything else keeps its exact space.
@@ -3000,6 +3003,9 @@ fn render_node(
                 .rounded_md()
                 .border_1()
                 .border_color(if is_focused { acc } else { th.faint })
+                // highlighted pane gets a 2x-thick accent border (drawn inside the
+                // flex box, so the grid never reflows — only inner content shifts 1px)
+                .when(is_focused, |d| d.border_2())
                 .when(is_focused, |d| {
                     d.shadow(vec![
                         // crisp 1px outer ring: reads as a double border
