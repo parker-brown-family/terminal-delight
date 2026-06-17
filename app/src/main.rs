@@ -35,7 +35,7 @@ use gpui::{
 use gpui_platform::application;
 use pane::{
     CloseFocusRead, ClosePane, DragPaneStart, OpenDisplayMenu, OpenFocusRead, OpenHelp,
-    OpenThemeMenu, PaneRenamed, TerminalView,
+    OpenThemeMenu, PaneRenamed, RequestCloseTab, TerminalView,
 };
 use serde::{Deserialize, Serialize};
 use theme::{PaneTheme, ThemeChoice};
@@ -879,6 +879,11 @@ fn make_pane_restored(
         ws.close_pane(pane.entity_id(), window, cx);
     })
     .detach();
+    // Ctrl+W in a pane → close the whole active tab, always via the confirm dialog
+    cx.subscribe(&pane, |ws, _pane, _ev: &RequestCloseTab, cx| {
+        ws.confirm_close_active_tab(cx);
+    })
+    .detach();
     // a committed rename → persist so the custom name survives a restart
     cx.subscribe(&pane, |ws, _pane, _ev: &PaneRenamed, cx| {
         ws.save(cx);
@@ -1297,6 +1302,15 @@ impl Workspace {
         }
     }
 
+    /// Ctrl+W: always raise the confirmation dialog for the active tab — even a
+    /// single-pane tab. Closing a tab ends live shells, so it's never silent.
+    fn confirm_close_active_tab(&mut self, cx: &mut Context<Self>) {
+        if self.active < self.tabs.len() {
+            self.confirm_close = Some(self.active);
+            cx.notify();
+        }
+    }
+
     /// Remove tab `i`; dropping its subtree drops each pane entity, which closes
     /// the PTY (the shell gets SIGHUP). Quits the app if it was the last tab —
     /// same end-state as the last shell exiting (see `reap`).
@@ -1389,9 +1403,17 @@ impl Workspace {
             cx.notify();
             return;
         }
-        if self.confirm_close.is_some() && ks.key.as_str() == "escape" {
-            self.confirm_close = None;
-            cx.notify();
+        // The close-tab confirmation owns the keyboard while up: Esc cancels,
+        // Enter confirms (so the serious dialog is fully keyboard-drivable).
+        if let Some(i) = self.confirm_close {
+            match ks.key.as_str() {
+                "escape" => {
+                    self.confirm_close = None;
+                    cx.notify();
+                }
+                "enter" => self.close_tab(i, window, cx),
+                _ => {}
+            }
             return;
         }
         // the inline rename box owns the keyboard while open
@@ -3208,6 +3230,12 @@ impl Render for Workspace {
                 cx.notify();
             }
         }
+        // demo/capture hook (TD_CONFIRM_DEMO): auto-open the close-tab confirmation
+        // once, so the serious dialog can be screenshotted without a keystroke.
+        if std::env::var("TD_CONFIRM_DEMO").is_ok() && self.confirm_close.is_none() {
+            self.confirm_close = Some(self.active);
+            cx.notify();
+        }
         // remember which pane currently holds focus in the active tab, so a later
         // mother-bar click returns to that exact terminal (the "most recent" one)
         let active = self.active;
@@ -4227,17 +4255,33 @@ impl Render for Workspace {
                 .unwrap_or_else(|| format!("tab {}", i + 1));
             let n = self.tab_pane_count(i);
             let danger = hsla(0., 0.72, 0.60, 1.);
+            // Grammar adapts to a single shell vs a multi-pane tab.
+            let (btn_label, body) = if n <= 1 {
+                (
+                    "CLOSE TAB".to_string(),
+                    format!("Closing \u{201c}{name}\u{201d} ends its shell. This can\u{2019}t be undone."),
+                )
+            } else {
+                (
+                    format!("CLOSE {n} PANES"),
+                    format!(
+                        "\u{201c}{name}\u{201d} holds {n} panes \u{2014} closing it ends all {n} shells. This can\u{2019}t be undone."
+                    ),
+                )
+            };
             let confirm_btn = div()
-                .px_2()
-                .py_0p5()
+                .px_3()
+                .py_1()
                 .rounded_sm()
                 .border_1()
                 .border_color(danger)
-                .bg(danger.alpha(0.18))
-                .text_color(white().alpha(0.95))
-                .text_size(px(11.))
+                .bg(danger.alpha(0.22))
+                .text_color(white().alpha(0.96))
+                .text_size(px(12.))
+                .font_weight(gpui::FontWeight::BOLD)
                 .cursor_pointer()
-                .child(format!("CLOSE {n} PANES"))
+                .hover(|s| s.bg(danger.alpha(0.4)))
+                .child(btn_label)
                 .on_mouse_down(
                     MouseButton::Left,
                     cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
@@ -4253,23 +4297,31 @@ impl Render for Workspace {
                     cx.notify();
                 }),
             );
+            // A serious modal, framed against the outer bar (th.surface + an accent
+            // halo): a solid danger warning banner over a dark body.
             let panel = div()
-                .w(px(340.))
-                .p_4()
-                .rounded_md()
+                .w(px(400.))
+                .rounded_lg()
+                .overflow_hidden()
                 .border_1()
-                .border_color(danger.alpha(0.7))
-                .bg(darken(th.surface, 0.6))
-                .shadow(vec![BoxShadow {
-                    color: hsla(0., 0., 0., 0.6),
-                    offset: point(px(4.), px(6.)),
-                    blur_radius: px(18.),
-                    spread_radius: px(0.),
-                    inset: false,
-                }])
-                .flex()
-                .flex_col()
-                .gap_3()
+                .border_color(danger.alpha(0.85))
+                .bg(darken(th.surface, 0.62))
+                .shadow(vec![
+                    BoxShadow {
+                        color: th.accent.alpha((th.glow * 0.5).clamp(0.18, 0.5)),
+                        offset: point(px(0.), px(0.)),
+                        blur_radius: px(28.),
+                        spread_radius: px(1.),
+                        inset: false,
+                    },
+                    BoxShadow {
+                        color: hsla(0., 0., 0., 0.66),
+                        offset: point(px(0.), px(10.)),
+                        blur_radius: px(34.),
+                        spread_radius: px(0.),
+                        inset: false,
+                    },
+                ])
                 .text_color(th.text)
                 .on_mouse_down(
                     MouseButton::Left,
@@ -4277,33 +4329,65 @@ impl Render for Workspace {
                 )
                 .child(
                     div()
-                        .text_size(px(12.))
-                        .font_weight(gpui::FontWeight::EXTRA_BOLD)
-                        .text_color(danger)
-                        .child("CLOSE TAB?"),
-                )
-                .child(
-                    div()
-                        .text_size(px(11.))
-                        .text_color(th.text.alpha(0.8))
-                        .child(format!(
-                            "\"{name}\" holds {n} panes — closing it ends all {n} shells."
-                        )),
-                )
-                .child(
-                    div()
+                        .w_full()
+                        .px_4()
+                        .py_2()
+                        .bg(danger.alpha(0.18))
+                        .border_b_1()
+                        .border_color(danger.alpha(0.55))
                         .flex()
                         .flex_row()
-                        .justify_end()
+                        .items_center()
                         .gap_2()
-                        .child(cancel_btn)
-                        .child(confirm_btn),
+                        .child(div().text_size(px(18.)).child("\u{26a0}"))
+                        .child(
+                            div()
+                                .text_size(px(15.))
+                                .font_weight(gpui::FontWeight::EXTRA_BOLD)
+                                .text_color(danger)
+                                .child("CLOSE TAB?"),
+                        ),
+                )
+                .child(
+                    div()
+                        .p_4()
+                        .flex()
+                        .flex_col()
+                        .gap_3()
+                        .child(
+                            div()
+                                .text_size(px(12.))
+                                .text_color(th.text.alpha(0.85))
+                                .child(body),
+                        )
+                        .child(
+                            div()
+                                .flex()
+                                .flex_row()
+                                .items_center()
+                                .justify_between()
+                                .child(
+                                    div()
+                                        .text_size(px(10.))
+                                        .text_color(th.text.alpha(0.45))
+                                        .child("Enter to close \u{00b7} Esc to cancel"),
+                                )
+                                .child(
+                                    div()
+                                        .flex()
+                                        .flex_row()
+                                        .gap_2()
+                                        .child(cancel_btn)
+                                        .child(confirm_btn),
+                                ),
+                        ),
                 );
-            // centered scrim; click outside cancels
+            // full-window dim scrim; click outside cancels
             Some(
                 div()
                     .absolute()
                     .inset_0()
+                    .bg(hsla(0., 0., 0., 0.62))
                     .flex()
                     .items_center()
                     .justify_center()
