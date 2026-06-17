@@ -2347,9 +2347,10 @@ impl Render for TerminalView {
             .grade
             .scale;
         self.sync_size(&th, window);
-        // Warp curvature is a global toggle now (not per-theme); keep this pane's
-        // hit-test coefficients in sync with it.
-        self.warp_k = theme::warp_k(cx);
+        // Warp curvature is PER-PANE (it rides the grade group): keep this pane's
+        // hit-test coefficients in sync with its OWN resolved warp, so clicks land
+        // correctly whether this pane is bent and its neighbour flat, or vice versa.
+        self.warp_k = theme::warp_coeffs(th.warp);
         // edge-detected focus reporting (CSI I / CSI O) for apps that ask for it.
         // The bell intentionally persists until SNOOZE / bell-off (so you never
         // miss which agent finished while you were away).
@@ -3373,10 +3374,11 @@ impl Render for TerminalView {
                             canvas(
                                 move |bounds, window, cx| {
                                     let sf = window.scale_factor();
-                                    // Warp is a single global toggle now, not a
-                                    // theme property — read it here so hit-testing
-                                    // matches the shader.
-                                    let (k1, k2) = crate::theme::warp_k(cx);
+                                    // Per-pane warp: this tube bends by THIS pane's
+                                    // own resolved curvature (grade.warp → th.warp),
+                                    // so a bent pane and a flat pane coexist and
+                                    // hit-testing matches each tube's own shader k.
+                                    let (k1, k2) = crate::theme::warp_coeffs(th.warp);
                                     crate::warp::register_tube(
                                         [
                                             f32::from(bounds.origin.x) * sf,

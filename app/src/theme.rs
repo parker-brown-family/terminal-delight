@@ -124,6 +124,9 @@ pub struct Theme {
     pub tracking: f32,
     pub tracking_period: f32,
     pub tracking_sweep: f32,
+    /// Barrel-warp amount for THIS pane (`0` = flat). Resolved from the scope's
+    /// [`Grade::warp`] so the renderer bends each pane by its own curvature.
+    pub warp: f32,
     pub flicker: f32,
     pub jiggle: f32,
     pub screen_glare: f32,
@@ -237,6 +240,11 @@ pub enum GradeKey {
     /// (the terminal reflows), distinct from `Scale` (chrome). Not a paint-time
     /// grade; rides the grade group for the per-pane override + "follow outer".
     TextSize,
+    /// Barrel-warp (CRT curvature) amount, `0..=WARP_MAX` (0 = dead flat). Not a
+    /// paint grade — it drives the per-pane tube curvature the renderer bends by —
+    /// but it rides the grade group so each pane curves by its OWN amount (own
+    /// override else inherited outer), instead of one global dial bending all.
+    Warp,
 }
 
 impl GradeKey {
@@ -247,6 +255,7 @@ impl GradeKey {
         match self {
             GradeKey::Scale => (0.7, 1.6, 1.0),
             GradeKey::TextSize => (0.6, 2.0, 1.0),
+            GradeKey::Warp => (0.0, WARP_MAX, 0.0),
             _ => (0.0, 1.0, 0.5),
         }
     }
@@ -276,6 +285,13 @@ pub struct Grade {
     /// Terminal text-size multiplier (`0.6..2.0`, neutral `1.0`). Scales the
     /// pane's grid font + cell metrics, so the terminal reflows.
     pub text_size: f32,
+    /// Barrel-warp amount (`0..=WARP_MAX`, `0` = flat). The renderer bends THIS
+    /// pane's tube by it, so warp is per-pane (override else inherited outer) —
+    /// not the old global dial that curved every pane at once.
+    pub warp: f32,
+    /// CRT tracking-band dials `[intensity, speed, size]` in `0..1`, or `None` to
+    /// use whatever the resolved theme authored. Per-pane via the grade group.
+    pub tracking: Option<[f32; 3]>,
 }
 
 impl Default for Grade {
@@ -286,14 +302,16 @@ impl Default for Grade {
     /// returns to.
     fn default() -> Self {
         Self {
-            brightness: 0.33, // −17
-            contrast: 0.25,   // −25
-            colour: 0.69,     // +19
-            text: 0.67,       // +17
-            background: 0.81, // +31
-            gamma: 0.76,      // +26
-            scale: 0.99,      // 99%
-            text_size: 1.0,   // terminal grid at config size
+            brightness: 0.33,   // −17
+            contrast: 0.25,     // −25
+            colour: 0.69,       // +19
+            text: 0.67,         // +17
+            background: 0.81,   // +31
+            gamma: 0.76,        // +26
+            scale: 0.99,        // 99%
+            text_size: 1.0,     // terminal grid at config size
+            warp: WARP_DEFAULT, // the house near-fishbowl bend
+            tracking: None,     // defer to the theme's authored roll bar
         }
     }
 }
@@ -301,7 +319,7 @@ impl Default for Grade {
 impl Grade {
     /// Picker order: (channel, label) for the OSD slider rows. Terminal text
     /// size leads — it's the control people reach for most.
-    pub const CHANNELS: [(GradeKey, &'static str); 8] = [
+    pub const CHANNELS: [(GradeKey, &'static str); 9] = [
         (GradeKey::TextSize, "text size"),
         (GradeKey::Brightness, "brightness"),
         (GradeKey::Contrast, "contrast"),
@@ -310,6 +328,7 @@ impl Grade {
         (GradeKey::Background, "background"),
         (GradeKey::Gamma, "gamma"),
         (GradeKey::Scale, "menu bar"),
+        (GradeKey::Warp, "warp"),
     ];
 
     /// The identity grade: every channel at its no-op (`0.5`, scale `1.0`), i.e.
@@ -325,11 +344,14 @@ impl Grade {
             gamma: 0.5,
             scale: 1.0,
             text_size: 1.0,
+            warp: 0.0,      // reset = dead flat
+            tracking: None, // reset = defer to the theme's roll bar
         }
     }
 
     /// True when every channel sits at neutral — the grade is the identity and
-    /// takes `resolve`'s fast path.
+    /// takes `resolve`'s fast path. NB: `warp`/`tracking` are NOT paint grades, so
+    /// they're deliberately excluded — a curved-but-ungraded pane still fast-paths.
     pub fn is_neutral(&self) -> bool {
         const EPS: f32 = 1e-3;
         [
@@ -362,6 +384,8 @@ impl Grade {
             && (self.gamma - d.gamma).abs() < EPS
             && (self.scale - d.scale).abs() < EPS
             && (self.text_size - d.text_size).abs() < EPS
+            && (self.warp - d.warp).abs() < EPS
+            && self.tracking == d.tracking
     }
 
     pub fn get(&self, k: GradeKey) -> f32 {
@@ -374,6 +398,7 @@ impl Grade {
             GradeKey::Gamma => self.gamma,
             GradeKey::Scale => self.scale,
             GradeKey::TextSize => self.text_size,
+            GradeKey::Warp => self.warp,
         }
     }
 
@@ -389,6 +414,7 @@ impl Grade {
             GradeKey::Gamma => self.gamma = v,
             GradeKey::Scale => self.scale = v,
             GradeKey::TextSize => self.text_size = v,
+            GradeKey::Warp => self.warp = v,
         }
     }
 }
@@ -468,8 +494,10 @@ pub fn house_outer() -> ThemeChoice {
             text: 0.5,
             background: 0.5,
             gamma: 0.5,
-            scale: 1.16,    // 116%
-            text_size: 1.0, // terminal grid at config size
+            scale: 1.16,        // 116%
+            text_size: 1.0,     // terminal grid at config size
+            warp: WARP_DEFAULT, // the house near-fishbowl bend
+            tracking: None,     // defer to the theme's authored roll bar
         },
         dynamic: Dynamic::Plain,
         text: None,
@@ -1110,12 +1138,16 @@ pub fn resolve(cx: &App, choice: &ThemeChoice) -> Arc<Theme> {
         && comp_over.is_none()
         && human_over.is_none();
     // Fast path: stock theme, no recolour, default mode, no syntax, neutral
-    // grade, and no global tracking override.
+    // grade, flat warp, and no tracking override — i.e. nothing to restate, so the
+    // shared base Arc is returned untouched. Warp/tracking are excluded from
+    // `is_neutral` (they're not paint grades), so guard them explicitly here:
+    // a curved or rolling pane must take the full path so `th.warp`/tracking get set.
     if identity_colour
         && mode.is_default()
         && !choice.syntax
         && choice.grade.is_neutral()
-        && tracking_dial(cx).is_none()
+        && choice.grade.warp.abs() < 1e-3
+        && choice.grade.tracking.is_none()
     {
         return base;
     }
@@ -1150,8 +1182,11 @@ pub fn resolve(cx: &App, choice: &ThemeChoice) -> Arc<Theme> {
     th.color_mode = mode;
     th.syntax = choice.syntax;
     th.grade = choice.grade;
-    // The global tracking dial (DISPLAY tray) overrides every theme's roll bar.
-    if let Some(dial) = tracking_dial(cx) {
+    // Warp + tracking ride the grade group, so they resolve per-pane (own
+    // override else inherited outer) — each pane bends by its own curvature
+    // instead of one global dial bending every pane.
+    th.warp = choice.grade.warp.clamp(0.0, WARP_MAX);
+    if let Some(dial) = choice.grade.tracking {
         apply_tracking(&mut th, dial);
     }
     Arc::new(th)
@@ -1165,64 +1200,18 @@ pub fn select_outer(cx: &mut App, choice: ThemeChoice) {
     cx.refresh_windows();
 }
 
-/// Screen-warp (CRT barrel) is a single global DIAL, ORTHOGONAL to the theme:
-/// any texture curves by `amount` (0 = dead flat). The default is a deliberately
-/// heavy, near-fishbowl bend (the house look); the slider runs from 0 up to
-/// [`WARP_MAX`] for a full fishbowl.
+/// Screen-warp (CRT barrel) curvature. Once a single global dial; now a PER-PANE
+/// setting that rides the grade group ([`Grade::warp`]) so each pane bends by its
+/// own amount (own override else inherited outer) — `resolve` writes it to
+/// [`Theme::warp`] and the renderer registers each tube with its own `(k1, k2)`.
+/// `0` = dead flat; the slider runs to [`WARP_MAX`] for a full fishbowl.
 pub const WARP_DEFAULT: f32 = 1.43;
 pub const WARP_MAX: f32 = 1.5;
 
-pub struct ScreenWarp(pub f32);
-impl Global for ScreenWarp {}
-
-/// The global screen-warp amount (0 = flat). Defaults to [`WARP_DEFAULT`] until
-/// state restore says otherwise.
-pub fn screen_warp(cx: &App) -> f32 {
-    cx.try_global::<ScreenWarp>()
-        .map(|w| w.0)
-        .unwrap_or(WARP_DEFAULT)
-}
-
-/// The barrel coefficients `(k1, k2)` the renderer + hit-testing use — scaled
-/// from the warp amount, so geometry stays in sync with the shader.
-pub fn warp_k(cx: &App) -> (f32, f32) {
-    let w = screen_warp(cx);
-    (w * 0.14, w * 0.06)
-}
-
-/// Set the global screen-warp amount (clamped to `0..=WARP_MAX`) and repaint.
-pub fn set_screen_warp(cx: &mut App, amount: f32) {
-    let a = amount.clamp(0.0, WARP_MAX);
-    cx.set_global(ScreenWarp(a));
-    apply_warp(a);
-    cx.refresh_windows();
-}
-
-/// Push the warp amount into the renderer's CRT warp pass (td-crt-pass patch).
-fn apply_warp(amount: f32) {
-    #[cfg(target_os = "linux")]
-    gpui_wgpu::set_crt_warp(amount * 0.14, amount * 0.06);
-    #[cfg(not(target_os = "linux"))]
-    let _ = amount;
-}
-
-/// Global override for the CRT tracking band (the horizontal roll bar), as three
-/// normalised dials `[intensity, speed, size]` in `0..1`. `None` = use whatever
-/// each theme authored; `Some` = override every scope (like the warp dial). Set
-/// from the DISPLAY tray.
-pub struct TrackingDial(pub Option<[f32; 3]>);
-impl Global for TrackingDial {}
-
-/// The global tracking override, if any (`None` = per-theme).
-pub fn tracking_dial(cx: &App) -> Option<[f32; 3]> {
-    cx.try_global::<TrackingDial>().and_then(|d| d.0)
-}
-
-/// Set (or clear, with `None`) the global tracking override and repaint.
-pub fn set_tracking_dial(cx: &mut App, v: Option<[f32; 3]>) {
-    cx.set_global(TrackingDial(v));
-    bump_theme_gen(cx);
-    cx.refresh_windows();
+/// The barrel coefficients `(k1, k2)` the renderer + hit-testing use for a given
+/// warp amount — kept here so geometry stays in sync with the shader's scaling.
+pub fn warp_coeffs(amount: f32) -> (f32, f32) {
+    (amount * 0.14, amount * 0.06)
 }
 
 /// Monotonic counter bumped whenever a global input to [`resolve`] changes that a
@@ -1252,15 +1241,16 @@ pub fn apply_tracking(th: &mut Theme, dial: [f32; 3]) {
     th.tracking_sweep = (1.0 + sz.clamp(0.0, 1.0) * 29.0).max(1.0);
 }
 
-/// The current effective tracking dials for a theme, as normalised `0..1` — the
-/// global override if set, else `th`'s own values inverted back to dial space.
-/// Lets a slider start from where the look currently is.
-pub fn tracking_dials_of(cx: &App, th: &Theme) -> [f32; 3] {
-    tracking_dial(cx).unwrap_or([
+/// The current effective tracking dials for a resolved theme, as normalised
+/// `0..1` — `th`'s own values inverted back to dial space. Lets a slider start
+/// from where the look currently is (warp/tracking are resolved per-pane into
+/// `th`, so this reflects the scope already in effect).
+pub fn tracking_dials_of(th: &Theme) -> [f32; 3] {
+    [
         th.tracking.clamp(0.0, 1.0),
         ((60.0 - th.tracking_period) / 54.0).clamp(0.0, 1.0),
         ((th.tracking_sweep - 1.0) / 29.0).clamp(0.0, 1.0),
-    ])
+    ]
 }
 
 fn hex(value: &str) -> Option<Hsla> {
@@ -1323,6 +1313,9 @@ pub(crate) fn parse(source: &str) -> Result<Theme, String> {
         tracking: file.effects.tracking.unwrap_or(0.).clamp(0., 1.),
         tracking_period: file.effects.tracking_period.unwrap_or(14.).clamp(2., 120.),
         tracking_sweep: file.effects.tracking_sweep.unwrap_or(7.).clamp(1., 30.),
+        // Resolved per-pane from the scope's Grade::warp in resolve(); the base
+        // theme is flat until then.
+        warp: 0.0,
         flicker: file.effects.flicker.unwrap_or(0.).clamp(0., 1.),
         jiggle: file.effects.jiggle.unwrap_or(0.).clamp(0., 1.),
         screen_glare: file
@@ -1456,6 +1449,108 @@ mod tests {
         assert!(!p.inherit_theme);
         // A later outer change no longer affects this now-detached pane.
         assert_eq!(p.effective(&outer_named("field-command", 0.5)).id, "hacker");
+    }
+
+    #[test]
+    fn warp_is_per_pane_via_the_grade_group_and_does_not_leak_globally() {
+        // The reported regression: setting warp on one terminal bent EVERY
+        // terminal (warp was a single global). The fix makes warp ride the grade
+        // group, so it resolves per-pane (own override else inherited outer) and
+        // an override never touches the outer or its siblings.
+        let mut outer = outer_named("field-command", 0.5);
+        outer.grade.warp = 1.2;
+
+        // a pristine pane inherits the outer warp (grade group follows outer)
+        let inheriting = PaneTheme::default();
+        assert!(
+            (inheriting.effective(&outer).grade.warp - 1.2).abs() < 1e-6,
+            "an un-overridden pane inherits the outer warp"
+        );
+
+        // a pane that pins a flat grade bends by its OWN (zero) warp — and the
+        // outer stays bent: warp no longer leaks globally (the whole bug).
+        let mut flat = PaneTheme::default();
+        flat.set_grade(Grade {
+            warp: 0.0,
+            ..Grade::default()
+        });
+        assert!(
+            flat.effective(&outer).grade.warp.abs() < 1e-6,
+            "an overriding pane bends by its own (flat) warp"
+        );
+        assert!(
+            (outer.grade.warp - 1.2).abs() < 1e-6,
+            "the outer warp is untouched — warp no longer leaks across panes"
+        );
+
+        // the inverse: a bent pane keeps its bend even beside a FLAT outer cabinet
+        let mut bent = PaneTheme::default();
+        bent.set_grade(Grade {
+            warp: 1.4,
+            ..Grade::default()
+        });
+        let mut flat_outer = outer_named("field-command", 0.5);
+        flat_outer.grade.warp = 0.0;
+        assert!(
+            (bent.effective(&flat_outer).grade.warp - 1.4).abs() < 1e-6,
+            "a bent pane bends even when the outer cabinet is flat"
+        );
+    }
+
+    #[test]
+    fn tracking_is_per_pane_via_the_grade_group() {
+        let mut outer = outer_named("field-command", 0.5);
+        outer.grade.tracking = Some([0.9, 0.5, 0.3]);
+
+        // inherit: a pristine pane follows the outer roll bar
+        assert_eq!(
+            PaneTheme::default().effective(&outer).grade.tracking,
+            Some([0.9, 0.5, 0.3]),
+            "tracking inherits the outer dial"
+        );
+
+        // override (drop): a pane can pin a grade that clears the roll override
+        // (None) → it defers to its theme's authored roll, not the outer's dial
+        let mut quiet = PaneTheme::default();
+        quiet.set_grade(Grade {
+            tracking: None,
+            ..Grade::default()
+        });
+        assert_eq!(
+            quiet.effective(&outer).grade.tracking,
+            None,
+            "an overriding pane can drop the outer roll dial"
+        );
+
+        // override (pin): a pane rolls by its OWN dial while the outer differs
+        let mut rolled = PaneTheme::default();
+        rolled.set_grade(Grade {
+            tracking: Some([0.2, 0.8, 0.1]),
+            ..Grade::default()
+        });
+        assert_eq!(
+            rolled.effective(&outer).grade.tracking,
+            Some([0.2, 0.8, 0.1]),
+            "a pane rolls by its own dial, not the outer's"
+        );
+    }
+
+    #[test]
+    fn grade_default_carries_the_house_warp_and_neutral_resets_flat() {
+        // a fresh scope starts at the house bend; reset (neutral) is dead flat.
+        assert!((Grade::default().warp - WARP_DEFAULT).abs() < 1e-6);
+        assert_eq!(Grade::default().tracking, None);
+        assert!(Grade::neutral().warp.abs() < 1e-6, "reset = flat");
+        // warp/tracking are NOT paint grades — a curved-but-ungraded pane still
+        // takes resolve()'s neutral fast path (is_neutral ignores them).
+        let curved = Grade {
+            warp: 1.4,
+            ..Grade::neutral()
+        };
+        assert!(
+            curved.is_neutral(),
+            "warp is excluded from the paint-grade neutral check"
+        );
     }
 
     #[test]
@@ -1982,8 +2077,6 @@ pub fn init(cx: &mut App) {
         custom: custom.clone(),
     });
     cx.set_global(OuterChoice(house_outer())); // warm cabinet; state restore may change it
-    cx.set_global(ScreenWarp(WARP_DEFAULT)); // default dial; state restore may change it
-    apply_warp(WARP_DEFAULT);
     cx.set_global(ActiveTheme(custom));
 
     let mut last = mtime(&path);
