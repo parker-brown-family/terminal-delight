@@ -486,11 +486,18 @@ struct Tab {
     /// mother-bar click) lands on the terminal you were last in, not always the
     /// first. Refreshed each render from the live focus; never persisted.
     focused: Option<EntityId>,
-    /// The "binder divider" colour for THIS tab's button — a stable property of
-    /// the tab itself, NOT derived from any pane's theme. Set via ctrl+click, it
-    /// never shifts when a sub-terminal overrides its look. `None` = the plain
-    /// bezel button. Persisted as a hex string in the state file.
+    /// The "binder divider" FILL colour for THIS tab's button — a stable property
+    /// of the tab itself, NOT derived from any pane's theme. Set via the tab
+    /// config pane, it never shifts when a sub-terminal overrides its look.
+    /// `None` = inherit the group's colour (if grouped) else the plain bezel.
+    /// Persisted as a hex string in the state file.
     color: Option<Hsla>,
+    /// TEXT-colour override for this tab's label. `None` = inherit the group's
+    /// text colour (if any) else the outer bar's text colour. Persisted as hex.
+    text_color: Option<Hsla>,
+    /// The group this tab belongs to (a [`TabGroup::id`]), if any. Members of a
+    /// group render under a shared colour band on the mother bar. Persisted.
+    group: Option<u32>,
 }
 
 impl Tab {
@@ -500,8 +507,40 @@ impl Tab {
             name,
             focused: None,
             color: None,
+            text_color: None,
+            group: None,
         }
     }
+}
+
+/// A browser-style tab group: a coloured band on the mother bar wrapping a run of
+/// adjacent member tabs. The group's colour + text colour *lead* its members (a
+/// member tab can still override with its own). Persisted in the state file.
+#[derive(Clone)]
+struct TabGroup {
+    id: u32,
+    name: Option<String>,
+    /// The band/fill colour — always set (a group is never colourless).
+    color: Hsla,
+    /// Optional text-colour lead for member labels; `None` = the bar's text.
+    text_color: Option<Hsla>,
+    /// Folded into a single counted pill when true (unless it holds the active
+    /// tab, which force-expands so you never lose your place).
+    collapsed: bool,
+}
+
+/// Which colour a tab-config wheel pip edits: the button FILL or the label TEXT.
+#[derive(Clone, Copy, PartialEq)]
+enum TabPip {
+    Fill,
+    Text,
+}
+
+/// Whether the tab-config wheel writes THIS tab's override or its GROUP's colour.
+#[derive(Clone, Copy, PartialEq)]
+enum TabScope {
+    ThisTab,
+    Group,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -524,6 +563,9 @@ struct StateFile {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     track: Option<[f32; 3]>,
     tabs: Vec<SavedTab>,
+    /// Tab groups (browser-style colour bands). Absent on pre-feature files.
+    #[serde(default)]
+    groups: Vec<SavedGroup>,
 }
 
 fn default_warp() -> f32 {
@@ -556,6 +598,7 @@ impl Default for StateFile {
             warp: theme::WARP_DEFAULT, // fresh install: the classic dial
             track: None,
             tabs: Vec::new(),
+            groups: Vec::new(),
         }
     }
 }
@@ -564,11 +607,30 @@ impl Default for StateFile {
 struct SavedTab {
     #[serde(default)]
     name: Option<String>,
-    /// Per-tab "binder divider" colour as a hex string (e.g. `#3a8f4d`).
-    /// Absent on pre-feature state files → the tab is uncoloured.
+    /// Per-tab "binder divider" FILL colour as a hex string (e.g. `#3a8f4d`).
+    /// Absent on pre-feature state files → the tab inherits group/bezel.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     color: Option<String>,
+    /// Per-tab label TEXT-colour override as a hex string; absent = inherit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    text_color: Option<String>,
+    /// The group id this tab belongs to, if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    group: Option<u32>,
     node: SavedNode,
+}
+
+/// A persisted tab group. Colours are hex strings; `id` ties tabs to groups.
+#[derive(Serialize, Deserialize)]
+struct SavedGroup {
+    id: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    name: Option<String>,
+    color: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    text_color: Option<String>,
+    #[serde(default)]
+    collapsed: bool,
 }
 
 fn state_path() -> PathBuf {
@@ -794,10 +856,28 @@ struct Workspace {
     tab_drag: Option<TabDrag>,
     /// The insertion slot (0..=len) a tab-reorder release would land in.
     tab_drop: Option<usize>,
-    /// Which tab's colour tray is open, if any (ctrl+click a tab opens it).
-    tab_color_edit: Option<usize>,
-    /// Window-space anchor for the open colour tray (the ctrl+click point).
-    tab_color_at: Option<Point<Pixels>>,
+    /// Browser-style tab groups (colour bands). Members reference a group by id.
+    groups: Vec<TabGroup>,
+    /// Monotonic id source for new groups (never reused, so stale refs stay safe).
+    next_group_id: u32,
+    /// Which tab's config pane is open, if any (right-click / ctrl+click a tab).
+    tab_menu: Option<usize>,
+    /// Window-space anchor for the open tab config pane.
+    tab_menu_at: Option<Point<Pixels>>,
+    /// Whether the tab pane's wheel edits this tab's override or its group colour.
+    tab_scope: TabScope,
+    /// Which pip (Fill / Text) the tab pane's wheel + lightness slider drive.
+    tab_pip: TabPip,
+    /// The tab-pane wheel pip being dragged, if any.
+    tab_wheel_drag: Option<TabPip>,
+    /// Live tab-pane wheel rect, for polar hit-testing during a drag.
+    tab_wheel_bounds: Arc<Mutex<Option<Bounds<Pixels>>>>,
+    /// True while the tab-pane lightness slider is being dragged.
+    tab_light_drag: bool,
+    /// Live tab-pane lightness-slider rect, for ratio math during a drag.
+    tab_light_bounds: Arc<Mutex<Option<Bounds<Pixels>>>>,
+    /// Inline group-name editor: (group id, buffer) while renaming a group.
+    group_rename: Option<(u32, String)>,
     /// The pane currently mirrored in the FOCUS reading modal, if any. Weak so a
     /// closed pane (its × / shell exit) drops normally — the modal just vanishes.
     focus_read: Option<gpui::WeakEntity<TerminalView>>,
@@ -1002,8 +1082,17 @@ impl Workspace {
             tab_bounds: Arc::new(Mutex::new(std::collections::HashMap::new())),
             tab_drag: None,
             tab_drop: None,
-            tab_color_edit: None,
-            tab_color_at: None,
+            groups: Vec::new(),
+            next_group_id: 1,
+            tab_menu: None,
+            tab_menu_at: None,
+            tab_scope: TabScope::ThisTab,
+            tab_pip: TabPip::Fill,
+            tab_wheel_drag: None,
+            tab_wheel_bounds: Arc::new(Mutex::new(None)),
+            tab_light_drag: false,
+            tab_light_bounds: Arc::new(Mutex::new(None)),
+            group_rename: None,
             focus_read: None,
             scratch,
             should_move: false,
@@ -1033,12 +1122,31 @@ impl Workspace {
                 pane.update(cx, |v, _| v.name = Some(FIRST_RUN_HINT.into()));
             }
         } else {
+            ws.groups = saved
+                .groups
+                .iter()
+                .filter_map(|g| {
+                    Some(TabGroup {
+                        id: g.id,
+                        name: g.name.clone(),
+                        color: theme::parse_hex(&g.color)?,
+                        text_color: g.text_color.as_deref().and_then(theme::parse_hex),
+                        collapsed: g.collapsed,
+                    })
+                })
+                .collect();
+            ws.next_group_id = ws.groups.iter().map(|g| g.id + 1).max().unwrap_or(1);
+            let live: std::collections::HashSet<u32> = ws.groups.iter().map(|g| g.id).collect();
             for t in &saved.tabs {
                 let root = build_node(&t.node, window, cx);
                 let mut tab = Tab::new(root, t.name.clone());
                 tab.color = t.color.as_deref().and_then(theme::parse_hex);
+                tab.text_color = t.text_color.as_deref().and_then(theme::parse_hex);
+                // drop a dangling group ref (a group that failed to parse / vanished)
+                tab.group = t.group.filter(|g| live.contains(g));
                 ws.tabs.push(tab);
             }
+            ws.prune_groups();
             ws.active = saved.active.min(ws.tabs.len() - 1);
             ws.focus_active(window, cx);
         }
@@ -1113,7 +1221,20 @@ impl Workspace {
                 .map(|t| SavedTab {
                     name: t.name.clone(),
                     color: t.color.map(hsla_to_hex),
+                    text_color: t.text_color.map(hsla_to_hex),
+                    group: t.group,
                     node: t.root.to_saved(cx),
+                })
+                .collect(),
+            groups: self
+                .groups
+                .iter()
+                .map(|g| SavedGroup {
+                    id: g.id,
+                    name: g.name.clone(),
+                    color: hsla_to_hex(g.color),
+                    text_color: g.text_color.map(hsla_to_hex),
+                    collapsed: g.collapsed,
                 })
                 .collect(),
         };
@@ -1142,12 +1263,15 @@ impl Workspace {
         let pane = make_pane(window, cx);
         self.tabs.push(Tab::new(Node::Leaf(pane), None));
         self.active = self.tabs.len() - 1;
-        // make_pane focuses the pane at creation, but that doesn't stick before
-        // it's mounted under the new tab — re-assert focus now so the very next
-        // keystroke lands in the fresh terminal (matches activate_tab/split).
-        self.focus_active(window, cx);
         self.save(cx);
         cx.notify();
+        // Defer the focus: new_tab fires from a mother-bar mouse-down listener, so
+        // the root container's tracked focus handle would grab focus back as the
+        // event bubbles (same race as activate_tab/split). A synchronous
+        // focus_active here never sticks — the new terminal opens unfocused. Running
+        // after the event settles makes the fresh pane light up as the active
+        // terminal so the very next keystroke lands in it.
+        cx.defer_in(window, |ws, window, cx| ws.focus_active(window, cx));
     }
 
     /// Split ONLY the focused terminal; everything else keeps its exact space.
@@ -1237,6 +1361,178 @@ impl Workspace {
         cx.notify();
     }
 
+    // ---- tab groups + per-tab/group colour ------------------------------------
+
+    /// The group tab `i` belongs to, if any (resolved by id).
+    fn group_of(&self, i: usize) -> Option<&TabGroup> {
+        let id = self.tabs.get(i)?.group?;
+        self.groups.iter().find(|g| g.id == id)
+    }
+
+    /// Position of group `id` in `self.groups`, if it exists.
+    fn group_index(&self, id: u32) -> Option<usize> {
+        self.groups.iter().position(|g| g.id == id)
+    }
+
+    /// Mutable handle to tab `i`'s group (split borrow: read the id first).
+    fn group_mut_of(&mut self, i: usize) -> Option<&mut TabGroup> {
+        let id = self.tabs.get(i)?.group?;
+        self.groups.iter_mut().find(|g| g.id == id)
+    }
+
+    /// The *resolved* (fill, text) colours for tab `i`'s button: the tab's own
+    /// override wins, else the group leads, else `None` (plain bezel / bar text).
+    fn resolved_tab_colors(&self, i: usize) -> (Option<Hsla>, Option<Hsla>) {
+        let Some(tab) = self.tabs.get(i) else {
+            return (None, None);
+        };
+        let g = self.group_of(i);
+        let fill = tab.color.or_else(|| g.map(|gr| gr.color));
+        let text = tab.text_color.or_else(|| g.and_then(|gr| gr.text_color));
+        (fill, text)
+    }
+
+    /// The two colours the tab pane's wheel shows for tab `i` in the active
+    /// scope. Unset values fall back to the bar's natural surface/text so a pip
+    /// always sits somewhere grabbable.
+    fn tab_scope_colors(&self, i: usize, cx: &App) -> (Hsla, Hsla) {
+        let th = theme::theme(cx);
+        match self.tab_scope {
+            TabScope::Group => match self.group_of(i) {
+                Some(g) => (g.color, g.text_color.unwrap_or(th.text)),
+                None => (th.surface, th.text),
+            },
+            TabScope::ThisTab => {
+                let (rf, rt) = self.resolved_tab_colors(i);
+                (rf.unwrap_or(th.surface), rt.unwrap_or(th.text))
+            }
+        }
+    }
+
+    /// The active-scope colour of one pip (for lightness / drag math).
+    fn tab_pip_color(&self, i: usize, pip: TabPip, cx: &App) -> Hsla {
+        let (f, t) = self.tab_scope_colors(i, cx);
+        match pip {
+            TabPip::Fill => f,
+            TabPip::Text => t,
+        }
+    }
+
+    /// The two wheel markers (pip, glyph, colour) for tab `i` in the active scope.
+    fn tab_pip_colors(&self, i: usize, cx: &App) -> [(TabPip, &'static str, Hsla); 2] {
+        let (f, t) = self.tab_scope_colors(i, cx);
+        [(TabPip::Fill, "▣", f), (TabPip::Text, "T", t)]
+    }
+
+    /// Write a pip colour into the active scope (this tab's override, or its
+    /// group). `None` clears a tab override / a group's text lead; a group's fill
+    /// is never cleared (a group always has a colour).
+    fn tab_set_pip(&mut self, pip: TabPip, hex: Option<String>, cx: &mut Context<Self>) {
+        let Some(i) = self.tab_menu else { return };
+        let col = hex.as_deref().and_then(theme::parse_hex);
+        match (self.tab_scope, pip) {
+            (TabScope::ThisTab, TabPip::Fill) => {
+                if let Some(t) = self.tabs.get_mut(i) {
+                    t.color = col;
+                }
+            }
+            (TabScope::ThisTab, TabPip::Text) => {
+                if let Some(t) = self.tabs.get_mut(i) {
+                    t.text_color = col;
+                }
+            }
+            (TabScope::Group, TabPip::Fill) => {
+                if let (Some(c), Some(g)) = (col, self.group_mut_of(i)) {
+                    g.color = c;
+                }
+            }
+            (TabScope::Group, TabPip::Text) => {
+                if let Some(g) = self.group_mut_of(i) {
+                    g.text_color = col;
+                }
+            }
+        }
+        self.save(cx);
+        cx.notify();
+    }
+
+    /// Drop empty groups (no member tabs reference them). Run after any change
+    /// that can orphan a group (close tab, remove-from-group, load).
+    fn prune_groups(&mut self) {
+        let live: std::collections::HashSet<u32> =
+            self.tabs.iter().filter_map(|t| t.group).collect();
+        self.groups.retain(|g| live.contains(&g.id));
+    }
+
+    /// Start a fresh single-member group from tab `i`, seeded with its current
+    /// fill (or a default teal). Switches the pane's wheel to the Group scope.
+    fn new_group_from(&mut self, i: usize, cx: &mut Context<Self>) {
+        let Some(tab) = self.tabs.get(i) else { return };
+        let color = tab.color.unwrap_or_else(|| hsla(0.47, 0.5, 0.5, 1.0));
+        let id = self.next_group_id;
+        self.next_group_id += 1;
+        self.groups.push(TabGroup {
+            id,
+            name: None,
+            color,
+            text_color: None,
+            collapsed: false,
+        });
+        if let Some(t) = self.tabs.get_mut(i) {
+            t.group = Some(id);
+        }
+        self.tab_scope = TabScope::Group;
+        self.save(cx);
+        cx.notify();
+    }
+
+    /// Assign tab `i` to group `gid` and slide it adjacent to that group's run so
+    /// the colour band stays continuous. Updates `tab_menu` to the tab's new
+    /// index (the move reorders the strip).
+    fn add_tab_to_group(&mut self, i: usize, gid: u32, cx: &mut Context<Self>) {
+        if i >= self.tabs.len() || self.tabs[i].group == Some(gid) {
+            return;
+        }
+        self.tabs[i].group = Some(gid);
+        // the slot just past the group's current run (excluding i itself)
+        let last = self
+            .tabs
+            .iter()
+            .enumerate()
+            .filter(|(j, t)| *j != i && t.group == Some(gid))
+            .map(|(j, _)| j)
+            .max();
+        if let Some(last) = last {
+            let slot = last + 1;
+            let (dest, _) = reorder_indices(i, slot, self.tabs.len(), self.active);
+            self.move_tab(i, slot, cx);
+            self.tab_menu = Some(dest);
+        } else {
+            self.save(cx);
+        }
+        cx.notify();
+    }
+
+    /// Remove tab `i` from its group and drop the group if it's now empty.
+    fn remove_from_group(&mut self, i: usize, cx: &mut Context<Self>) {
+        if let Some(t) = self.tabs.get_mut(i) {
+            t.group = None;
+        }
+        self.prune_groups();
+        self.tab_scope = TabScope::ThisTab;
+        self.save(cx);
+        cx.notify();
+    }
+
+    /// Fold / unfold a group.
+    fn toggle_group_collapsed(&mut self, gid: u32, cx: &mut Context<Self>) {
+        if let Some(g) = self.groups.iter_mut().find(|g| g.id == gid) {
+            g.collapsed = !g.collapsed;
+            self.save(cx);
+            cx.notify();
+        }
+    }
+
     /// Open the FOCUS reading modal on `pane`: flag it read (so Esc closes the
     /// modal), and focus it so every keystroke still lands in the real terminal
     /// while you read it blown up. Replaces any previously-read pane.
@@ -1319,11 +1615,13 @@ impl Workspace {
             return;
         }
         self.confirm_close = None;
+        self.tab_menu = None;
         self.tabs.remove(i);
         if self.tabs.is_empty() {
             cx.quit();
             return;
         }
+        self.prune_groups();
         self.active = self.active.min(self.tabs.len() - 1);
         self.focus_active(window, cx);
         self.save(cx);
@@ -1400,6 +1698,39 @@ impl Workspace {
         }
         if self.osd_menu.is_some() && ks.key.as_str() == "escape" {
             self.osd_menu = None;
+            cx.notify();
+            return;
+        }
+        // the inline group-name editor owns the keyboard while open
+        if let Some((gid, mut buf)) = self.group_rename.take() {
+            match ks.key.as_str() {
+                "enter" | "escape" => {
+                    if ks.key.as_str() == "enter" {
+                        if let Some(g) = self.groups.iter_mut().find(|g| g.id == gid) {
+                            g.name = (!buf.trim().is_empty()).then(|| buf.trim().to_string());
+                        }
+                        self.save(cx);
+                    }
+                    self.focus_active(window, cx);
+                }
+                "backspace" => {
+                    buf.pop();
+                    self.group_rename = Some((gid, buf));
+                }
+                _ => {
+                    if let Some(ch) = ks.key_char.as_ref() {
+                        if buf.chars().count() < 18 {
+                            buf.push_str(ch);
+                        }
+                    }
+                    self.group_rename = Some((gid, buf));
+                }
+            }
+            cx.notify();
+            return;
+        }
+        if self.tab_menu.is_some() && ks.key.as_str() == "escape" {
+            self.tab_menu = None;
             cx.notify();
             return;
         }
@@ -1601,6 +1932,8 @@ impl Workspace {
                 || self.warp_drag
                 || self.slider_drag.is_some()
                 || self.track_drag.is_some()
+                || self.tab_wheel_drag.is_some()
+                || self.tab_light_drag
                 || self.drag_split.is_some())
         {
             self.scrubbing = false;
@@ -1609,6 +1942,8 @@ impl Workspace {
             self.warp_drag = false;
             self.slider_drag = None;
             self.track_drag = None;
+            self.tab_wheel_drag = None;
+            self.tab_light_drag = false;
             self.drag_split = None;
             cx.notify();
             return;
@@ -1681,6 +2016,35 @@ impl Workspace {
                 }
             }
         }
+        // tab-config wheel pip drag: hue + saturation follow the cursor, keep `l`
+        if let (Some(pip), Some(i)) = (self.tab_wheel_drag, self.tab_menu) {
+            if ev.pressed_button == Some(MouseButton::Left) {
+                let b = *self.tab_wheel_bounds.lock().unwrap();
+                if let Some(b) = b {
+                    let l = self.tab_pip_color(i, pip, cx).l;
+                    if let Some(hex) = disk_color_at(b, ev.position.x, ev.position.y, l) {
+                        self.tab_set_pip(pip, Some(hex), cx);
+                    }
+                }
+            }
+        }
+        // tab-config lightness drag for the active pip
+        if self.tab_light_drag && ev.pressed_button == Some(MouseButton::Left) {
+            if let Some(i) = self.tab_menu {
+                let b = *self.tab_light_bounds.lock().unwrap();
+                if let Some(b) = b {
+                    let frac = ((f32::from(ev.position.x) - f32::from(b.origin.x))
+                        / f32::from(b.size.width).max(1.))
+                    .clamp(0., 1.);
+                    let c = self.tab_pip_color(i, self.tab_pip, cx);
+                    self.tab_set_pip(
+                        self.tab_pip,
+                        Some(hsla_to_hex(hsla(c.h, c.s, frac, 1.))),
+                        cx,
+                    );
+                }
+            }
+        }
     }
 
     fn on_mouse_up(&mut self, ev: &MouseUpEvent, window: &mut Window, cx: &mut Context<Self>) {
@@ -1689,6 +2053,8 @@ impl Workspace {
             || std::mem::take(&mut self.light_drag)
             || std::mem::take(&mut self.warp_drag)
             || self.track_drag.take().is_some()
+            || self.tab_wheel_drag.take().is_some()
+            || std::mem::take(&mut self.tab_light_drag)
         {
             self.save(cx);
             cx.notify();
@@ -1953,13 +2319,26 @@ impl Workspace {
         let tabs = std::mem::take(&mut self.tabs);
         self.tabs = tabs
             .into_iter()
-            .filter_map(|t| t.root.reap(cx).map(|root| Tab::new(root, t.name)))
+            .filter_map(|t| {
+                // rebuild around the live subtree but CARRY the tab's identity —
+                // name, colour overrides, and group membership all survive a reap
+                t.root.reap(cx).map(|root| Tab {
+                    root,
+                    name: t.name,
+                    focused: t.focused,
+                    color: t.color,
+                    text_color: t.text_color,
+                    group: t.group,
+                })
+            })
             .collect();
         if self.pane_count() != had {
             if self.tabs.is_empty() {
                 cx.quit();
                 return;
             }
+            // a reaped-away tab may have emptied a group
+            self.prune_groups();
             self.active = self.active.min(self.tabs.len() - 1);
             self.focus_active(window, cx);
             self.save(cx);
@@ -2285,18 +2664,7 @@ impl Workspace {
     /// mid) is what lets the lightness slider reach white/grey/black.
     fn wheel_color_at(&self, x: Pixels, y: Pixels, l: f32) -> Option<String> {
         let b = (*self.wheel_bounds.lock().unwrap())?;
-        let cx = f32::from(b.origin.x) + f32::from(b.size.width) / 2.0;
-        let cy = f32::from(b.origin.y) + f32::from(b.size.height) / 2.0;
-        let rad = f32::from(b.size.width).min(f32::from(b.size.height)) / 2.0;
-        if rad <= 0.0 {
-            return None;
-        }
-        let (dx, dy) = (f32::from(x) - cx, f32::from(y) - cy);
-        let dist = (dx * dx + dy * dy).sqrt().min(rad);
-        let ang = dy.atan2(dx) / std::f32::consts::TAU;
-        let hue = ang - ang.floor();
-        let sat = (dist / rad).min(1.0);
-        Some(hsla_to_hex(hsla(hue, sat, l.clamp(0.0, 1.0), 1.0)))
+        disk_color_at(b, x, y, l)
     }
 
     /// The current effective colour of one wheel marker (override or derived).
@@ -2568,36 +2936,7 @@ impl Workspace {
                     move |bounds, _, _| {
                         *store.lock().unwrap() = Some(bounds);
                     },
-                    move |bounds: Bounds<Pixels>, _, window, _| {
-                        let cx = f32::from(bounds.origin.x) + f32::from(bounds.size.width) / 2.0;
-                        let cy = f32::from(bounds.origin.y) + f32::from(bounds.size.height) / 2.0;
-                        let rad =
-                            f32::from(bounds.size.width).min(f32::from(bounds.size.height)) / 2.0;
-                        let cell = 3.5_f32;
-                        let mut yy = cy - rad;
-                        while yy <= cy + rad {
-                            let mut xx = cx - rad;
-                            while xx <= cx + rad {
-                                let dx = xx + cell / 2.0 - cx;
-                                let dy = yy + cell / 2.0 - cy;
-                                let dist = (dx * dx + dy * dy).sqrt();
-                                if dist <= rad {
-                                    let ang = dy.atan2(dx) / std::f32::consts::TAU;
-                                    let hue = ang - ang.floor();
-                                    let sat = (dist / rad).min(1.0);
-                                    window.paint_quad(fill(
-                                        Bounds::new(
-                                            point(px(xx), px(yy)),
-                                            size(px(cell + 0.6), px(cell + 0.6)),
-                                        ),
-                                        hsla(hue, sat, 0.55, 1.0),
-                                    ));
-                                }
-                                xx += cell;
-                            }
-                            yy += cell;
-                        }
-                    },
+                    move |bounds: Bounds<Pixels>, _, window, _| paint_hsv_disk(bounds, window),
                 )
                 .size_full(),
             );
@@ -2773,6 +3112,445 @@ impl Workspace {
             .child(label.to_string())
         }
     }
+
+    /// Open the tab config pane for tab `i`, anchored at `at`. Defaults the wheel
+    /// scope to THIS tab and the active pip to Fill.
+    fn open_tab_menu(&mut self, i: usize, at: Point<Pixels>, cx: &mut Context<Self>) {
+        self.tab_menu = Some(i);
+        self.tab_menu_at = Some(at);
+        self.tab_drag = None;
+        self.tab_scope = TabScope::ThisTab;
+        self.tab_pip = TabPip::Fill;
+        cx.notify();
+    }
+
+    /// One mother-bar tab button (or its inline rename box). Tinted by the tab's
+    /// resolved fill/text (own override → group lead → bezel default). Right-click
+    /// or ctrl+click opens the tab config pane; ✎ / double-click rename.
+    fn tab_button(&self, i: usize, cx: &mut Context<Self>) -> gpui::Div {
+        let th = theme::theme(cx);
+        let is_active = i == self.active;
+        // the inline rename box owns this slot while renaming
+        if self.renaming.as_ref().is_some_and(|(ri, _)| *ri == i) {
+            let buf = self
+                .renaming
+                .as_ref()
+                .map(|(_, b)| b.clone())
+                .unwrap_or_default();
+            return div()
+                .px_2()
+                .py_0p5()
+                .rounded_sm()
+                .border_1()
+                .border_color(th.accent)
+                .bg(darken(th.bg, 0.8))
+                .text_size(px(11.))
+                .text_color(th.text)
+                .flex()
+                .flex_row()
+                .items_center()
+                // clicking the edit box itself keeps editing (don't bubble to the
+                // root's commit-on-click-off handler)
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .child(buf)
+                .child(div().w(px(6.)).h(px(13.)).bg(th.cursor));
+        }
+        let label = self.tabs[i]
+            .name
+            .clone()
+            .unwrap_or_else(|| format!("{}", i + 1));
+        let (fill, text) = self.resolved_tab_colors(i);
+        // the per-tab close affordance — an X in the tab's own frame
+        let close_x = div()
+            .px_1()
+            .text_size(px(12.))
+            .text_color(text.unwrap_or(if is_active { th.text } else { th.faint }))
+            .cursor_pointer()
+            .child("×")
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
+                    cx.stop_propagation();
+                    ws.request_close_tab(i, window, cx);
+                }),
+            );
+        let tab_grp = SharedString::from(format!("tab-grp-{i}"));
+        let pencil_col = text.unwrap_or(th.text).alpha(0.8);
+        // hover-revealed ✎ affordance: invites the rename without a word
+        let pencil = div()
+            .id(SharedString::from(format!("tab-pencil-{i}")))
+            .text_size(px(10.))
+            .text_color(hsla(0., 0., 0., 0.)) // hidden until the tab is hovered
+            .group_hover(tab_grp.clone(), move |s| s.text_color(pencil_col))
+            .cursor_pointer()
+            .child("✎")
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
+                    cx.stop_propagation();
+                    let seed = ws.tabs[i].name.clone().unwrap_or_default();
+                    ws.renaming = Some((i, seed));
+                    window.focus(&ws.focus_handle, cx);
+                    cx.notify();
+                }),
+            );
+        // tint to the resolved fill (tab override or group lead); the resolved
+        // text colour rides over the bezel's default label colour
+        let mut btn = Self::bezel_btn(&th, &label, is_active);
+        if let Some(c) = fill {
+            btn = btn
+                .bg(linear_gradient(
+                    135.,
+                    linear_color_stop(brighten(c, 1.35), 0.),
+                    linear_color_stop(darken(c, 0.6), 1.),
+                ))
+                .border_color(if is_active { th.accent } else { c });
+        }
+        if let Some(tc) = text {
+            btn = btn.text_color(tc);
+        }
+        let store = self.tab_bounds.clone();
+        let drop_hi =
+            matches!(&self.drop_target, Some(DropTarget::Tab { index, .. }) if *index == i);
+        btn.group(tab_grp)
+            .relative()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap_1()
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |ws, ev: &MouseDownEvent, window, cx| {
+                    // don't let the click bubble to the root's focus handle, which
+                    // would steal focus from the pane
+                    cx.stop_propagation();
+                    if ev.modifiers.control {
+                        // ctrl+click → open this tab's config pane
+                        ws.open_tab_menu(i, ev.position, cx);
+                    } else if ev.click_count >= 2 {
+                        // double-click to rename (the file-manager gesture)
+                        let seed = ws.tabs[i].name.clone().unwrap_or_default();
+                        ws.renaming = Some((i, seed));
+                        window.focus(&ws.focus_handle, cx);
+                        cx.notify();
+                    } else {
+                        // select now; arm a reorder drag that engages only if the
+                        // cursor travels far enough (else it stays a plain click)
+                        ws.activate_tab(i, window, cx);
+                        ws.tab_drag = Some(TabDrag {
+                            from: i,
+                            start: ev.position,
+                            at: ev.position,
+                            engaged: false,
+                        });
+                        ws.tab_drop = None;
+                    }
+                }),
+            )
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(move |ws, ev: &MouseDownEvent, _w, cx| {
+                    // right-click → open this tab's config pane (rename + colour +
+                    // group), like the other configuration trays
+                    cx.stop_propagation();
+                    ws.open_tab_menu(i, ev.position, cx);
+                }),
+            )
+            .child(
+                // measure this tab button's box for "drop onto a tab"
+                div().absolute().inset_0().child(
+                    canvas(
+                        move |bounds, _, _| {
+                            store.lock().unwrap().insert(i, bounds);
+                        },
+                        |_, _, _, _| {},
+                    )
+                    .size_full(),
+                ),
+            )
+            .when(drop_hi, |d| {
+                d.child(
+                    div()
+                        .absolute()
+                        .inset_0()
+                        .rounded_sm()
+                        .border_1()
+                        .border_color(th.accent)
+                        .bg(th.accent.alpha(0.25)),
+                )
+            })
+            .child(pencil)
+            .child(close_x)
+    }
+
+    /// The handle at the left of an expanded group's band: shows the group name
+    /// in its colour; click folds the group.
+    fn group_chip(&self, gid: u32, cx: &mut Context<Self>) -> gpui::Stateful<gpui::Div> {
+        let th = theme::theme(cx);
+        let g = self.groups.iter().find(|g| g.id == gid);
+        let color = g.map(|g| g.color).unwrap_or(th.accent);
+        let name = g.and_then(|g| g.name.clone());
+        let glyph_col = if color.l > 0.55 {
+            hsla(0., 0., 0.08, 0.95)
+        } else {
+            white()
+        };
+        // double-click the chip to rename the group inline
+        let mut chip = div()
+            .id(SharedString::from(format!("grp-chip-{gid}")))
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap_1()
+            .px_1()
+            .h(px(18.))
+            .rounded_sm()
+            .bg(color)
+            .cursor_pointer()
+            .text_size(px(9.))
+            .font_weight(gpui::FontWeight::EXTRA_BOLD)
+            .text_color(glyph_col)
+            .child("▾");
+        if let Some((rg, buf)) = self.group_rename.as_ref().filter(|(rg, _)| *rg == gid) {
+            let _ = rg;
+            chip = chip
+                .child(buf.clone())
+                .child(div().w(px(5.)).h(px(11.)).bg(glyph_col));
+        } else if let Some(n) = name {
+            chip = chip.child(n);
+        }
+        chip.on_mouse_down(
+            MouseButton::Left,
+            cx.listener(move |ws, ev: &MouseDownEvent, window, cx| {
+                cx.stop_propagation();
+                if ev.click_count >= 2 {
+                    let seed = ws
+                        .groups
+                        .iter()
+                        .find(|g| g.id == gid)
+                        .and_then(|g| g.name.clone())
+                        .unwrap_or_default();
+                    ws.group_rename = Some((gid, seed));
+                    window.focus(&ws.focus_handle, cx);
+                    cx.notify();
+                } else {
+                    ws.toggle_group_collapsed(gid, cx);
+                }
+            }),
+        )
+    }
+
+    /// A collapsed group folded into one counted pill; click expands.
+    fn group_pill(
+        &self,
+        gid: u32,
+        count: usize,
+        cx: &mut Context<Self>,
+    ) -> gpui::Stateful<gpui::Div> {
+        let th = theme::theme(cx);
+        let g = self.groups.iter().find(|g| g.id == gid);
+        let color = g.map(|g| g.color).unwrap_or(th.accent);
+        let name = g
+            .and_then(|g| g.name.clone())
+            .unwrap_or_else(|| "group".into());
+        let glyph_col = if color.l > 0.55 {
+            hsla(0., 0., 0.08, 0.95)
+        } else {
+            white()
+        };
+        div()
+            .id(SharedString::from(format!("grp-pill-{gid}")))
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap_1()
+            .px_2()
+            .py_0p5()
+            .rounded_sm()
+            .border_1()
+            .border_color(color)
+            .bg(linear_gradient(
+                135.,
+                linear_color_stop(brighten(color, 1.2), 0.),
+                linear_color_stop(darken(color, 0.6), 1.),
+            ))
+            .cursor_pointer()
+            .text_size(px(11.))
+            .font_weight(gpui::FontWeight::EXTRA_BOLD)
+            .text_color(glyph_col)
+            .child("▸")
+            .child(name)
+            .child(format!("{count}"))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                    cx.stop_propagation();
+                    ws.toggle_group_collapsed(gid, cx);
+                }),
+            )
+    }
+
+    /// The tab-config wheel: the same HSV disk as the theme breakout, carrying
+    /// just TWO pips — ▣ Fill + T Text — scoped to one tab (or its group).
+    fn tab_color_wheel(&self, i: usize, cx: &mut Context<Self>) -> gpui::Div {
+        const D: f32 = 120.0;
+        let r = D / 2.0;
+        let store = self.tab_wheel_bounds.clone();
+        let markers = self.tab_pip_colors(i, cx);
+        let active = self.tab_pip;
+        let mut wheel = div()
+            .w(px(D))
+            .h(px(D))
+            .relative()
+            .rounded_full()
+            .cursor_pointer()
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |ws, ev: &MouseDownEvent, _w, cx| {
+                    cx.stop_propagation();
+                    let Some(i) = ws.tab_menu else { return };
+                    let Some(b) = *ws.tab_wheel_bounds.lock().unwrap() else {
+                        return;
+                    };
+                    let cols: Vec<Hsla> = ws
+                        .tab_pip_colors(i, cx)
+                        .iter()
+                        .map(|(_, _, c)| *c)
+                        .collect();
+                    if let Some(idx) = disk_grab(b, ev.position.x, ev.position.y, &cols) {
+                        let pip = ws.tab_pip_colors(i, cx)[idx].0;
+                        ws.tab_pip = pip;
+                        ws.tab_wheel_drag = Some(pip);
+                        if let Some(hex) =
+                            disk_color_at(b, ev.position.x, ev.position.y, cols[idx].l)
+                        {
+                            ws.tab_set_pip(pip, Some(hex), cx);
+                        }
+                    }
+                }),
+            )
+            .child(
+                canvas(
+                    move |bounds, _, _| {
+                        *store.lock().unwrap() = Some(bounds);
+                    },
+                    move |bounds: Bounds<Pixels>, _, window, _| paint_hsv_disk(bounds, window),
+                )
+                .size_full(),
+            );
+        // paint the active pip last so it sits on top of a pile (greyscale stack)
+        let mut ordered: Vec<_> = markers.into_iter().collect();
+        ordered.sort_by_key(|(t, _, _)| *t == active);
+        for (t, glyph, c) in ordered {
+            let ang = c.h.rem_euclid(1.0) * std::f32::consts::TAU;
+            let sat = c.s.clamp(0.0, 1.0);
+            let (dx, dy) = (r + ang.cos() * sat * r, r + ang.sin() * sat * r);
+            let glyph_col = if c.l > 0.55 {
+                hsla(0., 0., 0.08, 0.95)
+            } else {
+                white()
+            };
+            let ring = if t == active {
+                hsla(0.09, 0.9, 0.6, 1.0)
+            } else {
+                white()
+            };
+            wheel = wheel.child(
+                div()
+                    .absolute()
+                    .left(px(dx - 9.0))
+                    .top(px(dy - 9.0))
+                    .w(px(18.))
+                    .h(px(18.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded_full()
+                    .border_2()
+                    .border_color(ring)
+                    .bg(c)
+                    .text_size(px(10.))
+                    .font_weight(gpui::FontWeight::EXTRA_BOLD)
+                    .text_color(glyph_col)
+                    .shadow(vec![BoxShadow {
+                        color: hsla(0., 0., 0., 0.7),
+                        offset: point(px(0.), px(0.)),
+                        blur_radius: px(2.),
+                        spread_radius: px(1.),
+                        inset: false,
+                    }])
+                    .child(glyph),
+            );
+        }
+        wheel
+    }
+
+    /// Lightness slider for the active tab pip (dark→light ramp of its hue).
+    fn tab_lightness_bar(&self, i: usize, cx: &mut Context<Self>) -> gpui::Div {
+        const W: f32 = 120.0;
+        let store = self.tab_light_bounds.clone();
+        let c = self.tab_pip_color(i, self.tab_pip, cx);
+        let l = c.l.clamp(0.0, 1.0);
+        div()
+            .w(px(W))
+            .h(px(14.))
+            .relative()
+            .cursor_pointer()
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |ws, ev: &MouseDownEvent, _w, cx| {
+                    cx.stop_propagation();
+                    ws.tab_light_drag = true;
+                    let Some(i) = ws.tab_menu else { return };
+                    let Some(b) = *ws.tab_light_bounds.lock().unwrap() else {
+                        return;
+                    };
+                    let frac = ((f32::from(ev.position.x) - f32::from(b.origin.x))
+                        / f32::from(b.size.width).max(1.))
+                    .clamp(0., 1.);
+                    let cc = ws.tab_pip_color(i, ws.tab_pip, cx);
+                    ws.tab_set_pip(
+                        ws.tab_pip,
+                        Some(hsla_to_hex(hsla(cc.h, cc.s, frac, 1.))),
+                        cx,
+                    );
+                }),
+            )
+            .child(
+                canvas(
+                    move |bounds, _, _| {
+                        *store.lock().unwrap() = Some(bounds);
+                    },
+                    |_, _, _, _| {},
+                )
+                .size_full(),
+            )
+            .child(
+                div()
+                    .absolute()
+                    .inset_0()
+                    .rounded_full()
+                    .border_1()
+                    .border_color(hsla(0., 0., 0., 0.4))
+                    .bg(linear_gradient(
+                        90.,
+                        linear_color_stop(hsla(c.h, c.s, 0.06, 1.), 0.),
+                        linear_color_stop(hsla(c.h, c.s, 0.97, 1.), 1.),
+                    )),
+            )
+            .child(
+                div()
+                    .absolute()
+                    .left(px((W * l - 6.0).clamp(0.0, W - 12.0)))
+                    .top(px(1.))
+                    .w(px(12.))
+                    .h(px(12.))
+                    .rounded_full()
+                    .border_2()
+                    .border_color(white())
+                    .bg(c),
+            )
+    }
 }
 
 /// Hover popup for a theme button. Shows the full theme name (the in-button
@@ -2945,6 +3723,77 @@ fn hsla_to_hex(c: Hsla) -> String {
     format!("#{:02x}{:02x}{:02x}", to(r1), to(g1), to(b1))
 }
 
+/// Paint a canvas-rendered HSV disk into `bounds` (hue = angle, saturation =
+/// radius, fixed mid lightness). Shared by the theme breakout wheel and the
+/// tab-config wheel so the disk looks identical in both.
+fn paint_hsv_disk(bounds: Bounds<Pixels>, window: &mut Window) {
+    let cx = f32::from(bounds.origin.x) + f32::from(bounds.size.width) / 2.0;
+    let cy = f32::from(bounds.origin.y) + f32::from(bounds.size.height) / 2.0;
+    let rad = f32::from(bounds.size.width).min(f32::from(bounds.size.height)) / 2.0;
+    let cell = 3.5_f32;
+    let mut yy = cy - rad;
+    while yy <= cy + rad {
+        let mut xx = cx - rad;
+        while xx <= cx + rad {
+            let dx = xx + cell / 2.0 - cx;
+            let dy = yy + cell / 2.0 - cy;
+            let dist = (dx * dx + dy * dy).sqrt();
+            if dist <= rad {
+                let ang = dy.atan2(dx) / std::f32::consts::TAU;
+                let hue = ang - ang.floor();
+                let sat = (dist / rad).min(1.0);
+                window.paint_quad(fill(
+                    Bounds::new(point(px(xx), px(yy)), size(px(cell + 0.6), px(cell + 0.6))),
+                    hsla(hue, sat, 0.55, 1.0),
+                ));
+            }
+            xx += cell;
+        }
+        yy += cell;
+    }
+}
+
+/// Map a point in a wheel `bounds` to a `#rrggbb` at lightness `l` (polar:
+/// angle → hue, radius → saturation). The inverse of where a marker is painted.
+fn disk_color_at(bounds: Bounds<Pixels>, x: Pixels, y: Pixels, l: f32) -> Option<String> {
+    let cx = f32::from(bounds.origin.x) + f32::from(bounds.size.width) / 2.0;
+    let cy = f32::from(bounds.origin.y) + f32::from(bounds.size.height) / 2.0;
+    let rad = f32::from(bounds.size.width).min(f32::from(bounds.size.height)) / 2.0;
+    if rad <= 0.0 {
+        return None;
+    }
+    let (dx, dy) = (f32::from(x) - cx, f32::from(y) - cy);
+    let dist = (dx * dx + dy * dy).sqrt().min(rad);
+    let ang = dy.atan2(dx) / std::f32::consts::TAU;
+    let hue = ang - ang.floor();
+    let sat = (dist / rad).min(1.0);
+    Some(hsla_to_hex(hsla(hue, sat, l.clamp(0.0, 1.0), 1.0)))
+}
+
+/// Index of the marker `colors[i]` whose painted position in `bounds` is nearest
+/// the press at `(x, y)` — i.e. which pip the user grabbed. `None` if degenerate.
+fn disk_grab(bounds: Bounds<Pixels>, x: Pixels, y: Pixels, colors: &[Hsla]) -> Option<usize> {
+    let rad = f32::from(bounds.size.width).min(f32::from(bounds.size.height)) / 2.0;
+    if rad <= 0.0 {
+        return None;
+    }
+    let cx0 = f32::from(bounds.origin.x) + f32::from(bounds.size.width) / 2.0;
+    let cy0 = f32::from(bounds.origin.y) + f32::from(bounds.size.height) / 2.0;
+    let (px_, py_) = (f32::from(x), f32::from(y));
+    colors
+        .iter()
+        .enumerate()
+        .map(|(i, c)| {
+            let ang = c.h.rem_euclid(1.0) * std::f32::consts::TAU;
+            let sat = c.s.clamp(0.0, 1.0);
+            let mx = cx0 + ang.cos() * sat * rad;
+            let my = cy0 + ang.sin() * sat * rad;
+            (i, (mx - px_).powi(2) + (my - py_).powi(2))
+        })
+        .min_by(|a, b| a.1.total_cmp(&b.1))
+        .map(|(i, _)| i)
+}
+
 /// Which side of `rect` the cursor `pos` is nearest — the side a dropped pane
 /// will split toward. Picks the closest of the four edges (top/bottom win ties).
 fn zone_of(rect: Bounds<Pixels>, pos: Point<Pixels>) -> Zone {
@@ -3000,6 +3849,9 @@ fn render_node(
                 .rounded_md()
                 .border_1()
                 .border_color(if is_focused { acc } else { th.faint })
+                // highlighted pane gets a 2x-thick accent border (drawn inside the
+                // flex box, so the grid never reflows — only inner content shifts 1px)
+                .when(is_focused, |d| d.border_2())
                 .when(is_focused, |d| {
                     d.shadow(vec![
                         // crisp 1px outer ring: reads as a double border
@@ -3192,7 +4044,7 @@ impl Render for Workspace {
                 || self.osd_menu.is_some()
                 || self.confirm_close.is_some()
                 || self.help_open
-                || self.tab_color_edit.is_some()
+                || self.tab_menu.is_some()
                 || self.focus_read.as_ref().and_then(|w| w.upgrade()).is_some(),
         );
         // drop-hit-test rects are rebuilt every frame by the canvases below, so
@@ -3271,170 +4123,66 @@ impl Render for Workspace {
         let tab_count = self.tabs.len();
         let jiggle = self.jiggle.px;
 
-        // ---- tabs (right-click renames) ----
-        let renaming = self.renaming.clone();
+        // ---- tabs + browser-style group bands ----
+        // Adjacent tabs sharing a group render under one coloured rail with a
+        // handle chip; a collapsed group folds into a counted pill (unless it
+        // holds the active tab, which force-expands so you never lose your place).
         let mut tab_strip = div().flex().flex_row().gap_1().items_center();
         // while a tab is being dragged, an accent bar marks the slot it'd land in
         let dragging_tab = self.tab_drag.as_ref().is_some_and(|d| d.engaged);
         let drop_slot = self.tab_drop;
         let drop_marker = || div().w(px(3.)).h(px(18.)).rounded_full().bg(th.accent);
-        for i in 0..tab_count {
+        let active_group = self.tabs.get(self.active).and_then(|t| t.group);
+        let mut i = 0;
+        while i < tab_count {
             if dragging_tab && drop_slot == Some(i) {
                 tab_strip = tab_strip.child(drop_marker());
             }
-            let is_active = i == self.active;
-            if let Some((_, buf)) = renaming.as_ref().filter(|(ri, _)| *ri == i) {
-                tab_strip = tab_strip.child(
-                    div()
-                        .px_2()
-                        .py_0p5()
-                        .rounded_sm()
-                        .border_1()
-                        .border_color(th.accent)
-                        .bg(darken(th.bg, 0.8))
-                        .text_size(px(11.))
-                        .text_color(th.text)
+            if let Some(g) = self.tabs[i]
+                .group
+                .filter(|g| self.group_index(*g).is_some())
+            {
+                // a maximal run [i, j) of adjacent tabs in this group
+                let mut j = i;
+                while j < tab_count && self.tabs[j].group == Some(g) {
+                    j += 1;
+                }
+                let grp = &self.groups[self.group_index(g).unwrap()];
+                let color = grp.color;
+                // force-expand the run that holds the active tab
+                let collapsed = grp.collapsed && active_group != Some(g);
+                if collapsed {
+                    tab_strip = tab_strip.child(self.group_pill(g, j - i, cx));
+                } else {
+                    let mut band = div()
+                        .relative()
                         .flex()
                         .flex_row()
                         .items_center()
-                        // clicking the edit box itself keeps editing (don't let
-                        // it bubble to the root's commit-on-click-off handler)
-                        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                        .child(buf.clone())
-                        .child(div().w(px(6.)).h(px(13.)).bg(th.cursor)),
-                );
+                        .gap_1()
+                        .pb_1()
+                        .child(self.group_chip(g, cx));
+                    for k in i..j {
+                        band = band.child(self.tab_button(k, cx));
+                    }
+                    // the colour rail beneath the run (the ▔ band)
+                    band = band.child(
+                        div()
+                            .absolute()
+                            .left_0()
+                            .right_0()
+                            .bottom_0()
+                            .h(px(3.))
+                            .rounded_full()
+                            .bg(color),
+                    );
+                    tab_strip = tab_strip.child(band);
+                }
+                i = j;
                 continue;
             }
-            let label = self.tabs[i]
-                .name
-                .clone()
-                .unwrap_or_else(|| format!("{}", i + 1));
-            // the per-tab close affordance — an X in the tab's own frame
-            let close_x = div()
-                .px_1()
-                .text_size(px(12.))
-                .text_color(if is_active { th.text } else { th.faint })
-                .cursor_pointer()
-                .child("×")
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
-                        cx.stop_propagation();
-                        ws.request_close_tab(i, window, cx);
-                    }),
-                );
-            let tab_grp = SharedString::from(format!("tab-grp-{i}"));
-            let pencil_col = th.text.alpha(0.8);
-            // hover-revealed ✎ affordance: invites the rename without a word
-            let pencil = div()
-                .id(SharedString::from(format!("tab-pencil-{i}")))
-                .text_size(px(10.))
-                .text_color(hsla(0., 0., 0., 0.)) // hidden until the tab is hovered
-                .group_hover(tab_grp.clone(), move |s| s.text_color(pencil_col))
-                .cursor_pointer()
-                .child("✎")
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
-                        cx.stop_propagation();
-                        let seed = ws.tabs[i].name.clone().unwrap_or_default();
-                        ws.renaming = Some((i, seed));
-                        window.focus(&ws.focus_handle, cx);
-                        cx.notify();
-                    }),
-                );
-            // tint the tab to its binder-divider colour (a property of the tab,
-            // never inherited from a pane) — text stays the outer-bar text colour
-            let mut btn = Self::bezel_btn(&th, &label, is_active);
-            if let Some(c) = self.tabs[i].color {
-                btn = btn
-                    .bg(linear_gradient(
-                        135.,
-                        linear_color_stop(brighten(c, 1.35), 0.),
-                        linear_color_stop(darken(c, 0.6), 1.),
-                    ))
-                    .border_color(if is_active { th.accent } else { c });
-            }
-            tab_strip = tab_strip.child(
-                btn.group(tab_grp)
-                    .relative()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap_1()
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(move |ws, ev: &MouseDownEvent, window, cx| {
-                            // don't let the click bubble to the root's focus
-                            // handle, which would steal focus from the pane
-                            cx.stop_propagation();
-                            if ev.modifiers.control {
-                                // ctrl+click → open this tab's colour tray (just
-                                // this tab; never touches a pane's theme)
-                                ws.tab_color_edit = Some(i);
-                                ws.tab_color_at = Some(ev.position);
-                                ws.tab_drag = None;
-                                cx.notify();
-                            } else if ev.click_count >= 2 {
-                                // double-click to rename (the file-manager gesture)
-                                let seed = ws.tabs[i].name.clone().unwrap_or_default();
-                                ws.renaming = Some((i, seed));
-                                window.focus(&ws.focus_handle, cx);
-                                cx.notify();
-                            } else {
-                                // select now; arm a reorder drag that engages only
-                                // if the cursor travels far enough (else it stays a
-                                // plain click)
-                                ws.activate_tab(i, window, cx);
-                                ws.tab_drag = Some(TabDrag {
-                                    from: i,
-                                    start: ev.position,
-                                    at: ev.position,
-                                    engaged: false,
-                                });
-                                ws.tab_drop = None;
-                            }
-                        }),
-                    )
-                    .on_mouse_down(
-                        MouseButton::Right,
-                        cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
-                            let seed = ws.tabs[i].name.clone().unwrap_or_default();
-                            ws.renaming = Some((i, seed));
-                            window.focus(&ws.focus_handle, cx);
-                            cx.notify();
-                        }),
-                    )
-                    .child({
-                        // measure this tab button's box for "drop onto a tab"
-                        let store = self.tab_bounds.clone();
-                        div().absolute().inset_0().child(
-                            canvas(
-                                move |bounds, _, _| {
-                                    store.lock().unwrap().insert(i, bounds);
-                                },
-                                |_, _, _, _| {},
-                            )
-                            .size_full(),
-                        )
-                    })
-                    .when(
-                        matches!(&self.drop_target, Some(DropTarget::Tab { index, .. }) if *index == i),
-                        |d| {
-                            d.child(
-                                div()
-                                    .absolute()
-                                    .inset_0()
-                                    .rounded_sm()
-                                    .border_1()
-                                    .border_color(th.accent)
-                                    .bg(th.accent.alpha(0.25)),
-                            )
-                        },
-                    )
-                    .child(pencil)
-                    .child(close_x),
-            );
+            tab_strip = tab_strip.child(self.tab_button(i, cx));
+            i += 1;
         }
         if dragging_tab && drop_slot == Some(tab_count) {
             tab_strip = tab_strip.child(drop_marker());
@@ -4591,70 +5339,245 @@ impl Render for Workspace {
                 .child(panel)
         });
 
-        // ---- per-tab colour tray (ctrl+click a tab) — a small swatch popover ----
-        let tab_color_overlay = self.tab_color_edit.and_then(|i| {
+        // ---- tab config pane (right-click / ctrl+click a tab) ----
+        // Rename, a two-pip colour wheel (▣ fill + T text) scoped to this tab or
+        // its group, quick swatches, and group controls — like the other trays.
+        let tab_menu_overlay = self.tab_menu.and_then(|i| {
             let tab = self.tabs.get(i)?;
-            let current = tab.color;
             let label = tab.name.clone().unwrap_or_else(|| format!("tab {}", i + 1));
-            let at = self.tab_color_at.unwrap_or_default();
+            let grouped = tab.group.is_some();
+            let gid = tab.group;
+            let at = self.tab_menu_at.unwrap_or_default();
+            let scope = self.tab_scope;
+            let pip = self.tab_pip;
+
+            // rename this tab (closes the pane, opens the inline strip editor)
+            let rename_btn = Self::bezel_btn(&th, "✎ rename tab", false).on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
+                    cx.stop_propagation();
+                    let seed = ws
+                        .tabs
+                        .get(i)
+                        .and_then(|t| t.name.clone())
+                        .unwrap_or_default();
+                    ws.tab_menu = None;
+                    ws.renaming = Some((i, seed));
+                    window.focus(&ws.focus_handle, cx);
+                    cx.notify();
+                }),
+            );
+
+            // scope: this tab's override vs its group's lead (group only if grouped)
+            let scope_row = div()
+                .flex()
+                .flex_row()
+                .gap_1()
+                .items_center()
+                .child(
+                    Self::bezel_btn(&th, "this tab", scope == TabScope::ThisTab).on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                            cx.stop_propagation();
+                            ws.tab_scope = TabScope::ThisTab;
+                            cx.notify();
+                        }),
+                    ),
+                )
+                .when(grouped, |d| {
+                    d.child(
+                        Self::bezel_btn(&th, "group", scope == TabScope::Group).on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                                cx.stop_propagation();
+                                ws.tab_scope = TabScope::Group;
+                                cx.notify();
+                            }),
+                        ),
+                    )
+                });
+
+            // which pip the wheel + lightness slider drive
+            let pip_row = div()
+                .flex()
+                .flex_row()
+                .gap_1()
+                .child(
+                    Self::bezel_btn(&th, "▣ fill", pip == TabPip::Fill).on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                            cx.stop_propagation();
+                            ws.tab_pip = TabPip::Fill;
+                            cx.notify();
+                        }),
+                    ),
+                )
+                .child(
+                    Self::bezel_btn(&th, "T text", pip == TabPip::Text).on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                            cx.stop_propagation();
+                            ws.tab_pip = TabPip::Text;
+                            cx.notify();
+                        }),
+                    ),
+                );
+
+            // quick fill swatches
             let mut swatches = div().flex().flex_row().flex_wrap().gap_1().max_w(px(184.));
             for &(h, s, l) in TAB_SWATCHES {
                 let c = hsla(h, s, l, 1.);
-                let selected = current.is_some_and(|cc| {
-                    (cc.h - h).abs() < 0.001 && (cc.s - s).abs() < 0.001 && (cc.l - l).abs() < 0.001
-                });
+                let hex = hsla_to_hex(c);
                 swatches = swatches.child(
                     div()
                         .id(SharedString::from(format!(
                             "tab-swatch-{i}-{}",
                             (h * 1000.) as i32
                         )))
-                        .w(px(22.))
-                        .h(px(22.))
+                        .w(px(18.))
+                        .h(px(18.))
                         .rounded_full()
                         .bg(c)
                         .cursor_pointer()
-                        .when(selected, |d| d.border_2().border_color(white()))
-                        .when(!selected, |d| {
-                            d.border_1().border_color(hsla(0., 0., 0., 0.5))
-                        })
+                        .border_1()
+                        .border_color(hsla(0., 0., 0., 0.5))
                         .on_mouse_down(
                             MouseButton::Left,
                             cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
                                 cx.stop_propagation();
-                                if let Some(t) = ws.tabs.get_mut(i) {
-                                    t.color = Some(c);
-                                }
-                                ws.tab_color_edit = None;
-                                ws.save(cx);
-                                cx.notify();
+                                ws.tab_pip = TabPip::Fill;
+                                ws.tab_set_pip(TabPip::Fill, Some(hex.clone()), cx);
                             }),
                         ),
                 );
             }
-            let clear = div()
-                .id(SharedString::from(format!("tab-swatch-clear-{i}")))
-                .px_2()
-                .py_0p5()
-                .rounded_sm()
-                .border_1()
-                .border_color(th.accent.alpha(0.5))
-                .text_size(px(10.))
-                .text_color(th.text)
-                .cursor_pointer()
-                .child("clear")
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
-                        cx.stop_propagation();
-                        if let Some(t) = ws.tabs.get_mut(i) {
-                            t.color = None;
-                        }
-                        ws.tab_color_edit = None;
-                        ws.save(cx);
-                        cx.notify();
-                    }),
+
+            // clear the active pip's override (no-op on a group's fill)
+            let clear = Self::bezel_btn(&th, "clear", false).on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                    cx.stop_propagation();
+                    let p = ws.tab_pip;
+                    ws.tab_set_pip(p, None, cx);
+                }),
+            );
+
+            // group controls
+            let mut group_box = div().flex().flex_col().gap_1().child(
+                div()
+                    .text_size(px(9.))
+                    .text_color(th.text.alpha(0.7))
+                    .child("group"),
+            );
+            if grouped {
+                let gid_u = gid.unwrap();
+                let collapsed = self.group_of(i).map(|g| g.collapsed).unwrap_or(false);
+                group_box = group_box.child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .flex_wrap()
+                        .gap_1()
+                        .child(Self::bezel_btn(&th, "✎ name", false).on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
+                                cx.stop_propagation();
+                                let seed = ws
+                                    .groups
+                                    .iter()
+                                    .find(|g| g.id == gid_u)
+                                    .and_then(|g| g.name.clone())
+                                    .unwrap_or_default();
+                                ws.tab_menu = None;
+                                ws.group_rename = Some((gid_u, seed));
+                                window.focus(&ws.focus_handle, cx);
+                                cx.notify();
+                            }),
+                        ))
+                        .child(
+                            Self::bezel_btn(
+                                &th,
+                                if collapsed { "expand" } else { "collapse" },
+                                false,
+                            )
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                                    cx.stop_propagation();
+                                    ws.toggle_group_collapsed(gid_u, cx);
+                                }),
+                            ),
+                        )
+                        .child(Self::bezel_btn(&th, "remove", false).on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                                cx.stop_propagation();
+                                ws.remove_from_group(i, cx);
+                            }),
+                        )),
                 );
+            } else {
+                group_box =
+                    group_box.child(Self::bezel_btn(&th, "＋ new group", false).on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                            cx.stop_propagation();
+                            ws.new_group_from(i, cx);
+                        }),
+                    ));
+            }
+            // add to an existing OTHER group
+            let others: Vec<(u32, Hsla, String)> = self
+                .groups
+                .iter()
+                .filter(|g| Some(g.id) != gid)
+                .map(|g| {
+                    (
+                        g.id,
+                        g.color,
+                        g.name.clone().unwrap_or_else(|| format!("group {}", g.id)),
+                    )
+                })
+                .collect();
+            if !others.is_empty() {
+                let mut add_row = div()
+                    .flex()
+                    .flex_row()
+                    .flex_wrap()
+                    .gap_1()
+                    .max_w(px(184.))
+                    .child(
+                        div()
+                            .text_size(px(9.))
+                            .text_color(th.text.alpha(0.7))
+                            .child("add to:"),
+                    );
+                for (g_id, g_col, g_name) in others {
+                    add_row = add_row.child(
+                        div()
+                            .id(SharedString::from(format!("addgrp-{i}-{g_id}")))
+                            .px_1()
+                            .py_0p5()
+                            .rounded_sm()
+                            .border_1()
+                            .border_color(g_col)
+                            .bg(g_col.alpha(0.3))
+                            .cursor_pointer()
+                            .text_size(px(10.))
+                            .text_color(th.text)
+                            .child(g_name)
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                                    cx.stop_propagation();
+                                    ws.add_tab_to_group(i, g_id, cx);
+                                }),
+                            ),
+                    );
+                }
+                group_box = group_box.child(add_row);
+            }
+
             let panel = div()
                 .absolute()
                 .left(px(f32::from(at.x)))
@@ -4681,12 +5604,18 @@ impl Render for Workspace {
                 .child(
                     div()
                         .text_size(px(10.))
-                        .text_color(th.text.alpha(0.8))
-                        .child(format!("\u{201c}{label}\u{201d} tab colour")),
+                        .text_color(th.text.alpha(0.85))
+                        .child(format!("\u{201c}{label}\u{201d}")),
                 )
+                .child(rename_btn)
+                .child(scope_row)
+                .child(pip_row)
+                .child(self.tab_color_wheel(i, cx))
+                .child(self.tab_lightness_bar(i, cx))
                 .child(swatches)
-                .child(div().flex().flex_row().justify_end().child(clear));
-            // full-window scrim: a click anywhere else dismisses the tray
+                .child(div().flex().flex_row().justify_end().child(clear))
+                .child(group_box);
+            // full-window scrim: a click anywhere else dismisses the pane
             Some(
                 div()
                     .absolute()
@@ -4694,7 +5623,7 @@ impl Render for Workspace {
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                            ws.tab_color_edit = None;
+                            ws.tab_menu = None;
                             cx.notify();
                         }),
                     )
@@ -4992,7 +5921,7 @@ impl Render for Workspace {
                     .children(osd_overlay)
                     .children(confirm_overlay)
                     .children(help_overlay)
-                    .children(tab_color_overlay)
+                    .children(tab_menu_overlay)
                     .children(drag_chip)
                     // the FOCUS reading modal rides above everything else
                     .children(focus_overlay),
@@ -5223,6 +6152,8 @@ mod tests {
         let toml = toml::to_string(&SavedTab {
             name: None,
             color: None,
+            text_color: None,
+            group: None,
             node: saved,
         })
         .expect("serialize");
@@ -5318,6 +6249,8 @@ id = "hacker"
             tabs: vec![SavedTab {
                 name: None,
                 color: None,
+                text_color: None,
+                group: None,
                 node: SavedNode::Leaf {
                     appearance: PaneTheme::from_legacy(ThemeChoice {
                         id: "hacker".into(),
@@ -5329,6 +6262,7 @@ id = "hacker"
                     name: None,
                 },
             }],
+            groups: vec![],
         };
         let body = toml::to_string(&state).expect("serializes");
         let back: StateFile = toml::from_str(&body).expect("round-trips");
@@ -5353,6 +6287,8 @@ id = "hacker"
             tabs: vec![SavedTab {
                 name: Some("agents".into()),
                 color: None,
+                text_color: None,
+                group: None,
                 node: SavedNode::Leaf {
                     appearance: PaneTheme::default(),
                     cwd: Some("/home/user/proj".into()),
@@ -5360,6 +6296,7 @@ id = "hacker"
                     name: None,
                 },
             }],
+            groups: vec![],
         };
         let body = toml::to_string(&state).expect("serializes");
         let back: StateFile = toml::from_str(&body).expect("round-trips");
@@ -5371,6 +6308,77 @@ id = "hacker"
             resume.as_deref(),
             Some("claude --resume 48be90b8-5777-44b6-bb6f-1c6069205c0d")
         );
+    }
+
+    #[test]
+    fn tab_groups_and_per_tab_colours_round_trip() {
+        // a grouped tab with its own fill + text override, plus a group carrying
+        // its own colours + collapsed state, must all survive serialize→reload.
+        let leaf = || SavedNode::Leaf {
+            appearance: PaneTheme::default(),
+            cwd: None,
+            resume: None,
+            name: None,
+        };
+        let state = StateFile {
+            active: 0,
+            win: None,
+            scale: None,
+            theme: None,
+            warp: theme::WARP_DEFAULT,
+            track: None,
+            tabs: vec![
+                SavedTab {
+                    name: Some("HOME".into()),
+                    color: Some("#aa3344".into()),
+                    text_color: Some("#ffffff".into()),
+                    group: Some(7),
+                    node: leaf(),
+                },
+                SavedTab {
+                    name: Some("loose".into()),
+                    color: None,
+                    text_color: None,
+                    group: None,
+                    node: leaf(),
+                },
+            ],
+            groups: vec![SavedGroup {
+                id: 7,
+                name: Some("WORK".into()),
+                color: "#2d8f4d".into(),
+                text_color: Some("#101010".into()),
+                collapsed: true,
+            }],
+        };
+        let body = toml::to_string(&state).expect("serializes");
+        let back: StateFile = toml::from_str(&body).expect("round-trips");
+        assert_eq!(back.tabs[0].group, Some(7));
+        assert_eq!(back.tabs[0].text_color.as_deref(), Some("#ffffff"));
+        assert_eq!(back.tabs[1].group, None);
+        assert_eq!(back.groups.len(), 1);
+        assert_eq!(back.groups[0].id, 7);
+        assert_eq!(back.groups[0].name.as_deref(), Some("WORK"));
+        assert!(back.groups[0].collapsed);
+        assert_eq!(back.groups[0].text_color.as_deref(), Some("#101010"));
+    }
+
+    #[test]
+    fn pre_feature_state_loads_without_groups_or_text_colour() {
+        // a state.toml written before tab groups existed (no `groups`, no
+        // per-tab `text_color`/`group`) must still deserialize cleanly.
+        let toml = r#"
+active = 0
+warp = 1.43
+[[tabs]]
+name = "old"
+node = "Leaf"
+"#;
+        let back: StateFile = toml::from_str(toml).expect("legacy state loads");
+        assert_eq!(back.tabs.len(), 1);
+        assert_eq!(back.tabs[0].text_color, None);
+        assert_eq!(back.tabs[0].group, None);
+        assert!(back.groups.is_empty());
     }
 
     #[test]
@@ -5526,8 +6534,11 @@ id = "hacker"
             tabs: vec![SavedTab {
                 name: None,
                 color: None,
+                text_color: None,
+                group: None,
                 node,
             }],
+            groups: vec![],
         };
         let body = toml::to_string(&state).expect("serializes");
         let back: StateFile = toml::from_str(&body).expect("round-trips");
