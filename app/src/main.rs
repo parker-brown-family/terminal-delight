@@ -881,6 +881,16 @@ struct Workspace {
     /// The pane currently mirrored in the FOCUS reading modal, if any. Weak so a
     /// closed pane (its × / shell exit) drops normally — the modal just vanishes.
     focus_read: Option<gpui::WeakEntity<TerminalView>>,
+    /// User text-size multiplier for the FOCUS mirror, on top of the auto-fit
+    /// scale. 1.0 = fit-to-modal; the header slider drives it `FZ_MIN..=FZ_MAX`.
+    /// Non-destructive — it scales only the mirror, never the real terminal's
+    /// grid. Reset to 1.0 whenever the modal (re)opens on a pane.
+    focus_zoom: f32,
+    /// True while the FOCUS text-size slider thumb is being dragged.
+    focus_zoom_drag: bool,
+    /// On-screen box of the FOCUS slider track (captured each frame), so a drag
+    /// anywhere in the window maps the cursor-x back to a 0..1 track fraction.
+    focus_zoom_bounds: Arc<Mutex<Option<Bounds<Pixels>>>>,
     /// A scratch window (opened while another instance is already running, or a
     /// torn-off pane): one fresh terminal, never restores or persists session
     /// state — so it can't clobber the primary window's saved layout.
@@ -1094,6 +1104,9 @@ impl Workspace {
             tab_light_bounds: Arc::new(Mutex::new(None)),
             group_rename: None,
             focus_read: None,
+            focus_zoom: 1.0,
+            focus_zoom_drag: false,
+            focus_zoom_bounds: Arc::new(Mutex::new(None)),
             scratch,
             should_move: false,
         };
@@ -1548,6 +1561,8 @@ impl Workspace {
         pane.update(cx, |v, _| v.set_being_read(true));
         window.focus(&pane.focus_handle(cx), cx);
         self.focus_read = Some(pane.downgrade());
+        // Each FOCUS opens at fit-to-modal; the header slider takes it from there.
+        self.focus_zoom = 1.0;
         cx.notify();
     }
 
@@ -1557,6 +1572,131 @@ impl Workspace {
             pane.update(cx, |v, _| v.set_being_read(false));
         }
         cx.notify();
+    }
+
+    /// FOCUS text-size slider range — a multiplier on the auto-fit scale.
+    /// 1.0 (fit) sits inside the range so the thumb has travel both ways.
+    const FZ_MIN: f32 = 0.6;
+    const FZ_MAX: f32 = 3.0;
+
+    /// Map a window-x to a 0..1 fraction along the FOCUS slider track (`None`
+    /// until the track has been measured once).
+    fn focus_zoom_from_pos(&self, x: Pixels) -> Option<f32> {
+        let b = (*self.focus_zoom_bounds.lock().unwrap())?;
+        let w = f32::from(b.size.width);
+        if w <= 0.0 {
+            return None;
+        }
+        Some(((f32::from(x) - f32::from(b.origin.x)) / w).clamp(0.0, 1.0))
+    }
+
+    /// Set the FOCUS text-size multiplier from a 0..1 track fraction. Live only;
+    /// the zoom is per-open and intentionally never persisted.
+    fn set_focus_zoom(&mut self, frac: f32, cx: &mut Context<Self>) {
+        let z = Self::FZ_MIN + frac.clamp(0.0, 1.0) * (Self::FZ_MAX - Self::FZ_MIN);
+        if (z - self.focus_zoom).abs() > f32::EPSILON {
+            self.focus_zoom = z;
+            cx.notify();
+        }
+    }
+
+    /// The FOCUS modal's header text-size slider: a small "A …──●── A" track
+    /// that scales the mirror's text `FZ_MIN..=FZ_MAX`× the auto-fit size. The
+    /// track box is captured each frame into `focus_zoom_bounds`, so a drag that
+    /// leaves the track still maps the cursor-x back to a fraction (same trick as
+    /// the OSD grade sliders). Live-only — the zoom never persists.
+    fn focus_zoom_slider(
+        &self,
+        accent: gpui::Hsla,
+        text: gpui::Hsla,
+        cx: &mut Context<Self>,
+    ) -> gpui::Div {
+        const TRACK: f32 = 110.;
+        let store = self.focus_zoom_bounds.clone();
+        let frac = ((self.focus_zoom - Self::FZ_MIN) / (Self::FZ_MAX - Self::FZ_MIN)).clamp(0., 1.);
+        div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap_1()
+            // small "A" — the shrink end
+            .child(
+                div()
+                    .text_size(px(9.))
+                    .text_color(text.alpha(0.7))
+                    .child("A"),
+            )
+            .child(
+                div()
+                    .w(px(TRACK))
+                    .h(px(14.))
+                    .relative()
+                    .cursor_pointer()
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |ws, ev: &MouseDownEvent, _w, cx| {
+                            // don't let the panel/scrim see this (no close, no move)
+                            cx.stop_propagation();
+                            ws.focus_zoom_drag = true;
+                            if let Some(f) = ws.focus_zoom_from_pos(ev.position.x) {
+                                ws.set_focus_zoom(f, cx);
+                            }
+                        }),
+                    )
+                    .child(
+                        canvas(
+                            move |bounds, _, _| {
+                                *store.lock().unwrap() = Some(bounds);
+                            },
+                            |_, _, _, _| {},
+                        )
+                        .size_full(),
+                    )
+                    // groove
+                    .child(
+                        div()
+                            .absolute()
+                            .left_0()
+                            .right_0()
+                            .top(px(6.))
+                            .h(px(3.))
+                            .rounded_full()
+                            .bg(accent.alpha(0.18)),
+                    )
+                    // fill up to the thumb
+                    .child(
+                        div()
+                            .absolute()
+                            .left_0()
+                            .top(px(6.))
+                            .h(px(3.))
+                            .w(px(TRACK * frac))
+                            .rounded_full()
+                            .bg(accent),
+                    )
+                    // thumb
+                    .child(
+                        div()
+                            .absolute()
+                            .left(px((TRACK * frac - 5.).max(0.)))
+                            .top(px(2.))
+                            .w(px(10.))
+                            .h(px(10.))
+                            .rounded_full()
+                            .bg(linear_gradient(
+                                135.,
+                                linear_color_stop(brighten(accent, 1.4), 0.),
+                                linear_color_stop(darken(accent, 0.7), 1.),
+                            )),
+                    ),
+            )
+            // large "A" — the grow end
+            .child(
+                div()
+                    .text_size(px(15.))
+                    .text_color(text.alpha(0.7))
+                    .child("A"),
+            )
     }
 
     fn activate_tab(&mut self, i: usize, window: &mut Window, cx: &mut Context<Self>) {
@@ -1934,6 +2074,7 @@ impl Workspace {
                 || self.track_drag.is_some()
                 || self.tab_wheel_drag.is_some()
                 || self.tab_light_drag
+                || self.focus_zoom_drag
                 || self.drag_split.is_some())
         {
             self.scrubbing = false;
@@ -1944,6 +2085,7 @@ impl Workspace {
             self.track_drag = None;
             self.tab_wheel_drag = None;
             self.tab_light_drag = false;
+            self.focus_zoom_drag = false;
             self.drag_split = None;
             cx.notify();
             return;
@@ -1988,6 +2130,11 @@ impl Workspace {
                 if let Some(v) = self.grade_from_pos(key, ev.position.x) {
                     self.apply_grade(key, v, cx);
                 }
+            }
+        }
+        if self.focus_zoom_drag && ev.pressed_button == Some(MouseButton::Left) {
+            if let Some(frac) = self.focus_zoom_from_pos(ev.position.x) {
+                self.set_focus_zoom(frac, cx);
             }
         }
         if let Some(target) = self.wheel_drag {
@@ -2062,6 +2209,11 @@ impl Workspace {
         }
         if self.slider_drag.take().is_some() {
             self.save(cx);
+            cx.notify();
+            return;
+        }
+        // FOCUS text-size: live-only, never persisted, so just drop the latch.
+        if std::mem::take(&mut self.focus_zoom_drag) {
             cx.notify();
             return;
         }
@@ -5674,9 +5826,12 @@ impl Render for Workspace {
                 let content_h = (snap.rows as f32 * snap.cell_h).max(1.);
                 // scale the whole grid to fit the modal (tighter axis wins so the
                 // entire screen stays visible); never shrink past ~0.7×.
-                let ms = (avail_w / content_w)
+                let fit = (avail_w / content_w)
                     .min(avail_h / content_h)
                     .clamp(0.7, 6.0);
+                // The header slider rides on top of the fit: 1.0 = fit-to-modal,
+                // up to FZ_MAX× for reading (overflows the panel, clipped).
+                let ms = (fit * self.focus_zoom).clamp(0.5, 12.0);
                 let cell_h = snap.cell_h * ms;
                 let body = div()
                     .flex()
@@ -5700,9 +5855,12 @@ impl Render for Workspace {
                     .items_center()
                     .justify_between()
                     .px_3()
+                    .gap_3()
                     .text_size(px(12.))
                     .text_color(snap.accent)
                     .child(format!("👓  FOCUS · {}", snap.title))
+                    // text-size slider for the pane under scrutiny (live, per-open)
+                    .child(self.focus_zoom_slider(snap.accent, snap.text, cx))
                     .child(div().text_color(snap.text.alpha(0.6)).child("esc to close"));
                 let panel = div()
                     .w(px(panel_w))
