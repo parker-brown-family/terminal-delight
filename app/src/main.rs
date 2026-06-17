@@ -1559,10 +1559,18 @@ impl Workspace {
             prev.update(cx, |v, _| v.set_being_read(false));
         }
         pane.update(cx, |v, _| v.set_being_read(true));
-        window.focus(&pane.focus_handle(cx), cx);
         self.focus_read = Some(pane.downgrade());
         // Each FOCUS opens at fit-to-modal; the header slider takes it from there.
         self.focus_zoom = 1.0;
+        // Defer the focus: this runs from the 👓 header button's mouse-down
+        // listener, so a synchronous `window.focus` gets grabbed straight back by
+        // the root container's tracked focus handle (the same race new_tab/split
+        // dodge — see the focus-back-race note). Running after the event settles
+        // makes the CLICKED pane reliably take focus, so when you 👓 a pane other
+        // than the active one, keystrokes follow it into the reader.
+        cx.defer_in(window, move |_ws, window, cx| {
+            window.focus(&pane.focus_handle(cx), cx);
+        });
         cx.notify();
     }
 
