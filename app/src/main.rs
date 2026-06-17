@@ -3205,11 +3205,12 @@ impl Workspace {
     }
 
     /// Solid, reflective bezel button — light source upper-left.
-    /// A consistent header icon button (≈2× glyphs). The caller adds the glyph
-    /// child (an emoji via `.child("…")` or `pane::eq_icon`) and `on_mouse_down`.
-    fn hicon(th: &theme::Theme, active: bool) -> gpui::Div {
+    /// A consistent header icon button (≈2× glyphs), scaled by the menu-bar
+    /// slider `s`. The caller adds the glyph child (an emoji via `.child("…")`
+    /// or `pane::eq_icon`) and `on_mouse_down`.
+    fn hicon_s(th: &theme::Theme, active: bool, s: f32) -> gpui::Div {
         div()
-            .px_1()
+            .px(px(4. * s))
             .rounded_sm()
             .border_1()
             .border_color(th.accent.alpha(0.5))
@@ -3222,6 +3223,12 @@ impl Workspace {
     }
 
     fn bezel_btn(th: &theme::Theme, label: &str, active: bool) -> gpui::Div {
+        Self::bezel_btn_s(th, label, active, 1.0)
+    }
+
+    /// `bezel_btn` scaled by the menu-bar slider `s` — padding + text grow with
+    /// the bar so tabs and split/new-tab buttons resize together.
+    fn bezel_btn_s(th: &theme::Theme, label: &str, active: bool, s: f32) -> gpui::Div {
         let glint = BoxShadow {
             color: white().alpha(0.22),
             offset: point(px(1.), px(1.)),
@@ -3237,11 +3244,11 @@ impl Workspace {
             inset: false,
         };
         let b = div()
-            .px_2()
-            .py_0p5()
+            .px(px(8. * s))
+            .py(px(2. * s))
             .rounded_sm()
             .border_1()
-            .text_size(px(11.))
+            .text_size(px(11. * s))
             .cursor_pointer()
             .shadow(vec![glint, seat]);
         if active {
@@ -3281,6 +3288,8 @@ impl Workspace {
     /// or ctrl+click opens the tab config pane; ✎ / double-click rename.
     fn tab_button(&self, i: usize, cx: &mut Context<Self>) -> gpui::Div {
         let th = theme::theme(cx);
+        // tabs ride the menu-bar slider: everything in the tab scales with the bar
+        let s = theme::outer_choice(cx).grade.scale;
         let is_active = i == self.active;
         // the inline rename box owns this slot while renaming
         if self.renaming.as_ref().is_some_and(|(ri, _)| *ri == i) {
@@ -3290,13 +3299,13 @@ impl Workspace {
                 .map(|(_, b)| b.clone())
                 .unwrap_or_default();
             return div()
-                .px_2()
-                .py_0p5()
+                .px(px(8. * s))
+                .py(px(2. * s))
                 .rounded_sm()
                 .border_1()
                 .border_color(th.accent)
                 .bg(darken(th.bg, 0.8))
-                .text_size(px(11.))
+                .text_size(px(11. * s))
                 .text_color(th.text)
                 .flex()
                 .flex_row()
@@ -3305,7 +3314,7 @@ impl Workspace {
                 // root's commit-on-click-off handler)
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .child(buf)
-                .child(div().w(px(6.)).h(px(13.)).bg(th.cursor));
+                .child(div().w(px(6. * s)).h(px(13. * s)).bg(th.cursor));
         }
         let label = self.tabs[i]
             .name
@@ -3314,8 +3323,8 @@ impl Workspace {
         let (fill, text) = self.resolved_tab_colors(i);
         // the per-tab close affordance — an X in the tab's own frame
         let close_x = div()
-            .px_1()
-            .text_size(px(12.))
+            .px(px(4. * s))
+            .text_size(px(12. * s))
             .text_color(text.unwrap_or(if is_active { th.text } else { th.faint }))
             .cursor_pointer()
             .child("×")
@@ -3331,7 +3340,7 @@ impl Workspace {
         // hover-revealed ✎ affordance: invites the rename without a word
         let pencil = div()
             .id(SharedString::from(format!("tab-pencil-{i}")))
-            .text_size(px(10.))
+            .text_size(px(10. * s))
             .text_color(hsla(0., 0., 0., 0.)) // hidden until the tab is hovered
             .group_hover(tab_grp.clone(), move |s| s.text_color(pencil_col))
             .cursor_pointer()
@@ -3348,7 +3357,7 @@ impl Workspace {
             );
         // tint to the resolved fill (tab override or group lead); the resolved
         // text colour rides over the bezel's default label colour
-        let mut btn = Self::bezel_btn(&th, &label, is_active);
+        let mut btn = Self::bezel_btn_s(&th, &label, is_active, s);
         if let Some(c) = fill {
             btn = btn
                 .bg(linear_gradient(
@@ -3369,7 +3378,7 @@ impl Workspace {
             .flex()
             .flex_row()
             .items_center()
-            .gap_1()
+            .gap(px(4. * s))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |ws, ev: &MouseDownEvent, window, cx| {
@@ -3439,6 +3448,7 @@ impl Workspace {
     /// in its colour; click folds the group.
     fn group_chip(&self, gid: u32, cx: &mut Context<Self>) -> gpui::Stateful<gpui::Div> {
         let th = theme::theme(cx);
+        let s = theme::outer_choice(cx).grade.scale;
         let g = self.groups.iter().find(|g| g.id == gid);
         let color = g.map(|g| g.color).unwrap_or(th.accent);
         let name = g.and_then(|g| g.name.clone());
@@ -3453,13 +3463,13 @@ impl Workspace {
             .flex()
             .flex_row()
             .items_center()
-            .gap_1()
-            .px_1()
-            .h(px(18.))
+            .gap(px(4. * s))
+            .px(px(4. * s))
+            .h(px(18. * s))
             .rounded_sm()
             .bg(color)
             .cursor_pointer()
-            .text_size(px(9.))
+            .text_size(px(9. * s))
             .font_weight(gpui::FontWeight::EXTRA_BOLD)
             .text_color(glyph_col)
             .child("▾");
@@ -3467,7 +3477,7 @@ impl Workspace {
             let _ = rg;
             chip = chip
                 .child(buf.clone())
-                .child(div().w(px(5.)).h(px(11.)).bg(glyph_col));
+                .child(div().w(px(5. * s)).h(px(11. * s)).bg(glyph_col));
         } else if let Some(n) = name {
             chip = chip.child(n);
         }
@@ -3510,14 +3520,15 @@ impl Workspace {
         } else {
             white()
         };
+        let s = theme::outer_choice(cx).grade.scale;
         div()
             .id(SharedString::from(format!("grp-pill-{gid}")))
             .flex()
             .flex_row()
             .items_center()
-            .gap_1()
-            .px_2()
-            .py_0p5()
+            .gap(px(4. * s))
+            .px(px(8. * s))
+            .py(px(2. * s))
             .rounded_sm()
             .border_1()
             .border_color(color)
@@ -3527,7 +3538,7 @@ impl Workspace {
                 linear_color_stop(darken(color, 0.6), 1.),
             ))
             .cursor_pointer()
-            .text_size(px(11.))
+            .text_size(px(11. * s))
             .font_weight(gpui::FontWeight::EXTRA_BOLD)
             .text_color(glyph_col)
             .child("▸")
@@ -4279,11 +4290,17 @@ impl Render for Workspace {
         // Adjacent tabs sharing a group render under one coloured rail with a
         // handle chip; a collapsed group folds into a counted pill (unless it
         // holds the active tab, which force-expands so you never lose your place).
-        let mut tab_strip = div().flex().flex_row().gap_1().items_center();
+        let mut tab_strip = div().flex().flex_row().gap(px(4. * scale)).items_center();
         // while a tab is being dragged, an accent bar marks the slot it'd land in
         let dragging_tab = self.tab_drag.as_ref().is_some_and(|d| d.engaged);
         let drop_slot = self.tab_drop;
-        let drop_marker = || div().w(px(3.)).h(px(18.)).rounded_full().bg(th.accent);
+        let drop_marker = || {
+            div()
+                .w(px(3. * scale))
+                .h(px(18. * scale))
+                .rounded_full()
+                .bg(th.accent)
+        };
         let active_group = self.tabs.get(self.active).and_then(|t| t.group);
         let mut i = 0;
         while i < tab_count {
@@ -4311,8 +4328,8 @@ impl Render for Workspace {
                         .flex()
                         .flex_row()
                         .items_center()
-                        .gap_1()
-                        .pb_1()
+                        .gap(px(4. * scale))
+                        .pb(px(4. * scale))
                         .child(self.group_chip(g, cx));
                     for k in i..j {
                         band = band.child(self.tab_button(k, cx));
@@ -4324,7 +4341,7 @@ impl Render for Workspace {
                             .left_0()
                             .right_0()
                             .bottom_0()
-                            .h(px(3.))
+                            .h(px(3. * scale))
                             .rounded_full()
                             .bg(color),
                     );
@@ -4339,7 +4356,7 @@ impl Render for Workspace {
         if dragging_tab && drop_slot == Some(tab_count) {
             tab_strip = tab_strip.child(drop_marker());
         }
-        tab_strip = tab_strip.child(Self::bezel_btn(&th, "+", false).on_mouse_down(
+        tab_strip = tab_strip.child(Self::bezel_btn_s(&th, "+", false, scale).on_mouse_down(
             MouseButton::Left,
             cx.listener(|ws, _: &MouseDownEvent, window, cx| ws.new_tab(window, cx)),
         ));
@@ -4355,7 +4372,12 @@ impl Render for Workspace {
             .flex_row()
             .items_center()
             .gap_1()
-            .child(div().text_size(px(9.)).text_color(th.text).child("▭"))
+            .child(
+                div()
+                    .text_size(px(9. * scale))
+                    .text_color(th.text)
+                    .child("▭"),
+            )
             .child(
                 div()
                     .w(px(90.))
@@ -4433,10 +4455,15 @@ impl Render for Workspace {
                             }]),
                     ),
             )
-            .child(div().text_size(px(15.)).text_color(th.text).child("▭"))
             .child(
                 div()
-                    .text_size(px(10.))
+                    .text_size(px(15. * scale))
+                    .text_color(th.text)
+                    .child("▭"),
+            )
+            .child(
+                div()
+                    .text_size(px(10. * scale))
                     .text_color(th.accent)
                     .child(format!("{}%", (scale * 100.).round() as i32)),
             );
@@ -4444,20 +4471,24 @@ impl Render for Workspace {
         let cluster = div()
             .flex()
             .flex_row()
-            .gap_1()
+            .gap(px(4. * scale))
             .items_center()
-            .child(Self::bezel_btn(&th, "◧ split", false).on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|ws, _: &MouseDownEvent, window, cx| {
-                    ws.split(SplitDir::Row, window, cx)
-                }),
-            ))
-            .child(Self::bezel_btn(&th, "⬓ split", false).on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|ws, _: &MouseDownEvent, window, cx| {
-                    ws.split(SplitDir::Col, window, cx)
-                }),
-            ));
+            .child(
+                Self::bezel_btn_s(&th, "◧ split", false, scale).on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|ws, _: &MouseDownEvent, window, cx| {
+                        ws.split(SplitDir::Row, window, cx)
+                    }),
+                ),
+            )
+            .child(
+                Self::bezel_btn_s(&th, "⬓ split", false, scale).on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|ws, _: &MouseDownEvent, window, cx| {
+                        ws.split(SplitDir::Col, window, cx)
+                    }),
+                ),
+            );
 
         // Frameless window controls — only when the OS gave us none (client-side
         // decorations). A small minimize / maximize-toggle / close cluster that
@@ -4472,13 +4503,13 @@ impl Render for Workspace {
             };
             div()
                 .id(SharedString::from(format!("winctl-{glyph}")))
-                .w(px(20.))
-                .h(px(20.))
+                .w(px(20. * scale))
+                .h(px(20. * scale))
                 .flex()
                 .items_center()
                 .justify_center()
                 .rounded_sm()
-                .text_size(px(12.))
+                .text_size(px(12. * scale))
                 .text_color(th.text.alpha(0.7))
                 .cursor_pointer()
                 .hover(move |s| s.bg(hover.alpha(0.9)).text_color(white()))
@@ -4488,7 +4519,7 @@ impl Render for Workspace {
             .flex()
             .flex_row()
             .items_center()
-            .gap_1()
+            .gap(px(4. * scale))
             .when(is_client, |row| {
                 row.child(win_btn("—", false).on_mouse_down(
                     MouseButton::Left,
@@ -4514,14 +4545,14 @@ impl Render for Workspace {
             });
 
         let bezel_top = div()
-            .h(px(43.))
+            .h(px(43. * scale))
             .flex_none()
             .flex()
             .flex_row()
             .items_center()
             .justify_between()
-            .px_3()
-            .gap_3()
+            .px(px(12. * scale))
+            .gap(px(12. * scale))
             // the mother bar is the move handle: arm on press, hand off to the
             // compositor on the first drag (a plain click stays a click).
             .on_mouse_down(
@@ -4547,13 +4578,13 @@ impl Render for Workspace {
                     .flex()
                     .flex_row()
                     .items_center()
-                    .gap_2()
+                    .gap(px(8. * scale))
                     .child(
                         // The mother TITLE — painted in the complement colour (the
                         // wheel's `C` target; defaults to the accent's complement /
                         // the active dynamic's complement).
                         div()
-                            .text_size(px(14.))
+                            .text_size(px(14. * scale))
                             .font_weight(gpui::FontWeight::EXTRA_BOLD)
                             .text_color(th.complement)
                             .child("▸ TERMINAL-DELIGHT"),
@@ -4561,7 +4592,7 @@ impl Render for Workspace {
                     .child(
                         // Decoration only — stays a dim foreground tint.
                         div()
-                            .text_size(px(9.))
+                            .text_size(px(9. * scale))
                             .text_color(th.text.alpha(0.4))
                             .child("// SUB-TERMINAL"),
                     )
@@ -4572,12 +4603,12 @@ impl Render for Workspace {
                     .flex()
                     .flex_row()
                     .items_center()
-                    .gap_3()
+                    .gap(px(12. * scale))
                     .child(
                         // outer theme: a consistent 🎨 (trigger for the breakout)
-                        Self::hicon(&th, self.theme_menu.is_some())
-                            .text_size(px(pane::HICON))
-                            .line_height(px(pane::HICON))
+                        Self::hicon_s(&th, self.theme_menu.is_some(), scale)
+                            .text_size(px(pane::HICON * scale))
+                            .line_height(px(pane::HICON * scale))
                             .child("🎨")
                             .on_mouse_down(
                                 MouseButton::Left,
@@ -4591,12 +4622,11 @@ impl Render for Workspace {
                     )
                     .child(
                         // outer display: a consistent EQ-waveform (monitor-OSD).
-                        // The outer (Mother) bezel chrome stays a fixed size — the
-                        // scrubber sizes the per-terminal menu bars, not this bar.
-                        Self::hicon(&th, self.osd_menu.is_some())
+                        // The whole mother bar scales with the menu-bar slider.
+                        Self::hicon_s(&th, self.osd_menu.is_some(), scale)
                             .flex()
                             .items_center()
-                            .child(pane::eq_icon(th.accent, 1.0))
+                            .child(pane::eq_icon(th.accent, scale))
                             .on_mouse_down(
                                 MouseButton::Left,
                                 cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
@@ -4609,9 +4639,9 @@ impl Render for Workspace {
                     )
                     .child(
                         // help: keys + commands reference, themed by the outer
-                        Self::hicon(&th, self.help_open)
-                            .text_size(px(pane::HICON))
-                            .line_height(px(pane::HICON))
+                        Self::hicon_s(&th, self.help_open, scale)
+                            .text_size(px(pane::HICON * scale))
+                            .line_height(px(pane::HICON * scale))
                             .child("❔")
                             .on_mouse_down(
                                 MouseButton::Left,
@@ -4628,21 +4658,21 @@ impl Render for Workspace {
             );
 
         let bezel_bottom = div()
-            .h(px(22.))
+            .h(px(22. * scale))
             .flex_none()
             .flex()
             .flex_row()
             .items_center()
             .justify_between()
-            .px_3()
-            .text_size(px(10.5))
+            .px(px(12. * scale))
+            .text_size(px(10.5 * scale))
             .text_color(th.text)
             .child(div().child(format!("🎨 · {}", focused_title)))
             .child(
                 div()
                     .flex()
                     .flex_row()
-                    .gap_2()
+                    .gap(px(8. * scale))
                     .items_center()
                     .child(format!(
                         "{} tab{} · {} pane{}",
