@@ -125,7 +125,13 @@ pub fn eq_icon(accent: gpui::Hsla, scale: f32) -> gpui::Div {
         .gap(px(2. * scale))
         .h(px(HICON * scale));
     for h in bars {
-        row = row.child(div().w(px(3. * scale)).h(px(h * scale)).rounded_sm().bg(accent));
+        row = row.child(
+            div()
+                .w(px(3. * scale))
+                .h(px(h * scale))
+                .rounded_sm()
+                .bg(accent),
+        );
     }
     row
 }
@@ -1045,7 +1051,8 @@ impl TerminalView {
                                         // "Real" = the thinking spell itself lasted
                                         // > 1200ms (measure start→end, not start→now,
                                         // so the debounce delay doesn't skew it).
-                                        let real = match (view.think_since, view.not_thinking_since) {
+                                        let real = match (view.think_since, view.not_thinking_since)
+                                        {
                                             (Some(start), Some(end)) => {
                                                 end.duration_since(start)
                                                     > std::time::Duration::from_millis(1200)
