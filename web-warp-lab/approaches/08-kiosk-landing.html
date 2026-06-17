@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>terminal-delight — curved-glass landing</title>
+<style>
+  *{box-sizing:border-box}html,body{margin:0;height:100%;background:#000;overflow:hidden;cursor:default}
+  #gl{position:fixed;inset:0;width:100%;height:100%;display:block}
+  /* tiny tuner, top-left; harmless to leave or strip */
+  #ui{position:fixed;left:10px;top:9px;z-index:9;font:11px ui-monospace,monospace;color:#7fe;background:#060d09cc;border:1px solid #0a4;border-radius:8px;padding:5px 9px;display:flex;gap:10px;align-items:center;opacity:.55;transition:.2s}
+  #ui:hover{opacity:1}#ui label{display:flex;gap:5px;align-items:center}#ui input{width:96px;accent-color:#36ff7e}
+</style></head>
+<body>
+  <canvas id="gl"></canvas>
+  <div id="ui">
+    <label>BARREL<input id="curv" type="range" min="0" max="300" value="140"></label>
+    <label>FLICKER<input id="flick" type="range" min="0" max="100" value="62"></label>
+    <label>TRACKING<input id="track" type="range" min="0" max="100" value="70"></label>
+  </div>
+<script>
+const canvas=document.getElementById('gl');
+const gl=canvas.getContext('webgl2',{antialias:false,alpha:false});
+const dpr=Math.min(2,window.devicePixelRatio||1);
+let W,H;
+// offscreen 2D scene (the landing content) -> uploaded as a texture, warped in-shader
+const scene=document.createElement('canvas'); const x=scene.getContext('2d');
+const PHOS='#36ff7e',DIM='#1f9f57',BRIGHT='#bfffd8',AMBER='#f59e0b';
+const BTNS=[
+  {label:'▾ Get v0.1.0', url:'https://github.com/parker-brown-family/terminal-delight/releases', primary:true},
+  {label:'★ GitHub',     url:'https://github.com/parker-brown-family/terminal-delight'},
+  {label:'Docs',         url:'https://github.com/parker-brown-family/terminal-delight#readme'},
+];
+let btnRects=[]; let hover=-1;
+function layout(){
+  W=Math.round(innerWidth*dpr); H=Math.round(innerHeight*dpr);
+  canvas.width=W;canvas.height=H; scene.width=W;scene.height=H;
+}
+function drawScene(time){
+  const cx=W/2;
+  x.fillStyle='#020a06'; x.fillRect(0,0,W,H);
+  // background phosphor bloom
+  const g=x.createRadialGradient(cx,H*0.40,0,cx,H*0.40,H*0.85);
+  g.addColorStop(0,'rgba(12,70,30,0.6)');g.addColorStop(1,'rgba(0,0,0,0)'); x.fillStyle=g; x.fillRect(0,0,W,H);
+  x.textAlign='center'; x.textBaseline='middle';
+  // eyebrow
+  x.fillStyle=DIM; x.font=`${14*dpr}px ui-monospace,monospace`;
+  x.fillText('A   G P U - N A T I V E   L I N U X   T E R M I N A L', cx, H*0.20);
+  // title
+  x.shadowColor='#0f8'; x.shadowBlur=22*dpr; x.fillStyle=PHOS;
+  x.font=`800 ${Math.min(W*0.085,120*dpr)}px ui-monospace,monospace`;
+  x.fillText('terminal-delight', cx, H*0.32);
+  x.shadowBlur=0;
+  // tagline
+  x.fillStyle=BRIGHT; x.font=`${Math.min(W*0.018,24*dpr)}px ui-monospace,monospace`;
+  x.fillText('Hot-reloadable, CRT-flavored. Tiling. Themeable at will.', cx, H*0.44);
+  x.fillStyle=DIM; x.font=`${15*dpr}px ui-monospace,monospace`;
+  x.fillText('Rust end-to-end · gpui renders every pixel on the GPU · real PTY, real shell', cx, H*0.49);
+  // buttons (centered row) — keep them central so warp click-drift stays tiny
+  const bw=210*dpr, bh=54*dpr, gap=18*dpr, total=BTNS.length*bw+(BTNS.length-1)*gap;
+  let bx=cx-total/2, by=H*0.585;
+  btnRects=[];
+  BTNS.forEach((b,i)=>{
+    const r={x:bx,y:by,w:bw,h:bh,url:b.url};
+    btnRects.push(r);
+    const on=hover===i;
+    x.fillStyle=b.primary?(on?'#0d6':'#0a4d28'):(on?'#063a1c':'#03200f');
+    roundRect(bx,by,bw,bh,10*dpr); x.fill();
+    x.lineWidth=on?2.5*dpr:1.5*dpr; x.strokeStyle=b.primary||on?'#36ff7e':'#0a5'; roundRect(bx,by,bw,bh,10*dpr); x.stroke();
+    x.fillStyle=b.primary?'#eafff2':PHOS; x.shadowColor='#0f8'; x.shadowBlur=on?0:5*dpr;
+    x.font=`700 ${18*dpr}px ui-monospace,monospace`; x.fillText(b.label,bx+bw/2,by+bh/2); x.shadowBlur=0;
+    bx+=bw+gap;
+  });
+  // a faux prompt line with blinking cursor, low
+  x.textAlign='left'; x.fillStyle=DIM; x.font=`${15*dpr}px ui-monospace,monospace`;
+  const py=H*0.74, px=cx-260*dpr;
+  x.fillStyle=PHOS; x.fillText('pbrown@web', px, py); x.fillStyle=DIM; x.fillText(':~$ cargo run  ', px+95*dpr, py);
+  x.fillStyle='#7CFFA8'; x.fillText('# 53 tests green · p50 key→echo 121µs', px+95*dpr, py+24*dpr);
+  if(Math.floor(time/550)%2===0){x.fillStyle=PHOS;x.fillRect(px+208*dpr,py-9*dpr,9*dpr,18*dpr);}
+  x.textAlign='center';
+}
+function roundRect(rx,ry,rw,rh,r){x.beginPath();x.moveTo(rx+r,ry);x.arcTo(rx+rw,ry,rx+rw,ry+rh,r);x.arcTo(rx+rw,ry+rh,rx,ry+rh,r);x.arcTo(rx,ry+rh,rx,ry,r);x.arcTo(rx,ry,rx+rw,ry,r);x.closePath();}
+
+// ---------- WebGL: barrel + scanlines + vignette + glow + flicker + tracking bar ----------
+const vs=`#version 300 es
+void main(){vec2 p=vec2((gl_VertexID<<1)&2,gl_VertexID&2);gl_Position=vec4(p*2.0-1.0,0.,1.);}`;
+const fs=`#version 300 es
+precision highp float;
+uniform sampler2D tex; uniform vec2 res; uniform float k1,k2,time,flick,track;
+out vec4 o;
+float hash(float n){return fract(sin(n)*43758.5453);}
+vec2 warp(vec2 uv){vec2 c=uv-0.5;float r2=dot(c,c);return 0.5+c*(1.0+k1*r2+k2*r2*r2);}
+void main(){
+  vec2 uv0=gl_FragCoord.xy/res; uv0.y=1.0-uv0.y;
+  vec2 uv=warp(uv0);
+  vec2 e=min(uv,1.0-uv); float edge=smoothstep(0.0,0.005,min(e.x,e.y));
+  if(edge<=0.0){o=vec4(0,0,0,1);return;}
+  float r2=dot(uv-0.5,uv-0.5);
+  // rolling TRACKING bar: a bright, slightly-torn band sweeping down every ~7s
+  float barY=fract(time*0.14);
+  float d=uv.y-barY; d-=step(0.5,d); d+=step(d,-0.5);           // wrap distance
+  float band=smoothstep(0.06,0.0,abs(d));
+  float tear=band*track*0.010*sin(uv.y*120.0+time*30.0);        // horizontal tear inside the bar
+  uv.x+=tear;
+  // chromatic aberration at the rim
+  float a=0.004*r2;
+  vec3 col=vec3(texture(tex,warp(uv0+vec2(a,0.0))).r, texture(tex,uv).g, texture(tex,warp(uv0-vec2(a,0.0))).b);
+  // the tracking band brightens + lifts
+  col+=band*track*(0.18+0.12*sin(time*40.0))*vec3(0.5,1.0,0.6);
+  // scanlines (follow the curve)
+  col*=1.0-0.16*(0.5+0.5*sin(uv.y*res.y*0.9));
+  // cheap bloom
+  float ob=2.5/res.x; vec3 bl=texture(tex,uv+vec2(ob,0.0)).rgb+texture(tex,uv-vec2(ob,0.0)).rgb+texture(tex,uv+vec2(0.0,ob)).rgb+texture(tex,uv-vec2(0.0,ob)).rgb;
+  col+=0.10*bl;
+  // FLICKER: fast brightness jitter + occasional deeper dips (ramped by 'flick')
+  float fl=1.0 + flick*0.05*(sin(time*52.0)*0.5+sin(time*97.0)*0.3+ (hash(floor(time*24.0))-0.5));
+  float dip=1.0 - flick*0.10*step(0.93,hash(floor(time*9.0)));   // sporadic frame dip
+  col*=fl*dip;
+  // vignette + rim + edge AA
+  col*=1.0-0.5*r2; col*=edge;
+  o=vec4(col,1.0);
+}`;
+function mk(t,s){const sh=gl.createShader(t);gl.shaderSource(sh,s);gl.compileShader(sh);if(!gl.getShaderParameter(sh,gl.COMPILE_STATUS))throw gl.getShaderInfoLog(sh);return sh;}
+const pr=gl.createProgram();gl.attachShader(pr,mk(gl.VERTEX_SHADER,vs));gl.attachShader(pr,mk(gl.FRAGMENT_SHADER,fs));gl.linkProgram(pr);gl.useProgram(pr);
+const tex=gl.createTexture();gl.bindTexture(gl.TEXTURE_2D,tex);
+[[gl.TEXTURE_MIN_FILTER,gl.LINEAR],[gl.TEXTURE_MAG_FILTER,gl.LINEAR],[gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE],[gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE]].forEach(([k,v])=>gl.texParameteri(gl.TEXTURE_2D,k,v));
+const U=n=>gl.getUniformLocation(pr,n);
+const curv=document.getElementById('curv'),flick=document.getElementById('flick'),track=document.getElementById('track');
+const t0=performance.now(); let lastSceneKey='';
+function frame(now){
+  const time=(now-t0)/1000;
+  // redraw the scene texture only when content changes (cursor blink) — flicker/tracking are in-shader
+  const key=Math.floor((now-t0)/550)+'|'+W+'|'+hover;
+  if(key!==lastSceneKey){ drawScene(now-t0); gl.bindTexture(gl.TEXTURE_2D,tex); gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,scene); lastSceneKey=key; }
+  gl.viewport(0,0,W,H); const c=(+curv.value)/100;
+  gl.uniform2f(U('res'),W,H); gl.uniform1f(U('k1'),c*0.14); gl.uniform1f(U('k2'),c*0.06);
+  gl.uniform1f(U('time'),time); gl.uniform1f(U('flick'),(+flick.value)/100); gl.uniform1f(U('track'),(+track.value)/100); gl.uniform1i(U('tex'),0);
+  gl.drawArrays(gl.TRIANGLES,0,3);
+  window.__ready=true; requestAnimationFrame(frame);
+}
+// gather-map hit-test for the CTAs (same math as desktop warp_screen_to_content)
+function hit(clientX,clientY){
+  const sx=clientX*dpr/W, sy=clientY*dpr/H; const c=(+curv.value)/100;
+  const cu=sx-0.5,cv=sy-0.5,r2=cu*cu+cv*cv,f=1+c*0.14*r2+c*0.06*r2*r2;
+  const lx=(0.5+cu*f)*W, ly=(0.5+cv*f)*H;
+  return btnRects.findIndex(r=>lx>=r.x&&lx<=r.x+r.w&&ly>=r.y&&ly<=r.y+r.h);
+}
+canvas.addEventListener('mousemove',e=>{const i=hit(e.clientX,e.clientY);if(i!==hover){hover=i;lastSceneKey='';canvas.style.cursor=i>=0?'pointer':'default';}});
+canvas.addEventListener('click',e=>{const i=hit(e.clientX,e.clientY);if(i>=0){window.__lastClick=btnRects[i].url; window.open(btnRects[i].url,'_blank');}});
+window.__hitTest=hit;
+addEventListener('resize',()=>{layout();lastSceneKey='';});
+layout(); requestAnimationFrame(frame);
+</script></body></html>

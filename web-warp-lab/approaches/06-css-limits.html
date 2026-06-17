@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>06 · CSS limits — perspective tilt & cosmetic glass (NOT a true barrel)</title>
+<style>
+  *{box-sizing:border-box}html,body{margin:0;height:100%;background:#020a06;color:#36ff7e;font:13px ui-monospace,monospace}
+  h2{color:#9fe;font-size:12px;letter-spacing:1px;margin:10px 0 6px}
+  .row{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;padding:18px}
+  .demo{position:relative;height:280px;display:grid;place-items:center;border:1px solid #084;border-radius:8px;background:#010703;overflow:hidden}
+  .cap{position:absolute;top:6px;left:8px;font-size:10px;color:#5fd;z-index:5}
+  .note{position:absolute;bottom:6px;left:8px;right:8px;font-size:10px;color:#f87}
+  .screen{width:240px;height:150px;background:repeating-linear-gradient(#06381a 0 19px,#0a4d26 19px 20px),repeating-linear-gradient(90deg,#06381a 0 19px,#0a4d26 19px 20px);border:1px solid #0c6;color:#aiffd0;padding:8px;font-size:11px;color:#bfffd8}
+  /* A — perspective rotateX: a flat plane TILTS (trapezoid), no bulge */
+  .persp{perspective:420px}
+  .persp .screen{transform:rotateX(26deg)}
+  /* B — segmented cylinder: many vertical slices each rotateY — ONE axis only */
+  .cyl{perspective:700px;display:flex}
+  .cyl .slice{width:18px;height:150px;background:linear-gradient(90deg,#0a4d26,#06381a);border-right:1px solid #063;
+    transform-origin:center; }
+  /* C — pure CSS "glass": border-radius + inset shadows + vignette. Cosmetic only,
+     content stays perfectly FLAT (zero geometric warp). */
+  .glass .screen{border-radius:26px/40px;box-shadow:inset 0 0 40px #000,inset 0 0 90px #041a0c;position:relative}
+  .glass .screen::after{content:"";position:absolute;inset:0;border-radius:26px/40px;
+    background:radial-gradient(120% 120% at 50% 50%,transparent 55%,rgba(0,0,0,.6));pointer-events:none}
+</style></head><body>
+<div class="row">
+  <div class="demo persp"><span class="cap">A · perspective rotateX(26°)</span>
+    <div class="screen">pbrown@web:~$ echo flat-plane-tilt<br>this TILTS like a sign,<br>edges stay straight —<br>NO bulge.</div>
+    <span class="note">✗ trapezoid, not barrel</span>
+  </div>
+  <div class="demo cyl" id="cyl"><span class="cap">B · segmented rotateY cylinder</span>
+    <span class="note">~ single-axis curve only; seams break text flow</span>
+  </div>
+  <div class="demo glass"><span class="cap">C · border-radius + inset shadow + vignette</span>
+    <div class="screen">pbrown@web:~$ cargo test<br>ok. 53 passed<br>content is perfectly FLAT,<br>only the rim is faked.</div>
+    <span class="note">✗ cosmetic glass, zero geometric warp (but fully interactive)</span>
+  </div>
+</div>
+<script>
+// build the segmented cylinder (B): N vertical slices, each rotated a little so the
+// strip wraps — proves CSS can fake ONE axis but never bulge the second.
+const cyl=document.getElementById('cyl'), N=14;
+const words=['pbrown@web','cargo test','53 passed','curved? no','just a','cylinder of','flat slices','one axis','only — the','vertical','never bows','this is the','CSS ceiling','▸ CLAUDE'];
+for(let i=0;i<N;i++){
+  const a=(i-(N-1)/2)*8;                 // degrees per slice
+  const s=document.createElement('div'); s.className='slice';
+  s.style.transform=`rotateY(${a}deg)`;
+  s.style.color='#bfffd8'; s.style.fontSize='9px'; s.style.padding='4px 1px'; s.style.lineHeight='1.2';
+  s.textContent=words[i]||'';
+  cyl.appendChild(s);
+}
+window.__ready=true;
+</script></body></html>

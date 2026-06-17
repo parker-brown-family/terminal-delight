@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>07 · whole-site barrel warp (the real homepage, live & interactive)</title>
+<style>
+  *{box-sizing:border-box} html,body{margin:0;height:100%;background:#000;overflow:hidden}
+  /* the CRT "tube": a fixed, viewport-sized glass that warps whatever it contains.
+     The site loads inside as a normal, fully-interactive page. */
+  #tube{position:fixed;inset:0;filter:url(#barrel);will-change:filter;background:#020a06}
+  #tube iframe{width:100%;height:100%;border:0;display:block}
+  /* CRT dressing sits ON TOP of the glass (pointer-events:none so the site stays clickable) */
+  #fx{position:fixed;inset:0;pointer-events:none;z-index:3}
+  #fx .scan{position:absolute;inset:0;background:repeating-linear-gradient(0deg,rgba(0,0,0,.16) 0 1px,transparent 1px 3px);mix-blend-mode:multiply}
+  #fx .vig{position:absolute;inset:0;background:radial-gradient(120% 100% at 50% 50%,transparent 58%,rgba(0,0,0,.6))}
+  #fx .glow{position:absolute;inset:0;box-shadow:inset 0 0 120px rgba(10,60,25,.5),inset 0 0 24px rgba(54,255,134,.10)}
+  /* a tiny on-screen control to feel the curve; remove in prod */
+  #ui{position:fixed;left:12px;top:10px;z-index:5;font:12px ui-monospace,monospace;color:#8fe;background:#060d09cc;border:1px solid #0b3;border-radius:8px;padding:6px 10px;display:flex;gap:8px;align-items:center}
+  #ui input{width:160px;accent-color:#36ff7e}
+</style></head>
+<body>
+  <div id="tube"><iframe id="site" src="../../../terminal-delight/index.html" title="site"></iframe></div>
+  <div id="fx"><div class="scan"></div><div class="vig"></div><div class="glow"></div></div>
+  <div id="ui">BARREL <input id="curv" type="range" min="0" max="100" value="22"><span id="kv">22</span></div>
+
+  <svg width="0" height="0" style="position:absolute">
+    <filter id="barrel" x="-8%" y="-8%" width="116%" height="116%" color-interpolation-filters="sRGB">
+      <feImage id="map" result="map" preserveAspectRatio="none"/>
+      <feDisplacementMap id="disp" in="SourceGraphic" in2="map" xChannelSelector="R" yChannelSelector="G" scale="0"/>
+    </filter>
+  </svg>
+<script>
+const map=document.getElementById('map'),disp=document.getElementById('disp'),slider=document.getElementById('curv'),kv=document.getElementById('kv');
+// viewport-sized barrel map (regenerated only on resize / curve change — NOT per frame),
+// so the warp is glued to the SCREEN and stays put while the site scrolls inside.
+function build(){
+  const w=innerWidth,h=innerHeight;
+  const curv=(+slider.value)/100*0.9;              // GENTLE — keeps clicks landing right
+  const k1=curv*0.6,k2=curv*0.25;
+  const cv=document.createElement('canvas');cv.width=w;cv.height=h;const c=cv.getContext('2d');
+  const img=c.createImageData(w,h),cx=w/2,cy=h/2;
+  const ox=new Float32Array(w*h),oy=new Float32Array(w*h);let mo=1e-3;
+  for(let y=0;y<h;y++)for(let x=0;x<w;x++){
+    const dx=(x-cx)/cx*0.5,dy=(y-cy)/cy*0.5,r2=dx*dx+dy*dy,f=1+k1*r2+k2*r2*r2;
+    const i=y*w+x;ox[i]=dx*(f-1)*w;oy[i]=dy*(f-1)*h;
+    if(Math.abs(ox[i])>mo)mo=Math.abs(ox[i]);if(Math.abs(oy[i])>mo)mo=Math.abs(oy[i]);
+  }
+  for(let i=0;i<w*h;i++){img.data[i*4]=128+ox[i]/mo*127;img.data[i*4+1]=128+oy[i]/mo*127;img.data[i*4+2]=128;img.data[i*4+3]=255;}
+  c.putImageData(img,0,0);const u=cv.toDataURL();
+  map.setAttribute('href',u);map.setAttributeNS('http://www.w3.org/1999/xlink','href',u);
+  map.setAttribute('width',w);map.setAttribute('height',h);
+  disp.setAttribute('scale',(mo*2).toFixed(2));kv.textContent=slider.value;window.__ready=true;
+}
+slider.addEventListener('input',build);addEventListener('resize',build);requestAnimationFrame(build);
+</script></body></html>

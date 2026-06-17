@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>05 · clickable canvas terminal — correct hit-testing UNDER the barrel</title>
+<style>
+  *{box-sizing:border-box}html,body{margin:0;height:100%;background:#000;color:#8fe;font:13px ui-monospace,monospace;overflow:hidden}
+  .wrap{height:100%;display:grid;grid-template-rows:auto 1fr}
+  .bar{display:flex;gap:14px;align-items:center;padding:9px 16px;background:#060d09;border-bottom:1px solid #0b3}
+  .bar input{width:200px;accent-color:#36ff7e}.dim{color:#2faa66}
+  .stage{position:relative;display:grid;place-items:center;background:#000}
+  .bezel{position:relative;padding:14px;border-radius:24px;background:linear-gradient(#0b110d,#050805);box-shadow:0 0 0 2px #0a4,0 30px 90px #000}
+  canvas{display:block;border-radius:12px;cursor:crosshair}
+  /* a crosshair drawn in SCREEN space at the click point — if the highlighted cell
+     sits under it, hit-testing through the warp is correct */
+  #xh{position:absolute;width:14px;height:14px;margin:-7px 0 0 -7px;pointer-events:none;
+      border:2px solid #fff;border-radius:50%;box-shadow:0 0 8px #fff;display:none}
+</style></head>
+<body><div class="wrap">
+  <div class="bar"><label>BARREL <input id="curv" type="range" min="0" max="100" value="70"></label>
+    <span class="dim">click any cell — the highlight lands under the crosshair even at the curved rim (gather-map hit-test, same as the desktop app)</span></div>
+  <div class="stage"><div class="bezel">
+    <canvas id="gl" width="900" height="560"></canvas>
+    <div id="xh"></div>
+  </div></div>
+</div>
+<script>
+const W=900,H=560, COLS=15, ROWS=9;
+const scene=document.createElement('canvas');scene.width=W;scene.height=H;
+const x=scene.getContext('2d');
+let sel={c:-1,r:-1};
+function curvK(){const v=(+document.getElementById('curv').value)/100*3.2;return [v*0.14,v*0.06];}
+function warp(ux,uy){const cx=ux-0.5,cy=uy-0.5,r2=cx*cx+cy*cy,[k1,k2]=curvK(),f=1+k1*r2+k2*r2*r2;return [0.5+cx*f,0.5+cy*f];}
+function drawScene(){
+  x.fillStyle='#021107';x.fillRect(0,0,W,H);
+  const cw=W/COLS, ch=H/ROWS;
+  x.font='13px ui-monospace,monospace';x.textBaseline='middle';x.textAlign='center';
+  for(let r=0;r<ROWS;r++)for(let c=0;c<COLS;c++){
+    const on=(c===sel.c&&r===sel.r);
+    x.fillStyle=on?'#0c5':'#03200f'; x.fillRect(c*cw+1,r*ch+1,cw-2,ch-2);
+    x.strokeStyle=on?'#9fffc8':'#0a4'; x.lineWidth=on?2:1; x.strokeRect(c*cw+1,r*ch+1,cw-2,ch-2);
+    x.fillStyle=on?'#021107':'#36ff7e'; x.shadowColor='#0f8'; x.shadowBlur=on?0:4;
+    x.fillText('R'+r+'C'+c, c*cw+cw/2, r*ch+ch/2);
+    x.shadowBlur=0;
+  }
+}
+// ---- WebGL2 warp (same as approach 03) ----
+const gl=document.getElementById('gl').getContext('webgl2',{antialias:false});
+const vs=`#version 300 es
+void main(){vec2 p=vec2((gl_VertexID<<1)&2,gl_VertexID&2);gl_Position=vec4(p*2.0-1.0,0.,1.);}`;
+const fs=`#version 300 es
+precision highp float;uniform sampler2D tex;uniform vec2 res;uniform float k1,k2;out vec4 o;
+vec2 warp(vec2 uv){vec2 c=uv-0.5;float r2=dot(c,c);return 0.5+c*(1.0+k1*r2+k2*r2*r2);}
+void main(){vec2 uv=gl_FragCoord.xy/res;uv.y=1.0-uv.y;vec2 w=warp(uv);
+ vec2 e=min(w,1.0-w);float edge=smoothstep(0.0,0.004,min(e.x,e.y));
+ if(edge<=0.0){o=vec4(0,0,0,1);return;}
+ vec3 c=texture(tex,w).rgb; float r2=dot(w-0.5,w-0.5);
+ c*=1.0-0.10*(0.5+0.5*sin(w.y*res.y*1.4)); c*=1.0-0.45*r2; c*=edge; o=vec4(c,1.0);}`;
+function mk(t,s){const sh=gl.createShader(t);gl.shaderSource(sh,s);gl.compileShader(sh);return sh;}
+const pr=gl.createProgram();gl.attachShader(pr,mk(gl.VERTEX_SHADER,vs));gl.attachShader(pr,mk(gl.FRAGMENT_SHADER,fs));gl.linkProgram(pr);gl.useProgram(pr);
+const tex=gl.createTexture();gl.bindTexture(gl.TEXTURE_2D,tex);
+[[gl.TEXTURE_MIN_FILTER,gl.LINEAR],[gl.TEXTURE_MAG_FILTER,gl.LINEAR],[gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE],[gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE]].forEach(([k,v])=>gl.texParameteri(gl.TEXTURE_2D,k,v));
+const U=n=>gl.getUniformLocation(pr,n);
+function render(){
+  drawScene();
+  gl.bindTexture(gl.TEXTURE_2D,tex);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,scene);
+  gl.viewport(0,0,W,H);const[k1,k2]=curvK();
+  gl.uniform2f(U('res'),W,H);gl.uniform1f(U('k1'),k1);gl.uniform1f(U('k2'),k2);gl.uniform1i(U('tex'),0);
+  gl.drawArrays(gl.TRIANGLES,0,3);
+}
+// ---- the hit-test: click screen point -> gather-warp -> scene cell (identical to
+//      the desktop warp_screen_to_content). Highlighting that cell makes it render
+//      back UNDER the cursor, proving the interaction is warp-correct. ----
+const canvas=document.getElementById('gl'), xh=document.getElementById('xh');
+function pick(clientX,clientY){
+  const b=canvas.getBoundingClientRect();
+  const sx=(clientX-b.left)/b.width, sy=(clientY-b.top)/b.height;   // screen uv 0..1
+  const [lx,ly]=warp(sx,sy);                                        // gather -> scene uv
+  sel={c:Math.max(0,Math.min(COLS-1,Math.floor(lx*COLS))), r:Math.max(0,Math.min(ROWS-1,Math.floor(ly*ROWS)))};
+  // place the screen-space crosshair exactly where the pointer is (relative to bezel)
+  const bz=canvas.parentElement.getBoundingClientRect();
+  xh.style.left=(clientX-bz.left)+'px'; xh.style.top=(clientY-bz.top)+'px'; xh.style.display='block';
+  window.__sel=sel; render();
+}
+canvas.addEventListener('mousedown',e=>pick(e.clientX,e.clientY));
+document.getElementById('curv').addEventListener('input',render);
+window.__pickAt=(cx,cy)=>pick(cx,cy);   // test hook
+render(); window.__ready=true;
+</script></body></html>
