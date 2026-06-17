@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>02 · WebGL2 barrel on a foreignObject DOM snapshot</title>
+<style>
+  *{box-sizing:border-box}html,body{margin:0;height:100%;background:#000;color:#8fe;font:13px ui-monospace,monospace;overflow:hidden}
+  .wrap{height:100%;display:grid;grid-template-rows:auto 1fr}
+  .controls{display:flex;gap:16px;align-items:center;padding:9px 16px;background:#060d09;border-bottom:1px solid #0b3}
+  .controls input[type=range]{width:200px;accent-color:#36ff7e}
+  .panes{display:grid;grid-template-columns:1fr 1fr;gap:16px;padding:18px;align-items:center;justify-items:center}
+  .cap{position:absolute;top:6px;left:10px;font-size:11px;color:#5fd;opacity:.8}
+  .holder{position:relative}
+  /* the live, interactive DOM that we snapshot */
+  #src{width:460px;height:300px;background:radial-gradient(120% 120% at 50% 0%,#04300f,#021107 60%,#000);border-radius:12px;padding:16px 18px;overflow:hidden;color:#36ff7e;text-shadow:0 0 6px #0f86}
+  #src .dim{color:#2faa66}#src .amber{color:#f59e0b}#src .cyan{color:#22d3ee}
+  canvas{border-radius:12px;background:#000}
+</style></head>
+<body><div class="wrap">
+  <div class="controls">
+    <label>BARREL <input id="curv" type="range" min="0" max="100" value="48"></label>
+    <button id="snap">re-snapshot →</button>
+    <span class="dim">left = live interactive DOM · right = its snapshot, warped on the GPU</span>
+  </div>
+  <div class="panes">
+    <div class="holder"><span class="cap">LIVE DOM (flat, interactive)</span>
+      <div id="src">
+        <div style="color:#9fe;letter-spacing:1px;margin-bottom:8px">REAL HTML · foreignObject → texture</div>
+        <div><span class="dim">pbrown@web:~$</span> cargo test</div>
+        <div class="dim">test result: ok. 53 passed; 0 failed</div>
+        <div><span class="dim">pbrown@web:~$</span> <span class="amber">claude</span> <span class="dim">--resume</span></div>
+        <div class="amber">▸ CLAUDE · warped HTML, real &lt;div&gt;s</div>
+        <div><span class="dim">pbrown@web:~$</span> <span class="cyan">seq 1 100000 | tail -1</span></div>
+        <div class="dim">100000</div>
+        <div><span class="dim">pbrown@web:~$</span> █</div>
+      </div>
+    </div>
+    <div class="holder"><span class="cap">SNAPSHOT, BARREL-WARPED (WebGL2)</span>
+      <canvas id="gl" width="460" height="300"></canvas>
+    </div>
+  </div>
+</div>
+<script>
+const src=document.getElementById('src'), W=460, H=300;
+const gl=document.getElementById('gl').getContext('webgl2',{antialias:false});
+// --- shader: same barrel as the desktop pass ---
+const vs=`#version 300 es
+void main(){vec2 p=vec2((gl_VertexID<<1)&2,gl_VertexID&2);gl_Position=vec4(p*2.0-1.0,0.,1.);}`;
+const fs=`#version 300 es
+precision highp float;uniform sampler2D tex;uniform vec2 res;uniform float k1,k2;out vec4 o;
+vec2 warp(vec2 uv){vec2 c=uv-0.5;float r2=dot(c,c);return 0.5+c*(1.0+k1*r2+k2*r2*r2);}
+void main(){vec2 uv=gl_FragCoord.xy/res;uv.y=1.0-uv.y;vec2 w=warp(uv);
+ vec2 e=min(w,1.0-w);float edge=smoothstep(0.0,0.004,min(e.x,e.y));
+ if(edge<=0.0){o=vec4(0,0,0,1);return;}
+ float r2=dot(w-0.5,w-0.5);float a=0.003*r2;
+ vec3 c=vec3(texture(tex,warp(uv+vec2(a,0))).r,texture(tex,w).g,texture(tex,warp(uv-vec2(a,0))).b);
+ c*=1.0-0.12*(0.5+0.5*sin(w.y*res.y*1.5));         // scanline
+ c*=1.0-0.5*r2; c*=edge;                            // vignette + rim
+ o=vec4(c,1.0);}`;
+function mk(t,s){const sh=gl.createShader(t);gl.shaderSource(sh,s);gl.compileShader(sh);
+ if(!gl.getShaderParameter(sh,gl.COMPILE_STATUS))throw gl.getShaderInfoLog(sh);return sh;}
+const pr=gl.createProgram();gl.attachShader(pr,mk(gl.VERTEX_SHADER,vs));gl.attachShader(pr,mk(gl.FRAGMENT_SHADER,fs));
+gl.linkProgram(pr);gl.useProgram(pr);
+const tex=gl.createTexture();gl.bindTexture(gl.TEXTURE_2D,tex);
+[[gl.TEXTURE_MIN_FILTER,gl.LINEAR],[gl.TEXTURE_MAG_FILTER,gl.LINEAR],
+ [gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE],[gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE]].forEach(([k,v])=>gl.texParameteri(gl.TEXTURE_2D,k,v));
+const U=n=>gl.getUniformLocation(pr,n);
+
+// --- snapshot the live DOM via foreignObject → data URL → Image → texture ---
+function snapshot(){
+  // inline the computed styles so the snapshot matches (foreignObject ignores external CSS)
+  const clone=src.cloneNode(true);
+  const html=new XMLSerializer().serializeToString(clone);
+  const svg=`<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}">`+
+    `<foreignObject width="100%" height="100%">`+
+    `<style>*{margin:0;font-family:ui-monospace,monospace;font-size:13px;line-height:1.4}`+
+    `#src{width:${W}px;height:${H}px;background:radial-gradient(120% 120% at 50% 0%,#04300f,#021107 60%,#000);padding:16px 18px;color:#36ff7e}`+
+    `.dim{color:#2faa66}.amber{color:#f59e0b}.cyan{color:#22d3ee}</style>`+
+    html.replace('xmlns="http://www.w3.org/1999/xhtml"','xmlns="http://www.w3.org/1999/xhtml"')+
+    `</foreignObject></svg>`;
+  const url='data:image/svg+xml;charset=utf-8,'+encodeURIComponent(svg);
+  const img=new Image();
+  img.onload=()=>{
+    gl.bindTexture(gl.TEXTURE_2D,tex);
+    gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,img);
+    window.__snapped=true; draw();
+  };
+  img.onerror=(e)=>{window.__snapErr=String(e);};
+  img.src=url;
+}
+function draw(){
+  gl.viewport(0,0,W,H);gl.useProgram(pr);
+  const curv=(+document.getElementById('curv').value)/100*2.4;
+  gl.uniform2f(U('res'),W,H);gl.uniform1f(U('k1'),curv*0.14);gl.uniform1f(U('k2'),curv*0.06);gl.uniform1i(U('tex'),0);
+  gl.drawArrays(gl.TRIANGLES,0,3);
+}
+document.getElementById('curv').addEventListener('input',draw);
+document.getElementById('snap').addEventListener('click',snapshot);
+requestAnimationFrame(()=>{snapshot();window.__ready=true;});
+</script></body></html>

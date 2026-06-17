@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>09 · scrollable curved-CRT site (real homepage, warp suspends on scroll)</title>
+<style>
+  *{box-sizing:border-box} html,body{margin:0;height:100%;background:#020a06;overflow:hidden}
+  /* fixed viewport "tube": warp is glued to the SCREEN, content scrolls inside it */
+  #tube{position:fixed;inset:0;filter:url(#barrel);transition:filter .18s ease;background:#020a06}
+  #tube.scrolling{filter:none !important}      /* native-speed scroll, curve restores on idle */
+  #tube iframe{width:100%;height:100%;border:0;display:block}
+  #fx{position:fixed;inset:0;pointer-events:none;z-index:3}
+  #fx .scan{position:absolute;inset:0;background:repeating-linear-gradient(0deg,rgba(0,0,0,.16) 0 1px,transparent 1px 3px);mix-blend-mode:multiply}
+  #fx .vig{position:absolute;inset:0;background:radial-gradient(120% 100% at 50% 50%,transparent 56%,rgba(0,0,0,.62))}
+  #fx .glow{position:absolute;inset:0;box-shadow:inset 0 0 130px rgba(10,60,25,.5),inset 0 0 22px rgba(54,255,134,.10)}
+  #ui{position:fixed;left:12px;top:10px;z-index:5;font:12px ui-monospace,monospace;color:#8fe;background:#060d09cc;border:1px solid #0b3;border-radius:8px;padding:6px 10px;display:flex;gap:8px;align-items:center}
+  #ui input{width:150px;accent-color:#36ff7e}
+</style></head>
+<body>
+  <div id="tube"><iframe id="site" src="../../../terminal-delight/index.html" title="site"></iframe></div>
+  <div id="fx"><div class="scan"></div><div class="vig"></div><div class="glow"></div></div>
+  <div id="ui">BARREL <input id="curv" type="range" min="0" max="100" value="26"><span id="kv">26</span>
+    <span style="opacity:.7">· scroll inside · curve restores when you stop</span></div>
+
+  <svg width="0" height="0" style="position:absolute">
+    <filter id="barrel" x="-8%" y="-8%" width="116%" height="116%" color-interpolation-filters="sRGB">
+      <feImage id="map" result="map" preserveAspectRatio="none"/>
+      <feDisplacementMap id="disp" in="SourceGraphic" in2="map" xChannelSelector="R" yChannelSelector="G" scale="0"/>
+    </filter>
+  </svg>
+<script>
+const tube=document.getElementById('tube'),map=document.getElementById('map'),disp=document.getElementById('disp'),slider=document.getElementById('curv'),kv=document.getElementById('kv');
+function build(){
+  const w=innerWidth,h=innerHeight,curv=(+slider.value)/100*0.95,k1=curv*0.6,k2=curv*0.25;
+  const cv=document.createElement('canvas');cv.width=w;cv.height=h;const c=cv.getContext('2d');
+  const img=c.createImageData(w,h),cx=w/2,cy=h/2,ox=new Float32Array(w*h),oy=new Float32Array(w*h);let mo=1e-3;
+  for(let y=0;y<h;y++)for(let xx=0;xx<w;xx++){const dx=(xx-cx)/cx*0.5,dy=(y-cy)/cy*0.5,r2=dx*dx+dy*dy,f=1+k1*r2+k2*r2*r2;const i=y*w+xx;ox[i]=dx*(f-1)*w;oy[i]=dy*(f-1)*h;if(Math.abs(ox[i])>mo)mo=Math.abs(ox[i]);if(Math.abs(oy[i])>mo)mo=Math.abs(oy[i]);}
+  for(let i=0;i<w*h;i++){img.data[i*4]=128+ox[i]/mo*127;img.data[i*4+1]=128+oy[i]/mo*127;img.data[i*4+2]=128;img.data[i*4+3]=255;}
+  c.putImageData(img,0,0);const u=cv.toDataURL();
+  map.setAttribute('href',u);map.setAttributeNS('http://www.w3.org/1999/xlink','href',u);map.setAttribute('width',w);map.setAttribute('height',h);
+  disp.setAttribute('scale',(mo*2).toFixed(2));kv.textContent=slider.value;window.__ready=true;
+}
+// suspend the warp while scrolling → native 60fps; restore ~180ms after the last scroll.
+let tid=null;
+function onScroll(){ tube.classList.add('scrolling'); clearTimeout(tid); tid=setTimeout(()=>tube.classList.remove('scrolling'),180); }
+const ifr=document.getElementById('site');
+ifr.addEventListener('load',()=>{ try{ ifr.contentWindow.addEventListener('scroll',onScroll,{passive:true}); ifr.contentWindow.addEventListener('wheel',onScroll,{passive:true}); }catch(e){} });
+addEventListener('wheel',onScroll,{passive:true});
+// test hook: scroll the inner site and report whether warp is currently suspended
+window.__scrollTo=(y)=>{ try{ifr.contentWindow.scrollTo(0,y);}catch(e){} };
+window.__warpOn=()=>!tube.classList.contains('scrolling');
+slider.addEventListener('input',build);addEventListener('resize',build);requestAnimationFrame(build);
+</script></body></html>

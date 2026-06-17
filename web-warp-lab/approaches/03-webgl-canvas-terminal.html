@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8" /><meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>03 · WebGL2 barrel on a canvas-rendered terminal (live, 60fps)</title>
+<style>
+  *{box-sizing:border-box} html,body{height:100%;margin:0;background:#000;color:#8fe;font:13px/1.4 ui-monospace,monospace;overflow:hidden}
+  .wrap{height:100%;display:grid;grid-template-rows:auto 1fr}
+  .controls{display:flex;gap:16px;align-items:center;padding:9px 16px;background:#060d09;border-bottom:1px solid #0b3}
+  .controls input[type=range]{width:200px;accent-color:#36ff7e}
+  .controls label{display:flex;gap:6px;align-items:center}
+  #fps{margin-left:auto;color:#36ff7e;font-weight:bold}
+  .stage{position:relative;display:grid;place-items:center;background:#000}
+  /* the bezel frame is flat HTML; the GL canvas inside carries the warp */
+  .bezel{padding:14px;border-radius:24px;background:linear-gradient(#0b110d,#050805);box-shadow:0 0 0 2px #0a4,0 30px 90px #000,0 0 70px #0f03}
+  canvas{display:block;border-radius:12px}
+</style></head>
+<body><div class="wrap">
+  <div class="controls">
+    <label>BARREL <input id="curv" type="range" min="0" max="100" value="42"></label>
+    <label>SCAN <input id="scan" type="range" min="0" max="100" value="55"></label>
+    <label>ABERR <input id="ab" type="range" min="0" max="100" value="30"></label>
+    <label>GLOW <input id="glow" type="range" min="0" max="100" value="45"></label>
+    <span id="fps">– fps</span>
+  </div>
+  <div class="stage"><div class="bezel"><canvas id="gl" width="960" height="600"></canvas></div></div>
+</div>
+<script>
+// ---------- 1. SCENE: draw a terminal straight onto an offscreen 2D canvas ----------
+const P=new URLSearchParams(location.search);
+const W=+P.get('w')||960, H=+P.get('h')||600, SS=+P.get('ss')||1; // ?w=&h=&ss= to stress
+const STRESS=P.has('stress'); // force a full re-rasterize storm
+document.getElementById('gl').width=W; document.getElementById('gl').height=H;
+const scene=document.createElement('canvas'); scene.width=W*SS; scene.height=H*SS;
+const x=scene.getContext('2d');
+const PHOS='#36ff7e', DIM='#1f9f57', AMBER='#f59e0b', CYAN='#22d3ee';
+const FS=16*SS, LH=22*SS, PADX=22*SS, PADY=20*SS;
+let t0=performance.now();
+// a little "live" log that scrolls, plus a blinking cursor — proves it's not a static image
+const log=[
+  ['#9fe','TERMINAL · CURVED GLASS (WEB · WebGL2)'],
+  ['',''],
+  [PHOS,'pbrown@web:~$ ',DIM,'cargo test'],
+  [DIM,'   Compiling terminal-delight v0.1.0'],
+  [PHOS,'   Running 53 tests'],
+  ['#7CFFA8','test result: ok. 53 passed; 0 failed'],
+  ['',''],
+  [PHOS,'pbrown@web:~$ ',DIM,'echo "rendered to canvas, warped on the GPU"'],
+  [DIM,'rendered to canvas, warped on the GPU'],
+  [PHOS,'pbrown@web:~$ ',AMBER,'claude ',DIM,'--resume'],
+  [AMBER,'▸ CLAUDE · ',DIM,'this pane bows like real curved phosphor glass'],
+  [PHOS,'pbrown@web:~$ ',CYAN,'seq 1 100000 | tail -3'],
+  [DIM,'99998'],[DIM,'99999'],[DIM,'100000'],
+  [PHOS,'pbrown@web:~$ '],
+];
+function drawScene(time){
+  x.fillStyle='#021107'; x.fillRect(0,0,scene.width,scene.height);
+  // faint center phosphor bloom in the background
+  const g=x.createRadialGradient(W*SS/2,H*SS*0.32,0,W*SS/2,H*SS*0.32,H*SS*0.9);
+  g.addColorStop(0,'rgba(10,60,25,0.55)'); g.addColorStop(1,'rgba(0,0,0,0)');
+  x.fillStyle=g; x.fillRect(0,0,scene.width,scene.height);
+  x.font=`${FS}px ui-monospace, monospace`; x.textBaseline='top';
+  x.shadowColor='#0f8'; x.shadowBlur=6*SS;
+  let yy=PADY;
+  for(const line of log){
+    let xx=PADX;
+    for(let i=0;i<line.length;i+=2){
+      const col=line[i]||PHOS, txt=line[i+1]||'';
+      x.fillStyle=col; x.fillText(txt,xx,yy);
+      xx+=x.measureText(txt).width;
+    }
+    yy+=LH;
+    if(yy>H*SS-PADY) break;
+  }
+  // blinking block cursor after the last prompt
+  if(Math.floor(time/550)%2===0){
+    const last=log[log.length-1];
+    let cw=PADX; for(let i=1;i<last.length;i+=2) cw+=x.measureText(last[i]).width;
+    x.shadowBlur=10*SS; x.fillStyle=PHOS;
+    x.fillRect(cw, yy-LH+2*SS, 9*SS, FS);
+  }
+  x.shadowBlur=0;
+}
+
+// ---------- 2. WEBGL2: full-screen barrel + CRT pass sampling the scene texture ----------
+const gl=document.getElementById('gl').getContext('webgl2',{antialias:false});
+const vsrc=`#version 300 es
+void main(){ // fullscreen triangle, no buffers
+  vec2 p=vec2((gl_VertexID<<1)&2, gl_VertexID&2);
+  gl_Position=vec4(p*2.0-1.0,0.0,1.0);
+}`;
+const fsrc=`#version 300 es
+precision highp float;
+uniform sampler2D tex; uniform vec2 res; uniform float k1,k2,scan,aberr,glow,time;
+out vec4 frag;
+vec2 warp(vec2 uv){ vec2 c=uv-0.5; float r2=dot(c,c); return 0.5 + c*(1.0+k1*r2+k2*r2*r2); }
+void main(){
+  vec2 uv0=gl_FragCoord.xy/res; uv0.y=1.0-uv0.y;          // flip to image space
+  vec2 uv=warp(uv0);
+  // outside the tube -> black bezel interior, with a soft edge
+  vec2 e=min(uv,1.0-uv); float edge=smoothstep(0.0,0.004,min(e.x,e.y));
+  if(edge<=0.0){ frag=vec4(0.0,0.0,0.0,1.0); return; }
+  float r2=dot(uv-0.5,uv-0.5);
+  // chromatic aberration: sample R/B at slightly different warps near the rim
+  float a=aberr*0.004*r2;
+  float cr=texture(tex, warp(uv0+vec2(a,0.0))).r;
+  float cg=texture(tex, uv).g;
+  float cb=texture(tex, warp(uv0-vec2(a,0.0))).b;
+  vec3 col=vec3(cr,cg,cb);
+  // scanlines in screen space (follow the curve since uv is warped)
+  float sl=1.0 - scan*0.18*(0.5+0.5*sin(uv.y*res.y*1.4));
+  col*=sl;
+  // cheap bloom: add a blurred-ish bright pass (4 taps)
+  vec3 bl=vec3(0.0); float o=2.5/res.x;
+  bl+=texture(tex,uv+vec2(o,0)).rgb; bl+=texture(tex,uv-vec2(o,0)).rgb;
+  bl+=texture(tex,uv+vec2(0,o)).rgb; bl+=texture(tex,uv-vec2(0,o)).rgb;
+  col+=glow*0.18*bl*0.25;
+  // vignette + rim falloff + edge AA
+  col*=1.0-0.55*r2;
+  col*=edge;
+  frag=vec4(col,1.0);
+}`;
+function sh(type,src){const s=gl.createShader(type);gl.shaderSource(s,src);gl.compileShader(s);
+  if(!gl.getShaderParameter(s,gl.COMPILE_STATUS))throw gl.getShaderInfoLog(s);return s;}
+const prog=gl.createProgram();
+gl.attachShader(prog,sh(gl.VERTEX_SHADER,vsrc)); gl.attachShader(prog,sh(gl.FRAGMENT_SHADER,fsrc));
+gl.linkProgram(prog); if(!gl.getProgramParameter(prog,gl.LINK_STATUS))throw gl.getProgramInfoLog(prog);
+gl.useProgram(prog);
+const tex=gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D,tex);
+gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);
+gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
+gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);
+gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
+const U=n=>gl.getUniformLocation(prog,n);
+const ctrl={curv:document.getElementById('curv'),scan:document.getElementById('scan'),ab:document.getElementById('ab'),glow:document.getElementById('glow')};
+const fpsEl=document.getElementById('fps');
+let frames=0,facc=0,last=performance.now();
+function frame(now){
+  const time=now-t0;
+  drawScene(time);
+  gl.bindTexture(gl.TEXTURE_2D,tex);
+  gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,scene);
+  gl.viewport(0,0,gl.canvas.width,gl.canvas.height);
+  const curv=(+ctrl.curv.value)/100*3.0;             // 0..3
+  gl.uniform2f(U('res'),gl.canvas.width,gl.canvas.height);
+  gl.uniform1f(U('k1'),curv*0.14); gl.uniform1f(U('k2'),curv*0.06);
+  gl.uniform1f(U('scan'),(+ctrl.scan.value)/100);
+  gl.uniform1f(U('aberr'),(+ctrl.ab.value)/100);
+  gl.uniform1f(U('glow'),(+ctrl.glow.value)/100);
+  gl.uniform1f(U('time'),time*0.001);
+  gl.uniform1i(U('tex'),0);
+  const PASSES=+P.get('passes')||1;           // overdraw multiplier to find the GPU knee
+  for(let p=0;p<PASSES;p++) gl.drawArrays(gl.TRIANGLES,0,3);
+  frames++; facc+=now-last; last=now;
+  if(facc>=500){ fpsEl.textContent=(frames*1000/facc).toFixed(0)+' fps'; frames=0; facc=0; }
+  window.__fps=fpsEl.textContent; window.__ready=true;
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script></body></html>
