@@ -908,11 +908,20 @@ impl TerminalView {
         // theme group follows outer — an explicit per-pane theme is a deliberate
         // look the tint shouldn't stomp. The grade rides along untouched either
         // way (mode_theme leaves `grade`/`color_mode` alone).
-        let out = if inherit {
+        let mut out = if inherit {
             mode_theme(&base, &self.mode)
         } else {
             base
         };
+        // Terminal text-size: scale the GRID font + cell height by the pane's
+        // effective text-size grade so the terminal reflows (sync_size measures
+        // cell_w from font_size and cell_h from this). Chrome is untouched —
+        // that's `grade.scale` (the menu-bar slider). Neutral 1.0 = config size.
+        let ts = eff.grade.text_size;
+        if (ts - 1.0).abs() > f32::EPSILON {
+            out.font_size *= ts;
+            out.cell_h *= ts;
+        }
         *self.theme_cache.borrow_mut() = Some((eff, self.mode.clone(), inherit, gen, out.clone()));
         out
     }

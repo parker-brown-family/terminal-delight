@@ -2723,13 +2723,15 @@ impl Workspace {
                     .w(px(28.))
                     .text_size(px(9.))
                     .text_color(th.accent)
-                    // Text size reads as an absolute "110%"; colour channels read
-                    // as a signed offset from neutral ("-12", "+0").
-                    .child(if matches!(key, theme::GradeKey::Scale) {
-                        format!("{}%", (v * 100.).round() as i32)
-                    } else {
-                        format!("{:+}", ((v - neutral) * 100.).round() as i32)
-                    }),
+                    // Sizes (menu bar, terminal text) read as absolute "110%";
+                    // colour channels read as a signed offset ("-12", "+0").
+                    .child(
+                        if matches!(key, theme::GradeKey::Scale | theme::GradeKey::TextSize) {
+                            format!("{}%", (v * 100.).round() as i32)
+                        } else {
+                            format!("{:+}", ((v - neutral) * 100.).round() as i32)
+                        },
+                    ),
             )
     }
 
@@ -5073,7 +5075,7 @@ impl Render for Workspace {
                 rows = rows.child(self.slider_row(key, name, grade.get(key), &th, cx));
             }
             const PANEL_W: f32 = 300.;
-            const PANEL_H_EST: f32 = 306.; // 7 slider rows + reset + follow-outer
+            const PANEL_H_EST: f32 = 328.; // 8 slider rows + reset + follow-outer
             let mut panel = div().absolute().w(px(PANEL_W));
             panel = match self.osd_at {
                 Some(at) => {

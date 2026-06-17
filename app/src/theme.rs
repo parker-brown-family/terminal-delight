@@ -230,10 +230,13 @@ pub enum GradeKey {
     Text,
     Background,
     Gamma,
-    /// Text-size multiplier. Unlike the colour channels this is not a paint-time
-    /// grade — it scales the pane's font/cell metrics — but it rides the grade
-    /// group so it inherits the same per-pane override + "follow outer" rules.
+    /// Menu-bar size multiplier — scales the outer bar + tabs + per-pane header
+    /// chrome (NOT the terminal grid). Rides the grade group like the rest.
     Scale,
+    /// Terminal text-size multiplier — scales the pane's GRID font + cell metrics
+    /// (the terminal reflows), distinct from `Scale` (chrome). Not a paint-time
+    /// grade; rides the grade group for the per-pane override + "follow outer".
+    TextSize,
 }
 
 impl GradeKey {
@@ -243,6 +246,7 @@ impl GradeKey {
     pub fn range(self) -> (f32, f32, f32) {
         match self {
             GradeKey::Scale => (0.7, 1.6, 1.0),
+            GradeKey::TextSize => (0.6, 2.0, 1.0),
             _ => (0.0, 1.0, 0.5),
         }
     }
@@ -266,9 +270,12 @@ pub struct Grade {
     pub text: f32,
     pub background: f32,
     pub gamma: f32,
-    /// Text-size multiplier (`0.7..1.6`, neutral `1.0`). Scales the pane's font
-    /// and cell metrics rather than its colours.
+    /// Menu-bar size multiplier (`0.7..1.6`, neutral `1.0`). Scales the outer
+    /// bar + tabs + per-pane header chrome, not the terminal grid.
     pub scale: f32,
+    /// Terminal text-size multiplier (`0.6..2.0`, neutral `1.0`). Scales the
+    /// pane's grid font + cell metrics, so the terminal reflows.
+    pub text_size: f32,
 }
 
 impl Default for Grade {
@@ -286,13 +293,16 @@ impl Default for Grade {
             background: 0.81, // +31
             gamma: 0.76,      // +26
             scale: 0.99,      // 99%
+            text_size: 1.0,   // terminal grid at config size
         }
     }
 }
 
 impl Grade {
-    /// Picker order: (channel, label) for the OSD slider rows.
-    pub const CHANNELS: [(GradeKey, &'static str); 7] = [
+    /// Picker order: (channel, label) for the OSD slider rows. Terminal text
+    /// size leads — it's the control people reach for most.
+    pub const CHANNELS: [(GradeKey, &'static str); 8] = [
+        (GradeKey::TextSize, "text size"),
         (GradeKey::Brightness, "brightness"),
         (GradeKey::Contrast, "contrast"),
         (GradeKey::Colour, "colour"),
@@ -314,6 +324,7 @@ impl Grade {
             background: 0.5,
             gamma: 0.5,
             scale: 1.0,
+            text_size: 1.0,
         }
     }
 
@@ -332,6 +343,7 @@ impl Grade {
         .iter()
         .all(|v| (v - 0.5).abs() < EPS)
             && (self.scale - 1.0).abs() < EPS
+            && (self.text_size - 1.0).abs() < EPS
     }
 
     /// True when this grade equals the shipped [`Grade::default`]. Used as the
@@ -349,6 +361,7 @@ impl Grade {
             && (self.background - d.background).abs() < EPS
             && (self.gamma - d.gamma).abs() < EPS
             && (self.scale - d.scale).abs() < EPS
+            && (self.text_size - d.text_size).abs() < EPS
     }
 
     pub fn get(&self, k: GradeKey) -> f32 {
@@ -360,6 +373,7 @@ impl Grade {
             GradeKey::Background => self.background,
             GradeKey::Gamma => self.gamma,
             GradeKey::Scale => self.scale,
+            GradeKey::TextSize => self.text_size,
         }
     }
 
@@ -374,6 +388,7 @@ impl Grade {
             GradeKey::Background => self.background = v,
             GradeKey::Gamma => self.gamma = v,
             GradeKey::Scale => self.scale = v,
+            GradeKey::TextSize => self.text_size = v,
         }
     }
 }
@@ -453,7 +468,8 @@ pub fn house_outer() -> ThemeChoice {
             text: 0.5,
             background: 0.5,
             gamma: 0.5,
-            scale: 1.16, // 116%
+            scale: 1.16,    // 116%
+            text_size: 1.0, // terminal grid at config size
         },
         dynamic: Dynamic::Plain,
         text: None,
