@@ -125,7 +125,13 @@ pub fn eq_icon(accent: gpui::Hsla, scale: f32) -> gpui::Div {
         .gap(px(2. * scale))
         .h(px(HICON * scale));
     for h in bars {
-        row = row.child(div().w(px(3. * scale)).h(px(h * scale)).rounded_sm().bg(accent));
+        row = row.child(
+            div()
+                .w(px(3. * scale))
+                .h(px(h * scale))
+                .rounded_sm()
+                .bg(accent),
+        );
     }
     row
 }
@@ -824,6 +830,11 @@ impl gpui::EventEmitter<DragPaneStart> for TerminalView {}
 pub struct ClosePane;
 impl gpui::EventEmitter<ClosePane> for TerminalView {}
 
+/// Ctrl+W in this pane — the workspace closes the whole active tab, always via
+/// the serious confirmation dialog (never a silent close).
+pub struct RequestCloseTab;
+impl gpui::EventEmitter<RequestCloseTab> for TerminalView {}
+
 /// This sub-tab's name just changed (rename committed) — the workspace
 /// persists the layout so the custom name survives a restart.
 pub struct PaneRenamed;
@@ -1040,7 +1051,8 @@ impl TerminalView {
                                         // "Real" = the thinking spell itself lasted
                                         // > 1200ms (measure start→end, not start→now,
                                         // so the debounce delay doesn't skew it).
-                                        let real = match (view.think_since, view.not_thinking_since) {
+                                        let real = match (view.think_since, view.not_thinking_since)
+                                        {
                                             (Some(start), Some(end)) => {
                                                 end.duration_since(start)
                                                     > std::time::Duration::from_millis(1200)
@@ -1477,6 +1489,13 @@ impl TerminalView {
             return;
         }
         let m = &ks.modifiers;
+        // Ctrl+W closes the whole tab (always confirmed by the workspace). We
+        // intercept it here so it never reaches the PTY as werase (^W) — the
+        // workspace owns this chord, like new-tab/copy/paste below.
+        if m.control && !m.shift && !m.alt && ks.key.as_str() == "w" {
+            cx.emit(RequestCloseTab);
+            return;
+        }
         if m.control && m.shift {
             match ks.key.as_str() {
                 // workspace chords: new tab

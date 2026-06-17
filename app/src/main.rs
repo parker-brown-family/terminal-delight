@@ -4082,6 +4082,12 @@ impl Render for Workspace {
                 cx.notify();
             }
         }
+        // demo/capture hook (TD_CONFIRM_DEMO): auto-open the close-tab confirmation
+        // once, so the serious dialog can be screenshotted without a keystroke.
+        if std::env::var("TD_CONFIRM_DEMO").is_ok() && self.confirm_close.is_none() {
+            self.confirm_close = Some(self.active);
+            cx.notify();
+        }
         // remember which pane currently holds focus in the active tab, so a later
         // mother-bar click returns to that exact terminal (the "most recent" one)
         let active = self.active;
