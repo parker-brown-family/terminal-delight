@@ -1,4 +1,4 @@
-//! terminal-delight — tiling tree · tabs · device bezel · text-size scrubber.
+//! terminal-delight — tiling tree · tabs · device bezel · menu-bar size scrubber.
 //!
 //! Splits divide ONLY the focused terminal's space (true tiling tree); every
 //! other pane keeps its exact place. ctrl+shift+t / [+]: new tab ·
@@ -6,7 +6,7 @@
 //! drag a tab to reorder · ctrl+click a tab: set its binder-divider colour
 //! 👓 on a sub-tab header: FOCUS — mirror that pane big, rest dimmed, esc closes
 //! (alt+↑/↓ jumps between your messages in a claude/codex pane) ·
-//! ctrl+scroll or the bezel scrubber: text size.
+//! ctrl+scroll or the bezel scrubber: menu-bar size.
 //!
 //! TODO(os-chrome): client-side window decorations (WindowDecorations::Client).
 
@@ -1346,9 +1346,9 @@ impl Workspace {
         true
     }
 
-    /// Set the *outer* (Mother) text size — the bezel scrubber and ctrl+scroll.
+    /// Set the *outer* (Mother) menu-bar size — the bezel scrubber and ctrl+scroll.
     /// Panes that follow outer (the default) pick this up live; a pane that has
-    /// detached its grade keeps its own size.
+    /// detached its grade keeps its own size. Sizes the header, not the grid.
     fn set_scale(&mut self, value: f32, cx: &mut Context<Self>) {
         let mut choice = theme::outer_choice(cx);
         choice.grade.scale = value.clamp(0.7, 1.6);
@@ -1481,7 +1481,7 @@ impl Workspace {
         }
     }
 
-    /// ctrl+wheel anywhere = text-size scrub (panes skip scrolling when ctrl).
+    /// ctrl+wheel anywhere = menu-bar size scrub (panes skip scrolling when ctrl).
     fn on_wheel(&mut self, ev: &ScrollWheelEvent, _w: &mut Window, cx: &mut Context<Self>) {
         if !ev.modifiers.control {
             return;
@@ -3416,7 +3416,10 @@ impl Render for Workspace {
             cx.listener(|ws, _: &MouseDownEvent, window, cx| ws.new_tab(window, cx)),
         ));
 
-        // ---- text-size scrubber: A ──●── A 110% ----
+        // ---- menu-bar size scrubber: ▭ ──●── ▭ 110% ----
+        // Drives the per-pane HEADER height (+ its glyphs/icons/title), not the
+        // terminal text. The two flanking ▭ glyphs (small → large) read as
+        // "short bar → tall bar".
         let ratio = ((scale - 0.7) / 0.9).clamp(0., 1.);
         let scrub_store = self.scrub_bounds.clone();
         let scrubber = div()
@@ -3424,7 +3427,7 @@ impl Render for Workspace {
             .flex_row()
             .items_center()
             .gap_1()
-            .child(div().text_size(px(9.)).text_color(th.text).child("A"))
+            .child(div().text_size(px(9.)).text_color(th.text).child("▭"))
             .child(
                 div()
                     .w(px(90.))
@@ -3502,7 +3505,7 @@ impl Render for Workspace {
                             }]),
                     ),
             )
-            .child(div().text_size(px(12.)).text_color(th.text).child("A"))
+            .child(div().text_size(px(15.)).text_color(th.text).child("▭"))
             .child(
                 div()
                     .text_size(px(10.))
@@ -3659,11 +3662,13 @@ impl Render for Workspace {
                             ),
                     )
                     .child(
-                        // outer display: a consistent EQ-waveform (monitor-OSD)
+                        // outer display: a consistent EQ-waveform (monitor-OSD).
+                        // The outer (Mother) bezel chrome stays a fixed size — the
+                        // scrubber sizes the per-terminal menu bars, not this bar.
                         Self::hicon(&th, self.osd_menu.is_some())
                             .flex()
                             .items_center()
-                            .child(pane::eq_icon(th.accent))
+                            .child(pane::eq_icon(th.accent, 1.0))
                             .on_mouse_down(
                                 MouseButton::Left,
                                 cx.listener(|ws, _: &MouseDownEvent, _w, cx| {

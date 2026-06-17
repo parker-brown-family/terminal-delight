@@ -299,7 +299,7 @@ impl Grade {
         (GradeKey::Text, "text"),
         (GradeKey::Background, "background"),
         (GradeKey::Gamma, "gamma"),
-        (GradeKey::Scale, "text size"),
+        (GradeKey::Scale, "menu bar"),
     ];
 
     /// The identity grade: every channel at its no-op (`0.5`, scale `1.0`), i.e.

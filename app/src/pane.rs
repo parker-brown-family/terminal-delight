@@ -115,12 +115,17 @@ pub const HICON: f32 = 28.0;
 /// A small EQ-waveform glyph — a row of bars at varying heights — used as the
 /// consistent monitor/display icon. Drawn (not an emoji) so it can be wider than
 /// a square and read as "the screen / levels" control.
-pub fn eq_icon(accent: gpui::Hsla) -> gpui::Div {
+pub fn eq_icon(accent: gpui::Hsla, scale: f32) -> gpui::Div {
     use gpui::{div, px};
     let bars = [8.0f32, 17.0, 12.0, 22.0, 14.0, 19.0, 9.0];
-    let mut row = div().flex().flex_row().items_end().gap(px(2.)).h(px(HICON));
+    let mut row = div()
+        .flex()
+        .flex_row()
+        .items_end()
+        .gap(px(2. * scale))
+        .h(px(HICON * scale));
     for h in bars {
-        row = row.child(div().w(px(3.)).h(px(h)).rounded_sm().bg(accent));
+        row = row.child(div().w(px(3. * scale)).h(px(h * scale)).rounded_sm().bg(accent));
     }
     row
 }
@@ -900,11 +905,6 @@ impl TerminalView {
     /// whenever this pane notifies). No second terminal, no extra PTY work.
     pub fn mirror_snapshot(&self, cx: &App) -> MirrorSnapshot {
         let th = self.resolved_theme(cx);
-        let scale = self
-            .appearance
-            .effective(&theme::outer_choice(cx))
-            .grade
-            .scale;
         let lines = self.styled_lines(&th);
         MirrorSnapshot {
             lines,
@@ -912,7 +912,9 @@ impl TerminalView {
             text: th.text,
             accent: th.accent,
             font_family: th.font_family.clone(),
-            base_size: th.font_size * scale,
+            // The grid renders at its native size now (the scrubber sizes the
+            // menu bar, not the terminal), so the mirror matches it untouched.
+            base_size: th.font_size,
             cell_w: self.cell_w,
             cell_h: self.cell_h,
             cols: self.grid.cols,
@@ -1035,9 +1037,16 @@ impl TerminalView {
                             if !thinking && view.bell_cfg.enabled && view.mode.is_agent() {
                                 if let Some(not_since) = view.not_thinking_since {
                                     if not_since.elapsed() > std::time::Duration::from_millis(300) {
-                                        let real = view.think_since.as_ref().is_some_and(|t| {
-                                            t.elapsed() > std::time::Duration::from_millis(1200)
-                                        });
+                                        // "Real" = the thinking spell itself lasted
+                                        // > 1200ms (measure start→end, not start→now,
+                                        // so the debounce delay doesn't skew it).
+                                        let real = match (view.think_since, view.not_thinking_since) {
+                                            (Some(start), Some(end)) => {
+                                                end.duration_since(start)
+                                                    > std::time::Duration::from_millis(1200)
+                                            }
+                                            _ => false,
+                                        };
                                         if real && !view.bell {
                                             view.bell = true;
                                             view.bell_player.play(&view.bell_cfg);
@@ -1181,9 +1190,11 @@ impl TerminalView {
                 self.title = title;
                 cx.notify();
             }
-            // an agent (or any program) rang the bell — raise the SNOOZE bar and
-            // play this pane's configured sound, unless its bell is muted.
-            TermEvent::Bell if self.bell_cfg.enabled => {
+            // An agent rang the bell — raise the alert and play this pane's sound.
+            // Gated to agent (claude/codex) panes: the card literally reads "agent
+            // finished", so a plain shell BEL (e.g. readline's "cannot perform that
+            // action" beep on a failed tab-complete) must NOT trigger it.
+            TermEvent::Bell if self.bell_cfg.enabled && self.mode.is_agent() => {
                 self.bell = true;
                 self.bell_player.play(&self.bell_cfg);
                 cx.notify();
@@ -1199,12 +1210,15 @@ impl TerminalView {
     }
 
     /// Measure the real cell metrics from the active theme, fit grid to window.
-    fn sync_size(&mut self, th: &Theme, scale: f32, window: &mut Window) {
-        self.cell_h = th.cell_h * scale;
+    /// Fit the PTY grid to the measured content area. The terminal's own text
+    /// size is fixed (the global scrubber now sizes the menu bar, not the grid),
+    /// so this always measures at the theme's native cell/font metrics.
+    fn sync_size(&mut self, th: &Theme, window: &mut Window) {
+        self.cell_h = th.cell_h;
         let font = grid_font(th, FontWeight::NORMAL);
         if let Ok(w) = window.text_system().advance(
             window.text_system().resolve_font(&font),
-            px(th.font_size * scale),
+            px(th.font_size),
             'M',
         ) {
             if f32::from(w.width) > 1.0 {
@@ -2198,14 +2212,15 @@ impl Render for TerminalView {
                 ));
             deferred(anchored().position(pos).snap_to_window().child(menu))
         });
-        // Text size rides the grade group: a pane uses its own scale when its
-        // grade is detached, else the live outer (Mother) scale.
+        // Menu-bar size rides the grade group: a pane uses its own scale when its
+        // grade is detached, else the live outer (Mother) scale. This scrubber
+        // sizes the HEADER (height + glyphs/icons), never the terminal grid.
         let scale = self
             .appearance
             .effective(&theme::outer_choice(cx))
             .grade
             .scale;
-        self.sync_size(&th, scale, window);
+        self.sync_size(&th, window);
         // Warp curvature is a global toggle now (not per-theme); keep this pane's
         // hit-test coefficients in sync with it.
         self.warp_k = theme::warp_k(cx);
@@ -2393,6 +2408,14 @@ impl Render for TerminalView {
             ..th.complement
         };
 
+        // The global text-size scrubber now drives the MENU BAR: the bar height,
+        // its glyphs/icons, and its title text all scale by `scale` together, so
+        // the whole header grows/shrinks smoothly as one piece. (0.7..1.6 → a
+        // 28..64px tall bar.)
+        let header_h = HEADER_H * scale;
+        let hicon = HICON * scale;
+        let hpad = px(12. * scale); // header horizontal padding / control gap
+
         // solid, reflective header: gradient face + crisp top reflection line
         let mut lighter = th.surface;
         lighter.l = (lighter.l * 1.9).min(0.9);
@@ -2400,12 +2423,12 @@ impl Render for TerminalView {
         let hdr_grp = gpui::SharedString::from(format!("pane-hdr-{}", cx.entity_id()));
         let mut header = div()
             .group(hdr_grp.clone())
-            .h(px(HEADER_H))
+            .h(px(header_h))
             .flex()
             .flex_row()
             .items_center()
             .justify_between()
-            .px_3()
+            .px(hpad)
             .bg(linear_gradient(
                 180.,
                 linear_color_stop(lighter, 0.),
@@ -2414,6 +2437,8 @@ impl Render for TerminalView {
             .border_b_1()
             .border_color(th.accent.alpha(0.5))
             .text_color(bar_fg)
+            // the title / status / grid-label text scales with the bar
+            .text_size(px(th.font_size * scale))
             .child(if let Some(buf) = self.renaming.clone() {
                 // inline rename box: a left-click anywhere else commits via
                 // focus loss is not wired, so enter/escape (in on_key) close it
@@ -2453,7 +2478,7 @@ impl Render for TerminalView {
                     // hover-revealed ✎ affordance (invites the rename)
                     .child(
                         div()
-                            .text_size(px(11.))
+                            .text_size(px(11. * scale))
                             .text_color(Hsla {
                                 h: 0.,
                                 s: 0.,
@@ -2496,8 +2521,8 @@ impl Render for TerminalView {
                     // the control cluster keeps its natural width — only the title
                     // (min-w:0) shrinks, so these controls never get squeezed off.
                     .flex_shrink_0()
-                    // roomier spacing between the consistent 2× header glyphs
-                    .gap_3()
+                    // roomier spacing between the header glyphs — scales with the bar
+                    .gap(hpad)
                     .child(grid_label)
                     // Part 1: only in an agent (claude/codex) pane — jump between
                     // *your own* messages. Coloured like your input (`th.human`).
@@ -2534,8 +2559,8 @@ impl Render for TerminalView {
                                 // the bust matches the consistent 2× glyph set
                                 .child(
                                     div()
-                                        .text_size(px(HICON))
-                                        .line_height(px(HICON))
+                                        .text_size(px(hicon))
+                                        .line_height(px(hicon))
                                         .mr(px(1.))
                                         .child("👤"),
                                 )
@@ -2555,8 +2580,8 @@ impl Render for TerminalView {
                                 .border_color(th.accent.alpha(0.5))
                                 .cursor_pointer()
                                 // the FOCUS lens reads +50% over the other 2× glyphs
-                                .text_size(px(HICON * 1.5))
-                                .line_height(px(HICON * 1.5))
+                                .text_size(px(hicon * 1.5))
+                                .line_height(px(hicon * 1.5))
                                 .child("👓")
                                 .on_mouse_down(
                                     MouseButton::Left,
@@ -2576,8 +2601,8 @@ impl Render for TerminalView {
                                 .border_1()
                                 .border_color(th.accent.alpha(0.5))
                                 .cursor_pointer()
-                                .text_size(px(HICON))
-                                .line_height(px(HICON))
+                                .text_size(px(hicon))
+                                .line_height(px(hicon))
                                 .child("🎨")
                                 .on_mouse_down(
                                     MouseButton::Left,
@@ -2599,7 +2624,7 @@ impl Render for TerminalView {
                                 .border_1()
                                 .border_color(th.accent.alpha(0.5))
                                 .cursor_pointer()
-                                .child(eq_icon(th.accent))
+                                .child(eq_icon(th.accent, scale))
                                 .on_mouse_down(
                                     MouseButton::Left,
                                     cx.listener(|_, ev: &MouseDownEvent, _w, cx| {
@@ -2630,8 +2655,8 @@ impl Render for TerminalView {
                                     th.faint
                                 })
                                 .cursor_pointer()
-                                .text_size(px(HICON))
-                                .line_height(px(HICON))
+                                .text_size(px(hicon))
+                                .line_height(px(hicon))
                                 .child("🔔")
                                 .on_mouse_down(
                                     MouseButton::Left,
@@ -2658,8 +2683,8 @@ impl Render for TerminalView {
                                 .border_1()
                                 .border_color(th.accent.alpha(0.5))
                                 .cursor_pointer()
-                                .text_size(px(HICON))
-                                .line_height(px(HICON))
+                                .text_size(px(hicon))
+                                .line_height(px(hicon))
                                 .child("⋯")
                                 .on_mouse_down(
                                     MouseButton::Left,
@@ -2690,9 +2715,9 @@ impl Render for TerminalView {
                             .rounded_md()
                             .text_color(bar_fg)
                             .cursor_pointer()
-                            // much bigger than the 2× header glyphs
-                            .text_size(px(HICON + 10.))
-                            .line_height(px(HICON + 10.))
+                            // much bigger than the other header glyphs
+                            .text_size(px(hicon + 10.))
+                            .line_height(px(hicon + 10.))
                             .hover(|s| s.bg(bar_fg.alpha(0.18)))
                             .child("×")
                             .on_mouse_down(
@@ -2753,7 +2778,7 @@ impl Render for TerminalView {
                 // events fall through to the pane's own handler, which is what
                 // acknowledges the bell.
                 .absolute()
-                .top(px(HEADER_H + 16.))
+                .top(px(header_h + 16.))
                 .left_0()
                 .right_0()
                 .flex()
@@ -3201,7 +3226,9 @@ impl Render for TerminalView {
             .flex()
             .flex_col()
             .font_family(th.font_family.clone())
-            .text_size(px(th.font_size * scale))
+            // Terminal grid renders at its native size — the scrubber no longer
+            // touches it (it sizes the menu bar instead; see the header below).
+            .text_size(px(th.font_size))
             .text_color(th.text)
             .pt(px(shake_y.max(0.)))
             .pb(px((-shake_y).max(0.)))
