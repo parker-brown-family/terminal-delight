@@ -789,6 +789,13 @@ pub struct TerminalView {
     /// True while this pane is the one mirrored in the FOCUS modal — a plain Esc
     /// then closes the modal instead of reaching the PTY. Set by the workspace.
     being_read: bool,
+    /// Keyboard-driven selection state: `(anchor, active end)` in absolute grid
+    /// points. `shift+←/→` (char) and `shift+ctrl+←/→` (word) move the active end
+    /// while the anchor stays put — combinative, never resetting. `None` until a
+    /// shift-arrow starts one (seeding from the cursor or an existing mouse
+    /// selection); cleared whenever a normal key or a fresh mouse-down resets the
+    /// selection.
+    kbd_sel: Option<(TermPoint, TermPoint)>,
     /// When the current agent "thinking" spell began — used to ring the bell on
     /// the thinking→done edge (agents don't reliably emit a terminal BEL).
     think_since: Option<Instant>,
@@ -1149,6 +1156,7 @@ impl TerminalView {
                 .checked_sub(std::time::Duration::from_secs(1))
                 .unwrap_or_else(Instant::now),
             being_read: false,
+            kbd_sel: None,
             think_since: None,
             not_thinking_since: None,
             bell_drag: None,
@@ -1515,16 +1523,103 @@ impl TerminalView {
                 _ => {}
             }
         }
+        // Keyboard-driven visual selection: shift+←/→ extends TD's own selection
+        // by a character, shift+ctrl+←/→ by a word — combinative (anchor fixed,
+        // active end moves), seeded from the cursor or an existing mouse selection.
+        // Shells don't bind shift-arrows, so this never steals shell word-nav
+        // (plain ctrl+arrow still reaches the PTY) or ordinary typing. Works in the
+        // FOCUS reader too (the mirror repaints the highlight via the pane notify).
+        if m.shift && !m.alt && matches!(ks.key.as_str(), "left" | "right") {
+            self.extend_kbd_selection(ks.key.as_str() == "right", m.control, cx);
+            return;
+        }
         if let Some(bytes) = keystroke_bytes(ks) {
             {
                 let mut term = self.session.term.lock();
                 term.selection = None;
                 term.scroll_display(Scroll::Bottom);
             }
+            // a real keystroke ends any keyboard selection in progress
+            self.kbd_sel = None;
             self.pending_input = Some(Instant::now());
             self.session.notifier.notify(bytes);
             cx.notify();
         }
+    }
+
+    /// Grow TD's visual selection one step from the keyboard. `right` picks the
+    /// direction; `word` jumps by a semantic word (else one cell). The anchor is
+    /// fixed and only the active end moves, so repeated presses extend the same
+    /// selection (combinative) instead of starting a new one. Seeds from any live
+    /// keyboard selection, else an existing mouse selection's range, else the
+    /// cursor. The highlight is rendered by the normal grid scan, so it shows in
+    /// both the live pane and the FOCUS mirror.
+    fn extend_kbd_selection(&mut self, right: bool, word: bool, cx: &mut Context<Self>) {
+        let last_col = self.grid.cols.saturating_sub(1);
+        // one cell in the requested direction, clamped to the row (no line-wrap:
+        // command-line selection is single-row; mouse handles multi-line spans).
+        let step = |p: TermPoint| -> TermPoint {
+            if right {
+                if p.column.0 < last_col {
+                    TermPoint::new(p.line, Column(p.column.0 + 1))
+                } else {
+                    p
+                }
+            } else if p.column.0 > 0 {
+                TermPoint::new(p.line, Column(p.column.0 - 1))
+            } else {
+                p
+            }
+        };
+        let next = {
+            let mut term = self.session.term.lock();
+            let (anchor, active) = match self.kbd_sel {
+                Some(ae) => ae,
+                None => {
+                    if let Some(r) = term.selection.as_ref().and_then(|s| s.to_range(&*term)) {
+                        (r.start, r.end)
+                    } else {
+                        let c = term.renderable_content().cursor.point;
+                        (c, c)
+                    }
+                }
+            };
+            let active = if word {
+                let np = if right {
+                    term.semantic_search_right(active)
+                } else {
+                    term.semantic_search_left(active)
+                };
+                if np == active {
+                    // already on a word boundary — step one cell into the next word
+                    let s = step(active);
+                    if s == active {
+                        active
+                    } else if right {
+                        term.semantic_search_right(s)
+                    } else {
+                        term.semantic_search_left(s)
+                    }
+                } else {
+                    np
+                }
+            } else {
+                step(active)
+            };
+            // anchor on the trailing edge, active on the leading edge, so the run
+            // is inclusive in whichever direction it grew.
+            let (a_side, e_side) = if active >= anchor {
+                (Side::Left, Side::Right)
+            } else {
+                (Side::Right, Side::Left)
+            };
+            let mut sel = Selection::new(SelectionType::Simple, anchor, a_side);
+            sel.update(active, e_side);
+            term.selection = Some(sel);
+            (anchor, active)
+        };
+        self.kbd_sel = Some(next);
+        cx.notify();
     }
 
     fn on_wheel(&mut self, ev: &ScrollWheelEvent, _w: &mut Window, cx: &mut Context<Self>) {
@@ -1790,6 +1885,9 @@ impl TerminalView {
             _ => SelectionType::Simple,
         };
         self.session.term.lock().selection = Some(Selection::new(ty, point, side));
+        // a fresh mouse selection supersedes any keyboard-extension anchor; the
+        // next shift-arrow re-seeds from this new selection's range.
+        self.kbd_sel = None;
         self.selecting = true;
         self.last_mouse = ev.position;
         self.autoscroll = 0.;
