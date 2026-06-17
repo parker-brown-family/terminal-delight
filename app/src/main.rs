@@ -825,10 +825,6 @@ struct Workspace {
     light_drag: bool,
     /// Live lightness-slider rect, for ratio math during a drag.
     light_bounds: Arc<Mutex<Option<Bounds<Pixels>>>>,
-    /// True while the global screen-warp slider is being dragged.
-    warp_drag: bool,
-    /// Live warp-slider rect, for ratio math during a drag.
-    warp_bounds: Arc<Mutex<Option<Bounds<Pixels>>>>,
     /// Which tracking-band slider (0=intensity,1=speed,2=size) is being dragged.
     track_drag: Option<usize>,
     /// Live tracking-slider rects, for ratio math during a drag.
@@ -1054,8 +1050,11 @@ impl Workspace {
         if let Some(s) = saved.scale {
             outer.grade.scale = s.clamp(0.7, 1.6);
         }
-        theme::set_screen_warp(cx, saved.warp); // restore the global warp dial
-        theme::set_tracking_dial(cx, saved.track); // restore the global tracking dial
+        // Warp + tracking now ride the grade group (per-pane override + inherit);
+        // fold a legacy top-level `warp`/`track` from older state files into the
+        // outer grade so a saved fishbowl/roll survives the migration.
+        outer.grade.warp = saved.warp.clamp(0.0, theme::WARP_MAX);
+        outer.grade.tracking = saved.track;
         theme::select_outer(cx, outer);
         let mut ws = Self {
             tabs: vec![],
@@ -1074,8 +1073,6 @@ impl Workspace {
             wheel_active: WheelTarget::Seed,
             light_drag: false,
             light_bounds: Arc::new(Mutex::new(None)),
-            warp_drag: false,
-            warp_bounds: Arc::new(Mutex::new(None)),
             track_drag: None,
             track_bounds: Default::default(),
             wheel_bounds: Arc::new(Mutex::new(None)),
@@ -1226,8 +1223,10 @@ impl Workspace {
             // the source of truth is now `theme.grade.scale`.
             scale: Some(theme::outer_choice(cx).grade.scale),
             theme: Some(theme::outer_choice(cx)),
-            warp: theme::screen_warp(cx),
-            track: theme::tracking_dial(cx),
+            // Back-compat mirror: warp + tracking live in the outer grade now; keep
+            // writing the legacy top-level fields so older readers still work.
+            warp: theme::outer_choice(cx).grade.warp,
+            track: theme::outer_choice(cx).grade.tracking,
             tabs: self
                 .tabs
                 .iter()
@@ -2069,7 +2068,6 @@ impl Workspace {
             && (self.scrubbing
                 || self.wheel_drag.is_some()
                 || self.light_drag
-                || self.warp_drag
                 || self.slider_drag.is_some()
                 || self.track_drag.is_some()
                 || self.tab_wheel_drag.is_some()
@@ -2080,7 +2078,6 @@ impl Workspace {
             self.scrubbing = false;
             self.wheel_drag = None;
             self.light_drag = false;
-            self.warp_drag = false;
             self.slider_drag = None;
             self.track_drag = None;
             self.tab_wheel_drag = None;
@@ -2151,11 +2148,6 @@ impl Workspace {
                 self.set_active_lightness(l, cx);
             }
         }
-        if self.warp_drag && ev.pressed_button == Some(MouseButton::Left) {
-            if let Some(a) = self.warp_from_pos(ev.position.x) {
-                theme::set_screen_warp(cx, a);
-            }
-        }
         if let Some(idx) = self.track_drag {
             if ev.pressed_button == Some(MouseButton::Left) {
                 if let Some(v) = self.track_from_pos(idx, ev.position.x) {
@@ -2198,7 +2190,6 @@ impl Workspace {
         self.scrubbing = false;
         if self.wheel_drag.take().is_some()
             || std::mem::take(&mut self.light_drag)
-            || std::mem::take(&mut self.warp_drag)
             || self.track_drag.take().is_some()
             || self.tab_wheel_drag.take().is_some()
             || std::mem::take(&mut self.tab_light_drag)
@@ -2840,17 +2831,6 @@ impl Workspace {
         Some(((f32::from(x) - f32::from(b.origin.x)) / w).clamp(0.0, 1.0))
     }
 
-    /// Warp amount `0..=WARP_MAX` for the screen-warp slider at window-x `x`.
-    fn warp_from_pos(&self, x: Pixels) -> Option<f32> {
-        let b = (*self.warp_bounds.lock().unwrap())?;
-        let w = f32::from(b.size.width);
-        if w <= 0.0 {
-            return None;
-        }
-        let frac = ((f32::from(x) - f32::from(b.origin.x)) / w).clamp(0.0, 1.0);
-        Some(frac * theme::WARP_MAX)
-    }
-
     /// Ratio `0..1` for tracking slider `idx` at window-x `x`.
     fn track_from_pos(&self, idx: usize, x: Pixels) -> Option<f32> {
         let b = (*self.track_bounds[idx].lock().unwrap())?;
@@ -2861,16 +2841,34 @@ impl Workspace {
         Some(((f32::from(x) - f32::from(b.origin.x)) / w).clamp(0.0, 1.0))
     }
 
-    /// Set tracking dial component `idx` (during a drag) and repaint.
-    fn apply_track(&mut self, idx: usize, v: f32, cx: &mut Context<Self>) {
-        let mut d = theme::tracking_dial(cx).unwrap_or([0.2, 0.5, 0.3]);
-        d[idx] = v.clamp(0.0, 1.0);
-        theme::set_tracking_dial(cx, Some(d));
+    /// The active OSD scope's resolved tracking dials — the seed a roll slider
+    /// starts from when this scope hasn't pinned its own tracking yet.
+    fn scope_track_seed(&self, scope: &MenuScope, cx: &App) -> [f32; 3] {
+        let th = match scope {
+            MenuScope::Pane(p) => p.read(cx).resolved_theme(cx),
+            MenuScope::Outer => (*theme::resolve(cx, &theme::outer_choice(cx))).clone(),
+        };
+        theme::tracking_dials_of(&th)
     }
 
-    /// One tracking-band slider (idx 0=intensity, 1=speed, 2=size). The global
-    /// tracking dial overrides every theme's roll bar; first drag seeds from the
-    /// current look so it starts where you are.
+    /// Set tracking dial component `idx` on the active OSD scope (pane or outer),
+    /// pinning the scope's grade tracking. Seeds the other two dials from the
+    /// scope's current look so a drag starts where you are. Per-pane via grade.
+    fn apply_track(&mut self, idx: usize, v: f32, cx: &mut Context<Self>) {
+        let Some(scope) = self.osd_menu.clone() else {
+            return;
+        };
+        let seed = self.scope_track_seed(&scope, cx);
+        let mut grade = self.choice_for(&scope, cx).grade;
+        let mut d = grade.tracking.unwrap_or(seed);
+        d[idx] = v.clamp(0.0, 1.0);
+        grade.tracking = Some(d);
+        self.write_grade(&scope, grade, cx);
+    }
+
+    /// One tracking-band slider (idx 0=intensity, 1=speed, 2=size). Writes the
+    /// active OSD scope's grade tracking (per-pane override + inherit, like the
+    /// other DISPLAY channels); the fill starts from the scope's current look.
     fn track_slider(
         &self,
         idx: usize,
@@ -2880,8 +2878,7 @@ impl Workspace {
     ) -> gpui::Div {
         const TRACK: f32 = 108.;
         let store = self.track_bounds[idx].clone();
-        let seed = theme::tracking_dials_of(cx, th);
-        let frac = seed[idx].clamp(0.0, 1.0);
+        let frac = theme::tracking_dials_of(th)[idx].clamp(0.0, 1.0);
         div()
             .flex()
             .flex_row()
@@ -2906,9 +2903,7 @@ impl Workspace {
                             cx.stop_propagation();
                             ws.track_drag = Some(idx);
                             if let Some(v) = ws.track_from_pos(idx, ev.position.x) {
-                                let mut d = seed;
-                                d[idx] = v;
-                                theme::set_tracking_dial(cx, Some(d));
+                                ws.apply_track(idx, v, cx);
                             }
                         }),
                     )
@@ -2955,94 +2950,6 @@ impl Workspace {
                             .border_color(white())
                             .bg(th.accent),
                     ),
-            )
-    }
-
-    /// The global screen-warp dial — a 0→WARP_MAX slider (0 = dead flat). Drag to
-    /// find your fishbowl; a readout shows the live amount. Orthogonal to theme.
-    fn warp_slider(&self, th: &theme::Theme, cx: &mut Context<Self>) -> gpui::Div {
-        const TRACK: f32 = 132.;
-        let store = self.warp_bounds.clone();
-        let amount = theme::screen_warp(cx);
-        let frac = (amount / theme::WARP_MAX).clamp(0.0, 1.0);
-        div()
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap_2()
-            .child(
-                div()
-                    .w(px(64.))
-                    .text_size(px(10.))
-                    .text_color(th.text.alpha(0.8))
-                    .child("screen warp"),
-            )
-            .child(
-                div()
-                    .w(px(TRACK))
-                    .h(px(14.))
-                    .relative()
-                    .cursor_pointer()
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(|ws, ev: &MouseDownEvent, _w, cx| {
-                            cx.stop_propagation();
-                            ws.warp_drag = true;
-                            if let Some(a) = ws.warp_from_pos(ev.position.x) {
-                                theme::set_screen_warp(cx, a);
-                            }
-                        }),
-                    )
-                    .child(
-                        canvas(
-                            move |bounds, _, _| {
-                                *store.lock().unwrap() = Some(bounds);
-                            },
-                            |_, _, _, _| {},
-                        )
-                        .size_full(),
-                    )
-                    .child(
-                        div()
-                            .absolute()
-                            .left_0()
-                            .right_0()
-                            .top(px(6.))
-                            .h(px(3.))
-                            .rounded_full()
-                            .bg(darken(th.surface, 0.4))
-                            .border_1()
-                            .border_color(th.faint),
-                    )
-                    .child(
-                        div()
-                            .absolute()
-                            .left_0()
-                            .top(px(6.))
-                            .h(px(3.))
-                            .w(px(TRACK * frac))
-                            .rounded_full()
-                            .bg(th.accent),
-                    )
-                    .child(
-                        div()
-                            .absolute()
-                            .left(px((TRACK * frac - 5.0).max(0.0)))
-                            .top(px(2.))
-                            .w(px(10.))
-                            .h(px(10.))
-                            .rounded_full()
-                            .border_2()
-                            .border_color(white())
-                            .bg(th.accent),
-                    ),
-            )
-            .child(
-                div()
-                    .w(px(28.))
-                    .text_size(px(9.))
-                    .text_color(th.accent)
-                    .child(format!("{amount:.2}")),
             )
     }
 
@@ -5124,7 +5031,8 @@ impl Render for Workspace {
                         }),
                     ),
                 )
-                .child(self.warp_slider(&th, cx))
+                // warp now rides the grade channels above (GradeKey::Warp), so it
+                // scopes to pane/outer like the rest of the DISPLAY tray.
                 .child(self.track_slider(0, "roll", &th, cx))
                 .child(self.track_slider(1, "roll spd", &th, cx))
                 .child(self.track_slider(2, "roll size", &th, cx))
@@ -5139,8 +5047,13 @@ impl Render for Workspace {
                             MouseButton::Left,
                             cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
                                 cx.stop_propagation();
-                                theme::set_tracking_dial(cx, None);
-                                ws.save(cx);
+                                // clear THIS scope's tracking override → back to the
+                                // theme's authored roll bar (per-pane via the grade).
+                                if let Some(scope) = ws.osd_menu.clone() {
+                                    let mut g = ws.choice_for(&scope, cx).grade;
+                                    g.tracking = None;
+                                    ws.write_grade(&scope, g, cx);
+                                }
                             }),
                         ),
                 );
