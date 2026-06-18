@@ -132,7 +132,7 @@ pub struct Theme {
     /// warps the tube (text recedes toward the top). Resolved from the scope's
     /// [`Grade::crawl`], so it's per-pane like `warp`.
     pub crawl: bool,
-    /// Crawl convergence angle in degrees (`2..=30`). Drives the top-edge width
+    /// Crawl convergence angle in degrees (`2..=59`). Drives the top-edge width
     /// ratio the renderer tapers to — see [`crawl_coeffs`].
     pub crawl_angle: f32,
     /// Crawl depth: ratio of text height at the BOTTOM vs the TOP of the crawl
@@ -256,7 +256,7 @@ pub enum GradeKey {
     /// but it rides the grade group so each pane curves by its OWN amount (own
     /// override else inherited outer), instead of one global dial bending all.
     Warp,
-    /// Crawl convergence angle in degrees (`2..=30`). Not a paint grade — it
+    /// Crawl convergence angle in degrees (`2..=59`). Not a paint grade — it
     /// drives the per-pane crawl perspective the renderer warps by — but it
     /// rides the grade group for the per-pane override + "follow outer".
     CrawlAngle,
@@ -317,7 +317,7 @@ pub struct Grade {
     /// group (like `warp`/`tracking`). Omitted from TOML when off.
     #[serde(default, skip_serializing_if = "is_false")]
     pub crawl: bool,
-    /// Crawl convergence angle in degrees (`2..=30`, neutral 12).
+    /// Crawl convergence angle in degrees (`2..=59`, neutral 12).
     pub crawl_angle: f32,
     /// Crawl depth = text-height ratio bottom:top (`0.05..=15`, neutral 2.5).
     pub crawl_depth: f32,
@@ -1283,7 +1283,7 @@ pub const CRAWL_FONT_FAMILY: &str = "News Cycle";
 /// Crawl knob ranges (degrees / ratio). Defaults are the look a fresh crawl
 /// turns on at: a gentle 12° vergence and a classic 2.5× near:far height.
 pub const CRAWL_ANGLE_MIN: f32 = 2.0;
-pub const CRAWL_ANGLE_MAX: f32 = 30.0;
+pub const CRAWL_ANGLE_MAX: f32 = 59.0;
 pub const CRAWL_ANGLE_DEFAULT: f32 = 12.0;
 pub const CRAWL_DEPTH_MIN: f32 = 0.05;
 pub const CRAWL_DEPTH_MAX: f32 = 15.0;
