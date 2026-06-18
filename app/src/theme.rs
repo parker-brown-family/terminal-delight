@@ -127,6 +127,17 @@ pub struct Theme {
     /// Barrel-warp amount for THIS pane (`0` = flat). Resolved from the scope's
     /// [`Grade::warp`] so the renderer bends each pane by its own curvature.
     pub warp: f32,
+    /// Star-Wars text-crawl mode for THIS pane. When on, the grid renders in the
+    /// crawl font ([`CRAWL_FONT_FAMILY`], italic) and the renderer perspective-
+    /// warps the tube (text recedes toward the top). Resolved from the scope's
+    /// [`Grade::crawl`], so it's per-pane like `warp`.
+    pub crawl: bool,
+    /// Crawl convergence angle in degrees (`2..=30`). Drives the top-edge width
+    /// ratio the renderer tapers to — see [`crawl_coeffs`].
+    pub crawl_angle: f32,
+    /// Crawl depth: ratio of text height at the BOTTOM vs the TOP of the crawl
+    /// (`0.05..=15`). `>1` = classic (near text bigger); `1` = no foreshortening.
+    pub crawl_depth: f32,
     pub flicker: f32,
     pub jiggle: f32,
     pub screen_glare: f32,
@@ -245,6 +256,13 @@ pub enum GradeKey {
     /// but it rides the grade group so each pane curves by its OWN amount (own
     /// override else inherited outer), instead of one global dial bending all.
     Warp,
+    /// Crawl convergence angle in degrees (`2..=30`). Not a paint grade — it
+    /// drives the per-pane crawl perspective the renderer warps by — but it
+    /// rides the grade group for the per-pane override + "follow outer".
+    CrawlAngle,
+    /// Crawl depth — text-height ratio bottom:top (`0.05..=15`). Rides the grade
+    /// group like [`GradeKey::CrawlAngle`].
+    CrawlDepth,
 }
 
 impl GradeKey {
@@ -256,6 +274,8 @@ impl GradeKey {
             GradeKey::Scale => (0.7, 1.6, 1.0),
             GradeKey::TextSize => (0.6, 2.0, 1.0),
             GradeKey::Warp => (0.0, WARP_MAX, 0.0),
+            GradeKey::CrawlAngle => (CRAWL_ANGLE_MIN, CRAWL_ANGLE_MAX, CRAWL_ANGLE_DEFAULT),
+            GradeKey::CrawlDepth => (CRAWL_DEPTH_MIN, CRAWL_DEPTH_MAX, CRAWL_DEPTH_DEFAULT),
             _ => (0.0, 1.0, 0.5),
         }
     }
@@ -292,6 +312,15 @@ pub struct Grade {
     /// CRT tracking-band dials `[intensity, speed, size]` in `0..1`, or `None` to
     /// use whatever the resolved theme authored. Per-pane via the grade group.
     pub tracking: Option<[f32; 3]>,
+    /// Star-Wars text-crawl toggle. On ⇒ this pane's grid renders in the crawl
+    /// font and the renderer perspective-warps the tube. Per-pane via the grade
+    /// group (like `warp`/`tracking`). Omitted from TOML when off.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub crawl: bool,
+    /// Crawl convergence angle in degrees (`2..=30`, neutral 12).
+    pub crawl_angle: f32,
+    /// Crawl depth = text-height ratio bottom:top (`0.05..=15`, neutral 2.5).
+    pub crawl_depth: f32,
 }
 
 impl Default for Grade {
@@ -312,6 +341,9 @@ impl Default for Grade {
             text_size: 1.0,     // terminal grid at config size
             warp: WARP_DEFAULT, // the house near-fishbowl bend
             tracking: None,     // defer to the theme's authored roll bar
+            crawl: false,       // crawl mode off until toggled
+            crawl_angle: CRAWL_ANGLE_DEFAULT,
+            crawl_depth: CRAWL_DEPTH_DEFAULT,
         }
     }
 }
@@ -346,6 +378,9 @@ impl Grade {
             text_size: 1.0,
             warp: 0.0,      // reset = dead flat
             tracking: None, // reset = defer to the theme's roll bar
+            crawl: false,   // reset = crawl off
+            crawl_angle: CRAWL_ANGLE_DEFAULT,
+            crawl_depth: CRAWL_DEPTH_DEFAULT,
         }
     }
 
@@ -386,6 +421,9 @@ impl Grade {
             && (self.text_size - d.text_size).abs() < EPS
             && (self.warp - d.warp).abs() < EPS
             && self.tracking == d.tracking
+            && self.crawl == d.crawl
+            && (self.crawl_angle - d.crawl_angle).abs() < EPS
+            && (self.crawl_depth - d.crawl_depth).abs() < EPS
     }
 
     pub fn get(&self, k: GradeKey) -> f32 {
@@ -399,6 +437,8 @@ impl Grade {
             GradeKey::Scale => self.scale,
             GradeKey::TextSize => self.text_size,
             GradeKey::Warp => self.warp,
+            GradeKey::CrawlAngle => self.crawl_angle,
+            GradeKey::CrawlDepth => self.crawl_depth,
         }
     }
 
@@ -415,6 +455,8 @@ impl Grade {
             GradeKey::Scale => self.scale = v,
             GradeKey::TextSize => self.text_size = v,
             GradeKey::Warp => self.warp = v,
+            GradeKey::CrawlAngle => self.crawl_angle = v,
+            GradeKey::CrawlDepth => self.crawl_depth = v,
         }
     }
 }
@@ -498,6 +540,9 @@ pub fn house_outer() -> ThemeChoice {
             text_size: 1.0,     // terminal grid at config size
             warp: WARP_DEFAULT, // the house near-fishbowl bend
             tracking: None,     // defer to the theme's authored roll bar
+            crawl: false,
+            crawl_angle: CRAWL_ANGLE_DEFAULT,
+            crawl_depth: CRAWL_DEPTH_DEFAULT,
         },
         dynamic: Dynamic::Plain,
         text: None,
@@ -1148,6 +1193,7 @@ pub fn resolve(cx: &App, choice: &ThemeChoice) -> Arc<Theme> {
         && choice.grade.is_neutral()
         && choice.grade.warp.abs() < 1e-3
         && choice.grade.tracking.is_none()
+        && !choice.grade.crawl
     {
         return base;
     }
@@ -1189,6 +1235,10 @@ pub fn resolve(cx: &App, choice: &ThemeChoice) -> Arc<Theme> {
     if let Some(dial) = choice.grade.tracking {
         apply_tracking(&mut th, dial);
     }
+    // Crawl rides the grade group too: per-pane perspective + crawl font.
+    th.crawl = choice.grade.crawl;
+    th.crawl_angle = choice.grade.crawl_angle.clamp(CRAWL_ANGLE_MIN, CRAWL_ANGLE_MAX);
+    th.crawl_depth = choice.grade.crawl_depth.clamp(CRAWL_DEPTH_MIN, CRAWL_DEPTH_MAX);
     Arc::new(th)
 }
 
@@ -1212,6 +1262,35 @@ pub const WARP_MAX: f32 = 1.5;
 /// warp amount — kept here so geometry stays in sync with the shader's scaling.
 pub fn warp_coeffs(amount: f32) -> (f32, f32) {
     (amount * 0.14, amount * 0.06)
+}
+
+/// The grid font a crawl-mode pane renders in: a libre News-Gothic clone (SIL
+/// OFL), the closest freely-licensable match to the iconic crawl typeface. The
+/// TTF is bundled and registered at startup (see `main`); `grid_font` swaps to
+/// it (italic) when [`Theme::crawl`] is on.
+pub const CRAWL_FONT_FAMILY: &str = "News Cycle";
+
+/// Crawl knob ranges (degrees / ratio). Defaults are the look a fresh crawl
+/// turns on at: a gentle 12° vergence and a classic 2.5× near:far height.
+pub const CRAWL_ANGLE_MIN: f32 = 2.0;
+pub const CRAWL_ANGLE_MAX: f32 = 30.0;
+pub const CRAWL_ANGLE_DEFAULT: f32 = 12.0;
+pub const CRAWL_DEPTH_MIN: f32 = 0.05;
+pub const CRAWL_DEPTH_MAX: f32 = 15.0;
+pub const CRAWL_DEPTH_DEFAULT: f32 = 2.5;
+
+/// The crawl perspective coefficients the renderer warps each tube by, for a
+/// given angle (degrees) and depth ratio — kept here so the geometry stays in
+/// sync with the shader's inverse map (`fs_crt` in `crt_pass.wgsl`):
+/// - `a` = top-edge width ratio (`1` = no horizontal taper, smaller = sides
+///   converge harder toward the top). Driven by `angle`.
+/// - `d` = depth ratio = text height at the BOTTOM ÷ at the TOP (`>1` classic,
+///   `1` = no vertical foreshortening). Passed straight through, clamped.
+pub fn crawl_coeffs(angle_deg: f32, depth: f32) -> (f32, f32) {
+    let a = (1.0 - 1.3 * angle_deg.clamp(CRAWL_ANGLE_MIN, CRAWL_ANGLE_MAX).to_radians().sin())
+        .clamp(0.2, 1.0);
+    let d = depth.clamp(CRAWL_DEPTH_MIN, CRAWL_DEPTH_MAX);
+    (a, d)
 }
 
 /// Monotonic counter bumped whenever a global input to [`resolve`] changes that a
@@ -1316,6 +1395,10 @@ pub(crate) fn parse(source: &str) -> Result<Theme, String> {
         // Resolved per-pane from the scope's Grade::warp in resolve(); the base
         // theme is flat until then.
         warp: 0.0,
+        // Resolved per-pane from the scope's Grade in resolve(); off by default.
+        crawl: false,
+        crawl_angle: CRAWL_ANGLE_DEFAULT,
+        crawl_depth: CRAWL_DEPTH_DEFAULT,
         flicker: file.effects.flicker.unwrap_or(0.).clamp(0., 1.),
         jiggle: file.effects.jiggle.unwrap_or(0.).clamp(0., 1.),
         screen_glare: file
@@ -2008,6 +2091,114 @@ mod tests {
             ..Default::default()
         };
         assert!((detached.effective(&outer).grade.scale - 0.85).abs() < 1e-6);
+    }
+
+    #[test]
+    fn crawl_rides_the_grade_group_and_clamps() {
+        // Off by default; angle/depth start at the shipped neutral look.
+        assert!(!Grade::neutral().crawl);
+        assert!(!Grade::default().crawl);
+        assert!((Grade::neutral().crawl_angle - CRAWL_ANGLE_DEFAULT).abs() < 1e-6);
+        assert!((Grade::neutral().crawl_depth - CRAWL_DEPTH_DEFAULT).abs() < 1e-6);
+        // Crawl is NOT a paint grade, so it must not break the fast-path neutral
+        // check (like warp/tracking) — an otherwise-neutral grade stays neutral.
+        let mut g = Grade::neutral();
+        g.crawl = true;
+        assert!(g.is_neutral(), "crawl is excluded from the paint-neutral check");
+        // ...but it IS a divergence from the default, so the scope persists it.
+        assert!(!g.is_default(), "crawl on diverges from the house default");
+
+        // Angle/depth ride their own ranges and clamp.
+        assert_eq!(
+            GradeKey::CrawlAngle.range(),
+            (CRAWL_ANGLE_MIN, CRAWL_ANGLE_MAX, CRAWL_ANGLE_DEFAULT)
+        );
+        g.set(GradeKey::CrawlAngle, 99.0);
+        assert!((g.crawl_angle - CRAWL_ANGLE_MAX).abs() < 1e-6);
+        g.set(GradeKey::CrawlDepth, 0.0);
+        assert!((g.crawl_depth - CRAWL_DEPTH_MIN).abs() < 1e-6);
+
+        // Round-trips through TOML; an absent crawl flag reads as off.
+        let c = ThemeChoice {
+            grade: g,
+            ..Default::default()
+        };
+        let back: ThemeChoice = toml::from_str(&toml::to_string(&c).unwrap()).unwrap();
+        assert!(back.grade.crawl);
+        assert!((back.grade.crawl_angle - CRAWL_ANGLE_MAX).abs() < 1e-6);
+        let legacy: ThemeChoice =
+            toml::from_str("id = \"hacker\"\n[grade]\nbrightness = 0.9\n").unwrap();
+        assert!(!legacy.grade.crawl, "absent crawl flag = off");
+
+        // A pristine pane inherits the outer crawl live; a detached pane keeps its own.
+        let mut outer = ThemeChoice::default();
+        outer.grade.crawl = true;
+        assert!(PaneTheme::default().effective(&outer).grade.crawl);
+    }
+
+    #[test]
+    fn crawl_coeffs_map_angle_to_taper_and_pass_depth() {
+        // Bigger angle ⇒ harder convergence (smaller top-edge width ratio).
+        let (a_small, _) = crawl_coeffs(2.0, 2.5);
+        let (a_big, d) = crawl_coeffs(30.0, 2.5);
+        assert!(a_small > a_big, "more angle ⇒ narrower top edge");
+        assert!(a_big > 0.2 - 1e-6 && a_small <= 1.0);
+        assert!((d - 2.5).abs() < 1e-6, "depth passes straight through");
+        // Out-of-range knobs clamp to the band.
+        assert!((crawl_coeffs(0.0, 99.0).1 - CRAWL_DEPTH_MAX).abs() < 1e-6);
+    }
+
+    // A Rust mirror of the WGSL crawl inverse-map in `fs_crt` (crt_pass.wgsl):
+    // given a screen-local point in a crawling tube and the (a, depth) coeffs,
+    // return the content texel to sample, or None for the letterboxed starfield.
+    // The shader is the runtime authority; this copy locks the math by test.
+    fn crawl_sample(lx: f32, ly: f32, a: f32, depth: f32) -> Option<(f32, f32)> {
+        let vb = 1.0 - ly; // 0 = bottom/near, 1 = top/far
+        let tc = if (depth - 1.0).abs() < 1e-3 {
+            vb
+        } else {
+            (depth.powf(vb) - 1.0) / (depth - 1.0)
+        };
+        let width = (1.0 - tc) + a * tc;
+        let cx = 0.5 + (lx - 0.5) / width;
+        if !(0.0..=1.0).contains(&cx) {
+            None
+        } else {
+            Some((cx, 1.0 - tc))
+        }
+    }
+
+    #[test]
+    fn crawl_perspective_inverse_map_is_correct() {
+        // Identity: no taper, no foreshortening ⇒ content == screen.
+        for &(lx, ly) in &[(0.1f32, 0.2f32), (0.5, 0.5), (0.9, 0.8)] {
+            let (cx, cy) = crawl_sample(lx, ly, 1.0, 1.0).unwrap();
+            assert!((cx - lx).abs() < 1e-5 && (cy - ly).abs() < 1e-5);
+        }
+
+        let (a, depth) = crawl_coeffs(18.0, 3.0);
+
+        // The bottom row (near) samples full width at the very bottom of content.
+        let (cx_b, cy_b) = crawl_sample(0.5, 1.0, a, depth).unwrap();
+        assert!((cx_b - 0.5).abs() < 1e-5 && (cy_b - 1.0).abs() < 1e-5);
+        // Edges of the bottom row are still in-bounds (width == 1 there).
+        assert!(crawl_sample(0.0, 1.0, a, depth).is_some());
+
+        // Vertical foreshortening (depth > 1): screen-mid maps PAST content-mid,
+        // i.e. rows bunch toward the far (top) edge.
+        let (_, cy_mid) = crawl_sample(0.5, 0.5, a, depth).unwrap();
+        assert!(cy_mid > 0.5, "depth>1 bunches rows toward the top, got {cy_mid}");
+
+        // Horizontal taper (a < 1): near the top the sides converge, so the
+        // outer columns fall outside the trapezoid and letterbox to black.
+        assert!(crawl_sample(0.02, 0.0, a, depth).is_none(), "top-left letterboxes");
+        assert!(crawl_sample(0.5, 0.0, a, depth).is_some(), "top-centre stays in");
+
+        // cy is monotonic in screen-y (no folding): higher on screen (smaller
+        // ly) recedes further toward the content TOP (smaller cy).
+        let (_, cy_up) = crawl_sample(0.5, 0.25, a, depth).unwrap();
+        let (_, cy_down) = crawl_sample(0.5, 0.75, a, depth).unwrap();
+        assert!(cy_up < cy_down, "screen-up ⇒ nearer the content top (smaller cy)");
     }
 
     #[test]

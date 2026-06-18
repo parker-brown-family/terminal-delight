@@ -171,6 +171,7 @@
       <span class="links">
         <a href="#features" class="hide-sm">features</a>
         <a href="#gallery" class="hide-sm">gallery</a>
+        <a href="#crawl" class="hide-sm">crawl</a>
         <a href="#gamba" class="hide-sm">gamba</a>
         <a href="#vision">vision</a>
         <a href="#build">build</a>
@@ -237,6 +238,7 @@
         <figure><img loading="lazy" src="assets/theme-hacker.png" alt="hacker theme at large text size"><figcaption>hacker — exaggerated text size</figcaption></figure>
         <figure><img loading="lazy" src="assets/theme-tactical.png" alt="tactical-overdrive theme"><figcaption>tactical-overdrive — amber HUD</figcaption></figure>
         <figure><img loading="lazy" src="assets/theme-quiet.png" alt="quiet-command light theme"><figcaption>quiet-command — light phosphor</figcaption></figure>
+        <figure><img loading="lazy" src="assets/text-crawl.png" alt="terminal-delight in text-crawl mode: centred yellow News-Gothic text receding into the distance inside a curved CRT"><figcaption>text-crawl mode — the opening crawl, on a real terminal</figcaption></figure>
       </div>
     </div>
   </section>
@@ -260,6 +262,29 @@
       </div>
       <div class="cta" style="justify-content:flex-start;margin-top:18px">
         <a class="btn primary" href="gamba.html">🎰 PLAY NOW — the GAMBA cabinet</a>
+        <a class="btn" href="tv.html">📺 The 1950s TV cabinet</a>
+      </div>
+    </div>
+  </section>
+
+  <section id="crawl">
+    <div class="wrap prose">
+      <div class="eyebrow">▲ new in this build · the TEXT CRAWL mode</div>
+      <h2 style="letter-spacing:.03em">A long time ago, in a terminal far, far away…</h2>
+      <p style="font-size:1.08em">Flip <b>text crawl</b> on for any pane and every line of the terminal renders in the iconic News-Gothic crawl face and <b>recedes into the distance</b> — centred, tapering toward the top, exactly like the opening crawl you're picturing.</p>
+      <p>It isn't a video or an overlay. The crawl perspective is a <b>real GPU pre-map baked into the same CRT post-pass that already curves the glass</b>, so it composes for free with the barrel warp, screen jiggle, tracking band, glare and phosphor — and costs one extra <code>pow</code> per pixel, no second render. Two dials in the DISPLAY tray, per-pane like everything else: <b>angle</b> (2–30°, how hard the sides converge) and <b>depth</b> (0.05–15×, the bottom-to-top text-size ratio). Open the 👓 <b>FOCUS</b> reader on a crawling pane and it inherits the look too.</p>
+      <div class="screen" style="margin-top:4px">
+        <div class="bar"><span class="dot"></span> text-crawl mode — centred crawl font, perspective recede, all inside the curved CRT</div>
+        <img loading="lazy" src="assets/text-crawl.png" alt="terminal-delight in text-crawl mode: centred yellow News-Gothic text receding into the distance inside a curved, glare-lit CRT screen, a staged opening crawl" />
+        <div class="playnote">Real capture, staged demo text. Every terminal line is centred and perspective-warped on the GPU — jiggle, tracking, glare and phosphor ride right along.</div>
+      </div>
+      <div class="screen" style="margin-top:16px">
+        <div class="bar"><span class="dot"></span> 👓 FOCUS on a crawling pane — it inherits the crawl font &amp; centring</div>
+        <img loading="lazy" src="assets/text-crawl-focus.png" alt="the FOCUS reading modal opened over a text-crawl pane: the mirrored terminal text shows in the centred crawl font, big and readable, over a frosted-glass blurred backdrop of the crawling screen behind it" />
+        <div class="playnote">Open the 👓 reader on a crawling pane and it inherits the attributes — same crawl font, same centring — flattened for readability over the frosted backdrop.</div>
+      </div>
+      <div class="cta" style="justify-content:flex-start;margin-top:18px">
+        <a class="btn primary" href="start-crawl.html">▲ START THE CRAWL — the kiosk</a>
         <a class="btn" href="tv.html">📺 The 1950s TV cabinet</a>
       </div>
     </div>

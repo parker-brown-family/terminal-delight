@@ -12,11 +12,13 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
-/// One registered tube: (rect[x,y,w,h] physical px, glass glare, k1, k2). Each
-/// tube carries the barrel curvature of *its own* pane theme, so a bent pane
-/// bows even when the window theme is flat (and a flat pane stays flat beside a
-/// bent one).
-type Tube = ([f32; 4], f32, f32, f32);
+/// One registered tube: (rect[x,y,w,h] physical px, glass glare, k1, k2, crawl
+/// `[enabled, a, depth]`). Each tube carries the barrel curvature *and* the
+/// crawl perspective of *its own* pane theme, so a bent/crawling pane stays
+/// independent of its neighbours. `crawl[0]` is `1.0` when crawl is on (else
+/// `0.0`), `crawl[1]` the top-edge width ratio `a`, `crawl[2]` the depth ratio
+/// — see `theme::crawl_coeffs` and `fs_crt` in `crt_pass.wgsl`.
+type Tube = ([f32; 4], f32, f32, f32, [f32; 3]);
 
 static RECTS: Mutex<Vec<Tube>> = Mutex::new(Vec::new());
 static SUPPRESSED: AtomicBool = AtomicBool::new(false);
@@ -54,14 +56,16 @@ pub fn clear_focus_blur() {
 }
 
 /// Register one pane's tube for this frame: its content rect (physical px),
-/// glass glare, and its own barrel curvature (k1, k2) from its resolved theme.
-pub fn register_tube(rect: [f32; 4], glare: f32, k1: f32, k2: f32) {
+/// glass glare, its own barrel curvature (k1, k2), and its crawl perspective
+/// (`crawl = [enabled, a, depth]`, all `0`/identity when crawl is off), each
+/// from its resolved theme.
+pub fn register_tube(rect: [f32; 4], glare: f32, k1: f32, k2: f32, crawl: [f32; 3]) {
     if SUPPRESSED.load(Ordering::Relaxed) {
         return;
     }
     let mut rects = RECTS.lock().unwrap();
     if rects.len() < 8 {
-        rects.push((rect, glare.clamp(0.0, 1.0), k1, k2));
+        rects.push((rect, glare.clamp(0.0, 1.0), k1, k2, crawl));
     }
     push(&rects);
 }
@@ -80,13 +84,22 @@ fn rect_count() -> usize {
 #[cfg(test)]
 fn rect_curvature(i: usize) -> (f32, f32) {
     let rects = RECTS.lock().unwrap();
-    let (_, _, k1, k2) = rects[i];
+    let (_, _, k1, k2, _) = rects[i];
     (k1, k2)
+}
+
+#[cfg(test)]
+fn rect_crawl(i: usize) -> [f32; 3] {
+    let rects = RECTS.lock().unwrap();
+    rects[i].4
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A crawl triad with crawl disabled (identity: off, no taper, flat depth).
+    const CRAWL_OFF: [f32; 3] = [0.0, 1.0, 1.0];
 
     // The statics are process-global; this is the only test that touches them,
     // so it owns the sequence start-to-finish and restores the default at the end.
@@ -95,27 +108,27 @@ mod tests {
         let r = [0.0, 0.0, 100.0, 100.0];
         begin_frame();
         set_suppressed(false);
-        register_tube(r, 0.5, 0.14, 0.06);
-        register_tube(r, 0.5, 0.14, 0.06);
+        register_tube(r, 0.5, 0.14, 0.06, CRAWL_OFF);
+        register_tube(r, 0.5, 0.14, 0.06, CRAWL_OFF);
         assert_eq!(rect_count(), 2, "tubes register while the glass is live");
 
         // an open menu suppresses: begin_frame clears, and nothing re-registers
         begin_frame();
         set_suppressed(true);
-        register_tube(r, 0.5, 0.14, 0.06);
-        register_tube(r, 0.5, 0.14, 0.06);
+        register_tube(r, 0.5, 0.14, 0.06, CRAWL_OFF);
+        register_tube(r, 0.5, 0.14, 0.06, CRAWL_OFF);
         assert_eq!(rect_count(), 0, "an open overlay flattens the whole screen");
 
         // closing the menu restores warping on the next frame
         begin_frame();
         set_suppressed(false);
-        register_tube(r, 0.5, 0.14, 0.06);
+        register_tube(r, 0.5, 0.14, 0.06, CRAWL_OFF);
         assert_eq!(rect_count(), 1, "warp resumes once the overlay closes");
 
         // never bank more than the 8 the renderer reads
         begin_frame();
         for _ in 0..12 {
-            register_tube(r, 0.5, 0.14, 0.06);
+            register_tube(r, 0.5, 0.14, 0.06, CRAWL_OFF);
         }
         assert_eq!(rect_count(), 8, "the tube set is capped at the shader's 8");
 
@@ -124,12 +137,27 @@ mod tests {
         // bend its neighbours. This is what makes the sub-tab theme an override.
         begin_frame();
         set_suppressed(false);
-        register_tube(r, 0.4, 0.0, 0.0); // a no-bend pane
-        register_tube(r, 0.4, 0.14, 0.06); // a bent pane
+        register_tube(r, 0.4, 0.0, 0.0, CRAWL_OFF); // a no-bend pane
+        register_tube(r, 0.4, 0.14, 0.06, CRAWL_OFF); // a bent pane
         assert_eq!(rect_count(), 2);
         assert_eq!(rect_curvature(0), (0.0, 0.0), "flat pane stays flat");
         assert_eq!(rect_curvature(1), (0.14, 0.06), "bent pane keeps its bend");
 
+        set_suppressed(false);
+    }
+
+    // Crawl is per-pane like curvature: each tube carries its own crawl triad,
+    // so a crawling pane and a plain pane coexist without leaking into each other.
+    #[test]
+    fn crawl_triad_is_per_pane_and_passes_through() {
+        let r = [0.0, 0.0, 100.0, 100.0];
+        begin_frame();
+        set_suppressed(false);
+        register_tube(r, 0.4, 0.14, 0.06, CRAWL_OFF); // plain pane
+        register_tube(r, 0.4, 0.14, 0.06, [1.0, 0.6, 2.5]); // a crawling pane
+        assert_eq!(rect_count(), 2);
+        assert_eq!(rect_crawl(0), CRAWL_OFF, "plain pane carries no crawl");
+        assert_eq!(rect_crawl(1), [1.0, 0.6, 2.5], "crawling pane keeps its triad");
         set_suppressed(false);
     }
 
