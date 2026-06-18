@@ -513,6 +513,213 @@ impl Tab {
     }
 }
 
+/// `true` if `c` counts as part of a "word" for ctrl-arrow navigation.
+fn is_word_char(c: char) -> bool {
+    c.is_alphanumeric() || c == '_'
+}
+
+/// An inline single-line text editor with a caret and a selection range —
+/// backs the tab- and group-rename boxes so they honour normal text navigation:
+/// arrows (char), ctrl+arrows (word), shift+… (extend selection), home/end,
+/// ctrl+a (select all), backspace/delete. Indices are into `chars` (so a
+/// multi-byte glyph is one step). `anchor == cursor` means no selection.
+#[derive(Clone, Default)]
+struct EditBuffer {
+    chars: Vec<char>,
+    cursor: usize,
+    anchor: usize,
+}
+
+impl EditBuffer {
+    /// Seed from an existing name with the whole thing selected (the file-manager
+    /// rename gesture: the first keystroke replaces it, arrows still navigate).
+    fn seeded(s: &str) -> Self {
+        let chars: Vec<char> = s.chars().collect();
+        let len = chars.len();
+        Self {
+            chars,
+            cursor: len,
+            anchor: 0,
+        }
+    }
+
+    fn text(&self) -> String {
+        self.chars.iter().collect()
+    }
+
+    fn has_sel(&self) -> bool {
+        self.cursor != self.anchor
+    }
+
+    fn sel_range(&self) -> (usize, usize) {
+        (self.cursor.min(self.anchor), self.cursor.max(self.anchor))
+    }
+
+    /// Drop the selected run (if any); leaves the caret collapsed at its start.
+    fn delete_sel(&mut self) -> bool {
+        if !self.has_sel() {
+            return false;
+        }
+        let (a, b) = self.sel_range();
+        self.chars.drain(a..b);
+        self.cursor = a;
+        self.anchor = a;
+        true
+    }
+
+    fn prev_word(&self) -> usize {
+        let mut i = self.cursor;
+        while i > 0 && !is_word_char(self.chars[i - 1]) {
+            i -= 1;
+        }
+        while i > 0 && is_word_char(self.chars[i - 1]) {
+            i -= 1;
+        }
+        i
+    }
+
+    fn next_word(&self) -> usize {
+        let n = self.chars.len();
+        let mut i = self.cursor;
+        while i < n && !is_word_char(self.chars[i]) {
+            i += 1;
+        }
+        while i < n && is_word_char(self.chars[i]) {
+            i += 1;
+        }
+        i
+    }
+
+    /// Apply one keystroke. Enter/Escape are handled by the caller before this is
+    /// reached. `max` caps the inserted length.
+    fn apply(&mut self, key: &str, m: &gpui::Modifiers, key_char: Option<&str>, max: usize) {
+        let extend = m.shift;
+        let n = self.chars.len();
+        match key {
+            "left" => {
+                let to = if m.control {
+                    self.prev_word()
+                } else if self.has_sel() && !extend {
+                    self.sel_range().0
+                } else {
+                    self.cursor.saturating_sub(1)
+                };
+                self.cursor = to;
+                if !extend {
+                    self.anchor = to;
+                }
+            }
+            "right" => {
+                let to = if m.control {
+                    self.next_word()
+                } else if self.has_sel() && !extend {
+                    self.sel_range().1
+                } else {
+                    (self.cursor + 1).min(n)
+                };
+                self.cursor = to;
+                if !extend {
+                    self.anchor = to;
+                }
+            }
+            "home" => {
+                self.cursor = 0;
+                if !extend {
+                    self.anchor = 0;
+                }
+            }
+            "end" => {
+                self.cursor = n;
+                if !extend {
+                    self.anchor = n;
+                }
+            }
+            "a" if m.control => {
+                self.anchor = 0;
+                self.cursor = n;
+            }
+            "backspace" => {
+                if !self.delete_sel() && self.cursor > 0 {
+                    let to = if m.control {
+                        self.prev_word()
+                    } else {
+                        self.cursor - 1
+                    };
+                    self.chars.drain(to..self.cursor);
+                    self.cursor = to;
+                    self.anchor = to;
+                }
+            }
+            "delete" => {
+                if !self.delete_sel() && self.cursor < n {
+                    let to = if m.control {
+                        self.next_word()
+                    } else {
+                        self.cursor + 1
+                    };
+                    self.chars.drain(self.cursor..to);
+                    self.anchor = self.cursor;
+                }
+            }
+            _ => {
+                // a printable character: ctrl/alt chords never type
+                if m.control || m.alt {
+                    return;
+                }
+                if let Some(ch) = key_char.filter(|c| !c.is_empty()) {
+                    self.delete_sel();
+                    let incoming: Vec<char> = ch.chars().collect();
+                    let room = max.saturating_sub(self.chars.len());
+                    for c in incoming.into_iter().take(room) {
+                        self.chars.insert(self.cursor, c);
+                        self.cursor += 1;
+                    }
+                    self.anchor = self.cursor;
+                }
+            }
+        }
+    }
+}
+
+/// Render an [`EditBuffer`] as text with a selection highlight and a caret, in a
+/// flex row. Shared by the tab- and group-rename boxes.
+fn render_edit_buffer(
+    eb: &EditBuffer,
+    s: f32,
+    text_col: Hsla,
+    caret_col: Hsla,
+    sel_col: Hsla,
+) -> gpui::Div {
+    let span = |run: &[char], col: Hsla| div().text_color(col).child(run.iter().collect::<String>());
+    let caret = || div().w(px(2. * s)).h(px(13. * s)).bg(caret_col);
+    let highlight = |run: &[char]| {
+        div()
+            .bg(sel_col)
+            .text_color(text_col)
+            .child(run.iter().collect::<String>())
+    };
+    let mut row = div().flex().flex_row().items_center();
+    let (a, b) = eb.sel_range();
+    let len = eb.chars.len();
+    if a == b {
+        row = row
+            .child(span(&eb.chars[0..a], text_col))
+            .child(caret())
+            .child(span(&eb.chars[a..len], text_col));
+    } else {
+        row = row.child(span(&eb.chars[0..a], text_col));
+        if eb.cursor == a {
+            row = row.child(caret());
+        }
+        row = row.child(highlight(&eb.chars[a..b]));
+        if eb.cursor == b {
+            row = row.child(caret());
+        }
+        row = row.child(span(&eb.chars[b..len], text_col));
+    }
+    row
+}
+
 /// A browser-style tab group: a coloured band on the mother bar wrapping a run of
 /// adjacent member tabs. The group's colour + text colour *lead* its members (a
 /// member tab can still override with its own). Persisted in the state file.
@@ -798,7 +1005,7 @@ struct Workspace {
     tabs: Vec<Tab>,
     active: usize,
     focus_handle: gpui::FocusHandle,
-    renaming: Option<(usize, String)>,
+    renaming: Option<(usize, EditBuffer)>,
     /// Tab index awaiting a "close all its panes?" confirmation, if any.
     confirm_close: Option<usize>,
     /// The ? help modal is open (keys/commands reference), themed by the outer.
@@ -852,6 +1059,10 @@ struct Workspace {
     tab_drag: Option<TabDrag>,
     /// The insertion slot (0..=len) a tab-reorder release would land in.
     tab_drop: Option<usize>,
+    /// `true` when the resolved tab-drop slot is a fresh row below the last row
+    /// (the cursor was dragged past the bottom of the strip) — drives the wide
+    /// "drop onto a new row" bar instead of the thin between-tabs caret.
+    tab_drop_newrow: bool,
     /// Browser-style tab groups (colour bands). Members reference a group by id.
     groups: Vec<TabGroup>,
     /// Monotonic id source for new groups (never reused, so stale refs stay safe).
@@ -873,7 +1084,7 @@ struct Workspace {
     /// Live tab-pane lightness-slider rect, for ratio math during a drag.
     tab_light_bounds: Arc<Mutex<Option<Bounds<Pixels>>>>,
     /// Inline group-name editor: (group id, buffer) while renaming a group.
-    group_rename: Option<(u32, String)>,
+    group_rename: Option<(u32, EditBuffer)>,
     /// The pane currently mirrored in the FOCUS reading modal, if any. Weak so a
     /// closed pane (its × / shell exit) drops normally — the modal just vanishes.
     focus_read: Option<gpui::WeakEntity<TerminalView>>,
@@ -1089,6 +1300,7 @@ impl Workspace {
             tab_bounds: Arc::new(Mutex::new(std::collections::HashMap::new())),
             tab_drag: None,
             tab_drop: None,
+            tab_drop_newrow: false,
             groups: Vec::new(),
             next_group_id: 1,
             tab_menu: None,
@@ -1338,21 +1550,69 @@ impl Workspace {
         cx.notify();
     }
 
-    /// Which insertion slot (0..=len) a tab-reorder release at window-x `x` would
-    /// land in: count the tab buttons whose horizontal centre sits left of the
-    /// cursor. Reads the same live `tab_bounds` rects the pane-drop uses.
-    fn resolve_tab_slot(&self, x: Pixels) -> usize {
+    /// Where a tab-reorder release at cursor `pos` lands, now that tabs can wrap
+    /// onto several rows (a grid). Picks the ROW the cursor sits in, then the
+    /// insertion slot within it by x-midpoint. Returns `(slot, new_row)` — the
+    /// flag is set when the cursor was dragged below every row, i.e. "start a
+    /// fresh row" (the wide drop bar). Reads the same live `tab_bounds` rects the
+    /// pane-drop uses.
+    fn resolve_tab_slot(&self, pos: Point<Pixels>) -> (usize, bool) {
         let map = self.tab_bounds.lock().unwrap();
-        let mut slot = 0;
-        for i in 0..self.tabs.len() {
+        let (x, y) = (f32::from(pos.x), f32::from(pos.y));
+        let n = self.tabs.len();
+        // (index, top, bottom, mid-x) for every measured tab button
+        let mut items: Vec<(usize, f32, f32, f32)> = Vec::new();
+        for i in 0..n {
             if let Some(r) = map.get(&i) {
-                let mid = f32::from(r.origin.x) + f32::from(r.size.width) / 2.0;
-                if f32::from(x) > mid {
-                    slot = i + 1;
-                }
+                let top = f32::from(r.origin.y);
+                let bot = top + f32::from(r.size.height);
+                let midx = f32::from(r.origin.x) + f32::from(r.size.width) / 2.0;
+                items.push((i, top, bot, midx));
             }
         }
-        slot
+        if items.is_empty() {
+            return (0, false);
+        }
+        let min_top = items.iter().fold(f32::INFINITY, |a, t| a.min(t.1));
+        let max_bot = items.iter().fold(f32::NEG_INFINITY, |a, t| a.max(t.2));
+        // dragged below every row → a brand-new row at the very end
+        if y > max_bot + 2.0 {
+            return (n, true);
+        }
+        // the row the cursor sits in; above-everything clamps to the first row,
+        // a gap between rows snaps to the nearest row by vertical centre.
+        let tol = 2.0;
+        let mut row: Vec<&(usize, f32, f32, f32)> = if y < min_top {
+            items.iter().filter(|t| (t.1 - min_top).abs() < tol).collect()
+        } else {
+            items
+                .iter()
+                .filter(|t| y >= t.1 - tol && y <= t.2 + tol)
+                .collect()
+        };
+        if row.is_empty() {
+            let nearest_top = items
+                .iter()
+                .min_by(|a, b| {
+                    let da = ((a.1 + a.2) / 2.0 - y).abs();
+                    let db = ((b.1 + b.2) / 2.0 - y).abs();
+                    da.total_cmp(&db)
+                })
+                .map(|t| t.1)
+                .unwrap_or(min_top);
+            row = items
+                .iter()
+                .filter(|t| (t.1 - nearest_top).abs() < tol)
+                .collect();
+        }
+        // within the chosen row, the x midpoints decide the insertion index
+        let mut slot = row.iter().map(|t| t.0).min().unwrap_or(0);
+        for t in &row {
+            if x > t.3 {
+                slot = t.0 + 1;
+            }
+        }
+        (slot, false)
     }
 
     /// Slide outer tab `from` to insertion slot `to` (in the pre-removal index
@@ -1794,11 +2054,12 @@ impl Workspace {
     /// "click off saves" behaviour. Returns true if a rename was open. An empty
     /// name clears back to the auto-numbered label, matching the Enter path.
     fn commit_rename(&mut self, cx: &mut Context<Self>) -> bool {
-        let Some((tab_i, buf)) = self.renaming.take() else {
+        let Some((tab_i, eb)) = self.renaming.take() else {
             return false;
         };
+        let name = eb.text();
         if let Some(tab) = self.tabs.get_mut(tab_i) {
-            tab.name = (!buf.trim().is_empty()).then(|| buf.trim().to_string());
+            tab.name = (!name.trim().is_empty()).then(|| name.trim().to_string());
         }
         self.save(cx);
         cx.notify();
@@ -1849,28 +2110,21 @@ impl Workspace {
             return;
         }
         // the inline group-name editor owns the keyboard while open
-        if let Some((gid, mut buf)) = self.group_rename.take() {
+        if let Some((gid, mut eb)) = self.group_rename.take() {
             match ks.key.as_str() {
                 "enter" | "escape" => {
                     if ks.key.as_str() == "enter" {
+                        let name = eb.text();
                         if let Some(g) = self.groups.iter_mut().find(|g| g.id == gid) {
-                            g.name = (!buf.trim().is_empty()).then(|| buf.trim().to_string());
+                            g.name = (!name.trim().is_empty()).then(|| name.trim().to_string());
                         }
                         self.save(cx);
                     }
                     self.focus_active(window, cx);
                 }
-                "backspace" => {
-                    buf.pop();
-                    self.group_rename = Some((gid, buf));
-                }
                 _ => {
-                    if let Some(ch) = ks.key_char.as_ref() {
-                        if buf.chars().count() < 18 {
-                            buf.push_str(ch);
-                        }
-                    }
-                    self.group_rename = Some((gid, buf));
+                    eb.apply(ks.key.as_str(), m, ks.key_char.as_deref(), 18);
+                    self.group_rename = Some((gid, eb));
                 }
             }
             cx.notify();
@@ -1895,27 +2149,20 @@ impl Workspace {
             return;
         }
         // the inline rename box owns the keyboard while open
-        if let Some((tab_i, mut buf)) = self.renaming.take() {
+        if let Some((tab_i, mut eb)) = self.renaming.take() {
             match ks.key.as_str() {
                 "enter" => {
+                    let name = eb.text();
                     if let Some(tab) = self.tabs.get_mut(tab_i) {
-                        tab.name = (!buf.trim().is_empty()).then(|| buf.trim().to_string());
+                        tab.name = (!name.trim().is_empty()).then(|| name.trim().to_string());
                     }
                     self.save(cx);
                     self.focus_active(window, cx);
                 }
                 "escape" => self.focus_active(window, cx),
-                "backspace" => {
-                    buf.pop();
-                    self.renaming = Some((tab_i, buf));
-                }
                 _ => {
-                    if let Some(ch) = ks.key_char.as_ref() {
-                        if buf.chars().count() < 18 {
-                            buf.push_str(ch);
-                        }
-                    }
-                    self.renaming = Some((tab_i, buf));
+                    eb.apply(ks.key.as_str(), m, ks.key_char.as_deref(), 18);
+                    self.renaming = Some((tab_i, eb));
                 }
             }
             cx.notify();
@@ -2002,6 +2249,7 @@ impl Workspace {
             if ev.pressed_button != Some(MouseButton::Left) {
                 self.tab_drag = None;
                 self.tab_drop = None;
+                self.tab_drop_newrow = false;
                 cx.notify();
                 return;
             }
@@ -2018,11 +2266,14 @@ impl Workspace {
                 }
                 d.engaged
             };
-            self.tab_drop = if engaged {
-                Some(self.resolve_tab_slot(pos.x))
+            if engaged {
+                let (slot, new_row) = self.resolve_tab_slot(pos);
+                self.tab_drop = Some(slot);
+                self.tab_drop_newrow = new_row;
             } else {
-                None
-            };
+                self.tab_drop = None;
+                self.tab_drop_newrow = false;
+            }
             cx.notify();
             return;
         }
@@ -2219,6 +2470,7 @@ impl Workspace {
         // a tab reorder: drop the grabbed tab into its resolved slot
         if let Some(drag) = self.tab_drag.take() {
             let slot = self.tab_drop.take();
+            self.tab_drop_newrow = false;
             if drag.engaged {
                 if let Some(to) = slot {
                     self.move_tab(drag.from, to, cx);
@@ -3208,13 +3460,9 @@ impl Workspace {
         // tabs ride the menu-bar slider: everything in the tab scales with the bar
         let s = theme::outer_choice(cx).grade.scale;
         let is_active = i == self.active;
-        // the inline rename box owns this slot while renaming
-        if self.renaming.as_ref().is_some_and(|(ri, _)| *ri == i) {
-            let buf = self
-                .renaming
-                .as_ref()
-                .map(|(_, b)| b.clone())
-                .unwrap_or_default();
+        // the inline rename box owns this slot while renaming — full text editor
+        // (caret + selection) so arrows / ctrl+arrows / shift navigation all work
+        if let Some((_, eb)) = self.renaming.as_ref().filter(|(ri, _)| *ri == i) {
             return div()
                 .px(px(8. * s))
                 .py(px(2. * s))
@@ -3230,8 +3478,13 @@ impl Workspace {
                 // clicking the edit box itself keeps editing (don't bubble to the
                 // root's commit-on-click-off handler)
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                .child(buf)
-                .child(div().w(px(6. * s)).h(px(13. * s)).bg(th.cursor));
+                .child(render_edit_buffer(
+                    eb,
+                    s,
+                    th.text,
+                    th.cursor,
+                    th.accent.alpha(0.4),
+                ));
         }
         let label = self.tabs[i]
             .name
@@ -3267,7 +3520,7 @@ impl Workspace {
                 cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
                     cx.stop_propagation();
                     let seed = ws.tabs[i].name.clone().unwrap_or_default();
-                    ws.renaming = Some((i, seed));
+                    ws.renaming = Some((i, EditBuffer::seeded(&seed)));
                     window.focus(&ws.focus_handle, cx);
                     cx.notify();
                 }),
@@ -3308,7 +3561,7 @@ impl Workspace {
                     } else if ev.click_count >= 2 {
                         // double-click to rename (the file-manager gesture)
                         let seed = ws.tabs[i].name.clone().unwrap_or_default();
-                        ws.renaming = Some((i, seed));
+                        ws.renaming = Some((i, EditBuffer::seeded(&seed)));
                         window.focus(&ws.focus_handle, cx);
                         cx.notify();
                     } else {
@@ -3390,11 +3643,14 @@ impl Workspace {
             .font_weight(gpui::FontWeight::EXTRA_BOLD)
             .text_color(glyph_col)
             .child("▾");
-        if let Some((rg, buf)) = self.group_rename.as_ref().filter(|(rg, _)| *rg == gid) {
-            let _ = rg;
-            chip = chip
-                .child(buf.clone())
-                .child(div().w(px(5. * s)).h(px(11. * s)).bg(glyph_col));
+        if let Some((_, eb)) = self.group_rename.as_ref().filter(|(rg, _)| *rg == gid) {
+            chip = chip.child(render_edit_buffer(
+                eb,
+                s,
+                glyph_col,
+                glyph_col,
+                glyph_col.alpha(0.35),
+            ));
         } else if let Some(n) = name {
             chip = chip.child(n);
         }
@@ -3409,7 +3665,7 @@ impl Workspace {
                         .find(|g| g.id == gid)
                         .and_then(|g| g.name.clone())
                         .unwrap_or_default();
-                    ws.group_rename = Some((gid, seed));
+                    ws.group_rename = Some((gid, EditBuffer::seeded(&seed)));
                     window.focus(&ws.focus_handle, cx);
                     cx.notify();
                 } else {
@@ -4207,16 +4463,34 @@ impl Render for Workspace {
         // Adjacent tabs sharing a group render under one coloured rail with a
         // handle chip; a collapsed group folds into a counted pill (unless it
         // holds the active tab, which force-expands so you never lose your place).
-        let mut tab_strip = div().flex().flex_row().gap(px(4. * scale)).items_center();
+        // Tabs never own more than 55% of the bar — past that they WRAP onto a
+        // fresh row, so the split/window controls on the right are always kept.
+        let tabs_max_w = px((f32::from(wb.size.width) * 0.55).max(120.));
+        let mut tab_strip = div()
+            .flex()
+            .flex_row()
+            .flex_wrap()
+            .gap(px(4. * scale))
+            .items_center()
+            .max_w(tabs_max_w);
         // while a tab is being dragged, an accent bar marks the slot it'd land in
         let dragging_tab = self.tab_drag.as_ref().is_some_and(|d| d.engaged);
         let drop_slot = self.tab_drop;
+        let new_row_drop = dragging_tab && self.tab_drop_newrow;
+        // the between-tabs insertion caret — bold + glowing so it can't be missed
         let drop_marker = || {
             div()
-                .w(px(3. * scale))
-                .h(px(18. * scale))
+                .w(px(4. * scale))
+                .h(px(22. * scale))
                 .rounded_full()
                 .bg(th.accent)
+                .shadow(vec![BoxShadow {
+                    color: th.accent.alpha(0.9),
+                    offset: point(px(0.), px(0.)),
+                    blur_radius: px(6. * scale),
+                    spread_radius: px(1.),
+                    inset: false,
+                }])
         };
         let active_group = self.tabs.get(self.active).and_then(|t| t.group);
         let mut i = 0;
@@ -4270,13 +4544,33 @@ impl Render for Workspace {
             tab_strip = tab_strip.child(self.tab_button(i, cx));
             i += 1;
         }
-        if dragging_tab && drop_slot == Some(tab_count) {
+        // the end caret only when NOT a new-row drop (that gets the wide bar below)
+        if dragging_tab && drop_slot == Some(tab_count) && !new_row_drop {
             tab_strip = tab_strip.child(drop_marker());
         }
         tab_strip = tab_strip.child(Self::bezel_btn_s(&th, "+", false, scale).on_mouse_down(
             MouseButton::Left,
             cx.listener(|ws, _: &MouseDownEvent, window, cx| ws.new_tab(window, cx)),
         ));
+        // dragging a tab past the bottom of the strip → a VERY obvious full-width
+        // bar wraps onto its own line: "drop here to start a new row".
+        if new_row_drop {
+            tab_strip = tab_strip.child(
+                div()
+                    .w_full()
+                    .h(px(6. * scale))
+                    .mt(px(3. * scale))
+                    .rounded_full()
+                    .bg(th.accent)
+                    .shadow(vec![BoxShadow {
+                        color: th.accent.alpha(0.9),
+                        offset: point(px(0.), px(0.)),
+                        blur_radius: px(8. * scale),
+                        spread_radius: px(1.),
+                        inset: false,
+                    }]),
+            );
+        }
 
         // ---- menu-bar size scrubber: ▭ ──●── ▭ 110% ----
         // Drives the per-pane HEADER height (+ its glyphs/icons/title), not the
@@ -4385,13 +4679,26 @@ impl Render for Workspace {
                     .child(format!("{}%", (scale * 100.).round() as i32)),
             );
 
+        // The split buttons read as primary actions: taller (matched to the
+        // window-control buttons), roomier, larger glyph+label — so they never
+        // get crowded off the bar or look like an afterthought.
+        let split_btn = |label: &str| {
+            Self::bezel_btn_s(&th, label, false, scale)
+                .h(px(26. * scale))
+                .px(px(10. * scale))
+                .py(px(0.))
+                .text_size(px(13. * scale))
+                .flex()
+                .items_center()
+                .justify_center()
+        };
         let cluster = div()
             .flex()
             .flex_row()
-            .gap(px(4. * scale))
+            .gap(px(5. * scale))
             .items_center()
             .child(
-                Self::bezel_btn_s(&th, "◧ split", false, scale).on_mouse_down(
+                split_btn("◧ split").on_mouse_down(
                     MouseButton::Left,
                     cx.listener(|ws, _: &MouseDownEvent, window, cx| {
                         ws.split(SplitDir::Row, window, cx)
@@ -4399,7 +4706,7 @@ impl Render for Workspace {
                 ),
             )
             .child(
-                Self::bezel_btn_s(&th, "⬓ split", false, scale).on_mouse_down(
+                split_btn("⬓ split").on_mouse_down(
                     MouseButton::Left,
                     cx.listener(|ws, _: &MouseDownEvent, window, cx| {
                         ws.split(SplitDir::Col, window, cx)
@@ -4462,13 +4769,17 @@ impl Render for Workspace {
             });
 
         let bezel_top = div()
-            .h(px(43. * scale))
+            // min-height (not fixed): wrapped tab rows grow the bar downward.
+            .min_h(px(43. * scale))
             .flex_none()
             .flex()
             .flex_row()
-            .items_center()
+            // top-align: extra tab rows stack BELOW the first row while the
+            // controls stay pinned top-right (never interleaved with a tall strip).
+            .items_start()
             .justify_between()
             .px(px(12. * scale))
+            .py(px(7. * scale))
             .gap(px(12. * scale))
             // the mother bar is the move handle: arm on press, hand off to the
             // compositor on the first drag (a plain click stays a click).
@@ -4492,8 +4803,13 @@ impl Render for Workspace {
             )
             .child(
                 div()
+                    // takes the slack and may shrink so the tab strip wraps
+                    // rather than shoving the controls off the right edge.
+                    .flex_1()
+                    .min_w(px(0.))
                     .flex()
                     .flex_row()
+                    .flex_wrap()
                     .items_center()
                     .gap(px(8. * scale))
                     .child(
@@ -4501,6 +4817,7 @@ impl Render for Workspace {
                         // wheel's `C` target; defaults to the accent's complement /
                         // the active dynamic's complement).
                         div()
+                            .flex_none()
                             .text_size(px(14. * scale))
                             .font_weight(gpui::FontWeight::EXTRA_BOLD)
                             .text_color(th.complement)
@@ -4517,6 +4834,8 @@ impl Render for Workspace {
             )
             .child(
                 div()
+                    // never compressed or pushed off — the controls are always kept
+                    .flex_none()
                     .flex()
                     .flex_row()
                     .items_center()
@@ -4875,6 +5194,9 @@ impl Render for Workspace {
                 .flex_col()
                 .gap_2()
                 .flex_1()
+                // min-width 0 lets captions wrap inside the column instead of
+                // forcing the panel wider than its frame (the overflow bug).
+                .min_w(px(0.))
                 .child(
                     div()
                         .text_size(px(8.5))
@@ -4883,9 +5205,7 @@ impl Render for Workspace {
                 )
                 .child(label("THEME"))
                 .child(theme_row)
-                .child(label(
-                    "WHEEL — pick a pip, drag it out · ◉ seed T text C comp",
-                ))
+                .child(label("WHEEL · drag a pip out · ◉ seed T text C comp"))
                 .child(div().flex().justify_center().py_1().child(wheel))
                 .child(div().flex().justify_center().child(lbar))
                 .child(div().flex().justify_center().pt_1().child(pick_row))
@@ -4918,7 +5238,8 @@ impl Render for Workspace {
             // top-right anchor under the titlebar control.
             const PANEL_W: f32 = 344.; // wider: glyph column + controls side by side
             const PANEL_H_EST: f32 = 458.; // generous, incl. colour wheel + pick row + follow-outer
-            let mut panel = div().absolute().w(px(PANEL_W));
+            let vp_h = f32::from(window.viewport_size().height);
+            let mut panel = div().id("theme-panel").absolute().w(px(PANEL_W));
             panel = match self.menu_at {
                 Some(at) => {
                     let vp = window.viewport_size();
@@ -4935,6 +5256,11 @@ impl Render for Workspace {
                 .border_1()
                 .border_color(th.accent.alpha(0.55))
                 .bg(darken(th.surface, 0.6))
+                // never spill past the screen: clip horizontally, scroll a tall
+                // panel vertically rather than overflowing the bottom edge.
+                .max_h(px((vp_h - 16.).max(160.)))
+                .overflow_x_hidden()
+                .overflow_y_scroll()
                 .shadow(vec![BoxShadow {
                     color: hsla(0., 0., 0., 0.6),
                     offset: point(px(4.), px(6.)),
@@ -5467,7 +5793,7 @@ impl Render for Workspace {
                         .and_then(|t| t.name.clone())
                         .unwrap_or_default();
                     ws.tab_menu = None;
-                    ws.renaming = Some((i, seed));
+                    ws.renaming = Some((i, EditBuffer::seeded(&seed)));
                     window.focus(&ws.focus_handle, cx);
                     cx.notify();
                 }),
@@ -5594,7 +5920,7 @@ impl Render for Workspace {
                                     .and_then(|g| g.name.clone())
                                     .unwrap_or_default();
                                 ws.tab_menu = None;
-                                ws.group_rename = Some((gid_u, seed));
+                                ws.group_rename = Some((gid_u, EditBuffer::seeded(&seed)));
                                 window.focus(&ws.focus_handle, cx);
                                 cx.notify();
                             }),
@@ -6065,6 +6391,68 @@ mod tests {
         // empty tab → nothing to focus
         assert_eq!(pick_focus_target::<u32>(Some(1), &[]), None);
         assert_eq!(pick_focus_target::<u32>(None, &[]), None);
+    }
+
+    fn mods(ctrl: bool, shift: bool) -> gpui::Modifiers {
+        gpui::Modifiers {
+            control: ctrl,
+            shift,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn edit_buffer_navigates_selects_and_edits_like_a_text_field() {
+        // seeded selects all → first printable replaces the lot
+        let mut eb = EditBuffer::seeded("oldname");
+        assert!(eb.has_sel());
+        eb.apply("x", &mods(false, false), Some("x"), 18);
+        assert_eq!(eb.text(), "x");
+        assert!(!eb.has_sel());
+
+        // build "foo bar", caret at end
+        let mut eb = EditBuffer::default();
+        for ch in ["f", "o", "o", " ", "b", "a", "r"] {
+            eb.apply(ch, &mods(false, false), Some(ch), 18);
+        }
+        assert_eq!(eb.text(), "foo bar");
+        assert_eq!(eb.cursor, 7);
+
+        // ctrl+left jumps a word; again jumps to the next word boundary
+        eb.apply("left", &mods(true, false), None, 18);
+        assert_eq!(eb.cursor, 4); // start of "bar"
+        eb.apply("left", &mods(true, false), None, 18);
+        assert_eq!(eb.cursor, 0); // start of "foo"
+
+        // shift+right extends a char selection; shift+ctrl+right extends by word
+        eb.apply("right", &mods(false, true), None, 18);
+        assert_eq!(eb.sel_range(), (0, 1));
+        eb.apply("right", &mods(true, true), None, 18);
+        assert_eq!(eb.sel_range(), (0, 3)); // through "foo"
+
+        // typing over the selection replaces just it
+        eb.apply("Z", &mods(false, false), Some("Z"), 18);
+        assert_eq!(eb.text(), "Z bar");
+
+        // ctrl+backspace deletes the previous word
+        eb.apply("end", &mods(false, false), None, 18);
+        eb.apply("backspace", &mods(true, false), None, 18);
+        assert_eq!(eb.text(), "Z ");
+
+        // ctrl+a selects all, then backspace clears
+        eb.apply("a", &mods(true, false), None, 18);
+        assert_eq!(eb.sel_range(), (0, eb.chars.len()));
+        eb.apply("backspace", &mods(false, false), None, 18);
+        assert_eq!(eb.text(), "");
+    }
+
+    #[test]
+    fn edit_buffer_caps_inserted_length() {
+        let mut eb = EditBuffer::default();
+        for _ in 0..30 {
+            eb.apply("a", &mods(false, false), Some("a"), 18);
+        }
+        assert_eq!(eb.chars.len(), 18);
     }
 
     #[test]
