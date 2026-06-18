@@ -1032,6 +1032,8 @@ struct Workspace {
     confirm_close: Option<usize>,
     /// The ? help modal is open (keys/commands reference), themed by the outer.
     help_open: bool,
+    /// Help modal view: false = keyboard shortcuts, true = the full feature list.
+    help_features: bool,
     /// Open theme breakout menu, if any.
     theme_menu: Option<MenuScope>,
     /// Window-space point to anchor the open tray at (a sub-tab icon click).
@@ -1318,6 +1320,7 @@ impl Workspace {
             renaming: None,
             confirm_close: None,
             help_open: false,
+            help_features: false,
             theme_menu: None,
             menu_at: None,
             osd_menu: None,
@@ -6193,6 +6196,7 @@ impl Render for Workspace {
         });
 
         // ---- ? help modal: keys + commands, themed by the outer, over a dim scrim ----
+        let help_features = self.help_features;
         let help_overlay = self.help_open.then(|| {
             let (kc, dc, hc) = (th.accent, th.text.alpha(0.85), th.complement);
             let row = move |k: &str, d: &str| {
@@ -6240,9 +6244,11 @@ impl Render for Workspace {
                     vec![
                         row("Ctrl+Shift+T", "New tab"),
                         row("Ctrl+PgUp / PgDn", "Switch tabs"),
+                        row("Ctrl+Shift+PgUp / PgDn", "Move tab (in / across groups)"),
                         row("Ctrl+Alt+R / D", "Split ↔ / ↕"),
                         row("Alt + arrows", "Move focus between panes"),
                         row("drag a sub-tab", "Move / split · drag out = new window"),
+                        row("right-click a tab", "Rename · colour · group"),
                     ],
                 ))
                 .child(section(
@@ -6275,8 +6281,9 @@ impl Render for Workspace {
                     "LOOK & FEEL",
                     vec![
                         row("theme icon (top-right)", "Themes & colour wheel"),
-                        row("⛭", "Monitor grade (brightness, contrast…)"),
+                        row("⛭ DISPLAY tray", "Monitor grade · text size · text-crawl"),
                         row("A──A · Ctrl+wheel", "Text size"),
+                        row("warp dial", "Curve the glass (0 = flat → fishbowl)"),
                     ],
                 ))
                 .child(section(
@@ -6284,14 +6291,95 @@ impl Render for Workspace {
                     vec![
                         row("Alt + ↑ / ↓", "Jump to your previous / next message"),
                         row("▲ ▼ (pane header)", "Same — navigate your own messages"),
-                        row("your input colour", "Your turns stand out (set via the 👤 wheel pip)"),
+                        row("👓 (pane header)", "FOCUS — mirror this pane big"),
+                        row("your input colour", "Your turns stand out (👤 wheel pip)"),
                         row("bell on finish", "Pane shows ● done + a per-agent sound"),
+                        row("🤖 (mother bar)", "MCP — read-only agent-watch surface"),
                     ],
                 ))
                 .child(section(
                     "WINDOW",
                     vec![row("Ctrl+Alt+T", "New window (quick scratch)")],
                 ));
+            // The FEATURES view (toggled from the header) — there are far too many
+            // to fit as shortcuts, so this is the "what can it even do" tour.
+            let feat_a = div()
+                .flex()
+                .flex_col()
+                .flex_1()
+                .min_w(px(0.))
+                .gap_4()
+                .child(section(
+                    "PANES · TABS · WINDOW",
+                    vec![
+                        row("Tiling tree", "Splits divide only the focused pane"),
+                        row("Tab groups", "Colour band · handle chip · collapse pill"),
+                        row("Drag a sub-tab", "Split, move, or tear off a new window"),
+                        row("Rich rename", "Caret, selection, word-nav on tab names"),
+                        row("Pop-out scratch", "Quick window · single-instance aware"),
+                    ],
+                ))
+                .child(section(
+                    "THEMING",
+                    vec![
+                        row("4 themes + custom", "Live-editable TOML, ~300ms hot reload"),
+                        row("Per-pane look", "Theme & grade inherit · 'follow outer'"),
+                        row("Colour wheel", "3 markers — seed · text · complement"),
+                        row("Monitor grade", "Bright/contrast/colour/text/bg/gamma + size"),
+                    ],
+                ));
+            let feat_b = div()
+                .flex()
+                .flex_col()
+                .flex_1()
+                .min_w(px(0.))
+                .gap_4()
+                .child(section(
+                    "CRT · MOTION",
+                    vec![
+                        row("Barrel warp", "GPU curve · 0→1.5 dial · per-pane"),
+                        row("Scanlines · glow", "Vignette · phosphor · tracking · jiggle"),
+                        row("Text-crawl", "Star-Wars perspective recede (angle · depth)"),
+                        row("🎰 GAMBA", "Slot machine spins while an agent thinks"),
+                    ],
+                ))
+                .child(section(
+                    "AGENTS · MCP",
+                    vec![
+                        row("claude / codex", "Detected · jump messages · done bell"),
+                        row("👓 FOCUS", "Mirror a pane big over a frosted blur"),
+                        row("Session restore", "Crash / quit → resume the exact chat"),
+                        row("🤖 MCP server", "Read-only watch + push · stdio, never TCP"),
+                    ],
+                ));
+            // Header pills: SHORTCUTS ⇄ FEATURES. A million features don't fit as
+            // keycaps, so a click swaps the body to the feature tour.
+            let pill = |label: &str, active: bool, want: bool| {
+                div()
+                    .px_2()
+                    .py_0p5()
+                    .rounded_sm()
+                    .cursor_pointer()
+                    .text_size(px(10.5))
+                    .font_weight(gpui::FontWeight::BOLD)
+                    .text_color(if active { th.bg } else { th.text.alpha(0.75) })
+                    .when(active, |d| d.bg(th.accent))
+                    .child(label.to_string())
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                            cx.stop_propagation();
+                            ws.help_features = want;
+                            cx.notify();
+                        }),
+                    )
+            };
+            let tabs = div()
+                .flex()
+                .flex_row()
+                .gap_1()
+                .child(pill("SHORTCUTS", !help_features, false))
+                .child(pill("✦ FEATURES", help_features, true));
             let close_x = div()
                 .px_2()
                 .py_0p5()
@@ -6347,7 +6435,15 @@ impl Render for Workspace {
                                 .text_color(th.complement)
                                 .child("▸ TERMINAL-DELIGHT · HELP"),
                         )
-                        .child(close_x),
+                        .child(
+                            div()
+                                .flex()
+                                .flex_row()
+                                .items_center()
+                                .gap_3()
+                                .child(tabs)
+                                .child(close_x),
+                        ),
                 )
                 .child(
                     div()
@@ -6355,8 +6451,8 @@ impl Render for Workspace {
                         .flex_row()
                         .w_full()
                         .gap_8()
-                        .child(col_a)
-                        .child(col_b),
+                        .child(if help_features { feat_a } else { col_a })
+                        .child(if help_features { feat_b } else { col_b }),
                 )
                 .child(
                     div()

@@ -170,6 +170,7 @@
       <span class="brand">▸ terminal-delight<span class="blink">_</span></span>
       <span class="links">
         <a href="#features" class="hide-sm">features</a>
+        <a href="#mcp" style="color:var(--accent)">MCP ★</a>
         <a href="#gallery" class="hide-sm">gallery</a>
         <a href="#crawl" class="hide-sm">crawl</a>
         <a href="#gamba" class="hide-sm">gamba</a>
@@ -223,6 +224,105 @@
         <div class="card"><div class="ic">⛭</div><h3>Monitor-OSD grading</h3><p>Brightness, contrast, colour, text, background, gamma — <em>plus text size</em> — global or per-pane, applied in HSLA at paint time.</p></div>
         <div class="card"><div class="ic">◍</div><h3>CRT, on the GPU</h3><p>Scanlines, vignette, glow and a real barrel warp via a vendored gpui renderer patch. Per-theme dials; fully off in light themes.</p></div>
         <div class="card"><div class="ic">▤</div><h3>A real terminal</h3><p>PTY + full VT emulation (bash, vim, top, tmux), 16/256/truecolor, scrollback, mouse selection, bracketed paste, live SIGWINCH resize.</p></div>
+        <div class="card"><div class="ic">▣</div><h3>MCP agent control</h3><p>A <b>read-only</b> MCP server: an orchestrator watches a wall of agent panes and is <em>pushed</em> the moment one calls a tool or finishes. stdio, never TCP — and it can't write a PTY. <a href="#mcp">The use case ↓</a></p></div>
+      </div>
+
+      <details style="margin-top:24px;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:16px 20px">
+        <summary style="cursor:pointer;font-family:var(--mono);font-weight:700;color:var(--accent);letter-spacing:.02em">✦ …and about a million more — click for the full feature list</summary>
+        <div style="margin-top:16px;display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:18px 30px;font-size:14px;line-height:1.55;color:var(--text-dim)">
+          <div>
+            <h4 style="margin:0 0 6px;color:#eafff2;font-size:14px">Panes &amp; tabs</h4>
+            <ul style="margin:0;padding-left:18px">
+              <li>True tiling-tree splits (divide only the focused pane)</li>
+              <li>Browser-style <b>tab groups</b> — colour band, handle chip, collapse pill</li>
+              <li>Drag a sub-tab to split / move / tear off into a new window</li>
+              <li>Drag mother-bar tabs to reorder · grid wrap when they overflow</li>
+              <li>Rich rename (caret, selection, word-nav) · always-confirm close</li>
+              <li>Pop-out scratch window · single-instance aware boot</li>
+            </ul>
+          </div>
+          <div>
+            <h4 style="margin:0 0 6px;color:#eafff2;font-size:14px">Look &amp; theme</h4>
+            <ul style="margin:0;padding-left:18px">
+              <li>4 built-in themes + a live-editable <code>custom</code> TOML slot</li>
+              <li>Per-pane theme &amp; grade groups, each with a "follow outer" toggle</li>
+              <li>3-marker colour wheel (seed · text · complement) + lightness axis</li>
+              <li>Texture × colour-set model (field-command / tactical-overdrive …)</li>
+              <li>Monitor-OSD grade: brightness, contrast, colour, text, bg, gamma</li>
+              <li>Menu-bar size scrubber (ctrl+scroll / bezel) sizes the whole cabinet</li>
+            </ul>
+          </div>
+          <div>
+            <h4 style="margin:0 0 6px;color:#eafff2;font-size:14px">CRT &amp; effects</h4>
+            <ul style="margin:0;padding-left:18px">
+              <li>GPU barrel warp — a 0→1.5 dial, per-theme, per-pane</li>
+              <li>Scanlines · vignette · glow · phosphor · tracking band (roll/speed/size)</li>
+              <li>Frame jiggle · the whole thing composes in one CRT post-pass</li>
+              <li><b>Text-crawl mode</b> — perspective recede, angle + depth dials</li>
+              <li>🎰 GAMBA slot-machine theme while an agent "thinks"</li>
+            </ul>
+          </div>
+          <div>
+            <h4 style="margin:0 0 6px;color:#eafff2;font-size:14px">Agents</h4>
+            <ul style="margin:0;padding-left:18px">
+              <li>claude / codex detection · jump between your messages (Alt+↑/↓)</li>
+              <li>Your-turn input colour · agent-done bell with a per-pane sound</li>
+              <li>👓 <b>FOCUS</b> reader — mirror a pane big over a frosted blur</li>
+              <li>Crash/quit → session restore (resumes the exact conversation)</li>
+              <li>▣ <b>MCP read-only control surface</b> + live push notifications</li>
+            </ul>
+          </div>
+          <div>
+            <h4 style="margin:0 0 6px;color:#eafff2;font-size:14px">Terminal core</h4>
+            <ul style="margin:0;padding-left:18px">
+              <li>Real PTY + full VT (vim, top, tmux) · 16/256/truecolor</li>
+              <li>Scrollback · mouse selection · bracketed paste · live resize</li>
+              <li>Shift/Ctrl-click a URL or path · right-click Copy/Paste/Open/Clear</li>
+              <li>Keyboard selection extend (shift+arrows / +ctrl for words)</li>
+            </ul>
+          </div>
+          <div>
+            <h4 style="margin:0 0 6px;color:#eafff2;font-size:14px">Window</h4>
+            <ul style="margin:0;padding-left:18px">
+              <li>Frameless client-side decorations — the cabinet <em>is</em> the chrome</li>
+              <li>Ctrl+Alt+T global hotkey → a quick scratch window</li>
+              <li>MIT one-file AppImage · X11 &amp; Wayland</li>
+            </ul>
+          </div>
+        </div>
+      </details>
+    </div>
+  </section>
+
+  <section id="mcp">
+    <div class="wrap prose">
+      <div class="eyebrow">▲ the big one · the agent control surface</div>
+      <h2 style="letter-spacing:.02em">Your terminal, as mission control for a fleet of agents.</h2>
+      <p style="font-size:1.08em">Agentic coding means a <em>wall</em> of agents — claude here, codex there, three more in tabs — and the hard part isn't running them, it's <b>knowing what they're doing</b> without babysitting every pane. terminal-delight already knows, per pane, <b>who</b> is running (claude / codex / shell), <b>where</b> (cwd), and <b>which conversation</b>. So we turned that into a <b>read-only MCP server</b>: an orchestrating agent connects over stdio and watches the whole wall.</p>
+
+      <p><b>The use case.</b> An orchestrator launches terminal-delight as the wall, then over MCP it can <code>list_panes</code> (who's running where) and, with the feed on, <b>gets pushed a notification the instant any agent calls a tool, appears, or goes quiet</b> — so it can react: route the next task, ping you when a long build finishes, flag an agent that just ran something destructive, or restart one that wandered off. No polling. No scraping the screen — events come from each agent's own structured transcript.</p>
+
+      <div class="screen" style="margin-top:6px">
+        <div class="bar"><span class="dot"></span> an orchestrator watching the wall over MCP — read-only</div>
+<pre style="margin:0;padding:18px 20px;background:#07120c;color:var(--text);font-family:var(--mono);font-size:13px;line-height:1.5;overflow:auto"><span style="color:var(--text-dim)"># the orchestrator asks who's on the wall</span>
+→ list_panes
+  tab 0 · build    · CLAUDE · ~/proj      · claude --resume a1b2…
+  tab 1 · tests    · CODEX  · ~/proj/api  · codex resume 9f0e…
+  tab 2 · shell    · SHELL  · ~           <span style="color:var(--text-dim)">(excluded — agents-only)</span>
+
+<span style="color:var(--text-dim)"># …then the server PUSHES, the moment it happens:</span>
+<span style="color:var(--warn)">notifications/message</span> {
+  "data": { "event": "tool_call", "pane": "build",
+            "tool": "Bash", "summary": "cargo test --release" } }
+<span style="color:var(--warn)">notifications/message</span> {
+  "data": { "event": "agent_vanished", "pane": "tests" } }</pre>
+        <div class="playnote">Read-only by construction — <b>nothing here can write to a terminal.</b> Locked off by default; when on, agents-only (a plain shell is never exposed). stdio JSON-RPC, <b>never a network port.</b></div>
+      </div>
+
+      <p style="margin-top:16px">It ships behind a <b>🤖 robot button</b> on the mother bar that opens an <b>MCP CONTROL — READ ONLY</b> panel: a master switch, an expose policy (agents-only / all), an events toggle, and a live list of every pane with a per-pane exposed dot. The danger in any agent-control surface is the <em>write</em> path (bytes into a shell = arbitrary code execution); that path simply does not exist here — the observe plane shipped first, alone.</p>
+      <div class="cta" style="justify-content:flex-start;margin-top:14px">
+        <a class="btn primary" href="https://github.com/parker-brown-family/terminal-delight/blob/main/docs/mcp.md">▣ Wire it up — the MCP guide ↗</a>
+        <a class="btn" href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/mcp.rs">Read the server ↗</a>
       </div>
     </div>
   </section>
@@ -274,6 +374,11 @@
       <p style="font-size:1.08em">Flip <b>text crawl</b> on for any pane and every line of the terminal renders in the iconic News-Gothic crawl face and <b>recedes into the distance</b> — centred, tapering toward the top, exactly like the opening crawl you're picturing.</p>
       <p>It isn't a video or an overlay. The crawl perspective is a <b>real GPU pre-map baked into the same CRT post-pass that already curves the glass</b>, so it composes for free with the barrel warp, screen jiggle, tracking band, glare and phosphor — and costs one extra <code>pow</code> per pixel, no second render. Two dials in the DISPLAY tray, per-pane like everything else: <b>angle</b> (2–30°, how hard the sides converge) and <b>depth</b> (0.05–15×, the bottom-to-top text-size ratio). Open the 👓 <b>FOCUS</b> reader on a crawling pane and it inherits the look too.</p>
       <div class="screen" style="margin-top:4px">
+        <div class="bar"><span class="dot"></span> 🔴 real capture — the live crawl receding into the curved CRT</div>
+        <video src="assets/start-crawl.webm" autoplay loop muted playsinline preload="metadata" style="width:100%;height:auto;display:block" aria-label="screen recording of terminal-delight in text-crawl mode: centred News-Gothic terminal text receding into the distance inside a curved CRT screen, the opening-crawl perspective animating live as lines scroll up and shrink toward the horizon"></video>
+        <div class="playnote">▶ Unedited screen capture of the real app — every line is centred and perspective-warped on the GPU, composing live with the barrel warp, screen jiggle, glare and phosphor. No video overlay; it's the CRT post-pass doing the perspective.</div>
+      </div>
+      <div class="screen" style="margin-top:16px">
         <div class="bar"><span class="dot"></span> text-crawl mode — centred crawl font, perspective recede, all inside the curved CRT</div>
         <img loading="lazy" src="assets/text-crawl.png" alt="terminal-delight in text-crawl mode: centred yellow News-Gothic text receding into the distance inside a curved, glare-lit CRT screen, a staged opening crawl" />
         <div class="playnote">Real capture, staged demo text. Every terminal line is centred and perspective-warped on the GPU — jiggle, tracking, glare and phosphor ride right along.</div>
