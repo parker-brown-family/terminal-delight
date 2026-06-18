@@ -39,7 +39,7 @@ pub fn capture(master: Option<&File>, shell_pid: u32) -> PaneRuntime {
     let resume = if fg != shell_pid {
         let comm = proc_read(fg, "comm");
         let cmdline = proc_cmdline(fg);
-        agent_resume(&comm, &cmdline, cwd.as_deref(), Path::new(&home()))
+        agent_resume(&comm, &cmdline, cwd.as_deref(), Path::new(&home()), fg)
     } else {
         None
     };
@@ -100,13 +100,24 @@ fn home() -> String {
 
 /// Synthesize the resume command for an agent foreground process, or None if
 /// the process isn't an agent we know how to resume.
-fn agent_resume(comm: &str, cmdline: &str, cwd: Option<&str>, home: &Path) -> Option<String> {
+fn agent_resume(
+    comm: &str,
+    cmdline: &str,
+    cwd: Option<&str>,
+    home: &Path,
+    pid: u32,
+) -> Option<String> {
     let c = comm.trim();
     if c == "claude" || cmdline.contains("/claude") || cmdline.starts_with("claude ") {
         // Both sources (a cmdline arg, a transcript filename stem) end up typed
         // into a shell, so reject anything that isn't a plain id before use.
-        let id = arg_after(cmdline, &["--resume", "-r"])
-            .map(str::to_string)
+        let id = claude_session_from_fds(pid, cwd, home)
+            // The session the live process has its transcript OPEN on is the
+            // ground truth: it binds the id to THIS pane's process, so two panes
+            // in the same cwd never collide the way the mtime scan below can.
+            .or_else(|| arg_after(cmdline, &["--resume", "-r"]).map(str::to_string))
+            // Last resort when the fd isn't open (agent idle between writes):
+            // newest transcript for this cwd — ambiguous if several share a cwd.
             .or_else(|| cwd.and_then(|d| claude_session_for(d, home)))
             .filter(|id| safe_resume_id(id));
         Some(match id {
@@ -115,9 +126,12 @@ fn agent_resume(comm: &str, cmdline: &str, cwd: Option<&str>, home: &Path) -> Op
             None => "claude --continue".to_string(),
         })
     } else if c == "codex" || cmdline.contains("/codex") || cmdline.starts_with("codex ") {
-        let id = arg_after(cmdline, &["resume", "--resume"])
-            .filter(|v| looks_like_uuid(v))
-            .map(str::to_string)
+        let id = codex_session_from_fds(pid, home)
+            .or_else(|| {
+                arg_after(cmdline, &["resume", "--resume"])
+                    .filter(|v| looks_like_uuid(v))
+                    .map(str::to_string)
+            })
             .or_else(|| cwd.and_then(|d| codex_session_for(d, home)))
             .filter(|id| safe_resume_id(id));
         Some(match id {
@@ -208,6 +222,45 @@ fn rollout_uuid(p: &Path) -> Option<String> {
     looks_like_uuid(&tail).then_some(tail)
 }
 
+/// The Claude session id the live process is *actively holding open* — read
+/// straight from its open file descriptors (`/proc/<pid>/fd` → the `<id>.jsonl`
+/// transcript it has open). Unlike the mtime scan, this binds the id to THIS
+/// process, so two panes in the same cwd resolve to their own sessions instead
+/// of both grabbing whichever transcript was touched last.
+fn claude_session_from_fds(pid: u32, cwd: Option<&str>, home: &Path) -> Option<String> {
+    // Confine the match to this cwd's project dir when we know it, so an
+    // unrelated transcript the process happens to have open can't leak in.
+    let root = match cwd {
+        Some(d) => home.join(".claude/projects").join(claude_slug(d)),
+        None => home.join(".claude/projects"),
+    };
+    open_jsonl_under(pid, &root).and_then(|p| p.file_stem().map(|s| s.to_string_lossy().into_owned()))
+}
+
+/// Codex equivalent: the rollout `<uuid>.jsonl` the live process holds open.
+fn codex_session_from_fds(pid: u32, home: &Path) -> Option<String> {
+    let root = home.join(".codex/sessions");
+    open_jsonl_under(pid, &root)
+        .as_deref()
+        .and_then(rollout_uuid)
+}
+
+/// First open file descriptor of `pid` that resolves to a `*.jsonl` under
+/// `root`. Returns None when `/proc/<pid>/fd` is unreadable (no such pid, or the
+/// agent has the transcript closed right now) — callers fall back to the
+/// on-disk mtime scan.
+fn open_jsonl_under(pid: u32, root: &Path) -> Option<PathBuf> {
+    let entries = std::fs::read_dir(format!("/proc/{pid}/fd")).ok()?;
+    for e in entries.flatten() {
+        if let Ok(target) = std::fs::read_link(e.path()) {
+            if target.extension().is_some_and(|x| x == "jsonl") && target.starts_with(root) {
+                return Some(target);
+            }
+        }
+    }
+    None
+}
+
 fn newest_jsonl(dir: &Path) -> Option<PathBuf> {
     std::fs::read_dir(dir)
         .ok()?
@@ -253,7 +306,7 @@ mod tests {
         // a cmdline arg carrying shell metacharacters must NOT be typed into the
         // shell — fall back to the safe cwd-scoped resume instead.
         assert_eq!(
-            agent_resume("claude", "claude --resume a;rm~-rf~/", Some("/tmp"), home).as_deref(),
+            agent_resume("claude", "claude --resume a;rm~-rf~/", Some("/tmp"), home, 0).as_deref(),
             Some("claude --continue"),
             "unsafe id rejected, falls back to --continue"
         );
@@ -264,7 +317,8 @@ mod tests {
                 "claude",
                 &format!("claude --resume {id}"),
                 Some("/tmp"),
-                home
+                home,
+                0,
             )
             .as_deref(),
             Some("claude --resume 48be90b8-5777-44b6-bb6f-1c6069205c0d")
@@ -281,7 +335,7 @@ mod tests {
         // `--resume` with a flag (not an id) after it must not capture the flag.
         let home = Path::new("/nonexistent");
         assert_eq!(
-            agent_resume("claude", "claude --resume --verbose", Some("/tmp"), home).as_deref(),
+            agent_resume("claude", "claude --resume --verbose", Some("/tmp"), home, 0).as_deref(),
             Some("claude --continue")
         );
     }
@@ -294,18 +348,19 @@ mod tests {
                 "claude",
                 "claude --resume 48be90b8-5777-44b6-bb6f-1c6069205c0d",
                 Some("/tmp"),
-                home
+                home,
+                0,
             )
             .as_deref(),
             Some("claude --resume 48be90b8-5777-44b6-bb6f-1c6069205c0d")
         );
         assert_eq!(
-            agent_resume("claude", "claude -r abc123", Some("/tmp"), home).as_deref(),
+            agent_resume("claude", "claude -r abc123", Some("/tmp"), home, 0).as_deref(),
             Some("claude --resume abc123")
         );
         // bare `claude`, no transcripts on disk → cwd-scoped continue
         assert_eq!(
-            agent_resume("claude", "claude", Some("/tmp"), home).as_deref(),
+            agent_resume("claude", "claude", Some("/tmp"), home, 0).as_deref(),
             Some("claude --continue")
         );
     }
@@ -315,11 +370,11 @@ mod tests {
         let home = Path::new("/nonexistent");
         let id = "0196f9a1-2222-7333-8444-555566667777";
         assert_eq!(
-            agent_resume("codex", &format!("codex resume {id}"), None, home),
+            agent_resume("codex", &format!("codex resume {id}"), None, home, 0),
             Some(format!("codex resume {id}"))
         );
         assert_eq!(
-            agent_resume("codex", "codex", Some("/tmp"), home).as_deref(),
+            agent_resume("codex", "codex", Some("/tmp"), home, 0).as_deref(),
             Some("codex resume --last")
         );
     }
@@ -327,8 +382,8 @@ mod tests {
     #[test]
     fn non_agents_get_no_resume() {
         let home = Path::new("/nonexistent");
-        assert_eq!(agent_resume("vim", "vim src/main.rs", None, home), None);
-        assert_eq!(agent_resume("bash", "bash", None, home), None);
+        assert_eq!(agent_resume("vim", "vim src/main.rs", None, home, 0), None);
+        assert_eq!(agent_resume("bash", "bash", None, home, 0), None);
     }
 
     #[test]
@@ -344,6 +399,25 @@ mod tests {
             Some("bbbb-new")
         );
         std::fs::remove_dir_all(&tmp).unwrap();
+    }
+
+    #[test]
+    fn open_fd_scan_binds_id_to_the_live_process() {
+        // The whole point of the fd scan: the session id comes from a transcript
+        // the *running* process actually holds open, not from whichever file in
+        // the cwd was touched last. Prove it against our own open fd.
+        let tmp = std::env::temp_dir().join(format!("td-fd-{}", std::process::id()));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let live = tmp.join("48be90b8-aaaa-bbbb-cccc-1c6069205c0d.jsonl");
+        let _held = std::fs::File::create(&live).unwrap(); // keep the fd open
+        let pid = std::process::id();
+        assert_eq!(open_jsonl_under(pid, &tmp).as_deref(), Some(live.as_path()));
+        // a different root must not match this process's fd
+        assert_eq!(open_jsonl_under(pid, Path::new("/nonexistent")), None);
+        // a dead/unknown pid yields nothing (callers fall back to the mtime scan)
+        assert_eq!(open_jsonl_under(0, &tmp), None);
+        drop(_held);
+        std::fs::remove_dir_all(&tmp).ok();
     }
 
     #[test]

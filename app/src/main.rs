@@ -1420,13 +1420,14 @@ impl Workspace {
         })
         .detach();
         // session checkpoint: live state (pane cwds, agent sessions, window
-        // bounds) changes without structural events, so re-snapshot every 5
-        // minutes — a crash loses at most that much recency, never the layout.
+        // bounds) changes without structural events, so re-snapshot every 30s —
+        // a crash loses at most that much recency, never the layout. (Clean quit
+        // via ✕ saves immediately, so this only covers crashes / WM kills.)
         // Scratch windows never persist, so they skip the checkpoint entirely.
         if !scratch {
             cx.spawn(async move |this, cx| loop {
                 cx.background_executor()
-                    .timer(Duration::from_secs(300))
+                    .timer(Duration::from_secs(30))
                     .await;
                 if this
                     .update(cx, |ws: &mut Workspace, cx| ws.save(cx))
@@ -5034,8 +5035,12 @@ impl Render for Workspace {
                 ))
                 .child(win_btn("✕", true).on_mouse_down(
                     MouseButton::Left,
-                    cx.listener(|_ws, _: &MouseDownEvent, window, cx| {
+                    cx.listener(|ws, _: &MouseDownEvent, window, cx| {
                         cx.stop_propagation();
+                        // snapshot the LIVE state (current agent sessions + cwds)
+                        // before the window dies, so a clean quit reopens exactly
+                        // where we left off instead of the last periodic checkpoint.
+                        ws.save(cx);
                         window.remove_window();
                     }),
                 ))
