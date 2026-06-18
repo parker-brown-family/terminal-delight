@@ -1190,24 +1190,38 @@ impl TerminalView {
             return false;
         }
         let term = self.session.term.lock();
-        let content = term.renderable_content();
-        let display_offset = content.display_offset;
-        let mut rows = vec![String::new(); self.grid.rows];
-        for indexed in content.display_iter {
-            let row = indexed.point.line.0 + display_offset as i32;
-            if row < 0 || row as usize >= self.grid.rows {
-                continue;
+        // Scan the LIVE bottom screen directly (Line(0)..screen_lines), NOT
+        // `renderable_content().display_iter` — that honours the display offset, so
+        // when Alt+↑ scrolls back to a human message the running agent's "esc to
+        // interrupt" spinner leaves the *viewport* and the scan falsely reads
+        // "done". The agent is still working at the buffer bottom, so detection
+        // must read the live screen regardless of how far the user has scrolled up.
+        let grid = term.grid();
+        let rows = grid.screen_lines();
+        let cols = grid.columns();
+        for line in 0..rows as i32 {
+            let row = &grid[Line(line)];
+            let mut s = String::with_capacity(cols);
+            for col in 0..cols {
+                let cell = &row[Column(col)];
+                if cell.flags.contains(Flags::WIDE_CHAR_SPACER) {
+                    continue;
+                }
+                s.push(if cell.c == '\0' { ' ' } else { cell.c });
             }
-            let cell = &indexed.cell;
-            if cell.flags.contains(Flags::WIDE_CHAR_SPACER) {
-                continue;
+            let low = s.to_ascii_lowercase();
+            if low.contains("esc to interrupt") || low.contains("interrupt)") {
+                return true;
             }
-            rows[row as usize].push(if cell.c == '\0' { ' ' } else { cell.c });
         }
-        rows.iter().any(|line| {
-            let low = line.to_ascii_lowercase();
-            low.contains("esc to interrupt") || low.contains("interrupt)")
-        })
+        false
+    }
+
+    /// Does this pane have an unacknowledged "agent finished" bell raised? Read by
+    /// the workspace to badge the owning tab; cleared by the in-terminal ack click
+    /// (see [`snooze_bell`]).
+    pub fn has_bell(&self) -> bool {
+        self.bell
     }
 
     fn handle_term_event(&mut self, event: TermEvent, cx: &mut Context<Self>) -> bool {
@@ -3394,7 +3408,11 @@ impl Render for TerminalView {
             .on_mouse_move(cx.listener(Self::on_mouse_move))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .size_full()
-            .bg(th.bg)
+            // Grade the base background too (not just cells): the DISPLAY brightness
+            // / contrast / colour sliders dim the whole pane like a dimmer light —
+            // crucially the flat/paper themes, whose bright background is the bulk of
+            // what you see. Neutral grade short-circuits, so the default is unchanged.
+            .bg(graded(th.bg, &th.grade, Channel::Bg))
             .relative()
             .flex()
             .flex_col()
