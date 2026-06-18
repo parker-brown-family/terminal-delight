@@ -4750,6 +4750,10 @@ impl Render for Workspace {
             .flex_wrap()
             .gap(px(4. * scale))
             .items_center()
+            // min_w_0 lets the strip shrink BELOW its content so it wraps to extra
+            // rows (under tab 1) instead of overrunning into the controls; max_w
+            // still caps it at 55% on wide windows.
+            .min_w_0()
             .max_w(tabs_max_w);
         // while a tab is being dragged, an accent bar marks the slot it'd land in
         let dragging_tab = self.tab_drag.as_ref().is_some_and(|d| d.engaged)
@@ -5059,8 +5063,9 @@ impl Render for Workspace {
             .flex_none()
             .flex()
             .flex_row()
-            // top-align: extra tab rows stack BELOW the first row while the
-            // controls stay pinned top-right (never interleaved with a tall strip).
+            // top-align: the tab strip wraps INTERNALLY (overflow tabs stack under
+            // tab 1) and grows DOWNWARD, while the title + controls stay pinned on
+            // the top line — the first tab row never moves.
             .items_start()
             .justify_between()
             .px(px(12. * scale))
@@ -5087,39 +5092,52 @@ impl Render for Workspace {
                 }),
             )
             .child(
+                // LEFT GROUP: title + // SUB-TERMINAL + the tab strip, all INLINE
+                // on the top line. There is NO flex_wrap here, so the strip never
+                // drops below the title as a block; it wraps INTERNALLY (its own
+                // 55% cap) so overflow tabs stack UNDER tab 1. items_start keeps
+                // the title on the top line when the strip grows to several rows.
                 div()
-                    // takes the slack and may shrink so the tab strip wraps
-                    // rather than shoving the controls off the right edge.
                     .flex_1()
                     .min_w(px(0.))
                     .flex()
                     .flex_row()
-                    .flex_wrap()
-                    .items_center()
+                    .items_start()
                     .gap(px(8. * scale))
                     .child(
-                        // The mother TITLE — painted in the complement colour (the
-                        // wheel's `C` target; defaults to the accent's complement /
-                        // the active dynamic's complement).
+                        // title + // SUB-TERMINAL, vertically centred against the
+                        // first tab row via a fixed height so they don't ride down
+                        // when the tab strip wraps to extra rows.
                         div()
                             .flex_none()
-                            .text_size(px(14. * scale))
-                            .font_weight(gpui::FontWeight::EXTRA_BOLD)
-                            .text_color(th.complement)
-                            .child("▸ TERMINAL-DELIGHT"),
-                    )
-                    .child(
-                        // Decoration only — stays a dim foreground tint.
-                        div()
-                            .text_size(px(9. * scale))
-                            .text_color(th.text.alpha(0.4))
-                            .child("// SUB-TERMINAL"),
+                            .h(px(22. * scale))
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap(px(8. * scale))
+                            .child(
+                                // The mother TITLE — the complement colour (wheel's
+                                // `C`; defaults to the accent's / active dynamic's).
+                                div()
+                                    .flex_none()
+                                    .text_size(px(14. * scale))
+                                    .font_weight(gpui::FontWeight::EXTRA_BOLD)
+                                    .text_color(th.complement)
+                                    .child("▸ TERMINAL-DELIGHT"),
+                            )
+                            .child(
+                                // Decoration only — stays a dim foreground tint.
+                                div()
+                                    .text_size(px(9. * scale))
+                                    .text_color(th.text.alpha(0.4))
+                                    .child("// SUB-TERMINAL"),
+                            ),
                     )
                     .child(tab_strip),
             )
             .child(
+                // never compressed or pushed off — the controls are always kept
                 div()
-                    // never compressed or pushed off — the controls are always kept
                     .flex_none()
                     .flex()
                     .flex_row()
