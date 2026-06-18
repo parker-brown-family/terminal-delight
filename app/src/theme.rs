@@ -1237,8 +1237,14 @@ pub fn resolve(cx: &App, choice: &ThemeChoice) -> Arc<Theme> {
     }
     // Crawl rides the grade group too: per-pane perspective + crawl font.
     th.crawl = choice.grade.crawl;
-    th.crawl_angle = choice.grade.crawl_angle.clamp(CRAWL_ANGLE_MIN, CRAWL_ANGLE_MAX);
-    th.crawl_depth = choice.grade.crawl_depth.clamp(CRAWL_DEPTH_MIN, CRAWL_DEPTH_MAX);
+    th.crawl_angle = choice
+        .grade
+        .crawl_angle
+        .clamp(CRAWL_ANGLE_MIN, CRAWL_ANGLE_MAX);
+    th.crawl_depth = choice
+        .grade
+        .crawl_depth
+        .clamp(CRAWL_DEPTH_MIN, CRAWL_DEPTH_MAX);
     Arc::new(th)
 }
 
@@ -1287,8 +1293,13 @@ pub const CRAWL_DEPTH_DEFAULT: f32 = 2.5;
 /// - `d` = depth ratio = text height at the BOTTOM ÷ at the TOP (`>1` classic,
 ///   `1` = no vertical foreshortening). Passed straight through, clamped.
 pub fn crawl_coeffs(angle_deg: f32, depth: f32) -> (f32, f32) {
-    let a = (1.0 - 1.3 * angle_deg.clamp(CRAWL_ANGLE_MIN, CRAWL_ANGLE_MAX).to_radians().sin())
-        .clamp(0.2, 1.0);
+    let a = (1.0
+        - 1.3
+            * angle_deg
+                .clamp(CRAWL_ANGLE_MIN, CRAWL_ANGLE_MAX)
+                .to_radians()
+                .sin())
+    .clamp(0.2, 1.0);
     let d = depth.clamp(CRAWL_DEPTH_MIN, CRAWL_DEPTH_MAX);
     (a, d)
 }
@@ -2104,7 +2115,10 @@ mod tests {
         // check (like warp/tracking) — an otherwise-neutral grade stays neutral.
         let mut g = Grade::neutral();
         g.crawl = true;
-        assert!(g.is_neutral(), "crawl is excluded from the paint-neutral check");
+        assert!(
+            g.is_neutral(),
+            "crawl is excluded from the paint-neutral check"
+        );
         // ...but it IS a divergence from the default, so the scope persists it.
         assert!(!g.is_default(), "crawl on diverges from the house default");
 
@@ -2187,18 +2201,30 @@ mod tests {
         // Vertical foreshortening (depth > 1): screen-mid maps PAST content-mid,
         // i.e. rows bunch toward the far (top) edge.
         let (_, cy_mid) = crawl_sample(0.5, 0.5, a, depth).unwrap();
-        assert!(cy_mid > 0.5, "depth>1 bunches rows toward the top, got {cy_mid}");
+        assert!(
+            cy_mid > 0.5,
+            "depth>1 bunches rows toward the top, got {cy_mid}"
+        );
 
         // Horizontal taper (a < 1): near the top the sides converge, so the
         // outer columns fall outside the trapezoid and letterbox to black.
-        assert!(crawl_sample(0.02, 0.0, a, depth).is_none(), "top-left letterboxes");
-        assert!(crawl_sample(0.5, 0.0, a, depth).is_some(), "top-centre stays in");
+        assert!(
+            crawl_sample(0.02, 0.0, a, depth).is_none(),
+            "top-left letterboxes"
+        );
+        assert!(
+            crawl_sample(0.5, 0.0, a, depth).is_some(),
+            "top-centre stays in"
+        );
 
         // cy is monotonic in screen-y (no folding): higher on screen (smaller
         // ly) recedes further toward the content TOP (smaller cy).
         let (_, cy_up) = crawl_sample(0.5, 0.25, a, depth).unwrap();
         let (_, cy_down) = crawl_sample(0.5, 0.75, a, depth).unwrap();
-        assert!(cy_up < cy_down, "screen-up ⇒ nearer the content top (smaller cy)");
+        assert!(
+            cy_up < cy_down,
+            "screen-up ⇒ nearer the content top (smaller cy)"
+        );
     }
 
     #[test]

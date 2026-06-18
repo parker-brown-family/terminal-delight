@@ -157,7 +157,11 @@ mod tests {
         register_tube(r, 0.4, 0.14, 0.06, [1.0, 0.6, 2.5]); // a crawling pane
         assert_eq!(rect_count(), 2);
         assert_eq!(rect_crawl(0), CRAWL_OFF, "plain pane carries no crawl");
-        assert_eq!(rect_crawl(1), [1.0, 0.6, 2.5], "crawling pane keeps its triad");
+        assert_eq!(
+            rect_crawl(1),
+            [1.0, 0.6, 2.5],
+            "crawling pane keeps its triad"
+        );
         set_suppressed(false);
     }
 

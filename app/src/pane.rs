@@ -20,8 +20,9 @@ use futures::StreamExt;
 use gpui::{
     anchored, canvas, deferred, div, font, linear_color_stop, linear_gradient, point, prelude::*,
     px, rgb, App, Bounds, BoxShadow, ClipboardItem, Context, FocusHandle, Focusable, Font,
-    FontStyle, FontWeight, Hsla, KeyDownEvent, Keystroke, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, Pixels, ScrollWheelEvent, StyledText, TextRun, UnderlineStyle, Window,
+    FontStyle, FontWeight, Hsla, KeyDownEvent, Keystroke, MouseButton, MouseDownEvent,
+    MouseMoveEvent, MouseUpEvent, Pixels, ScrollWheelEvent, StyledText, TextRun, UnderlineStyle,
+    Window,
 };
 
 /// What the tube is showing — drives the per-pane screen colour.

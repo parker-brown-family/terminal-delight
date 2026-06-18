@@ -5093,7 +5093,11 @@ impl Render for Workspace {
                     .child(
                         Self::bezel_btn(
                             &th,
-                            if crawl_on { "\u{25a3} crawl on" } else { "\u{25a2} crawl off" },
+                            if crawl_on {
+                                "\u{25a3} crawl on"
+                            } else {
+                                "\u{25a2} crawl off"
+                            },
                             crawl_on,
                         )
                         .on_mouse_down(
