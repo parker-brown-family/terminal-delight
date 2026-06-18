@@ -1133,11 +1133,9 @@ struct Workspace {
 }
 
 fn make_pane(window: &mut Window, cx: &mut Context<Workspace>) -> Entity<TerminalView> {
-    // A brand-new terminal ships as the green phosphor CRT, pinned so it does not
-    // follow the warm outer cabinet (green screens in a wooden cabinet).
-    let pane = make_pane_restored(session::PaneRestore::default(), window, cx);
-    pane.update(cx, |view, _| view.appearance = PaneTheme::house());
-    pane
+    // A brand-new terminal with no restore context. The pinned green house
+    // appearance is applied by make_pane_restored, so this is a thin alias.
+    make_pane_restored(session::PaneRestore::default(), window, cx)
 }
 
 fn make_pane_restored(
@@ -1146,6 +1144,13 @@ fn make_pane_restored(
     cx: &mut Context<Workspace>,
 ) -> Entity<TerminalView> {
     let pane = cx.new(|cx| TerminalView::new_restored(restore, cx));
+    // Every freshly-built pane ships as the pinned green house screen — it does
+    // NOT follow the warm outer cabinet. Centralising the default HERE (not just
+    // in make_pane) is what kills the orange-overglow CLASS: split, tear-off and
+    // any future creation site inherit the right look for free. The restore path
+    // (build_node) is the sole exception and re-applies the pane's SAVED
+    // appearance right after — which may legitimately be pristine/follow-outer.
+    pane.update(cx, |view, _| view.appearance = PaneTheme::house());
     cx.observe(&pane, |_, _, cx| cx.notify()).detach();
     cx.subscribe(&pane, |ws, pane, ev: &OpenThemeMenu, cx| {
         ws.theme_menu = Some(MenuScope::Pane(pane));
@@ -1230,16 +1235,18 @@ fn build_node(saved: &SavedNode, window: &mut Window, cx: &mut Context<Workspace
                 window,
                 cx,
             );
-            if !appearance.is_pristine() || name.is_some() {
-                let appearance = appearance.clone();
-                let name = name.clone();
-                pane.update(cx, |view, _| {
-                    view.appearance = appearance;
-                    if name.is_some() {
-                        view.name = name;
-                    }
-                });
-            }
+            // Restore the pane's EXACT saved appearance, overriding the green
+            // house default that make_pane_restored pins. A saved pristine
+            // appearance means "follow the outer cabinet" and must win here —
+            // hence this applies unconditionally, not just when non-pristine.
+            let appearance = appearance.clone();
+            let name = name.clone();
+            pane.update(cx, |view, _| {
+                view.appearance = appearance;
+                if name.is_some() {
+                    view.name = name;
+                }
+            });
             Node::Leaf(pane)
         }
         SavedNode::Split { dir, ratio, a, b } => Node::Split {
