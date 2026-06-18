@@ -1,0 +1,5 @@
+# Every file is owned by Parker. Combined with "Require review from Code
+# Owners" branch protection on main, this means ONLY @parker-brown-family
+# can approve (and therefore gate the merge of) any PR — a maintainer cannot
+# self-merge, and a non-owner approval does not satisfy the requirement.
+* @parker-brown-family
