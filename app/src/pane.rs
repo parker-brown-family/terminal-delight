@@ -136,6 +136,60 @@ pub fn eq_icon(accent: gpui::Hsla, scale: f32) -> gpui::Div {
     row
 }
 
+/// A small line-art retro robot — a dish antenna, a boxy head with two round
+/// eyes and a mouth slit. Drawn from divs (deliberately NOT the 🤖 emoji) so it
+/// inherits the accent colour and scales crisply with the menu bar. Marks the
+/// read-only MCP "watch the agents" control on the mother bar.
+pub fn robot_icon(accent: gpui::Hsla, scale: f32) -> gpui::Div {
+    use gpui::{div, px};
+    let s = scale;
+    let eye = || {
+        div()
+            .w(px(3.5 * s))
+            .h(px(3.5 * s))
+            .rounded_full()
+            .bg(accent)
+    };
+    div()
+        .flex()
+        .flex_col()
+        .items_center()
+        .justify_center()
+        .gap(px(1.5 * s))
+        .h(px(HICON * s))
+        .child(
+            // antenna: a dot on a short stem
+            div()
+                .flex()
+                .flex_col()
+                .items_center()
+                .child(div().w(px(3.5 * s)).h(px(3.5 * s)).rounded_full().bg(accent))
+                .child(div().w(px(1.5 * s)).h(px(3. * s)).bg(accent.alpha(0.8))),
+        )
+        .child(
+            // head: rounded outline with two eyes over a mouth slit
+            div()
+                .flex()
+                .flex_col()
+                .items_center()
+                .justify_center()
+                .gap(px(2. * s))
+                .w(px(20. * s))
+                .h(px(15. * s))
+                .rounded_md()
+                .border_1()
+                .border_color(accent)
+                .child(div().flex().flex_row().gap(px(4. * s)).child(eye()).child(eye()))
+                .child(
+                    div()
+                        .w(px(9. * s))
+                        .h(px(1.6 * s))
+                        .rounded_sm()
+                        .bg(accent.alpha(0.85)),
+                ),
+        )
+}
+
 /// New value for a dragged bell-trim pip: move start or end to time `t`, keeping
 /// a 0.2s gap and staying within [0, dur]. `end <= start` means "to the clip
 /// end", so the effective end is `dur`. Pure so the drag math is unit-testable.
@@ -960,6 +1014,13 @@ impl TerminalView {
     /// captured from the kernel for the workspace snapshot.
     pub fn runtime(&self) -> crate::session::PaneRuntime {
         crate::session::capture(self.session.master.as_ref(), self.session.shell_pid)
+    }
+
+    /// This pane's shell pid — the kernel handle behind its identity. Ephemeral
+    /// (recycles across a resume); the durable key is the agent session. Read by
+    /// the read-only MCP snapshot.
+    pub fn shell_pid(&self) -> u32 {
+        self.session.shell_pid
     }
 
     /// Plain spawn (no restore context); kept for `cx.new(TerminalView::new)`.
