@@ -3759,13 +3759,19 @@ mod tests {
         let (line, col) = stitch_wrapped_line(&rows, &wraps, 0, 2);
         assert_eq!(line, "https://a.dev/x ");
         assert_eq!(col, 2);
-        assert_eq!(link_at(&line, col), Some(Link::Url("https://a.dev/x".into())));
+        assert_eq!(
+            link_at(&line, col),
+            Some(Link::Url("https://a.dev/x".into()))
+        );
 
         // click on the *continuation* row → walks up, same URL, column offset by cols
         let (line, col) = stitch_wrapped_line(&rows, &wraps, 1, 3);
         assert_eq!(line, "https://a.dev/x ");
         assert_eq!(col, cols + 3);
-        assert_eq!(link_at(&line, col), Some(Link::Url("https://a.dev/x".into())));
+        assert_eq!(
+            link_at(&line, col),
+            Some(Link::Url("https://a.dev/x".into()))
+        );
 
         // a non-wrapping row stitches to just itself
         let (line, col) = stitch_wrapped_line(&rows, &wraps, 2, 1);

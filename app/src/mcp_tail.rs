@@ -18,12 +18,18 @@ use std::path::{Path, PathBuf};
 /// be many MB, but the recent tool calls are always at the end.
 const TAIL_BYTES: u64 = 256 * 1024;
 
-/// Resolve the transcript file for a pane from its mode label + cwd. `None` for
-/// non-agent panes (a plain shell has no transcript) or an unreadable cwd.
-pub fn transcript_for(mode: &str, cwd: Option<&str>, home: &Path) -> Option<PathBuf> {
+/// Resolve the transcript file a pane is using, from its mode label, cwd, and
+/// `session` (the resume command, which carries the fd-accurate session id).
+/// `None` for non-agent panes (a plain shell has no transcript) or no cwd.
+pub fn transcript_for(
+    mode: &str,
+    cwd: Option<&str>,
+    session: Option<&str>,
+    home: &Path,
+) -> Option<PathBuf> {
     let cwd = cwd?;
     match mode {
-        "CLAUDE" => session::claude_transcript(cwd, home),
+        "CLAUDE" => session::claude_transcript(cwd, session, home),
         "CODEX" => session::codex_transcript(cwd, home),
         _ => None,
     }
@@ -276,7 +282,7 @@ mod tests {
     #[test]
     fn transcript_for_only_resolves_agents_with_a_cwd() {
         let home = Path::new("/nonexistent");
-        assert!(transcript_for("SHELL", Some("/tmp"), home).is_none());
-        assert!(transcript_for("CLAUDE", None, home).is_none());
+        assert!(transcript_for("SHELL", Some("/tmp"), None, home).is_none());
+        assert!(transcript_for("CLAUDE", None, None, home).is_none());
     }
 }

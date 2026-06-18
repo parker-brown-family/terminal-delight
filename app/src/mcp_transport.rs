@@ -212,7 +212,7 @@ fn serve_stdio(
 /// the request path (`pane_events`) and the push feed. Pure IO, off the main
 /// thread; only ever sees panes the policy already marked exposed.
 fn tail_for(p: &mcp::PaneInfo, limit: usize, home: &std::path::Path) -> Vec<mcp::ToolEvent> {
-    match mcp_tail::transcript_for(&p.mode, p.cwd.as_deref(), home) {
+    match mcp_tail::transcript_for(&p.mode, p.cwd.as_deref(), p.session.as_deref(), home) {
         Some(path) => mcp_tail::tail_tool_events(&path, limit),
         None => vec![],
     }
@@ -304,7 +304,9 @@ mod tests {
         let cwd = "/w/push-x";
         let proj = home.join(".claude/projects").join(slug(cwd));
         std::fs::create_dir_all(&proj).unwrap();
-        let transcript = proj.join("s.jsonl");
+        // Named for the pane's session id ("claude --resume x") so the tailer
+        // resolves it by the fd-accurate id, not newest-by-mtime.
+        let transcript = proj.join("x.jsonl");
         append_tool_use(&transcript, "Bash", "first"); // pre-existing history
 
         let (snap_tx, snap_rx) = mpsc::channel::<mcp::Snapshot>();
