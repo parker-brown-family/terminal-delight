@@ -2605,6 +2605,18 @@ impl Workspace {
         self.write_grade(&scope, theme::Grade::neutral(), cx);
     }
 
+    /// Flip the active OSD scope's Star-Wars text-crawl mode (per-pane via the
+    /// grade group, exactly like a slider). On ⇒ the grid renders in the crawl
+    /// font and the renderer perspective-warps the tube.
+    fn toggle_crawl(&mut self, cx: &mut Context<Self>) {
+        let Some(scope) = self.osd_menu.clone() else {
+            return;
+        };
+        let mut grade = self.choice_for(&scope, cx).grade;
+        grade.crawl = !grade.crawl;
+        self.write_grade(&scope, grade, cx);
+    }
+
     /// Commit a grade to a scope: pin it on a pane (grade group only), or set it
     /// on the outer choice.
     fn write_grade(&mut self, scope: &MenuScope, grade: theme::Grade, cx: &mut Context<Self>) {
@@ -2723,14 +2735,16 @@ impl Workspace {
                     .text_size(px(9.))
                     .text_color(th.accent)
                     // Sizes (menu bar, terminal text) read as absolute "110%";
-                    // colour channels read as a signed offset ("-12", "+0").
-                    .child(
-                        if matches!(key, theme::GradeKey::Scale | theme::GradeKey::TextSize) {
+                    // crawl angle in degrees, crawl depth as a ratio; colour
+                    // channels read as a signed offset ("-12", "+0").
+                    .child(match key {
+                        theme::GradeKey::Scale | theme::GradeKey::TextSize => {
                             format!("{}%", (v * 100.).round() as i32)
-                        } else {
-                            format!("{:+}", ((v - neutral) * 100.).round() as i32)
-                        },
-                    ),
+                        }
+                        theme::GradeKey::CrawlAngle => format!("{}\u{00b0}", v.round() as i32),
+                        theme::GradeKey::CrawlDepth => format!("{v:.1}\u{00d7}"),
+                        _ => format!("{:+}", ((v - neutral) * 100.).round() as i32),
+                    }),
             )
     }
 
@@ -5065,6 +5079,54 @@ impl Render for Workspace {
                             }),
                         ),
                 );
+            // ---- TEXT CRAWL: per-pane Star-Wars crawl toggle + its two knobs.
+            // Rides the grade group like everything else here, so it scopes to
+            // pane/outer and inherits via "follow outer". The angle/depth sliders
+            // only appear while crawl is on.
+            {
+                let crawl_on = grade.crawl;
+                let mut block = div()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .child(label("TEXT CRAWL"))
+                    .child(
+                        Self::bezel_btn(
+                            &th,
+                            if crawl_on {
+                                "\u{25a3} crawl on"
+                            } else {
+                                "\u{25a2} crawl off"
+                            },
+                            crawl_on,
+                        )
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                                cx.stop_propagation();
+                                ws.toggle_crawl(cx);
+                            }),
+                        ),
+                    );
+                if crawl_on {
+                    block = block
+                        .child(self.slider_row(
+                            theme::GradeKey::CrawlAngle,
+                            "angle",
+                            grade.crawl_angle,
+                            &th,
+                            cx,
+                        ))
+                        .child(self.slider_row(
+                            theme::GradeKey::CrawlDepth,
+                            "depth",
+                            grade.crawl_depth,
+                            &th,
+                            cx,
+                        ));
+                }
+                panel = panel.child(block);
+            }
             if is_pane {
                 // Grade-group toggle, independent of the theme tray's: on = this
                 // pane's monitor grade tracks the outer sliders live; off = it
@@ -5786,6 +5848,11 @@ impl Render for Workspace {
                 // up to FZ_MAX× for reading (overflows the panel, clipped).
                 let ms = (fit * self.focus_zoom).clamp(0.5, 12.0);
                 let cell_h = snap.cell_h * ms;
+                // FOCUS inherits crawl: the rows are already in the crawl font
+                // (baked into the runs) and, in crawl mode, the modal centres each
+                // row exactly like the live pane (a flat, readable mirror — the
+                // ambient perspective stays on the pane behind the modal).
+                let crawl = snap.crawl;
                 let body = div()
                     .flex()
                     .flex_col()
@@ -5793,6 +5860,17 @@ impl Render for Workspace {
                     .text_color(snap.text)
                     .font_family(snap.font_family.clone())
                     .children(snap.lines.into_iter().map(move |(text, runs)| {
+                        if crawl {
+                            return match pane::crawl_centered_runs(text, runs) {
+                                Some((t, cut)) => div()
+                                    .h(px(cell_h))
+                                    .flex()
+                                    .justify_center()
+                                    .whitespace_nowrap()
+                                    .child(gpui::StyledText::new(t).with_runs(cut)),
+                                None => div().h(px(cell_h)).whitespace_nowrap(),
+                            };
+                        }
                         let line = div().h(px(cell_h)).whitespace_nowrap();
                         if text.is_empty() {
                             line
@@ -6852,6 +6930,16 @@ fn main() {
                 ..Default::default()
             },
             move |window, cx| {
+                // Bundle the crawl-mode typeface (News Cycle Bold, SIL OFL — a
+                // libre News-Gothic clone) so `crawl` mode has its font even on a
+                // box that doesn't ship it. Registered BEFORE the font registry is
+                // captured so `all_font_names()` includes it and `resolve_family`
+                // can find "News Cycle".
+                if let Err(e) = cx.text_system().add_fonts(vec![std::borrow::Cow::Borrowed(
+                    include_bytes!("../assets/fonts/NewsCycle-Bold.ttf").as_slice(),
+                )]) {
+                    eprintln!("terminal-delight: failed to load crawl font: {e}");
+                }
                 // First-run self-diagnostics for untested boxes (AMD/Intel,
                 // Wayland, fractional scaling): record installed fonts so the grid
                 // can fall back deliberately, and surface the GPU/driver gpui chose.
