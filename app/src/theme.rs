@@ -331,12 +331,16 @@ impl Default for Grade {
     /// returns to.
     fn default() -> Self {
         Self {
-            brightness: 0.33,   // −17
-            contrast: 0.25,     // −25
+            // Tuned down from a blown-out phosphor green: the old high
+            // background (+31) + gamma (+26) opened every fresh pane to an
+            // eye-searing flat green. Parker's dialed-in "tasteful CRT" look —
+            // a dim screen with the glow living in the text, not the field.
+            brightness: 0.16,   // −34
+            contrast: 0.45,     // −5
             colour: 0.69,       // +19
-            text: 0.67,         // +17
-            background: 0.81,   // +31
-            gamma: 0.76,        // +26
+            text: 0.66,         // +16
+            background: 0.43,   // −7
+            gamma: 0.5,         // 0 (no gamma lift — keeps the field dark)
             scale: 0.99,        // 99%
             text_size: 1.0,     // terminal grid at config size
             warp: WARP_DEFAULT, // the house near-fishbowl bend
