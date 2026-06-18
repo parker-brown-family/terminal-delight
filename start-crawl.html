@@ -1,0 +1,267 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>terminal-delight — the TEXT CRAWL cabinet</title>
+<meta name="description" content="terminal-delight's Star-Wars-style text-crawl mode, on a mid-century console television: a live opening crawl receding into a curved CRT, with knobs for barrel warp, crawl angle, depth, fade and tracking.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' rx='3' fill='%23070401'/><text y='12' x='2' font-size='11' fill='%23ffe24d'>▲</text></svg>">
+<style>
+  :root{ --wood1:#5a3320; --wood2:#3c2013; --wood3:#74442a; --brass:#caa84e; --brass-d:#8a6f2b;
+    --spill:rgba(255,225,77,.18); --spill-soft:rgba(255,225,77,.30); }
+  *{box-sizing:border-box} html,body{margin:0;height:100%}
+  body{
+    background:
+      radial-gradient(120% 80% at 50% 18%, #14110d 0%, #0a0806 60%, #040302 100%),
+      #050403;
+    color:#d8c9b0; font-family:ui-monospace,monospace; min-height:100%;
+    display:flex; flex-direction:column; align-items:center; justify-content:center; overflow:hidden;
+  }
+  body::after{content:"";position:fixed;left:0;right:0;bottom:0;height:34%;pointer-events:none;
+    background:linear-gradient(#0000, #1d130a55 40%, #2a1a0e88);
+    -webkit-mask:linear-gradient(#0000,#000 60%);mask:linear-gradient(#0000,#000 60%);}
+  .stage{ transform-origin:center; }
+  .tv{ position:relative; width:min(92vw, 940px); }
+  .cabinet{
+    position:relative; border-radius:26px 26px 16px 16px; padding:30px;
+    background:
+      repeating-linear-gradient(91deg, #00000018 0 3px, #ffffff08 3px 6px, #00000010 6px 11px),
+      linear-gradient(160deg, var(--wood3), var(--wood1) 42%, var(--wood2));
+    box-shadow:
+      0 2px 0 #ffffff1f inset, 0 -18px 40px #00000066 inset,
+      0 40px 70px -20px #000a, 0 14px 30px #0008;
+    display:grid; grid-template-columns: 1fr 150px; gap:24px;
+  }
+  .cabinet::before{ content:""; position:absolute; inset:14px; border-radius:18px;
+    box-shadow:0 0 0 2px #00000033, 0 0 26px #0006 inset; pointer-events:none; }
+  .screen-housing{ position:relative; border-radius:50px/40px; padding:20px;
+    background:linear-gradient(150deg,#14110d,#241a12);
+    box-shadow:0 0 0 3px #0006, 0 10px 30px #000a inset, 0 2px 0 #ffffff14 inset,
+      0 0 60px -6px var(--spill-soft); }
+  .screen-housing::after{ content:""; position:absolute; inset:-6px; border-radius:54px/44px; pointer-events:none;
+    box-shadow:0 0 50px 4px var(--spill) inset; mix-blend-mode:screen; }
+  .screen{ position:relative; aspect-ratio:4/3; border-radius:46px/36px; overflow:hidden;
+    background:#01040a; box-shadow:0 0 60px #0008 inset, 0 0 0 6px #0b0907; }
+  .screen canvas{ position:absolute; inset:0; width:100%; height:100%; display:block; cursor:default; }
+  .screen .sheen{ position:absolute; inset:0; pointer-events:none; border-radius:46px/36px;
+    background:
+      radial-gradient(120% 80% at 30% 12%, #ffffff22, #ffffff00 38%),
+      radial-gradient(120% 120% at 50% 50%, #0000 60%, #00000055);
+    mix-blend-mode:screen; }
+  .panel{ display:flex; flex-direction:column; align-items:center; gap:12px; padding-top:4px; }
+  .brand{ font-weight:800; letter-spacing:.12em; font-size:12px; color:#f0dca6;
+    text-shadow:0 1px 0 #0008; text-align:center; }
+  .brand small{ display:block; font-weight:600; font-size:9px; letter-spacing:.22em; color:#caa84ecc; }
+  .knob-wrap{ display:flex; flex-direction:column; align-items:center; gap:3px; }
+  .knob{ width:56px; height:56px; border-radius:50%; position:relative; cursor:ns-resize;
+    background:radial-gradient(circle at 38% 32%, #f6e7b0, #c8a64a 46%, #6f5117 100%);
+    box-shadow:0 4px 8px #000a, 0 0 0 4px #2a1c0e, 0 0 0 6px #0006, inset 0 -3px 6px #00000066, inset 0 2px 3px #ffffff66;
+    touch-action:none; }
+  .knob::after{ content:""; position:absolute; left:50%; top:6px; width:4px; height:16px; margin-left:-2px;
+    border-radius:2px; background:linear-gradient(#3a2a10,#1c1407); box-shadow:0 0 2px #000; }
+  .knob.detent{ width:44px; height:44px; }
+  .knob-label{ font-size:9px; letter-spacing:.12em; color:#e9d6a8; font-weight:700; }
+  .knob-val{ font-size:8.5px; color:#caa84e; height:11px; }
+  .grille{ margin-top:auto; width:128px; height:64px; border-radius:8px;
+    background:repeating-linear-gradient(0deg, #2a1a0e 0 3px, #0b0805 3px 6px), linear-gradient(160deg, #3a2616, #241509);
+    box-shadow:0 0 0 2px #00000044, 0 4px 10px #0008 inset, 0 1px 0 #ffffff10 inset; }
+  .legs{ position:absolute; left:0; right:0; bottom:-54px; height:64px; display:flex; justify-content:space-between; padding:0 60px; }
+  .legs i{ display:block; width:16px; height:64px; transform-origin:top center;
+    background:linear-gradient(#3c2414,#1c1107); border-radius:0 0 6px 6px; box-shadow:0 8px 14px #0009; }
+  .legs i:first-child{ transform:rotate(9deg); } .legs i:last-child{ transform:rotate(-9deg); }
+  .legs i:nth-child(2){ transform:rotate(4deg);} .legs i:nth-child(3){ transform:rotate(-4deg);}
+  .dock{ display:flex; gap:10px; flex-wrap:wrap; justify-content:center; margin-top:78px; padding:0 12px; }
+  .dock a{ font-size:12px; letter-spacing:.04em; text-decoration:none; padding:8px 14px; border-radius:9px;
+    color:#ffe7a6; border:1px solid #caa84e66; background:#ffffff08; }
+  .dock a.primary{ color:#1a1402; background:linear-gradient(#ffe97a,#e3c24a); border-color:#ffe97a; font-weight:700; }
+  .dock a:hover{ border-color:#ffe97a; }
+  .hint{ position:fixed; bottom:12px; left:0; right:0; text-align:center; font-size:11px; color:#7a6b52; }
+  .hint b{ color:#caa84e; }
+  @media (max-width:760px){
+    body{ overflow:auto; padding:14px 0 64px; -webkit-text-size-adjust:100%; }
+    body::after{ height:22%; }
+    .tv{ width:94vw; }
+    .cabinet{ grid-template-columns:1fr; gap:14px; padding:15px; border-radius:20px 20px 12px 12px; }
+    .cabinet::before{ inset:9px; border-radius:13px; }
+    .screen-housing{ padding:12px; border-radius:38px/30px; }
+    .screen{ border-radius:34px/26px; }
+    .panel{ flex-direction:row; flex-wrap:wrap; justify-content:center; align-items:flex-start; gap:4px 12px; }
+    .brand{ width:100%; order:-1; }
+    .knob{ width:50px; height:50px; } .knob.detent{ width:46px; height:46px; }
+    .grille{ width:100%; height:30px; order:9; margin-top:2px; }
+    .legs{ padding:0 22px; bottom:-38px; } .legs i{ height:46px; width:13px; }
+    .dock{ margin-top:34px; } .hint{ position:static; margin:14px auto 0; max-width:90%; }
+  }
+</style></head>
+<body>
+  <div class="stage">
+  <div class="tv">
+    <div class="cabinet">
+      <div class="screen-housing">
+        <div class="screen"><canvas id="gl"></canvas><div class="sheen"></div></div>
+      </div>
+      <div class="panel">
+        <div class="brand">CRAWL-O-MATIC<small>MODEL TD-1977</small></div>
+        <div class="knob-wrap"><div class="knob" id="k-barrel"></div><div class="knob-label">BARREL</div><div class="knob-val" id="v-barrel"></div></div>
+        <div class="knob-wrap"><div class="knob" id="k-angle"></div><div class="knob-label">ANGLE</div><div class="knob-val" id="v-angle"></div></div>
+        <div class="knob-wrap"><div class="knob" id="k-depth"></div><div class="knob-label">DEPTH</div><div class="knob-val" id="v-depth"></div></div>
+        <div class="knob-wrap"><div class="knob" id="k-fade"></div><div class="knob-label">FADE</div><div class="knob-val" id="v-fade"></div></div>
+        <div class="knob-wrap"><div class="knob" id="k-track"></div><div class="knob-label">TRACKING</div><div class="knob-val" id="v-track"></div></div>
+        <div class="knob-wrap"><div class="knob detent" id="k-chan"></div><div class="knob-label">COLOUR</div></div>
+        <div class="grille"></div>
+      </div>
+    </div>
+    <div class="legs"><i></i><i></i><i></i><i></i></div>
+  </div>
+  </div>
+  <div class="dock">
+    <a class="primary" href="https://github.com/parker-brown-family/terminal-delight/releases/latest">▾ Download</a>
+    <a href="info.html">← Full site</a>
+    <a href="tv.html">📺 The TV cabinet</a>
+    <a href="gamba.html">🎰 GAMBA</a>
+    <a href="https://github.com/parker-brown-family/terminal-delight">★ GitHub</a>
+  </div>
+  <div class="hint">turn the <b>knobs</b> — BARREL · crawl ANGLE · DEPTH · FADE · TRACKING — and twist <b>COLOUR</b>. It's a real terminal mode; this is the web tribute.</div>
+
+<script>
+const cv=document.getElementById('gl'); let gl=cv.getContext('webgl2',{antialias:false,alpha:false}); let ctx2d=null;
+let W,H, dpr=Math.min(2,window.devicePixelRatio||1);
+const scene=document.createElement('canvas'); const x=scene.getContext('2d');
+// COLOUR channels — the crawl text glow. Dark starfield stays constant; the
+// COLOUR knob flips the phosphor hue (classic crawl yellow leads).
+const CHANNELS=[
+ {name:'GALAXY GOLD', phos:'#ffe24d', glow:'#ffd23c', tint:[1.0,0.86,0.30], spill:'255,225,77'},
+ {name:'PHOSPHOR',    phos:'#7CFC8A', glow:'#36ff7e', tint:[0.45,1.0,0.55], spill:'120,252,138'},
+ {name:'ION BLUE',    phos:'#79c4ff', glow:'#3aa0ff', tint:[0.40,0.65,1.0], spill:'121,196,255'},
+ {name:'EMBER',       phos:'#ff9a3c', glow:'#ff7a1c', tint:[1.0,0.60,0.25], spill:'255,154,60'},
+ {name:'NOVA WHITE',  phos:'#f5f7ff', glow:'#ffffff', tint:[0.95,0.96,1.0], spill:'245,247,255'},
+];
+let chan=0; const cur=()=>CHANNELS[chan];
+function setSpill(){ const sp=cur().spill, rs=document.documentElement.style;
+  rs.setProperty('--spill', `rgba(${sp},0.16)`); rs.setProperty('--spill-soft', `rgba(${sp},0.28)`); }
+let snow=0, osdUntil=0;
+// The opening crawl (staged, leak-safe). Blank strings are paragraph gaps.
+const STORY=[
+ 'A long time ago, in a','terminal far, far away....','','',
+ 'TERMINAL DELIGHT','','',
+ 'It is a period of late-night','builds. Rebel developers,','striking from a hidden worktree,','have won their first victory','against the evil Galactic Flaky CI.','',
+ 'During the battle, their agents','stole secret plans to the empire’s','ultimate weapon, the PHOSPHOR','STAR — a curved CRT with power','enough to light a thousand screens.','',
+ 'Pursued by sinister linters, a lone','maintainer races home aboard her','terminal, keeper of the patches','that can save her people and','restore green to the galaxy....','','','',
+ 'turn the knobs. the work never ships.','',
+];
+// star positions (fixed seed-ish via index trig)
+function stars(){ const a=[]; for(let i=0;i<150;i++){ a.push([ (Math.sin(i*12.9898)*43758.5453%1+1)%1, (Math.sin(i*78.233)*12543.123%1+1)%1, ((Math.sin(i*3.17)*0.5+0.5))*0.8+0.2 ]); } return a; }
+const STARS=stars();
+// knob state 0..1
+const K={barrel:0.66, angle:0.42, depth:0.686, fade:0.92, track:0.42, speed:0.5};
+function layout(){ const r=cv.getBoundingClientRect(); W=Math.max(2,Math.round(r.width*dpr)); H=Math.max(2,Math.round(r.height*dpr)); cv.width=W;cv.height=H;scene.width=W;scene.height=H; }
+// Draw the FLAT crawl strip (uniform size, scrolling up). The shader supplies the
+// perspective recede + barrel, mirroring the native app (flat content + post-pass).
+function drawCrawl(time){
+  const c=cur(); x.fillStyle='#01040a'; x.fillRect(0,0,W,H);
+  for(const st of STARS){ const a=0.25+0.6*st[2]*(0.6+0.4*Math.sin(time*1.6+st[0]*30.0));
+    x.fillStyle=`rgba(220,230,255,${a.toFixed(3)})`; x.fillRect(st[0]*W, st[1]*H, dpr, dpr); }
+  const s=Math.max(0.5, W/900), lineH=40*s*dpr, fs=27*s*dpr;
+  const total=STORY.length*lineH;
+  // scroll so the strip rises through the frame and loops
+  const period=total+H*1.2, off=(time*lineH*K.speed*1.4)%period;
+  x.textAlign='center'; x.textBaseline='middle';
+  x.shadowColor=c.glow;
+  for(let i=0;i<STORY.length;i++){ const line=STORY[i]; if(!line) continue;
+    const y=H*1.06 - off + i*lineH; if(y< -lineH || y> H+lineH) continue;
+    const big = line===line.toUpperCase() && line.replace(/[^A-Z]/g,'').length>2;
+    x.shadowBlur=(big?16:10)*s*dpr; x.fillStyle=c.phos;
+    x.font=`${big?'800 ':''}${(big?fs*1.15:fs)}px ui-monospace,monospace`;
+    x.fillText(line, W/2, y);
+  }
+  x.shadowBlur=0;
+  if(performance.now()<osdUntil){ x.textAlign='right'; x.fillStyle='#fff'; x.shadowColor=c.glow; x.shadowBlur=9*s*dpr;
+    x.font=`700 ${13*s*dpr}px ui-monospace,monospace`;
+    x.fillText('COLOUR · '+c.name, W-16*s*dpr, H*0.08); x.shadowBlur=0; x.textAlign='center'; }
+}
+const vs=`#version 300 es
+void main(){vec2 p=vec2((gl_VertexID<<1)&2,gl_VertexID&2);gl_Position=vec4(p*2.0-1.0,0.,1.);}`;
+// Fragment: crawl perspective pre-map (recede toward the top) → barrel → tracking
+// + chroma + scanline + fade + flicker + snow. Mirrors the native crt_pass.wgsl.
+const fs=`#version 300 es
+precision highp float; uniform sampler2D tex; uniform vec2 res;
+uniform float k1,k2,time,fade,trackSpd,trackWob,snow,ca,cd; uniform vec3 tint;
+out vec4 o; float hash(float n){return fract(sin(n)*43758.5453);}
+vec2 warp(vec2 uv){vec2 c=uv-0.5;float r2=dot(c,c);return 0.5+c*(1.0+k1*r2+k2*r2*r2);}
+void main(){
+  vec2 uv0=gl_FragCoord.xy/res; uv0.y=1.0-uv0.y;
+  // ---- crawl perspective inverse-map ----
+  float vb=1.0-uv0.y;                                  // 0 bottom/near, 1 top/far
+  float tc = abs(cd-1.0)<1e-3 ? vb : (pow(cd,vb)-1.0)/(cd-1.0);
+  float cw=(1.0-tc)+ca*tc;                             // row width: 1 bottom -> ca top
+  float ccx=0.5+(uv0.x-0.5)/cw;
+  if(ccx<0.0||ccx>1.0){o=vec4(0.0,0.0,0.0,1.0);return;} // letterbox starfield bars
+  vec2 cuv=vec2(ccx,1.0-tc);
+  // ---- barrel ----
+  vec2 uv=warp(cuv);
+  vec2 e=min(uv,1.0-uv); float edge=smoothstep(0.0,0.006,min(e.x,e.y));
+  if(edge<=0.0){o=vec4(0,0,0,1);return;} float r2=dot(uv-0.5,uv-0.5);
+  float barY=fract(time*trackSpd); float d=uv.y-barY; d-=step(0.5,d); d+=step(d,-0.5);
+  float band=smoothstep(0.07,0.0,abs(d));
+  uv.x+=band*trackWob*0.012*sin(uv.y*130.0+time*26.0);
+  float a=0.004*r2;
+  vec3 col=vec3(texture(tex,warp(cuv+vec2(a,0.))).r, texture(tex,uv).g, texture(tex,warp(cuv-vec2(a,0.))).b);
+  col+=band*(0.16+0.12*sin(time*38.0))*(0.4+trackWob)*tint;
+  col*=1.0-0.15*(0.5+0.5*sin(uv.y*res.y*0.9));
+  float ob=2.5/res.x; col+=0.09*(texture(tex,uv+vec2(ob,0.)).rgb+texture(tex,uv-vec2(ob,0.)).rgb+texture(tex,uv+vec2(0.,ob)).rgb+texture(tex,uv-vec2(0.,ob)).rgb);
+  col*=mix(0.28,1.18,fade);
+  col*=1.0+0.03*(sin(time*48.0)*0.5+ (hash(floor(time*22.0))-0.5));
+  col=mix(col, vec3(hash(floor(gl_FragCoord.x)*3.1+floor(gl_FragCoord.y)*7.7+floor(time*45.0)*13.0)), clamp(snow,0.0,1.0)*0.8);
+  col*=1.0-0.5*r2; col*=edge; o=vec4(col,1.0);
+}`;
+function mk(t,s){const sh=gl.createShader(t);gl.shaderSource(sh,s);gl.compileShader(sh);if(!gl.getShaderParameter(sh,gl.COMPILE_STATUS))throw gl.getShaderInfoLog(sh);return sh;}
+let pr=null, tex=null;
+if(gl){ try {
+  pr=gl.createProgram();gl.attachShader(pr,mk(35633,vs));gl.attachShader(pr,mk(35632,fs));gl.linkProgram(pr);
+  if(!gl.getProgramParameter(pr,gl.LINK_STATUS)) throw gl.getProgramInfoLog(pr);
+  gl.useProgram(pr);
+  tex=gl.createTexture();gl.bindTexture(3553,tex);[[10241,9729],[10240,9729],[10242,33071],[10243,33071]].forEach(([k,v])=>gl.texParameteri(3553,k,v));
+  gl.bindVertexArray(gl.createVertexArray());
+} catch(e){ gl=null; } }
+if(!gl){ try { ctx2d=cv.getContext('2d'); } catch(e){} }
+const U=n=>gl.getUniformLocation(pr,n);
+const t0=performance.now();
+// crawl knob mapping: ANGLE 2..30° -> top-width ratio a; DEPTH 0.2..5 (log)
+function crawlA(){ const deg=2+K.angle*28; return Math.max(0.2, Math.min(1.0, 1.0-1.3*Math.sin(deg*Math.PI/180))); }
+function crawlD(){ return Math.exp(Math.log(0.05)+(Math.log(15)-Math.log(0.05))*K.depth); }
+function frame(now){ const time=(now-t0)/1000;
+  drawCrawl(time);                                    // scrolls every frame
+  if(gl){
+    gl.bindTexture(3553,tex);gl.texImage2D(3553,0,6408,6408,5121,scene);
+    gl.viewport(0,0,W,H); const c=K.barrel*2.2, t=cur().tint;
+    gl.uniform2f(U('res'),W,H); gl.uniform1f(U('k1'),c*0.14); gl.uniform1f(U('k2'),c*0.06);
+    gl.uniform1f(U('time'),time); gl.uniform1f(U('fade'),K.fade);
+    gl.uniform1f(U('trackSpd'),0.04+K.track*0.30); gl.uniform1f(U('trackWob'),K.track);
+    gl.uniform1f(U('snow'),snow); gl.uniform3f(U('tint'),t[0],t[1],t[2]);
+    gl.uniform1f(U('ca'),crawlA()); gl.uniform1f(U('cd'),crawlD()); gl.uniform1i(U('tex'),0);
+    gl.drawArrays(4,0,3); snow=snow>0.01?snow*0.90:0;
+  } else if(ctx2d){ ctx2d.clearRect(0,0,W,H); ctx2d.drawImage(scene,0,0,W,H); }
+  window.__ready=true; requestAnimationFrame(frame);
+}
+function bindKnob(el,vEl,name,fmt){ const set=v=>{K[name]=Math.max(0,Math.min(1,v)); el.style.transform='rotate('+(K[name]*270-135)+'deg)'; if(vEl)vEl.textContent=fmt(K[name]); };
+  set(K[name]);
+  let dragging=false,startY,startV;
+  el.addEventListener('pointerdown',e=>{dragging=true;startY=e.clientY;startV=K[name];el.setPointerCapture(e.pointerId);e.preventDefault();});
+  el.addEventListener('pointermove',e=>{if(!dragging)return; set(startV+(startY-e.clientY)/160);});
+  el.addEventListener('pointerup',()=>dragging=false); el.addEventListener('pointercancel',()=>dragging=false);
+  el.addEventListener('wheel',e=>{e.preventDefault();set(K[name]-Math.sign(e.deltaY)*0.06);},{passive:false});
+  el.__set=set;
+}
+bindKnob(document.getElementById('k-barrel'),document.getElementById('v-barrel'),'barrel',v=>Math.round(v*100)+'%');
+bindKnob(document.getElementById('k-angle'),document.getElementById('v-angle'),'angle',()=>Math.round(2+K.angle*28)+'°');
+bindKnob(document.getElementById('k-depth'),document.getElementById('v-depth'),'depth',()=>crawlD().toFixed(1)+'×');
+bindKnob(document.getElementById('k-fade'),document.getElementById('v-fade'),'fade',v=>Math.round(v*100)+'%');
+bindKnob(document.getElementById('k-track'),document.getElementById('v-track'),'track',v=>Math.round(v*100)+'%');
+(function(){const el=document.getElementById('k-chan'); let a=0;
+  function go(d){ chan=(chan+d+CHANNELS.length)%CHANNELS.length; a+=d*(360/CHANNELS.length);
+    el.style.transform='rotate('+a+'deg)'; snow=1.0; osdUntil=performance.now()+1700; setSpill(); }
+  el.addEventListener('pointerdown',e=>{e.preventDefault();go(1);});
+  el.addEventListener('wheel',e=>{e.preventDefault();go(Math.sign(e.deltaY)||1);},{passive:false});
+  window.__channel=(d)=>go(d);
+})();
+window.__setKnob=(n,v)=>document.getElementById('k-'+n).__set(v);
+addEventListener('resize',()=>{layout();});
+layout(); setSpill(); requestAnimationFrame(frame);
+</script></body></html>

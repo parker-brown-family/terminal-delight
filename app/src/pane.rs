@@ -20,8 +20,9 @@ use futures::StreamExt;
 use gpui::{
     anchored, canvas, deferred, div, font, linear_color_stop, linear_gradient, point, prelude::*,
     px, rgb, App, Bounds, BoxShadow, ClipboardItem, Context, FocusHandle, Focusable, Font,
-    FontWeight, Hsla, KeyDownEvent, Keystroke, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, Pixels, ScrollWheelEvent, StyledText, TextRun, UnderlineStyle, Window,
+    FontStyle, FontWeight, Hsla, KeyDownEvent, Keystroke, MouseButton, MouseDownEvent,
+    MouseMoveEvent, MouseUpEvent, Pixels, ScrollWheelEvent, StyledText, TextRun, UnderlineStyle,
+    Window,
 };
 
 /// What the tube is showing — drives the per-pane screen colour.
@@ -935,6 +936,10 @@ pub struct MirrorSnapshot {
     pub cols: usize,
     pub rows: usize,
     pub title: String,
+    /// Crawl mode is on for this pane — the FOCUS modal inherits the look: the
+    /// rows are already in the crawl font (baked into `lines`' runs) and the
+    /// modal centres each row, matching the live pane.
+    pub crawl: bool,
 }
 
 impl TerminalView {
@@ -1001,6 +1006,7 @@ impl TerminalView {
             cols: self.grid.cols,
             rows: self.grid.rows,
             title: self.name.clone().unwrap_or_else(|| self.title.clone()),
+            crawl: th.crawl,
         }
     }
 
@@ -1245,24 +1251,38 @@ impl TerminalView {
             return false;
         }
         let term = self.session.term.lock();
-        let content = term.renderable_content();
-        let display_offset = content.display_offset;
-        let mut rows = vec![String::new(); self.grid.rows];
-        for indexed in content.display_iter {
-            let row = indexed.point.line.0 + display_offset as i32;
-            if row < 0 || row as usize >= self.grid.rows {
-                continue;
+        // Scan the LIVE bottom screen directly (Line(0)..screen_lines), NOT
+        // `renderable_content().display_iter` — that honours the display offset, so
+        // when Alt+↑ scrolls back to a human message the running agent's "esc to
+        // interrupt" spinner leaves the *viewport* and the scan falsely reads
+        // "done". The agent is still working at the buffer bottom, so detection
+        // must read the live screen regardless of how far the user has scrolled up.
+        let grid = term.grid();
+        let rows = grid.screen_lines();
+        let cols = grid.columns();
+        for line in 0..rows as i32 {
+            let row = &grid[Line(line)];
+            let mut s = String::with_capacity(cols);
+            for col in 0..cols {
+                let cell = &row[Column(col)];
+                if cell.flags.contains(Flags::WIDE_CHAR_SPACER) {
+                    continue;
+                }
+                s.push(if cell.c == '\0' { ' ' } else { cell.c });
             }
-            let cell = &indexed.cell;
-            if cell.flags.contains(Flags::WIDE_CHAR_SPACER) {
-                continue;
+            let low = s.to_ascii_lowercase();
+            if low.contains("esc to interrupt") || low.contains("interrupt)") {
+                return true;
             }
-            rows[row as usize].push(if cell.c == '\0' { ' ' } else { cell.c });
         }
-        rows.iter().any(|line| {
-            let low = line.to_ascii_lowercase();
-            low.contains("esc to interrupt") || low.contains("interrupt)")
-        })
+        false
+    }
+
+    /// Does this pane have an unacknowledged "agent finished" bell raised? Read by
+    /// the workspace to badge the owning tab; cleared by the in-terminal ack click
+    /// (see [`snooze_bell`]).
+    pub fn has_bell(&self) -> bool {
+        self.bell
     }
 
     fn handle_term_event(&mut self, event: TermEvent, cx: &mut Context<Self>) -> bool {
@@ -2245,9 +2265,49 @@ pub fn font_diagnostic() -> Option<String> {
 }
 
 fn grid_font(th: &Theme, weight: FontWeight) -> Font {
-    let mut f = font(resolve_family(&th.font_family));
+    // Crawl mode swaps the whole grid to the bundled News-Gothic crawl font,
+    // italic, for that iconic recede-into-the-distance look. The perspective
+    // itself is the renderer's job (the tube's crawl warp); here we only change
+    // the typeface. Lines are shaped as runs, so the proportional font lays out
+    // correctly even though the grid advances per cell.
+    let family = if th.crawl {
+        resolve_family(crate::theme::CRAWL_FONT_FAMILY)
+    } else {
+        resolve_family(&th.font_family)
+    };
+    let mut f = font(family);
     f.weight = weight;
+    if th.crawl {
+        f.style = FontStyle::Italic;
+    }
     f
+}
+
+/// Crawl-mode row centring: alacritty fills each row to full width with blank
+/// cells, so trim the trailing blanks (clamping the runs to match) and hand back
+/// the visible content to be justify-centred. Returns `None` for a blank row.
+/// Shared by the live pane and the FOCUS mirror so both centre identically.
+pub(crate) fn crawl_centered_runs(
+    text: String,
+    runs: Vec<TextRun>,
+) -> Option<(String, Vec<TextRun>)> {
+    let keep = text.trim_end_matches(' ').len();
+    if keep == 0 {
+        return None;
+    }
+    let mut acc = 0usize;
+    let mut cut = Vec::with_capacity(runs.len());
+    for mut r in runs {
+        if acc >= keep {
+            break;
+        }
+        if acc + r.len > keep {
+            r.len = keep - acc;
+        }
+        acc += r.len;
+        cut.push(r);
+    }
+    Some((text[..keep].to_string(), cut))
 }
 
 /// gpui Keystroke → PTY bytes.
@@ -3409,7 +3469,11 @@ impl Render for TerminalView {
             .on_mouse_move(cx.listener(Self::on_mouse_move))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .size_full()
-            .bg(th.bg)
+            // Grade the base background too (not just cells): the DISPLAY brightness
+            // / contrast / colour sliders dim the whole pane like a dimmer light —
+            // crucially the flat/paper themes, whose bright background is the bulk of
+            // what you see. Neutral grade short-circuits, so the default is unchanged.
+            .bg(graded(th.bg, &th.grade, Channel::Bg))
             .relative()
             .flex()
             .flex_col()
@@ -3440,6 +3504,19 @@ impl Render for TerminalView {
                                     // so a bent pane and a flat pane coexist and
                                     // hit-testing matches each tube's own shader k.
                                     let (k1, k2) = crate::theme::warp_coeffs(th.warp);
+                                    // Per-pane crawl: this tube recedes by THIS
+                                    // pane's own crawl perspective (grade.crawl →
+                                    // th.crawl/angle/depth). Identity when off, so
+                                    // a crawling pane and a plain pane coexist.
+                                    let crawl = if th.crawl {
+                                        let (a, d) = crate::theme::crawl_coeffs(
+                                            th.crawl_angle,
+                                            th.crawl_depth,
+                                        );
+                                        [1.0, a, d]
+                                    } else {
+                                        [0.0, 1.0, 1.0]
+                                    };
                                     crate::warp::register_tube(
                                         [
                                             f32::from(bounds.origin.x) * sf,
@@ -3450,6 +3527,7 @@ impl Render for TerminalView {
                                         th.screen_glare,
                                         k1,
                                         k2,
+                                        crawl,
                                     );
                                     let changed = {
                                         let mut slot = store.lock().unwrap();
@@ -3478,6 +3556,24 @@ impl Render for TerminalView {
                             .flex()
                             .flex_col()
                             .children(lines.into_iter().map(|(text, runs)| {
+                                // Crawl mode centres each row: alacritty fills a row
+                                // to full width with blank cells, so we trim the
+                                // trailing blanks (clamping the runs to match) and let
+                                // the flex row justify-centre the remaining shaped
+                                // text. gpui measures the real glyph run, so this
+                                // centres correctly even in the proportional crawl
+                                // font. The grid model is unchanged (visual only).
+                                if th.crawl {
+                                    return match crawl_centered_runs(text, runs) {
+                                        Some((t, cut)) => div()
+                                            .h(px(self.cell_h))
+                                            .flex()
+                                            .justify_center()
+                                            .whitespace_nowrap()
+                                            .child(StyledText::new(t).with_runs(cut)),
+                                        None => div().h(px(self.cell_h)).whitespace_nowrap(),
+                                    };
+                                }
                                 let line = div().h(px(self.cell_h)).whitespace_nowrap();
                                 if text.is_empty() {
                                     line

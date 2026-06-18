@@ -7,7 +7,21 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ## [Unreleased]
 
-_Nothing yet._
+### Added
+
+- **Text-crawl mode** — a per-pane toggle that renders the whole terminal as a
+  Star-Wars-style opening crawl: every line in the bundled News-Gothic crawl face
+  (News Cycle, SIL OFL), centred and receding into the distance. The perspective
+  is a GPU pre-map baked into the same CRT post-pass that curves the glass, so it
+  composes for free with the barrel warp, screen jiggle, tracking band, glare and
+  phosphor at one extra `pow` per pixel — no second render pass. Two per-pane
+  dials in the DISPLAY tray (rides the grade group like warp/tracking): **angle**
+  (2–30°, side convergence) and **depth** (0.05–15×, bottom-to-top text-height
+  ratio). The 👓 FOCUS reader inherits the crawl font + centring (flattened for
+  readability). Renderer change ships via `docs/patches/0003-text-crawl.patch`.
+  Web tributes: a `start-crawl.html` kiosk and an `info.html` section.
+  - _Known limitation:_ click hit-testing in a crawling pane stays barrel-only,
+    so text selection is approximate — crawl is a display/nostalgia mode.
 
 ## [0.2.0] — 2026-06-15
 

@@ -1,0 +1,194 @@
+diff --git a/crates/gpui_wgpu/src/crt_pass.wgsl b/crates/gpui_wgpu/src/crt_pass.wgsl
+index 4257883..9e81d0a 100644
+--- a/crates/gpui_wgpu/src/crt_pass.wgsl
++++ b/crates/gpui_wgpu/src/crt_pass.wgsl
+@@ -21,6 +21,8 @@ struct CrtParams {
+     glare: array<vec4<f32>, 8>,    // strength, k1, k2, _pad (per-rect curvature)
+     focus_rect: vec4<f32>,         // x, y, w, h (physical px) — the sharp panel
+     focus_params: vec4<f32>,       // blur_radius_px, feather_px, tint, corner_radius_px
++    crawl: array<vec4<f32>, 8>,    // per-rect Star-Wars crawl: enabled(0/1), a (top
++                                   // width ratio), D (depth = h_bottom/h_top), _pad
+ }
+ 
+ @group(0) @binding(0) var<uniform> crt: CrtParams;
+@@ -66,13 +68,40 @@ fn fs_crt(in: CrtVsOut) -> @location(0) vec4<f32> {
+             // a bent neighbour has turned the pass on, and vice versa.
+             let k1 = crt.glare[i].y;
+             let k2 = crt.glare[i].z;
+-            // a genuinely flat tube (a no-bend pane) passes straight through,
+-            // so it looks identical with or without the pass — no vignette, no
+-            // glare, exact hit-testing.
+-            if (abs(k1) < 0.0005 && abs(k2) < 0.0005) {
++            let crawl_on = crt.crawl[i].x > 0.5;
++            // a genuinely flat tube (a no-bend, non-crawling pane) passes straight
++            // through, so it looks identical with or without the pass — no
++            // vignette, no glare, exact hit-testing. A crawling pane never takes
++            // this path even when barrel-flat, so its perspective still applies.
++            if (abs(k1) < 0.0005 && abs(k2) < 0.0005 && !crawl_on) {
+                 return textureSampleLevel(screen_tex, screen_samp, in.uv, 0.0);
+             }
+-            let local = (p - r.xy) / r.zw;
++            var local = (p - r.xy) / r.zw;
++            // ---- crawl perspective pre-map (Star-Wars text recede) ----
++            // Re-aim the sample so the flat content reads as a plane tilting away
++            // toward the top: rows bunch + narrow with distance. We invert the
++            // perspective-correct foreshortening v = ln(1+(D-1)tc)/ln(D), so
++            // tc(vb) = (D^vb - 1)/(D - 1), with vb measured from the near (bottom)
++            // edge. Sides taper from full width at the bottom to `a` at the top.
++            // Out-of-trapezoid samples letterbox to black (the starfield bars),
++            // which still pick up the glass glare/vignette below.
++            if (crawl_on) {
++                let a = crt.crawl[i].y;
++                let depth = crt.crawl[i].z;
++                let vb = 1.0 - local.y;            // 0 = bottom/near, 1 = top/far
++                var tc: f32;
++                if (abs(depth - 1.0) < 1e-3) {
++                    tc = vb;                       // no foreshortening → linear
++                } else {
++                    tc = (pow(depth, vb) - 1.0) / (depth - 1.0);
++                }
++                let width = (1.0 - tc) + a * tc;   // 1 at bottom → a at top
++                let cx = 0.5 + (local.x - 0.5) / width;
++                if (cx < 0.0 || cx > 1.0) {
++                    return vec4<f32>(0.0, 0.0, 0.0, 1.0);
++                }
++                local = vec2<f32>(cx, 1.0 - tc);
++            }
+             let c = local - vec2<f32>(0.5, 0.5);
+             let r2 = dot(c, c);
+             let f = 1.0 + k1 * r2 + k2 * r2 * r2;
+diff --git a/crates/gpui_wgpu/src/wgpu_renderer.rs b/crates/gpui_wgpu/src/wgpu_renderer.rs
+index f8eabe3..68f4975 100644
+--- a/crates/gpui_wgpu/src/wgpu_renderer.rs
++++ b/crates/gpui_wgpu/src/wgpu_renderer.rs
+@@ -111,9 +111,14 @@ fn crt_warp() -> (f32, f32) {
+     )
+ }
+ 
+-// (rect[x,y,w,h], glare, k1, k2) — curvature is per rect so each tube bends
+-// on its own theme regardless of the window-wide dial.
+-type CrtRect = ([f32; 4], f32, f32, f32);
++// (rect[x,y,w,h], glare, k1, k2, crawl[enabled, a, depth]) — curvature AND crawl
++// perspective are per rect so each tube bends/recedes on its own theme regardless
++// of the window-wide dial. crawl[0]=1 enables the perspective pre-map; a is the
++// top-edge width ratio, depth the bottom:top text-height ratio (see crt_pass.wgsl).
++type CrtRect = ([f32; 4], f32, f32, f32, [f32; 3]);
++
++/// Crawl identity (disabled): no perspective, no taper, flat depth.
++const CRAWL_IDENTITY: [f32; 3] = [0.0, 1.0, 1.0];
+ 
+ static CRT_RECTS: std::sync::Mutex<Vec<CrtRect>> = std::sync::Mutex::new(Vec::new());
+ 
+@@ -121,7 +126,12 @@ static CRT_RECTS: std::sync::Mutex<Vec<CrtRect>> = std::sync::Mutex::new(Vec::ne
+ pub fn set_crt_rects(rects: &[[f32; 4]]) {
+     let mut guard = CRT_RECTS.lock().unwrap();
+     guard.clear();
+-    guard.extend(rects.iter().take(8).map(|rect| (*rect, 0.0, 0.0, 0.0)));
++    guard.extend(
++        rects
++            .iter()
++            .take(8)
++            .map(|rect| (*rect, 0.0, 0.0, 0.0, CRAWL_IDENTITY)),
++    );
+ }
+ 
+ /// Replace the set of warped rectangles with a per-rect top-left glass glare.
+@@ -132,38 +142,46 @@ pub fn set_crt_rects_with_glare(rects: &[([f32; 4], f32)]) {
+         rects
+             .iter()
+             .take(8)
+-            .map(|(rect, glare)| (*rect, glare.clamp(0.0, 1.0), 0.0, 0.0)),
++            .map(|(rect, glare)| (*rect, glare.clamp(0.0, 1.0), 0.0, 0.0, CRAWL_IDENTITY)),
+     );
+ }
+ 
+ /// Replace the set of warped rectangles with a per-rect glare AND per-rect
+ /// barrel curvature (k1, k2). This is what the per-pane warp registry uses:
+ /// each tube carries the curvature of its own theme.
+-pub fn set_crt_rects_tubes(rects: &[([f32; 4], f32, f32, f32)]) {
++pub fn set_crt_rects_tubes(rects: &[([f32; 4], f32, f32, f32, [f32; 3])]) {
+     let mut guard = CRT_RECTS.lock().unwrap();
+     guard.clear();
+     guard.extend(
+         rects
+             .iter()
+             .take(8)
+-            .map(|(rect, glare, k1, k2)| (*rect, glare.clamp(0.0, 1.0), *k1, *k2)),
++            .map(|(rect, glare, k1, k2, crawl)| (*rect, glare.clamp(0.0, 1.0), *k1, *k2, *crawl)),
+     );
+ }
+ 
+-/// Returns (rects, packed glare+curvature [glare, k1, k2, _], count, max|k|).
+-/// The max curvature magnitude lets the caller turn the pass on when any tube
+-/// bends, even if the global dial is flat.
+-fn crt_rects() -> ([[f32; 4]; 8], [[f32; 4]; 8], u32, f32) {
++/// Returns (rects, packed glare+curvature [glare, k1, k2, _], crawl [enabled, a,
++/// depth, _], count, max|k|). The max curvature magnitude lets the caller turn
++/// the pass on when any tube bends, even if the global dial is flat — and a tube
++/// with crawl on also forces the pass active (`max_k` is bumped) so the
++/// perspective is applied even on an otherwise-flat pane.
++fn crt_rects() -> ([[f32; 4]; 8], [[f32; 4]; 8], [[f32; 4]; 8], u32, f32) {
+     let guard = CRT_RECTS.lock().unwrap();
+     let mut rects = [[0.0f32; 4]; 8];
+     let mut glare = [[0.0f32; 4]; 8];
++    let mut crawl = [[0.0f32, 1.0, 1.0, 0.0]; 8];
+     let mut max_k = 0.0f32;
+-    for (i, (r, g, k1, k2)) in guard.iter().take(8).enumerate() {
++    for (i, (r, g, k1, k2, c)) in guard.iter().take(8).enumerate() {
+         rects[i] = *r;
+         glare[i] = [*g, *k1, *k2, 0.0];
++        crawl[i] = [c[0], c[1], c[2], 0.0];
+         max_k = max_k.max(k1.abs()).max(k2.abs());
++        // A crawling tube must keep the pass live even when it's barrel-flat.
++        if c[0] > 0.5 {
++            max_k = max_k.max(1.0);
++        }
+     }
+-    (rects, glare, guard.len().min(8) as u32, max_k)
++    (rects, glare, crawl, guard.len().min(8) as u32, max_k)
+ }
+ 
+ // ---- terminal-delight FOCUS frosted-glass backdrop ----
+@@ -287,7 +305,8 @@ impl CrtPass {
+         let params_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+             label: Some("crt_pass_params"),
+             // k(16) + rects(8*16) + glare(8*16) + focus_rect(16) + focus_params(16)
+-            size: 16 + 8 * 16 + 8 * 16 + 32,
++            // + crawl(8*16)
++            size: 16 + 8 * 16 + 8 * 16 + 32 + 8 * 16,
+             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+             mapped_at_creation: false,
+         });
+@@ -1395,7 +1414,8 @@ impl WgpuRenderer {
+         // td-crt-pass: when warp is on, the scene renders offscreen and a
+         // final barrel-distortion pass writes the swapchain.
+         let (crt_k1, crt_k2) = crt_warp();
+-        let (crt_rect_arr, crt_glare_arr, crt_rect_count, crt_max_rect_k) = crt_rects();
++        let (crt_rect_arr, crt_glare_arr, crt_crawl_arr, crt_rect_count, crt_max_rect_k) =
++            crt_rects();
+         let (fb_rect, fb_radius, fb_feather, fb_tint, fb_corner, fb_active) = focus_blur();
+         let crt_active = (crt_rect_count > 0
+             && (crt_k1.abs() > 0.0005 || crt_k2.abs() > 0.0005 || crt_max_rect_k > 0.0005))
+@@ -1598,7 +1618,10 @@ impl WgpuRenderer {
+             if let (true, Some(scene_view)) = (crt_active, crt_scene_view.as_ref()) {
+                 if let Some(crt) = self.crt.as_ref() {
+                     let resources = self.resources();
+-                    let mut params = [0.0f32; 4 + 32 + 32 + 8];
++                    // k(4) + rects(32) + glare(32) + focus_rect(4) + focus_params(4)
++                    // + crawl(32) = 108 floats. crawl appended last so the existing
++                    // field offsets are unchanged.
++                    let mut params = [0.0f32; 4 + 32 + 32 + 8 + 32];
+                     params[0] = crt_k1;
+                     params[1] = crt_k2;
+                     params[2] = crt_rect_count as f32;
+@@ -1614,6 +1637,10 @@ impl WgpuRenderer {
+                     params[73] = fb_feather;
+                     params[74] = fb_tint;
+                     params[75] = fb_corner;
++                    // crawl[enabled, a, depth, _] per rect
++                    for (i, c) in crt_crawl_arr.iter().enumerate() {
++                        params[76 + i * 4..76 + i * 4 + 4].copy_from_slice(c);
++                    }
+                     resources.queue.write_buffer(
+                         &crt.params_buffer,
+                         0,
