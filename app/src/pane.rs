@@ -164,7 +164,13 @@ pub fn robot_icon(accent: gpui::Hsla, scale: f32) -> gpui::Div {
                 .flex()
                 .flex_col()
                 .items_center()
-                .child(div().w(px(3.5 * s)).h(px(3.5 * s)).rounded_full().bg(accent))
+                .child(
+                    div()
+                        .w(px(3.5 * s))
+                        .h(px(3.5 * s))
+                        .rounded_full()
+                        .bg(accent),
+                )
                 .child(div().w(px(1.5 * s)).h(px(3. * s)).bg(accent.alpha(0.8))),
         )
         .child(
@@ -180,7 +186,14 @@ pub fn robot_icon(accent: gpui::Hsla, scale: f32) -> gpui::Div {
                 .rounded_md()
                 .border_1()
                 .border_color(accent)
-                .child(div().flex().flex_row().gap(px(4. * s)).child(eye()).child(eye()))
+                .child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .gap(px(4. * s))
+                        .child(eye())
+                        .child(eye()),
+                )
                 .child(
                     div()
                         .w(px(9. * s))

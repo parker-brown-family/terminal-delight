@@ -15,6 +15,8 @@ mod crt;
 mod csd;
 mod gamba;
 mod mcp;
+mod mcp_tail;
+mod mcp_transport;
 mod pane;
 mod session;
 mod term;
@@ -1449,6 +1451,14 @@ impl Workspace {
                 }
             })
             .detach();
+        }
+        // Read-only MCP control surface: when an orchestrator launches us with
+        // TD_MCP set (stdio piped), speak JSON-RPC on stdin/stdout. `build` runs
+        // once for this process's first window, and `start` is a process-wide
+        // singleton (an atomic guard), so the server attaches exactly once —
+        // whichever window mode the orchestrator chose to launch.
+        if std::env::var_os("TD_MCP").is_some() {
+            mcp_transport::start(cx);
         }
         ws
     }
@@ -5820,17 +5830,20 @@ impl Render for Workspace {
                     cx.notify();
                 }),
             );
-            let expose_btn =
-                Self::bezel_btn(&th, format!("expose: {}", cfg.expose.label()).as_str(), false)
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                            cx.stop_propagation();
-                            ws.mcp.expose = ws.mcp.expose.next();
-                            ws.save(cx);
-                            cx.notify();
-                        }),
-                    );
+            let expose_btn = Self::bezel_btn(
+                &th,
+                format!("expose: {}", cfg.expose.label()).as_str(),
+                false,
+            )
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                    cx.stop_propagation();
+                    ws.mcp.expose = ws.mcp.expose.next();
+                    ws.save(cx);
+                    cx.notify();
+                }),
+            );
             let events_btn = Self::bezel_btn(
                 &th,
                 if cfg.events {
@@ -5877,9 +5890,9 @@ impl Render for Workspace {
                         .items_center()
                         .gap_2()
                         .child(
-                            div().text_color(dot_col).child(
-                                if p.exposed { "\u{25cf}" } else { "\u{25cb}" }.to_string(),
-                            ),
+                            div()
+                                .text_color(dot_col)
+                                .child(if p.exposed { "\u{25cf}" } else { "\u{25cb}" }.to_string()),
                         )
                         .child(
                             div()

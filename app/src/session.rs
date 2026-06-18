@@ -175,6 +175,13 @@ fn claude_session_for(cwd: &str, home: &Path) -> Option<String> {
 /// ~/.codex/sessions/YYYY/MM/DD/rollout-<ts>-<uuid>.jsonl — uuid from the name,
 /// cwd matched against the first bytes of the file.
 fn codex_session_for(cwd: &str, home: &Path) -> Option<String> {
+    codex_rollout_for(cwd, home).and_then(|p| rollout_uuid(&p))
+}
+
+/// The on-disk rollout *file* for `cwd` (the path `codex_session_for` lifts its
+/// uuid from). Shared so the read-only MCP event tailer can follow the same
+/// transcript instead of re-deriving the layout.
+fn codex_rollout_for(cwd: &str, home: &Path) -> Option<PathBuf> {
     let root = home.join(".codex/sessions");
     let mut rollouts: Vec<PathBuf> = vec![];
     collect_jsonl(&root, &mut rollouts, 4);
@@ -183,15 +190,31 @@ fn codex_session_for(cwd: &str, home: &Path) -> Option<String> {
             .and_then(|m| m.modified())
             .unwrap_or(std::time::UNIX_EPOCH)
     });
-    for p in rollouts.iter().rev().take(20) {
+    rollouts.into_iter().rev().take(20).find(|p| {
         let head = std::fs::read(p)
             .map(|b| String::from_utf8_lossy(&b[..b.len().min(4096)]).into_owned())
             .unwrap_or_default();
-        if head.contains(cwd) {
-            return rollout_uuid(p);
-        }
-    }
-    None
+        head.contains(cwd)
+    })
+}
+
+/// Path to the newest Claude Code transcript JSONL for `cwd` (the live
+/// conversation), or None. Public so the read-only MCP event tailer can follow
+/// the same file the resume id is lifted from.
+pub fn claude_transcript(cwd: &str, home: &Path) -> Option<PathBuf> {
+    newest_jsonl(&home.join(".claude/projects").join(claude_slug(cwd)))
+}
+
+/// Path to the newest Codex rollout JSONL for `cwd`, or None. Companion to
+/// [`claude_transcript`] for the MCP event tailer.
+pub fn codex_transcript(cwd: &str, home: &Path) -> Option<PathBuf> {
+    codex_rollout_for(cwd, home)
+}
+
+/// `$HOME` as a path (or `.`), exposed so callers that already know a pane's
+/// cwd can resolve its transcript without re-reading the env themselves.
+pub fn home_dir() -> PathBuf {
+    PathBuf::from(home())
 }
 
 /// `rollout-2026-06-12T10-00-00-<uuid>.jsonl` → uuid (the last 36 chars of the stem).
