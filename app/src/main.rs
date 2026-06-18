@@ -794,6 +794,19 @@ struct TabDrag {
     engaged: bool,
 }
 
+/// A whole tab group being dragged by its handle to reorder it (all its members
+/// move together, staying contiguous) among the strip's tabs and other groups.
+struct GroupDrag {
+    /// The group id grabbed when the drag began.
+    gid: u32,
+    /// Where the grab started (window space) — engages past a small threshold.
+    start: Point<Pixels>,
+    /// Latest cursor position.
+    at: Point<Pixels>,
+    /// True once the cursor moved far enough to be a drag, not a stray click.
+    engaged: bool,
+}
+
 struct Workspace {
     tabs: Vec<Tab>,
     active: usize,
@@ -850,6 +863,8 @@ struct Workspace {
     tab_bounds: Arc<Mutex<std::collections::HashMap<usize, Bounds<Pixels>>>>,
     /// An outer tab being dragged along the strip to reorder it, if any.
     tab_drag: Option<TabDrag>,
+    /// A whole group being dragged by its handle to reorder it, if any.
+    group_drag: Option<GroupDrag>,
     /// The insertion slot (0..=len) a tab-reorder release would land in.
     tab_drop: Option<usize>,
     /// Browser-style tab groups (colour bands). Members reference a group by id.
@@ -860,6 +875,14 @@ struct Workspace {
     tab_menu: Option<usize>,
     /// Window-space anchor for the open tab config pane.
     tab_menu_at: Option<Point<Pixels>>,
+    /// Which group's own config menu is open (right-click its handle/pill), if
+    /// any. While open, `tab_menu` points at a representative member so the
+    /// shared colour wheel edits the GROUP (scope = Group) and the per-tab menu
+    /// is suppressed — group properties are managed from the group, never from a
+    /// member tab.
+    group_menu: Option<u32>,
+    /// Window-space anchor for the open group config menu.
+    group_menu_at: Option<Point<Pixels>>,
     /// Whether the tab pane's wheel edits this tab's override or its group colour.
     tab_scope: TabScope,
     /// Which pip (Fill / Text) the tab pane's wheel + lightness slider drive.
@@ -1088,11 +1111,14 @@ impl Workspace {
             pane_bounds: Arc::new(Mutex::new(std::collections::HashMap::new())),
             tab_bounds: Arc::new(Mutex::new(std::collections::HashMap::new())),
             tab_drag: None,
+            group_drag: None,
             tab_drop: None,
             groups: Vec::new(),
             next_group_id: 1,
             tab_menu: None,
             tab_menu_at: None,
+            group_menu: None,
+            group_menu_at: None,
             tab_scope: TabScope::ThisTab,
             tab_pip: TabPip::Fill,
             tab_wheel_drag: None,
@@ -1369,6 +1395,70 @@ impl Workspace {
         let tab = self.tabs.remove(from);
         self.tabs.insert(dest, tab);
         self.active = new_active;
+        self.save(cx);
+        cx.notify();
+    }
+
+    /// Keyboard tab reorder (ctrl+shift+pgup / pgdn): slide the active tab one
+    /// slot in `dir` (−1 left / +1 right) — but never across a group boundary. A
+    /// grouped tab can't be shoved out of its group, nor an ungrouped tab pulled
+    /// into one; only same-group (or both-ungrouped) neighbours swap. Mirrors the
+    /// drag-reorder group clamp so both gestures behave alike.
+    fn nudge_active_tab(&mut self, dir: i32, cx: &mut Context<Self>) {
+        let cur = self.active;
+        let n = self.tabs.len();
+        let nb = match dir {
+            d if d < 0 && cur > 0 => cur - 1,
+            d if d > 0 && cur + 1 < n => cur + 1,
+            _ => return,
+        };
+        // boundary clamp: the swap is allowed only when both tabs share the same
+        // group membership (both `None`, or both the same group id).
+        if self.tabs[cur].group != self.tabs[nb].group {
+            return;
+        }
+        self.tabs.swap(cur, nb);
+        self.active = nb;
+        self.save(cx);
+        cx.notify();
+    }
+
+    /// Slide a whole group to insertion slot `to` (pre-removal index space,
+    /// 0..=len): every member moves together and ends up contiguous (this also
+    /// heals a group that drag-reorder had split), preserving member order, with
+    /// `active` still pointing at the very same tab it did before.
+    fn move_group(&mut self, gid: u32, to: usize, cx: &mut Context<Self>) {
+        let n = self.tabs.len();
+        let to = to.min(n);
+        let is_member: Vec<bool> = self.tabs.iter().map(|t| t.group == Some(gid)).collect();
+        if !is_member.iter().any(|&b| b) {
+            return;
+        }
+        // splice point translated into the member-free ("rest") index space
+        let members_before_to = (0..to).filter(|&i| is_member[i]).count();
+        let dest = to - members_before_to;
+        let active_was = self.active;
+        // pull tabs out, tagged with their original index, into rest + block
+        let mut rest: Vec<(usize, Tab)> = Vec::with_capacity(n);
+        let mut block: Vec<(usize, Tab)> = Vec::new();
+        for (i, t) in self.tabs.drain(..).enumerate() {
+            if is_member[i] {
+                block.push((i, t));
+            } else {
+                rest.push((i, t));
+            }
+        }
+        let dest = dest.min(rest.len());
+        let mut rebuilt: Vec<(usize, Tab)> = Vec::with_capacity(n);
+        rebuilt.extend(rest.drain(..dest));
+        rebuilt.extend(block);
+        rebuilt.extend(rest.drain(..));
+        // keep `active` on the same tab by matching its original index
+        self.active = rebuilt
+            .iter()
+            .position(|(oi, _)| *oi == active_was)
+            .unwrap_or_else(|| self.active.min(n.saturating_sub(1)));
+        self.tabs = rebuilt.into_iter().map(|(_, t)| t).collect();
         self.save(cx);
         cx.notify();
     }
@@ -1719,6 +1809,19 @@ impl Workspace {
         }
     }
 
+    /// Does any pane in tab `i` have an unacknowledged "agent finished" bell? It
+    /// drives the per-tab 🔔 badge, so a run that finishes in a background tab is
+    /// visible on the mother bar without opening every pane. Mirrors the pane's
+    /// own bell — the in-terminal ack click clears both at once.
+    fn tab_has_bell(&self, i: usize, cx: &App) -> bool {
+        let Some(tab) = self.tabs.get(i) else {
+            return false;
+        };
+        let mut leaves = vec![];
+        tab.root.leaves(&mut leaves);
+        leaves.iter().any(|p| p.read(cx).has_bell())
+    }
+
     /// How many panes a tab holds — drives the "close more than one?" gate.
     fn tab_pane_count(&self, i: usize) -> usize {
         self.tabs
@@ -1927,14 +2030,25 @@ impl Workspace {
         }
         if m.control && !m.alt && self.tabs.len() > 1 {
             match ks.key.as_str() {
+                // ctrl+shift+pgup → MOVE the active tab left (clamped to its
+                // group); plain ctrl+pgup → switch to the previous tab.
                 "pageup" => {
-                    let n = self.tabs.len();
-                    self.activate_tab((self.active + n - 1) % n, window, cx);
+                    if m.shift {
+                        self.nudge_active_tab(-1, cx);
+                    } else {
+                        let n = self.tabs.len();
+                        self.activate_tab((self.active + n - 1) % n, window, cx);
+                    }
                     return;
                 }
+                // ctrl+shift+pgdn → MOVE right (clamped); plain ctrl+pgdn → next.
                 "pagedown" => {
-                    let n = self.tabs.len();
-                    self.activate_tab((self.active + 1) % n, window, cx);
+                    if m.shift {
+                        self.nudge_active_tab(1, cx);
+                    } else {
+                        let n = self.tabs.len();
+                        self.activate_tab((self.active + 1) % n, window, cx);
+                    }
                     return;
                 }
                 _ => {}
@@ -2008,6 +2122,37 @@ impl Workspace {
             let pos = ev.position;
             let engaged = {
                 let d = self.tab_drag.as_mut().unwrap();
+                d.at = pos;
+                if !d.engaged {
+                    let dx = f32::from(pos.x) - f32::from(d.start.x);
+                    let dy = f32::from(pos.y) - f32::from(d.start.y);
+                    if (dx * dx + dy * dy).sqrt() > 6.0 {
+                        d.engaged = true;
+                    }
+                }
+                d.engaged
+            };
+            self.tab_drop = if engaged {
+                Some(self.resolve_tab_slot(pos.x))
+            } else {
+                None
+            };
+            cx.notify();
+            return;
+        }
+        // a group drag in flight: track the cursor, engage past the threshold (so a
+        // plain handle click still folds the group), and resolve the drop slot —
+        // the whole group lands at the slot a release would drop it into.
+        if self.group_drag.is_some() {
+            if ev.pressed_button != Some(MouseButton::Left) {
+                self.group_drag = None;
+                self.tab_drop = None;
+                cx.notify();
+                return;
+            }
+            let pos = ev.position;
+            let engaged = {
+                let d = self.group_drag.as_mut().unwrap();
                 d.at = pos;
                 if !d.engaged {
                     let dx = f32::from(pos.x) - f32::from(d.start.x);
@@ -2213,6 +2358,20 @@ impl Workspace {
         }
         // FOCUS text-size: live-only, never persisted, so just drop the latch.
         if std::mem::take(&mut self.focus_zoom_drag) {
+            cx.notify();
+            return;
+        }
+        // a group drag: drop the whole group into its resolved slot, or — if it
+        // never engaged — treat the handle press as a click that folds the group.
+        if let Some(drag) = self.group_drag.take() {
+            let slot = self.tab_drop.take();
+            if drag.engaged {
+                if let Some(to) = slot {
+                    self.move_group(drag.gid, to, cx);
+                }
+            } else {
+                self.toggle_group_collapsed(drag.gid, cx);
+            }
             cx.notify();
             return;
         }
@@ -3194,9 +3353,41 @@ impl Workspace {
     fn open_tab_menu(&mut self, i: usize, at: Point<Pixels>, cx: &mut Context<Self>) {
         self.tab_menu = Some(i);
         self.tab_menu_at = Some(at);
+        self.group_menu = None;
         self.tab_drag = None;
         self.tab_scope = TabScope::ThisTab;
         self.tab_pip = TabPip::Fill;
+        cx.notify();
+    }
+
+    /// Open the group's own config menu (right-click its handle / collapsed pill).
+    /// The group is a first-class tabby thing: its colour, name, fold, and
+    /// disband all live here — never on a member tab's menu. We point the shared
+    /// colour wheel at a representative member with Group scope, so the existing
+    /// wheel/lightness/swatch machinery edits the group's colours directly.
+    fn open_group_menu(&mut self, gid: u32, at: Point<Pixels>, cx: &mut Context<Self>) {
+        self.group_menu = Some(gid);
+        self.group_menu_at = Some(at);
+        self.tab_menu = self.tabs.iter().position(|t| t.group == Some(gid));
+        self.tab_scope = TabScope::Group;
+        self.tab_pip = TabPip::Fill;
+        self.tab_drag = None;
+        cx.notify();
+    }
+
+    /// Disband a group: clear every member's membership, prune the now-empty
+    /// group, and close the menu.
+    fn ungroup(&mut self, gid: u32, cx: &mut Context<Self>) {
+        for t in self.tabs.iter_mut() {
+            if t.group == Some(gid) {
+                t.group = None;
+            }
+        }
+        self.prune_groups();
+        self.group_menu = None;
+        self.tab_menu = None;
+        self.tab_scope = TabScope::ThisTab;
+        self.save(cx);
         cx.notify();
     }
 
@@ -3357,6 +3548,11 @@ impl Workspace {
                         .bg(th.accent.alpha(0.25)),
                 )
             })
+            // 🔔 badge: an agent run finished in a pane of this tab and hasn't been
+            // acknowledged yet (cleared by the in-terminal ack click).
+            .when(self.tab_has_bell(i, cx), |d| {
+                d.child(div().text_size(px(11. * s)).child("🔔"))
+            })
             .child(pencil)
             .child(close_x)
     }
@@ -3382,8 +3578,10 @@ impl Workspace {
             .items_center()
             .gap(px(4. * s))
             .px(px(4. * s))
-            .h(px(18. * s))
-            .rounded_sm()
+            .h(px(20. * s))
+            // square the bottom so the handle sits flush ON the group's colour
+            // rail (rounded top only) — the "parent tab" touching the bar
+            .rounded_t_md()
             .bg(color)
             .cursor_pointer()
             .text_size(px(9. * s))
@@ -3400,21 +3598,27 @@ impl Workspace {
         }
         chip.on_mouse_down(
             MouseButton::Left,
-            cx.listener(move |ws, ev: &MouseDownEvent, window, cx| {
+            cx.listener(move |ws, ev: &MouseDownEvent, _window, cx| {
                 cx.stop_propagation();
-                if ev.click_count >= 2 {
-                    let seed = ws
-                        .groups
-                        .iter()
-                        .find(|g| g.id == gid)
-                        .and_then(|g| g.name.clone())
-                        .unwrap_or_default();
-                    ws.group_rename = Some((gid, seed));
-                    window.focus(&ws.focus_handle, cx);
-                    cx.notify();
-                } else {
-                    ws.toggle_group_collapsed(gid, cx);
-                }
+                // arm a group drag: a release without travel folds the group, a
+                // release after travel reorders the whole group (see on_mouse_up).
+                ws.group_drag = Some(GroupDrag {
+                    gid,
+                    start: ev.position,
+                    at: ev.position,
+                    engaged: false,
+                });
+                ws.tab_drop = None;
+                cx.notify();
+            }),
+        )
+        // right-click the handle → the group's own config menu (rename, colour,
+        // fold, disband). Group properties live on the group, not its members.
+        .on_mouse_down(
+            MouseButton::Right,
+            cx.listener(move |ws, ev: &MouseDownEvent, _w, cx| {
+                cx.stop_propagation();
+                ws.open_group_menu(gid, ev.position, cx);
             }),
         )
     }
@@ -3463,9 +3667,25 @@ impl Workspace {
             .child(format!("{count}"))
             .on_mouse_down(
                 MouseButton::Left,
-                cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                cx.listener(move |ws, ev: &MouseDownEvent, _w, cx| {
                     cx.stop_propagation();
-                    ws.toggle_group_collapsed(gid, cx);
+                    // arm a group drag; a release without travel expands the pill.
+                    ws.group_drag = Some(GroupDrag {
+                        gid,
+                        start: ev.position,
+                        at: ev.position,
+                        engaged: false,
+                    });
+                    ws.tab_drop = None;
+                    cx.notify();
+                }),
+            )
+            // right-click a folded group → its config menu, same as the handle.
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(move |ws, ev: &MouseDownEvent, _w, cx| {
+                    cx.stop_propagation();
+                    ws.open_group_menu(gid, ev.position, cx);
                 }),
             )
     }
@@ -4209,7 +4429,8 @@ impl Render for Workspace {
         // holds the active tab, which force-expands so you never lose your place).
         let mut tab_strip = div().flex().flex_row().gap(px(4. * scale)).items_center();
         // while a tab is being dragged, an accent bar marks the slot it'd land in
-        let dragging_tab = self.tab_drag.as_ref().is_some_and(|d| d.engaged);
+        let dragging_tab = self.tab_drag.as_ref().is_some_and(|d| d.engaged)
+            || self.group_drag.as_ref().is_some_and(|d| d.engaged);
         let drop_slot = self.tab_drop;
         let drop_marker = || {
             div()
@@ -4240,26 +4461,32 @@ impl Render for Workspace {
                 if collapsed {
                     tab_strip = tab_strip.child(self.group_pill(g, j - i, cx));
                 } else {
+                    // The group reads as ONE bound unit: the handle + members all
+                    // rest on a shared colour rail (items_end sits everything on the
+                    // bar), and extra horizontal margin sets the group apart from
+                    // its neighbours — ungrouped tabs keep their tight 4px gap.
                     let mut band = div()
                         .relative()
                         .flex()
                         .flex_row()
-                        .items_center()
+                        .items_end()
                         .gap(px(4. * scale))
+                        .mx(px(6. * scale))
                         .pb(px(4. * scale))
                         .child(self.group_chip(g, cx));
                     for k in i..j {
                         band = band.child(self.tab_button(k, cx));
                     }
-                    // the colour rail beneath the run (the ▔ band)
+                    // the colour rail the whole run rests on — the handle's square
+                    // bottom meets it, so the chip and its tabs read as linked
                     band = band.child(
                         div()
                             .absolute()
                             .left_0()
                             .right_0()
                             .bottom_0()
-                            .h(px(3. * scale))
-                            .rounded_full()
+                            .h(px(4. * scale))
+                            .rounded_b_md()
                             .bg(color),
                     );
                     tab_strip = tab_strip.child(band);
@@ -5447,13 +5674,15 @@ impl Render for Workspace {
         // ---- tab config pane (right-click / ctrl+click a tab) ----
         // Rename, a two-pip colour wheel (▣ fill + T text) scoped to this tab or
         // its group, quick swatches, and group controls — like the other trays.
-        let tab_menu_overlay = self.tab_menu.and_then(|i| {
+        let tab_menu_overlay = self
+            .tab_menu
+            .filter(|_| self.group_menu.is_none())
+            .and_then(|i| {
             let tab = self.tabs.get(i)?;
             let label = tab.name.clone().unwrap_or_else(|| format!("tab {}", i + 1));
             let grouped = tab.group.is_some();
             let gid = tab.group;
             let at = self.tab_menu_at.unwrap_or_default();
-            let scope = self.tab_scope;
             let pip = self.tab_pip;
 
             // rename this tab (closes the pane, opens the inline strip editor)
@@ -5472,35 +5701,6 @@ impl Render for Workspace {
                     cx.notify();
                 }),
             );
-
-            // scope: this tab's override vs its group's lead (group only if grouped)
-            let scope_row = div()
-                .flex()
-                .flex_row()
-                .gap_1()
-                .items_center()
-                .child(
-                    Self::bezel_btn(&th, "this tab", scope == TabScope::ThisTab).on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                            cx.stop_propagation();
-                            ws.tab_scope = TabScope::ThisTab;
-                            cx.notify();
-                        }),
-                    ),
-                )
-                .when(grouped, |d| {
-                    d.child(
-                        Self::bezel_btn(&th, "group", scope == TabScope::Group).on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                                cx.stop_propagation();
-                                ws.tab_scope = TabScope::Group;
-                                cx.notify();
-                            }),
-                        ),
-                    )
-                });
 
             // which pip the wheel + lightness slider drive
             let pip_row = div()
@@ -5575,52 +5775,16 @@ impl Render for Workspace {
                     .child("group"),
             );
             if grouped {
-                let gid_u = gid.unwrap();
-                let collapsed = self.group_of(i).map(|g| g.collapsed).unwrap_or(false);
-                group_box = group_box.child(
-                    div()
-                        .flex()
-                        .flex_row()
-                        .flex_wrap()
-                        .gap_1()
-                        .child(Self::bezel_btn(&th, "✎ name", false).on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
-                                cx.stop_propagation();
-                                let seed = ws
-                                    .groups
-                                    .iter()
-                                    .find(|g| g.id == gid_u)
-                                    .and_then(|g| g.name.clone())
-                                    .unwrap_or_default();
-                                ws.tab_menu = None;
-                                ws.group_rename = Some((gid_u, seed));
-                                window.focus(&ws.focus_handle, cx);
-                                cx.notify();
-                            }),
-                        ))
-                        .child(
-                            Self::bezel_btn(
-                                &th,
-                                if collapsed { "expand" } else { "collapse" },
-                                false,
-                            )
-                            .on_mouse_down(
-                                MouseButton::Left,
-                                cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
-                                    cx.stop_propagation();
-                                    ws.toggle_group_collapsed(gid_u, cx);
-                                }),
-                            ),
-                        )
-                        .child(Self::bezel_btn(&th, "remove", false).on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
-                                cx.stop_propagation();
-                                ws.remove_from_group(i, cx);
-                            }),
-                        )),
-                );
+                // membership only — the group's own colour / name / fold / disband
+                // live on the group's right-click menu, never on a member tab.
+                group_box =
+                    group_box.child(Self::bezel_btn(&th, "remove from group", false).on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                            cx.stop_propagation();
+                            ws.remove_from_group(i, cx);
+                        }),
+                    ));
             } else {
                 group_box =
                     group_box.child(Self::bezel_btn(&th, "＋ new group", false).on_mouse_down(
@@ -5713,7 +5877,6 @@ impl Render for Workspace {
                         .child(format!("\u{201c}{label}\u{201d}")),
                 )
                 .child(rename_btn)
-                .child(scope_row)
                 .child(pip_row)
                 .child(self.tab_color_wheel(i, cx))
                 .child(self.tab_lightness_bar(i, cx))
@@ -5729,6 +5892,184 @@ impl Render for Workspace {
                         MouseButton::Left,
                         cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
                             ws.tab_menu = None;
+                            cx.notify();
+                        }),
+                    )
+                    .child(panel),
+            )
+        });
+
+        // ---- group config menu (right-click a group handle / collapsed pill) ----
+        // The group's OWN tabby controls: rename, a two-pip colour wheel (▣ fill +
+        // T text) scoped to the GROUP, fold, and disband. `open_group_menu` points
+        // the shared wheel at a representative member with Group scope, so the same
+        // wheel / lightness / swatch widgets edit the group's colours directly.
+        let group_menu_overlay = self.group_menu.and_then(|gid| {
+            let g = self.groups.iter().find(|g| g.id == gid)?;
+            let gname = g.name.clone().unwrap_or_else(|| format!("group {gid}"));
+            let collapsed = g.collapsed;
+            let at = self.group_menu_at.unwrap_or_default();
+            let pip = self.tab_pip;
+            let mi = self.tabs.iter().position(|t| t.group == Some(gid))?;
+
+            let rename_btn = Self::bezel_btn(&th, "✎ rename group", false).on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
+                    cx.stop_propagation();
+                    let seed = ws
+                        .groups
+                        .iter()
+                        .find(|g| g.id == gid)
+                        .and_then(|g| g.name.clone())
+                        .unwrap_or_default();
+                    ws.group_menu = None;
+                    ws.tab_menu = None;
+                    ws.group_rename = Some((gid, seed));
+                    window.focus(&ws.focus_handle, cx);
+                    cx.notify();
+                }),
+            );
+            let fold_btn =
+                Self::bezel_btn(&th, if collapsed { "expand" } else { "collapse" }, false)
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                            cx.stop_propagation();
+                            ws.toggle_group_collapsed(gid, cx);
+                        }),
+                    );
+            let disband_btn = Self::bezel_btn(&th, "ungroup", false).on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                    cx.stop_propagation();
+                    ws.ungroup(gid, cx);
+                }),
+            );
+
+            // which pip the wheel + lightness slider drive (fill vs text lead)
+            let pip_row = div()
+                .flex()
+                .flex_row()
+                .gap_1()
+                .child(
+                    Self::bezel_btn(&th, "▣ fill", pip == TabPip::Fill).on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                            cx.stop_propagation();
+                            ws.tab_pip = TabPip::Fill;
+                            cx.notify();
+                        }),
+                    ),
+                )
+                .child(
+                    Self::bezel_btn(&th, "T text", pip == TabPip::Text).on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                            cx.stop_propagation();
+                            ws.tab_pip = TabPip::Text;
+                            cx.notify();
+                        }),
+                    ),
+                );
+
+            // quick fill swatches — write the group's fill via the shared pip path
+            let mut swatches = div().flex().flex_row().flex_wrap().gap_1().max_w(px(184.));
+            for &(h, s, l) in TAB_SWATCHES {
+                let c = hsla(h, s, l, 1.);
+                let hex = hsla_to_hex(c);
+                swatches = swatches.child(
+                    div()
+                        .id(SharedString::from(format!(
+                            "grp-swatch-{gid}-{}",
+                            (h * 1000.) as i32
+                        )))
+                        .w(px(18.))
+                        .h(px(18.))
+                        .rounded_full()
+                        .bg(c)
+                        .cursor_pointer()
+                        .border_1()
+                        .border_color(hsla(0., 0., 0., 0.5))
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                                cx.stop_propagation();
+                                ws.tab_pip = TabPip::Fill;
+                                ws.tab_set_pip(TabPip::Fill, Some(hex.clone()), cx);
+                            }),
+                        ),
+                );
+            }
+
+            // clear the active pip (a group's fill never clears; its text lead does)
+            let clear = Self::bezel_btn(&th, "clear", false).on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                    cx.stop_propagation();
+                    let p = ws.tab_pip;
+                    ws.tab_set_pip(p, None, cx);
+                }),
+            );
+
+            let panel = div()
+                .absolute()
+                .left(px(f32::from(at.x)))
+                .top(px(f32::from(at.y) + 8.))
+                .p_2()
+                .rounded_md()
+                .border_1()
+                .border_color(th.accent.alpha(0.6))
+                .bg(darken(th.surface, 0.6))
+                .shadow(vec![BoxShadow {
+                    color: hsla(0., 0., 0., 0.55),
+                    offset: point(px(3.), px(5.)),
+                    blur_radius: px(16.),
+                    spread_radius: px(0.),
+                    inset: false,
+                }])
+                .flex()
+                .flex_col()
+                .gap_2()
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|_, _: &MouseDownEvent, _w, cx| cx.stop_propagation()),
+                )
+                .child(
+                    div()
+                        .text_size(px(10.))
+                        .text_color(th.text.alpha(0.85))
+                        .child(format!("group · {gname}")),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .gap_1()
+                        .child(rename_btn)
+                        .child(fold_btn),
+                )
+                .child(pip_row)
+                .child(self.tab_color_wheel(mi, cx))
+                .child(self.tab_lightness_bar(mi, cx))
+                .child(swatches)
+                .child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .justify_between()
+                        .child(clear)
+                        .child(disband_btn),
+                );
+            Some(
+                div()
+                    .absolute()
+                    .inset_0()
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                            ws.group_menu = None;
+                            ws.tab_menu = None;
+                            ws.tab_scope = TabScope::ThisTab;
                             cx.notify();
                         }),
                     )
@@ -6033,6 +6374,7 @@ impl Render for Workspace {
                     .children(confirm_overlay)
                     .children(help_overlay)
                     .children(tab_menu_overlay)
+                    .children(group_menu_overlay)
                     .children(drag_chip)
                     // the FOCUS reading modal rides above everything else
                     .children(focus_overlay),
