@@ -3749,6 +3749,9 @@ impl Workspace {
         // tabs ride the menu-bar slider: everything in the tab scales with the bar
         let s = theme::outer_choice(cx).grade.scale;
         let is_active = i == self.active;
+        // the ACTIVE tab reads 20% bigger and lifts up out of the strip so the
+        // current tab is unmistakable at a glance.
+        let ts = if is_active { s * 1.2 } else { s };
         // the inline rename box owns this slot while renaming — full text editor
         // (caret + selection) so arrows / ctrl+arrows / shift navigation all work
         if let Some((_, eb)) = self.renaming.as_ref().filter(|(ri, _)| *ri == i) {
@@ -3782,8 +3785,8 @@ impl Workspace {
         let (fill, text) = self.resolved_tab_colors(i);
         // the per-tab close affordance — an X in the tab's own frame
         let close_x = div()
-            .px(px(4. * s))
-            .text_size(px(12. * s))
+            .px(px(4. * ts))
+            .text_size(px(12. * ts))
             .text_color(text.unwrap_or(if is_active { th.text } else { th.faint }))
             .cursor_pointer()
             .child("×")
@@ -3799,7 +3802,7 @@ impl Workspace {
         // hover-revealed ✎ affordance: invites the rename without a word
         let pencil = div()
             .id(SharedString::from(format!("tab-pencil-{i}")))
-            .text_size(px(10. * s))
+            .text_size(px(10. * ts))
             .text_color(hsla(0., 0., 0., 0.)) // hidden until the tab is hovered
             .group_hover(tab_grp.clone(), move |s| s.text_color(pencil_col))
             .cursor_pointer()
@@ -3816,7 +3819,7 @@ impl Workspace {
             );
         // tint to the resolved fill (tab override or group lead); the resolved
         // text colour rides over the bezel's default label colour
-        let mut btn = Self::bezel_btn_s(&th, &label, is_active, s);
+        let mut btn = Self::bezel_btn_s(&th, &label, is_active, ts);
         if let Some(c) = fill {
             btn = btn
                 .bg(linear_gradient(
@@ -3834,10 +3837,12 @@ impl Workspace {
             matches!(&self.drop_target, Some(DropTarget::Tab { index, .. }) if *index == i);
         btn.group(tab_grp)
             .relative()
+            // lift the active tab up out of the strip a touch
+            .when(is_active, |d| d.mt(px(-4. * s)))
             .flex()
             .flex_row()
             .items_center()
-            .gap(px(4. * s))
+            .gap(px(4. * ts))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |ws, ev: &MouseDownEvent, window, cx| {
@@ -5867,6 +5872,8 @@ impl Render for Workspace {
             let panes = self.mcp_snapshot(cx);
             let total = panes.len();
             let exposed = panes.iter().filter(|p| p.exposed).count();
+            let vp_h = f32::from(window.viewport_size().height);
+            let home = std::env::var("HOME").unwrap_or_default();
             let label = |s: String| {
                 div()
                     .text_size(px(9.))
@@ -5925,7 +5932,7 @@ impl Render for Workspace {
             );
 
             // live pane list: exactly what the server would (or wouldn't) expose
-            let mut list = div().flex().flex_col().gap_1();
+            let mut list = div().id("mcp-pane-list").flex().flex_col().gap_1();
             if panes.is_empty() {
                 list = list.child(label("no panes".to_string()));
             }
@@ -5940,10 +5947,37 @@ impl Render for Workspace {
                 } else {
                     th.text.alpha(0.6)
                 };
-                let mut sub = p.cwd.clone().unwrap_or_else(|| "\u{2014}".to_string());
-                if let Some(sess) = &p.session {
-                    sub = format!("{sub}  \u{00b7}  {sess}");
+                // Abbreviate so a long cwd / resume id never spills off the panel:
+                // home → ~, then keep the tail; the resume command → a short tag.
+                let mut cwd = p.cwd.clone().unwrap_or_else(|| "\u{2014}".to_string());
+                if !home.is_empty() {
+                    cwd = cwd.replacen(&home, "~", 1);
                 }
+                if cwd.chars().count() > 34 {
+                    let tail: String = cwd
+                        .chars()
+                        .rev()
+                        .take(32)
+                        .collect::<Vec<_>>()
+                        .into_iter()
+                        .rev()
+                        .collect();
+                    cwd = format!("\u{2026}{tail}");
+                }
+                let sub = match &p.session {
+                    Some(sess) => {
+                        let agent = sess.split_whitespace().next().unwrap_or("agent");
+                        let id = sess
+                            .split_whitespace()
+                            .last()
+                            .filter(|t| t.len() >= 8 && !t.starts_with("--"));
+                        match id {
+                            Some(i) => format!("{cwd}   {agent} \u{00b7} {}", &i[..8]),
+                            None => format!("{cwd}   {agent}"),
+                        }
+                    }
+                    None => cwd,
+                };
                 list = list.child(
                     div()
                         .flex()
@@ -5952,6 +5986,7 @@ impl Render for Workspace {
                         .gap_2()
                         .child(
                             div()
+                                .flex_none()
                                 .text_color(dot_col)
                                 .child(if p.exposed { "\u{25cf}" } else { "\u{25cb}" }.to_string()),
                         )
@@ -5965,17 +6000,24 @@ impl Render for Workspace {
                                 .child(p.mode.clone()),
                         )
                         .child(
+                            // takes the remaining width and clips, so neither the
+                            // title nor the path can push the row off the panel.
                             div()
+                                .flex_1()
+                                .min_w(px(0.))
+                                .overflow_hidden()
                                 .flex()
                                 .flex_col()
                                 .child(
                                     div()
+                                        .overflow_hidden()
                                         .text_size(px(10.))
                                         .text_color(th.text)
                                         .child(p.title.clone()),
                                 )
                                 .child(
                                     div()
+                                        .overflow_hidden()
                                         .text_size(px(8.5))
                                         .text_color(th.text.alpha(0.5))
                                         .child(sub),
@@ -5984,11 +6026,20 @@ impl Render for Workspace {
                 );
             }
 
+            // The pane list scrolls within a height cap, so the toggles above and
+            // the notes below stay pinned and on-screen no matter how many panes.
+            let list = list
+                .min_h(px(0.))
+                .max_h(px((vp_h - 220.).max(140.)))
+                .overflow_y_scroll();
+
             let panel = div()
                 .absolute()
                 .top(px(36.))
                 .right(px(70.))
                 .w(px(360.))
+                .max_h(px((vp_h - 52.).max(200.)))
+                .overflow_hidden()
                 .p_3()
                 .rounded_md()
                 .border_1()
