@@ -4423,6 +4423,13 @@ fn render_node(
                 .flex_1()
                 .min_w_0()
                 .min_h_0()
+                // The focused pane has to read as forward even when its accent
+                // border matches the theme (orange border on an orange cabinet is
+                // invisible). gpui has no CSS scale/z-index, so we get the same
+                // "bigger + raised" effect geometrically: INACTIVE panes recess a
+                // few px and dim, leaving the focused one flush, full-bright, and
+                // lifted by its drop shadow — colour-independent, always legible.
+                .when(!is_focused, |d| d.m(px(6.)))
                 .overflow_hidden()
                 .rounded_md()
                 .border_1()
@@ -4440,11 +4447,20 @@ fn render_node(
                             spread_radius: px(1.),
                             inset: false,
                         },
-                        // soft halo around the live tube
+                        // lifted drop shadow: the downward offset is what makes the
+                        // pane read as raised off the surface, not just outlined.
+                        BoxShadow {
+                            color: hsla(0., 0., 0., 0.5),
+                            offset: point(px(0.), px(7.)),
+                            blur_radius: px(26.),
+                            spread_radius: px(1.),
+                            inset: false,
+                        },
+                        // soft accent halo around the live tube
                         BoxShadow {
                             color: acc.alpha(0.55),
                             offset: point(px(0.), px(0.)),
-                            blur_radius: px(16.),
+                            blur_radius: px(18.),
                             spread_radius: px(2.),
                             inset: false,
                         },
@@ -4463,6 +4479,18 @@ fn render_node(
                     ),
                 )
                 .child(e.clone())
+                // dim every pane that isn't focused so the live one is the bright
+                // one. Plain bg overlay (no .occlude()) → a click still falls
+                // through to the terminal beneath to focus it.
+                .when(!is_focused, |d| {
+                    d.child(
+                        div()
+                            .absolute()
+                            .inset_0()
+                            .rounded_md()
+                            .bg(hsla(0., 0., 0., 0.22)),
+                    )
+                })
                 // translucent slab on the side the drop will split toward
                 .when_some(drop_zone, |d, zone| {
                     let slab = div().absolute().bg(th.accent.alpha(0.30));
