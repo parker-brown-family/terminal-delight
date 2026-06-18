@@ -1,82 +1,140 @@
 //! The live stdio JSON-RPC transport for the read-only MCP server.
 //!
-//! Wiring problem: the protocol ([`crate::mcp`]) is pure and the pane snapshot
-//! lives in gpui's main thread, but a JSON-RPC server has to block on stdin.
-//! So the transport is two halves bridged by a channel:
+//! The protocol ([`crate::mcp`]) is pure; the pane snapshot lives on gpui's
+//! main thread; a JSON-RPC server must block on stdin; and the push feed must
+//! write to stdout from a *different* thread than the request loop. So the
+//! transport is four cooperating pieces around one channel each:
 //!
-//!   • a dedicated **reader thread** blocks on stdin, and for each request line
-//!     asks the main thread for a fresh [`mcp::Snapshot`], runs the pure
-//!     dispatch, and writes the one response line to stdout (the single writer);
-//!   • a **gpui ticker** (same leak-safe shape as the jiggle/checkpoint clocks)
-//!     drains those snapshot requests on the main thread, where `&App` is
-//!     available, and replies. When the window is dropped it answers any
-//!     in-flight request with a locked-down snapshot and then stops, so the
-//!     reader never hangs and no orphan task survives the window.
+//!   • **reader thread** — blocks on stdin. Static methods (`initialize`,
+//!     `tools/list`, `ping`, `logging/setLevel`) are answered instantly with no
+//!     snapshot, so the handshake never waits on the GUI. `tools/call` asks the
+//!     ticker for a fresh snapshot (5 s budget) and, on timeout, returns a
+//!     JSON-RPC error rather than dropping the request (no client hang).
+//!   • **ticker** (gpui main thread, leak-safe like the jiggle/checkpoint
+//!     clocks) — serves per-request snapshots where `&App` is available, and
+//!     every ~1 s also pushes a snapshot to the notifier.
+//!   • **notifier thread** — tails exposed agent transcripts off the main
+//!     thread, diffs them through [`mcp::Watcher`], and emits
+//!     `notifications/message` so an orchestrator reacts without polling.
+//!   • **writer thread** — the *single* owner of stdout; both the reader
+//!     (responses) and the notifier (notifications) funnel lines through it, so
+//!     the two streams never interleave-corrupt.
 //!
-//! Transport is opt-in: `main` only starts it when `TD_MCP` is set (an
-//! orchestrator launching terminal-delight with stdio piped). It never writes
-//! to a PTY — exposure is still gated by the operator policy in the snapshot.
+//! Opt-in via `TD_MCP`; process-wide singleton. It never writes to a PTY.
 
+use std::collections::HashMap;
 use std::io::Write;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{self, RecvTimeoutError, TryRecvError};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use std::sync::mpsc::{self, RecvTimeoutError};
+use std::sync::Arc;
+use std::thread;
 use std::time::Duration;
 
 use gpui::Context;
 
 use crate::{mcp, mcp_tail, session, Workspace};
 
-/// A one-shot reply channel the main thread sends a fresh snapshot back on.
+/// A one-shot reply channel the ticker sends a fresh snapshot back on.
 type Reply = mpsc::Sender<mcp::Snapshot>;
 
-/// Start the stdio MCP server once per process. Call from `Workspace::new`
-/// (only the primary, non-scratch window). No-op on a second call.
+/// How long a `tools/call` waits for the UI to produce a snapshot before the
+/// client gets a "not ready" error instead of hanging.
+const SNAPSHOT_BUDGET: Duration = Duration::from_secs(5);
+/// Ticks (~40 ms each) between push-snapshots handed to the notifier (~1 s).
+const PUSH_EVERY_TICKS: u32 = 25;
+/// How many recent events to tail per pane when diffing the push feed.
+const PUSH_TAIL: usize = 50;
+
+/// Start the stdio MCP server once per process. Call from `Workspace::build`.
+/// No-op on a second call.
 pub fn start(cx: &mut Context<Workspace>) {
     static STARTED: AtomicBool = AtomicBool::new(false);
     if STARTED.swap(true, Ordering::SeqCst) {
         return;
     }
 
-    let (req_tx, req_rx) = mpsc::channel::<Reply>();
+    let (req_tx, req_rx) = mpsc::channel::<Reply>(); // reader → ticker (per request)
+    let (snap_tx, snap_rx) = mpsc::channel::<mcp::Snapshot>(); // ticker → notifier (periodic)
+    let (out_tx, out_rx) = mpsc::channel::<String>(); // reader + notifier → writer
 
-    // Reader half: blocks on stdin off the main thread.
-    let _ = std::thread::Builder::new()
-        .name("td-mcp".into())
-        .spawn(move || serve_stdio(req_tx));
+    // Shared, lock-free control bits: the desired log severity (gates the push
+    // feed) and whether the client has handshaken (no notifications before).
+    let level = Arc::new(AtomicU8::new(mcp::log_severity("info")));
+    let active = Arc::new(AtomicBool::new(false));
 
-    // Ticker half: services snapshot requests on the gpui main thread.
+    // Writer: the single owner of stdout.
+    let _ = thread::Builder::new()
+        .name("td-mcp-out".into())
+        .spawn(move || {
+            let mut out = std::io::stdout();
+            while let Ok(line) = out_rx.recv() {
+                if writeln!(out, "{line}").is_err() || out.flush().is_err() {
+                    break;
+                }
+            }
+        });
+
+    // Notifier: tails transcripts off-thread and emits the push feed.
+    {
+        let out_tx = out_tx.clone();
+        let level = Arc::clone(&level);
+        let active = Arc::clone(&active);
+        let home = session::home_dir();
+        let _ = thread::Builder::new()
+            .name("td-mcp-notify".into())
+            .spawn(move || notify_loop(snap_rx, out_tx, level, active, home));
+    }
+
+    // Reader: blocks on stdin, routes each request.
+    {
+        let out_tx = out_tx.clone();
+        let level = Arc::clone(&level);
+        let active = Arc::clone(&active);
+        let _ = thread::Builder::new()
+            .name("td-mcp".into())
+            .spawn(move || serve_stdio(req_tx, out_tx, level, active));
+    }
+
+    // Ticker: services snapshot requests on the main thread + feeds the notifier.
     cx.spawn(async move |this, cx| {
+        let mut since_push: u32 = 0;
         loop {
             cx.background_executor()
                 .timer(Duration::from_millis(40))
                 .await;
+
+            // Drain any pending per-request snapshot asks.
             let mut alive = true;
             loop {
                 match req_rx.try_recv() {
-                    Ok(reply) => {
-                        let snap = this.update(cx, |ws: &mut Workspace, cx| mcp::Snapshot {
-                            config: ws.mcp.clone(),
-                            panes: ws.mcp_snapshot(cx),
-                        });
-                        match snap {
-                            Ok(s) => {
-                                let _ = reply.send(s);
-                            }
-                            Err(_) => {
-                                // Window gone mid-drain: unblock the reader with
-                                // a locked snapshot, then stop the ticker.
-                                let _ = reply.send(locked());
-                                alive = false;
-                            }
+                    Ok(reply) => match this.update(cx, snapshot_of) {
+                        Ok(s) => {
+                            let _ = reply.send(s);
                         }
-                    }
-                    Err(TryRecvError::Empty) => break,
-                    // Reader thread ended (stdin closed) — nothing left to serve.
-                    Err(TryRecvError::Disconnected) => return,
+                        Err(_) => {
+                            let _ = reply.send(mcp::Snapshot::empty());
+                            alive = false;
+                        }
+                    },
+                    Err(mpsc::TryRecvError::Empty) => break,
+                    Err(mpsc::TryRecvError::Disconnected) => return, // reader gone
                 }
             }
-            // Stop (and let the reader exit on its next send) once the window
-            // is dropped — mirrors the jiggle clock's orphan-task guard.
+
+            // Periodically feed the notifier — only while the feed is live, so
+            // we don't wake it for nothing.
+            since_push += 1;
+            if since_push >= PUSH_EVERY_TICKS {
+                since_push = 0;
+                if let Ok(snap) = this.update(cx, snapshot_of) {
+                    if snap.config.enabled && snap.config.events {
+                        let _ = snap_tx.send(snap);
+                    }
+                } else {
+                    alive = false;
+                }
+            }
+
             if !alive || this.update(cx, |_, _| ()).is_err() {
                 break;
             }
@@ -85,58 +143,220 @@ pub fn start(cx: &mut Context<Workspace>) {
     .detach();
 }
 
-/// A snapshot that exposes nothing — handed to the reader when the window has
-/// gone so an in-flight request still gets a (safe, empty) answer.
-fn locked() -> mcp::Snapshot {
+/// Build a fresh snapshot from the live workspace (runs on the main thread).
+fn snapshot_of(ws: &mut Workspace, cx: &mut Context<Workspace>) -> mcp::Snapshot {
     mcp::Snapshot {
-        config: mcp::McpConfig::default(),
-        panes: vec![],
+        config: ws.mcp.clone(),
+        panes: ws.mcp_snapshot(cx),
     }
 }
 
-/// The reader loop: one request line in, one response line out. Exits on EOF,
-/// a write error, or the main thread going away.
-fn serve_stdio(req_tx: mpsc::Sender<Reply>) {
+/// The reader loop: one request line in, one response line out (via the writer).
+fn serve_stdio(
+    req_tx: mpsc::Sender<Reply>,
+    out_tx: mpsc::Sender<String>,
+    level: Arc<AtomicU8>,
+    active: Arc<AtomicBool>,
+) {
     let stdin = std::io::stdin();
-    let mut out = std::io::stdout();
     let mut line = String::new();
     loop {
         line.clear();
         match stdin.read_line(&mut line) {
-            Ok(0) | Err(_) => break, // EOF or a broken pipe
+            Ok(0) | Err(_) => break, // EOF or broken pipe
             Ok(_) => {}
         }
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
+        let req = line.trim();
+        if req.is_empty() {
             continue;
         }
 
-        // Ask the main thread for a fresh snapshot via a per-request channel.
-        let (reply_tx, reply_rx) = mpsc::channel();
-        if req_tx.send(reply_tx).is_err() {
-            break; // ticker gone
+        // Transport-stateful, snapshot-independent bookkeeping.
+        if let Some(sev) = mcp::log_level_from(req) {
+            level.store(sev, Ordering::Relaxed);
         }
-        let snap = match reply_rx.recv_timeout(Duration::from_secs(5)) {
-            Ok(s) => s,
-            // Shutting down or wedged — don't hang the reader forever.
-            Err(RecvTimeoutError::Disconnected) => break,
-            Err(RecvTimeoutError::Timeout) => continue,
+        if mcp::is_initialize(req) {
+            active.store(true, Ordering::Relaxed);
+        }
+
+        let response = if mcp::requires_snapshot(req) {
+            // tools/call — fetch a live snapshot, bounded so we never hang.
+            let (reply_tx, reply_rx) = mpsc::channel();
+            if req_tx.send(reply_tx).is_err() {
+                break; // ticker gone
+            }
+            match reply_rx.recv_timeout(SNAPSHOT_BUDGET) {
+                Ok(snap) => {
+                    let home = session::home_dir();
+                    mcp::handle_line(req, &snap, |p, n| tail_for(p, n, &home))
+                }
+                Err(RecvTimeoutError::Disconnected) => break,
+                Err(RecvTimeoutError::Timeout) => {
+                    mcp::error_response(req, -32000, "terminal-delight UI not ready")
+                }
+            }
+        } else {
+            // Static method: answer instantly, no main-thread round-trip.
+            mcp::handle_line(req, &mcp::Snapshot::empty(), |_, _| vec![])
         };
 
-        // Transcript IO happens here, off the main thread; the closure only
-        // sees panes the policy already marked exposed.
-        let tail = |p: &mcp::PaneInfo, limit: usize| -> Vec<mcp::ToolEvent> {
-            let home = session::home_dir();
-            match mcp_tail::transcript_for(&p.mode, p.cwd.as_deref(), &home) {
-                Some(path) => mcp_tail::tail_tool_events(&path, limit),
-                None => vec![],
-            }
-        };
-
-        if let Some(resp) = mcp::handle_line(trimmed, &snap, tail) {
-            if writeln!(out, "{resp}").is_err() || out.flush().is_err() {
-                break;
+        if let Some(resp) = response {
+            if out_tx.send(resp).is_err() {
+                break; // writer gone
             }
         }
+    }
+}
+
+/// Resolve a pane's recent tool events by tailing its own transcript. Shared by
+/// the request path (`pane_events`) and the push feed. Pure IO, off the main
+/// thread; only ever sees panes the policy already marked exposed.
+fn tail_for(p: &mcp::PaneInfo, limit: usize, home: &std::path::Path) -> Vec<mcp::ToolEvent> {
+    match mcp_tail::transcript_for(&p.mode, p.cwd.as_deref(), home) {
+        Some(path) => mcp_tail::tail_tool_events(&path, limit),
+        None => vec![],
+    }
+}
+
+/// The push feed: each periodic snapshot is tailed and diffed into
+/// `notifications/message`. Exits when the ticker drops `snap_rx` (window gone)
+/// or the writer disappears.
+fn notify_loop(
+    snap_rx: mpsc::Receiver<mcp::Snapshot>,
+    out_tx: mpsc::Sender<String>,
+    level: Arc<AtomicU8>,
+    active: Arc<AtomicBool>,
+    home: std::path::PathBuf,
+) {
+    let mut watcher = mcp::Watcher::default();
+    while let Ok(snap) = snap_rx.recv() {
+        // Don't push before the client handshakes, if the client raised the log
+        // level past info, or if exposure/events are off.
+        if !active.load(Ordering::Relaxed)
+            || level.load(Ordering::Relaxed) > mcp::log_severity("info")
+            || !(snap.config.enabled && snap.config.events)
+        {
+            continue;
+        }
+        let mut tailed: HashMap<u32, Vec<mcp::ToolEvent>> = HashMap::new();
+        for p in snap.panes.iter().filter(|p| p.exposed && p.is_agent) {
+            tailed.insert(p.pid, tail_for(p, PUSH_TAIL, &home));
+        }
+        for n in watcher.diff(&snap.panes, &tailed) {
+            if out_tx.send(mcp::encode_notification(&n)).is_err() {
+                return; // writer gone
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Claude Code's per-project transcript-dir slug (mirrors session.rs).
+    fn slug(cwd: &str) -> String {
+        cwd.chars()
+            .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+            .collect()
+    }
+
+    fn agent_snapshot(pid: u32, cwd: &str) -> mcp::Snapshot {
+        mcp::Snapshot {
+            config: mcp::McpConfig {
+                enabled: true,
+                expose: mcp::Expose::AgentsOnly,
+                events: true,
+            },
+            panes: vec![mcp::PaneInfo {
+                tab: 0,
+                title: "work".into(),
+                mode: "CLAUDE".into(),
+                is_agent: true,
+                pid,
+                cwd: Some(cwd.into()),
+                session: Some("claude --resume x".into()),
+                exposed: true,
+            }],
+        }
+    }
+
+    fn append_tool_use(path: &std::path::Path, tool: &str, summary: &str) {
+        let line = format!(
+            r#"{{"type":"assistant","timestamp":"ts-{summary}","message":{{"content":[{{"type":"tool_use","name":"{tool}","input":{{"command":"{summary}"}}}}]}}}}"#
+        );
+        let mut f = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .unwrap();
+        writeln!(f, "{line}").unwrap();
+    }
+
+    /// End-to-end push feed over a REAL transcript file (no gpui): first sight
+    /// announces the agent without replaying history, and a tool call written
+    /// afterwards is pushed as a `notifications/message`. The barrier (reading
+    /// the first notification) guarantees the bookmark is set before we append,
+    /// so this is deterministic — no sleeps.
+    #[test]
+    fn push_feed_announces_then_streams_new_tool_calls() {
+        let home = std::env::temp_dir().join(format!("td-push-{}", std::process::id()));
+        let cwd = "/w/push-x";
+        let proj = home.join(".claude/projects").join(slug(cwd));
+        std::fs::create_dir_all(&proj).unwrap();
+        let transcript = proj.join("s.jsonl");
+        append_tool_use(&transcript, "Bash", "first"); // pre-existing history
+
+        let (snap_tx, snap_rx) = mpsc::channel::<mcp::Snapshot>();
+        let (out_tx, out_rx) = mpsc::channel::<String>();
+        let level = Arc::new(AtomicU8::new(mcp::log_severity("info")));
+        let active = Arc::new(AtomicBool::new(true)); // pretend the client handshaked
+        let h = home.clone();
+        let handle = thread::spawn(move || notify_loop(snap_rx, out_tx, level, active, h));
+
+        // 1st poll: first sight ⇒ agent_appeared, history NOT replayed.
+        snap_tx.send(agent_snapshot(4242, cwd)).unwrap();
+        let first: serde_json::Value = serde_json::from_str(&out_rx.recv().unwrap()).unwrap();
+        assert_eq!(first["method"], "notifications/message");
+        assert_eq!(first["params"]["data"]["event"], "agent_appeared");
+        assert_eq!(first["params"]["data"]["pid"], 4242);
+
+        // A new tool call lands, then the next poll arrives → it is pushed.
+        append_tool_use(&transcript, "Edit", "second");
+        snap_tx.send(agent_snapshot(4242, cwd)).unwrap();
+        let second: serde_json::Value = serde_json::from_str(&out_rx.recv().unwrap()).unwrap();
+        assert_eq!(second["params"]["data"]["event"], "tool_call");
+        assert_eq!(second["params"]["data"]["tool"], "Edit");
+        assert_eq!(second["params"]["data"]["summary"], "second");
+
+        drop(snap_tx); // ends the loop cleanly
+        handle.join().unwrap();
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    /// The feed stays silent until the client has handshaked (active=false).
+    #[test]
+    fn push_feed_is_silent_before_handshake() {
+        let home = std::env::temp_dir().join(format!("td-push-silent-{}", std::process::id()));
+        let cwd = "/w/silent";
+        let proj = home.join(".claude/projects").join(slug(cwd));
+        std::fs::create_dir_all(&proj).unwrap();
+        append_tool_use(&proj.join("s.jsonl"), "Bash", "x");
+
+        let (snap_tx, snap_rx) = mpsc::channel::<mcp::Snapshot>();
+        let (out_tx, out_rx) = mpsc::channel::<String>();
+        let level = Arc::new(AtomicU8::new(mcp::log_severity("info")));
+        let active = Arc::new(AtomicBool::new(false)); // NOT handshaked
+        let h = home.clone();
+        let handle = thread::spawn(move || notify_loop(snap_rx, out_tx, level, active, h));
+
+        snap_tx.send(agent_snapshot(7, cwd)).unwrap();
+        drop(snap_tx);
+        handle.join().unwrap();
+        assert!(
+            out_rx.recv().is_err(),
+            "nothing should be pushed before initialize"
+        );
+        std::fs::remove_dir_all(&home).ok();
     }
 }

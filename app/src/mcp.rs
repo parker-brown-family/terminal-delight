@@ -127,6 +127,7 @@ pub fn should_expose(cfg: &McpConfig, is_agent: bool) -> bool {
 // ===========================================================================
 
 use serde_json::{json, Value};
+use std::collections::{HashMap, HashSet};
 
 /// MCP revision we advertise (we echo the client's if it sends one).
 pub const PROTOCOL_VERSION: &str = "2025-06-18";
@@ -156,6 +157,16 @@ impl Snapshot {
     /// Panes the policy currently permits a connected agent to see.
     fn exposed(&self) -> Vec<&PaneInfo> {
         self.panes.iter().filter(|p| p.exposed).collect()
+    }
+
+    /// A snapshot that exposes nothing — used to answer snapshot-independent
+    /// methods (initialize / tools/list / ping …) without a main-thread
+    /// round-trip, and as the safe fallback when the UI has gone away.
+    pub fn empty() -> Self {
+        Self {
+            config: McpConfig::default(),
+            panes: vec![],
+        }
     }
 }
 
@@ -203,6 +214,10 @@ where
         // We hold no resources/prompts — answer empty so discovery doesn't error.
         "resources/list" => Ok(json!({ "resources": [] })),
         "prompts/list" => Ok(json!({ "prompts": [] })),
+        // The client sets a logging verbosity; we acknowledge. The transport
+        // separately reads the level (see `log_level_from`) to gate the push
+        // feed — the dispatch stays pure and just confirms receipt.
+        "logging/setLevel" => Ok(json!({})),
         m => Err((-32601, format!("method not found: {m}"))),
     }
 }
@@ -214,13 +229,16 @@ fn initialize_result(params: &Value) -> Value {
         .unwrap_or(PROTOCOL_VERSION);
     json!({
         "protocolVersion": pv,
-        "capabilities": { "tools": {} },
+        // `logging`: we push `notifications/message` as agents act (see Watcher).
+        "capabilities": { "tools": {}, "logging": {} },
         "serverInfo": { "name": SERVER_NAME, "version": env!("CARGO_PKG_VERSION") },
         "instructions":
             "Read-only watch surface for terminal-delight's panes. `list_panes` \
              reports who is running where (mode, cwd, agent session); \
              `pane_events` tails an agent pane's own transcript for recent \
-             tool calls. Nothing here can write to a terminal."
+             tool calls. With logging enabled the server also pushes \
+             `notifications/message` as agents appear, vanish, and call tools, \
+             so you can react without polling. Nothing here can write to a terminal."
     })
 }
 
@@ -351,6 +369,185 @@ fn encode_ok(id: Value, result: Value) -> String {
 fn encode_err(id: Value, code: i64, msg: String) -> String {
     serde_json::to_string(&json!({
         "jsonrpc": "2.0", "id": id, "error": { "code": code, "message": msg }
+    }))
+    .unwrap_or_default()
+}
+
+// ---- transport helpers (let the stdio layer route without re-parsing logic) ----
+
+/// Does this request need a live pane snapshot? Only `tools/call` reads panes;
+/// `initialize` / `tools/list` / `ping` / `logging/setLevel` etc. are answered
+/// from static data, so the transport can reply instantly without a main-thread
+/// round-trip (and the handshake never blocks on the GUI being ready).
+pub fn requires_snapshot(line: &str) -> bool {
+    parse_req(line)
+        .map(|r| r.method == "tools/call")
+        .unwrap_or(false)
+}
+
+/// True for the `initialize` request — the transport flips the push feed live
+/// once the client has handshaken.
+pub fn is_initialize(line: &str) -> bool {
+    parse_req(line)
+        .map(|r| r.method == "initialize")
+        .unwrap_or(false)
+}
+
+/// If this is `logging/setLevel`, the requested level's severity (see
+/// [`log_severity`]); otherwise `None`. Lets the transport gate the push feed.
+pub fn log_level_from(line: &str) -> Option<u8> {
+    let r = parse_req(line)?;
+    if r.method != "logging/setLevel" {
+        return None;
+    }
+    r.params
+        .get("level")
+        .and_then(Value::as_str)
+        .map(log_severity)
+}
+
+/// MCP syslog-style level → severity rank (higher = more severe). We push at
+/// `info`, so a client that raises the level to `warning`+ silences the feed.
+pub fn log_severity(name: &str) -> u8 {
+    match name {
+        "debug" => 0,
+        "info" => 1,
+        "notice" => 2,
+        "warning" => 3,
+        "error" => 4,
+        "critical" => 5,
+        "alert" => 6,
+        "emergency" => 7,
+        _ => 1,
+    }
+}
+
+/// Build a JSON-RPC error response for a request line (used when the UI can't
+/// produce a snapshot in time). `None` for a notification — those get no reply.
+pub fn error_response(line: &str, code: i64, msg: &str) -> Option<String> {
+    let id = parse_req(line)?.id?;
+    Some(encode_err(id, code, msg.to_string()))
+}
+
+// ===========================================================================
+// Push feed — turn the pull tools into a live stream.
+//
+// An orchestrator's real need is "tell me the moment an agent acts", not "let
+// me poll". The [`Watcher`] is the pure brain of that: fed a fresh exposed
+// snapshot plus freshly-tailed events per agent pane, it diffs against what it
+// last saw and returns the notifications to push. No IO, no gpui — so every
+// rule (don't flood history on first sight, fire on new tool calls, announce
+// appear/vanish) is unit-tested. The transport just does the tailing IO and
+// ships whatever this returns as `notifications/message`.
+// ===========================================================================
+
+/// One thing worth telling the client about, at a syslog level.
+#[derive(Clone, PartialEq, Debug)]
+pub struct Notification {
+    pub level: &'static str,
+    pub data: Value,
+}
+
+/// Stateful change-detector across snapshots. Cheap: a last-seen event
+/// signature + the set of known agent pids.
+#[derive(Default)]
+pub struct Watcher {
+    /// Signature of the newest tool event already emitted, per pane pid.
+    seen: HashMap<u32, String>,
+    /// Exposed agent pids known as of the last diff (for appear/vanish).
+    known: HashSet<u32>,
+}
+
+/// Identity of a tool event for "have I already pushed this?" — ts+tool+summary
+/// is stable across re-tails of the same transcript.
+fn event_sig(e: &ToolEvent) -> String {
+    format!("{}|{}|{}", e.ts, e.tool, e.summary)
+}
+
+impl Watcher {
+    /// Diff a fresh exposed snapshot + freshly-tailed events (pid → recent
+    /// events, oldest-first) into the notifications to push. Mutates the
+    /// last-seen state. Rules:
+    ///   • agent appears (new exposed agent pid) → `agent_appeared`
+    ///   • agent vanishes (known pid gone) → `agent_vanished`
+    ///   • on FIRST sight of a pane we record its latest event but emit NOTHING
+    ///     for it — we never replay the backlog when an orchestrator connects
+    ///     mid-conversation; only events that happen *after* we start watching.
+    ///   • thereafter, every event newer than the last we emitted → `tool_call`.
+    pub fn diff(
+        &mut self,
+        panes: &[PaneInfo],
+        tailed: &HashMap<u32, Vec<ToolEvent>>,
+    ) -> Vec<Notification> {
+        let agents: Vec<&PaneInfo> = panes.iter().filter(|p| p.exposed && p.is_agent).collect();
+        let now: HashSet<u32> = agents.iter().map(|p| p.pid).collect();
+        let mut out = vec![];
+
+        for p in &agents {
+            if !self.known.contains(&p.pid) {
+                out.push(Notification {
+                    level: "info",
+                    data: json!({
+                        "event": "agent_appeared", "pid": p.pid, "title": p.title,
+                        "mode": p.mode, "cwd": p.cwd, "session": p.session,
+                    }),
+                });
+            }
+        }
+        for pid in &self.known {
+            if !now.contains(pid) {
+                out.push(Notification {
+                    level: "info",
+                    data: json!({ "event": "agent_vanished", "pid": pid }),
+                });
+            }
+        }
+
+        for p in &agents {
+            let Some(events) = tailed.get(&p.pid) else {
+                continue;
+            };
+            if events.is_empty() {
+                continue;
+            }
+            let fresh: Vec<&ToolEvent> = match self.seen.get(&p.pid) {
+                // First time we look at this pane: emit nothing, just bookmark.
+                None => vec![],
+                Some(sig) => match events.iter().rposition(|e| &event_sig(e) == sig) {
+                    // Everything after the bookmark is new.
+                    Some(i) => events[i + 1..].iter().collect(),
+                    // Bookmark fell out of the tail window (rotation/burst):
+                    // emit only the newest so we don't replay a whole file.
+                    None => events.last().into_iter().collect(),
+                },
+            };
+            for e in fresh {
+                out.push(Notification {
+                    level: "info",
+                    data: json!({
+                        "event": "tool_call", "pid": p.pid, "title": p.title,
+                        "tool": e.tool, "summary": e.summary, "ts": e.ts,
+                    }),
+                });
+            }
+            if let Some(latest) = events.last() {
+                self.seen.insert(p.pid, event_sig(latest));
+            }
+        }
+
+        // Drop bookmarks for panes that are gone, so a recycled pid starts fresh.
+        self.seen.retain(|pid, _| now.contains(pid));
+        self.known = now;
+        out
+    }
+}
+
+/// Encode a [`Notification`] as an MCP `notifications/message` line.
+pub fn encode_notification(n: &Notification) -> String {
+    serde_json::to_string(&json!({
+        "jsonrpc": "2.0",
+        "method": "notifications/message",
+        "params": { "level": n.level, "logger": SERVER_NAME, "data": n.data },
     }))
     .unwrap_or_default()
 }
@@ -599,5 +796,165 @@ mod tests {
         let s = snap(true, true, vec![]);
         let v = resp(&handle_line(r#"{"id":8,"method":"do/stuff"}"#, &s, no_tail).unwrap());
         assert_eq!(v["error"]["code"], -32601);
+    }
+
+    // ---- transport routing helpers ----
+
+    #[test]
+    fn only_tools_call_requires_a_snapshot() {
+        assert!(requires_snapshot(
+            r#"{"id":1,"method":"tools/call","params":{"name":"list_panes"}}"#
+        ));
+        for m in [
+            r#"{"id":1,"method":"initialize"}"#,
+            r#"{"id":1,"method":"tools/list"}"#,
+            r#"{"id":1,"method":"ping"}"#,
+            r#"{"id":1,"method":"logging/setLevel","params":{"level":"warning"}}"#,
+            r#"{"method":"notifications/initialized"}"#,
+            "garbage",
+        ] {
+            assert!(!requires_snapshot(m), "should be static: {m}");
+        }
+    }
+
+    #[test]
+    fn log_level_parsing_and_severity_order() {
+        assert_eq!(
+            log_level_from(r#"{"id":1,"method":"logging/setLevel","params":{"level":"warning"}}"#),
+            Some(log_severity("warning"))
+        );
+        assert_eq!(log_level_from(r#"{"id":1,"method":"ping"}"#), None);
+        assert!(log_severity("debug") < log_severity("info"));
+        assert!(log_severity("info") < log_severity("warning"));
+        assert_eq!(
+            log_severity("nonsense"),
+            log_severity("info"),
+            "unknown ⇒ info"
+        );
+    }
+
+    #[test]
+    fn error_response_targets_the_id_and_skips_notifications() {
+        let e =
+            error_response(r#"{"id":9,"method":"tools/call"}"#, -32000, "ui not ready").unwrap();
+        let v = resp(&e);
+        assert_eq!(v["id"], 9);
+        assert_eq!(v["error"]["code"], -32000);
+        assert_eq!(v["error"]["message"], "ui not ready");
+        assert!(
+            error_response(r#"{"method":"notifications/initialized"}"#, -1, "x").is_none(),
+            "a notification gets no error reply"
+        );
+    }
+
+    #[test]
+    fn initialize_advertises_logging_capability() {
+        let s = Snapshot::empty();
+        let v = resp(
+            &handle_line(r#"{"id":1,"method":"initialize","params":{}}"#, &s, no_tail).unwrap(),
+        );
+        assert!(v["result"]["capabilities"]["logging"].is_object());
+    }
+
+    // ---- Watcher (push feed brain) ----
+
+    fn tailed(pid: u32, events: &[(&str, &str)]) -> HashMap<u32, Vec<ToolEvent>> {
+        let v = events
+            .iter()
+            .map(|(tool, sum)| ToolEvent {
+                ts: format!("t-{sum}"),
+                tool: (*tool).into(),
+                summary: (*sum).into(),
+            })
+            .collect();
+        HashMap::from([(pid, v)])
+    }
+
+    #[test]
+    fn first_sight_announces_the_agent_but_replays_no_history() {
+        let mut w = Watcher::default();
+        let panes = vec![agent_pane(100, true)];
+        let n = w.diff(&panes, &tailed(100, &[("Bash", "old1"), ("Edit", "old2")]));
+        // exactly one notification: the agent appeared. No tool_call backlog.
+        assert_eq!(n.len(), 1);
+        assert_eq!(n[0].data["event"], "agent_appeared");
+        assert_eq!(n[0].data["pid"], 100);
+    }
+
+    #[test]
+    fn new_tool_call_after_first_sight_is_pushed_once() {
+        let mut w = Watcher::default();
+        let panes = vec![agent_pane(100, true)];
+        // first sight: bookmark old2, emit only appeared
+        w.diff(&panes, &tailed(100, &[("Bash", "old1"), ("Edit", "old2")]));
+        // a new event arrives
+        let n = w.diff(
+            &panes,
+            &tailed(100, &[("Bash", "old1"), ("Edit", "old2"), ("Grep", "new1")]),
+        );
+        assert_eq!(n.len(), 1, "only the new event");
+        assert_eq!(n[0].data["event"], "tool_call");
+        assert_eq!(n[0].data["tool"], "Grep");
+        assert_eq!(n[0].data["summary"], "new1");
+        // idempotent: re-tailing the same file pushes nothing new
+        let again = w.diff(&panes, &tailed(100, &[("Edit", "old2"), ("Grep", "new1")]));
+        assert!(again.is_empty(), "no duplicate pushes");
+    }
+
+    #[test]
+    fn rotated_transcript_emits_only_the_newest_not_a_flood() {
+        let mut w = Watcher::default();
+        let panes = vec![agent_pane(100, true)];
+        w.diff(&panes, &tailed(100, &[("Bash", "a"), ("Edit", "b")])); // bookmark "b"
+                                                                       // the tail window no longer contains "b" (rotated); 3 unseen events present
+        let n = w.diff(&panes, &tailed(100, &[("X", "c"), ("Y", "d"), ("Z", "e")]));
+        assert_eq!(n.len(), 1, "only newest, not all three");
+        assert_eq!(n[0].data["summary"], "e");
+    }
+
+    #[test]
+    fn vanished_agent_is_announced_and_state_forgotten() {
+        let mut w = Watcher::default();
+        let panes = vec![agent_pane(100, true)];
+        w.diff(&panes, &tailed(100, &[("Bash", "x")]));
+        let n = w.diff(&[], &HashMap::new()); // pane gone
+        assert_eq!(n.len(), 1);
+        assert_eq!(n[0].data["event"], "agent_vanished");
+        assert_eq!(n[0].data["pid"], 100);
+        // a brand-new pane reusing pid 100 is treated as fresh (appeared again)
+        let again = w.diff(&panes, &tailed(100, &[("Bash", "x")]));
+        assert_eq!(again.len(), 1);
+        assert_eq!(again[0].data["event"], "agent_appeared");
+    }
+
+    #[test]
+    fn watcher_ignores_unexposed_and_non_agent_panes() {
+        let mut w = Watcher::default();
+        let shell = PaneInfo {
+            tab: 0,
+            title: "sh".into(),
+            mode: "SHELL".into(),
+            is_agent: false,
+            pid: 7,
+            cwd: None,
+            session: None,
+            exposed: true,
+        };
+        let hidden_agent = agent_pane(8, false);
+        let n = w.diff(&[shell, hidden_agent], &HashMap::new());
+        assert!(n.is_empty(), "only exposed agents are watched");
+    }
+
+    #[test]
+    fn notification_encodes_as_mcp_message() {
+        let v = resp(&encode_notification(&Notification {
+            level: "info",
+            data: json!({ "event": "tool_call", "tool": "Bash" }),
+        }));
+        assert_eq!(v["method"], "notifications/message");
+        assert!(v["id"].is_null(), "a notification carries no id");
+        assert_eq!(v["params"]["level"], "info");
+        assert_eq!(v["params"]["logger"], SERVER_NAME);
+        assert_eq!(v["params"]["data"]["tool"], "Bash");
     }
 }
