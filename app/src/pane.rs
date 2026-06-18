@@ -263,6 +263,42 @@ fn link_at(line: &str, col: usize) -> Option<Link> {
     None
 }
 
+/// Stitch a click on a soft-wrapped row back into its full logical line. A
+/// terminal wraps a long URL/path mid-token with no space and marks the last
+/// cell of each wrapped row with `WRAPLINE`; `wraps[r]` carries that flag. We
+/// walk up while the row above wraps into us and down while we keep wrapping,
+/// concatenate those rows, and return the stitched line together with the
+/// absolute column of the original click within it — so `link_at` sees the whole
+/// token instead of a truncated fragment. Pure: testable without a live grid.
+fn stitch_wrapped_line(
+    rows: &[Vec<char>],
+    wraps: &[bool],
+    vrow: usize,
+    vcol: usize,
+) -> (String, usize) {
+    if rows.is_empty() {
+        return (String::new(), vcol);
+    }
+    let vrow = vrow.min(rows.len() - 1);
+    // first row of the logical line: walk up while the row above wraps into us
+    let mut top = vrow;
+    while top > 0 && wraps[top - 1] {
+        top -= 1;
+    }
+    // last row: walk down while the current row wraps into the next
+    let mut bot = vrow;
+    while bot + 1 < rows.len() && wraps[bot] {
+        bot += 1;
+    }
+    let mut line = String::new();
+    for row in &rows[top..=bot] {
+        line.extend(row.iter());
+    }
+    // click column within the stitched line = chars in the rows above it + vcol
+    let offset: usize = rows[top..vrow].iter().map(|r| r.len()).sum();
+    (line, offset + vcol)
+}
+
 /// Turn a path link into an absolute path: expand a leading `~`, and join a
 /// relative `./`/`../` onto the pane's cwd. Returns None if it can't be anchored.
 fn resolve_path(p: &str, cwd: Option<&str>) -> Option<String> {
@@ -1364,30 +1400,41 @@ impl TerminalView {
     /// against the pane's cwd (only returning paths that actually exist).
     fn link_under(&self, pos: gpui::Point<Pixels>) -> Option<String> {
         let (vrow, vcol, _) = self.viewport_cell(pos);
-        let line = {
+        // Read the whole visible grid plus per-row soft-wrap flags, then stitch
+        // the clicked row to its neighbours so a URL/path wrapped across rows is
+        // recognised as one token (see `stitch_wrapped_line`).
+        let (line, col) = {
             let term = self.session.term.lock();
             let content = term.renderable_content();
             let display_offset = content.display_offset;
-            let mut row = vec![' '; self.grid.cols];
+            let cols = self.grid.cols;
+            let rows = self.grid.rows;
+            let mut grid: Vec<Vec<char>> = vec![vec![' '; cols]; rows];
+            let mut wraps: Vec<bool> = vec![false; rows];
             for indexed in content.display_iter {
-                if indexed.point.line.0 + display_offset as i32 != vrow as i32 {
+                let r = indexed.point.line.0 + display_offset as i32;
+                if r < 0 || r as usize >= rows {
                     continue;
                 }
+                let r = r as usize;
                 if indexed.cell.flags.contains(Flags::WIDE_CHAR_SPACER) {
                     continue;
                 }
+                if indexed.cell.flags.contains(Flags::WRAPLINE) {
+                    wraps[r] = true;
+                }
                 let c = indexed.point.column.0;
-                if c < row.len() {
-                    row[c] = if indexed.cell.c == '\0' {
+                if c < cols {
+                    grid[r][c] = if indexed.cell.c == '\0' {
                         ' '
                     } else {
                         indexed.cell.c
                     };
                 }
             }
-            row.into_iter().collect::<String>()
+            stitch_wrapped_line(&grid, &wraps, vrow, vcol)
         };
-        match link_at(&line, vcol)? {
+        match link_at(&line, col)? {
             Link::Url(u) => Some(u),
             Link::Path(p) => {
                 let cwd = self.runtime().cwd;
@@ -3616,6 +3663,43 @@ mod tests {
         assert_eq!(link_at("just some words", 5), None);
         assert_eq!(link_at("a b", 1), None); // the space
         assert_eq!(link_at("", 0), None);
+    }
+
+    #[test]
+    fn stitch_wrapped_line_rejoins_a_url_split_across_rows() {
+        // a narrow 8-col terminal; the URL fills row 0 (wraps) and spills into row 1
+        let cols = 8;
+        let pad = |s: &str| {
+            let mut v: Vec<char> = s.chars().collect();
+            v.resize(cols, ' ');
+            v
+        };
+        let rows = vec![
+            pad("https://"), // wraps into the next row (full width)
+            pad("a.dev/x "), // tail of the URL, then padding
+            pad("next    "),
+        ];
+        let wraps = vec![true, false, false];
+
+        // click on the first row → stitched line + adjusted column find the whole URL
+        let (line, col) = stitch_wrapped_line(&rows, &wraps, 0, 2);
+        assert_eq!(line, "https://a.dev/x ");
+        assert_eq!(col, 2);
+        assert_eq!(link_at(&line, col), Some(Link::Url("https://a.dev/x".into())));
+
+        // click on the *continuation* row → walks up, same URL, column offset by cols
+        let (line, col) = stitch_wrapped_line(&rows, &wraps, 1, 3);
+        assert_eq!(line, "https://a.dev/x ");
+        assert_eq!(col, cols + 3);
+        assert_eq!(link_at(&line, col), Some(Link::Url("https://a.dev/x".into())));
+
+        // a non-wrapping row stitches to just itself
+        let (line, col) = stitch_wrapped_line(&rows, &wraps, 2, 1);
+        assert_eq!(line, "next    ");
+        assert_eq!(col, 1);
+
+        // empty grid is harmless
+        assert_eq!(stitch_wrapped_line(&[], &[], 0, 4), (String::new(), 4));
     }
 
     #[test]
