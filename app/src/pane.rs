@@ -2189,6 +2189,29 @@ impl TerminalView {
     }
 }
 
+/// Bottom-anchor painted rows for crawl mode: slide content down until the last
+/// non-blank row sits on the bottom (near) edge, with blank padding pushed to the
+/// (receding) top. This is what makes a crawl pane read as a Star-Wars crawl —
+/// prompt at the near edge, output stacking up into the distance — and lands the
+/// prompt at the bottom after a clear/Ctrl+L. Row count is preserved (layout
+/// height unchanged). No-op when the screen is full (offset 0) or all-blank. Pure.
+fn bottom_anchor_rows(lines: &mut Vec<(String, Vec<TextRun>)>, rows: usize) {
+    let Some(last) = lines.iter().rposition(|(t, _)| !t.trim_end().is_empty()) else {
+        return;
+    };
+    let offset = rows.saturating_sub(last + 1);
+    if offset == 0 {
+        return;
+    }
+    lines.truncate(last + 1); // drop the trailing blank rows we're re-adding on top
+    let mut shifted: Vec<(String, Vec<TextRun>)> =
+        std::iter::repeat_with(|| (String::new(), Vec::new()))
+            .take(offset)
+            .collect();
+    shifted.append(lines); // moves content below the blank padding
+    *lines = shifted;
+}
+
 /// Font families installed on this system, captured once at startup so the grid
 /// can fall back deliberately instead of letting gpui pick a silent substitute
 /// (a past bug shipped DejaVu Sans without anyone noticing).
@@ -2478,7 +2501,19 @@ impl Render for TerminalView {
                 });
             }
         }
-        let lines = self.styled_lines(&th);
+        let mut lines = self.styled_lines(&th);
+        // Crawl mode reads as a Star-Wars crawl: the prompt belongs at the near
+        // (bottom) edge with output stacking UP into the distance. The grid
+        // paints top-anchored, so after a clear/Ctrl+L the prompt would land at
+        // the far/small top instead. Bottom-anchor the painted rows: slide them
+        // down until the last non-blank row hugs the bottom edge, with the blank
+        // padding pushed to the (receding) top. The row count is unchanged, so
+        // layout height is identical; a full screen (vim/less, all rows used)
+        // gives offset 0 and is left exactly as-is. Visual only — the grid model,
+        // PTY, and shell are untouched (so the perspective shader composes on top).
+        if th.crawl {
+            bottom_anchor_rows(&mut lines, self.grid.rows);
+        }
         let status = if self.bell {
             "● done"
         } else if self.exited {
@@ -3700,6 +3735,45 @@ mod tests {
 
         // empty grid is harmless
         assert_eq!(stitch_wrapped_line(&[], &[], 0, 4), (String::new(), 4));
+    }
+
+    #[test]
+    fn bottom_anchor_rows_pushes_content_to_the_bottom() {
+        let row = |s: &str| (s.to_string(), Vec::<TextRun>::new());
+        let texts = |l: &[(String, Vec<TextRun>)]| {
+            l.iter().map(|(t, _)| t.clone()).collect::<Vec<_>>()
+        };
+
+        // cleared screen: just a prompt on row 0 → it slides to the bottom
+        let mut lines = vec![row("$ "), row(""), row(""), row("")];
+        bottom_anchor_rows(&mut lines, 4);
+        assert_eq!(texts(&lines), vec!["", "", "", "$ "]);
+
+        // partially filled: content hugs the bottom, blank padding on top
+        let mut lines = vec![row("ls"), row("a b c"), row("$ "), row("")];
+        bottom_anchor_rows(&mut lines, 4);
+        assert_eq!(texts(&lines), vec!["", "ls", "a b c", "$ "]);
+
+        // full screen (all rows used) is left exactly as-is (offset 0)
+        let mut lines = vec![row("a"), row("b"), row("c"), row("d")];
+        bottom_anchor_rows(&mut lines, 4);
+        assert_eq!(texts(&lines), vec!["a", "b", "c", "d"]);
+
+        // rows of only trailing spaces count as blank
+        let mut lines = vec![row("$ "), row("   "), row("   ")];
+        bottom_anchor_rows(&mut lines, 3);
+        assert_eq!(texts(&lines), vec!["", "", "$ "]);
+
+        // all-blank is a no-op (nothing to anchor)
+        let mut lines = vec![row(""), row("")];
+        bottom_anchor_rows(&mut lines, 2);
+        assert_eq!(texts(&lines), vec!["", ""]);
+
+        // row count is always preserved
+        let mut lines = vec![row("x"), row(""), row(""), row(""), row("")];
+        bottom_anchor_rows(&mut lines, 5);
+        assert_eq!(lines.len(), 5);
+        assert_eq!(texts(&lines).last().unwrap(), "x");
     }
 
     #[test]
