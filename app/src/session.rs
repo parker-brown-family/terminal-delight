@@ -189,6 +189,13 @@ fn claude_session_for(cwd: &str, home: &Path) -> Option<String> {
 /// ~/.codex/sessions/YYYY/MM/DD/rollout-<ts>-<uuid>.jsonl — uuid from the name,
 /// cwd matched against the first bytes of the file.
 fn codex_session_for(cwd: &str, home: &Path) -> Option<String> {
+    codex_rollout_for(cwd, home).and_then(|p| rollout_uuid(&p))
+}
+
+/// The on-disk rollout *file* for `cwd` (the path `codex_session_for` lifts its
+/// uuid from). Shared so the read-only MCP event tailer can follow the same
+/// transcript instead of re-deriving the layout.
+fn codex_rollout_for(cwd: &str, home: &Path) -> Option<PathBuf> {
     let root = home.join(".codex/sessions");
     let mut rollouts: Vec<PathBuf> = vec![];
     collect_jsonl(&root, &mut rollouts, 4);
@@ -197,15 +204,49 @@ fn codex_session_for(cwd: &str, home: &Path) -> Option<String> {
             .and_then(|m| m.modified())
             .unwrap_or(std::time::UNIX_EPOCH)
     });
-    for p in rollouts.iter().rev().take(20) {
+    rollouts.into_iter().rev().take(20).find(|p| {
         let head = std::fs::read(p)
             .map(|b| String::from_utf8_lossy(&b[..b.len().min(4096)]).into_owned())
             .unwrap_or_default();
-        if head.contains(cwd) {
-            return rollout_uuid(p);
+        head.contains(cwd)
+    })
+}
+
+/// Path to the Claude Code transcript JSONL a pane is actually using. Prefers
+/// the exact session id carried in the pane's `resume` command — that id was
+/// resolved from the agent's open file descriptor in [`capture`], so it points
+/// at the *right* conversation even when several share a cwd or a newer-but-
+/// unrelated transcript exists. Falls back to newest-by-mtime only when there's
+/// no usable id (e.g. a bare `claude --continue`). Public for the MCP tailer.
+pub fn claude_transcript(cwd: &str, resume: Option<&str>, home: &Path) -> Option<PathBuf> {
+    let dir = home.join(".claude/projects").join(claude_slug(cwd));
+    if let Some(id) = resume.and_then(claude_resume_id) {
+        let exact = dir.join(format!("{id}.jsonl"));
+        if exact.is_file() {
+            return Some(exact);
         }
     }
-    None
+    newest_jsonl(&dir)
+}
+
+/// The session id embedded in a `claude --resume <id>` / `-r <id>` command, if
+/// it's a plain (shell-safe) id — the transcript's filename stem.
+fn claude_resume_id(resume: &str) -> Option<String> {
+    arg_after(resume, &["--resume", "-r"])
+        .map(str::to_string)
+        .filter(|id| safe_resume_id(id))
+}
+
+/// Path to the newest Codex rollout JSONL for `cwd`, or None. Companion to
+/// [`claude_transcript`] for the MCP event tailer.
+pub fn codex_transcript(cwd: &str, home: &Path) -> Option<PathBuf> {
+    codex_rollout_for(cwd, home)
+}
+
+/// `$HOME` as a path (or `.`), exposed so callers that already know a pane's
+/// cwd can resolve its transcript without re-reading the env themselves.
+pub fn home_dir() -> PathBuf {
+    PathBuf::from(home())
 }
 
 /// `rollout-2026-06-12T10-00-00-<uuid>.jsonl` → uuid (the last 36 chars of the stem).
@@ -234,7 +275,8 @@ fn claude_session_from_fds(pid: u32, cwd: Option<&str>, home: &Path) -> Option<S
         Some(d) => home.join(".claude/projects").join(claude_slug(d)),
         None => home.join(".claude/projects"),
     };
-    open_jsonl_under(pid, &root).and_then(|p| p.file_stem().map(|s| s.to_string_lossy().into_owned()))
+    open_jsonl_under(pid, &root)
+        .and_then(|p| p.file_stem().map(|s| s.to_string_lossy().into_owned()))
 }
 
 /// Codex equivalent: the rollout `<uuid>.jsonl` the live process holds open.
@@ -306,7 +348,14 @@ mod tests {
         // a cmdline arg carrying shell metacharacters must NOT be typed into the
         // shell — fall back to the safe cwd-scoped resume instead.
         assert_eq!(
-            agent_resume("claude", "claude --resume a;rm~-rf~/", Some("/tmp"), home, 0).as_deref(),
+            agent_resume(
+                "claude",
+                "claude --resume a;rm~-rf~/",
+                Some("/tmp"),
+                home,
+                0
+            )
+            .as_deref(),
             Some("claude --continue"),
             "unsafe id rejected, falls back to --continue"
         );
@@ -417,6 +466,27 @@ mod tests {
         // a dead/unknown pid yields nothing (callers fall back to the mtime scan)
         assert_eq!(open_jsonl_under(0, &tmp), None);
         drop(_held);
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn claude_transcript_follows_the_panes_own_session_not_newest() {
+        // The MCP tailer must read the conversation a pane is actually in. Given
+        // the pane's resume id, follow THAT file even when a newer, unrelated
+        // transcript exists in the same cwd; only `--continue` falls back to it.
+        let tmp = std::env::temp_dir().join(format!("td-tx-{}", std::process::id()));
+        let proj = tmp.join(".claude/projects").join(claude_slug("/work/y"));
+        std::fs::create_dir_all(&proj).unwrap();
+        std::fs::write(proj.join("aaaa-mine.jsonl"), "{}").unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        std::fs::write(proj.join("bbbb-newer.jsonl"), "{}").unwrap(); // newest by mtime
+        let mine = claude_transcript("/work/y", Some("claude --resume aaaa-mine"), &tmp).unwrap();
+        assert!(mine.ends_with("aaaa-mine.jsonl"), "followed my own session");
+        let cont = claude_transcript("/work/y", Some("claude --continue"), &tmp).unwrap();
+        assert!(
+            cont.ends_with("bbbb-newer.jsonl"),
+            "no id ⇒ newest fallback"
+        );
         std::fs::remove_dir_all(&tmp).ok();
     }
 

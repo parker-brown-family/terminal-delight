@@ -14,6 +14,9 @@ mod bell;
 mod crt;
 mod csd;
 mod gamba;
+mod mcp;
+mod mcp_tail;
+mod mcp_transport;
 mod pane;
 mod session;
 mod term;
@@ -774,6 +777,10 @@ struct StateFile {
     /// Tab groups (browser-style colour bands). Absent on pre-feature files.
     #[serde(default)]
     groups: Vec<SavedGroup>,
+    /// Read-only MCP control-surface policy (the mother-bar robot panel). Absent
+    /// on pre-feature files → the locked-down [`mcp::McpConfig`] default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    mcp: Option<mcp::McpConfig>,
 }
 
 fn default_warp() -> f32 {
@@ -807,6 +814,7 @@ impl Default for StateFile {
             track: None,
             tabs: Vec::new(),
             groups: Vec::new(),
+            mcp: None,
         }
     }
 }
@@ -1033,6 +1041,11 @@ struct Workspace {
     osd_menu: Option<MenuScope>,
     /// Window-space anchor for the open OSD tray (a pane display-icon click).
     osd_at: Option<Point<Pixels>>,
+    /// Read-only MCP control-surface policy (persisted). The 🤖 mother-bar
+    /// button edits this; the live snapshot it would expose is derived per-frame.
+    mcp: mcp::McpConfig,
+    /// The 🤖 MCP control panel is open. Outer-only (global), so a plain bool.
+    mcp_menu: bool,
     /// The OSD slider being dragged, if any (which channel).
     slider_drag: Option<theme::GradeKey>,
     /// Live per-slider track rects for ratio math during a drag.
@@ -1309,6 +1322,8 @@ impl Workspace {
             menu_at: None,
             osd_menu: None,
             osd_at: None,
+            mcp: saved.mcp.clone().unwrap_or_default(),
+            mcp_menu: false,
             slider_drag: None,
             slider_bounds: Arc::new(Mutex::new(std::collections::HashMap::new())),
             wheel_drag: None,
@@ -1445,6 +1460,14 @@ impl Workspace {
             })
             .detach();
         }
+        // Read-only MCP control surface: when an orchestrator launches us with
+        // TD_MCP set (stdio piped), speak JSON-RPC on stdin/stdout. `build` runs
+        // once for this process's first window, and `start` is a process-wide
+        // singleton (an atomic guard), so the server attaches exactly once —
+        // whichever window mode the orchestrator chose to launch.
+        if std::env::var_os("TD_MCP").is_some() {
+            mcp_transport::start(cx);
+        }
         ws
     }
 
@@ -1496,10 +1519,47 @@ impl Workspace {
                     collapsed: g.collapsed,
                 })
                 .collect(),
+            mcp: Some(self.mcp.clone()),
         };
         if let Ok(body) = toml::to_string(&state) {
             let _ = session::write_atomic(&state_path(), &body);
         }
+    }
+
+    /// Build the read-only snapshot the MCP control surface would expose: every
+    /// pane across every tab, with its kernel-derived identity (mode, pid, cwd)
+    /// and — for an agent — its resumable session (the durable key a watch rule
+    /// binds to, and the pointer to its on-disk tool-call transcript). The
+    /// `exposed` flag applies the current policy. Strictly read-only: this never
+    /// writes a byte to any PTY.
+    fn mcp_snapshot(&self, cx: &App) -> Vec<mcp::PaneInfo> {
+        let mut out = vec![];
+        for (ti, tab) in self.tabs.iter().enumerate() {
+            let mut leaves = vec![];
+            tab.root.leaves(&mut leaves);
+            for leaf in leaves {
+                let p = leaf.read(cx);
+                let rt = p.runtime();
+                let is_agent = p.mode.is_agent();
+                let title = p
+                    .name
+                    .clone()
+                    .filter(|n| !n.is_empty())
+                    .or_else(|| (!p.title.is_empty()).then(|| p.title.clone()))
+                    .unwrap_or_else(|| p.mode.label().to_string());
+                out.push(mcp::PaneInfo {
+                    tab: ti,
+                    title,
+                    mode: p.mode.label().to_string(),
+                    is_agent,
+                    pid: p.shell_pid(),
+                    cwd: rt.cwd,
+                    session: rt.resume,
+                    exposed: mcp::should_expose(&self.mcp, is_agent),
+                });
+            }
+        }
+        out
     }
 
     /// Mouse-down can dispatch more than once per physical click (capture +
@@ -2221,6 +2281,11 @@ impl Workspace {
         }
         if self.osd_menu.is_some() && ks.key.as_str() == "escape" {
             self.osd_menu = None;
+            cx.notify();
+            return;
+        }
+        if self.mcp_menu && ks.key.as_str() == "escape" {
+            self.mcp_menu = false;
             cx.notify();
             return;
         }
@@ -4656,6 +4721,7 @@ impl Render for Workspace {
         warp::set_suppressed(
             self.theme_menu.is_some()
                 || self.osd_menu.is_some()
+                || self.mcp_menu
                 || self.confirm_close.is_some()
                 || self.help_open
                 || self.tab_menu.is_some()
@@ -5172,6 +5238,23 @@ impl Render for Workspace {
                                     cx.stop_propagation();
                                     ws.osd_menu = Some(MenuScope::Outer);
                                     ws.osd_at = None;
+                                    cx.notify();
+                                }),
+                            ),
+                    )
+                    .child(
+                        // MCP: a drawn robot — opens the read-only agent-watch
+                        // control surface. Lights up when the panel is open OR
+                        // the server policy is currently enabled.
+                        Self::hicon_s(&th, self.mcp_menu || self.mcp.enabled, scale)
+                            .flex()
+                            .items_center()
+                            .child(pane::robot_icon(th.accent, scale))
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                                    cx.stop_propagation();
+                                    ws.mcp_menu = true;
                                     cx.notify();
                                 }),
                             ),
@@ -5769,6 +5852,183 @@ impl Render for Workspace {
                     MouseButton::Left,
                     cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
                         ws.osd_menu = None;
+                        cx.notify();
+                    }),
+                )
+                .child(panel)
+        });
+
+        // ---- MCP control: the read-only agent-watch surface (the 🤖 button) ----
+        let mcp_overlay = self.mcp_menu.then(|| {
+            let cfg = self.mcp.clone();
+            let panes = self.mcp_snapshot(cx);
+            let total = panes.len();
+            let exposed = panes.iter().filter(|p| p.exposed).count();
+            let label = |s: String| {
+                div()
+                    .text_size(px(9.))
+                    .text_color(th.text.alpha(0.55))
+                    .child(s)
+            };
+            let enable_btn = Self::bezel_btn(
+                &th,
+                if cfg.enabled {
+                    "\u{25c9} server enabled"
+                } else {
+                    "\u{25cb} server disabled"
+                },
+                cfg.enabled,
+            )
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                    cx.stop_propagation();
+                    ws.mcp.enabled = !ws.mcp.enabled;
+                    ws.save(cx);
+                    cx.notify();
+                }),
+            );
+            let expose_btn = Self::bezel_btn(
+                &th,
+                format!("expose: {}", cfg.expose.label()).as_str(),
+                false,
+            )
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                    cx.stop_propagation();
+                    ws.mcp.expose = ws.mcp.expose.next();
+                    ws.save(cx);
+                    cx.notify();
+                }),
+            );
+            let events_btn = Self::bezel_btn(
+                &th,
+                if cfg.events {
+                    "\u{25c9} stream tool-call events"
+                } else {
+                    "\u{25cb} events off"
+                },
+                cfg.events,
+            )
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                    cx.stop_propagation();
+                    ws.mcp.events = !ws.mcp.events;
+                    ws.save(cx);
+                    cx.notify();
+                }),
+            );
+
+            // live pane list: exactly what the server would (or wouldn't) expose
+            let mut list = div().flex().flex_col().gap_1();
+            if panes.is_empty() {
+                list = list.child(label("no panes".to_string()));
+            }
+            for p in &panes {
+                let dot_col = if p.exposed {
+                    th.accent
+                } else {
+                    th.text.alpha(0.3)
+                };
+                let mode_col = if p.is_agent {
+                    th.accent
+                } else {
+                    th.text.alpha(0.6)
+                };
+                let mut sub = p.cwd.clone().unwrap_or_else(|| "\u{2014}".to_string());
+                if let Some(sess) = &p.session {
+                    sub = format!("{sub}  \u{00b7}  {sess}");
+                }
+                list = list.child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap_2()
+                        .child(
+                            div()
+                                .text_color(dot_col)
+                                .child(if p.exposed { "\u{25cf}" } else { "\u{25cb}" }.to_string()),
+                        )
+                        .child(
+                            div()
+                                .w(px(52.))
+                                .flex_none()
+                                .text_size(px(9.))
+                                .font_weight(gpui::FontWeight::EXTRA_BOLD)
+                                .text_color(mode_col)
+                                .child(p.mode.clone()),
+                        )
+                        .child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .child(
+                                    div()
+                                        .text_size(px(10.))
+                                        .text_color(th.text)
+                                        .child(p.title.clone()),
+                                )
+                                .child(
+                                    div()
+                                        .text_size(px(8.5))
+                                        .text_color(th.text.alpha(0.5))
+                                        .child(sub),
+                                ),
+                        ),
+                );
+            }
+
+            let panel = div()
+                .absolute()
+                .top(px(36.))
+                .right(px(70.))
+                .w(px(360.))
+                .p_3()
+                .rounded_md()
+                .border_1()
+                .border_color(th.accent.alpha(0.55))
+                .bg(darken(th.surface, 0.6))
+                .shadow(vec![BoxShadow {
+                    color: hsla(0., 0., 0., 0.6),
+                    offset: point(px(4.), px(6.)),
+                    blur_radius: px(18.),
+                    spread_radius: px(0.),
+                    inset: false,
+                }])
+                .flex()
+                .flex_col()
+                .gap_2()
+                .text_size(px(10.))
+                .text_color(th.text)
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|_, _: &MouseDownEvent, _w, cx| cx.stop_propagation()),
+                )
+                .child(label("MCP CONTROL \u{2014} READ ONLY".to_string()))
+                .child(enable_btn)
+                .child(expose_btn)
+                .child(events_btn)
+                .child(label(format!("{exposed}/{total} pane(s) exposed")))
+                .child(list)
+                .child(
+                    div()
+                        .text_size(px(8.5))
+                        .text_color(th.accent.alpha(0.85))
+                        .child("watches agent panes \u{00b7} never writes to a PTY".to_string()),
+                )
+                .child(label("live server transport: next increment".to_string()));
+
+            // full-screen scrim: a click anywhere outside closes the panel
+            div()
+                .absolute()
+                .inset_0()
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                        ws.mcp_menu = false;
                         cx.notify();
                     }),
                 )
@@ -6838,6 +7098,7 @@ impl Render for Workspace {
                     .child(bezel_bottom)
                     .children(menu_overlay)
                     .children(osd_overlay)
+                    .children(mcp_overlay)
                     .children(confirm_overlay)
                     .children(help_overlay)
                     .children(tab_menu_overlay)
@@ -7245,6 +7506,7 @@ id = "hacker"
                 },
             }],
             groups: vec![],
+            mcp: None,
         };
         let body = toml::to_string(&state).expect("serializes");
         let back: StateFile = toml::from_str(&body).expect("round-trips");
@@ -7279,6 +7541,7 @@ id = "hacker"
                 },
             }],
             groups: vec![],
+            mcp: None,
         };
         let body = toml::to_string(&state).expect("serializes");
         let back: StateFile = toml::from_str(&body).expect("round-trips");
@@ -7332,6 +7595,7 @@ id = "hacker"
                 text_color: Some("#101010".into()),
                 collapsed: true,
             }],
+            mcp: None,
         };
         let body = toml::to_string(&state).expect("serializes");
         let back: StateFile = toml::from_str(&body).expect("round-trips");
@@ -7521,6 +7785,7 @@ node = "Leaf"
                 node,
             }],
             groups: vec![],
+            mcp: None,
         };
         let body = toml::to_string(&state).expect("serializes");
         let back: StateFile = toml::from_str(&body).expect("round-trips");
