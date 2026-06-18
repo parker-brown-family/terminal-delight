@@ -60,3 +60,15 @@ length-capped; the underlying compositions are public domain.
 
 `wild-eep.mp3` (classic Mac OS alert) is **Apple-owned and never bundled or
 committed** — it exists only in a user's local sounds dir for personal use.
+
+## Bundled fonts (text-crawl mode)
+
+The Star-Wars-style **text crawl** mode renders the terminal in a bundled
+typeface, compiled into the binary via `include_bytes!` (so it ships inside the
+AppImage too):
+
+| File | Family | License | Attribution |
+|------|--------|---------|-------------|
+| `app/assets/fonts/NewsCycle-Bold.ttf` | News Cycle | **SIL Open Font License 1.1** (`app/assets/fonts/OFL.txt`) | © 2010–2011 Nathan Willis, with Reserved Font Name "News Cycle". A libre News-Gothic-class face — the closest freely-licensable match to the crawl's News Gothic typeface. Unmodified. |
+
+The full OFL text travels beside the font at `app/assets/fonts/OFL.txt`.

@@ -6,6 +6,9 @@
 #   0002-focus-blur         — frosted-glass backdrop blur for the FOCUS modal
 #                             (delta on 0001; adds gpui_wgpu::set_focus_blur,
 #                             which app/src/warp.rs calls)
+#   0003-text-crawl         — Star-Wars text-crawl perspective pre-map in the CRT
+#                             pass + per-rect crawl uniform (delta on 0001+0002;
+#                             extends set_crt_rects_tubes, which warp.rs calls)
 #   0002-sever-gpl-crates   — drops the GPL crates (ztracing/zlog) that the
 #                             gpui -> sum_tree edge would otherwise link into
 #                             the binary, keeping a *distributed* build MIT-clean
@@ -17,10 +20,11 @@ zed_dir="${ZED_UPSTREAM_DIR:-$repo_root/../zed-upstream}"
 zed_rev="$(sed -n 's/^zed_rev = "\(.*\)"/\1/p' "$repo_root/app/Cargo.toml")"
 patch_crt="$repo_root/docs/patches/0001-td-crt-pass.patch"
 patch_blur="$repo_root/docs/patches/0002-focus-blur.patch"
+patch_crawl="$repo_root/docs/patches/0003-text-crawl.patch"
 patch_gpl="$repo_root/docs/patches/0002-sever-gpl-crates.patch"
 
 [ -n "$zed_rev" ] || { echo "zed_rev not found in app/Cargo.toml" >&2; exit 1; }
-for p in "$patch_crt" "$patch_blur" "$patch_gpl"; do
+for p in "$patch_crt" "$patch_blur" "$patch_crawl" "$patch_gpl"; do
     [ -f "$p" ] || { echo "missing $p" >&2; exit 1; }
 done
 
@@ -59,6 +63,11 @@ apply_patch "$patch_crt" "td-crt-pass" \
 # sentinel: set_focus_blur present in gpui_wgpu means the blur is already in the tree
 apply_patch "$patch_blur" "focus-blur" \
     'git grep -q "set_focus_blur" -- crates/gpui_wgpu/src'
+# 0003-text-crawl is a delta on top of 0001+0002 (it patches the v3 shader and the
+# tube renderer); must apply after focus-blur.
+# sentinel: the per-rect crawl uniform present means the crawl is already in the tree
+apply_patch "$patch_crawl" "text-crawl" \
+    'git grep -q "crawl: array" -- crates/gpui_wgpu/src'
 # sentinel: ztracing/zlog gone from sum_tree means the sever is already in the tree
 apply_patch "$patch_gpl" "sever-gpl-crates" \
     '! git grep -q "ztracing" -- crates/sum_tree'
