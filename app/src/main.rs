@@ -6450,6 +6450,10 @@ impl Render for Workspace {
                 for (d, active) in chunk {
                     let active = *active;
                     let glyph = d.glyph().to_string();
+                    // A per-set swatch tints the plain symbol glyphs (❖ ⚡ ☼ …) to
+                    // their palette colour so the tray reads at a glance; colour
+                    // emoji ignore the tint and keep their own hues.
+                    let swatch = d.swatch();
                     let box_id = SharedString::from(format!("dyn-{}", d.label()));
                     let d_click = d.clone();
                     let cur_c = cur.clone();
@@ -6474,7 +6478,12 @@ impl Render for Workspace {
                                 darken(th.surface, 0.3)
                             })
                             .text_size(px(18.))
-                            .text_color(if active { th.text } else { th.text.alpha(0.7) })
+                            .text_color(match (swatch, active) {
+                                (Some(c), true) => c,
+                                (Some(c), false) => c.alpha(0.85),
+                                (None, true) => th.text,
+                                (None, false) => th.text.alpha(0.7),
+                            })
                             .cursor_pointer()
                             .child(glyph)
                             .on_mouse_down(

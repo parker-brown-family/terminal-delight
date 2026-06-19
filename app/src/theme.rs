@@ -944,6 +944,27 @@ pub enum Dynamic {
     /// robin-egg teal complement, vivid game-board greens and cinnabar reds.
     /// Maximum good vibes; the colour half of the GAMBA look (theme `gamba`).
     Retro,
+    /// BAT: a nocturnal electric-purple monitor — near-black violet field, bright
+    /// magenta phosphor letters, pale-orchid title. The flying-mouse, not baseball.
+    Bat,
+    /// CHERRY: a dark cherry field with bright cherry-red text and a blush-rose
+    /// title — a sweet, glossy crimson monochrome.
+    Cherry,
+    /// COTTON CLOWNDY: cotton-candy meets clown — a playful pastel SPREAD on a pink
+    /// field, fanning pink → sky-blue → violet for confetti accents.
+    CottonClowndy,
+    /// WOOD: a warm wooden-log monitor — saddle-brown field, light-oak text, birch
+    /// title. It's a log; the grain colours stay the same, just a cosy timber glow.
+    Wood,
+    /// ARMY: olive-drab field with khaki text and a sand title — a muted, sturdy
+    /// military monochrome (helmet-and-star).
+    Army,
+    /// MIDNIGHT: a deep indigo-navy field with icy-periwinkle text and a
+    /// moonlight-white title — a calm, starlit blue (moon-and-star).
+    Midnight,
+    /// SNOWFLAKE: a cold charcoal-blue field with crisp snow-white text and a
+    /// pure-white title — the brightest, iciest monochrome.
+    Snowflake,
     /// User-defined palette: explicit primary/secondary/tertiary/quaternary.
     /// Boxed so the rare custom palette doesn't bloat every `ThemeChoice` clone.
     Custom(Box<CustomPalette>),
@@ -952,12 +973,20 @@ pub enum Dynamic {
 impl Dynamic {
     /// The named colour sets shown in the tray, in display order (Custom is
     /// appended separately as the cog).
-    pub const NAMED: [Dynamic; 5] = [
+    pub const NAMED: [Dynamic; 12] = [
         Dynamic::Greenworks,
         Dynamic::Bolt,
         Dynamic::Amber,
         Dynamic::Pineapple,
         Dynamic::Retro,
+        // ── themes pack ──
+        Dynamic::Bat,
+        Dynamic::Cherry,
+        Dynamic::CottonClowndy,
+        Dynamic::Wood,
+        Dynamic::Army,
+        Dynamic::Midnight,
+        Dynamic::Snowflake,
     ];
 
     /// Glyph shown in the tray's vertical box for this colour set.
@@ -969,6 +998,13 @@ impl Dynamic {
             Dynamic::Amber => "☼",
             Dynamic::Pineapple => "🍍",
             Dynamic::Retro => "🎰",
+            Dynamic::Bat => "🦇",
+            Dynamic::Cherry => "🍒",
+            Dynamic::CottonClowndy => "🤡",
+            Dynamic::Wood => "🪵",
+            Dynamic::Army => "🪖",
+            Dynamic::Midnight => "🌙",
+            Dynamic::Snowflake => "❄",
             Dynamic::Custom(_) => "⚙",
         }
     }
@@ -982,6 +1018,13 @@ impl Dynamic {
             Dynamic::Amber => "amber",
             Dynamic::Pineapple => "pineapple",
             Dynamic::Retro => "retro",
+            Dynamic::Bat => "bat",
+            Dynamic::Cherry => "cherry",
+            Dynamic::CottonClowndy => "cotton-clowndy",
+            Dynamic::Wood => "wood",
+            Dynamic::Army => "army",
+            Dynamic::Midnight => "midnight",
+            Dynamic::Snowflake => "snowflake",
             Dynamic::Custom(_) => "custom",
         }
     }
@@ -1026,8 +1069,72 @@ impl Dynamic {
                 complement: Some("#43c6c3"),
                 mode: ColorMode::OnTheme,
             },
+            // bat: near-black violet field, bright magenta phosphor + orchid title
+            Dynamic::Bat => SetSig {
+                seed: "#b026ff",
+                text: Some("#f0a6ff"),
+                complement: Some("#f7d6ff"),
+                mode: ColorMode::Monochrome,
+            },
+            // cherry: dark cherry field, bright cherry-red text, blush-rose title
+            Dynamic::Cherry => SetSig {
+                seed: "#e11d48",
+                text: Some("#ff8fa8"),
+                complement: Some("#ffdbe4"),
+                mode: ColorMode::Monochrome,
+            },
+            // cotton clowndy: candy-pink anchor, sky-blue title; OnTheme so the
+            // playful pink→sky→violet spread flows into the ANSI accents.
+            Dynamic::CottonClowndy => SetSig {
+                seed: "#ff6ec7",
+                text: Some("#ffd1ef"),
+                complement: Some("#a0e9ff"),
+                mode: ColorMode::OnTheme,
+            },
+            // wood: saddle-brown field, light-oak text, birch-cream title
+            Dynamic::Wood => SetSig {
+                seed: "#8a5a2b",
+                text: Some("#d8b486"),
+                complement: Some("#f0dcc0"),
+                mode: ColorMode::Monochrome,
+            },
+            // army: olive-drab field, khaki text, sand title
+            Dynamic::Army => SetSig {
+                seed: "#6b7d2f",
+                text: Some("#cdd6a3"),
+                complement: Some("#eef0d2"),
+                mode: ColorMode::Monochrome,
+            },
+            // midnight: deep indigo-navy field, icy-periwinkle text, moonlight title
+            Dynamic::Midnight => SetSig {
+                seed: "#4361ee",
+                text: Some("#b8c9ff"),
+                complement: Some("#e6ecff"),
+                mode: ColorMode::Monochrome,
+            },
+            // snowflake: cold charcoal-blue field, crisp snow-white text, white title
+            Dynamic::Snowflake => SetSig {
+                seed: "#7cc4ff",
+                text: Some("#e8f4ff"),
+                complement: Some("#ffffff"),
+                mode: ColorMode::Monochrome,
+            },
             _ => return None,
         })
+    }
+
+    /// A legible swatch colour for the tray glyph — the set's signature seed
+    /// lifted to a readable lightness/saturation on the dark chip, so the plain
+    /// symbol glyphs (❖ ⚡ ☼ …) read as green / purple / amber at a glance.
+    /// `None` for Plain/Custom (no signature) → the glyph keeps the theme text
+    /// colour. Colour-emoji glyphs (🍍 🎰 🍒 …) ignore this tint and show their
+    /// own colours, so it lands only on the monochrome symbol sets.
+    pub fn swatch(&self) -> Option<Hsla> {
+        let mut c = hex(self.signature()?.seed)?;
+        c.s = c.s.max(0.45);
+        c.l = c.l.clamp(0.55, 0.72);
+        c.a = 1.0;
+        Some(c)
     }
 
     /// `true` for the serde/skip default — no colour set.
@@ -1112,8 +1219,18 @@ pub fn roles(anchor: Hsla, d: &Dynamic) -> Roles {
             prim_l: 0.60,
             prim_s_floor: 0.66,
         },
-        // The monochrome colour sets — one hue, bright high-intensity text.
-        Dynamic::Greenworks | Dynamic::Bolt | Dynamic::Amber => Spec {
+        // The monochrome colour sets — one hue, bright high-intensity text. The
+        // themes-pack monitors (bat/cherry/wood/army/midnight/snowflake) ride here
+        // too; their distinct field/text/title come from the signature palette.
+        Dynamic::Greenworks
+        | Dynamic::Bolt
+        | Dynamic::Amber
+        | Dynamic::Bat
+        | Dynamic::Cherry
+        | Dynamic::Wood
+        | Dynamic::Army
+        | Dynamic::Midnight
+        | Dynamic::Snowflake => Spec {
             sec_deg: 0.,
             ter_deg: 0.,
             mono: true,
@@ -1121,6 +1238,17 @@ pub fn roles(anchor: Hsla, d: &Dynamic) -> Roles {
             text_s: 0.12,
             prim_l: 0.72,
             prim_s_floor: 0.30,
+        },
+        // cotton clowndy: a pastel confetti spread off the candy-pink anchor —
+        // secondary fans to sky-blue, tertiary to violet; light + lively.
+        Dynamic::CottonClowndy => Spec {
+            sec_deg: -130.,
+            ter_deg: -60.,
+            mono: false,
+            text_l: 0.88,
+            text_s: 0.45,
+            prim_l: 0.70,
+            prim_s_floor: 0.55,
         },
         // Plain (and anything else) → single-hue tint, mono when the seed is grey.
         _ => Spec {
@@ -1549,7 +1677,7 @@ mod tests {
     #[test]
     fn dynamic_tray_entries_have_distinct_glyphs_and_labels() {
         // The tray is glyph-only (no captions/hover), so each entry must be
-        // visually distinct — the cog (Custom) is appended after the named five.
+        // visually distinct — the cog (Custom) is appended after the named sets.
         let mut entries: Vec<&Dynamic> = Dynamic::NAMED.iter().collect();
         let custom = Dynamic::Custom(Box::default());
         entries.push(&custom);
@@ -1565,7 +1693,39 @@ mod tests {
             entries.len(),
             "every dynamic needs its own label"
         );
-        assert_eq!(entries.len(), 6, "five named dynamics plus the custom cog");
+        assert_eq!(
+            entries.len(),
+            13,
+            "twelve named dynamics plus the custom cog"
+        );
+    }
+
+    #[test]
+    fn every_named_set_carries_a_parseable_signature() {
+        // A tray set with no signature would click to a no-op (Plain-like) look;
+        // every NAMED set must seed a real, parseable palette.
+        for d in Dynamic::NAMED.iter() {
+            let sig = d
+                .signature()
+                .unwrap_or_else(|| panic!("{} has no signature", d.label()));
+            assert!(
+                hex(sig.seed).is_some(),
+                "{} seed {} does not parse",
+                d.label(),
+                sig.seed
+            );
+            // …and every named set must carry a legible tray swatch so the glyph
+            // reads as its palette colour on the dark chip.
+            let sw = d
+                .swatch()
+                .unwrap_or_else(|| panic!("{} has no swatch", d.label()));
+            assert!(
+                (0.55..=0.72).contains(&sw.l),
+                "{} swatch lightness {} not in legible band",
+                d.label(),
+                sw.l
+            );
+        }
     }
 
     fn outer_named(id: &str, brightness: f32) -> ThemeChoice {
