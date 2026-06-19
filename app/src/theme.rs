@@ -113,6 +113,8 @@ pub struct Theme {
     /// default fg are recoloured by token class, while cells the program gave
     /// an explicit ANSI colour still flow through `color_mode`.
     pub syntax: bool,
+    /// Which grammar the overlay highlights when `syntax` is on (the SYNTAX tray).
+    pub syntax_scheme: SyntaxScheme,
     /// Monitor-OSD grading baked from the scope's [`ThemeChoice::grade`], applied
     /// to final cell colours at paint time (see `pane::graded`).
     pub grade: Grade,
@@ -222,6 +224,71 @@ fn is_false(b: &bool) -> bool {
     !*b
 }
 
+/// Which grammar the `syntax` overlay highlights, when on. Orthogonal to
+/// PROGRAM COLOUR (`ColorMode`): the scheme decides *what* gets a role, the
+/// colour mode decides *how* roles are coloured (see `pane::role_color`).
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum SyntaxScheme {
+    /// Programming tokens — keywords, strings, numbers, paths, flags, comments.
+    #[default]
+    Code,
+    /// Agent-watch markers — callouts, tool calls, links, structure, lists.
+    Agentic,
+    /// Log streams — error/warn/ok levels, timestamps, durations, paths.
+    Logs,
+    /// Markdown — headings, bold/italic, code spans, links, quotes, lists.
+    Markdown,
+}
+
+/// Lenient on load: an unknown scheme folds to `Code` (the default), so a state
+/// file from a newer/older build keeps deserialising instead of erroring.
+impl<'de> Deserialize<'de> for SyntaxScheme {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        Ok(match String::deserialize(d)?.as_str() {
+            "agentic" => SyntaxScheme::Agentic,
+            "logs" => SyntaxScheme::Logs,
+            "markdown" => SyntaxScheme::Markdown,
+            _ => SyntaxScheme::Code,
+        })
+    }
+}
+
+impl SyntaxScheme {
+    /// Picker order for the SYNTAX tray.
+    pub const ALL: [SyntaxScheme; 4] = [
+        SyntaxScheme::Code,
+        SyntaxScheme::Agentic,
+        SyntaxScheme::Logs,
+        SyntaxScheme::Markdown,
+    ];
+
+    /// `true` for the serde/skip default (code).
+    pub fn is_code(&self) -> bool {
+        matches!(self, SyntaxScheme::Code)
+    }
+
+    /// Tiny caption under the glyph in the picker.
+    pub fn caption(self) -> &'static str {
+        match self {
+            SyntaxScheme::Code => "code",
+            SyntaxScheme::Agentic => "agentic",
+            SyntaxScheme::Logs => "logs",
+            SyntaxScheme::Markdown => "mark",
+        }
+    }
+
+    /// Glyph shown in the picker.
+    pub fn icon(self) -> &'static str {
+        match self {
+            SyntaxScheme::Code => "\u{25c6}",     // ◆
+            SyntaxScheme::Agentic => "\u{25cf}",  // ●
+            SyntaxScheme::Logs => "\u{2261}",     // ≡
+            SyntaxScheme::Markdown => "\u{00b6}", // ¶
+        }
+    }
+}
+
 /// serde `default` for the two `PaneTheme` inherit flags — a fresh pane follows
 /// outer for both groups, so an absent flag means "inheriting".
 fn yes() -> bool {
@@ -278,6 +345,29 @@ impl GradeKey {
             GradeKey::CrawlDepth => (CRAWL_DEPTH_MIN, CRAWL_DEPTH_MAX, CRAWL_DEPTH_DEFAULT),
             _ => (0.0, 1.0, 0.5),
         }
+    }
+
+    /// Map a stored channel value to a `0..=100` "slider percent" — the single,
+    /// uniform unit the MCP config API speaks. Every channel reports the same
+    /// `0..100` scale regardless of its idiosyncratic stored range (brightness
+    /// `0..1`, crawl-depth `0.05..15`, text-size `0.6..2`), so an agent never has
+    /// to know a channel's internal units to read or write it. It is exactly the
+    /// OSD slider's track fraction ×100 — what a human sees on the display tray.
+    pub fn to_percent(self, stored: f32) -> f32 {
+        let (min, max, _) = self.range();
+        if (max - min).abs() < f32::EPSILON {
+            return 0.0;
+        }
+        (((stored - min) / (max - min)) * 100.0).clamp(0.0, 100.0)
+    }
+
+    /// Inverse of [`Self::to_percent`]: a `0..=100` percent back to the channel's
+    /// stored units. The percent is clamped to `0..100` first; the caller should
+    /// still pass the result through [`Grade::set`], which clamps into range
+    /// again (belt-and-suspenders, and the single point that owns the bounds).
+    pub fn from_percent(self, pct: f32) -> f32 {
+        let (min, max, _) = self.range();
+        min + (pct.clamp(0.0, 100.0) / 100.0) * (max - min)
     }
 }
 
@@ -479,6 +569,9 @@ pub struct ThemeChoice {
     /// flows through `color`. (Was the retired `ColorMode::Syntax` mode.)
     #[serde(default, skip_serializing_if = "is_false")]
     pub syntax: bool,
+    /// Which grammar the syntax overlay highlights (code/agentic/logs/markdown).
+    #[serde(default, skip_serializing_if = "SyntaxScheme::is_code")]
+    pub syntax_scheme: SyntaxScheme,
     /// Monitor-OSD grading for this scope. Starts at the house [`Grade::default`]
     /// and is omitted from the wire form only while it still matches it (see
     /// [`Grade::is_default`]), so a hand-tuned grade — even a neutral one — persists.
@@ -509,6 +602,7 @@ impl Default for ThemeChoice {
             seed: None,
             color: ColorMode::default(),
             syntax: true,
+            syntax_scheme: SyntaxScheme::Code,
             grade: Grade::default(),
             dynamic: Dynamic::default(),
             text: None,
@@ -533,6 +627,7 @@ pub fn house_outer() -> ThemeChoice {
         seed: Some("#e0913a".into()),
         color: ColorMode::Default, // "ansi"
         syntax: true,
+        syntax_scheme: SyntaxScheme::Code,
         grade: Grade {
             brightness: 0.38, // −12
             contrast: 0.21,   // −29
@@ -566,6 +661,7 @@ pub fn house_terminal() -> ThemeChoice {
         seed: None,
         color: ColorMode::Default, // "ansi"
         syntax: true,
+        syntax_scheme: SyntaxScheme::Code,
         grade: Grade::default(), // the green house grade
         dynamic: Dynamic::Plain,
         text: None,
@@ -587,6 +683,8 @@ pub struct ThemeGroup {
     pub color: ColorMode,
     #[serde(default, skip_serializing_if = "is_false")]
     pub syntax: bool,
+    #[serde(default, skip_serializing_if = "SyntaxScheme::is_code")]
+    pub syntax_scheme: SyntaxScheme,
     #[serde(default, skip_serializing_if = "Dynamic::is_plain")]
     pub dynamic: Dynamic,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -604,6 +702,7 @@ impl Default for ThemeGroup {
             seed: None,
             color: ColorMode::default(),
             syntax: true,
+            syntax_scheme: SyntaxScheme::Code,
             dynamic: Dynamic::default(),
             text: None,
             complement: None,
@@ -620,6 +719,7 @@ impl ThemeGroup {
             seed: c.seed.clone(),
             color: c.color,
             syntax: c.syntax,
+            syntax_scheme: c.syntax_scheme,
             dynamic: c.dynamic.clone(),
             text: c.text.clone(),
             complement: c.complement.clone(),
@@ -688,6 +788,7 @@ impl PaneTheme {
             seed: g.seed,
             color: g.color,
             syntax: g.syntax,
+            syntax_scheme: g.syntax_scheme,
             grade,
             dynamic: g.dynamic,
             text: g.text,
@@ -1231,6 +1332,7 @@ pub fn resolve(cx: &App, choice: &ThemeChoice) -> Arc<Theme> {
     }
     th.color_mode = mode;
     th.syntax = choice.syntax;
+    th.syntax_scheme = choice.syntax_scheme;
     th.grade = choice.grade;
     // Warp + tracking ride the grade group, so they resolve per-pane (own
     // override else inherited outer) — each pane bends by its own curvature
@@ -1398,6 +1500,7 @@ pub(crate) fn parse(source: &str) -> Result<Theme, String> {
         ansi,
         color_mode: ColorMode::default(),
         syntax: false,
+        syntax_scheme: SyntaxScheme::Code,
         grade: Grade::default(),
         scanline_opacity: file.effects.scanline_opacity.unwrap_or(0.).clamp(0., 0.6),
         scanline_step: file.effects.scanline_step.unwrap_or(4.).max(2.),
@@ -1981,6 +2084,7 @@ mod tests {
             id: "hacker".into(),
             color: ColorMode::OnTheme,
             syntax: true,
+            syntax_scheme: SyntaxScheme::Code,
             ..Default::default()
         };
         let toml = toml::to_string(&c).unwrap();
@@ -2027,6 +2131,58 @@ mod tests {
             back.grade.is_neutral(),
             "neutral round-trips, not the house default"
         );
+    }
+
+    #[test]
+    fn grade_percent_round_trips_across_every_channel() {
+        // The MCP config API's uniform 0..100 unit must round-trip every channel
+        // back to its stored value — including the channels with non-`0..1`
+        // ranges (text-size 0.6..2, scale 0.7..1.6, warp, crawl angle/depth) —
+        // or a `get → set` would silently drift the look.
+        let keys = [
+            GradeKey::Brightness,
+            GradeKey::Contrast,
+            GradeKey::Colour,
+            GradeKey::Text,
+            GradeKey::Background,
+            GradeKey::Gamma,
+            GradeKey::Scale,
+            GradeKey::TextSize,
+            GradeKey::Warp,
+            GradeKey::CrawlAngle,
+            GradeKey::CrawlDepth,
+        ];
+        for k in keys {
+            let (min, max, _) = k.range();
+            // sweep the channel's whole range in stored units
+            for i in 0..=20 {
+                let stored = min + (max - min) * (i as f32 / 20.0);
+                let pct = k.to_percent(stored);
+                assert!(
+                    (0.0..=100.0).contains(&pct),
+                    "{k:?}: percent {pct} out of 0..100 for stored {stored}"
+                );
+                let back = k.from_percent(pct);
+                assert!(
+                    (back - stored).abs() < (max - min) * 1e-4 + 1e-6,
+                    "{k:?}: round-trip {stored} → {pct}% → {back} drifted"
+                );
+            }
+            // the endpoints map to the bookends, and out-of-range percent saturates
+            assert!(k.to_percent(min).abs() < 1e-3, "{k:?}: min should be 0%");
+            assert!(
+                (k.to_percent(max) - 100.0).abs() < 1e-3,
+                "{k:?}: max should be 100%"
+            );
+            assert!(
+                (k.from_percent(-50.0) - min).abs() < 1e-6,
+                "{k:?}: below 0% clamps to min"
+            );
+            assert!(
+                (k.from_percent(150.0) - max).abs() < 1e-6,
+                "{k:?}: above 100% clamps to max"
+            );
+        }
     }
 
     #[test]

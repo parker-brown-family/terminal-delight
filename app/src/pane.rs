@@ -748,47 +748,78 @@ fn classify_line(line: &str) -> Vec<Tok> {
 /// cells). The renderer only applies these to cells the program left at default
 /// fg — cells with explicit ANSI colour still flow through [`ansi_to_hsla`].
 fn syntax_colors(line: &str, th: &Theme) -> Vec<Hsla> {
-    classify_line(line)
-        .into_iter()
-        .map(|t| tok_color(t, th))
-        .collect()
+    use crate::theme::SyntaxScheme;
+    let roles: Vec<Role> = match th.syntax_scheme {
+        SyntaxScheme::Code => classify_line(line).into_iter().map(tok_to_role).collect(),
+        SyntaxScheme::Agentic => classify_agentic(line),
+        SyntaxScheme::Logs => classify_logs(line),
+        SyntaxScheme::Markdown => classify_markdown(line),
+    };
+    roles.into_iter().map(|r| role_color(r, th)).collect()
 }
 
-/// Colour for one syntax token, derived from the pane's PROGRAM COLOUR mode so
-/// the two controls compose into one coherent scheme:
-///   • `ansi` (Default)  — vivid full-spectrum: each role a distinct hue on the
-///     seed arc (the bright IDE look).
-///   • `mono` (Monochrome) — one phosphor: vary only the *lightness* of the text
-///     colour, so token structure reads without any colour (distraction-free).
-///   • `theme` (OnTheme) — paint the main roles in the *actual selected palette*
-///     (keyword→seed, string→complement, number→the human pip), filling the
-///     remaining roles by derivation. The syntax wears your theme.
-fn tok_color(t: Tok, th: &Theme) -> Hsla {
+/// The shared 6-slot palette every syntax SCHEME maps its grammar into, so all
+/// schemes are coloured identically by PROGRAM COLOUR (see [`role_color`]).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Role {
+    Text,       // body / unclassified
+    Primary,    // loudest accent — keyword · callout · error · heading
+    Secondary,  // string · link/reference · ok/pass · bold
+    Tertiary,   // number · tool-call · warn · code-span
+    Quaternary, // path · structure/title · timestamp · italic · url
+    Muted,      // operators/punct/flags · list markers · debug · quotes
+    Comment,    // comments / faint asides
+}
+
+/// Paint `out[a..b]` (char-indexed) with role `r`, clamped to bounds.
+fn paint_roles(out: &mut [Role], a: usize, b: usize, r: Role) {
+    let b = b.min(out.len());
+    if a < b {
+        out[a..b].iter_mut().for_each(|p| *p = r);
+    }
+}
+
+/// `code`-scheme token → palette role.
+fn tok_to_role(t: Tok) -> Role {
+    match t {
+        Tok::Word => Role::Text,
+        Tok::Keyword => Role::Primary,
+        Tok::Str => Role::Secondary,
+        Tok::Num => Role::Tertiary,
+        Tok::Path => Role::Quaternary,
+        Tok::Flag | Tok::Op | Tok::Punct => Role::Muted,
+        Tok::Comment => Role::Comment,
+    }
+}
+
+/// Colour for one role, derived from the pane's PROGRAM COLOUR mode so the two
+/// controls compose: `ansi` = vivid full-spectrum (a distinct hue per role on
+/// the seed arc); `mono` = shades of the text phosphor (structure, no colour);
+/// `theme` = the main roles in the ACTUAL selected palette, rest derived.
+fn role_color(role: Role, th: &Theme) -> Hsla {
     use crate::theme::ColorMode;
-    if t == Tok::Word {
+    if role == Role::Text {
         return th.text;
     }
-    if t == Tok::Comment {
+    if role == Role::Comment {
         return Hsla { a: 0.7, ..th.faint };
     }
     match th.color_mode {
         ColorMode::Default => {
             let dark = th.bg.l < 0.5;
             let l = if dark { 0.72 } else { 0.40 };
-            let hue = |off: f32| Hsla {
+            let hue = |off: f32, a: f32| Hsla {
                 h: wrap01(th.accent.h + off),
                 s: th.accent.s.clamp(0.45, 0.95),
                 l,
-                a: 1.0,
+                a,
             };
-            match t {
-                Tok::Num => hue(0.09),
-                Tok::Str => hue(0.17),
-                Tok::Path => hue(-0.09),
-                Tok::Flag => hue(-0.17),
-                Tok::Op => hue(0.32),
-                Tok::Punct => hue(0.24),
-                Tok::Keyword => th.accent,
+            match role {
+                Role::Primary => th.accent,
+                Role::Secondary => hue(0.17, 1.0),
+                Role::Tertiary => hue(0.09, 1.0),
+                Role::Quaternary => hue(-0.09, 1.0),
+                Role::Muted => hue(0.28, 0.80),
                 _ => th.text,
             }
         }
@@ -800,14 +831,12 @@ fn tok_color(t: Tok, th: &Theme) -> Hsla {
                 l: (base.l + dl).clamp(0.05, 0.97),
                 a,
             };
-            match t {
-                Tok::Keyword => shade(0.14, 1.0),
-                Tok::Str => shade(0.07, 1.0),
-                Tok::Num => shade(0.07, 1.0),
-                Tok::Path => shade(-0.05, 0.95),
-                Tok::Flag => shade(-0.05, 0.90),
-                Tok::Op => shade(-0.12, 0.80),
-                Tok::Punct => shade(-0.12, 0.75),
+            match role {
+                Role::Primary => shade(0.14, 1.0),
+                Role::Secondary => shade(0.07, 1.0),
+                Role::Tertiary => shade(0.04, 1.0),
+                Role::Quaternary => shade(-0.05, 0.95),
+                Role::Muted => shade(-0.12, 0.78),
                 _ => base,
             }
         }
@@ -818,18 +847,277 @@ fn tok_color(t: Tok, th: &Theme) -> Hsla {
                 l: from.l,
                 a: 1.0,
             };
-            match t {
-                Tok::Keyword => th.accent,
-                Tok::Str => th.complement,
-                Tok::Num => th.human,
-                Tok::Path => nudge(th.accent, 0.05),
-                Tok::Flag => th.faint,
-                Tok::Op => nudge(th.complement, -0.05),
-                Tok::Punct => Hsla { a: 0.7, ..th.text },
+            match role {
+                Role::Primary => th.accent,
+                Role::Secondary => th.complement,
+                Role::Tertiary => th.human,
+                Role::Quaternary => nudge(th.accent, 0.05),
+                Role::Muted => th.faint,
                 _ => th.text,
             }
         }
     }
+}
+
+/// First non-whitespace char index, or `n` if the line is blank.
+fn lead_idx(ch: &[char]) -> usize {
+    ch.iter()
+        .position(|c| !c.is_whitespace())
+        .unwrap_or(ch.len())
+}
+
+/// AGENTIC scheme — agent-watch markers: callouts, tool calls, links/files,
+/// structure/titles, list & step markers. Heuristic + line-oriented.
+fn classify_agentic(line: &str) -> Vec<Role> {
+    let ch: Vec<char> = line.chars().collect();
+    let n = ch.len();
+    let mut out = vec![Role::Text; n];
+    let lead = lead_idx(&ch);
+    if lead == n {
+        return out;
+    }
+    // structure: heading run of '#'
+    if ch[lead] == '#' {
+        paint_roles(&mut out, lead, n, Role::Quaternary);
+        return out;
+    }
+    // structure: a table/separator rule (only box-drawing / dashes / pipes)
+    let only_rule = ch
+        .iter()
+        .all(|c| matches!(c, '|' | '-' | '+' | '=' | '─' | '│' | '┼' | '╶' | ' '));
+    if n >= 4 && only_rule && ch.iter().any(|c| !c.is_whitespace()) {
+        paint_roles(&mut out, 0, n, Role::Quaternary);
+        return out;
+    }
+    // inline: links / paths (Secondary) · tool-call Name( (Tertiary) · ALL-CAPS (Quaternary)
+    let mut i = 0;
+    while i < n {
+        if ch[i].is_whitespace() {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        while i < n && !ch[i].is_whitespace() {
+            i += 1;
+        }
+        let tok: String = ch[start..i].iter().collect();
+        let lower = tok.to_ascii_lowercase();
+        if lower.starts_with("http://")
+            || lower.starts_with("https://")
+            || lower.starts_with("file://")
+            || lower.starts_with("www.")
+            || (tok.contains('/') && tok.len() > 2 && !tok.ends_with(':'))
+        {
+            paint_roles(&mut out, start, i, Role::Secondary); // link / file reference
+        } else if let Some(p) = tok.chars().position(|c| c == '(') {
+            let name = &tok[..tok
+                .char_indices()
+                .nth(p)
+                .map(|(b, _)| b)
+                .unwrap_or(tok.len())];
+            if name.len() >= 2
+                && name.chars().next().is_some_and(|c| c.is_ascii_uppercase())
+                && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+            {
+                paint_roles(&mut out, start, start + p, Role::Tertiary); // tool call
+            }
+        } else if tok.chars().count() >= 2
+            && tok
+                .chars()
+                .all(|c| c.is_ascii_uppercase() || matches!(c, '_' | '-'))
+            && tok.chars().any(|c| c.is_ascii_uppercase())
+        {
+            paint_roles(&mut out, start, i, Role::Quaternary); // ALL-CAPS title-ish
+        }
+    }
+    // sequence markers at the start (paint just the marker): 1. / 1) / - / * / • / phase|step|part|stage N
+    if ch[lead].is_ascii_digit() {
+        let mut k = lead;
+        while k < n && ch[k].is_ascii_digit() {
+            k += 1;
+        }
+        if k < n && (ch[k] == '.' || ch[k] == ')') {
+            paint_roles(&mut out, lead, k + 1, Role::Muted);
+        }
+    } else if matches!(ch[lead], '-' | '*' | '•' | '·')
+        && lead + 1 < n
+        && ch[lead + 1].is_whitespace()
+    {
+        paint_roles(&mut out, lead, lead + 1, Role::Muted);
+    }
+    let rest_lower: String = ch[lead..].iter().collect::<String>().to_ascii_lowercase();
+    for kw in ["phase ", "step ", "part ", "stage "] {
+        if rest_lower.starts_with(kw) {
+            let mut end = lead + kw.chars().count();
+            while end < n && (ch[end].is_ascii_digit() || ch[end] == '.') {
+                end += 1;
+            }
+            paint_roles(&mut out, lead, end, Role::Muted);
+        }
+    }
+    // callout label at the start (wins on the label): KnownWord ':'
+    let rest: String = ch[lead..].iter().collect();
+    if let Some(colon) = rest.chars().position(|c| c == ':') {
+        let word: String = rest.chars().take(colon).collect();
+        const CALLOUTS: &[&str] = &[
+            "recommendation",
+            "recap",
+            "goal",
+            "note",
+            "next",
+            "why",
+            "plan",
+            "todo",
+            "summary",
+            "tip",
+            "warning",
+            "result",
+            "caveat",
+            "takeaway",
+            "key",
+            "fix",
+            "action",
+            "status",
+            "context",
+        ];
+        let w = word.trim();
+        if CALLOUTS.iter().any(|c| w.eq_ignore_ascii_case(c)) {
+            paint_roles(&mut out, lead, lead + colon + 1, Role::Primary);
+        }
+    }
+    out
+}
+
+/// LOGS scheme — error/warn/ok levels, timestamps, durations, paths, ✓/✗.
+fn classify_logs(line: &str) -> Vec<Role> {
+    let ch: Vec<char> = line.chars().collect();
+    let n = ch.len();
+    let mut out = vec![Role::Text; n];
+    let mut i = 0;
+    while i < n {
+        let c = ch[i];
+        if !(c.is_alphanumeric() || matches!(c, ':' | '/' | '.' | '-' | '_')) {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        while i < n && (ch[i].is_alphanumeric() || matches!(ch[i], ':' | '/' | '.' | '-' | '_')) {
+            i += 1;
+        }
+        let tok: String = ch[start..i].iter().collect();
+        let role = match tok.to_ascii_uppercase().as_str() {
+            "ERROR" | "ERR" | "FAIL" | "FAILED" | "FATAL" | "PANIC" | "CRITICAL" => {
+                Some(Role::Primary)
+            }
+            "WARN" | "WARNING" => Some(Role::Tertiary),
+            "OK" | "PASS" | "PASSED" | "DONE" | "SUCCESS" | "READY" | "UP" => Some(Role::Secondary),
+            "INFO" | "DEBUG" | "TRACE" | "NOTE" | "DEBUG:" => Some(Role::Muted),
+            _ => None,
+        };
+        if let Some(r) = role {
+            paint_roles(&mut out, start, i, r);
+        } else if tok.contains(':')
+            && tok.chars().any(|c| c.is_ascii_digit())
+            && tok
+                .chars()
+                .all(|c| c.is_ascii_digit() || matches!(c, ':' | '.' | '-' | 'T' | 'Z'))
+        {
+            paint_roles(&mut out, start, i, Role::Muted); // timestamp
+        } else if tok.chars().next().is_some_and(|c| c.is_ascii_digit()) {
+            paint_roles(&mut out, start, i, Role::Tertiary); // number / duration
+        } else if tok.contains('/') && tok.len() > 2 {
+            paint_roles(&mut out, start, i, Role::Quaternary); // path
+        }
+    }
+    for (idx, c) in ch.iter().enumerate() {
+        match c {
+            '✓' | '✔' => out[idx] = Role::Secondary,
+            '✗' | '✘' | '×' => out[idx] = Role::Primary,
+            _ => {}
+        }
+    }
+    out
+}
+
+/// MARKDOWN scheme — headings, bold/italic, code spans, links, quotes, lists.
+fn classify_markdown(line: &str) -> Vec<Role> {
+    let ch: Vec<char> = line.chars().collect();
+    let n = ch.len();
+    let mut out = vec![Role::Text; n];
+    let lead = lead_idx(&ch);
+    if lead < n && ch[lead] == '#' {
+        paint_roles(&mut out, 0, n, Role::Primary);
+        return out;
+    }
+    if lead < n && ch[lead] == '>' {
+        paint_roles(&mut out, lead, n, Role::Muted);
+        return out;
+    }
+    // list markers
+    if lead < n && matches!(ch[lead], '-' | '*' | '+') && lead + 1 < n && ch[lead + 1] == ' ' {
+        paint_roles(&mut out, lead, lead + 1, Role::Muted);
+    } else if lead < n && ch[lead].is_ascii_digit() {
+        let mut k = lead;
+        while k < n && ch[k].is_ascii_digit() {
+            k += 1;
+        }
+        if k < n && (ch[k] == '.' || ch[k] == ')') {
+            paint_roles(&mut out, lead, k + 1, Role::Muted);
+        }
+    }
+    // inline spans
+    let mut i = 0;
+    while i < n {
+        if ch[i] == '`' {
+            let mut j = i + 1;
+            while j < n && ch[j] != '`' {
+                j += 1;
+            }
+            let j = (j + 1).min(n);
+            paint_roles(&mut out, i, j, Role::Tertiary);
+            i = j;
+        } else if i + 1 < n && ch[i] == '*' && ch[i + 1] == '*' {
+            let mut j = i + 2;
+            while j + 1 < n && !(ch[j] == '*' && ch[j + 1] == '*') {
+                j += 1;
+            }
+            let j = (j + 2).min(n);
+            paint_roles(&mut out, i, j, Role::Secondary); // **bold**
+            i = j;
+        } else if matches!(ch[i], '*' | '_') {
+            let q = ch[i];
+            let mut j = i + 1;
+            while j < n && ch[j] != q {
+                j += 1;
+            }
+            if j < n && j > i + 1 {
+                paint_roles(&mut out, i, j + 1, Role::Quaternary); // *em*
+                i = j + 1;
+            } else {
+                i += 1;
+            }
+        } else if ch[i] == '[' {
+            let mut j = i + 1;
+            while j < n && ch[j] != ']' {
+                j += 1;
+            }
+            if j + 1 < n && ch[j + 1] == '(' {
+                let mut k = j + 2;
+                while k < n && ch[k] != ')' {
+                    k += 1;
+                }
+                let k = (k + 1).min(n);
+                paint_roles(&mut out, i, j + 1, Role::Secondary); // [text]
+                paint_roles(&mut out, j + 1, k, Role::Quaternary); // (url)
+                i = k;
+            } else {
+                i += 1;
+            }
+        } else {
+            i += 1;
+        }
+    }
+    out
 }
 
 /// Which independent level a graded cell takes: foreground text vs background.
@@ -3968,7 +4256,10 @@ mod tests {
         // a contiguous substring outscores the same chars scattered
         let (sub, _) = fuzzy_match("the cargo build finished", "cargo").unwrap();
         let (scattered, _) = fuzzy_match("c-a-r-g-o spread out", "cargo").unwrap();
-        assert!(sub > scattered, "contiguous run beats a scattered subsequence");
+        assert!(
+            sub > scattered,
+            "contiguous run beats a scattered subsequence"
+        );
         // case-insensitive; positions point at the matched chars (for highlight)
         let (_, pos) = fuzzy_match("Run CARGO now", "cargo").unwrap();
         assert_eq!(pos, vec![4, 5, 6, 7, 8]);
@@ -4502,6 +4793,87 @@ mod tests {
             assert_ne!(th.accent, base.accent, "{:?} retints the accent", mode);
             assert_eq!(th.ansi[7], th.text, "default-fg slot follows the mode text");
             assert!(th.bg.l < 0.1, "{:?} tube depths stay dark", mode);
+        }
+    }
+
+    /// Role at the first char of the first occurrence of `needle`.
+    fn role_at(line: &str, needle: &str, roles: &[Role]) -> Role {
+        let idx = line.find(needle).expect("needle present");
+        roles[line[..idx].chars().count()]
+    }
+
+    #[test]
+    fn agentic_marks_callouts_tools_links_and_structure() {
+        let l = "Recommendation: ship it";
+        let r = classify_agentic(l);
+        assert_eq!(role_at(l, "Recommendation", &r), Role::Primary);
+        assert_eq!(role_at(l, "ship", &r), Role::Text); // body after the colon
+
+        let l = "then Bash(ls) runs";
+        assert_eq!(role_at(l, "Bash", &classify_agentic(l)), Role::Tertiary);
+
+        let l = "see https://x.io/y and src/main.rs";
+        let r = classify_agentic(l);
+        assert_eq!(role_at(l, "https", &r), Role::Secondary);
+        assert_eq!(role_at(l, "src/main.rs", &r), Role::Secondary);
+
+        assert_eq!(classify_agentic("# Heading")[0], Role::Quaternary);
+        assert_eq!(classify_agentic("1. first step")[0], Role::Muted);
+    }
+
+    #[test]
+    fn logs_marks_levels_timestamps_and_numbers() {
+        let l = "12:00:01 ERROR took 45ms at src/x.rs";
+        let r = classify_logs(l);
+        assert_eq!(role_at(l, "ERROR", &r), Role::Primary);
+        assert_eq!(role_at(l, "12:00:01", &r), Role::Muted);
+        assert_eq!(role_at(l, "45ms", &r), Role::Tertiary);
+        assert_eq!(role_at(l, "src/x.rs", &r), Role::Quaternary);
+
+        let l = "WARN low disk OK ready";
+        let r = classify_logs(l);
+        assert_eq!(role_at(l, "WARN", &r), Role::Tertiary);
+        assert_eq!(role_at(l, "OK", &r), Role::Secondary);
+    }
+
+    #[test]
+    fn markdown_marks_headings_spans_and_links() {
+        assert_eq!(classify_markdown("## Title")[0], Role::Primary);
+        assert_eq!(classify_markdown("> quoted")[0], Role::Muted);
+
+        let l = "a **bold** and `code` and [t](u)";
+        let r = classify_markdown(l);
+        assert_eq!(role_at(l, "**bold**", &r), Role::Secondary);
+        assert_eq!(role_at(l, "`code`", &r), Role::Tertiary);
+        assert_eq!(role_at(l, "[t]", &r), Role::Secondary);
+        assert_eq!(role_at(l, "(u)", &r), Role::Quaternary);
+    }
+
+    #[test]
+    fn role_color_responds_to_program_color() {
+        let base = crate::theme::parse(crate::theme::DEFAULT_THEME_TOML).unwrap();
+        let mut mono = base.clone();
+        mono.color_mode = crate::theme::ColorMode::Monochrome;
+        assert_eq!(role_color(Role::Primary, &mono).h, mono.text.h); // shade of text hue
+        let mut on = base.clone();
+        on.color_mode = crate::theme::ColorMode::OnTheme;
+        assert_eq!(role_color(Role::Secondary, &on), on.complement);
+        assert_eq!(role_color(Role::Tertiary, &on), on.human);
+        assert_eq!(role_color(Role::Text, &base), base.text); // mode-independent
+    }
+
+    #[test]
+    fn syntax_colors_match_line_length_for_every_scheme() {
+        let base = crate::theme::parse(crate::theme::DEFAULT_THEME_TOML).unwrap();
+        let line = "Note: run Bash(ls) at 12:00 OK `x` **y** /a/b 3ms";
+        for scheme in crate::theme::SyntaxScheme::ALL {
+            let mut th = base.clone();
+            th.syntax_scheme = scheme;
+            assert_eq!(
+                syntax_colors(line, &th).len(),
+                line.chars().count(),
+                "{scheme:?} must emit one colour per char"
+            );
         }
     }
 }

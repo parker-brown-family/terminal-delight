@@ -2548,9 +2548,7 @@ impl Workspace {
         let start = if n <= VISIBLE {
             0
         } else {
-            find.selected
-                .saturating_sub(VISIBLE / 2)
-                .min(n - VISIBLE)
+            find.selected.saturating_sub(VISIBLE / 2).min(n - VISIBLE)
         };
         let end = (start + VISIBLE).min(n);
 
@@ -2561,13 +2559,7 @@ impl Workspace {
             "FIND IN PANE"
         };
         let input = {
-            let eb = render_edit_buffer(
-                &find.query,
-                1.0,
-                th.text,
-                th.accent,
-                th.accent.alpha(0.3),
-            );
+            let eb = render_edit_buffer(&find.query, 1.0, th.text, th.accent, th.accent.alpha(0.3));
             if q.is_empty() {
                 eb.child(
                     div()
@@ -2634,19 +2626,14 @@ impl Workspace {
             } else {
                 th.text.alpha(0.5)
             };
-            let title_line = div()
-                .flex()
-                .flex_row()
-                .items_center()
-                .gap_2()
-                .child(
-                    div()
-                        .overflow_hidden()
-                        .whitespace_nowrap()
-                        .text_size(px(10.))
-                        .text_color(th.text)
-                        .child(hit.title.clone()),
-                );
+            let title_line = div().flex().flex_row().items_center().gap_2().child(
+                div()
+                    .overflow_hidden()
+                    .whitespace_nowrap()
+                    .text_size(px(10.))
+                    .text_color(th.text)
+                    .child(hit.title.clone()),
+            );
             let title_line = if global && hit.same_pane_count > 1 {
                 title_line.child(
                     div()
@@ -3147,7 +3134,8 @@ impl Workspace {
                 }
                 _ => {
                     let before = find.query.text();
-                    find.query.apply(ks.key.as_str(), m, ks.key_char.as_deref(), 80);
+                    find.query
+                        .apply(ks.key.as_str(), m, ks.key_char.as_deref(), 80);
                     if find.query.text() != before {
                         find.results = self.compute_find(&find.query.text(), &find.scope, cx);
                         find.selected = 0;
@@ -6347,27 +6335,48 @@ impl Render for Workspace {
                     ),
                 );
             }
-            // SYNTAX axis: an off/on overlay orthogonal to the source row above.
-            // On = recolour default-fg text by token class (the old `code` look),
-            // letting program ANSI still pass through the chosen source mode.
-            let mut syntax_row = div().flex().flex_row().gap_2();
-            for (on, icon, caption) in [(false, "○", "off"), (true, "◆", "code")] {
-                let active = cur.syntax == on;
+            // SYNTAX scheme: off, or one of the highlight grammars (code / agentic
+            // / logs / markdown). On = recolour default-fg text by the scheme's
+            // grammar; PROGRAM COLOUR (above) decides HOW those roles are coloured,
+            // and program ANSI still passes through the chosen source mode.
+            let mut syntax_row = div().flex().flex_row().flex_wrap().gap_2();
+            {
                 let cur_c = cur.clone();
+                let active = !cur.syntax;
                 syntax_row =
-                    syntax_row.child(color_mode_btn(&th, icon, caption, active).on_mouse_down(
+                    syntax_row.child(color_mode_btn(&th, "○", "off", active).on_mouse_down(
                         MouseButton::Left,
                         cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
                             cx.stop_propagation();
                             ws.set_menu_choice(
                                 ThemeChoice {
-                                    syntax: on,
+                                    syntax: false,
                                     ..cur_c.clone()
                                 },
                                 cx,
                             );
                         }),
                     ));
+            }
+            for scheme in theme::SyntaxScheme::ALL {
+                let active = cur.syntax && cur.syntax_scheme == scheme;
+                let cur_c = cur.clone();
+                syntax_row = syntax_row.child(
+                    color_mode_btn(&th, scheme.icon(), scheme.caption(), active).on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                            cx.stop_propagation();
+                            ws.set_menu_choice(
+                                ThemeChoice {
+                                    syntax: true,
+                                    syntax_scheme: scheme,
+                                    ..cur_c.clone()
+                                },
+                                cx,
+                            );
+                        }),
+                    ),
+                );
             }
             let label = |s: &str| {
                 div()
@@ -6473,7 +6482,7 @@ impl Render for Workspace {
                 .child(seed_row)
                 .child(label("PROGRAM COLOUR"))
                 .child(color_row)
-                .child(label("CODE"))
+                .child(label("SYNTAX"))
                 .child(syntax_row);
             if is_pane {
                 // Per-group toggle: on = this pane's theme follows the outer scope
