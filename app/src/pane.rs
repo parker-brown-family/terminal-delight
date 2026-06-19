@@ -748,33 +748,88 @@ fn classify_line(line: &str) -> Vec<Tok> {
 /// cells). The renderer only applies these to cells the program left at default
 /// fg — cells with explicit ANSI colour still flow through [`ansi_to_hsla`].
 fn syntax_colors(line: &str, th: &Theme) -> Vec<Hsla> {
-    // Each class is a fixed offset on the seed arc — distinct, but unmistakably
-    // one family. Lightness flips so it reads on light themes too.
-    let dark = th.bg.l < 0.5;
-    let l = if dark { 0.72 } else { 0.40 };
-    let hue = |off: f32| -> Hsla {
-        Hsla {
-            h: wrap01(th.accent.h + off),
-            s: th.accent.s.clamp(0.45, 0.95),
-            l,
-            a: 1.0,
-        }
-    };
-    let comment = Hsla { a: 0.7, ..th.faint };
     classify_line(line)
         .into_iter()
-        .map(|t| match t {
-            Tok::Word => th.text,
-            Tok::Num => hue(0.09),
-            Tok::Str => hue(0.17),
-            Tok::Path => hue(-0.09),
-            Tok::Flag => hue(-0.17),
-            Tok::Op => hue(0.32),
-            Tok::Punct => hue(0.24),
-            Tok::Keyword => th.accent,
-            Tok::Comment => comment,
-        })
+        .map(|t| tok_color(t, th))
         .collect()
+}
+
+/// Colour for one syntax token, derived from the pane's PROGRAM COLOUR mode so
+/// the two controls compose into one coherent scheme:
+///   • `ansi` (Default)  — vivid full-spectrum: each role a distinct hue on the
+///     seed arc (the bright IDE look).
+///   • `mono` (Monochrome) — one phosphor: vary only the *lightness* of the text
+///     colour, so token structure reads without any colour (distraction-free).
+///   • `theme` (OnTheme) — paint the main roles in the *actual selected palette*
+///     (keyword→seed, string→complement, number→the human pip), filling the
+///     remaining roles by derivation. The syntax wears your theme.
+fn tok_color(t: Tok, th: &Theme) -> Hsla {
+    use crate::theme::ColorMode;
+    if t == Tok::Word {
+        return th.text;
+    }
+    if t == Tok::Comment {
+        return Hsla { a: 0.7, ..th.faint };
+    }
+    match th.color_mode {
+        ColorMode::Default => {
+            let dark = th.bg.l < 0.5;
+            let l = if dark { 0.72 } else { 0.40 };
+            let hue = |off: f32| Hsla {
+                h: wrap01(th.accent.h + off),
+                s: th.accent.s.clamp(0.45, 0.95),
+                l,
+                a: 1.0,
+            };
+            match t {
+                Tok::Num => hue(0.09),
+                Tok::Str => hue(0.17),
+                Tok::Path => hue(-0.09),
+                Tok::Flag => hue(-0.17),
+                Tok::Op => hue(0.32),
+                Tok::Punct => hue(0.24),
+                Tok::Keyword => th.accent,
+                _ => th.text,
+            }
+        }
+        ColorMode::Monochrome => {
+            let base = th.text;
+            let shade = |dl: f32, a: f32| Hsla {
+                h: base.h,
+                s: base.s,
+                l: (base.l + dl).clamp(0.05, 0.97),
+                a,
+            };
+            match t {
+                Tok::Keyword => shade(0.14, 1.0),
+                Tok::Str => shade(0.07, 1.0),
+                Tok::Num => shade(0.07, 1.0),
+                Tok::Path => shade(-0.05, 0.95),
+                Tok::Flag => shade(-0.05, 0.90),
+                Tok::Op => shade(-0.12, 0.80),
+                Tok::Punct => shade(-0.12, 0.75),
+                _ => base,
+            }
+        }
+        ColorMode::OnTheme => {
+            let nudge = |from: Hsla, off: f32| Hsla {
+                h: wrap01(from.h + off),
+                s: from.s,
+                l: from.l,
+                a: 1.0,
+            };
+            match t {
+                Tok::Keyword => th.accent,
+                Tok::Str => th.complement,
+                Tok::Num => th.human,
+                Tok::Path => nudge(th.accent, 0.05),
+                Tok::Flag => th.faint,
+                Tok::Op => nudge(th.complement, -0.05),
+                Tok::Punct => Hsla { a: 0.7, ..th.text },
+                _ => th.text,
+            }
+        }
+    }
 }
 
 /// Which independent level a graded cell takes: foreground text vs background.
