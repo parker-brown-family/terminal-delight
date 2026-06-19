@@ -2284,6 +2284,60 @@ impl TerminalView {
         hits
     }
 
+    /// Like [`search_grid`](Self::search_grid) but EXACT (case-insensitive
+    /// substring) — for the MCP `grep` tool, where an agent wants precise matches
+    /// rather than the interactive fuzzy ranker. One hit per matching line, with
+    /// the FIRST match's char range in `positions` (`score` unused). Bounded to
+    /// the most-recent `cap` lines so a grep across a busy wall stays cheap.
+    pub fn grep_grid(&self, needle: &str, cap: usize) -> Vec<GridHit> {
+        if needle.is_empty() {
+            return Vec::new();
+        }
+        let ndl: Vec<char> = needle.chars().collect();
+        let term = self.session.term.lock();
+        let grid = term.grid();
+        let cols = grid.columns();
+        let bot = grid.bottommost_line().0;
+        let start = (bot - cap as i32 + 1).max(grid.topmost_line().0);
+        let mut hits = Vec::new();
+        let mut buf = String::with_capacity(cols);
+        for l in start..=bot {
+            buf.clear();
+            let row = &grid[Line(l)];
+            for c in 0..cols {
+                let ch = row[Column(c)].c;
+                buf.push(if ch == '\0' { ' ' } else { ch });
+            }
+            let trimmed = buf.trim_end();
+            if trimmed.is_empty() {
+                continue;
+            }
+            let hay: Vec<char> = trimmed.chars().collect();
+            if ndl.len() > hay.len() {
+                continue;
+            }
+            let mut matched = None;
+            'outer: for i in 0..=(hay.len() - ndl.len()) {
+                for j in 0..ndl.len() {
+                    if !hay[i + j].eq_ignore_ascii_case(&ndl[j]) {
+                        continue 'outer;
+                    }
+                }
+                matched = Some(i);
+                break;
+            }
+            if let Some(i) = matched {
+                hits.push(GridHit {
+                    line: l,
+                    text: trimmed.to_string(),
+                    score: 0,
+                    positions: (i..i + ndl.len()).collect(),
+                });
+            }
+        }
+        hits
+    }
+
     /// Scroll this pane so grid line `line` sits at the top of the viewport, and
     /// (when `sel` is given) select that inclusive column span so a find-jump
     /// lands with the hit highlighted. Mirrors `scroll_to_human`'s offset math.

@@ -262,6 +262,26 @@ pub struct ToolEvent {
     pub summary: String,
 }
 
+/// One `grep` hit: the scrollback line index, the column of the first match, and
+/// the full line text (so an agent gets the context, not just a coordinate).
+#[derive(Clone, PartialEq, Debug, Serialize)]
+pub struct GrepMatch {
+    pub line: i32,
+    pub col: usize,
+    pub text: String,
+}
+
+/// All `grep` hits in one exposed pane, with the pane's identity echoed (the same
+/// fields `list_panes` reports) so a caller can correlate without a second call.
+#[derive(Clone, PartialEq, Debug, Serialize)]
+pub struct PaneMatches {
+    pub pid: u32,
+    pub tab: usize,
+    pub title: String,
+    pub mode: String,
+    pub matches: Vec<GrepMatch>,
+}
+
 /// The live data one request is answered from — built fresh per request on the
 /// gpui main thread: the operator policy plus the current pane snapshot.
 pub struct Snapshot {
@@ -313,7 +333,7 @@ pub fn handle_line<F>(line: &str, snap: &Snapshot, tail: F) -> Option<String>
 where
     F: Fn(&PaneInfo, usize) -> Vec<ToolEvent>,
 {
-    handle_line_with(line, snap, tail, no_apply)
+    handle_line_with(line, snap, tail, no_apply, no_search)
 }
 
 /// Like [`handle_line`] but with a *write* capability. `apply` performs the
@@ -323,18 +343,31 @@ where
 /// write, so a connection that never wires a real `apply` cannot mutate anything
 /// regardless of policy. Keeping the effect behind a closure mirrors the `tail`
 /// pattern: all protocol shape stays here, all IO/GUI lives in the caller.
-pub fn handle_line_with<F, G>(line: &str, snap: &Snapshot, tail: F, apply: G) -> Option<String>
+pub fn handle_line_with<F, G, H>(
+    line: &str,
+    snap: &Snapshot,
+    tail: F,
+    apply: G,
+    search: H,
+) -> Option<String>
 where
     F: Fn(&PaneInfo, usize) -> Vec<ToolEvent>,
     G: Fn(&[ConfigUpdate]) -> Vec<ApplyOutcome>,
+    H: Fn(&str, usize) -> Vec<PaneMatches>,
 {
     let req = parse_req(line)?;
     // A notification (no id) is fire-and-forget — never answer it, even on error.
     let id = req.id.clone()?;
-    Some(match dispatch(&req, snap, &tail, &apply) {
+    Some(match dispatch(&req, snap, &tail, &apply, &search) {
         Ok(result) => encode_ok(id, result),
         Err((code, msg)) => encode_err(id, code, msg),
     })
+}
+
+/// The read-only `search`: finds nothing. Used by the bare [`handle_line`] and any
+/// transport that does not wire pane-content search, so `grep` is inert there.
+pub fn no_search(_needle: &str, _cap: usize) -> Vec<PaneMatches> {
+    Vec::new()
 }
 
 /// The read-only `apply`: refuses every update with a clear reason. Used by the
@@ -346,16 +379,23 @@ pub fn no_apply(updates: &[ConfigUpdate]) -> Vec<ApplyOutcome> {
         .collect()
 }
 
-fn dispatch<F, G>(req: &Req, snap: &Snapshot, tail: &F, apply: &G) -> Result<Value, (i64, String)>
+fn dispatch<F, G, H>(
+    req: &Req,
+    snap: &Snapshot,
+    tail: &F,
+    apply: &G,
+    search: &H,
+) -> Result<Value, (i64, String)>
 where
     F: Fn(&PaneInfo, usize) -> Vec<ToolEvent>,
     G: Fn(&[ConfigUpdate]) -> Vec<ApplyOutcome>,
+    H: Fn(&str, usize) -> Vec<PaneMatches>,
 {
     match req.method.as_str() {
         "initialize" => Ok(initialize_result(&req.params)),
         "ping" => Ok(json!({})),
         "tools/list" => Ok(json!({ "tools": tool_defs() })),
-        "tools/call" => tools_call(&req.params, snap, tail, apply),
+        "tools/call" => tools_call(&req.params, snap, tail, apply, search),
         // We hold no resources/prompts — answer empty so discovery doesn't error.
         "resources/list" => Ok(json!({ "resources": [] })),
         "prompts/list" => Ok(json!({ "prompts": [] })),
@@ -479,19 +519,40 @@ fn tool_defs() -> Value {
                 "required": ["updates"],
                 "additionalProperties": false
             }
+        },
+        {
+            "name": "grep",
+            "description": "Search the recent scrollback of every EXPOSED pane for an exact, case-insensitive substring. Returns, per matching pane, its identity (pid/tab/title/mode) and the matching lines with the match column. Read-only — it reads on-screen text, never writes. Use it to find where something is across the whole window (an error, a path, a TODO, a value).",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Exact substring to find (case-insensitive)."
+                    },
+                    "scrollback": {
+                        "type": "integer",
+                        "description": "How many recent lines per pane to search (default 2000, max 50000)."
+                    }
+                },
+                "required": ["query"],
+                "additionalProperties": false
+            }
         }
     ])
 }
 
-fn tools_call<F, G>(
+fn tools_call<F, G, H>(
     params: &Value,
     snap: &Snapshot,
     tail: &F,
     apply: &G,
+    search: &H,
 ) -> Result<Value, (i64, String)>
 where
     F: Fn(&PaneInfo, usize) -> Vec<ToolEvent>,
     G: Fn(&[ConfigUpdate]) -> Vec<ApplyOutcome>,
+    H: Fn(&str, usize) -> Vec<PaneMatches>,
 {
     let name = params
         .get("name")
@@ -503,8 +564,62 @@ where
         "pane_events" => Ok(pane_events(&args, snap, tail)),
         "get_pane_config" => Ok(get_pane_config(&args, snap)),
         "set_pane_config" => Ok(set_pane_config(&args, snap, apply)),
+        "grep" => Ok(grep(&args, snap, search)),
         other => Err((-32602, format!("unknown tool: {other}"))),
     }
+}
+
+/// `grep` — search every exposed pane's scrollback for an exact, case-insensitive
+/// substring (the `search` closure does the per-pane work on the GUI thread; here
+/// we just shape the request and the response). Read-only; gated by the same
+/// expose policy as `list_panes`, so disclosure of on-screen text follows it.
+fn grep<H>(args: &Value, snap: &Snapshot, search: &H) -> Value
+where
+    H: Fn(&str, usize) -> Vec<PaneMatches>,
+{
+    if !snap.config.enabled {
+        return tool_err(
+            "MCP exposure is disabled. Enable it in terminal-delight's MCP \
+             CONTROL panel (the robot button on the mother bar).",
+        );
+    }
+    let query = args.get("query").and_then(Value::as_str).unwrap_or("");
+    if query.is_empty() {
+        return tool_err("grep needs a non-empty \"query\" string");
+    }
+    let cap = args
+        .get("scrollback")
+        .and_then(Value::as_u64)
+        .unwrap_or(2000)
+        .clamp(1, 50_000) as usize;
+    // Per-pane match cap so a noisy pane can't flood one response.
+    const PER_PANE: usize = 50;
+    let mut panes = search(query, cap);
+    let mut truncated = false;
+    let mut total = 0usize;
+    for p in &mut panes {
+        if p.matches.len() > PER_PANE {
+            p.matches.truncate(PER_PANE);
+            truncated = true;
+        }
+        total += p.matches.len();
+    }
+    let text = if panes.is_empty() {
+        format!("no matches for {query:?} in any exposed pane")
+    } else {
+        format!(
+            "{total} match{} for {query:?} across {} pane{}{}",
+            if total == 1 { "" } else { "es" },
+            panes.len(),
+            if panes.len() == 1 { "" } else { "s" },
+            if truncated {
+                format!(" (capped at {PER_PANE} per pane)")
+            } else {
+                String::new()
+            }
+        )
+    };
+    tool_ok(text, json!({ "query": query, "panes": panes }))
 }
 
 fn list_panes(snap: &Snapshot) -> Value {
@@ -1051,6 +1166,47 @@ mod tests {
     }
 
     #[test]
+    fn grep_returns_matches_and_gates_on_enabled() {
+        let search = |q: &str, _cap: usize| -> Vec<PaneMatches> {
+            vec![PaneMatches {
+                pid: 42,
+                tab: 0,
+                title: "work".into(),
+                mode: "CLAUDE".into(),
+                matches: vec![
+                    GrepMatch {
+                        line: -3,
+                        col: 4,
+                        text: format!("found {q} here"),
+                    },
+                    GrepMatch {
+                        line: 0,
+                        col: 0,
+                        text: format!("{q} again"),
+                    },
+                ],
+            }]
+        };
+        let line = json!({ "id": 1, "method": "tools/call",
+            "params": { "name": "grep", "arguments": { "query": "boom" } } })
+        .to_string();
+        let on = snap(true, false, vec![agent_pane(42, true)]);
+        let r = resp(&handle_line_with(&line, &on, no_tail, no_apply, &search).unwrap())["result"]
+            .clone();
+        assert!(r.get("isError").is_none(), "enabled grep is not an error");
+        let panes = r["structuredContent"]["panes"].as_array().unwrap();
+        assert_eq!(panes[0]["pid"], 42);
+        assert_eq!(panes[0]["matches"].as_array().unwrap().len(), 2);
+        assert_eq!(panes[0]["matches"][0]["col"], 4);
+
+        // exposure disabled → error result (search closure never consulted).
+        let off = snap(false, false, vec![agent_pane(42, true)]);
+        let r = resp(&handle_line_with(&line, &off, no_tail, no_apply, &search).unwrap())["result"]
+            .clone();
+        assert_eq!(r["isError"], true);
+    }
+
+    #[test]
     fn initialize_echoes_version_and_names_the_server() {
         let s = snap(false, true, vec![]);
         let line = handle_line(
@@ -1089,7 +1245,7 @@ mod tests {
     }
 
     #[test]
-    fn tools_list_advertises_both_read_only_tools() {
+    fn tools_list_advertises_all_tools() {
         let s = snap(true, true, vec![]);
         let v = resp(&handle_line(r#"{"id":2,"method":"tools/list"}"#, &s, no_tail).unwrap());
         let names: Vec<&str> = v["result"]["tools"]
@@ -1102,6 +1258,7 @@ mod tests {
         assert!(names.contains(&"pane_events"));
         assert!(names.contains(&"get_pane_config"), "config GET advertised");
         assert!(names.contains(&"set_pane_config"), "config SET advertised");
+        assert!(names.contains(&"grep"), "grep advertised");
     }
 
     // ---- config API: GET ----
@@ -1143,7 +1300,7 @@ mod tests {
         let line = json!({ "id": 9, "method": "tools/call",
             "params": { "name": "set_pane_config", "arguments": { "updates": updates } } })
         .to_string();
-        resp(&handle_line_with(&line, snap, no_tail, apply).unwrap())["result"].clone()
+        resp(&handle_line_with(&line, snap, no_tail, apply, no_search).unwrap())["result"].clone()
     }
 
     #[test]
@@ -1263,7 +1420,8 @@ mod tests {
         let line = json!({ "id": 1, "method": "tools/call",
             "params": { "name": "set_pane_config", "arguments": {} } })
         .to_string();
-        let r = resp(&handle_line_with(&line, &s, no_tail, no_apply).unwrap())["result"].clone();
+        let r = resp(&handle_line_with(&line, &s, no_tail, no_apply, no_search).unwrap())["result"]
+            .clone();
         assert_eq!(r["isError"], true);
         // empty updates
         assert_eq!(call_set(&s, json!([]))["isError"], true);

@@ -45,6 +45,9 @@ enum UiReq {
     Snapshot(mpsc::Sender<mcp::Snapshot>),
     /// Apply a parsed `set_pane_config` batch and report the per-target outcome.
     Apply(Vec<mcp::ConfigUpdate>, mpsc::Sender<Vec<mcp::ApplyOutcome>>),
+    /// `grep`: search every exposed pane's scrollback for an exact substring
+    /// (needle, lines-per-pane cap) and report the per-pane matches.
+    Search(String, usize, mpsc::Sender<Vec<mcp::PaneMatches>>),
 }
 
 /// Build a uniform refusal for a whole batch (used when the UI is gone/wedged).
@@ -146,6 +149,17 @@ pub fn start(cx: &mut Context<Workspace>) {
                             }
                         }
                     }
+                    Ok(UiReq::Search(needle, cap, reply)) => {
+                        match this.update(cx, |ws, cx| ws.mcp_search(&needle, cap, cx)) {
+                            Ok(hits) => {
+                                let _ = reply.send(hits);
+                            }
+                            Err(_) => {
+                                let _ = reply.send(Vec::new());
+                                alive = false;
+                            }
+                        }
+                    }
                     Err(mpsc::TryRecvError::Empty) => break,
                     Err(mpsc::TryRecvError::Disconnected) => return, // reader gone
                 }
@@ -233,7 +247,20 @@ fn serve_stdio(
                             Err(_) => refuse_all(updates, "terminal-delight UI not ready"),
                         }
                     };
-                    mcp::handle_line_with(req, &snap, |p, n| tail_for(p, n, &home), apply)
+                    // The read capability for `grep`: search exposed panes' grids
+                    // on the gpui main thread via the same ticker + budget. Reads
+                    // other than grep never invoke this closure.
+                    let search = |needle: &str, cap: usize| -> Vec<mcp::PaneMatches> {
+                        let (tx, rx) = mpsc::channel();
+                        if req_tx
+                            .send(UiReq::Search(needle.to_string(), cap, tx))
+                            .is_err()
+                        {
+                            return Vec::new();
+                        }
+                        rx.recv_timeout(SNAPSHOT_BUDGET).unwrap_or_default()
+                    };
+                    mcp::handle_line_with(req, &snap, |p, n| tail_for(p, n, &home), apply, search)
                 }
                 Err(RecvTimeoutError::Disconnected) => break,
                 Err(RecvTimeoutError::Timeout) => {

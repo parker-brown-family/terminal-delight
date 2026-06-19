@@ -1740,6 +1740,49 @@ impl Workspace {
         Self::grade_report(&theme::outer_choice(cx).grade)
     }
 
+    /// Search every EXPOSED pane's recent scrollback for `needle` (exact,
+    /// case-insensitive) — the main-thread half of the MCP `grep` tool. Mirrors
+    /// `mcp_snapshot`'s walk + policy filter, so the operator's expose toggle
+    /// governs on-screen-content disclosure exactly as it gates `list_panes`.
+    fn mcp_search(&self, needle: &str, cap: usize, cx: &App) -> Vec<mcp::PaneMatches> {
+        let mut out = vec![];
+        for (ti, tab) in self.tabs.iter().enumerate() {
+            let mut leaves = vec![];
+            tab.root.leaves(&mut leaves);
+            for leaf in leaves {
+                let p = leaf.read(cx);
+                if !mcp::should_expose(&self.mcp, p.mode.is_agent()) {
+                    continue;
+                }
+                let hits = p.grep_grid(needle, cap);
+                if hits.is_empty() {
+                    continue;
+                }
+                let title = p
+                    .name
+                    .clone()
+                    .filter(|n| !n.is_empty())
+                    .or_else(|| (!p.title.is_empty()).then(|| p.title.clone()))
+                    .unwrap_or_else(|| p.mode.label().to_string());
+                out.push(mcp::PaneMatches {
+                    pid: p.shell_pid(),
+                    tab: ti,
+                    title,
+                    mode: p.mode.label().to_string(),
+                    matches: hits
+                        .into_iter()
+                        .map(|h| mcp::GrepMatch {
+                            line: h.line,
+                            col: h.positions.first().copied().unwrap_or(0),
+                            text: h.text,
+                        })
+                        .collect(),
+                });
+            }
+        }
+        out
+    }
+
     /// Bridge a stored [`theme::Grade`] into the config API's uniform `0..100`
     /// percents — the single seam between the appearance model and `mcp`.
     fn grade_report(g: &theme::Grade) -> mcp::GradeReport {
