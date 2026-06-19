@@ -3820,9 +3820,8 @@ mod tests {
     #[test]
     fn bottom_anchor_rows_pushes_content_to_the_bottom() {
         let row = |s: &str| (s.to_string(), Vec::<TextRun>::new());
-        let texts = |l: &[(String, Vec<TextRun>)]| {
-            l.iter().map(|(t, _)| t.clone()).collect::<Vec<_>>()
-        };
+        let texts =
+            |l: &[(String, Vec<TextRun>)]| l.iter().map(|(t, _)| t.clone()).collect::<Vec<_>>();
 
         // cleared screen: just a prompt on row 0 → it slides to the bottom
         let mut lines = vec![row("$ "), row(""), row(""), row("")];

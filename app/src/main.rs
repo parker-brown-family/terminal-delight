@@ -1048,6 +1048,9 @@ struct Workspace {
     mcp: mcp::McpConfig,
     /// The 🤖 MCP control panel is open. Outer-only (global), so a plain bool.
     mcp_menu: bool,
+    /// 🎨 toggle in the MCP panel: tint each pane row with that pane's own
+    /// resolved screen background + text colour. Defaults off (session-scoped).
+    mcp_theme_preview: bool,
     /// The OSD slider being dragged, if any (which channel).
     slider_drag: Option<theme::GradeKey>,
     /// Live per-slider track rects for ratio math during a drag.
@@ -1327,6 +1330,7 @@ impl Workspace {
             osd_at: None,
             mcp: saved.mcp.clone().unwrap_or_default(),
             mcp_menu: false,
+            mcp_theme_preview: false,
             slider_drag: None,
             slider_bounds: Arc::new(Mutex::new(std::collections::HashMap::new())),
             wheel_drag: None,
@@ -5889,6 +5893,8 @@ impl Render for Workspace {
                 },
                 cfg.enabled,
             )
+            .id("mcp-btn-enable")
+            .hover(|s| s.border_color(th.accent))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
@@ -5903,6 +5909,8 @@ impl Render for Workspace {
                 format!("expose: {}", cfg.expose.label()).as_str(),
                 false,
             )
+            .id("mcp-btn-expose")
+            .hover(|s| s.border_color(th.accent))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
@@ -5921,6 +5929,8 @@ impl Render for Workspace {
                 },
                 cfg.events,
             )
+            .id("mcp-btn-events")
+            .hover(|s| s.border_color(th.accent))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
@@ -5930,65 +5940,133 @@ impl Render for Workspace {
                     cx.notify();
                 }),
             );
+            // 🎨 tint toggle: paint each pane row with that pane's own screen
+            // background + text colour (off by default).
+            let theme_btn = Self::bezel_btn(
+                &th,
+                if self.mcp_theme_preview {
+                    "\u{1f3a8} theme \u{00b7} on"
+                } else {
+                    "\u{1f3a8} theme \u{00b7} off"
+                },
+                self.mcp_theme_preview,
+            )
+            .id("mcp-btn-theme")
+            .hover(|s| s.border_color(th.accent))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                    cx.stop_propagation();
+                    ws.mcp_theme_preview = !ws.mcp_theme_preview;
+                    cx.notify();
+                }),
+            );
 
-            // live pane list: exactly what the server would (or wouldn't) expose
+            // Live pane list — walk the REAL tree (not the wire snapshot) so each
+            // row can carry the pane's own resolved colours and focus it on click.
+            let preview = self.mcp_theme_preview;
             let mut list = div().id("mcp-pane-list").flex().flex_col().gap_1();
-            if panes.is_empty() {
-                list = list.child(label("no panes".to_string()));
-            }
-            for p in &panes {
-                let dot_col = if p.exposed {
-                    th.accent
-                } else {
-                    th.text.alpha(0.3)
-                };
-                let mode_col = if p.is_agent {
-                    th.accent
-                } else {
-                    th.text.alpha(0.6)
-                };
-                // Abbreviate so a long cwd / resume id never spills off the panel:
-                // home → ~, then keep the tail; the resume command → a short tag.
-                let mut cwd = p.cwd.clone().unwrap_or_else(|| "\u{2014}".to_string());
-                if !home.is_empty() {
-                    cwd = cwd.replacen(&home, "~", 1);
-                }
-                if cwd.chars().count() > 34 {
-                    let tail: String = cwd
-                        .chars()
-                        .rev()
-                        .take(32)
-                        .collect::<Vec<_>>()
-                        .into_iter()
-                        .rev()
-                        .collect();
-                    cwd = format!("\u{2026}{tail}");
-                }
-                let sub = match &p.session {
-                    Some(sess) => {
-                        let agent = sess.split_whitespace().next().unwrap_or("agent");
-                        let id = sess
-                            .split_whitespace()
-                            .last()
-                            .filter(|t| t.len() >= 8 && !t.starts_with("--"));
-                        match id {
-                            Some(i) => format!("{cwd}   {agent} \u{00b7} {}", &i[..8]),
-                            None => format!("{cwd}   {agent}"),
-                        }
+            let mut ri = 0usize;
+            for (ti, tab) in self.tabs.iter().enumerate() {
+                let mut leaves = vec![];
+                tab.root.leaves(&mut leaves);
+                for leaf in leaves {
+                    let id = leaf.entity_id();
+                    let p = leaf.read(cx);
+                    let is_agent = p.mode.is_agent();
+                    let mode_lbl = p.mode.label().to_string();
+                    let title = p
+                        .name
+                        .clone()
+                        .filter(|n| !n.is_empty())
+                        .or_else(|| (!p.title.is_empty()).then(|| p.title.clone()))
+                        .unwrap_or_else(|| p.mode.label().to_string());
+                    let rt = p.runtime();
+                    let exposed = mcp::should_expose(&self.mcp, is_agent);
+                    // the pane's own resolved screen colours, for 🎨 preview mode
+                    let pth = p.resolved_theme(cx);
+
+                    // Abbreviate so a long cwd / resume id never spills off the panel.
+                    let mut cwd = rt.cwd.clone().unwrap_or_else(|| "\u{2014}".to_string());
+                    if !home.is_empty() {
+                        cwd = cwd.replacen(&home, "~", 1);
                     }
-                    None => cwd,
-                };
-                list = list.child(
-                    div()
+                    if cwd.chars().count() > 34 {
+                        let tail: String = cwd
+                            .chars()
+                            .rev()
+                            .take(32)
+                            .collect::<Vec<_>>()
+                            .into_iter()
+                            .rev()
+                            .collect();
+                        cwd = format!("\u{2026}{tail}");
+                    }
+                    let sub = match &rt.resume {
+                        Some(sess) => {
+                            let agent = sess.split_whitespace().next().unwrap_or("agent");
+                            let sid = sess
+                                .split_whitespace()
+                                .last()
+                                .filter(|t| t.len() >= 8 && !t.starts_with("--"));
+                            match sid {
+                                Some(i) => format!("{cwd}   {agent} \u{00b7} {}", &i[..8]),
+                                None => format!("{cwd}   {agent}"),
+                            }
+                        }
+                        None => cwd,
+                    };
+
+                    // 🎨 on → the row wears the pane's own background + text colour.
+                    let row_text = if preview { pth.text } else { th.text };
+                    let dot_col = if exposed {
+                        th.accent
+                    } else {
+                        row_text.alpha(0.3)
+                    };
+                    let mode_col = if is_agent {
+                        th.accent
+                    } else {
+                        row_text.alpha(0.6)
+                    };
+                    let hover_border = th.accent.alpha(0.7);
+
+                    let mut row = div()
+                        .id(SharedString::from(format!("mcp-row-{ri}")))
                         .flex()
                         .flex_row()
                         .items_center()
                         .gap_2()
-                        .child(
+                        .px_1()
+                        .py_0p5()
+                        .rounded_sm()
+                        .border_1()
+                        .border_color(hsla(0., 0., 0., 0.))
+                        .cursor_pointer()
+                        // hover turns each pane into a clickable chip
+                        .hover(move |s| s.border_color(hover_border))
+                        // click → hop to that tab and focus that exact pane, just
+                        // as if the terminal itself had been clicked.
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
+                                cx.stop_propagation();
+                                if let Some(t) = ws.tabs.get_mut(ti) {
+                                    t.focused = Some(id);
+                                }
+                                ws.mcp_menu = false;
+                                ws.activate_tab(ti, window, cx);
+                            }),
+                        );
+                    if preview {
+                        row = row.bg(pth.bg);
+                    }
+                    list = list.child(
+                        row.child(
                             div()
                                 .flex_none()
                                 .text_color(dot_col)
-                                .child(if p.exposed { "\u{25cf}" } else { "\u{25cb}" }.to_string()),
+                                .child(if exposed { "\u{25cf}" } else { "\u{25cb}" }.to_string()),
                         )
                         .child(
                             div()
@@ -5997,7 +6075,7 @@ impl Render for Workspace {
                                 .text_size(px(9.))
                                 .font_weight(gpui::FontWeight::EXTRA_BOLD)
                                 .text_color(mode_col)
-                                .child(p.mode.clone()),
+                                .child(mode_lbl),
                         )
                         .child(
                             // takes the remaining width and clips, so neither the
@@ -6012,18 +6090,23 @@ impl Render for Workspace {
                                     div()
                                         .overflow_hidden()
                                         .text_size(px(10.))
-                                        .text_color(th.text)
-                                        .child(p.title.clone()),
+                                        .text_color(row_text)
+                                        .child(title),
                                 )
                                 .child(
                                     div()
                                         .overflow_hidden()
                                         .text_size(px(8.5))
-                                        .text_color(th.text.alpha(0.5))
+                                        .text_color(row_text.alpha(0.55))
                                         .child(sub),
                                 ),
                         ),
-                );
+                    );
+                    ri += 1;
+                }
+            }
+            if ri == 0 {
+                list = list.child(label("no panes".to_string()));
             }
 
             // The pane list scrolls within a height cap, so the toggles above and
@@ -6065,6 +6148,7 @@ impl Render for Workspace {
                 .child(enable_btn)
                 .child(expose_btn)
                 .child(events_btn)
+                .child(theme_btn)
                 .child(label(format!("{exposed}/{total} pane(s) exposed")))
                 .child(list)
                 .child(
