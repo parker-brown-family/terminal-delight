@@ -55,6 +55,22 @@ pub fn clear_focus_blur() {
     set_focus_blur([0.0; 4], 0.0, 0.0, 0.0, 0.0);
 }
 
+/// Register the FOCUS reader panel itself as the ONE warp tube for this frame —
+/// the "Inherit theme" path, so the reading modal bends + glares like the pane
+/// it mirrors instead of reading flat. Unlike [`register_tube`] this ignores the
+/// modal suppression (a reader open normally flattens the glass) and *replaces*
+/// the tube set with exactly this rect: the panes behind are dimmed + frosted,
+/// so only the panel's own curvature is visible and there's no rect-ordering
+/// ambiguity over the panel pixels. `crawl` is normally identity — the modal
+/// already centres crawl rows for readable mirroring, so we inherit curve + glare
+/// only. Called from the panel's measurement canvas right beside `set_focus_blur`.
+pub fn register_focus_tube(rect: [f32; 4], glare: f32, k1: f32, k2: f32, crawl: [f32; 3]) {
+    let mut rects = RECTS.lock().unwrap();
+    rects.clear();
+    rects.push((rect, glare.clamp(0.0, 1.0), k1, k2, crawl));
+    push(&rects);
+}
+
 /// Register one pane's tube for this frame: its content rect (physical px),
 /// glass glare, its own barrel curvature (k1, k2), and its crawl perspective
 /// (`crawl = [enabled, a, depth]`, all `0`/identity when crawl is off), each
@@ -142,6 +158,26 @@ mod tests {
         assert_eq!(rect_count(), 2);
         assert_eq!(rect_curvature(0), (0.0, 0.0), "flat pane stays flat");
         assert_eq!(rect_curvature(1), (0.14, 0.06), "bent pane keeps its bend");
+
+        // FOCUS "Inherit theme": a reader open suppresses the normal pane tubes,
+        // but register_focus_tube bypasses that and REPLACES the set with exactly
+        // the panel — so the reader bends by its own pane's curvature and there's
+        // no rect-ordering ambiguity over the panel pixels.
+        begin_frame();
+        set_suppressed(true); // a reader open flattens the panes behind
+        register_tube(r, 0.5, 0.14, 0.06, CRAWL_OFF); // no-op while suppressed
+        assert_eq!(rect_count(), 0, "panes don't register under the reader");
+        register_focus_tube(r, 0.4, 0.20, 0.08, CRAWL_OFF);
+        assert_eq!(
+            rect_count(),
+            1,
+            "the focus tube registers despite suppression"
+        );
+        assert_eq!(
+            rect_curvature(0),
+            (0.20, 0.08),
+            "the reader bends by its pane's own curvature"
+        );
 
         set_suppressed(false);
     }

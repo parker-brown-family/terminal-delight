@@ -857,8 +857,18 @@ fn graded(c: Hsla, g: &crate::theme::Grade, ch: Channel) -> Hsla {
     l = l.powf(gamma);
     // contrast pushes lightness away from (or toward) mid-grey…
     l = (l - 0.5) * f(g.contrast) + 0.5;
-    // …then master brightness and the per-channel text/background level scale it.
-    l *= f(g.brightness);
+    // …then master brightness lights the SCREEN. The background field has dark
+    // headroom and brightens fully; TEXT is already near the top of the lightness
+    // range, where raising L in HSL just washes any hue toward white — so for text
+    // brightness only ever DIMS (multiplier capped at 1.0). Turning brightness up
+    // thus lights the screen without bleaching the text; brightening the text
+    // itself is the per-channel `text` slider's job.
+    let bri = f(g.brightness);
+    l *= match ch {
+        Channel::Text => bri.min(1.0),
+        Channel::Bg => bri,
+    };
+    // …then the per-channel text/background level scales it.
     l *= match ch {
         Channel::Text => f(g.text),
         Channel::Bg => f(g.background),
@@ -1044,6 +1054,13 @@ pub struct MirrorSnapshot {
     /// rows are already in the crawl font (baked into `lines`' runs) and the
     /// modal centres each row, matching the live pane.
     pub crawl: bool,
+    /// This pane's resolved barrel-warp shader coefficients (`k1`, `k2`) and
+    /// screen-glare strength. The FOCUS reader uses them when "Inherit theme" is
+    /// on, registering the panel as a warp tube so it bends + glares like the
+    /// pane it mirrors (identity `0`/`0`/`0` for a flat pane → no change).
+    pub k1: f32,
+    pub k2: f32,
+    pub glare: f32,
 }
 
 impl TerminalView {
@@ -1096,6 +1113,9 @@ impl TerminalView {
     pub fn mirror_snapshot(&self, cx: &App) -> MirrorSnapshot {
         let th = self.resolved_theme(cx);
         let lines = self.styled_lines(&th);
+        // The pane's own resolved CRT curvature + glare, so the FOCUS reader can
+        // inherit the look on demand (flat 0/0/0 for a flat pane → no-op).
+        let (k1, k2) = crate::theme::warp_coeffs(th.warp);
         MirrorSnapshot {
             lines,
             bg: th.bg,
@@ -1111,6 +1131,9 @@ impl TerminalView {
             rows: self.grid.rows,
             title: self.name.clone().unwrap_or_else(|| self.title.clone()),
             crawl: th.crawl,
+            k1,
+            k2,
+            glare: th.screen_glare,
         }
     }
 
@@ -1709,6 +1732,14 @@ impl TerminalView {
             cx.emit(RequestCloseTab);
             return;
         }
+        // Ctrl+X = CUT the selection: copy it, and when it's the trailing run on
+        // the live input line, erase it there too (see `cut_selection`). Gated on
+        // an actual selection so a bare Ctrl+X still reaches the shell as the
+        // readline prefix key (C-x C-e, etc.).
+        if m.control && !m.shift && !m.alt && ks.key.as_str() == "x" && self.has_selection() {
+            self.cut_selection(cx);
+            return;
+        }
         if m.control && m.shift {
             match ks.key.as_str() {
                 // workspace chords: new tab
@@ -1920,6 +1951,50 @@ impl TerminalView {
                 cx.write_to_primary(ClipboardItem::new_string(text));
             }
         }
+    }
+    /// Cut: copy the selection to the clipboard, then — only when it's safe to —
+    /// delete it from the live shell input line. Scrollback is read-only, so the
+    /// delete fires *only* when the selection sits on the on-screen input line
+    /// (display at bottom) and ends right at the cursor, i.e. it's the run of
+    /// characters immediately to the cursor's left. In that case `n` DELs erase
+    /// exactly those cells (readline backspaces the chars before the cursor and
+    /// shifts the tail left — a true cut). Anywhere else it's a plain copy, so a
+    /// cut over history or a mid-line non-adjacent selection can never corrupt
+    /// the buffer. Bound to Ctrl+X, and only when something is selected (so a bare
+    /// Ctrl+X still reaches the shell as the readline prefix key).
+    fn cut_selection(&mut self, cx: &mut Context<Self>) {
+        let text = match self.session.term.lock().selection_to_string() {
+            Some(t) if !t.is_empty() => t,
+            _ => return,
+        };
+        cx.write_to_clipboard(ClipboardItem::new_string(text.clone()));
+        cx.write_to_primary(ClipboardItem::new_string(text));
+        // Decide whether the selection is the trailing run on the live input line.
+        let erase = {
+            let term = self.session.term.lock();
+            let content = term.renderable_content();
+            let cur = content.cursor.point;
+            if content.display_offset != 0 {
+                None
+            } else {
+                term.selection
+                    .as_ref()
+                    .and_then(|s| s.to_range(&*term))
+                    // single row, on the cursor's row, ending immediately left of it
+                    .filter(|r| {
+                        r.start.line == r.end.line
+                            && r.end.line == cur.line
+                            && r.end.column.0 + 1 == cur.column.0
+                    })
+                    .map(|r| r.end.column.0 - r.start.column.0 + 1)
+            }
+        };
+        if let Some(n) = erase {
+            self.session.notifier.notify(vec![0x7f; n]); // n × DEL (erase char left)
+            self.session.term.lock().selection = None;
+            self.kbd_sel = None;
+        }
+        cx.notify();
     }
     /// Paste the clipboard into the PTY, honouring bracketed-paste mode.
     fn paste_clipboard(&self, cx: &mut Context<Self>) {
@@ -3753,6 +3828,61 @@ mod tests {
     use super::*;
 
     #[test]
+    fn brightness_lights_the_screen_without_whitening_text() {
+        use crate::theme::{Grade, GradeKey};
+        // a bright, saturated phosphor-green text cell and a near-black screen.
+        let text = Hsla {
+            h: 0.33,
+            s: 0.9,
+            l: 0.78,
+            a: 1.0,
+        };
+        let bg = Hsla {
+            h: 0.33,
+            s: 0.6,
+            l: 0.06,
+            a: 1.0,
+        };
+
+        // Brightness turned UP from neutral.
+        let mut g = Grade::neutral();
+        g.set(GradeKey::Brightness, 0.85);
+
+        let t = graded(text, &g, Channel::Text);
+        let b = graded(bg, &g, Channel::Bg);
+        // text must NOT be pushed brighter (toward white) by brightness…
+        assert!(
+            t.l <= text.l + 1e-6,
+            "brightness-up must not raise text lightness (got {} from {})",
+            t.l,
+            text.l
+        );
+        assert!(
+            t.s > 0.5,
+            "text keeps its colour, not bleached to grey/white"
+        );
+        // …while the screen field DOES brighten (it has the dark headroom).
+        assert!(
+            b.l > bg.l,
+            "brightness-up lights the screen: {} > {}",
+            b.l,
+            bg.l
+        );
+
+        // Brightness turned DOWN still dims BOTH (the existing dimming behaviour).
+        let mut d = Grade::neutral();
+        d.set(GradeKey::Brightness, 0.2);
+        assert!(
+            graded(text, &d, Channel::Text).l < text.l,
+            "dim still dims text"
+        );
+        assert!(
+            graded(bg, &d, Channel::Bg).l < bg.l,
+            "dim still dims the screen"
+        );
+    }
+
+    #[test]
     fn trim_drag_clamps_and_keeps_a_gap() {
         // drag END: lands on t, but never below start+0.2, never above dur
         assert_eq!(trim_drag_value(true, 7.0, 2.0, 10.0, 12.0), 7.0);
@@ -4064,13 +4194,24 @@ mod tests {
         assert_eq!(graded(c, &n, Channel::Text), c);
         assert_eq!(graded(c, &n, Channel::Bg), c);
 
-        // brightness > 0.5 raises lightness, < 0.5 lowers it
+        // brightness lights the SCREEN: it raises the background channel, but must
+        // NOT push text brighter (that bleaches the hue toward white — see
+        // brightness_lights_the_screen_without_whitening_text). Below neutral it
+        // still dims both.
         let mut up = Grade::neutral();
         up.set(GradeKey::Brightness, 0.75);
-        assert!(graded(c, &up, Channel::Text).l > c.l);
+        assert!(
+            graded(c, &up, Channel::Bg).l > c.l,
+            "brightness lifts the screen"
+        );
+        assert!(
+            graded(c, &up, Channel::Text).l <= c.l + 1e-6,
+            "brightness must not brighten text toward white"
+        );
         let mut down = Grade::neutral();
         down.set(GradeKey::Brightness, 0.25);
         assert!(graded(c, &down, Channel::Text).l < c.l);
+        assert!(graded(c, &down, Channel::Bg).l < c.l);
 
         // colour = 0 desaturates to greyscale
         let mut grey = Grade::neutral();

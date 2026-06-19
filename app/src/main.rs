@@ -781,6 +781,11 @@ struct StateFile {
     /// on pre-feature files → the locked-down [`mcp::McpConfig`] default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     mcp: Option<mcp::McpConfig>,
+    /// Global FOCUS-reader preference: inherit the read pane's CRT look (barrel
+    /// curvature + glare) instead of the flat default. Absent on pre-feature
+    /// files → `false` (the flat reader everyone had before).
+    #[serde(default)]
+    focus_inherit: bool,
 }
 
 fn default_warp() -> f32 {
@@ -815,6 +820,7 @@ impl Default for StateFile {
             tabs: Vec::new(),
             groups: Vec::new(),
             mcp: None,
+            focus_inherit: false,
         }
     }
 }
@@ -1140,6 +1146,29 @@ struct Workspace {
     /// On-screen box of the FOCUS slider track (captured each frame), so a drag
     /// anywhere in the window maps the cursor-x back to a 0..1 track fraction.
     focus_zoom_bounds: Arc<Mutex<Option<Bounds<Pixels>>>>,
+    /// Vertical pan offset (px) of the zoomed mirror inside the FOCUS panel. When
+    /// the text is scaled up past the panel it overflows the bottom; the wheel
+    /// pans this 0..=`focus_overflow` so you can reach the last row. Reset on open.
+    focus_scroll_y: f32,
+    /// How far (px) the scaled mirror overflows the panel's inner height this
+    /// frame (0 = it fits). Refreshed each render; the scrim's wheel handler reads
+    /// it to decide pan-the-modal vs. scroll-the-terminal.
+    focus_overflow: f32,
+    /// Horizontal pan offset (px) of the zoomed mirror inside the FOCUS panel —
+    /// the left/right counterpart of `focus_scroll_y`. When the text is scaled up
+    /// wider than the panel it left-anchors (line starts visible) and shift+wheel
+    /// pans this 0..=`focus_overflow_x`. Reset on open.
+    focus_scroll_x: f32,
+    /// How far (px) the scaled mirror overflows the panel's inner width this frame
+    /// (0 = it fits → the mirror stays centred). Refreshed each render.
+    focus_overflow_x: f32,
+    /// The mirror's scaled cell height (px), captured each render so a line-delta
+    /// wheel event pans the modal by whole rows.
+    focus_line_h: f32,
+    /// Global, persisted: when on, the FOCUS reader inherits the read pane's CRT
+    /// look (barrel curvature + screen glare) instead of the flat default. One
+    /// toggle in the modal header; applies to every reader open from then on.
+    focus_inherit_theme: bool,
     /// A scratch window (opened while another instance is already running, or a
     /// torn-off pane): one fresh terminal, never restores or persists session
     /// state — so it can't clobber the primary window's saved layout.
@@ -1372,6 +1401,12 @@ impl Workspace {
             focus_zoom: 1.0,
             focus_zoom_drag: false,
             focus_zoom_bounds: Arc::new(Mutex::new(None)),
+            focus_scroll_y: 0.0,
+            focus_overflow: 0.0,
+            focus_scroll_x: 0.0,
+            focus_overflow_x: 0.0,
+            focus_line_h: 0.0,
+            focus_inherit_theme: saved.focus_inherit,
             scratch,
             should_move: false,
         };
@@ -1527,6 +1562,7 @@ impl Workspace {
                 })
                 .collect(),
             mcp: Some(self.mcp.clone()),
+            focus_inherit: self.focus_inherit_theme,
         };
         if let Ok(body) = toml::to_string(&state) {
             let _ = session::write_atomic(&state_path(), &body);
@@ -1990,6 +2026,9 @@ impl Workspace {
         self.focus_read = Some(pane.downgrade());
         // Each FOCUS opens at fit-to-modal; the header slider takes it from there.
         self.focus_zoom = 1.0;
+        // A fresh open starts at the top-left of the mirror (no pan carried over).
+        self.focus_scroll_y = 0.0;
+        self.focus_scroll_x = 0.0;
         // Defer the focus: this runs from the 👓 header button's mouse-down
         // listener, so a synchronous `window.focus` gets grabbed straight back by
         // the root container's tracked focus handle (the same race new_tab/split
@@ -2132,6 +2171,53 @@ impl Workspace {
                     .text_size(px(15.))
                     .text_color(text.alpha(0.7))
                     .child("A"),
+            )
+    }
+
+    /// The FOCUS header's "Inherit theme" toggle: a small pill that flips the
+    /// global [`Self::focus_inherit_theme`] preference (and persists it) so every
+    /// reader from now on either inherits the read pane's CRT look (curve + glare)
+    /// or stays flat. A filled dot ◉ = on, hollow ○ = off.
+    fn focus_inherit_toggle(
+        &self,
+        accent: gpui::Hsla,
+        text: gpui::Hsla,
+        cx: &mut Context<Self>,
+    ) -> gpui::Div {
+        let on = self.focus_inherit_theme;
+        div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap_1()
+            .px_2()
+            .py_0p5()
+            .rounded_md()
+            .cursor_pointer()
+            .border_1()
+            .border_color(if on {
+                accent.alpha(0.8)
+            } else {
+                text.alpha(0.22)
+            })
+            .bg(if on {
+                accent.alpha(0.15)
+            } else {
+                hsla(0., 0., 0., 0.)
+            })
+            .text_size(px(11.))
+            .text_color(if on { accent } else { text.alpha(0.7) })
+            .child(if on { "◉" } else { "○" })
+            .child("Inherit theme")
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                    // don't let the panel/scrim see this (no close)
+                    cx.stop_propagation();
+                    ws.focus_inherit_theme = !ws.focus_inherit_theme;
+                    ws.save(cx);
+                    cx.notify();
+                }),
             )
     }
 
@@ -6391,6 +6477,7 @@ impl Render for Workspace {
                     vec![
                         row("right-click", "Copy · Paste · Open link · Clear"),
                         row("Ctrl+Shift+C / V", "Copy / Paste"),
+                        row("Ctrl+X", "Cut selection (deletes on the input line)"),
                         row("double / triple-click", "Select word / line"),
                         row("Shift+Enter", "Newline (multiline in claude/codex)"),
                     ],
@@ -6427,6 +6514,8 @@ impl Render for Workspace {
                         row("Alt + ↑ / ↓", "Jump to your previous / next message"),
                         row("▲ ▼ (pane header)", "Same — navigate your own messages"),
                         row("👓 (pane header)", "FOCUS — mirror this pane big"),
+                        row("FOCUS · Inherit theme", "Reader curves + glares like its pane"),
+                        row("wheel / shift+wheel", "Pan a zoomed FOCUS read down / sideways"),
                         row("your input colour", "Your turns stand out (👤 wheel pip)"),
                         row("bell on finish", "Pane shows ● done + a per-agent sound"),
                         row("🤖 (mother bar)", "MCP — read-only agent-watch surface"),
@@ -7042,152 +7131,228 @@ impl Render for Workspace {
         if focus_on && focus_ramp < 1.0 {
             window.request_animation_frame();
         }
-        let focus_overlay = self
-            .focus_read
-            .as_ref()
-            .and_then(|w| w.upgrade())
-            .map(|pane| {
-                let snap = pane.update(cx, |v, cx| v.mirror_snapshot(cx));
-                let (ww, wh) = self
-                    .last_win
-                    .map(|(_, _, w, h)| (w, h))
-                    .unwrap_or((1200., 800.));
-                let panel_w = (ww * 0.8).max(320.);
-                let panel_h = (wh * 0.8).max(240.);
-                let pad = 16.0_f32;
-                let hdr_h = 30.0_f32;
-                let avail_w = (panel_w - pad * 2.).max(1.);
-                let avail_h = (panel_h - hdr_h - pad * 2.).max(1.);
-                let content_w = (snap.cols as f32 * snap.cell_w).max(1.);
-                let content_h = (snap.rows as f32 * snap.cell_h).max(1.);
-                // scale the whole grid to fit the modal (tighter axis wins so the
-                // entire screen stays visible); never shrink past ~0.7×.
-                let fit = (avail_w / content_w)
-                    .min(avail_h / content_h)
-                    .clamp(0.7, 6.0);
-                // The header slider rides on top of the fit: 1.0 = fit-to-modal,
-                // up to FZ_MAX× for reading (overflows the panel, clipped).
-                let ms = (fit * self.focus_zoom).clamp(0.5, 12.0);
-                let cell_h = snap.cell_h * ms;
-                // FOCUS inherits crawl: the rows are already in the crawl font
-                // (baked into the runs) and, in crawl mode, the modal centres each
-                // row exactly like the live pane (a flat, readable mirror — the
-                // ambient perspective stays on the pane behind the modal).
-                let crawl = snap.crawl;
-                let body = div()
-                    .flex()
-                    .flex_col()
-                    .text_size(px(snap.base_size * ms))
-                    .text_color(snap.text)
-                    .font_family(snap.font_family.clone())
-                    .children(snap.lines.into_iter().map(move |(text, runs)| {
-                        if crawl {
-                            return match pane::crawl_centered_runs(text, runs) {
-                                Some((t, cut)) => div()
-                                    .h(px(cell_h))
-                                    .flex()
-                                    .justify_center()
-                                    .whitespace_nowrap()
-                                    .child(gpui::StyledText::new(t).with_runs(cut)),
-                                None => div().h(px(cell_h)).whitespace_nowrap(),
-                            };
-                        }
-                        let line = div().h(px(cell_h)).whitespace_nowrap();
-                        if text.is_empty() {
-                            line
-                        } else {
-                            line.child(gpui::StyledText::new(text).with_runs(runs))
-                        }
-                    }));
-                let header = div()
-                    .h(px(hdr_h))
-                    .flex_none()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .justify_between()
-                    .px_3()
-                    .gap_3()
-                    .text_size(px(12.))
-                    .text_color(snap.accent)
-                    .child(format!("👓  FOCUS · {}", snap.title))
-                    // text-size slider for the pane under scrutiny (live, per-open)
-                    .child(self.focus_zoom_slider(snap.accent, snap.text, cx))
-                    .child(div().text_color(snap.text.alpha(0.6)).child("esc to close"));
-                let panel = div()
-                    .w(px(panel_w))
-                    .h(px(panel_h))
-                    .flex()
-                    .flex_col()
-                    .rounded(px(12.))
-                    .overflow_hidden()
-                    .bg(snap.bg)
-                    .border_2()
-                    .border_color(snap.accent.alpha(0.7))
-                    .shadow(vec![
-                        BoxShadow {
-                            color: hsla(0., 0., 0., 0.7),
-                            offset: point(px(0.), px(10.)),
-                            blur_radius: px(40.),
-                            spread_radius: px(2.),
-                            inset: false,
-                        },
-                        BoxShadow {
-                            color: snap.accent.alpha(0.18),
-                            offset: point(px(0.), px(0.)),
-                            blur_radius: px(48.),
-                            spread_radius: px(2.),
-                            inset: false,
-                        },
-                    ])
-                    .child(header)
-                    .child(
+        let focus_overlay = if let Some(pane) = self.focus_read.as_ref().and_then(|w| w.upgrade()) {
+            let snap = pane.update(cx, |v, cx| v.mirror_snapshot(cx));
+            let (ww, wh) = self
+                .last_win
+                .map(|(_, _, w, h)| (w, h))
+                .unwrap_or((1200., 800.));
+            let panel_w = (ww * 0.8).max(320.);
+            let panel_h = (wh * 0.8).max(240.);
+            // Reader padding: a third roomier than the old 16px so the text
+            // breathes inside the glass.
+            let pad = 21.0_f32;
+            let hdr_h = 30.0_f32;
+            let avail_w = (panel_w - pad * 2.).max(1.);
+            let avail_h = (panel_h - hdr_h - pad * 2.).max(1.);
+            let content_w = (snap.cols as f32 * snap.cell_w).max(1.);
+            let content_h = (snap.rows as f32 * snap.cell_h).max(1.);
+            // scale the whole grid to fit the modal (tighter axis wins so the
+            // entire screen stays visible); never shrink past ~0.7×.
+            let fit = (avail_w / content_w)
+                .min(avail_h / content_h)
+                .clamp(0.7, 6.0);
+            // The header slider rides on top of the fit: 1.0 = fit-to-modal,
+            // up to FZ_MAX× for reading (overflows the panel, panned by wheel).
+            let ms = (fit * self.focus_zoom).clamp(0.5, 12.0);
+            let cell_h = snap.cell_h * ms;
+            // How far the scaled mirror spills past the panel's inner height. The
+            // wheel pans `focus_scroll_y` across this so a zoomed-up read can
+            // reach the bottom row (clamped here in case the zoom just shrank).
+            let total_h = snap.rows as f32 * cell_h;
+            let overflow = (total_h - avail_h).max(0.0);
+            self.focus_overflow = overflow;
+            self.focus_line_h = cell_h;
+            self.focus_scroll_y = self.focus_scroll_y.clamp(0.0, overflow);
+            let scroll_y = self.focus_scroll_y;
+            // "Inherit theme": bend + glare the panel like the pane it mirrors.
+            let inherit = self.focus_inherit_theme;
+            let (k1, k2, glare) = (snap.k1, snap.k2, snap.glare);
+            // FOCUS inherits crawl: the rows are already in the crawl font
+            // (baked into the runs) and, in crawl mode, the modal centres each
+            // row exactly like the live pane (a flat, readable mirror — the
+            // ambient perspective stays on the pane behind the modal).
+            let crawl = snap.crawl;
+            // Each mirror row is a full grid-width string (cleared cells included),
+            // so the body block already spans the panel and "centring the block"
+            // would be a no-op. Size it instead to the *widest used* row (trailing
+            // blanks trimmed) so a narrow read becomes a narrow, genuinely centred
+            // column — the trailing-space overflow is invisible and clipped.
+            let used_cols = snap
+                .lines
+                .iter()
+                .map(|(t, _)| t.trim_end().chars().count())
+                .max()
+                .unwrap_or(0)
+                .max(1);
+            // Body width: the used text width for a flat read; the full inner width
+            // for a crawl (its rows self-centre across the panel). When a zoomed-up
+            // flat read is wider than the panel, that width drives the horizontal
+            // pan + left-anchor below (so you never lose the line starts off-screen).
+            let body_w = if crawl {
+                avail_w
+            } else {
+                (used_cols as f32 * snap.cell_w * ms).max(1.0)
+            };
+            let overflow_x = (body_w - avail_w).max(0.0);
+            // Centre the column when it fits; collapse the margin to 0 (left-anchor)
+            // once it's wider than the panel, so panning starts from the line heads.
+            let center_x = ((avail_w - body_w) * 0.5).max(0.0);
+            self.focus_overflow_x = overflow_x;
+            self.focus_scroll_x = self.focus_scroll_x.clamp(0.0, overflow_x);
+            let scroll_x = self.focus_scroll_x;
+            let body = div()
+                .flex()
+                .flex_col()
+                // keep the mirror's natural size so the wheel-pan offset is exact
+                // (no flex-shrink compressing it when it overflows the panel)
+                .flex_none()
+                .w(px(body_w))
+                .text_size(px(snap.base_size * ms))
+                .text_color(snap.text)
+                .font_family(snap.font_family.clone())
+                .children(snap.lines.into_iter().map(move |(text, runs)| {
+                    if crawl {
+                        return match pane::crawl_centered_runs(text, runs) {
+                            Some((t, cut)) => div()
+                                .h(px(cell_h))
+                                .flex()
+                                .justify_center()
+                                .whitespace_nowrap()
+                                .child(gpui::StyledText::new(t).with_runs(cut)),
+                            None => div().h(px(cell_h)).whitespace_nowrap(),
+                        };
+                    }
+                    let line = div().h(px(cell_h)).whitespace_nowrap();
+                    if text.is_empty() {
+                        line
+                    } else {
+                        line.child(gpui::StyledText::new(text).with_runs(runs))
+                    }
+                }));
+            let header = div()
+                .h(px(hdr_h))
+                .flex_none()
+                .flex()
+                .flex_row()
+                .items_center()
+                .justify_between()
+                .px_3()
+                .gap_3()
+                .text_size(px(12.))
+                .text_color(snap.accent)
+                .child(
+                    // left cluster: title + the persistent inherit-theme toggle
+                    div()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap_3()
+                        .child(format!("👓  FOCUS · {}", snap.title))
+                        .child(self.focus_inherit_toggle(snap.accent, snap.text, cx)),
+                )
+                // text-size slider for the pane under scrutiny (live, per-open)
+                .child(self.focus_zoom_slider(snap.accent, snap.text, cx))
+                .child(div().text_color(snap.text.alpha(0.6)).child("esc to close"));
+            let panel = div()
+                .w(px(panel_w))
+                .h(px(panel_h))
+                .flex()
+                .flex_col()
+                .rounded(px(12.))
+                .overflow_hidden()
+                .bg(snap.bg)
+                .border_2()
+                .border_color(snap.accent.alpha(0.7))
+                .shadow(vec![
+                    BoxShadow {
+                        color: hsla(0., 0., 0., 0.7),
+                        offset: point(px(0.), px(10.)),
+                        blur_radius: px(40.),
+                        spread_radius: px(2.),
+                        inset: false,
+                    },
+                    BoxShadow {
+                        color: snap.accent.alpha(0.18),
+                        offset: point(px(0.), px(0.)),
+                        blur_radius: px(48.),
+                        spread_radius: px(2.),
+                        inset: false,
+                    },
+                ])
+                .child(header)
+                .child(
+                    // The reading area: a clip box with the mirror absolutely
+                    // anchored inside it. Absolute positioning (not a flex child +
+                    // margins) pins both axes deterministically: `left = pad +
+                    // center_x - scroll_x` centres the column while it fits, then
+                    // left-anchors + pans once it's wider than the panel (so the
+                    // line heads never run off-screen); `top = pad - scroll_y` does
+                    // the same vertically. Panning is just sliding that origin.
+                    div().flex_1().min_h_0().overflow_hidden().relative().child(
                         div()
-                            .flex_1()
-                            .min_h_0()
-                            .overflow_hidden()
-                            .p(px(pad))
+                            .absolute()
+                            .top(px(pad - scroll_y))
+                            .left(px(pad + center_x - scroll_x))
+                            .flex()
+                            .flex_col()
                             .child(body),
-                    )
-                    // Measure the panel's exact on-screen box (physical px) and arm
-                    // the FOCUS backdrop blur: the CRT post-pass frosts everything
-                    // outside this rect while the panel itself stays razor-sharp.
-                    // Using the real prepaint bounds (not an analytic centre) keeps
-                    // the sharp/blur edge pixel-aligned through the CSD shadow margin.
-                    .child(
-                        div().absolute().inset_0().child(
-                            gpui::canvas(
-                                move |bounds, window, _cx| {
-                                    let sf = window.scale_factor();
-                                    crate::warp::set_focus_blur(
-                                        [
-                                            f32::from(bounds.origin.x) * sf,
-                                            f32::from(bounds.origin.y) * sf,
-                                            f32::from(bounds.size.width) * sf,
-                                            f32::from(bounds.size.height) * sf,
-                                        ],
-                                        28.0 * sf * focus_ramp, // blur radius (eases in)
-                                        16.0 * sf,              // feather across the panel edge
-                                        focus_ramp,             // frosted-glass tint (eases in)
-                                        12.0 * sf, // corner radius — matches rounded(12)
+                    ),
+                )
+                // Measure the panel's exact on-screen box (physical px) and arm
+                // the FOCUS backdrop blur: the CRT post-pass frosts everything
+                // outside this rect while the panel itself stays razor-sharp.
+                // Using the real prepaint bounds (not an analytic centre) keeps
+                // the sharp/blur edge pixel-aligned through the CSD shadow margin.
+                // When "Inherit theme" is on, the same rect is also registered as
+                // the lone warp tube so the reader bends + glares like its pane.
+                .child(
+                    div().absolute().inset_0().child(
+                        gpui::canvas(
+                            move |bounds, window, _cx| {
+                                let sf = window.scale_factor();
+                                let rect = [
+                                    f32::from(bounds.origin.x) * sf,
+                                    f32::from(bounds.origin.y) * sf,
+                                    f32::from(bounds.size.width) * sf,
+                                    f32::from(bounds.size.height) * sf,
+                                ];
+                                crate::warp::set_focus_blur(
+                                    rect,
+                                    28.0 * sf * focus_ramp, // blur radius (eases in)
+                                    16.0 * sf,              // feather across the panel edge
+                                    focus_ramp,             // frosted-glass tint (eases in)
+                                    12.0 * sf,              // corner radius — matches rounded(12)
+                                );
+                                if inherit {
+                                    // crawl stays identity: the body already
+                                    // centres crawl rows for readable mirroring.
+                                    crate::warp::register_focus_tube(
+                                        rect,
+                                        glare,
+                                        k1,
+                                        k2,
+                                        [0.0, 1.0, 1.0],
                                     );
-                                },
-                                |_, _, _, _| {},
-                            )
-                            .size_full(),
-                        ),
-                    )
-                    // clicks inside the panel must not fall through to the scrim
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(|_, _: &MouseDownEvent, _w, cx| cx.stop_propagation()),
-                    );
-                // Dim + LOCK scrim over the whole window. `.occlude()` makes it
-                // swallow every mouse event (clicks AND scroll) so nothing behind
-                // the modal can be focused, scrolled, or typed into — you stay in
-                // the FOCUS pane. The 0.60 dim rides UNDER the frosted backdrop the
-                // CRT pass paints (the shader blurs these dimmed pixels). A click on
-                // the dimmed area outside the panel closes it; esc closes too.
+                                }
+                            },
+                            |_, _, _, _| {},
+                        )
+                        .size_full(),
+                    ),
+                )
+                // clicks inside the panel must not fall through to the scrim
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|_, _: &MouseDownEvent, _w, cx| cx.stop_propagation()),
+                );
+            // Dim + LOCK scrim over the whole window. `.occlude()` makes it
+            // swallow every mouse event (clicks AND scroll) so nothing behind
+            // the modal can be focused, scrolled, or typed into — you stay in
+            // the FOCUS pane. The 0.60 dim rides UNDER the frosted backdrop the
+            // CRT pass paints (the shader blurs these dimmed pixels). A click on
+            // the dimmed area outside the panel closes it; esc closes too.
+            Some(
                 div()
                     .absolute()
                     .inset_0()
@@ -7200,18 +7365,54 @@ impl Render for Workspace {
                         MouseButton::Left,
                         cx.listener(|ws, _: &MouseDownEvent, _w, cx| ws.close_focus_read(cx)),
                     )
-                    // The scrim occludes the pane behind it, so route the wheel back
-                    // to the focused terminal's scrollback and re-paint the mirror.
-                    // Scrolling anywhere over the modal (panel or dimmed surround)
-                    // drives the read pane — you never lose the wheel while reading.
+                    // A zoomed-up mirror overflows the panel; the wheel pans it so
+                    // the off-screen rows/columns are reachable. Plain wheel pans
+                    // vertically; SHIFT+wheel (and a trackpad's native x delta) pans
+                    // horizontally so a huge read doesn't run its line heads off the
+                    // side. At an edge (or when it already fits) the wheel falls
+                    // through to the read pane's scrollback — the wheel is never lost.
                     .on_scroll_wheel(cx.listener(|ws, ev: &ScrollWheelEvent, _w, cx| {
+                        let (dx_raw, dy) = match ev.delta {
+                            gpui::ScrollDelta::Lines(l) => {
+                                (l.x * ws.focus_line_h, l.y * ws.focus_line_h)
+                            }
+                            gpui::ScrollDelta::Pixels(p) => (f32::from(p.x), f32::from(p.y)),
+                        };
+                        // Shift turns the vertical wheel into horizontal pan (mouse
+                        // users); a trackpad's own x delta drives it directly too.
+                        let shift = ev.modifiers.shift;
+                        let dx = if shift { dy } else { dx_raw };
+                        if ws.focus_overflow_x > 0.0 && (shift || dx.abs() > f32::EPSILON) {
+                            let next = (ws.focus_scroll_x - dx).clamp(0.0, ws.focus_overflow_x);
+                            if (next - ws.focus_scroll_x).abs() > f32::EPSILON {
+                                ws.focus_scroll_x = next;
+                                cx.notify();
+                                return;
+                            }
+                            // shift = an explicit horizontal gesture: at the L/R edge
+                            // it stops here rather than scrolling the terminal.
+                            if shift {
+                                return;
+                            }
+                        }
+                        if ws.focus_overflow > 0.0 {
+                            let next = (ws.focus_scroll_y - dy).clamp(0.0, ws.focus_overflow);
+                            if (next - ws.focus_scroll_y).abs() > f32::EPSILON {
+                                ws.focus_scroll_y = next;
+                                cx.notify();
+                                return;
+                            }
+                        }
                         if let Some(pane) = ws.focus_read.as_ref().and_then(|w| w.upgrade()) {
                             pane.update(cx, |v, cx| v.scroll_by_wheel(ev, cx));
                             cx.notify();
                         }
                     }))
-                    .child(panel)
-            });
+                    .child(panel),
+            )
+        } else {
+            None
+        };
 
         let drag_chip = self.drag_pane.as_ref().filter(|d| d.engaged).map(|d| {
             div()
@@ -7738,6 +7939,7 @@ id = "hacker"
             }],
             groups: vec![],
             mcp: None,
+            focus_inherit: false,
         };
         let body = toml::to_string(&state).expect("serializes");
         let back: StateFile = toml::from_str(&body).expect("round-trips");
@@ -7773,6 +7975,7 @@ id = "hacker"
             }],
             groups: vec![],
             mcp: None,
+            focus_inherit: false,
         };
         let body = toml::to_string(&state).expect("serializes");
         let back: StateFile = toml::from_str(&body).expect("round-trips");
@@ -7827,6 +8030,7 @@ id = "hacker"
                 collapsed: true,
             }],
             mcp: None,
+            focus_inherit: false,
         };
         let body = toml::to_string(&state).expect("serializes");
         let back: StateFile = toml::from_str(&body).expect("round-trips");
@@ -7856,6 +8060,21 @@ node = "Leaf"
         assert_eq!(back.tabs[0].text_color, None);
         assert_eq!(back.tabs[0].group, None);
         assert!(back.groups.is_empty());
+        // pre-feature files have no `focus_inherit` → the flat reader default.
+        assert!(
+            !back.focus_inherit,
+            "missing key defaults to the flat reader"
+        );
+    }
+
+    #[test]
+    fn focus_inherit_preference_round_trips() {
+        // The global "Inherit theme" reader preference survives a save/load.
+        let mut state = StateFile::default();
+        state.focus_inherit = true;
+        let body = toml::to_string(&state).expect("serializes");
+        let back: StateFile = toml::from_str(&body).expect("round-trips");
+        assert!(back.focus_inherit, "the inherit-theme toggle persists");
     }
 
     #[test]
@@ -8017,6 +8236,7 @@ node = "Leaf"
             }],
             groups: vec![],
             mcp: None,
+            focus_inherit: false,
         };
         let body = toml::to_string(&state).expect("serializes");
         let back: StateFile = toml::from_str(&body).expect("round-trips");
