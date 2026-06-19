@@ -100,10 +100,23 @@ pub fn spawn_in(
         cell_height,
     };
 
-    let options = tty::Options {
+    let mut options = tty::Options {
         working_directory: cwd.filter(|d| d.is_dir()),
         ..Default::default()
     };
+    // A demo window runs THIS binary as every pane's program — a frozen screen of
+    // lorem-ipsum styled like a real agent session — instead of the user's shell.
+    // So a shared demo shows no real shell, cwd, scrollback, or secret, yet flows
+    // through the normal PTY→grid→warp/grade render path for full fidelity. Gated
+    // on TD_DEMO, which is set only for the spawned demo window (see main).
+    if std::env::var_os("TD_DEMO").is_some() {
+        if let Ok(exe) = std::env::current_exe() {
+            options.shell = Some(tty::Shell::new(
+                exe.to_string_lossy().into_owned(),
+                vec!["--td-emit-demo".to_string()],
+            ));
+        }
+    }
     let pty = tty::new(&options, window_size, 0)?;
     let master = pty.file().try_clone().ok();
     let shell_pid = pty.child().id();

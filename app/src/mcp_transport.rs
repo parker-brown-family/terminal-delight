@@ -34,8 +34,26 @@ use gpui::Context;
 
 use crate::{mcp, mcp_tail, session, Workspace};
 
-/// A one-shot reply channel the ticker sends a fresh snapshot back on.
-type Reply = mpsc::Sender<mcp::Snapshot>;
+/// What the reader thread asks the ticker (gpui main thread) to do. Both
+/// variants carry a one-shot channel the ticker answers on, so the reader can
+/// block with a budget and never hang. Reads and writes share the one ticker so
+/// every touch of pane state happens on the main thread — the reader never
+/// mutates anything itself.
+enum UiReq {
+    /// Produce a fresh pane snapshot (every `tools/call` needs one to gate on
+    /// policy and read identities/grades).
+    Snapshot(mpsc::Sender<mcp::Snapshot>),
+    /// Apply a parsed `set_pane_config` batch and report the per-target outcome.
+    Apply(Vec<mcp::ConfigUpdate>, mpsc::Sender<Vec<mcp::ApplyOutcome>>),
+}
+
+/// Build a uniform refusal for a whole batch (used when the UI is gone/wedged).
+fn refuse_all(updates: &[mcp::ConfigUpdate], why: &str) -> Vec<mcp::ApplyOutcome> {
+    updates
+        .iter()
+        .map(|(t, _)| (t.clone(), Err(why.to_string())))
+        .collect()
+}
 
 /// How long a `tools/call` waits for the UI to produce a snapshot before the
 /// client gets a "not ready" error instead of hanging.
@@ -53,7 +71,7 @@ pub fn start(cx: &mut Context<Workspace>) {
         return;
     }
 
-    let (req_tx, req_rx) = mpsc::channel::<Reply>(); // reader → ticker (per request)
+    let (req_tx, req_rx) = mpsc::channel::<UiReq>(); // reader → ticker (per request)
     let (snap_tx, snap_rx) = mpsc::channel::<mcp::Snapshot>(); // ticker → notifier (periodic)
     let (out_tx, out_rx) = mpsc::channel::<String>(); // reader + notifier → writer
 
@@ -107,7 +125,7 @@ pub fn start(cx: &mut Context<Workspace>) {
             let mut alive = true;
             loop {
                 match req_rx.try_recv() {
-                    Ok(reply) => match this.update(cx, snapshot_of) {
+                    Ok(UiReq::Snapshot(reply)) => match this.update(cx, snapshot_of) {
                         Ok(s) => {
                             let _ = reply.send(s);
                         }
@@ -116,6 +134,18 @@ pub fn start(cx: &mut Context<Workspace>) {
                             alive = false;
                         }
                     },
+                    Ok(UiReq::Apply(updates, reply)) => {
+                        match this.update(cx, |ws, cx| ws.apply_mcp_config(&updates, cx)) {
+                            Ok(out) => {
+                                let _ = reply.send(out);
+                            }
+                            Err(_) => {
+                                let _ = reply
+                                    .send(refuse_all(&updates, "terminal-delight UI not ready"));
+                                alive = false;
+                            }
+                        }
+                    }
                     Err(mpsc::TryRecvError::Empty) => break,
                     Err(mpsc::TryRecvError::Disconnected) => return, // reader gone
                 }
@@ -148,12 +178,13 @@ fn snapshot_of(ws: &mut Workspace, cx: &mut Context<Workspace>) -> mcp::Snapshot
     mcp::Snapshot {
         config: ws.mcp.clone(),
         panes: ws.mcp_snapshot(cx),
+        outer_grade: ws.mcp_outer_grade(cx),
     }
 }
 
 /// The reader loop: one request line in, one response line out (via the writer).
 fn serve_stdio(
-    req_tx: mpsc::Sender<Reply>,
+    req_tx: mpsc::Sender<UiReq>,
     out_tx: mpsc::Sender<String>,
     level: Arc<AtomicU8>,
     active: Arc<AtomicBool>,
@@ -182,13 +213,27 @@ fn serve_stdio(
         let response = if mcp::requires_snapshot(req) {
             // tools/call — fetch a live snapshot, bounded so we never hang.
             let (reply_tx, reply_rx) = mpsc::channel();
-            if req_tx.send(reply_tx).is_err() {
+            if req_tx.send(UiReq::Snapshot(reply_tx)).is_err() {
                 break; // ticker gone
             }
             match reply_rx.recv_timeout(SNAPSHOT_BUDGET) {
                 Ok(snap) => {
                     let home = session::home_dir();
-                    mcp::handle_line(req, &snap, |p, n| tail_for(p, n, &home))
+                    // The write capability: a set_pane_config batch is applied on
+                    // the gpui main thread via the same ticker, bounded by the
+                    // same budget. Reads (list_panes/pane_events/get_pane_config)
+                    // never invoke this closure.
+                    let apply = |updates: &[mcp::ConfigUpdate]| -> Vec<mcp::ApplyOutcome> {
+                        let (tx, rx) = mpsc::channel();
+                        if req_tx.send(UiReq::Apply(updates.to_vec(), tx)).is_err() {
+                            return refuse_all(updates, "terminal-delight UI gone");
+                        }
+                        match rx.recv_timeout(SNAPSHOT_BUDGET) {
+                            Ok(out) => out,
+                            Err(_) => refuse_all(updates, "terminal-delight UI not ready"),
+                        }
+                    };
+                    mcp::handle_line_with(req, &snap, |p, n| tail_for(p, n, &home), apply)
                 }
                 Err(RecvTimeoutError::Disconnected) => break,
                 Err(RecvTimeoutError::Timeout) => {
@@ -267,6 +312,7 @@ mod tests {
                 enabled: true,
                 expose: mcp::Expose::AgentsOnly,
                 events: true,
+                writable: false,
             },
             panes: vec![mcp::PaneInfo {
                 tab: 0,
@@ -277,7 +323,9 @@ mod tests {
                 cwd: Some(cwd.into()),
                 session: Some("claude --resume x".into()),
                 exposed: true,
+                grade: mcp::GradeReport::default(),
             }],
+            outer_grade: mcp::GradeReport::default(),
         }
     }
 

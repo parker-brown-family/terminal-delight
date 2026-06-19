@@ -1,11 +1,16 @@
-# terminal-delight as a read-only MCP control surface
+# terminal-delight as an MCP control surface
 
-terminal-delight can act as a **read-only [MCP](https://modelcontextprotocol.io)
+terminal-delight can act as an **[MCP](https://modelcontextprotocol.io)
 server**: an orchestrating agent connects over stdio and watches a wall of
 panes — who is running where, which conversation each agent is in, and what
-tools they call — and reacts, **without ever touching a keyboard**. It is
-observe-only by construction: there is **no way to write to a terminal** through
-this interface.
+tools they call — and reacts, **without ever touching a keyboard**. It can also,
+behind a second opt-in, **configure a pane's appearance** — dim the brightness,
+flatten the warp, restyle the whole wall at once.
+
+The hard line never moves: **no tool can write bytes to a terminal/PTY.**
+Sending input into a shell would be arbitrary code execution; that path does not
+exist. "Writes" here mean *appearance only* (the monitor grade), and they are
+disabled until you deliberately turn them on.
 
 ## Wiring it up
 
@@ -55,6 +60,11 @@ Exposure ships **disabled** and the policy is operator-controlled from the
   plain shell) or `all panes`.
 - **Events** — allow tailing each agent's transcript for tool-call events
   (powers `pane_events` and the push feed).
+- **Writes** — a *second* opt-in (off by default) that promotes the read-only
+  watch surface to a remote-control one: with it on, `set_pane_config` may change
+  a pane's (or the window-level `outer`) appearance. A read→write escalation, so
+  it's its own switch. The `TD_MCP_WRITE=1` env var forces it on for a headless /
+  orchestrated launch.
 
 The policy is persisted in `state.toml` under `[mcp]`. A connected client always
 sees the *current* policy live; flipping a toggle takes effect on the next call.
@@ -65,9 +75,24 @@ sees the *current* policy live; flipping a toggle takes effect on the next call.
 |------|-----------|---------|
 | `list_panes` | _(none)_ | Every currently-exposed pane: `tab`, `title`, `mode` (CLAUDE/CODEX/SHELL/…), `is_agent`, `pid`, `cwd`, `session` (resumable id), `exposed`. Text summary + `structuredContent`. |
 | `pane_events` | `pid` (from `list_panes`), `limit` (default 20, max 200) | Recent structured tool calls for that agent pane — `{ts, tool, summary}` — tailed from the agent's **own transcript**, not the rendered screen. |
+| `get_pane_config` | `targets?` — array of pids and/or `"outer"`; omit for every exposed pane + `outer` | Each target's **appearance**: the monitor grade as uniform `0..100` percents (`brightness`, `contrast`, `colour`, `text`, `background`, `gamma`, `menu_bar`, `text_size`, `warp`, `crawl_angle`, `crawl_depth`) plus a `crawl` boolean. A bad pid is a per-target `error` row, not a failed call. Read-only. |
+| `set_pane_config` | `updates` — array of `{ target, config }` where `target` is a pid or `"outer"` and `config` is a partial grade | Applies each partial: only the channels you include change (others untouched, PATCH semantics); out-of-range values clamp. Returns the resulting grade per target. Requires the **Writes** toggle. Setting `outer` re-grades every pane that inherits it — change the whole wall in one call. |
 
-Both honour the policy: `list_panes` only lists exposed panes; `pane_events`
-additionally requires Events on and the pane to be an agent.
+`list_panes`/`pane_events`/`get_pane_config` honour the master switch;
+`pane_events` also needs Events on and an agent pane; `set_pane_config` also
+needs the Writes toggle.
+
+### The config API is deliberately *dumb*
+
+`set_pane_config` stores the **absolute** number you give it — it never
+interprets a relative ask. To "make every terminal 20% dimmer": `get_pane_config`
+the current `brightness`, compute `brightness * 0.8` yourself, then
+`set_pane_config` that value. The agent owns the arithmetic; the surface just
+reads and writes. Every channel speaks the same `0..100` percent scale (it is the
+display-tray slider position) so you never reason about a channel's internal
+range. Appearance changes persist exactly like an OSD edit and apply on the gpui
+main thread (bounded by the same 5 s budget as reads — a wedged UI errors, never
+hangs).
 
 ## Push notifications
 
@@ -95,8 +120,11 @@ silence it.
 
 ## Security posture
 
-- **Read-only.** No tool writes to a PTY. Sending bytes into a shell would be
-  arbitrary code execution; that path does not exist here.
+- **Never a PTY.** No tool writes bytes to a terminal. Sending input into a shell
+  would be arbitrary code execution; that path does not exist here. The only
+  writes are *appearance* (the monitor grade) via `set_pane_config`.
+- **Writes are a separate opt-in.** The server is a read-only watch surface until
+  you flip **Writes** (or set `TD_MCP_WRITE`). Reads never need it.
 - **stdio only, never TCP.** The trust boundary is whoever launched the process.
 - **No arbitrary reads.** Transcript paths are derived from each pane's
   kernel-reported `cwd`, slugged so they can't escape `~/.claude` / `~/.codex`;

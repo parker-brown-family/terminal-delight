@@ -13,6 +13,7 @@
 mod bell;
 mod crt;
 mod csd;
+mod demo;
 mod gamba;
 mod mcp;
 mod mcp_tail;
@@ -37,7 +38,7 @@ use gpui::{
 };
 use gpui_platform::application;
 use pane::{
-    CloseFocusRead, ClosePane, DragPaneStart, OpenDisplayMenu, OpenFocusRead, OpenHelp,
+    CloseFocusRead, ClosePane, DragPaneStart, OpenDisplayMenu, OpenFind, OpenFocusRead, OpenHelp,
     OpenThemeMenu, PaneRenamed, RequestCloseTab, TerminalView,
 };
 use serde::{Deserialize, Serialize};
@@ -867,6 +868,15 @@ fn load_state() -> StateFile {
         .unwrap_or_default()
 }
 
+/// The layout for a demo window: the throwaway state file named by
+/// `TD_DEMO_STATE` (written by [`Workspace::share_demo`]), NOT the real session.
+fn load_demo_state() -> StateFile {
+    std::env::var_os("TD_DEMO_STATE")
+        .and_then(|p| fs::read_to_string(p).ok())
+        .and_then(|s| toml::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
 /// Frame-wide jiggle: the whole device hops ±1px every so often.
 struct FrameJiggle {
     started: Instant,
@@ -1029,10 +1039,50 @@ struct GroupDrag {
     engaged: bool,
 }
 
+/// What the find panel is searching, and where it centres.
+enum FindScope {
+    /// Ctrl+F: just this pane; the panel centres over the pane's on-screen box.
+    InPane(EntityId),
+    /// Ctrl+Shift+F: every pane across every tab; the panel centres on the window.
+    Global,
+}
+
+/// One row in the find panel: a matched line in a pane, carrying everything to
+/// render it (mode label, title, snippet + match highlight) and to jump to it
+/// (the pane handle + its tab, the grid line, and the matched column span).
+struct FindHit {
+    pane: gpui::WeakEntity<TerminalView>,
+    pane_id: EntityId,
+    tab: usize,
+    mode: String,
+    is_agent: bool,
+    title: String,
+    line: i32,
+    snippet: String,
+    /// Char indices into `snippet` that matched (also column indices).
+    positions: Vec<usize>,
+    score: i64,
+    /// Global scope only: how many lines matched in this pane (the row shows one).
+    same_pane_count: usize,
+}
+
+/// Live state of the open find panel: the query box, the computed hits, and the
+/// keyboard selection. `None` when the panel is closed.
+struct FindState {
+    scope: FindScope,
+    query: EditBuffer,
+    results: Vec<FindHit>,
+    selected: usize,
+}
+
 struct Workspace {
     tabs: Vec<Tab>,
     active: usize,
     focus_handle: gpui::FocusHandle,
+    /// The find panel (Ctrl+F / Ctrl+Shift+F), if open. Owns the keyboard while
+    /// up, like the rename editors — typing edits the query, ↑/↓ move the
+    /// selection, ↵ jumps to the hit, esc closes.
+    find: Option<FindState>,
     renaming: Option<(usize, EditBuffer)>,
     /// Tab index awaiting a "close all its panes?" confirmation, if any.
     confirm_close: Option<usize>,
@@ -1233,6 +1283,11 @@ fn make_pane_restored(
         cx.notify();
     })
     .detach();
+    // Ctrl+F / Ctrl+Shift+F in a pane → open the find panel (this pane, or global)
+    cx.subscribe_in(&pane, window, |ws, pane, ev: &OpenFind, window, cx| {
+        ws.open_find(pane.entity_id(), ev.global, window, cx);
+    })
+    .detach();
     // grab the header → begin a sub-tab drag (the workspace drives it from here)
     cx.subscribe(&pane, |ws, pane, ev: &DragPaneStart, cx| {
         let start = ev.at;
@@ -1310,7 +1365,14 @@ impl Workspace {
     /// The primary window: restore the saved layout (or open a single fresh tab)
     /// and persist changes back to disk.
     fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        Self::build(false, None, window, cx)
+        Self::build(false, false, None, window, cx)
+    }
+
+    /// A demo window: restores the cloned layout from `TD_DEMO_STATE` but never
+    /// persists (treated as scratch for saving). Every pane runs the frozen
+    /// lorem-ipsum emitter — see [`Self::share_demo`] and `term::spawn_in`.
+    fn new_demo(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        Self::build(false, true, None, window, cx)
     }
 
     /// A scratch window: one fresh terminal (optionally seeded with a cwd/agent
@@ -1321,16 +1383,23 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        Self::build(true, seed, window, cx)
+        Self::build(true, false, seed, window, cx)
     }
 
     fn build(
         scratch: bool,
+        demo: bool,
         seed: Option<session::PaneRestore>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let saved = load_state();
+        // A demo window restores its cloned layout from the throwaway demo state,
+        // never the real session — and never writes back (scratch for saving).
+        let saved = if demo {
+            load_demo_state()
+        } else {
+            load_state()
+        };
         // scale + theme are read even in scratch mode so a quick window still
         // looks like the rest of the session; only the *layout* is skipped.
         // Text size now lives in the outer grade (`grade.scale`); fold a legacy
@@ -1349,6 +1418,7 @@ impl Workspace {
             tabs: vec![],
             active: 0,
             focus_handle: cx.focus_handle(),
+            find: None,
             renaming: None,
             confirm_close: None,
             help_open: false,
@@ -1407,7 +1477,9 @@ impl Workspace {
             focus_overflow_x: 0.0,
             focus_line_h: 0.0,
             focus_inherit_theme: saved.focus_inherit,
-            scratch,
+            // a demo window restores a layout (so `scratch` is false to take the
+            // restore branch below) yet must never overwrite the real state
+            scratch: scratch || demo,
             should_move: false,
         };
         if scratch {
@@ -1508,6 +1580,13 @@ impl Workspace {
         // singleton (an atomic guard), so the server attaches exactly once —
         // whichever window mode the orchestrator chose to launch.
         if std::env::var_os("TD_MCP").is_some() {
+            // A SECOND, explicit opt-in promotes the read-only watch surface to a
+            // remote-control one (an agent may change pane appearance via
+            // set_pane_config). The robot panel persists this in state; the env
+            // var forces it on for a headless / orchestrated launch.
+            if std::env::var_os("TD_MCP_WRITE").is_some() {
+                ws.mcp.writable = true;
+            }
             mcp_transport::start(cx);
         }
         ws
@@ -1523,12 +1602,12 @@ impl Workspace {
         n
     }
 
-    fn save(&self, cx: &App) {
-        // a scratch / torn-off window must never overwrite the primary's layout
-        if self.scratch {
-            return;
-        }
-        let state = StateFile {
+    /// Serialise the live workspace into the persistable [`StateFile`] — the tab/
+    /// split tree, per-pane appearance, groups, theme, and MCP policy. Shared by
+    /// [`Self::save`] (writes the real state) and [`Self::share_demo`] (clones the
+    /// layout into a throwaway demo state), so the two can never drift.
+    fn build_state(&self, cx: &App) -> StateFile {
+        StateFile {
             active: self.active,
             win: self.last_win,
             // Kept for backward-compat with readers of the old top-level field;
@@ -1563,10 +1642,57 @@ impl Workspace {
                 .collect(),
             mcp: Some(self.mcp.clone()),
             focus_inherit: self.focus_inherit_theme,
-        };
-        if let Ok(body) = toml::to_string(&state) {
+        }
+    }
+
+    fn save(&self, cx: &App) {
+        // a scratch / torn-off window must never overwrite the primary's layout
+        if self.scratch {
+            return;
+        }
+        if let Ok(body) = toml::to_string(&self.build_state(cx)) {
             let _ = session::write_atomic(&state_path(), &body);
         }
+    }
+
+    /// "Share a demo of this layout": clone the CURRENT live layout + appearance
+    /// into a throwaway state file and launch a detached window from it with
+    /// TD_DEMO set, so every pane runs the frozen lorem-ipsum emitter instead of
+    /// a real shell. A faithful, safe-to-screen-share twin of this wall. The
+    /// child loads the demo state (never the real one) and never persists.
+    fn share_demo(&self, cx: &App) {
+        let state = self.build_state(cx);
+        let Ok(body) = toml::to_string(&state) else {
+            return;
+        };
+        // a unique throwaway path (pid + nanos) so concurrent demos don't collide
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let path =
+            std::env::temp_dir().join(format!("td-demo-{}-{stamp}.toml", std::process::id()));
+        if session::write_atomic(&path, &body).is_err() {
+            return;
+        }
+        let Ok(exe) = std::env::current_exe() else {
+            return;
+        };
+        let mut cmd = std::process::Command::new(exe);
+        cmd.env("TD_DEMO", "1")
+            .env("TD_DEMO_STATE", &path)
+            // belt-and-suspenders: also a peerless launch must boot non-restoring
+            .env_remove("TD_SCRATCH")
+            .env_remove("TD_SEED_CWD")
+            .env_remove("TD_SEED_RESUME");
+        use std::os::unix::process::CommandExt;
+        unsafe {
+            cmd.pre_exec(|| {
+                libc::setsid();
+                Ok(())
+            });
+        }
+        let _ = cmd.spawn();
     }
 
     /// Build the read-only snapshot the MCP control surface would expose: every
@@ -1577,6 +1703,7 @@ impl Workspace {
     /// writes a byte to any PTY.
     fn mcp_snapshot(&self, cx: &App) -> Vec<mcp::PaneInfo> {
         let mut out = vec![];
+        let outer = theme::outer_choice(cx);
         for (ti, tab) in self.tabs.iter().enumerate() {
             let mut leaves = vec![];
             tab.root.leaves(&mut leaves);
@@ -1599,8 +1726,151 @@ impl Workspace {
                     cwd: rt.cwd,
                     session: rt.resume,
                     exposed: mcp::should_expose(&self.mcp, is_agent),
+                    // the look the pane actually renders with (own override else
+                    // inherited outer), in the config API's 0..100 percents
+                    grade: Self::grade_report(&p.appearance.effective(&outer).grade),
                 });
             }
+        }
+        out
+    }
+
+    /// The window-level outer grade, for `get_pane_config`'s `outer` target.
+    fn mcp_outer_grade(&self, cx: &App) -> mcp::GradeReport {
+        Self::grade_report(&theme::outer_choice(cx).grade)
+    }
+
+    /// Bridge a stored [`theme::Grade`] into the config API's uniform `0..100`
+    /// percents — the single seam between the appearance model and `mcp`.
+    fn grade_report(g: &theme::Grade) -> mcp::GradeReport {
+        use theme::GradeKey as K;
+        mcp::GradeReport {
+            brightness: K::Brightness.to_percent(g.brightness),
+            contrast: K::Contrast.to_percent(g.contrast),
+            colour: K::Colour.to_percent(g.colour),
+            text: K::Text.to_percent(g.text),
+            background: K::Background.to_percent(g.background),
+            gamma: K::Gamma.to_percent(g.gamma),
+            menu_bar: K::Scale.to_percent(g.scale),
+            text_size: K::TextSize.to_percent(g.text_size),
+            warp: K::Warp.to_percent(g.warp),
+            crawl: g.crawl,
+            crawl_angle: K::CrawlAngle.to_percent(g.crawl_angle),
+            crawl_depth: K::CrawlDepth.to_percent(g.crawl_depth),
+        }
+    }
+
+    /// Apply a partial [`mcp::ConfigPatch`] (0..100 percents) onto a stored grade
+    /// in place. PATCH semantics: an absent field is left unchanged; each present
+    /// channel goes through [`theme::Grade::set`], which clamps into its range.
+    /// The API is "dumb" — this stores the absolute number given; it never
+    /// interprets a relative ask. The agent does that math from a prior read.
+    fn apply_config_patch(g: &mut theme::Grade, patch: &mcp::ConfigPatch) {
+        use theme::GradeKey as K;
+        if let Some(p) = patch.brightness {
+            g.set(K::Brightness, K::Brightness.from_percent(p));
+        }
+        if let Some(p) = patch.contrast {
+            g.set(K::Contrast, K::Contrast.from_percent(p));
+        }
+        if let Some(p) = patch.colour {
+            g.set(K::Colour, K::Colour.from_percent(p));
+        }
+        if let Some(p) = patch.text {
+            g.set(K::Text, K::Text.from_percent(p));
+        }
+        if let Some(p) = patch.background {
+            g.set(K::Background, K::Background.from_percent(p));
+        }
+        if let Some(p) = patch.gamma {
+            g.set(K::Gamma, K::Gamma.from_percent(p));
+        }
+        if let Some(p) = patch.menu_bar {
+            g.set(K::Scale, K::Scale.from_percent(p));
+        }
+        if let Some(p) = patch.text_size {
+            g.set(K::TextSize, K::TextSize.from_percent(p));
+        }
+        if let Some(p) = patch.warp {
+            g.set(K::Warp, K::Warp.from_percent(p));
+        }
+        if let Some(p) = patch.crawl_angle {
+            g.set(K::CrawlAngle, K::CrawlAngle.from_percent(p));
+        }
+        if let Some(p) = patch.crawl_depth {
+            g.set(K::CrawlDepth, K::CrawlDepth.from_percent(p));
+        }
+        if let Some(c) = patch.crawl {
+            g.crawl = c;
+        }
+    }
+
+    /// Apply a parsed `set_pane_config` batch on the gpui main thread (called by
+    /// the transport's ticker). Each update pins the targeted pane's grade group
+    /// (an OSD-equivalent edit, so it persists and repaints identically) or sets
+    /// the outer grade; the per-target outcome reports the resulting effective
+    /// grade or why it was refused. One bad pid never sinks the rest, and the
+    /// state is saved once iff anything changed.
+    fn apply_mcp_config(
+        &mut self,
+        updates: &[mcp::ConfigUpdate],
+        cx: &mut Context<Self>,
+    ) -> Vec<mcp::ApplyOutcome> {
+        let mut out = Vec::with_capacity(updates.len());
+        let mut changed = false;
+        for (target, patch) in updates {
+            match target {
+                mcp::Target::Outer => {
+                    let mut choice = theme::outer_choice(cx);
+                    Self::apply_config_patch(&mut choice.grade, patch);
+                    let report = Self::grade_report(&choice.grade);
+                    theme::select_outer(cx, choice);
+                    changed = true;
+                    out.push((target.clone(), Ok(report)));
+                }
+                mcp::Target::Pane(pid) => {
+                    // locate an EXPOSED leaf with this shell pid (collect the
+                    // handle first so the &self.tabs borrow ends before we mutate)
+                    let mut hit = None;
+                    'find: for tab in &self.tabs {
+                        let mut leaves = vec![];
+                        tab.root.leaves(&mut leaves);
+                        for leaf in leaves {
+                            let p = leaf.read(cx);
+                            if p.shell_pid() == *pid {
+                                let exposed = mcp::should_expose(&self.mcp, p.mode.is_agent());
+                                hit = Some((leaf.clone(), exposed));
+                                break 'find;
+                            }
+                        }
+                    }
+                    match hit {
+                        Some((leaf, true)) => {
+                            let outer = theme::outer_choice(cx);
+                            let report = leaf.update(cx, |view, cx| {
+                                let mut g = view.appearance.effective(&outer).grade;
+                                Self::apply_config_patch(&mut g, patch);
+                                view.appearance.set_grade(g);
+                                cx.notify();
+                                Self::grade_report(&g)
+                            });
+                            changed = true;
+                            out.push((target.clone(), Ok(report)));
+                        }
+                        Some((_, false)) => out.push((
+                            target.clone(),
+                            Err(format!(
+                                "pane {pid} is not exposed under the current policy"
+                            )),
+                        )),
+                        None => out.push((target.clone(), Err(format!("no pane with pid {pid}")))),
+                    }
+                }
+            }
+        }
+        if changed {
+            self.save(cx);
+            cx.notify();
         }
         out
     }
@@ -2049,6 +2319,470 @@ impl Workspace {
         cx.notify();
     }
 
+    /// Open the find panel: `global` searches every pane (centred on the window),
+    /// else just `pane_id` (centred over that pane). The workspace root takes the
+    /// keyboard so typing edits the query box — panes route keys to their PTY, so
+    /// the find box lives here. Deferred focus dodges the focus-back race the
+    /// rename editors hit (the pane's own focus would otherwise grab it back).
+    fn open_find(
+        &mut self,
+        pane_id: EntityId,
+        global: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.find = Some(FindState {
+            scope: if global {
+                FindScope::Global
+            } else {
+                FindScope::InPane(pane_id)
+            },
+            query: EditBuffer::seeded(""),
+            results: Vec::new(),
+            selected: 0,
+        });
+        cx.defer_in(window, |ws, window, cx| {
+            window.focus(&ws.focus_handle, cx);
+        });
+        cx.notify();
+    }
+
+    /// Fuzzy-search the panes in `scope` for `query`, building the find rows. In
+    /// `InPane` every matching line is its own row (newest first); in `Global`
+    /// each matching pane contributes one row (its best line + a match count),
+    /// ranked by score. Empty query → no results.
+    fn compute_find(&self, query: &str, scope: &FindScope, cx: &App) -> Vec<FindHit> {
+        let needle = query.trim().to_ascii_lowercase();
+        if needle.is_empty() {
+            return Vec::new();
+        }
+        // Most-recent lines scanned per pane — bounds the per-keystroke cost when
+        // a global search sweeps many deep-scrollback panes at once.
+        const CAP: usize = 2500;
+        let mut hits: Vec<FindHit> = Vec::new();
+        for (ti, tab) in self.tabs.iter().enumerate() {
+            let mut leaves = vec![];
+            tab.root.leaves(&mut leaves);
+            for leaf in leaves {
+                let id = leaf.entity_id();
+                if let FindScope::InPane(target) = scope {
+                    if id != *target {
+                        continue;
+                    }
+                }
+                let p = leaf.read(cx);
+                let mode = p.mode.label().to_string();
+                let is_agent = p.mode.is_agent();
+                let title = p
+                    .name
+                    .clone()
+                    .filter(|n| !n.is_empty())
+                    .or_else(|| (!p.title.is_empty()).then(|| p.title.clone()))
+                    .unwrap_or_else(|| mode.clone());
+                let gh = p.search_grid(&needle, CAP);
+                if gh.is_empty() {
+                    continue;
+                }
+                match scope {
+                    FindScope::InPane(_) => {
+                        for h in gh.into_iter().rev() {
+                            hits.push(FindHit {
+                                pane: leaf.downgrade(),
+                                pane_id: id,
+                                tab: ti,
+                                mode: mode.clone(),
+                                is_agent,
+                                title: title.clone(),
+                                line: h.line,
+                                snippet: h.text,
+                                positions: h.positions,
+                                score: h.score,
+                                same_pane_count: 0,
+                            });
+                        }
+                    }
+                    FindScope::Global => {
+                        let count = gh.len();
+                        let best = gh.into_iter().max_by_key(|h| h.score).unwrap();
+                        hits.push(FindHit {
+                            pane: leaf.downgrade(),
+                            pane_id: id,
+                            tab: ti,
+                            mode,
+                            is_agent,
+                            title,
+                            line: best.line,
+                            snippet: best.text,
+                            positions: best.positions,
+                            score: best.score,
+                            same_pane_count: count,
+                        });
+                    }
+                }
+            }
+        }
+        if matches!(scope, FindScope::Global) {
+            hits.sort_by(|a, b| b.score.cmp(&a.score));
+        }
+        hits
+    }
+
+    /// ↵ in the find panel: jump to the selected hit — scroll its pane to the
+    /// matched line (highlighting the span), focus that exact leaf in its tab, and
+    /// close the panel. An empty result set just closes + refocuses the pane.
+    fn jump_to_find(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(find) = self.find.take() else {
+            return;
+        };
+        let Some(hit) = find.results.get(find.selected) else {
+            self.focus_active(window, cx);
+            cx.notify();
+            return;
+        };
+        let (tab, line, pane_id) = (hit.tab, hit.line, hit.pane_id);
+        let sel = match (hit.positions.first(), hit.positions.last()) {
+            (Some(&a), Some(&b)) => Some((a, b)),
+            _ => None,
+        };
+        if let Some(p) = hit.pane.upgrade() {
+            p.update(cx, |v, cx| v.scroll_to_line(line, sel, cx));
+        }
+        if let Some(t) = self.tabs.get_mut(tab) {
+            t.focused = Some(pane_id);
+        }
+        self.activate_tab(tab, window, cx);
+        cx.notify();
+    }
+
+    /// Render a matched line as a highlighted snippet: the run is windowed around
+    /// the first match (so a long line shows the hit in context, with `…` ellipses
+    /// where trimmed) and the matched chars are painted in `hit_col`/bold while the
+    /// rest stays `base_col`. Consecutive matched/unmatched chars are grouped into
+    /// single spans so the row stays cheap even on a wide line.
+    fn find_snippet(
+        snippet: &str,
+        positions: &[usize],
+        hit_col: gpui::Hsla,
+        base_col: gpui::Hsla,
+    ) -> gpui::Div {
+        let chars: Vec<char> = snippet.chars().collect();
+        let n = chars.len();
+        let first = positions.first().copied().unwrap_or(0);
+        let win_start = first.saturating_sub(12);
+        let win_end = (win_start + 96).min(n);
+        let pos: std::collections::HashSet<usize> = positions.iter().copied().collect();
+        let mut row = div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .whitespace_nowrap()
+            .text_size(px(9.));
+        if win_start > 0 {
+            row = row.child(div().text_color(base_col.alpha(0.5)).child("\u{2026}"));
+        }
+        let mut i = win_start;
+        while i < win_end {
+            let matched = pos.contains(&i);
+            let mut j = i;
+            let mut s = String::new();
+            while j < win_end && pos.contains(&j) == matched {
+                s.push(chars[j]);
+                j += 1;
+            }
+            row = if matched {
+                row.child(
+                    div()
+                        .text_color(hit_col)
+                        .font_weight(gpui::FontWeight::BOLD)
+                        .child(s),
+                )
+            } else {
+                row.child(div().text_color(base_col).child(s))
+            };
+            i = j;
+        }
+        if win_end < n {
+            row = row.child(div().text_color(base_col.alpha(0.5)).child("\u{2026}"));
+        }
+        row
+    }
+
+    /// The find panel overlay: a fuzzy-search box + a results list styled like the
+    /// 🤖 MCP pane list (mode label · title · matched-line snippet). It centres over
+    /// the searched pane (Ctrl+F) or the whole window (Ctrl+Shift+F), positioned
+    /// absolutely from the measured pane/window box. Only a window of rows around
+    /// the selection renders, so the keyboard selection always stays in view.
+    fn render_find(&self, th: &theme::Theme, cx: &mut Context<Self>) -> Option<gpui::Div> {
+        let find = self.find.as_ref()?;
+        let (ww, wh) = self
+            .last_win
+            .map(|(_, _, w, h)| (w, h))
+            .unwrap_or((1200., 800.));
+        let global = matches!(find.scope, FindScope::Global);
+        const ROW_H: f32 = 36.;
+        const VISIBLE: usize = 11;
+        let panel_w = if global { 600. } else { 480. };
+        let n = find.results.len();
+        let shown = n.min(VISIBLE).max(1);
+        let panel_h = 72. + shown as f32 * ROW_H + 26.;
+        // centre point in window-relative logical px
+        let (cxp, cyp) = if let FindScope::InPane(id) = &find.scope {
+            self.pane_bounds
+                .lock()
+                .unwrap()
+                .get(id)
+                .map(|b| {
+                    (
+                        f32::from(b.origin.x) + f32::from(b.size.width) * 0.5,
+                        f32::from(b.origin.y) + f32::from(b.size.height) * 0.5,
+                    )
+                })
+                .unwrap_or((ww * 0.5, wh * 0.5))
+        } else {
+            (ww * 0.5, wh * 0.5)
+        };
+        let left = (cxp - panel_w * 0.5).clamp(8., (ww - panel_w - 8.).max(8.));
+        let top = (cyp - panel_h * 0.5).clamp(8., (wh - panel_h - 8.).max(8.));
+
+        // windowed slice so the selection stays on-screen during keyboard nav
+        let start = if n <= VISIBLE {
+            0
+        } else {
+            find.selected
+                .saturating_sub(VISIBLE / 2)
+                .min(n - VISIBLE)
+        };
+        let end = (start + VISIBLE).min(n);
+
+        let q = find.query.text();
+        let scope_lbl = if global {
+            "FIND \u{2014} ALL PANES"
+        } else {
+            "FIND IN PANE"
+        };
+        let input = {
+            let eb = render_edit_buffer(
+                &find.query,
+                1.0,
+                th.text,
+                th.accent,
+                th.accent.alpha(0.3),
+            );
+            if q.is_empty() {
+                eb.child(
+                    div()
+                        .text_color(th.text.alpha(0.35))
+                        .child("type to search\u{2026}"),
+                )
+            } else {
+                eb
+            }
+        };
+        let header = div()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .px_2()
+            .pt_2()
+            .pb_1()
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .justify_between()
+                    .child(
+                        div()
+                            .text_size(px(10.))
+                            .font_weight(gpui::FontWeight::EXTRA_BOLD)
+                            .text_color(th.accent)
+                            .child(format!("\u{1f50d}  {scope_lbl}")),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(9.))
+                            .text_color(th.text.alpha(0.5))
+                            .child(if q.trim().is_empty() {
+                                String::new()
+                            } else {
+                                format!("{n} match{}", if n == 1 { "" } else { "es" })
+                            }),
+                    ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .w_full()
+                    .px_2()
+                    .py_1()
+                    .rounded_sm()
+                    .bg(th.bg.alpha(0.55))
+                    .border_1()
+                    .border_color(th.accent.alpha(0.4))
+                    .text_size(px(13.))
+                    .child(input),
+            );
+
+        let mut list = div().flex().flex_col().gap_0p5().px_1();
+        for i in start..end {
+            let hit = &find.results[i];
+            let selected = i == find.selected;
+            let mode_col = if hit.is_agent {
+                th.accent
+            } else {
+                th.text.alpha(0.5)
+            };
+            let title_line = div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap_2()
+                .child(
+                    div()
+                        .overflow_hidden()
+                        .whitespace_nowrap()
+                        .text_size(px(10.))
+                        .text_color(th.text)
+                        .child(hit.title.clone()),
+                );
+            let title_line = if global && hit.same_pane_count > 1 {
+                title_line.child(
+                    div()
+                        .flex_none()
+                        .text_size(px(8.))
+                        .text_color(th.accent.alpha(0.75))
+                        .child(format!("{}\u{00d7}", hit.same_pane_count)),
+                )
+            } else {
+                title_line
+            };
+            let row = div()
+                .id(gpui::SharedString::from(format!("find-row-{i}")))
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap_2()
+                .px_2()
+                .h(px(ROW_H))
+                .rounded_sm()
+                .cursor_pointer()
+                .bg(if selected {
+                    th.accent.alpha(0.16)
+                } else {
+                    hsla(0., 0., 0., 0.)
+                })
+                .border_1()
+                .border_color(if selected {
+                    th.accent.alpha(0.55)
+                } else {
+                    hsla(0., 0., 0., 0.)
+                })
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
+                        cx.stop_propagation();
+                        if let Some(f) = ws.find.as_mut() {
+                            f.selected = i;
+                        }
+                        ws.jump_to_find(window, cx);
+                    }),
+                )
+                .child(
+                    div()
+                        .w(px(54.))
+                        .flex_none()
+                        .text_size(px(9.))
+                        .font_weight(gpui::FontWeight::EXTRA_BOLD)
+                        .text_color(mode_col)
+                        .child(hit.mode.clone()),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w(px(0.))
+                        .overflow_hidden()
+                        .flex()
+                        .flex_col()
+                        .child(title_line)
+                        .child(Self::find_snippet(
+                            &hit.snippet,
+                            &hit.positions,
+                            th.accent,
+                            th.text.alpha(0.8),
+                        )),
+                );
+            list = list.child(row);
+        }
+        if n == 0 {
+            list = list.child(
+                div()
+                    .px_2()
+                    .py_2()
+                    .text_size(px(10.))
+                    .text_color(th.text.alpha(0.4))
+                    .child(if q.trim().is_empty() {
+                        "Start typing to fuzzy-search the terminal\u{2026}".to_string()
+                    } else {
+                        format!("No matches for \u{201c}{}\u{201d}", q.trim())
+                    }),
+            );
+        }
+
+        let panel = div()
+            .absolute()
+            .left(px(left))
+            .top(px(top))
+            .w(px(panel_w))
+            .flex()
+            .flex_col()
+            .rounded(px(10.))
+            .overflow_hidden()
+            .bg(darken(th.surface, 0.35))
+            .border_1()
+            .border_color(th.accent.alpha(0.6))
+            .shadow(vec![BoxShadow {
+                color: hsla(0., 0., 0., 0.7),
+                offset: point(px(0.), px(10.)),
+                blur_radius: px(36.),
+                spread_radius: px(2.),
+                inset: false,
+            }])
+            .child(header)
+            .child(div().pb_1().flex().flex_col().child(list))
+            .child(
+                div()
+                    .px_2()
+                    .pb_1()
+                    .pt_0p5()
+                    .text_size(px(8.5))
+                    .text_color(th.text.alpha(0.45))
+                    .child("\u{2191}\u{2193} select \u{00b7} \u{21b5} jump \u{00b7} esc close"),
+            )
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|_, _: &MouseDownEvent, _w, cx| cx.stop_propagation()),
+            );
+
+        Some(
+            div()
+                .absolute()
+                .inset_0()
+                .occlude()
+                .bg(hsla(0., 0., 0., 0.28))
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|ws, _: &MouseDownEvent, window, cx| {
+                        ws.find = None;
+                        ws.focus_active(window, cx);
+                        cx.notify();
+                    }),
+                )
+                .child(panel),
+        )
+    }
+
     /// FOCUS text-size slider range — a multiplier on the auto-fit scale.
     /// 1.0 (fit) sits inside the range so the thumb has travel both ways.
     const FZ_MIN: f32 = 0.6;
@@ -2381,6 +3115,48 @@ impl Workspace {
             self.mcp_menu = false;
             cx.notify();
             return;
+        }
+        // The find panel owns the keyboard while open: esc closes, ↵ jumps to the
+        // selected hit, ↑/↓ move the selection, everything else edits the query and
+        // re-runs the fuzzy search.
+        if let Some(mut find) = self.find.take() {
+            match ks.key.as_str() {
+                "escape" => {
+                    self.focus_active(window, cx);
+                    cx.notify();
+                    return;
+                }
+                "enter" => {
+                    self.find = Some(find);
+                    self.jump_to_find(window, cx);
+                    return;
+                }
+                "down" | "tab" => {
+                    if !find.results.is_empty() {
+                        find.selected = (find.selected + 1).min(find.results.len() - 1);
+                    }
+                    self.find = Some(find);
+                    cx.notify();
+                    return;
+                }
+                "up" => {
+                    find.selected = find.selected.saturating_sub(1);
+                    self.find = Some(find);
+                    cx.notify();
+                    return;
+                }
+                _ => {
+                    let before = find.query.text();
+                    find.query.apply(ks.key.as_str(), m, ks.key_char.as_deref(), 80);
+                    if find.query.text() != before {
+                        find.results = self.compute_find(&find.query.text(), &find.scope, cx);
+                        find.selected = 0;
+                    }
+                    self.find = Some(find);
+                    cx.notify();
+                    return;
+                }
+            }
         }
         // the inline group-name editor owns the keyboard while open
         if let Some((gid, mut eb)) = self.group_rename.take() {
@@ -4823,6 +5599,7 @@ impl Render for Workspace {
                 || self.confirm_close.is_some()
                 || self.help_open
                 || self.tab_menu.is_some()
+                || self.find.is_some()
                 || self.focus_read.as_ref().and_then(|w| w.upgrade()).is_some(),
         );
         // drop-hit-test rects are rebuilt every frame by the canvases below, so
@@ -5956,6 +6733,9 @@ impl Render for Workspace {
                 .child(panel)
         });
 
+        // ---- Find: fuzzy search in this pane (Ctrl+F) or every pane (Ctrl+Shift+F) ----
+        let find_overlay = self.render_find(&th, cx);
+
         // ---- MCP control: the read-only agent-watch surface (the 🤖 button) ----
         let mcp_overlay = self.mcp_menu.then(|| {
             let cfg = self.mcp.clone();
@@ -6044,6 +6824,30 @@ impl Render for Workspace {
                 cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
                     cx.stop_propagation();
                     ws.mcp_theme_preview = !ws.mcp_theme_preview;
+                    cx.notify();
+                }),
+            );
+
+            // Writes opt-in: promotes the read-only watch surface to a
+            // remote-control one (set_pane_config). A deliberate second switch —
+            // appearance only, never a PTY. Mirrors the TD_MCP_WRITE env var.
+            let writes_btn = Self::bezel_btn(
+                &th,
+                if cfg.writable {
+                    "\u{25c9} writes on \u{00b7} agents can restyle"
+                } else {
+                    "\u{25cb} writes off \u{00b7} read-only"
+                },
+                cfg.writable,
+            )
+            .id("mcp-btn-writes")
+            .hover(|s| s.border_color(th.accent))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                    cx.stop_propagation();
+                    ws.mcp.writable = !ws.mcp.writable;
+                    ws.save(cx);
                     cx.notify();
                 }),
             );
@@ -6230,10 +7034,18 @@ impl Render for Workspace {
                     MouseButton::Left,
                     cx.listener(|_, _: &MouseDownEvent, _w, cx| cx.stop_propagation()),
                 )
-                .child(label("MCP CONTROL \u{2014} READ ONLY".to_string()))
+                .child(label(format!(
+                    "MCP CONTROL \u{2014} {}",
+                    if cfg.writable {
+                        "READ + WRITE"
+                    } else {
+                        "READ ONLY"
+                    }
+                )))
                 .child(enable_btn)
                 .child(expose_btn)
                 .child(events_btn)
+                .child(writes_btn)
                 .child(theme_btn)
                 .child(label(format!("{exposed}/{total} pane(s) exposed")))
                 .child(list)
@@ -6478,6 +7290,8 @@ impl Render for Workspace {
                         row("right-click", "Copy · Paste · Open link · Clear"),
                         row("Ctrl+Shift+C / V", "Copy / Paste"),
                         row("Ctrl+X", "Cut selection (deletes on the input line)"),
+                        row("Ctrl+F", "Find in this pane (fuzzy) — ↵ jumps to it"),
+                        row("Ctrl+Shift+F", "Find across ALL panes (fuzzy)"),
                         row("double / triple-click", "Select word / line"),
                         row("Shift+Enter", "Newline (multiline in claude/codex)"),
                     ],
@@ -6677,6 +7491,39 @@ impl Render for Workspace {
                         .gap_8()
                         .child(if help_features { feat_a } else { col_a })
                         .child(if help_features { feat_b } else { col_b }),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_1()
+                        .child(
+                            Self::bezel_btn(
+                                &th,
+                                "\u{1f5a5}\u{fe0f}  Spin up a demo of this layout",
+                                false,
+                            )
+                            .id("help-share-demo")
+                            .hover(|s| s.border_color(th.accent))
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                                    cx.stop_propagation();
+                                    ws.share_demo(cx);
+                                    ws.help_open = false;
+                                    cx.notify();
+                                }),
+                            ),
+                        )
+                        .child(
+                            div()
+                                .text_size(px(9.))
+                                .text_color(th.text.alpha(0.45))
+                                .child(
+                                    "opens a new window cloning this exact layout, every pane \
+                                     filled with lorem-ipsum — safe to screen-share",
+                                ),
+                        ),
                 )
                 .child(
                     div()
@@ -7537,7 +8384,9 @@ impl Render for Workspace {
                     .children(group_menu_overlay)
                     .children(drag_chip)
                     // the FOCUS reading modal rides above everything else
-                    .children(focus_overlay),
+                    .children(focus_overlay)
+                    // the find panel rides on top too (its own scrim locks input)
+                    .children(find_overlay),
             );
         // Frameless: wrap the cabinet in client-side decorations (shadow margin,
         // rounded clip, live resize edges) so it runs with no system titlebar.
@@ -8384,6 +9233,13 @@ fn spawn_seeded_window(rt: &session::PaneRuntime) {
 }
 
 fn main() {
+    // `--td-emit-demo`: this process was spawned as a demo pane's program (see
+    // `term::spawn_in` under TD_DEMO). Print a screenful of agentic lorem-ipsum
+    // sized to the PTY and block — no window, no shell. Must run before any gpui.
+    if std::env::args().nth(1).as_deref() == Some("--td-emit-demo") {
+        demo::emit_and_block();
+    }
+
     // Decide boot mode before the window opens: forced scratch (TD_SCRATCH),
     // a seeded tear-off (TD_SEED_*), or "a sibling is already running" all open
     // a small single-terminal window; a lone launch restores the full session.
@@ -8394,11 +9250,23 @@ fn main() {
         .filter(|s| !s.is_empty());
     let (scratch, seed) =
         scratch_decision(force, another_instance_running(), seed_cwd, seed_resume);
+    // A demo window (spawned by "Share a demo of this layout") restores a cloned
+    // layout from TD_DEMO_STATE and fills every pane with the frozen emitter.
+    let demo = std::env::var_os("TD_DEMO_STATE").is_some();
 
     application().run(move |cx: &mut App| {
         theme::init(cx);
         bell::ensure_seeded(); // populate the sounds dir from bundled defaults if empty
-        let bounds = if scratch {
+        let bounds = if demo {
+            // open the demo at the cloned window's geometry, else a generous centre
+            match load_demo_state().win {
+                Some((x, y, w, h)) => Bounds {
+                    origin: point(px(x), px(y)),
+                    size: size(px(w.max(480.)), px(h.max(320.))),
+                },
+                None => Bounds::centered(None, size(px(1280.), px(720.)), cx),
+            }
+        } else if scratch {
             // a quick window: ~45% of the display wide, ~40% tall, centred
             let size_px = cx
                 .primary_display()
@@ -8469,7 +9337,9 @@ fn main() {
                         },
                     );
                 }
-                if scratch {
+                if demo {
+                    cx.new(|cx| Workspace::new_demo(window, cx))
+                } else if scratch {
                     cx.new(|cx| Workspace::new_scratch(seed.clone(), window, cx))
                 } else {
                     cx.new(|cx| Workspace::new(window, cx))

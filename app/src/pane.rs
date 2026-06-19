@@ -1020,6 +1020,70 @@ impl gpui::EventEmitter<PaneRenamed> for TerminalView {}
 pub struct OpenHelp;
 impl gpui::EventEmitter<OpenHelp> for TerminalView {}
 
+/// Ctrl+F (`global = false`) / Ctrl+Shift+F (`global = true`) was pressed in this
+/// pane — ask the workspace to open the find panel. In-pane find searches just
+/// this pane (and the panel centres over it); global find searches every pane.
+pub struct OpenFind {
+    pub global: bool,
+}
+impl gpui::EventEmitter<OpenFind> for TerminalView {}
+
+/// One matched line inside a pane's grid: its absolute grid line index, the line
+/// text (built from column 0 so a char index is also its column), and the fuzzy
+/// score + matched char positions — for the snippet highlight and the jump-time
+/// selection of the hit span.
+pub struct GridHit {
+    pub line: i32,
+    pub text: String,
+    pub score: i64,
+    pub positions: Vec<usize>,
+}
+
+/// A lightweight fzf-style fuzzy subsequence match. `needle` must already be
+/// lowercased; `hay` is compared case-insensitively (ASCII fold). Returns `None`
+/// unless every needle char appears in order; otherwise `(score, positions)` —
+/// higher score is better (contiguous runs + word-start hits weigh more) and
+/// `positions` are the char indices in `hay` that matched, for highlighting. An
+/// empty needle never matches.
+pub(crate) fn fuzzy_match(hay: &str, needle: &str) -> Option<(i64, Vec<usize>)> {
+    if needle.is_empty() {
+        return None;
+    }
+    let needle: Vec<char> = needle.chars().collect();
+    let mut positions = Vec::with_capacity(needle.len());
+    let mut ni = 0usize;
+    let mut score: i64 = 0;
+    let mut prev_match: Option<usize> = None;
+    let mut prev_char: Option<char> = None;
+    for (hi, hc) in hay.chars().enumerate() {
+        if ni >= needle.len() {
+            break;
+        }
+        if hc.to_ascii_lowercase() == needle[ni] {
+            score += 8;
+            // contiguity bonus: adjacent to the previously matched char
+            if prev_match == Some(hi.wrapping_sub(1)) {
+                score += 14;
+            }
+            // word-start bonus: first char, or preceded by a non-alphanumeric
+            if prev_char.map(|c| !c.is_alphanumeric()).unwrap_or(true) {
+                score += 10;
+            }
+            positions.push(hi);
+            prev_match = Some(hi);
+            ni += 1;
+        }
+        prev_char = Some(hc);
+    }
+    if ni == needle.len() {
+        // tighter (shorter) haystacks edge out sprawling ones at equal matches
+        score -= (hay.chars().count() as i64) / 16;
+        Some((score, positions))
+    } else {
+        None
+    }
+}
+
 /// The 👓 (reading-glasses) icon on this sub-tab's header was clicked — the
 /// workspace opens a FOCUS modal: an 80%-of-window mirror of this pane's live
 /// screen, with the rest of the window dimmed back. No anchor: the modal is
@@ -1740,6 +1804,13 @@ impl TerminalView {
             self.cut_selection(cx);
             return;
         }
+        // Ctrl+F = find in THIS pane; Ctrl+Shift+F = find across ALL panes. Both
+        // open a workspace-owned find panel (so it can search siblings and centre
+        // itself); intercepted here so the chord never reaches the PTY.
+        if m.control && !m.alt && ks.key.as_str() == "f" {
+            cx.emit(OpenFind { global: m.shift });
+            return;
+        }
         if m.control && m.shift {
             match ks.key.as_str() {
                 // workspace chords: new tab
@@ -1884,6 +1955,71 @@ impl TerminalView {
                 .scroll_display(Scroll::Delta(lines));
             cx.notify();
         }
+    }
+
+    /// Fuzzy-search this pane's grid (scrollback history + visible screen) for
+    /// `needle` (already lowercased). Scans at most the most-recent `cap` lines so
+    /// a deep buffer can't stall the per-keystroke search across many panes. Each
+    /// line is built from column 0 (so a matched char index is also its column);
+    /// blank lines are skipped. Returns the matches newest-last (grid order).
+    pub fn search_grid(&self, needle: &str, cap: usize) -> Vec<GridHit> {
+        if needle.is_empty() {
+            return Vec::new();
+        }
+        let term = self.session.term.lock();
+        let grid = term.grid();
+        let cols = grid.columns();
+        let bot = grid.bottommost_line().0;
+        let start = (bot - cap as i32 + 1).max(grid.topmost_line().0);
+        let mut hits = Vec::new();
+        let mut buf = String::with_capacity(cols);
+        for l in start..=bot {
+            buf.clear();
+            let row = &grid[Line(l)];
+            for c in 0..cols {
+                let ch = row[Column(c)].c;
+                buf.push(if ch == '\0' { ' ' } else { ch });
+            }
+            let trimmed = buf.trim_end();
+            if trimmed.is_empty() {
+                continue;
+            }
+            if let Some((score, positions)) = fuzzy_match(trimmed, needle) {
+                hits.push(GridHit {
+                    line: l,
+                    text: trimmed.to_string(),
+                    score,
+                    positions,
+                });
+            }
+        }
+        hits
+    }
+
+    /// Scroll this pane so grid line `line` sits at the top of the viewport, and
+    /// (when `sel` is given) select that inclusive column span so a find-jump
+    /// lands with the hit highlighted. Mirrors `scroll_to_human`'s offset math.
+    pub fn scroll_to_line(
+        &mut self,
+        line: i32,
+        sel: Option<(usize, usize)>,
+        cx: &mut Context<Self>,
+    ) {
+        {
+            let mut term = self.session.term.lock();
+            let hist = term.grid().history_size() as i32;
+            let off = (-line).clamp(0, hist);
+            let cur = term.grid().display_offset() as i32;
+            term.scroll_display(Scroll::Delta(off - cur));
+            if let Some((lo, hi)) = sel {
+                let a = TermPoint::new(Line(line), Column(lo));
+                let b = TermPoint::new(Line(line), Column(hi));
+                let mut s = Selection::new(SelectionType::Simple, a, Side::Left);
+                s.update(b, Side::Right);
+                term.selection = Some(s);
+            }
+        }
+        cx.notify();
     }
 
     /// Part 1: grid-line indices (alacritty `Line.0`) of the user's own input
@@ -3826,6 +3962,24 @@ impl Render for TerminalView {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fuzzy_match_scores_ranks_and_locates() {
+        // a contiguous substring outscores the same chars scattered
+        let (sub, _) = fuzzy_match("the cargo build finished", "cargo").unwrap();
+        let (scattered, _) = fuzzy_match("c-a-r-g-o spread out", "cargo").unwrap();
+        assert!(sub > scattered, "contiguous run beats a scattered subsequence");
+        // case-insensitive; positions point at the matched chars (for highlight)
+        let (_, pos) = fuzzy_match("Run CARGO now", "cargo").unwrap();
+        assert_eq!(pos, vec![4, 5, 6, 7, 8]);
+        // a word-start hit outscores a mid-word one
+        let (start, _) = fuzzy_match("build run", "run").unwrap();
+        let (mid, _) = fuzzy_match("overrunner", "run").unwrap();
+        assert!(start > mid, "word-start match ranks above mid-word");
+        // non-subsequence and empty needle never match
+        assert!(fuzzy_match("hello world", "xyz").is_none());
+        assert!(fuzzy_match("anything", "").is_none());
+    }
 
     #[test]
     fn brightness_lights_the_screen_without_whitening_text() {

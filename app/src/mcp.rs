@@ -35,6 +35,13 @@ pub struct McpConfig {
     /// transcript (the claude/codex JSONL), rather than scraping the rendered
     /// screen — the reliable, structured event source.
     pub events: bool,
+    /// Allow the config-write tools (`set_pane_config`) to *mutate* a pane's
+    /// appearance. A separate, second opt-in beyond [`Self::enabled`]: turning
+    /// the server on makes it a read-only *watch* surface; flipping this makes
+    /// it a *remote-control* surface (an agent can dim/recolour your terminals).
+    /// Off by default — that escalation must be a deliberate choice, and the
+    /// `TD_MCP_WRITE` env var or the robot panel's "writes" toggle sets it.
+    pub writable: bool,
 }
 
 impl Default for McpConfig {
@@ -43,6 +50,7 @@ impl Default for McpConfig {
             enabled: false,
             expose: Expose::AgentsOnly,
             events: true,
+            writable: false,
         }
     }
 }
@@ -104,7 +112,115 @@ pub struct PaneInfo {
     pub session: Option<String>,
     /// Whether this pane would be exposed under the current policy.
     pub exposed: bool,
+    /// The pane's *effective* grade — what it actually renders with (its own
+    /// override, else the inherited outer) — in the config API's uniform
+    /// `0..100` percents. `#[serde(skip)]` so `list_panes` stays an
+    /// identity-only listing; `get_pane_config` serialises it explicitly.
+    #[serde(skip)]
+    pub grade: GradeReport,
 }
+
+/// The grade group exactly as the config API reads and writes it: every channel
+/// a `0..=100` percent (see [`crate::theme::GradeKey::to_percent`]), uniform
+/// across channels so an agent never reasons about a channel's stored range.
+/// This is the **GET** shape — a full report of a scope's current grade.
+///
+/// `tracking` is deliberately absent: it is a theme-authored roll-bar dial, not
+/// a user-facing OSD slider, so v1 of the config API leaves it alone.
+#[derive(Clone, Copy, PartialEq, Debug, Serialize, Deserialize, Default)]
+pub struct GradeReport {
+    pub brightness: f32,
+    pub contrast: f32,
+    pub colour: f32,
+    pub text: f32,
+    pub background: f32,
+    pub gamma: f32,
+    /// Menu-bar / chrome size (the `Scale` channel).
+    pub menu_bar: f32,
+    /// Terminal grid text size.
+    pub text_size: f32,
+    /// CRT barrel-warp amount.
+    pub warp: f32,
+    /// Star-Wars text-crawl toggle (a bool, not a percent).
+    pub crawl: bool,
+    pub crawl_angle: f32,
+    pub crawl_depth: f32,
+}
+
+/// The **POST** shape: a *partial* grade. Every field is optional and an absent
+/// field is left **unchanged** (PATCH, not PUT) — so "dim the brightness" never
+/// silently resets the theme, the warp, or any other channel. Percents are
+/// `0..=100`; out-of-range values clamp (the API is "dumb" — it stores the
+/// number it is given, it does not interpret "20% lower"; the agent does that
+/// math and posts the resulting absolute value). `deny_unknown_fields` makes a
+/// typo'd channel a loud error rather than a silent no-op.
+#[derive(Clone, Copy, PartialEq, Debug, Deserialize, Default)]
+#[serde(default, deny_unknown_fields)]
+pub struct ConfigPatch {
+    pub brightness: Option<f32>,
+    pub contrast: Option<f32>,
+    pub colour: Option<f32>,
+    pub text: Option<f32>,
+    pub background: Option<f32>,
+    pub gamma: Option<f32>,
+    pub menu_bar: Option<f32>,
+    pub text_size: Option<f32>,
+    pub warp: Option<f32>,
+    pub crawl: Option<bool>,
+    pub crawl_angle: Option<f32>,
+    pub crawl_depth: Option<f32>,
+}
+
+impl ConfigPatch {
+    /// True when the patch carries no field — a request that would change
+    /// nothing, which we reject so a caller learns their `config` was empty
+    /// (e.g. a misspelled wrapper key) instead of silently succeeding.
+    pub fn is_empty(&self) -> bool {
+        *self == ConfigPatch::default()
+    }
+}
+
+/// What a single get/set addresses: one pane (by pid — the live, ephemeral
+/// handle from `list_panes`) or the window-level `outer` scope that every
+/// inheriting pane follows. Setting `outer` is the "every terminal at once"
+/// lever; setting a pid pins that one pane's grade group.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum Target {
+    Pane(u32),
+    Outer,
+}
+
+impl Target {
+    /// Parse a JSON target: the string `"outer"` or an integer pid.
+    pub fn parse(v: &Value) -> Result<Self, String> {
+        if let Some(s) = v.as_str() {
+            if s.eq_ignore_ascii_case("outer") {
+                return Ok(Target::Outer);
+            }
+            return Err(format!("unknown target \"{s}\" (want a pid or \"outer\")"));
+        }
+        if let Some(pid) = v.as_u64() {
+            return Ok(Target::Pane(pid as u32));
+        }
+        Err("target must be a pid (integer) or the string \"outer\"".to_string())
+    }
+
+    /// The JSON form echoed back in results (pid as a number, `outer` as a
+    /// string) so a caller can correlate without re-parsing the label.
+    pub fn to_json(&self) -> Value {
+        match self {
+            Target::Pane(pid) => json!(pid),
+            Target::Outer => json!("outer"),
+        }
+    }
+}
+
+/// One parsed `set_pane_config` update: a target and the partial grade to apply.
+pub type ConfigUpdate = (Target, ConfigPatch);
+
+/// The per-target outcome the GUI-thread `apply` closure returns: the resulting
+/// effective grade on success, or a human-readable reason it was refused.
+pub type ApplyOutcome = (Target, Result<GradeReport, String>);
 
 /// The single policy gate: would a pane with this agent-ness be exposed under
 /// `cfg`? Pure, so the safety rule is unit-tested in isolation.
@@ -151,6 +267,9 @@ pub struct ToolEvent {
 pub struct Snapshot {
     pub config: McpConfig,
     pub panes: Vec<PaneInfo>,
+    /// The window-level outer grade (the scope panes inherit from), reported in
+    /// the same `0..100` percents — the `outer` target of `get_pane_config`.
+    pub outer_grade: GradeReport,
 }
 
 impl Snapshot {
@@ -166,6 +285,7 @@ impl Snapshot {
         Self {
             config: McpConfig::default(),
             panes: vec![],
+            outer_grade: GradeReport::default(),
         }
     }
 }
@@ -193,24 +313,49 @@ pub fn handle_line<F>(line: &str, snap: &Snapshot, tail: F) -> Option<String>
 where
     F: Fn(&PaneInfo, usize) -> Vec<ToolEvent>,
 {
+    handle_line_with(line, snap, tail, no_apply)
+}
+
+/// Like [`handle_line`] but with a *write* capability. `apply` performs the
+/// `set_pane_config` mutation — in the live server that is a round-trip onto the
+/// gpui main thread (see `mcp_transport`) — and returns the per-target outcome.
+/// The read-only [`handle_line`] supplies [`no_apply`], which refuses every
+/// write, so a connection that never wires a real `apply` cannot mutate anything
+/// regardless of policy. Keeping the effect behind a closure mirrors the `tail`
+/// pattern: all protocol shape stays here, all IO/GUI lives in the caller.
+pub fn handle_line_with<F, G>(line: &str, snap: &Snapshot, tail: F, apply: G) -> Option<String>
+where
+    F: Fn(&PaneInfo, usize) -> Vec<ToolEvent>,
+    G: Fn(&[ConfigUpdate]) -> Vec<ApplyOutcome>,
+{
     let req = parse_req(line)?;
     // A notification (no id) is fire-and-forget — never answer it, even on error.
     let id = req.id.clone()?;
-    Some(match dispatch(&req, snap, &tail) {
+    Some(match dispatch(&req, snap, &tail, &apply) {
         Ok(result) => encode_ok(id, result),
         Err((code, msg)) => encode_err(id, code, msg),
     })
 }
 
-fn dispatch<F>(req: &Req, snap: &Snapshot, tail: &F) -> Result<Value, (i64, String)>
+/// The read-only `apply`: refuses every update with a clear reason. Used by the
+/// bare [`handle_line`] and by any transport that does not offer writes.
+pub fn no_apply(updates: &[ConfigUpdate]) -> Vec<ApplyOutcome> {
+    updates
+        .iter()
+        .map(|(t, _)| (t.clone(), Err("this connection is read-only".to_string())))
+        .collect()
+}
+
+fn dispatch<F, G>(req: &Req, snap: &Snapshot, tail: &F, apply: &G) -> Result<Value, (i64, String)>
 where
     F: Fn(&PaneInfo, usize) -> Vec<ToolEvent>,
+    G: Fn(&[ConfigUpdate]) -> Vec<ApplyOutcome>,
 {
     match req.method.as_str() {
         "initialize" => Ok(initialize_result(&req.params)),
         "ping" => Ok(json!({})),
         "tools/list" => Ok(json!({ "tools": tool_defs() })),
-        "tools/call" => tools_call(&req.params, snap, tail),
+        "tools/call" => tools_call(&req.params, snap, tail, apply),
         // We hold no resources/prompts — answer empty so discovery doesn't error.
         "resources/list" => Ok(json!({ "resources": [] })),
         "prompts/list" => Ok(json!({ "prompts": [] })),
@@ -233,12 +378,18 @@ fn initialize_result(params: &Value) -> Value {
         "capabilities": { "tools": {}, "logging": {} },
         "serverInfo": { "name": SERVER_NAME, "version": env!("CARGO_PKG_VERSION") },
         "instructions":
-            "Read-only watch surface for terminal-delight's panes. `list_panes` \
-             reports who is running where (mode, cwd, agent session); \
-             `pane_events` tails an agent pane's own transcript for recent \
-             tool calls. With logging enabled the server also pushes \
-             `notifications/message` as agents appear, vanish, and call tools, \
-             so you can react without polling. Nothing here can write to a terminal."
+            "Watch and configure terminal-delight's panes. `list_panes` reports \
+             who is running where (mode, cwd, agent session); `pane_events` tails \
+             an agent pane's own transcript for recent tool calls. With logging \
+             enabled the server also pushes `notifications/message` as agents \
+             appear, vanish, and call tools, so you can react without polling. \
+             `get_pane_config` / `set_pane_config` read and change a pane's (or \
+             the window-level `outer`) appearance — brightness, contrast, colour, \
+             warp, text size, crawl — in uniform 0..100 percents; writes need the \
+             server's opt-in writes toggle. The config API is dumb: it stores the \
+             absolute number you give it, so compute relative changes (\"20% \
+             lower\") yourself from a get_pane_config read. Appearance is all you \
+             can change: nothing here can write bytes to a terminal/PTY."
     })
 }
 
@@ -266,13 +417,81 @@ fn tool_defs() -> Value {
                 "required": ["pid"],
                 "additionalProperties": false
             }
+        },
+        {
+            "name": "get_pane_config",
+            "description":
+                "Read the appearance (monitor grade) of one or more panes, or the \
+                 window-level `outer` scope. Every channel is reported as a \
+                 0..100 percent (brightness, contrast, colour, text, background, \
+                 gamma, menu_bar, text_size, warp, crawl_angle, crawl_depth) plus \
+                 a `crawl` boolean. Omit `targets` to report every exposed pane \
+                 plus `outer`. Read-only. To change a value, GET it, compute the \
+                 new absolute number yourself, then POST it with set_pane_config.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "targets": {
+                        "type": "array",
+                        "description": "pids (from list_panes) and/or the string \"outer\"; omit for all",
+                        "items": { "type": ["integer", "string"] }
+                    }
+                },
+                "additionalProperties": false
+            }
+        },
+        {
+            "name": "set_pane_config",
+            "description":
+                "Set the appearance of one or more panes (by pid) or the `outer` \
+                 scope. Each update carries a partial `config`: only the channels \
+                 you include change (0..100 percents; out-of-range values clamp), \
+                 everything else is left untouched. The API is deliberately dumb \
+                 — it stores the absolute number you give it and does NOT \
+                 interpret relative asks like \"20% lower\"; read the current \
+                 value with get_pane_config, do that math yourself, and post the \
+                 result. Setting `outer` re-grades every pane that inherits it — \
+                 the one-shot way to change every terminal at once. Requires the \
+                 server's writes toggle (TD_MCP_WRITE).",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "updates": {
+                        "type": "array",
+                        "description": "one entry per target to change",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "target": {
+                                    "type": ["integer", "string"],
+                                    "description": "a pid, or \"outer\""
+                                },
+                                "config": {
+                                    "type": "object",
+                                    "description": "partial grade; any of brightness/contrast/colour/text/background/gamma/menu_bar/text_size/warp/crawl_angle/crawl_depth (0..100) and crawl (bool)"
+                                }
+                            },
+                            "required": ["target", "config"],
+                            "additionalProperties": false
+                        }
+                    }
+                },
+                "required": ["updates"],
+                "additionalProperties": false
+            }
         }
     ])
 }
 
-fn tools_call<F>(params: &Value, snap: &Snapshot, tail: &F) -> Result<Value, (i64, String)>
+fn tools_call<F, G>(
+    params: &Value,
+    snap: &Snapshot,
+    tail: &F,
+    apply: &G,
+) -> Result<Value, (i64, String)>
 where
     F: Fn(&PaneInfo, usize) -> Vec<ToolEvent>,
+    G: Fn(&[ConfigUpdate]) -> Vec<ApplyOutcome>,
 {
     let name = params
         .get("name")
@@ -282,6 +501,8 @@ where
     match name {
         "list_panes" => Ok(list_panes(snap)),
         "pane_events" => Ok(pane_events(&args, snap, tail)),
+        "get_pane_config" => Ok(get_pane_config(&args, snap)),
+        "set_pane_config" => Ok(set_pane_config(&args, snap, apply)),
         other => Err((-32602, format!("unknown tool: {other}"))),
     }
 }
@@ -351,6 +572,163 @@ where
             .join("\n")
     };
     tool_ok(text, json!({ "pid": pid, "events": events }))
+}
+
+/// GET the appearance of the requested targets (or every exposed pane + outer).
+/// Read-only and gated only by the master switch — reading a look is as safe as
+/// `list_panes`. A bad/hidden pid surfaces as a per-target `error` row rather
+/// than failing the whole call, so a batch GET is robust to a recycled pid.
+fn get_pane_config(args: &Value, snap: &Snapshot) -> Value {
+    if !snap.config.enabled {
+        return tool_err(
+            "MCP exposure is disabled. Enable it in terminal-delight's MCP \
+             CONTROL panel (the robot button on the mother bar).",
+        );
+    }
+    let targets = match args.get("targets") {
+        None | Some(Value::Null) => {
+            let mut ts: Vec<Target> = snap.exposed().iter().map(|p| Target::Pane(p.pid)).collect();
+            ts.push(Target::Outer);
+            ts
+        }
+        Some(Value::Array(a)) => {
+            let mut ts = Vec::with_capacity(a.len());
+            for v in a {
+                match Target::parse(v) {
+                    Ok(t) => ts.push(t),
+                    Err(e) => return tool_err(&e),
+                }
+            }
+            ts
+        }
+        Some(_) => {
+            return tool_err("`targets` must be an array of pids and/or \"outer\"");
+        }
+    };
+    let configs: Vec<Value> = targets.iter().map(|t| resolve_get(t, snap)).collect();
+    let text = configs
+        .iter()
+        .map(summarise_config)
+        .collect::<Vec<_>>()
+        .join("\n");
+    tool_ok(text, json!({ "configs": configs }))
+}
+
+/// Build the GET row for one target: identity + the effective grade percents, or
+/// a `{ target, error }` row if the pid is unknown / not exposed.
+fn resolve_get(t: &Target, snap: &Snapshot) -> Value {
+    match t {
+        Target::Outer => json!({
+            "target": t.to_json(),
+            "scope": "outer",
+            "grade": snap.outer_grade,
+        }),
+        Target::Pane(pid) => match snap.panes.iter().find(|p| p.pid == *pid && p.exposed) {
+            Some(p) => json!({
+                "target": t.to_json(),
+                "scope": "pane",
+                "tab": p.tab,
+                "title": p.title,
+                "mode": p.mode,
+                "grade": p.grade,
+            }),
+            None => json!({
+                "target": t.to_json(),
+                "error": format!("no exposed pane with pid {pid}"),
+            }),
+        },
+    }
+}
+
+/// A one-line human gist of a GET row (the structured `grade` is the real data).
+fn summarise_config(c: &Value) -> String {
+    let label = c
+        .get("target")
+        .map(|t| t.to_string().trim_matches('"').to_string())
+        .unwrap_or_default();
+    if let Some(err) = c.get("error").and_then(Value::as_str) {
+        return format!("{label}: {err}");
+    }
+    let g = &c["grade"];
+    let pct = |k: &str| g.get(k).and_then(Value::as_f64).unwrap_or(0.0).round() as i64;
+    format!(
+        "{label}: brightness {} · contrast {} · text {} · text-size {} · warp {}{}",
+        pct("brightness"),
+        pct("contrast"),
+        pct("text"),
+        pct("text_size"),
+        pct("warp"),
+        if g.get("crawl").and_then(Value::as_bool).unwrap_or(false) {
+            " · crawl on"
+        } else {
+            ""
+        },
+    )
+}
+
+/// POST a partial grade to one or more targets. Gated by BOTH the master switch
+/// and the separate `writable` opt-in (a read→write escalation). The whole batch
+/// is parsed and validated *before* any mutation, so a malformed update never
+/// leaves a half-applied batch; the actual change is delegated to `apply` (the
+/// gpui-thread round-trip), which returns a per-target outcome so one bad pid
+/// doesn't sink the rest.
+fn set_pane_config<G>(args: &Value, snap: &Snapshot, apply: &G) -> Value
+where
+    G: Fn(&[ConfigUpdate]) -> Vec<ApplyOutcome>,
+{
+    if !snap.config.enabled {
+        return tool_err("MCP exposure is disabled. Enable it in the MCP CONTROL panel.");
+    }
+    if !snap.config.writable {
+        return tool_err(
+            "MCP writes are disabled. This server is a read-only watch surface \
+             until you opt in: enable \"writes\" in the MCP CONTROL panel (or set \
+             TD_MCP_WRITE=1) to let an agent change pane appearance.",
+        );
+    }
+    let Some(updates_v) = args.get("updates").and_then(Value::as_array) else {
+        return tool_err("set_pane_config requires an `updates` array of { target, config }.");
+    };
+    if updates_v.is_empty() {
+        return tool_err("`updates` is empty — nothing to set.");
+    }
+    let mut updates: Vec<ConfigUpdate> = Vec::with_capacity(updates_v.len());
+    for (i, u) in updates_v.iter().enumerate() {
+        let target = match u.get("target") {
+            Some(tv) => match Target::parse(tv) {
+                Ok(t) => t,
+                Err(e) => return tool_err(&format!("updates[{i}]: {e}")),
+            },
+            None => return tool_err(&format!("updates[{i}] is missing `target`")),
+        };
+        let cfg_v = u.get("config").cloned().unwrap_or(Value::Null);
+        let patch: ConfigPatch = match serde_json::from_value(cfg_v) {
+            Ok(p) => p,
+            Err(e) => return tool_err(&format!("updates[{i}].config is invalid: {e}")),
+        };
+        if patch.is_empty() {
+            return tool_err(&format!(
+                "updates[{i}].config has no recognised channels to change"
+            ));
+        }
+        updates.push((target, patch));
+    }
+    let outcomes = apply(&updates);
+    let results: Vec<Value> = outcomes
+        .iter()
+        .map(|(t, r)| match r {
+            Ok(g) => json!({ "target": t.to_json(), "ok": true, "grade": g }),
+            Err(e) => json!({ "target": t.to_json(), "ok": false, "error": e }),
+        })
+        .collect();
+    let ok = outcomes.iter().filter(|(_, r)| r.is_ok()).count();
+    let failed = outcomes.len() - ok;
+    let text = if failed == 0 {
+        format!("applied {ok} update(s)")
+    } else {
+        format!("applied {ok} update(s), {failed} failed")
+    };
+    tool_ok(text, json!({ "results": results }))
 }
 
 fn tool_ok(text: String, structured: Value) -> Value {
@@ -577,6 +955,7 @@ mod tests {
             enabled: true,
             expose: Expose::AgentsOnly,
             events: true,
+            writable: false,
         };
         assert!(should_expose(&c, true), "agent pane exposed");
         assert!(!should_expose(&c, false), "plain shell NOT exposed");
@@ -588,6 +967,7 @@ mod tests {
             enabled: true,
             expose: Expose::All,
             events: false,
+            writable: false,
         };
         assert!(should_expose(&c, true));
         assert!(should_expose(&c, false), "All exposes shells too");
@@ -599,12 +979,18 @@ mod tests {
             enabled: true,
             expose: Expose::All,
             events: false,
+            writable: true,
         };
         let body = toml::to_string(&c).unwrap();
         // kebab-case on the enum: "all", not "All".
         assert!(body.contains("expose = \"all\""), "got: {body}");
+        assert!(body.contains("writable = true"), "got: {body}");
         let back: McpConfig = toml::from_str(&body).unwrap();
         assert_eq!(c, back);
+        // an older state.toml without `writable` still loads (serde default off).
+        let legacy: McpConfig =
+            toml::from_str("enabled = true\nevents = true\nexpose = \"all\"\n").unwrap();
+        assert!(!legacy.writable, "missing writable defaults to read-only");
     }
 
     #[test]
@@ -625,6 +1011,7 @@ mod tests {
             cwd: Some("/work/x".into()),
             session: Some("claude --resume abc".into()),
             exposed,
+            grade: GradeReport::default(),
         }
     }
 
@@ -634,9 +1021,24 @@ mod tests {
                 enabled,
                 expose: Expose::AgentsOnly,
                 events,
+                writable: false,
             },
             panes,
+            outer_grade: GradeReport::default(),
         }
+    }
+
+    /// A snapshot like [`snap`] but with the write opt-in flipped on, and an
+    /// `outer` grade set so reads have something non-trivial to report.
+    fn snap_writable(panes: Vec<PaneInfo>) -> Snapshot {
+        let mut s = snap(true, true, panes);
+        s.config.writable = true;
+        s.outer_grade = GradeReport {
+            brightness: 40.0,
+            text_size: 50.0,
+            ..GradeReport::default()
+        };
+        s
     }
 
     fn no_tail(_: &PaneInfo, _: usize) -> Vec<ToolEvent> {
@@ -698,6 +1100,217 @@ mod tests {
             .collect();
         assert!(names.contains(&"list_panes"));
         assert!(names.contains(&"pane_events"));
+        assert!(names.contains(&"get_pane_config"), "config GET advertised");
+        assert!(names.contains(&"set_pane_config"), "config SET advertised");
+    }
+
+    // ---- config API: GET ----
+
+    /// Call a tool through the read-only path (no write capability wired).
+    fn call(snap: &Snapshot, name: &str, args: Value) -> Value {
+        let line = json!({ "id": 9, "method": "tools/call",
+            "params": { "name": name, "arguments": args } })
+        .to_string();
+        resp(&handle_line(&line, snap, no_tail).unwrap())["result"].clone()
+    }
+
+    /// Call set_pane_config with a fake gpui-thread `apply`: pid 100 succeeds
+    /// (echoing the patched brightness), every other pid fails, outer succeeds.
+    fn call_set(snap: &Snapshot, updates: Value) -> Value {
+        let apply = |ups: &[ConfigUpdate]| -> Vec<ApplyOutcome> {
+            ups.iter()
+                .map(|(t, patch)| match t {
+                    Target::Outer => (
+                        t.clone(),
+                        Ok(GradeReport {
+                            brightness: patch.brightness.unwrap_or(0.0),
+                            ..GradeReport::default()
+                        }),
+                    ),
+                    Target::Pane(100) => (
+                        t.clone(),
+                        Ok(GradeReport {
+                            brightness: patch.brightness.unwrap_or(0.0),
+                            ..GradeReport::default()
+                        }),
+                    ),
+                    Target::Pane(other) => {
+                        (t.clone(), Err(format!("no exposed pane with pid {other}")))
+                    }
+                })
+                .collect()
+        };
+        let line = json!({ "id": 9, "method": "tools/call",
+            "params": { "name": "set_pane_config", "arguments": { "updates": updates } } })
+        .to_string();
+        resp(&handle_line_with(&line, snap, no_tail, apply).unwrap())["result"].clone()
+    }
+
+    #[test]
+    fn get_pane_config_defaults_to_every_exposed_pane_plus_outer() {
+        let s = snap_writable(vec![agent_pane(100, true), agent_pane(200, false)]);
+        let r = call(&s, "get_pane_config", json!({}));
+        let configs = r["structuredContent"]["configs"].as_array().unwrap();
+        // exposed pane 100 + outer, but NOT the unexposed pane 200.
+        let scopes: Vec<&str> = configs
+            .iter()
+            .map(|c| c["scope"].as_str().unwrap())
+            .collect();
+        assert_eq!(configs.len(), 2, "one exposed pane + outer");
+        assert!(scopes.contains(&"outer"));
+        assert!(scopes.contains(&"pane"));
+        let outer = configs.iter().find(|c| c["scope"] == "outer").unwrap();
+        assert_eq!(
+            outer["grade"]["text_size"], 50.0,
+            "outer grade reported in percents"
+        );
+    }
+
+    #[test]
+    fn get_pane_config_unknown_pid_is_a_per_target_error_not_a_failure() {
+        let s = snap_writable(vec![agent_pane(100, true)]);
+        let r = call(
+            &s,
+            "get_pane_config",
+            json!({ "targets": [100, 999, "outer"] }),
+        );
+        assert!(
+            r.get("isError").is_none(),
+            "a bad pid does not fail the batch"
+        );
+        let configs = r["structuredContent"]["configs"].as_array().unwrap();
+        assert_eq!(configs.len(), 3);
+        let bad = configs.iter().find(|c| c["target"] == 999).unwrap();
+        assert!(bad["error"].as_str().unwrap().contains("999"));
+    }
+
+    #[test]
+    fn get_pane_config_locked_when_disabled() {
+        let s = snap(false, true, vec![agent_pane(100, true)]);
+        let r = call(&s, "get_pane_config", json!({}));
+        assert_eq!(r["isError"], true);
+    }
+
+    // ---- config API: SET (gating + parsing + result shape) ----
+
+    #[test]
+    fn set_pane_config_refused_when_writes_are_off() {
+        // enabled, but the second opt-in is off ⇒ refused, and it says why.
+        let s = snap(true, true, vec![agent_pane(100, true)]);
+        let r = call_set(
+            &s,
+            json!([{ "target": 100, "config": { "brightness": 30 } }]),
+        );
+        assert_eq!(r["isError"], true);
+        assert!(r["content"][0]["text"].as_str().unwrap().contains("writes"));
+    }
+
+    #[test]
+    fn set_pane_config_refused_when_disabled() {
+        let mut s = snap(false, true, vec![agent_pane(100, true)]);
+        s.config.writable = true; // writable but master switch off ⇒ still refused
+        let r = call_set(
+            &s,
+            json!([{ "target": 100, "config": { "brightness": 30 } }]),
+        );
+        assert_eq!(r["isError"], true);
+    }
+
+    #[test]
+    fn set_pane_config_applies_and_echoes_the_resulting_grade() {
+        let s = snap_writable(vec![agent_pane(100, true)]);
+        let r = call_set(
+            &s,
+            json!([{ "target": 100, "config": { "brightness": 30 } }]),
+        );
+        assert!(r.get("isError").is_none());
+        let results = r["structuredContent"]["results"].as_array().unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0]["ok"], true);
+        assert_eq!(results[0]["target"], 100);
+        assert_eq!(
+            results[0]["grade"]["brightness"], 30.0,
+            "the dumb store echoes the value"
+        );
+    }
+
+    #[test]
+    fn set_pane_config_partial_batch_reports_per_target() {
+        // one good pid, one bad pid, plus outer — the bad one fails alone.
+        let s = snap_writable(vec![agent_pane(100, true)]);
+        let r = call_set(
+            &s,
+            json!([
+                { "target": 100, "config": { "brightness": 20 } },
+                { "target": 777, "config": { "brightness": 20 } },
+                { "target": "outer", "config": { "brightness": 10 } }
+            ]),
+        );
+        let results = r["structuredContent"]["results"].as_array().unwrap();
+        assert_eq!(results.len(), 3);
+        let ok = results.iter().filter(|x| x["ok"] == true).count();
+        assert_eq!(ok, 2, "100 and outer applied; 777 failed");
+        assert!(r["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("1 failed"));
+    }
+
+    #[test]
+    fn set_pane_config_rejects_malformed_requests_before_mutating() {
+        let s = snap_writable(vec![agent_pane(100, true)]);
+        // missing `updates`
+        let line = json!({ "id": 1, "method": "tools/call",
+            "params": { "name": "set_pane_config", "arguments": {} } })
+        .to_string();
+        let r = resp(&handle_line_with(&line, &s, no_tail, no_apply).unwrap())["result"].clone();
+        assert_eq!(r["isError"], true);
+        // empty updates
+        assert_eq!(call_set(&s, json!([]))["isError"], true);
+        // empty config (no channels)
+        assert_eq!(
+            call_set(&s, json!([{ "target": 100, "config": {} }]))["isError"],
+            true
+        );
+        // unknown channel ⇒ loud error (deny_unknown_fields)
+        assert_eq!(
+            call_set(&s, json!([{ "target": 100, "config": { "britness": 30 } }]))["isError"],
+            true
+        );
+        // bad target string
+        assert_eq!(
+            call_set(
+                &s,
+                json!([{ "target": "everything", "config": { "brightness": 30 } }])
+            )["isError"],
+            true
+        );
+    }
+
+    #[test]
+    fn config_patch_patch_semantics_only_touch_named_channels() {
+        // A patch with one channel deserialises to exactly one Some(..).
+        let p: ConfigPatch = serde_json::from_value(json!({ "brightness": 42 })).unwrap();
+        assert_eq!(p.brightness, Some(42.0));
+        assert!(p.contrast.is_none() && p.warp.is_none() && p.crawl.is_none());
+        assert!(!p.is_empty());
+        assert!(ConfigPatch::default().is_empty());
+    }
+
+    #[test]
+    fn read_only_handle_line_cannot_write_even_if_policy_allows() {
+        // Through the bare read-only `handle_line`, set_pane_config reaches
+        // `no_apply` and every target is refused — the capability, not just the
+        // policy, gates writes.
+        let s = snap_writable(vec![agent_pane(100, true)]);
+        let line = json!({ "id": 1, "method": "tools/call",
+            "params": { "name": "set_pane_config",
+                "arguments": { "updates": [{ "target": 100, "config": { "brightness": 30 } }] } } })
+        .to_string();
+        let r = resp(&handle_line(&line, &s, no_tail).unwrap())["result"].clone();
+        let results = r["structuredContent"]["results"].as_array().unwrap();
+        assert_eq!(results[0]["ok"], false);
+        assert!(results[0]["error"].as_str().unwrap().contains("read-only"));
     }
 
     #[test]
@@ -939,6 +1552,7 @@ mod tests {
             cwd: None,
             session: None,
             exposed: true,
+            grade: GradeReport::default(),
         };
         let hidden_agent = agent_pane(8, false);
         let n = w.diff(&[shell, hidden_agent], &HashMap::new());
