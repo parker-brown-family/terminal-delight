@@ -9292,6 +9292,16 @@ fn main() {
         demo::emit_and_block();
     }
 
+    // Give every shell we spawn a real terminal type. gpui launches us from the
+    // desktop/WM with TERM unset, and alacritty_terminal's `tty::new` does NOT
+    // set one — so without this, child shells inherit an empty TERM, readline
+    // can't look up the `clear_screen` capability, and Ctrl+L silently no-ops
+    // (the prompt never pops to the top). `setup_env` picks the `alacritty`
+    // terminfo if installed, else the universally-present `xterm-256color`, and
+    // advertises 24-bit colour (COLORTERM=truecolor). Must run before any PTY is
+    // spawned; it mutates the process env, so keep it ahead of the gpui app/threads.
+    alacritty_terminal::tty::setup_env();
+
     // Decide boot mode before the window opens: forced scratch (TD_SCRATCH),
     // a seeded tear-off (TD_SEED_*), or "a sibling is already running" all open
     // a small single-terminal window; a lone launch restores the full session.

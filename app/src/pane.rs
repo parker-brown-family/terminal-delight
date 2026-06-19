@@ -93,6 +93,31 @@ pub fn is_human_input_line(text: &str) -> bool {
     }
 }
 
+/// Mark which rows belong to *the user's own turn*, spanning a wrapped multi-line
+/// message — not just the caret row. An agent TUI prints the human's turn behind
+/// a prompt caret (see `is_human_input_line`) and indents any wrapped
+/// continuation rows under that text. So once a caret row opens a turn we keep
+/// marking the rows that follow as long as they read as indented continuation
+/// (lead with whitespace and carry real text); a blank row, a left-margin row
+/// (the agent's reply / a status line), or a fresh caret row closes the turn.
+/// This is what colours the *entire* message in `th.human`, not just its first
+/// line. Pure + cheap so it's unit-testable and runs once per paint in agent mode.
+pub fn human_input_rows(rows: &[String]) -> Vec<bool> {
+    let mut marks = vec![false; rows.len()];
+    let mut in_turn = false;
+    for (i, text) in rows.iter().enumerate() {
+        if is_human_input_line(text) {
+            in_turn = true; // a caret row opens (or continues) the turn
+        } else if in_turn {
+            // Stay in the turn only for indented, non-blank continuation rows;
+            // a blank or column-0 row hands the screen back to the agent.
+            in_turn = !text.trim_end().is_empty() && text.starts_with(' ');
+        }
+        marks[i] = in_turn;
+    }
+    marks
+}
+
 /// Foreground process of the PTY, the honest kernel answer.
 fn foreground_mode(master: &std::fs::File, shell_pid: u32) -> PaneMode {
     use std::os::fd::AsRawFd;
@@ -454,8 +479,37 @@ fn mode_theme(base: &Theme, mode: &PaneMode) -> Theme {
 }
 
 const HEADER_H: f32 = 40.0;
-const PAD_X: f32 = 8.0;
-const PAD_Y: f32 = 4.0;
+/// The smallest breathing border the grid ever keeps off any edge (px). On a
+/// flat or tiny pane the 2% term falls below this and the floor takes over.
+const PAD_MIN: f32 = 4.0;
+
+/// Padding (px) that frames the terminal grid inside its tube, returned as
+/// `(pad_x, pad_y)` for the left/right and top/bottom insets. Two terms add up:
+///
+/// 1. **Breathing border** — `max(PAD_MIN, 2%)` of the axis, so text never hugs
+///    the glass and the border scales with the pane instead of being a fixed
+///    sliver that looks cramped on a large pane.
+/// 2. **Barrel-warp overscan** — the CRT warp is a framebuffer gather
+///    (`fs_crt`, mirrored by [`warp_screen_to_content`]): each edge pixel samples
+///    content from `0.5 + (s−0.5)·f`, `f = 1 + k1·r² + k2·r⁴`, so the outer
+///    `~0.5·(f−1)` band of each axis maps *past* the content and smears into an
+///    overscan border. Without compensation that band eats the edge rows — and
+///    the **prompt lives on the bottom row**, so it was the visible casualty
+///    (see the curve-bottom-cutoff bug). We reserve that band on every side so
+///    the edge rows/cols sit inside the warp's visible region. `r²≈0.25` is the
+///    mid-edge; the `1.15` nudges the inset toward the harder-bowing corners.
+///
+/// Curvature is symmetric top/bottom, so the frame reads even all around. A flat
+/// pane (`k1=k2=0`) collapses term 2 and keeps just the breathing border.
+/// Used by the renderer, [`Self::sync_size`] (grid fit) and
+/// [`Self::viewport_cell`] (hit-test) so all three agree on where the grid sits.
+fn grid_pad(w: f32, h: f32, k1: f32, k2: f32) -> (f32, f32) {
+    let over = 0.5 * (0.25 * k1 + 0.0625 * k2) * 1.15;
+    (
+        (w * (0.02 + over)).max(PAD_MIN),
+        (h * (0.02 + over)).max(PAD_MIN),
+    )
+}
 
 /// The real xterm 16-colour palette. Cells always derive from these *true*
 /// colours; the active [`ColorMode`] decides how they're finally painted (see
@@ -1814,20 +1868,23 @@ impl TerminalView {
                 self.cell_w = f32::from(w.width);
             }
         }
+        // Fit the grid to the tube minus its (curvature-aware) frame, so the
+        // padding and the row/col count never disagree. `th` gives the exact warp
+        // for this frame — no dependence on `self.warp_k`'s render-time update.
+        let (k1, k2) = theme::warp_coeffs(th.warp);
         let stored = *self.content_bounds.lock().unwrap();
-        let (avail_w, avail_h) = match stored {
-            Some(b) => (
-                f32::from(b.size.width) - PAD_X * 2.,
-                f32::from(b.size.height) - PAD_Y * 2.,
-            ),
+        let (tube_w, tube_h) = match stored {
+            Some(b) => (f32::from(b.size.width), f32::from(b.size.height)),
             None => {
                 let viewport = window.viewport_size();
                 (
-                    f32::from(viewport.width) - PAD_X * 2.,
-                    f32::from(viewport.height) - HEADER_H - PAD_Y * 2.,
+                    f32::from(viewport.width),
+                    f32::from(viewport.height) - HEADER_H,
                 )
             }
         };
+        let (pad_x, pad_y) = grid_pad(tube_w, tube_h, k1, k2);
+        let (avail_w, avail_h) = (tube_w - pad_x * 2., tube_h - pad_y * 2.);
         let cols = ((avail_w / self.cell_w).floor() as usize).max(10);
         let rows = ((avail_h / self.cell_h).floor() as usize).max(3);
         let target = term::GridSize { cols, rows };
@@ -1865,8 +1922,11 @@ impl TerminalView {
             k1,
             k2,
         );
-        let fx = (lx * bw - PAD_X) / self.cell_w;
-        let y = ((ly * bh - PAD_Y) / self.cell_h).max(0.) as usize;
+        // Same frame the renderer laid the grid into, so a click maps to the
+        // cell shown under it (the grid starts at pad_x/pad_y inside the tube).
+        let (pad_x, pad_y) = grid_pad(bw, bh, k1, k2);
+        let fx = (lx * bw - pad_x) / self.cell_w;
+        let y = ((ly * bh - pad_y) / self.cell_h).max(0.) as usize;
         let col = (fx.max(0.) as usize).min(self.grid.cols.saturating_sub(1));
         let row = y.min(self.grid.rows.saturating_sub(1));
         if std::env::var("TD_HITDEBUG").is_ok() {
@@ -2763,8 +2823,9 @@ impl TerminalView {
             Vec::new()
         };
         // Which rows are the user's own input (only computed in agent mode).
+        // Span-aware: the whole wrapped message is marked, not just the caret row.
         let human_rows: Vec<bool> = if agent {
-            rows_text.iter().map(|t| is_human_input_line(t)).collect()
+            human_input_rows(&rows_text)
         } else {
             Vec::new()
         };
@@ -4164,6 +4225,19 @@ impl Render for TerminalView {
             (0.0, 0.0)
         };
         let shake_y = jiggle + rumble_dy;
+        // The frame the grid sits in: a 2%/4px breathing border plus a
+        // curvature-proportional inset so the bottom prompt clears the barrel
+        // overscan. Same `grid_pad` the fit + hit-test use, so they stay locked.
+        let (grid_pad_x, grid_pad_y) = {
+            let (w, h) = self
+                .content_bounds
+                .lock()
+                .unwrap()
+                .map(|b| (f32::from(b.size.width), f32::from(b.size.height)))
+                .unwrap_or((0.0, 0.0));
+            let (k1, k2) = theme::warp_coeffs(th.warp);
+            grid_pad(w, h, k1, k2)
+        };
         div()
             .track_focus(&self.focus_handle(cx))
             .on_key_down(cx.listener(Self::on_key))
@@ -4254,8 +4328,8 @@ impl Render for TerminalView {
                     })
                     .child(
                         div()
-                            .px(px(PAD_X))
-                            .py(px(PAD_Y))
+                            .px(px(grid_pad_x))
+                            .py(px(grid_pad_y))
                             .flex()
                             .flex_col()
                             .children(lines.into_iter().map(|(text, runs)| {
@@ -4613,6 +4687,52 @@ mod tests {
         assert!(!is_human_input_line("cat file > out.txt")); // '>' mid-line
         assert!(!is_human_input_line(""));
         assert!(!is_human_input_line("    "));
+    }
+
+    #[test]
+    fn human_input_rows_span_the_whole_wrapped_message() {
+        // A multi-line user turn: caret row + indented wrapped continuation,
+        // then a blank row and the agent's column-0 reply.
+        let rows: Vec<String> = [
+            "> Great - all the work we had on deck",
+            "  is done? Let's get a clean main",
+            "  and stand up a CLA across the repos",
+            "",
+            "● Two things: clean up the git state,",
+            "  and stand up a CLA across the OSS repos.",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        let marks = human_input_rows(&rows);
+        // caret row + both indented continuation rows are the human's turn
+        assert_eq!(marks[0..3], [true, true, true]);
+        // the blank row closes the turn; the agent's reply is NOT human —
+        // including its own indented continuation row after the bullet.
+        assert_eq!(marks[3..6], [false, false, false]);
+
+        // A bare/empty caret (live input box) colours just that row.
+        let live: Vec<String> = ["❯", ""].iter().map(|s| s.to_string()).collect();
+        assert_eq!(human_input_rows(&live), [true, false]);
+    }
+
+    #[test]
+    fn grid_pad_floors_then_scales_then_compensates_curvature() {
+        // Flat + small → the 4px floor wins on both axes.
+        assert_eq!(grid_pad(100.0, 100.0, 0.0, 0.0), (4.0, 4.0));
+        // Flat + large → 2% of each axis (no overscan term).
+        assert_eq!(grid_pad(1000.0, 800.0, 0.0, 0.0), (20.0, 16.0));
+        // Curving a pane only ADDS inset (the prompt needs to clear the smear),
+        // never removes it — and the inset tracks each axis independently.
+        let (k1, k2) = crate::theme::warp_coeffs(crate::theme::WARP_DEFAULT);
+        let (fx, fy) = grid_pad(1000.0, 800.0, 0.0, 0.0);
+        let (cx, cy) = grid_pad(1000.0, 800.0, k1, k2);
+        assert!(cx > fx && cy > fy, "house warp must widen the frame");
+        // Symmetric source ⇒ the per-axis pad is purely a function of that axis
+        // length (top==bottom, left==right framing reads even).
+        let (sx, _) = grid_pad(640.0, 480.0, k1, k2);
+        let (_, sy) = grid_pad(480.0, 640.0, k1, k2);
+        assert!((sx - sy).abs() < 1e-3, "equal axis lengths ⇒ equal pad");
     }
 
     #[test]
