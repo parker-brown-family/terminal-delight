@@ -131,29 +131,30 @@ const scene=document.createElement('canvas'); const x=scene.getContext('2d');
 // coverage so 终端之悦 / 端末の悦び / 터미널의 기쁨 / टर्मिनल आनंद render real glyphs.
 const MONO="ui-monospace,'DejaVu Sans Mono',monospace";
 const BRAND="'Noto Sans CJK SC','Noto Sans CJK JP','Noto Sans CJK KR','Noto Sans Devanagari','Noto Sans',system-ui,sans-serif";
+const UI="ui-monospace,'Noto Sans CJK SC','Noto Sans CJK JP','Noto Sans CJK KR','Noto Sans Devanagari',monospace";
 
 // LANGUAGES — each channel is a language: its autonym, the translated brand
 // (TERMINAL = the final node · DELIGHT = bliss/peace), and a CRT palette
 // (screen-background hue + a distinct picture-glow that also lights the cabinet).
 // The brand strings are the SAME ones lang.rs ships to the app (app/src/lang.rs `brand`).
 const LANGS=[
- {code:'en',native:'English', eng:'English',  brand:'TERMINAL DELIGHT',
+ {code:'en',native:'English', eng:'English',  brand:'TERMINAL DELIGHT', dl:'▾ Download',explore:'▸ Explore the full site',term:'the final node',dlght:'bliss, peace',
   bg:'#06122e',bgTint:[0.22,0.42,1.0], phos:'#ff9a3c',dim:'#b3611c',bright:'#ffd8b0',accent:'#ff9a3c',dark:'#4d2f0a',dark2:'#6d420d',tint:[1.0,0.6,0.25], glow:'#ff9a3c',spill:'255,154,60'},
- {code:'es',native:'Español', eng:'Spanish',  brand:'DELEITE TERMINAL',
+ {code:'es',native:'Español', eng:'Spanish',  brand:'DELEITE TERMINAL', dl:'▾ Descargar',explore:'▸ Explora el sitio',term:'el nodo final',dlght:'dicha, paz',
   bg:'#2a0708',bgTint:[1.0,0.36,0.24], phos:'#ffcf4d',dim:'#b3881c',bright:'#fff0bf',accent:'#ffcf4d',dark:'#4d3a0a',dark2:'#6d520d',tint:[1.0,0.78,0.30],glow:'#ffcf4d',spill:'255,207,77'},
- {code:'de',native:'Deutsch', eng:'German',   brand:'TERMINALE WONNE',
+ {code:'de',native:'Deutsch', eng:'German',   brand:'TERMINALE WONNE', dl:'▾ Herunterladen',explore:'▸ Zur ganzen Seite',term:'der Endpunkt',dlght:'Wonne, Frieden',
   bg:'#06160c',bgTint:[0.30,1.0,0.5],  phos:'#c084fc',dim:'#7a4fb0',bright:'#ead9fc',accent:'#c084fc',dark:'#3a2454',dark2:'#52336f',tint:[0.78,0.52,1.0],glow:'#c084fc',spill:'192,132,252'},
- {code:'fr',native:'Français',eng:'French',   brand:'DÉLICE TERMINAL',
+ {code:'fr',native:'Français',eng:'French',   brand:'DÉLICE TERMINAL', dl:'▾ Télécharger',explore:'▸ Découvrir le site',term:'le nœud final',dlght:'délice, paix',
   bg:'#0a0826',bgTint:[0.46,0.5,1.0],  phos:'#ff8ab0',dim:'#b35379',bright:'#ffd6e4',accent:'#ff8ab0',dark:'#4d1430',dark2:'#6d1d44',tint:[1.0,0.55,0.72],glow:'#ff8ab0',spill:'255,138,176'},
- {code:'ru',native:'Русский', eng:'Russian',  brand:'ТЕРМИНАЛЬНОЕ БЛАЖЕНСТВО',
+ {code:'ru',native:'Русский', eng:'Russian',  brand:'ТЕРМИНАЛЬНОЕ БЛАЖЕНСТВО', dl:'▾ Скачать',explore:'▸ Открыть весь сайт',term:'конечный узел',dlght:'блаженство, покой',
   bg:'#240306',bgTint:[1.0,0.3,0.34],  phos:'#f5f7ff',dim:'#aeb3c8',bright:'#ffffff',accent:'#ff5a6a',dark:'#3a1014',dark2:'#52171d',tint:[0.95,0.96,1.0],glow:'#f5f7ff',spill:'245,247,255'},
- {code:'zh',native:'中文',    eng:'Chinese',  brand:'终端之悦',
+ {code:'zh',native:'中文',    eng:'Chinese',  brand:'终端之悦', dl:'▾ 下载',explore:'▸ 浏览完整网站',term:'终点',dlght:'喜悦 · 安宁',
   bg:'#2a0608',bgTint:[1.0,0.28,0.22], phos:'#ffd34d',dim:'#b3911c',bright:'#fff2bf',accent:'#ff5a3c',dark:'#4d2a0a',dark2:'#6d3a0d',tint:[1.0,0.74,0.28],glow:'#ffd34d',spill:'255,211,77'},
- {code:'ja',native:'日本語',  eng:'Japanese', brand:'端末の悦び',
+ {code:'ja',native:'日本語',  eng:'Japanese', brand:'端末の悦び', dl:'▾ ダウンロード',explore:'▸ サイト全体を見る',term:'終端',dlght:'至福 · 安らぎ',
   bg:'#0a0a1e',bgTint:[0.5,0.5,0.9],   phos:'#ffffff',dim:'#aeb0c8',bright:'#ffffff',accent:'#ff5a6a',dark:'#3a1418',dark2:'#52202a',tint:[1.0,0.92,0.95],glow:'#ffd0d6',spill:'255,208,214'},
- {code:'ko',native:'한국어',  eng:'Korean',   brand:'터미널의 기쁨',
+ {code:'ko',native:'한국어',  eng:'Korean',   brand:'터미널의 기쁨', dl:'▾ 다운로드',explore:'▸ 전체 사이트 보기',term:'종착점',dlght:'기쁨, 평온',
   bg:'#03181e',bgTint:[0.24,0.7,0.9],  phos:'#7fe9ff',dim:'#3f9fb8',bright:'#d7f6ff',accent:'#7fe9ff',dark:'#0a3a4d',dark2:'#0d526d',tint:[0.5,0.86,1.0],glow:'#7fe9ff',spill:'127,233,255'},
- {code:'hi',native:'हिन्दी',   eng:'Hindi',    brand:'टर्मिनल आनंद',
+ {code:'hi',native:'हिन्दी',   eng:'Hindi',    brand:'टर्मिनल आनंद', dl:'▾ डाउनलोड',explore:'▸ पूरी साइट देखें',term:'अंतिम छोर',dlght:'आनंद, शांति',
   bg:'#2a1402',bgTint:[1.0,0.62,0.2],  phos:'#ffb04d',dim:'#b3781c',bright:'#ffe6bf',accent:'#5ecb6a',dark:'#4d370a',dark2:'#6d4f0d',tint:[1.0,0.68,0.28],glow:'#ffb04d',spill:'255,176,77'},
 ];
 let chan=0; const cur=()=>LANGS[chan];
@@ -166,8 +167,8 @@ const DWELL=5000;                      // auto-surf to the next language after t
 let dwellStart=performance.now();      // reset on any interaction
 const rgba=(t,a)=>`rgba(${Math.round(t[0]*120)},${Math.round(t[1]*150)},${Math.round(t[2]*120)},${a})`;
 const BTNS=[
-  {label:'▾ Download', url:'https://github.com/parker-brown-family/terminal-delight/releases/latest', primary:true},
-  {label:'▸ Explore the full site', url:'info.html'},
+  {lab:'dl', url:'https://github.com/parker-brown-family/terminal-delight/releases/latest', primary:true},
+  {lab:'explore', url:'info.html'},
 ];
 let btnRects=[], hover=-1;
 const K={barrel:1.0, fade:0.92, track:0.55};
@@ -194,8 +195,8 @@ function drawScene(time){
   x.fillStyle=c.phos; x.font=`${(narrow?12:15)*s*dpr}px ${MONO}`;
   x.fillText('terminal-delight', cx, narrow?H*0.55:H*0.65);
   // etymology, Parker's gloss
-  x.fillStyle=c.dim; x.font=`${(narrow?9:11.5)*s*dpr}px ${MONO}`;
-  x.fillText('TERMINAL — the final node · DELIGHT — bliss, peace', cx, narrow?H*0.63:H*0.74);
+  x.fillStyle=c.dim; x.font=`${(narrow?9:11.5)*s*dpr}px ${UI}`;
+  x.fillText('TERMINAL — '+c.term+' · DELIGHT — '+c.dlght, cx, narrow?H*0.63:H*0.74);
   // buttons (wide: a row; narrow: stacked compact)
   btnRects=[]; const bh=(narrow?38:44)*s*dpr, gap=(narrow?10:14)*s*dpr;
   if(narrow){ const bw=Math.min(W*0.8,340*s*dpr); let by=H*0.70;
@@ -214,8 +215,8 @@ function drawScene(time){
 function drawBtn(b,i,bx,by,bw,bh,s){ const c=cur(); btnRects.push({x:bx,y:by,w:bw,h:bh,url:b.url}); const on=hover===i;
   x.fillStyle=b.primary?(on?c.dark2:c.dark):(on?c.dark:'rgba(255,255,255,0.05)'); rr(bx,by,bw,bh,9*dpr); x.fill();
   x.lineWidth=on?2.4*dpr:1.4*dpr; x.strokeStyle=(b.primary||on)?c.accent:c.dim; rr(bx,by,bw,bh,9*dpr); x.stroke();
-  x.fillStyle=b.primary?c.bright:c.phos; x.shadowColor=c.glow; x.shadowBlur=on?0:1.4*dpr; x.font=`700 ${15*s*dpr}px ${MONO}`;
-  x.fillText(b.label,bx+bw/2,by+bh/2); x.shadowBlur=0; }
+  x.fillStyle=b.primary?c.bright:c.phos; x.shadowColor=c.glow; x.shadowBlur=on?0:1.4*dpr; x.font=`700 ${15*s*dpr}px ${UI}`;
+  x.fillText(cur()[b.lab],bx+bw/2,by+bh/2); x.shadowBlur=0; }
 function rr(rx,ry,rw,rh,r){x.beginPath();x.moveTo(rx+r,ry);x.arcTo(rx+rw,ry,rx+rw,ry+rh,r);x.arcTo(rx+rw,ry+rh,rx,ry+rh,r);x.arcTo(rx,ry+rh,rx,ry,r);x.arcTo(rx,ry,rx+rw,ry,r);x.closePath();}
 
 const vs=`#version 300 es
