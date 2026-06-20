@@ -356,7 +356,7 @@ pub fn ipsum(cols: usize, rows: usize, seed: u64) -> Vec<String> {
 /// A box-drawn two-column table ("Links"-style), fitted to `cols`.
 fn table(r: &mut Rng, cols: usize) -> Vec<String> {
     // two columns; left ~40%, capped so even a wide pane stays tidy
-    let inner = cols.saturating_sub(7).min(96).max(24);
+    let inner = cols.saturating_sub(7).clamp(24, 96);
     let lw = (inner * 2 / 5).clamp(10, 40);
     let rw = inner.saturating_sub(lw).max(8);
     let top = format!("┌{}┬{}┐", "─".repeat(lw + 1), "─".repeat(rw + 1));

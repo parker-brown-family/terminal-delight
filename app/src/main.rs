@@ -2465,7 +2465,7 @@ impl Workspace {
             }
         }
         if matches!(scope, FindScope::Global) {
-            hits.sort_by(|a, b| b.score.cmp(&a.score));
+            hits.sort_by_key(|h| std::cmp::Reverse(h.score));
         }
         hits
     }
@@ -2566,7 +2566,7 @@ impl Workspace {
         const VISIBLE: usize = 11;
         let panel_w = if global { 600. } else { 480. };
         let n = find.results.len();
-        let shown = n.min(VISIBLE).max(1);
+        let shown = n.clamp(1, VISIBLE);
         let panel_h = 72. + shown as f32 * ROW_H + 26.;
         // centre point in window-relative logical px
         let (cxp, cyp) = if let FindScope::InPane(id) = &find.scope {

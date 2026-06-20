@@ -365,6 +365,10 @@ impl GradeKey {
     /// stored units. The percent is clamped to `0..100` first; the caller should
     /// still pass the result through [`Grade::set`], which clamps into range
     /// again (belt-and-suspenders, and the single point that owns the bounds).
+    // Deliberately a method: it needs `self` to pick the channel's range, and is
+    // the symmetric partner of `to_percent`. The `from_*`-takes-no-self heuristic
+    // doesn't fit a per-key converter, so suppress rather than rename the API.
+    #[allow(clippy::wrong_self_convention)]
     pub fn from_percent(self, pct: f32) -> f32 {
         let (min, max, _) = self.range();
         min + (pct.clamp(0.0, 100.0) / 100.0) * (max - min)
