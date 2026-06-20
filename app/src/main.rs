@@ -32,10 +32,10 @@ use std::time::{Duration, Instant};
 
 use gpui::{
     canvas, div, fill, hsla, linear_color_stop, linear_gradient, point, prelude::*, px, size,
-    white, App, Bounds, BoxShadow, Context, Decorations, Entity, EntityId, Focusable, Hsla,
-    KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point,
-    ScrollWheelEvent, SharedString, TitlebarOptions, Window, WindowBounds, WindowDecorations,
-    WindowOptions,
+    white, App, Bounds, BoxShadow, ClipboardItem, Context, Decorations, Entity, EntityId,
+    Focusable, Hsla, KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    Pixels, Point, ScrollWheelEvent, SharedString, TitlebarOptions, Window, WindowBounds,
+    WindowDecorations, WindowOptions,
 };
 use gpui_platform::application;
 use pane::{
@@ -1081,6 +1081,30 @@ struct FindState {
     selected: usize,
 }
 
+/// The FOCUS reader's wrapped layout, captured each render so the mouse handlers
+/// can map a screen click back to a source cell (for selection + copy) through the
+/// exact frame the user is looking at. All metrics are logical px, matching the
+/// captured `focus_body_bounds`.
+struct FocusMap {
+    /// One entry per on-screen visual row, in paint order: `(src_row, src_col0,
+    /// glyph_cols)`. `src_col0` is where this wrapped row begins in its source row.
+    rows: Vec<(usize, usize, usize)>,
+    /// Source grid-row texts, for assembling the copied selection (one logical line
+    /// per source row, regardless of how many visual rows it wrapped into).
+    src_lines: Vec<String>,
+    line_h: f32,
+    glyph_w: f32,
+    /// Left inset of the content inside the clip box.
+    pad: f32,
+    /// Top of the first visual row inside the clip box (`pad + v_offset −
+    /// scroll_y`), so a click's y resolves to a visual row.
+    top: f32,
+    k1: f32,
+    k2: f32,
+    /// Whether the reader is curved this frame (so the hit-test applies the warp).
+    inherit: bool,
+}
+
 struct Workspace {
     tabs: Vec<Tab>,
     active: usize,
@@ -1212,17 +1236,23 @@ struct Workspace {
     /// frame (0 = it fits). Refreshed each render; the scrim's wheel handler reads
     /// it to decide pan-the-modal vs. scroll-the-terminal.
     focus_overflow: f32,
-    /// Horizontal pan offset (px) of the zoomed mirror inside the FOCUS panel —
-    /// the left/right counterpart of `focus_scroll_y`. When the text is scaled up
-    /// wider than the panel it left-anchors (line starts visible) and shift+wheel
-    /// pans this 0..=`focus_overflow_x`. Reset on open.
-    focus_scroll_x: f32,
-    /// How far (px) the scaled mirror overflows the panel's inner width this frame
-    /// (0 = it fits → the mirror stays centred). Refreshed each render.
-    focus_overflow_x: f32,
     /// The mirror's scaled cell height (px), captured each render so a line-delta
     /// wheel event pans the modal by whole rows.
     focus_line_h: f32,
+    /// On-screen box of the FOCUS reading area (the clip box below the header),
+    /// captured each frame. This is the SAME rect registered as the warp tube, so a
+    /// click normalises into it and applies the identical barrel map the shader
+    /// gathers with — the curve-aware hit-test the live pane already uses.
+    focus_body_bounds: Arc<Mutex<Option<Bounds<Pixels>>>>,
+    /// The reader's wrapped layout this frame, so a click maps back to a real
+    /// source cell for selection + copy. Refreshed every render.
+    focus_map: Arc<Mutex<Option<FocusMap>>>,
+    /// Click-drag text selection in the reader, as source `(row, col)` cells
+    /// `(anchor, head)`. Stored in SOURCE coordinates so it survives a zoom/wrap
+    /// reflow. `None` = nothing selected.
+    focus_sel: Option<((usize, usize), (usize, usize))>,
+    /// True while a left-drag is actively extending the reader selection.
+    focus_sel_drag: bool,
     /// Global, persisted: when on, the FOCUS reader inherits the read pane's CRT
     /// look (barrel curvature + screen glare) instead of the flat default. One
     /// toggle in the modal header; applies to every reader open from then on.
@@ -1481,9 +1511,11 @@ impl Workspace {
             focus_zoom_bounds: Arc::new(Mutex::new(None)),
             focus_scroll_y: 0.0,
             focus_overflow: 0.0,
-            focus_scroll_x: 0.0,
-            focus_overflow_x: 0.0,
             focus_line_h: 0.0,
+            focus_body_bounds: Arc::new(Mutex::new(None)),
+            focus_map: Arc::new(Mutex::new(None)),
+            focus_sel: None,
+            focus_sel_drag: false,
             focus_inherit_theme: saved.focus_inherit,
             lang: saved.lang,
             // a demo window restores a layout (so `scratch` is false to take the
@@ -2349,9 +2381,11 @@ impl Workspace {
         self.focus_read = Some(pane.downgrade());
         // Each FOCUS opens at fit-to-modal; the header slider takes it from there.
         self.focus_zoom = 1.0;
-        // A fresh open starts at the top-left of the mirror (no pan carried over).
+        // A fresh open starts at the top of the mirror (no pan carried over) with
+        // nothing selected.
         self.focus_scroll_y = 0.0;
-        self.focus_scroll_x = 0.0;
+        self.focus_sel = None;
+        self.focus_sel_drag = false;
         // Defer the focus: this runs from the 👓 header button's mouse-down
         // listener, so a synchronous `window.focus` gets grabbed straight back by
         // the root container's tracked focus handle (the same race new_tab/split
@@ -2369,6 +2403,9 @@ impl Workspace {
         if let Some(pane) = self.focus_read.take().and_then(|w| w.upgrade()) {
             pane.update(cx, |v, _| v.set_being_read(false));
         }
+        self.focus_sel = None;
+        self.focus_sel_drag = false;
+        *self.focus_map.lock().unwrap() = None;
         cx.notify();
     }
 
@@ -2824,8 +2861,10 @@ impl Workspace {
     }
 
     /// FOCUS text-size slider range — a multiplier on the auto-fit scale.
-    /// 1.0 (fit) sits inside the range so the thumb has travel both ways.
-    const FZ_MIN: f32 = 0.6;
+    /// 1.0 (fit) sits inside the range so the thumb has travel both ways. The
+    /// low end reaches well below fit so a dense read can shrink to a compact,
+    /// glanceable column (the reader wraps, so smaller never means narrower-only).
+    const FZ_MIN: f32 = 0.35;
     const FZ_MAX: f32 = 3.0;
 
     /// Map a window-x to a 0..1 fraction along the FOCUS slider track (`None`
@@ -2837,6 +2876,69 @@ impl Workspace {
             return None;
         }
         Some(((f32::from(x) - f32::from(b.origin.x)) / w).clamp(0.0, 1.0))
+    }
+
+    /// Map a window position to the source `(row, col)` cell under it in the FOCUS
+    /// reader, or `None` if the reader isn't laid out yet or the click misses it.
+    /// Mirrors the live pane's curve-aware hit-test: normalise into the reading
+    /// rect, apply the SAME barrel map the shader gathers with (only when the
+    /// reader is curved), then undo the pad + scroll to land on a wrapped row, and
+    /// map that back to a source cell via the frame's wrap map.
+    fn focus_cell_at(&self, pos: Point<Pixels>) -> Option<(usize, usize)> {
+        let bounds = (*self.focus_body_bounds.lock().unwrap())?;
+        let guard = self.focus_map.lock().unwrap();
+        let map = guard.as_ref()?;
+        if map.rows.is_empty() {
+            return None;
+        }
+        let (bx, by) = (f32::from(bounds.origin.x), f32::from(bounds.origin.y));
+        let bw = f32::from(bounds.size.width).max(1.0);
+        let bh = f32::from(bounds.size.height).max(1.0);
+        let (u, v) = ((f32::from(pos.x) - bx) / bw, (f32::from(pos.y) - by) / bh);
+        let (lu, lv) = if map.inherit {
+            pane::warp_screen_to_content(u, v, map.k1, map.k2)
+        } else {
+            (u, v)
+        };
+        let content_y = lv * bh - map.top;
+        let vrow = ((content_y / map.line_h).max(0.0) as usize).min(map.rows.len() - 1);
+        let (src_row, src_col0, cols) = map.rows[vrow];
+        let content_x = (lu * bw - map.pad).max(0.0);
+        let col_in = (content_x / map.glyph_w.max(0.1)).floor() as usize;
+        Some((src_row, src_col0 + col_in.min(cols)))
+    }
+
+    /// Assemble the reader's current selection into copyable text — one logical
+    /// line per SOURCE row (the visual wrap is cosmetic, so a wrapped paragraph
+    /// copies back as the single line it really is). Trailing blanks are trimmed.
+    fn focus_selection_text(&self) -> Option<String> {
+        let (a, b) = self.focus_sel?;
+        let (start, end) = if a <= b { (a, b) } else { (b, a) };
+        let guard = self.focus_map.lock().unwrap();
+        let map = guard.as_ref()?;
+        let mut out = String::new();
+        for row in start.0..=end.0 {
+            let line = map.src_lines.get(row).map(|s| s.as_str()).unwrap_or("");
+            let chars: Vec<char> = line.trim_end_matches(' ').chars().collect();
+            let from = if row == start.0 { start.1 } else { 0 }.min(chars.len());
+            let to = if row == end.0 { end.1 + 1 } else { chars.len() }.min(chars.len());
+            if from < to {
+                out.extend(&chars[from..to]);
+            }
+            if row != end.0 {
+                out.push('\n');
+            }
+        }
+        (!out.is_empty()).then_some(out)
+    }
+
+    /// Copy the reader selection to the clipboard (and X11 PRIMARY for middle-click
+    /// paste), matching how the live pane copies. No-op when nothing is selected.
+    fn copy_focus_selection(&self, cx: &mut Context<Self>) {
+        if let Some(text) = self.focus_selection_text() {
+            cx.write_to_clipboard(ClipboardItem::new_string(text.clone()));
+            cx.write_to_primary(ClipboardItem::new_string(text));
+        }
     }
 
     /// Set the FOCUS text-size multiplier from a 0..1 track fraction. Live only;
@@ -3468,6 +3570,7 @@ impl Workspace {
                 || self.tab_wheel_drag.is_some()
                 || self.tab_light_drag
                 || self.focus_zoom_drag
+                || self.focus_sel_drag
                 || self.drag_split.is_some())
         {
             self.scrubbing = false;
@@ -3478,6 +3581,7 @@ impl Workspace {
             self.tab_wheel_drag = None;
             self.tab_light_drag = false;
             self.focus_zoom_drag = false;
+            self.focus_sel_drag = false;
             self.drag_split = None;
             cx.notify();
             return;
@@ -3527,6 +3631,18 @@ impl Workspace {
         if self.focus_zoom_drag && ev.pressed_button == Some(MouseButton::Left) {
             if let Some(frac) = self.focus_zoom_from_pos(ev.position.x) {
                 self.set_focus_zoom(frac, cx);
+            }
+        }
+        // Extend the FOCUS reader selection as the cursor drags — the head moves to
+        // the source cell under it, the anchor stays put.
+        if self.focus_sel_drag && ev.pressed_button == Some(MouseButton::Left) {
+            if let (Some(cell), Some((anchor, head))) =
+                (self.focus_cell_at(ev.position), self.focus_sel)
+            {
+                if head != cell {
+                    self.focus_sel = Some((anchor, cell));
+                    cx.notify();
+                }
             }
         }
         if let Some(target) = self.wheel_drag {
@@ -3600,6 +3716,16 @@ impl Workspace {
         }
         // FOCUS text-size: live-only, never persisted, so just drop the latch.
         if std::mem::take(&mut self.focus_zoom_drag) {
+            cx.notify();
+            return;
+        }
+        // FOCUS selection: a real drag copies the selected text; a plain click
+        // (anchor == head) just clears the selection without copying.
+        if std::mem::take(&mut self.focus_sel_drag) {
+            match self.focus_sel {
+                Some((a, b)) if a != b => self.copy_focus_selection(cx),
+                _ => self.focus_sel = None,
+            }
             cx.notify();
             return;
         }
@@ -8145,73 +8271,114 @@ impl Render for Workspace {
             let avail_h = (panel_h - hdr_h - pad * 2.).max(1.);
             let content_w = (snap.cols as f32 * snap.cell_w).max(1.);
             let content_h = (snap.rows as f32 * snap.cell_h).max(1.);
-            // scale the whole grid to fit the modal (tighter axis wins so the
-            // entire screen stays visible); never shrink past ~0.7×.
-            let fit = (avail_w / content_w)
-                .min(avail_h / content_h)
-                .clamp(0.7, 6.0);
-            // The header slider rides on top of the fit: 1.0 = fit-to-modal,
-            // up to FZ_MAX× for reading (overflows the panel, panned by wheel).
-            let ms = (fit * self.focus_zoom).clamp(0.5, 12.0);
+            // Auto-fit (1.0 on the slider). A flat read WRAPS, so its width never
+            // constrains the fit — scale to fill the panel HEIGHT so a wide-but-short
+            // source (e.g. a directory listing) fills the glass instead of shrinking
+            // to a tiny band with a big blank above it. Crawl doesn't wrap, so it
+            // keeps the both-axes fit that guarantees each whole row stays visible.
+            let fit = if snap.crawl {
+                (avail_w / content_w).min(avail_h / content_h)
+            } else {
+                avail_h / content_h
+            }
+            .clamp(0.7, 6.0);
+            // The header slider rides on top of the fit: 1.0 = fit-to-modal. The
+            // reader WRAPS rather than scrolling sideways, so a bigger size never
+            // runs lines off the edge — it just wraps more; a smaller size shows a
+            // compact column. The floor sits well under 1.0 so a dense read can
+            // shrink right down (the old 0.5 floor still felt huge on small panes).
+            let ms = (fit * self.focus_zoom).clamp(0.3, 12.0);
             let cell_h = snap.cell_h * ms;
-            // How far the scaled mirror spills past the panel's inner height. The
-            // wheel pans `focus_scroll_y` across this so a zoomed-up read can
-            // reach the bottom row (clamped here in case the zoom just shrank).
-            let total_h = snap.rows as f32 * cell_h;
-            let overflow = (total_h - avail_h).max(0.0);
-            self.focus_overflow = overflow;
-            self.focus_line_h = cell_h;
-            self.focus_scroll_y = self.focus_scroll_y.clamp(0.0, overflow);
-            let scroll_y = self.focus_scroll_y;
+            let glyph_w = (snap.cell_w * ms).max(0.5);
             // "Inherit theme": bend + glare the panel like the pane it mirrors.
             let inherit = self.focus_inherit_theme;
             let (k1, k2, glare) = (snap.k1, snap.k2, snap.glare);
-            // FOCUS inherits crawl: the rows are already in the crawl font
-            // (baked into the runs) and, in crawl mode, the modal centres each
-            // row exactly like the live pane (a flat, readable mirror — the
-            // ambient perspective stays on the pane behind the modal).
+            // FOCUS inherits crawl: the rows are already in the crawl font (baked
+            // into the runs) and, in crawl mode, the modal centres each row exactly
+            // like the live pane (a flat, readable mirror — the ambient perspective
+            // stays on the pane behind the modal). Crawl keeps its own centred,
+            // unwrapped rows; only the flat reader wraps.
             let crawl = snap.crawl;
-            // Each mirror row is a full grid-width string (cleared cells included),
-            // so the body block already spans the panel and "centring the block"
-            // would be a no-op. Size it instead to the *widest used* row (trailing
-            // blanks trimmed) so a narrow read becomes a narrow, genuinely centred
-            // column — the trailing-space overflow is invisible and clipped.
-            let used_cols = snap
-                .lines
-                .iter()
-                .map(|(t, _)| t.trim_end().chars().count())
-                .max()
-                .unwrap_or(0)
-                .max(1);
-            // Body width: the used text width for a flat read; the full inner width
-            // for a crawl (its rows self-centre across the panel). When a zoomed-up
-            // flat read is wider than the panel, that width drives the horizontal
-            // pan + left-anchor below (so you never lose the line starts off-screen).
+            // Wrap-to-fit: how many glyphs fit across the inner width at this size.
+            // Every grid row soft-wraps to this, so a flat read can NEVER overflow
+            // horizontally — there is no sideways scroll any more.
+            let fit_cols = (avail_w / glyph_w).floor().max(1.0) as usize;
+            let vrows = if crawl {
+                Vec::new()
+            } else {
+                pane::wrap_focus_lines(&snap.lines, fit_cols)
+            };
+            // Exact content height — crawl is one row per grid row, a wrapped read
+            // one row per visual (wrapped) row. Counted, never measured.
+            let row_count = if crawl { snap.rows } else { vrows.len() };
+            let total_h = row_count as f32 * cell_h;
+            self.focus_overflow = (total_h - avail_h).max(0.0);
+            self.focus_line_h = cell_h;
+            self.focus_scroll_y = self.focus_scroll_y.clamp(0.0, self.focus_overflow);
+            let scroll_y = self.focus_scroll_y;
+            // Centre a short read vertically: when the whole thing fits, split the
+            // slack evenly above and below so it sits balanced in the glass — no
+            // blank band jammed against the top OR the bottom. Once it overflows
+            // this is 0 and the wheel pans `scroll_y` from the top.
+            let v_offset = (avail_h - total_h).max(0.0) * 0.5;
+            // Horizontal frame: size it to the FULL grid width at this zoom (capped
+            // at the panel), NOT to the live content. Sizing to content made the
+            // whole block re-centre and JIGGLE sideways every time a line's length
+            // changed — fatal for a reader whose eye is locked on one spot. The grid
+            // width is fixed, so the left edge never moves. When the grid is narrower
+            // than the glass (a zoomed-down read) this fixed frame is centred;
+            // otherwise it fills and left-anchors at `pad`.
             let body_w = if crawl {
                 avail_w
             } else {
-                (used_cols as f32 * snap.cell_w * ms).max(1.0)
+                (snap.cols as f32 * glyph_w).min(avail_w)
             };
-            let overflow_x = (body_w - avail_w).max(0.0);
-            // Centre the column when it fits; collapse the margin to 0 (left-anchor)
-            // once it's wider than the panel, so panning starts from the line heads.
-            let center_x = ((avail_w - body_w) * 0.5).max(0.0);
-            self.focus_overflow_x = overflow_x;
-            self.focus_scroll_x = self.focus_scroll_x.clamp(0.0, overflow_x);
-            let scroll_x = self.focus_scroll_x;
-            let body = div()
-                .flex()
-                .flex_col()
-                // keep the mirror's natural size so the wheel-pan offset is exact
-                // (no flex-shrink compressing it when it overflows the panel)
-                .flex_none()
-                .w(px(body_w))
-                .text_size(px(snap.base_size * ms))
-                .text_color(snap.text)
-                .font_family(snap.font_family.clone())
-                .children(snap.lines.into_iter().map(move |(text, runs)| {
-                    if crawl {
-                        return match pane::crawl_centered_runs(text, runs) {
+            let h_offset = ((avail_w - body_w) * 0.5).max(0.0);
+            // Left inset of the content this frame — the hit-test maps clicks against
+            // it, so it must include the centring offset.
+            let content_left = pad + h_offset;
+            let base_size = snap.base_size * ms;
+            // Stash this frame's wrapped layout so a click in the reading area maps
+            // back to a source cell for selection + copy. Crawl gets an empty map
+            // (no selection over the perspective mode).
+            let map_rows: Vec<(usize, usize, usize)> = if crawl {
+                Vec::new()
+            } else {
+                vrows
+                    .iter()
+                    .map(|v| (v.src_row, v.src_col0, v.cols))
+                    .collect()
+            };
+            *self.focus_map.lock().unwrap() = Some(FocusMap {
+                rows: map_rows,
+                src_lines: snap.lines.iter().map(|(t, _)| t.clone()).collect(),
+                line_h: cell_h,
+                glyph_w,
+                pad: content_left,
+                top: pad + v_offset - scroll_y,
+                k1,
+                k2,
+                inherit,
+            });
+            // The current selection (normalised so start ≤ end) and the tint we
+            // paint it with — captured by value for the body closure below.
+            let sel = self
+                .focus_sel
+                .map(|(a, b)| if a <= b { (a, b) } else { (b, a) });
+            let sel_hl = snap.accent.alpha(0.30);
+            // Crawl self-centres each row across the full inner width; a wrapped
+            // flat read fills that width and left-aligns (it has no sideways axis).
+            let body = if crawl {
+                div()
+                    .flex()
+                    .flex_col()
+                    .flex_none()
+                    .w(px(body_w))
+                    .text_size(px(base_size))
+                    .text_color(snap.text)
+                    .font_family(snap.font_family.clone())
+                    .children(snap.lines.into_iter().map(move |(text, runs)| {
+                        match pane::crawl_centered_runs(text, runs) {
                             Some((t, cut)) => div()
                                 .h(px(cell_h))
                                 .flex()
@@ -8219,15 +8386,46 @@ impl Render for Workspace {
                                 .whitespace_nowrap()
                                 .child(gpui::StyledText::new(t).with_runs(cut)),
                             None => div().h(px(cell_h)).whitespace_nowrap(),
+                        }
+                    }))
+            } else {
+                div()
+                    .flex()
+                    .flex_col()
+                    .flex_none()
+                    .w(px(body_w))
+                    .text_size(px(base_size))
+                    .text_color(snap.text)
+                    .font_family(snap.font_family.clone())
+                    .children(vrows.into_iter().map(move |vr| {
+                        let line = div().h(px(cell_h)).whitespace_nowrap();
+                        if vr.text.is_empty() {
+                            return line;
+                        }
+                        // Paint the selected glyph span on this wrapped row (if the
+                        // selection covers it), mapping the source-cell range down to
+                        // this visual row's local columns.
+                        let runs = match sel {
+                            Some((s, en)) if vr.src_row >= s.0 && vr.src_row <= en.0 => {
+                                let lo = if vr.src_row == s.0 {
+                                    s.1.max(vr.src_col0)
+                                } else {
+                                    vr.src_col0
+                                };
+                                let hi = if vr.src_row == en.0 {
+                                    en.1 + 1
+                                } else {
+                                    vr.src_col0 + vr.cols
+                                };
+                                let lf = lo.saturating_sub(vr.src_col0).min(vr.cols);
+                                let lt = hi.saturating_sub(vr.src_col0).min(vr.cols);
+                                pane::highlight_runs(&vr.text, &vr.runs, lf, lt, sel_hl)
+                            }
+                            _ => vr.runs,
                         };
-                    }
-                    let line = div().h(px(cell_h)).whitespace_nowrap();
-                    if text.is_empty() {
-                        line
-                    } else {
-                        line.child(gpui::StyledText::new(text).with_runs(runs))
-                    }
-                }));
+                        line.child(gpui::StyledText::new(vr.text).with_runs(runs))
+                    }))
+            };
             let header = div()
                 .h(px(hdr_h))
                 .flex_none()
@@ -8282,20 +8480,56 @@ impl Render for Workspace {
                 .child(
                     // The reading area: a clip box with the mirror absolutely
                     // anchored inside it. Absolute positioning (not a flex child +
-                    // margins) pins both axes deterministically: `left = pad +
-                    // center_x - scroll_x` centres the column while it fits, then
-                    // left-anchors + pans once it's wider than the panel (so the
-                    // line heads never run off-screen); `top = pad - scroll_y` does
-                    // the same vertically. Panning is just sliding that origin.
-                    div().flex_1().min_h_0().overflow_hidden().relative().child(
-                        div()
-                            .absolute()
-                            .top(px(pad - scroll_y))
-                            .left(px(pad + center_x - scroll_x))
-                            .flex()
-                            .flex_col()
-                            .child(body),
-                    ),
+                    // margins) pins the vertical origin deterministically:
+                    // `top = pad + v_offset - scroll_y`. `v_offset` centres a short
+                    // read (slack split top/bottom); once the read overflows it's 0
+                    // and the wheel pans `scroll_y` from the top. The fixed-width
+                    // frame is centred horizontally at `content_left`. A press here
+                    // starts a click-drag text selection (mapped back to a source
+                    // cell through the warp); the trailing probe canvas captures this
+                    // box's exact on-screen rect so the hit-test stays curve-accurate.
+                    div()
+                        .flex_1()
+                        .min_h_0()
+                        .overflow_hidden()
+                        .relative()
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|ws, ev: &MouseDownEvent, _w, cx| {
+                                cx.stop_propagation(); // don't let the panel/scrim close
+                                match ws.focus_cell_at(ev.position) {
+                                    Some(cell) => {
+                                        ws.focus_sel = Some((cell, cell));
+                                        ws.focus_sel_drag = true;
+                                    }
+                                    None => ws.focus_sel = None,
+                                }
+                                cx.notify();
+                            }),
+                        )
+                        .child(
+                            div()
+                                .absolute()
+                                .top(px(pad + v_offset - scroll_y))
+                                .left(px(content_left))
+                                .flex()
+                                .flex_col()
+                                .child(body),
+                        )
+                        .child(
+                            div().absolute().inset_0().child(
+                                gpui::canvas(
+                                    {
+                                        let store = self.focus_body_bounds.clone();
+                                        move |bounds, _window, _cx| {
+                                            *store.lock().unwrap() = Some(bounds);
+                                        }
+                                    },
+                                    |_, _, _, _| {},
+                                )
+                                .size_full(),
+                            ),
+                        ),
                 )
                 // Measure the panel's exact on-screen box (physical px) and arm
                 // the FOCUS backdrop blur: the CRT post-pass frosts everything
@@ -8323,10 +8557,24 @@ impl Render for Workspace {
                                     12.0 * sf,              // corner radius — matches rounded(12)
                                 );
                                 if inherit {
-                                    // crawl stays identity: the body already
-                                    // centres crawl rows for readable mirroring.
+                                    // Warp ONLY the reading area, never the header
+                                    // chrome. The slider + "Inherit theme" toggle are
+                                    // gpui hit-boxes at their flat layout positions, so
+                                    // bending them with the glass makes their clicks
+                                    // land off-target (you have to aim well above the
+                                    // control). Insetting the tube's top past the
+                                    // header keeps the chrome flat + honest — the same
+                                    // rule the per-pane tubes follow — while the body
+                                    // still curves. crawl stays identity: the body
+                                    // already centres crawl rows for readable mirroring.
+                                    let body_rect = [
+                                        rect[0],
+                                        rect[1] + hdr_h * sf,
+                                        rect[2],
+                                        (rect[3] - hdr_h * sf).max(1.0),
+                                    ];
                                     crate::warp::register_focus_tube(
-                                        rect,
+                                        body_rect,
                                         glare,
                                         k1,
                                         k2,
@@ -8363,36 +8611,16 @@ impl Render for Workspace {
                         MouseButton::Left,
                         cx.listener(|ws, _: &MouseDownEvent, _w, cx| ws.close_focus_read(cx)),
                     )
-                    // A zoomed-up mirror overflows the panel; the wheel pans it so
-                    // the off-screen rows/columns are reachable. Plain wheel pans
-                    // vertically; SHIFT+wheel (and a trackpad's native x delta) pans
-                    // horizontally so a huge read doesn't run its line heads off the
-                    // side. At an edge (or when it already fits) the wheel falls
-                    // through to the read pane's scrollback — the wheel is never lost.
+                    // The reader wraps, so it only ever overflows VERTICALLY; the
+                    // wheel pans it so the off-screen rows are reachable. There is no
+                    // horizontal axis to pan. At the top/bottom edge (or when the read
+                    // already fits) the wheel falls through to the read pane's own
+                    // scrollback — the wheel is never lost.
                     .on_scroll_wheel(cx.listener(|ws, ev: &ScrollWheelEvent, _w, cx| {
-                        let (dx_raw, dy) = match ev.delta {
-                            gpui::ScrollDelta::Lines(l) => {
-                                (l.x * ws.focus_line_h, l.y * ws.focus_line_h)
-                            }
-                            gpui::ScrollDelta::Pixels(p) => (f32::from(p.x), f32::from(p.y)),
+                        let dy = match ev.delta {
+                            gpui::ScrollDelta::Lines(l) => l.y * ws.focus_line_h,
+                            gpui::ScrollDelta::Pixels(p) => f32::from(p.y),
                         };
-                        // Shift turns the vertical wheel into horizontal pan (mouse
-                        // users); a trackpad's own x delta drives it directly too.
-                        let shift = ev.modifiers.shift;
-                        let dx = if shift { dy } else { dx_raw };
-                        if ws.focus_overflow_x > 0.0 && (shift || dx.abs() > f32::EPSILON) {
-                            let next = (ws.focus_scroll_x - dx).clamp(0.0, ws.focus_overflow_x);
-                            if (next - ws.focus_scroll_x).abs() > f32::EPSILON {
-                                ws.focus_scroll_x = next;
-                                cx.notify();
-                                return;
-                            }
-                            // shift = an explicit horizontal gesture: at the L/R edge
-                            // it stops here rather than scrolling the terminal.
-                            if shift {
-                                return;
-                            }
-                        }
                         if ws.focus_overflow > 0.0 {
                             let next = (ws.focus_scroll_y - dy).clamp(0.0, ws.focus_overflow);
                             if (next - ws.focus_scroll_y).abs() > f32::EPSILON {

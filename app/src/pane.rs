@@ -439,7 +439,7 @@ fn open_with_system(target: &str) {
 /// rect-local space. The shader is a *gather*, so hit-testing applies the SAME
 /// forward map (no inverse) to land a click on the exact cell shown under it.
 /// `f == 1` when curvature is zero, so this is the identity for a flat pane.
-fn warp_screen_to_content(sx: f32, sy: f32, k1: f32, k2: f32) -> (f32, f32) {
+pub(crate) fn warp_screen_to_content(sx: f32, sy: f32, k1: f32, k2: f32) -> (f32, f32) {
     let cu = sx - 0.5;
     let cv = sy - 0.5;
     let r2 = cu * cu + cv * cv;
@@ -3184,6 +3184,168 @@ pub(crate) fn crawl_centered_runs(
     Some((text[..keep].to_string(), cut))
 }
 
+/// One on-screen row of the wrapped FOCUS reader.
+///
+/// The reader NEVER scrolls sideways: every source grid row is soft-wrapped to
+/// the panel's glyph width at the current zoom, so a long line stacks vertically
+/// instead of running off the edge. Each `VisualRow` carries the styled slice to
+/// paint plus the source coordinates it came from — `src_row` indexes the
+/// mirror's grid rows and `src_col0` is the column in that row where this visual
+/// row's first glyph sits — so a click on a wrapped row maps back to a real cell
+/// for selection + copy.
+pub struct VisualRow {
+    pub text: String,
+    pub runs: Vec<TextRun>,
+    pub src_row: usize,
+    pub src_col0: usize,
+    /// Glyph count painted on this visual row (for hit-clamping a click).
+    pub cols: usize,
+}
+
+/// Slice the styled runs covering bytes `[start, end)` out of `runs`, clamping the
+/// two boundary runs. Mirrors the clamp idiom in [`crawl_centered_runs`].
+fn slice_runs(runs: &[TextRun], start: usize, end: usize) -> Vec<TextRun> {
+    let mut out = Vec::new();
+    let mut acc = 0usize;
+    for r in runs {
+        let (r0, r1) = (acc, acc + r.len);
+        acc = r1;
+        if r1 <= start {
+            continue;
+        }
+        if r0 >= end {
+            break;
+        }
+        let (s, e) = (r0.max(start), r1.min(end));
+        if e > s {
+            let mut nr = r.clone();
+            nr.len = e - s;
+            out.push(nr);
+        }
+    }
+    out
+}
+
+/// Soft-wrap one source grid row to at most `fit_cols` glyph columns, breaking at
+/// the last space inside the window and hard-breaking an over-long token, so the
+/// reader can never overflow horizontally. Trailing blank cells are trimmed; the
+/// break space between wrapped rows is swallowed so a continuation never starts
+/// with a stray space. A blank source row yields one empty visual row so
+/// paragraph spacing survives. Pushes the resulting rows onto `out`.
+fn wrap_source_row(
+    src_row: usize,
+    text: &str,
+    runs: &[TextRun],
+    fit_cols: usize,
+    out: &mut Vec<VisualRow>,
+) {
+    let fit_cols = fit_cols.max(1);
+    let keep = text.trim_end_matches(' ').len();
+    let chars: Vec<(usize, char)> = text[..keep].char_indices().collect();
+    let n = chars.len();
+    if n == 0 {
+        out.push(VisualRow {
+            text: String::new(),
+            runs: Vec::new(),
+            src_row,
+            src_col0: 0,
+            cols: 0,
+        });
+        return;
+    }
+    let mut i = 0usize;
+    while i < n {
+        let mut end = (i + fit_cols).min(n);
+        // Prefer a word boundary: break before the last space inside the window
+        // (keeps words whole). With no space the hard cap stands, so an over-long
+        // token still breaks at exactly `fit_cols` and never spills off the edge.
+        if end < n {
+            if let Some(sp) = (i + 1..=end).rev().find(|&k| chars[k].1 == ' ') {
+                end = sp;
+            }
+        }
+        let byte_start = chars[i].0;
+        let byte_end = if end < n { chars[end].0 } else { keep };
+        out.push(VisualRow {
+            text: text[byte_start..byte_end].to_string(),
+            runs: slice_runs(runs, byte_start, byte_end),
+            src_row,
+            src_col0: i,
+            cols: end - i,
+        });
+        i = end;
+        while i < n && chars[i].1 == ' ' {
+            i += 1; // swallow the break space(s) so the next row's head is a glyph
+        }
+    }
+}
+
+/// Soft-wrap every mirror row to `fit_cols` glyph columns for the FOCUS reader.
+/// The result is the exact set of on-screen rows, in order — so its length × the
+/// line height is the precise content height (no measuring), and `(src_row,
+/// src_col0)` lets a click on any wrapped row resolve to a real source cell.
+pub fn wrap_focus_lines(lines: &[(String, Vec<TextRun>)], fit_cols: usize) -> Vec<VisualRow> {
+    let mut out = Vec::new();
+    for (r, (text, runs)) in lines.iter().enumerate() {
+        wrap_source_row(r, text, runs, fit_cols, &mut out);
+    }
+    out
+}
+
+/// Paint a selection background over glyph columns `[from, to)` of a wrapped
+/// row's styled runs, splitting the two boundary runs so ONLY the selected glyphs
+/// are tinted (the surrounding text keeps its own styling). `from`/`to` are char
+/// offsets into `text`. Used by the FOCUS reader to draw a click-drag selection.
+pub fn highlight_runs(
+    text: &str,
+    runs: &[TextRun],
+    from: usize,
+    to: usize,
+    bg: Hsla,
+) -> Vec<TextRun> {
+    if from >= to {
+        return runs.to_vec();
+    }
+    // char offset → byte offset (clamped to the string end past the last glyph)
+    let byte_of = |c: usize| {
+        text.char_indices()
+            .nth(c)
+            .map(|(b, _)| b)
+            .unwrap_or(text.len())
+    };
+    let (fb, tb) = (byte_of(from), byte_of(to));
+    let mut out = Vec::with_capacity(runs.len() + 2);
+    let mut acc = 0usize;
+    for r in runs {
+        let (r0, r1) = (acc, acc + r.len);
+        acc = r1;
+        // Split this run at the selection edges that fall inside it, then tint the
+        // piece that lies within [fb, tb).
+        let mut cuts = vec![r0, r1];
+        if fb > r0 && fb < r1 {
+            cuts.push(fb);
+        }
+        if tb > r0 && tb < r1 {
+            cuts.push(tb);
+        }
+        cuts.sort_unstable();
+        cuts.dedup();
+        for w in cuts.windows(2) {
+            let (s, e) = (w[0], w[1]);
+            if e <= s {
+                continue;
+            }
+            let mut nr = r.clone();
+            nr.len = e - s;
+            if s >= fb && e <= tb {
+                nr.background_color = Some(bg);
+            }
+            out.push(nr);
+        }
+    }
+    out
+}
+
 /// gpui Keystroke → PTY bytes.
 fn keystroke_bytes(ks: &Keystroke) -> Option<Vec<u8>> {
     let m = &ks.modifiers;
@@ -4501,6 +4663,89 @@ impl Render for TerminalView {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A single styled run of `len` bytes (style irrelevant to wrap geometry).
+    fn run(len: usize) -> TextRun {
+        TextRun {
+            len,
+            font: font("monospace"),
+            color: Hsla {
+                h: 0.,
+                s: 0.,
+                l: 0.,
+                a: 1.,
+            },
+            background_color: None,
+            underline: None,
+            strikethrough: None,
+        }
+    }
+
+    #[test]
+    fn wrap_breaks_at_words_and_trims_trailing_blanks() {
+        // trailing grid blanks are trimmed; a line that fits stays one row
+        let lines = vec![("abcdef     ".to_string(), vec![run(11)])];
+        let rows = wrap_focus_lines(&lines, 10);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].text, "abcdef");
+        assert_eq!((rows[0].src_row, rows[0].src_col0, rows[0].cols), (0, 0, 6));
+
+        // word-boundary wrap: the break space is swallowed, not carried over
+        let lines = vec![("ab cd ef".to_string(), vec![run(8)])];
+        let rows = wrap_focus_lines(&lines, 4);
+        let got: Vec<(&str, usize)> = rows.iter().map(|r| (r.text.as_str(), r.src_col0)).collect();
+        assert_eq!(got, vec![("ab", 0), ("cd", 3), ("ef", 6)]);
+    }
+
+    #[test]
+    fn wrap_hard_breaks_long_tokens_and_never_overflows() {
+        // a single unbreakable token longer than the width splits at the cap, so a
+        // wrapped row can NEVER be wider than fit_cols (the reader never scrolls right)
+        let fit = 5usize;
+        let lines = vec![("0123456789abc".to_string(), vec![run(13)])];
+        let rows = wrap_focus_lines(&lines, fit);
+        assert_eq!(
+            rows.iter().map(|r| r.text.as_str()).collect::<Vec<_>>(),
+            vec!["01234", "56789", "abc"]
+        );
+        assert!(
+            rows.iter().all(|r| r.cols <= fit),
+            "no row exceeds fit_cols"
+        );
+        // src columns are contiguous so a click on any row maps to the right cell
+        assert_eq!(
+            rows.iter().map(|r| r.src_col0).collect::<Vec<_>>(),
+            vec![0, 5, 10]
+        );
+
+        // a blank source row survives as one empty visual row (paragraph spacing)
+        let rows = wrap_focus_lines(&[("   ".to_string(), vec![run(3)])], 8);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].cols, 0);
+    }
+
+    #[test]
+    fn highlight_tints_only_the_selected_span() {
+        // one 5-byte run "hello"; select glyphs [1,3) → three runs, middle tinted
+        let bg = Hsla {
+            h: 0.5,
+            s: 0.5,
+            l: 0.5,
+            a: 0.3,
+        };
+        let out = highlight_runs("hello", &[run(5)], 1, 3, bg);
+        assert_eq!(out.iter().map(|r| r.len).collect::<Vec<_>>(), vec![1, 2, 2]);
+        assert_eq!(
+            out.iter()
+                .map(|r| r.background_color.is_some())
+                .collect::<Vec<_>>(),
+            vec![false, true, false]
+        );
+        // an empty selection is a no-op (returns the runs unchanged)
+        let out = highlight_runs("hello", &[run(5)], 2, 2, bg);
+        assert_eq!(out.len(), 1);
+        assert!(out[0].background_color.is_none());
+    }
 
     #[test]
     fn fuzzy_match_scores_ranks_and_locates() {
