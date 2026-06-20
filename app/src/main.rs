@@ -6368,12 +6368,18 @@ impl Render for Workspace {
                         ),
                 );
             }
+            let t = self.lang.strings();
             let mut color_row = div().flex().flex_row().gap_2();
             for mode in theme::ColorMode::ALL {
                 let active = cur.color == mode;
                 let cur_c = cur.clone();
-                color_row = color_row.child(
-                    color_mode_btn(&th, mode.icon(), mode.caption(), active).on_mouse_down(
+                let cap = match mode {
+                    theme::ColorMode::Default => t.cm_ansi,
+                    theme::ColorMode::Monochrome => t.cm_mono,
+                    theme::ColorMode::OnTheme => t.cm_theme,
+                };
+                color_row =
+                    color_row.child(color_mode_btn(&th, mode.icon(), cap, active).on_mouse_down(
                         MouseButton::Left,
                         cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
                             cx.stop_propagation();
@@ -6385,8 +6391,7 @@ impl Render for Workspace {
                                 cx,
                             );
                         }),
-                    ),
-                );
+                    ));
             }
             // SYNTAX scheme: off, or one of the highlight grammars (code / agentic
             // / logs / markdown). On = recolour default-fg text by the scheme's
@@ -6397,7 +6402,7 @@ impl Render for Workspace {
                 let cur_c = cur.clone();
                 let active = !cur.syntax;
                 syntax_row =
-                    syntax_row.child(color_mode_btn(&th, "○", "off", active).on_mouse_down(
+                    syntax_row.child(color_mode_btn(&th, "○", t.sc_off, active).on_mouse_down(
                         MouseButton::Left,
                         cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
                             cx.stop_propagation();
@@ -6414,8 +6419,14 @@ impl Render for Workspace {
             for scheme in theme::SyntaxScheme::ALL {
                 let active = cur.syntax && cur.syntax_scheme == scheme;
                 let cur_c = cur.clone();
+                let cap = match scheme {
+                    theme::SyntaxScheme::Code => t.sc_code,
+                    theme::SyntaxScheme::Agentic => t.sc_agentic,
+                    theme::SyntaxScheme::Logs => t.sc_logs,
+                    theme::SyntaxScheme::Markdown => t.sc_mark,
+                };
                 syntax_row = syntax_row.child(
-                    color_mode_btn(&th, scheme.icon(), scheme.caption(), active).on_mouse_down(
+                    color_mode_btn(&th, scheme.icon(), cap, active).on_mouse_down(
                         MouseButton::Left,
                         cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
                             cx.stop_propagation();
@@ -6533,28 +6544,28 @@ impl Render for Workspace {
                     div()
                         .text_size(px(8.5))
                         .text_color(th.text.alpha(0.45))
-                        .child(if is_pane { "THIS PANE" } else { "OUTER" }),
+                        .child(if is_pane { t.scope_pane } else { t.scope_outer }),
                 )
-                .child(label("THEME"))
+                .child(label(t.t_theme))
                 .child(theme_row)
-                .child(label("WHEEL · drag a pip out · ◉ seed T text C comp"))
+                .child(label(t.t_wheel))
                 .child(div().flex().justify_center().py_1().child(wheel))
                 .child(div().flex().justify_center().child(lbar))
                 .child(div().flex().justify_center().pt_1().child(pick_row))
                 .child(seed_row)
-                .child(label("PROGRAM COLOUR"))
+                .child(label(t.t_program))
                 .child(color_row)
-                .child(label("SYNTAX"))
+                .child(label(t.t_syntax))
                 .child(syntax_row);
             if is_pane {
                 // Per-group toggle: on = this pane's theme follows the outer scope
                 // live; off = it keeps its own retained theme. Non-destructive.
                 let lbl = if following {
-                    "◉ follow outer"
+                    format!("◉ {}", t.follow_outer)
                 } else {
-                    "◯ follow outer"
+                    format!("◯ {}", t.follow_outer)
                 };
-                controls = controls.child(Self::bezel_btn(&th, lbl, following).on_mouse_down(
+                controls = controls.child(Self::bezel_btn(&th, &lbl, following).on_mouse_down(
                     MouseButton::Left,
                     cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
                         cx.stop_propagation();
