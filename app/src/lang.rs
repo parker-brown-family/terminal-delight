@@ -248,6 +248,9 @@ pub struct Strings {
     pub thm_hacker: &'static str,
     pub thm_gamba: &'static str,
     pub thm_custom: &'static str,
+    // ── feature names: localized per Parker's note (👓 lens/loupe, 🎰 slot) ──
+    pub focus_name: &'static str,
+    pub gamba_name: &'static str,
 }
 
 /// English — the source of truth. Strings match the original inline literals.
@@ -406,6 +409,8 @@ pub const EN: Strings = Strings {
     thm_hacker: "hacker",
     thm_gamba: "gamba",
     thm_custom: "custom",
+    focus_name: "FOCUS",
+    gamba_name: "GAMBA",
 };
 
 /// Español.
@@ -450,9 +455,9 @@ pub const ES: Strings = Strings {
     warp: "Curva el cristal (0 = plano → pecera)",
     jump_msg: "Salta a tu mensaje anterior / siguiente",
     nav_msg: "Igual — navega tus propios mensajes",
-    focus: "FOCUS — refleja este panel en grande",
+    focus: "LENTE — refleja este panel en grande",
     focus_inherit: "El lector se curva y brilla como su panel",
-    pan_focus: "Desplaza una lectura FOCUS ampliada abajo / a los lados",
+    pan_focus: "Desplaza una lectura LENTE ampliada abajo / a los lados",
     input_colour: "Tus turnos resaltan (pip 👤 de la rueda)",
     bell: "El panel muestra ● listo + un sonido por agente",
     mcp: "MCP — superficie de observación de agentes, solo lectura",
@@ -509,7 +514,7 @@ pub const ES: Strings = Strings {
     k_text_size_key: "A──A · Ctrl+rueda",
     k_warp_dial: "dial de curvatura",
     k_pane_header: "(cabecera del panel)",
-    k_focus_inherit_key: "FOCUS · Heredar tema",
+    k_focus_inherit_key: "LENTE · Heredar tema",
     k_wheel_key: "rueda / Mayús+rueda",
     k_input_colour: "color de tu entrada",
     k_bell_finish: "campana al terminar",
@@ -562,8 +567,10 @@ pub const ES: Strings = Strings {
     thm_field: "campo",
     thm_tactical: "táctico",
     thm_hacker: "hacker",
-    thm_gamba: "gamba",
+    thm_gamba: "tragaperras",
     thm_custom: "personalizado",
+    focus_name: "LENTE",
+    gamba_name: "TRAGAPERRAS",
 };
 
 /// Deutsch.
@@ -608,9 +615,9 @@ pub const DE: Strings = Strings {
     warp: "Das Glas wölben (0 = flach → Fischglas)",
     jump_msg: "Zur vorherigen / nächsten Nachricht springen",
     nav_msg: "Dasselbe — durch eigene Nachrichten navigieren",
-    focus: "FOCUS — dieses Panel groß spiegeln",
+    focus: "LUPE — dieses Panel groß spiegeln",
     focus_inherit: "Der Leser wölbt und glänzt wie sein Panel",
-    pan_focus: "Eine gezoomte FOCUS-Ansicht nach unten / seitlich schwenken",
+    pan_focus: "Eine gezoomte LUPE-Ansicht nach unten / seitlich schwenken",
     input_colour: "Deine Beiträge stechen hervor (👤-Rad-Pip)",
     bell: "Panel zeigt ● fertig + einen Ton pro Agent",
     mcp: "MCP — schreibgeschützte Agenten-Beobachtung",
@@ -667,7 +674,7 @@ pub const DE: Strings = Strings {
     k_text_size_key: "A──A · Strg+Rad",
     k_warp_dial: "Wölbungsregler",
     k_pane_header: "(Panel-Kopf)",
-    k_focus_inherit_key: "FOCUS · Theme erben",
+    k_focus_inherit_key: "LUPE · Theme erben",
     k_wheel_key: "Rad / Umschalt+Rad",
     k_input_colour: "Farbe deiner Eingabe",
     k_bell_finish: "Glocke bei Fertig",
@@ -720,8 +727,10 @@ pub const DE: Strings = Strings {
     thm_field: "Feld",
     thm_tactical: "taktisch",
     thm_hacker: "Hacker",
-    thm_gamba: "gamba",
+    thm_gamba: "Slots",
     thm_custom: "eigenes",
+    focus_name: "LUPE",
+    gamba_name: "SLOTS",
 };
 
 /// 中文 (简体).
@@ -766,9 +775,9 @@ pub const ZH: Strings = Strings {
     warp: "弯曲屏幕（0 = 平面 → 鱼缸）",
     jump_msg: "跳到你的上一条 / 下一条消息",
     nav_msg: "同上——浏览你自己的消息",
-    focus: "FOCUS——放大镜像此面板",
+    focus: "放大镜——放大镜像此面板",
     focus_inherit: "阅读器像其面板一样弯曲并泛光",
-    pan_focus: "平移放大的 FOCUS 阅读：向下 / 左右",
+    pan_focus: "平移放大的 放大镜 阅读：向下 / 左右",
     input_colour: "你的发言更突出（👤 色环标记）",
     bell: "面板显示 ● 完成 + 每个智能体的提示音",
     mcp: "MCP——只读的智能体观察面",
@@ -825,7 +834,7 @@ pub const ZH: Strings = Strings {
     k_text_size_key: "A──A · Ctrl+滚轮",
     k_warp_dial: "弯曲旋钮",
     k_pane_header: "（面板标题栏）",
-    k_focus_inherit_key: "FOCUS · 继承主题",
+    k_focus_inherit_key: "放大镜 · 继承主题",
     k_wheel_key: "滚轮 / Shift+滚轮",
     k_input_colour: "你的输入颜色",
     k_bell_finish: "完成时响铃",
@@ -878,8 +887,10 @@ pub const ZH: Strings = Strings {
     thm_field: "野战",
     thm_tactical: "战术",
     thm_hacker: "黑客",
-    thm_gamba: "gamba",
+    thm_gamba: "老虎机",
     thm_custom: "自定义",
+    focus_name: "放大镜",
+    gamba_name: "老虎机",
 };
 
 /// Français.
@@ -924,9 +935,9 @@ pub const FR: Strings = Strings {
     warp: "Courber le verre (0 = plat → bocal)",
     jump_msg: "Sauter à votre message précédent / suivant",
     nav_msg: "Pareil — parcourir vos propres messages",
-    focus: "FOCUS — refléter ce volet en grand",
+    focus: "LOUPE — refléter ce volet en grand",
     focus_inherit: "Le lecteur se courbe et brille comme son volet",
-    pan_focus: "Faire glisser une lecture FOCUS zoomée bas / côtés",
+    pan_focus: "Faire glisser une lecture LOUPE zoomée bas / côtés",
     input_colour: "Vos tours ressortent (pastille 👤 de la roue)",
     bell: "Le volet affiche ● terminé + un son par agent",
     mcp: "MCP — surface d'observation des agents, lecture seule",
@@ -983,7 +994,7 @@ pub const FR: Strings = Strings {
     k_text_size_key: "A──A · Ctrl+molette",
     k_warp_dial: "molette de courbure",
     k_pane_header: "(en-tête du volet)",
-    k_focus_inherit_key: "FOCUS · Hériter le thème",
+    k_focus_inherit_key: "LOUPE · Hériter le thème",
     k_wheel_key: "molette / Maj+molette",
     k_input_colour: "couleur de votre saisie",
     k_bell_finish: "cloche à la fin",
@@ -1036,8 +1047,10 @@ pub const FR: Strings = Strings {
     thm_field: "champ",
     thm_tactical: "tactique",
     thm_hacker: "hacker",
-    thm_gamba: "gamba",
+    thm_gamba: "casino",
     thm_custom: "perso",
+    focus_name: "LOUPE",
+    gamba_name: "CASINO",
 };
 
 /// Русский.
@@ -1082,9 +1095,9 @@ pub const RU: Strings = Strings {
     warp: "Изогнуть стекло (0 = плоско → аквариум)",
     jump_msg: "Перейти к предыдущему / следующему сообщению",
     nav_msg: "То же — навигация по своим сообщениям",
-    focus: "FOCUS — отразить эту панель крупно",
+    focus: "ЛУПА — отразить эту панель крупно",
     focus_inherit: "Читатель изгибается и бликует как его панель",
-    pan_focus: "Панорама увеличенного FOCUS вниз / в стороны",
+    pan_focus: "Панорама увеличенного ЛУПА вниз / в стороны",
     input_colour: "Ваши реплики выделяются (метка 👤 круга)",
     bell: "Панель показывает ● готово + звук на агента",
     mcp: "MCP — поверхность наблюдения за агентами, только чтение",
@@ -1141,7 +1154,7 @@ pub const RU: Strings = Strings {
     k_text_size_key: "A──A · Ctrl+колесо",
     k_warp_dial: "регулятор изгиба",
     k_pane_header: "(шапка панели)",
-    k_focus_inherit_key: "FOCUS · Наследовать тему",
+    k_focus_inherit_key: "ЛУПА · Наследовать тему",
     k_wheel_key: "колесо / Shift+колесо",
     k_input_colour: "цвет вашего ввода",
     k_bell_finish: "звонок при завершении",
@@ -1194,8 +1207,10 @@ pub const RU: Strings = Strings {
     thm_field: "поле",
     thm_tactical: "тактика",
     thm_hacker: "хакер",
-    thm_gamba: "gamba",
+    thm_gamba: "слоты",
     thm_custom: "своя",
+    focus_name: "ЛУПА",
+    gamba_name: "СЛОТЫ",
 };
 
 /// 日本語.
@@ -1240,9 +1255,9 @@ pub const JA: Strings = Strings {
     warp: "画面を湾曲（0 = 平面 → 金魚鉢）",
     jump_msg: "前 / 次の自分のメッセージへ移動",
     nav_msg: "同上 — 自分のメッセージを移動",
-    focus: "FOCUS — このペインを大きくミラー",
+    focus: "ルーペ — このペインを大きくミラー",
     focus_inherit: "リーダーがペインのように湾曲して光る",
-    pan_focus: "拡大した FOCUS 表示を下 / 左右にパン",
+    pan_focus: "拡大した ルーペ 表示を下 / 左右にパン",
     input_colour: "あなたの発言が目立つ（👤 ホイールのピップ）",
     bell: "ペインに ● 完了 + エージェントごとの音",
     mcp: "MCP — 読み取り専用のエージェント監視面",
@@ -1299,7 +1314,7 @@ pub const JA: Strings = Strings {
     k_text_size_key: "A──A · Ctrl+ホイール",
     k_warp_dial: "湾曲ダイヤル",
     k_pane_header: "（ペインヘッダー）",
-    k_focus_inherit_key: "FOCUS · テーマを継承",
+    k_focus_inherit_key: "ルーペ · テーマを継承",
     k_wheel_key: "ホイール / Shift+ホイール",
     k_input_colour: "あなたの入力の色",
     k_bell_finish: "完了時にベル",
@@ -1352,8 +1367,10 @@ pub const JA: Strings = Strings {
     thm_field: "フィールド",
     thm_tactical: "戦術",
     thm_hacker: "ハッカー",
-    thm_gamba: "gamba",
+    thm_gamba: "スロット",
     thm_custom: "カスタム",
+    focus_name: "ルーペ",
+    gamba_name: "スロット",
 };
 
 /// 한국어.
@@ -1398,9 +1415,9 @@ pub const KO: Strings = Strings {
     warp: "화면 휘기 (0 = 평면 → 어항)",
     jump_msg: "이전 / 다음 내 메시지로 이동",
     nav_msg: "동일 — 내 메시지 탐색",
-    focus: "FOCUS — 이 창을 크게 미러링",
+    focus: "돋보기 — 이 창을 크게 미러링",
     focus_inherit: "리더가 창처럼 휘고 빛남",
-    pan_focus: "확대된 FOCUS 보기를 아래 / 좌우로 이동",
+    pan_focus: "확대된 돋보기 보기를 아래 / 좌우로 이동",
     input_colour: "당신의 차례가 돋보임 (👤 휠 핍)",
     bell: "창에 ● 완료 + 에이전트별 소리 표시",
     mcp: "MCP — 읽기 전용 에이전트 관찰 면",
@@ -1457,7 +1474,7 @@ pub const KO: Strings = Strings {
     k_text_size_key: "A──A · Ctrl+휠",
     k_warp_dial: "곡면 다이얼",
     k_pane_header: "(창 헤더)",
-    k_focus_inherit_key: "FOCUS · 테마 상속",
+    k_focus_inherit_key: "돋보기 · 테마 상속",
     k_wheel_key: "휠 / Shift+휠",
     k_input_colour: "당신의 입력 색",
     k_bell_finish: "완료 시 벨",
@@ -1510,8 +1527,10 @@ pub const KO: Strings = Strings {
     thm_field: "필드",
     thm_tactical: "전술",
     thm_hacker: "해커",
-    thm_gamba: "gamba",
+    thm_gamba: "슬롯",
     thm_custom: "커스텀",
+    focus_name: "돋보기",
+    gamba_name: "슬롯",
 };
 
 /// हिन्दी.
@@ -1557,9 +1576,9 @@ pub const HI: Strings = Strings {
     warp: "स्क्रीन मोड़ें (0 = सपाट → मछली का कटोरा)",
     jump_msg: "अपने पिछले / अगले संदेश पर जाएँ",
     nav_msg: "वही — अपने संदेशों में नेविगेट करें",
-    focus: "FOCUS — इस पेन को बड़ा मिरर करें",
+    focus: "लेंस — इस पेन को बड़ा मिरर करें",
     focus_inherit: "रीडर अपने पेन की तरह मुड़ता और चमकता है",
-    pan_focus: "ज़ूम किए FOCUS को नीचे / बग़ल में पैन करें",
+    pan_focus: "ज़ूम किए लेंस को नीचे / बग़ल में पैन करें",
     input_colour: "आपकी बारी अलग दिखती है (👤 व्हील पिप)",
     bell: "पेन ● पूर्ण + प्रति-एजेंट ध्वनि दिखाता है",
     mcp: "MCP — केवल-पढ़ने वाली एजेंट निगरानी सतह",
@@ -1616,7 +1635,7 @@ pub const HI: Strings = Strings {
     k_text_size_key: "A──A · Ctrl+व्हील",
     k_warp_dial: "मोड़ डायल",
     k_pane_header: "(पेन हेडर)",
-    k_focus_inherit_key: "FOCUS · थीम विरासत",
+    k_focus_inherit_key: "लेंस · थीम विरासत",
     k_wheel_key: "व्हील / Shift+व्हील",
     k_input_colour: "आपके इनपुट का रंग",
     k_bell_finish: "समाप्ति पर घंटी",
@@ -1669,8 +1688,10 @@ pub const HI: Strings = Strings {
     thm_field: "फ़ील्ड",
     thm_tactical: "रणनीतिक",
     thm_hacker: "हैकर",
-    thm_gamba: "gamba",
+    thm_gamba: "स्लॉट",
     thm_custom: "कस्टम",
+    focus_name: "लेंस",
+    gamba_name: "स्लॉट",
 };
 
 #[cfg(test)]
