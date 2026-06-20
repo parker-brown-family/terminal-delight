@@ -6512,7 +6512,7 @@ impl Render for Workspace {
                                     .text_size(px(14. * scale))
                                     .font_weight(gpui::FontWeight::EXTRA_BOLD)
                                     .text_color(th.complement)
-                                    .child("▸ TERMINAL-DELIGHT"),
+                                    .child(format!("▸ {}", s.brand)),
                             )
                             .child(
                                 // Decoration only — stays a dim foreground tint.
@@ -8148,7 +8148,7 @@ impl Render for Workspace {
                                 .text_size(px(13.))
                                 .font_weight(gpui::FontWeight::EXTRA_BOLD)
                                 .text_color(th.complement)
-                                .child(format!("▸ TERMINAL-DELIGHT · {}", s.help)),
+                                .child(format!("▸ {} · {}", s.brand, s.help)),
                         )
                         .child(
                             div()
