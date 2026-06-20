@@ -3101,6 +3101,40 @@ pub fn font_diagnostic() -> Option<String> {
     ))
 }
 
+/// Family names handed to gpui as PER-GLYPH fallbacks so scripts the primary mono
+/// font lacks — CJK ideographs (中文), kana/kanji (日本語), hangul (한글), and
+/// Devanagari (हिन्दी) — render real glyphs instead of tofu (□) boxes. gpui's
+/// cosmic-text system tries these in order for any glyph missing from the grid
+/// font; the Latin path is untouched (a fallback only fires on a miss, so the
+/// default look never changes). Ordered mono-first to keep grid metrics closest.
+const SCRIPT_FALLBACKS: &[&str] = &[
+    "Noto Sans Mono CJK SC",
+    "Noto Sans Mono CJK JP",
+    "Noto Sans Mono CJK KR",
+    "Noto Sans CJK SC",
+    "Noto Sans CJK JP",
+    "Noto Sans Devanagari",
+    "Noto Sans Mono",
+];
+
+/// The installed subset of [`SCRIPT_FALLBACKS`], built once into a gpui
+/// `FontFallbacks`. Filtered to what's actually present (the same discipline as
+/// [`resolve_family`]) so we never request an absent family. `None` when the box
+/// has no non-Latin coverage at all — a missing glyph still tofus then, but
+/// nothing regresses. Built lazily, after [`init_font_registry`] has run.
+fn script_fallbacks() -> Option<gpui::FontFallbacks> {
+    static FB: OnceLock<Option<gpui::FontFallbacks>> = OnceLock::new();
+    FB.get_or_init(|| {
+        let present: Vec<String> = SCRIPT_FALLBACKS
+            .iter()
+            .filter(|f| font_available(f))
+            .map(|f| (*f).to_string())
+            .collect();
+        (!present.is_empty()).then(|| gpui::FontFallbacks::from_fonts(present))
+    })
+    .clone()
+}
+
 fn grid_font(th: &Theme, weight: FontWeight) -> Font {
     // Crawl mode swaps the whole grid to the bundled News-Gothic crawl font,
     // italic, for that iconic recede-into-the-distance look. The perspective
@@ -3114,6 +3148,9 @@ fn grid_font(th: &Theme, weight: FontWeight) -> Font {
     };
     let mut f = font(family);
     f.weight = weight;
+    // Per-glyph fallback so CJK / Devanagari content renders real glyphs instead
+    // of tofu boxes; only fires for glyphs the primary mono font is missing.
+    f.fallbacks = script_fallbacks();
     if th.crawl {
         f.style = FontStyle::Italic;
     }
