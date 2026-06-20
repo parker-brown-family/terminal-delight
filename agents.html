@@ -192,7 +192,45 @@
     .roll{ width:100%; margin-left:0; }
     .dock{ flex-wrap:wrap; gap:12px; } .knobs{ margin-left:0; }
     .stand{ display:none; }
+    .term{ width:94vw; height:80vh; }
   }
+
+  /* ===== agent terminal modal — click a row to watch that agent ===== */
+  .row{ cursor:pointer; }
+  .modal{ position:fixed; inset:0; z-index:50; display:none; align-items:center; justify-content:center; padding:28px;
+    background:rgba(2,6,4,.72); backdrop-filter:blur(7px); -webkit-backdrop-filter:blur(7px); }
+  .modal.open{ display:flex; animation:fade .18s ease; }
+  @keyframes fade{ from{opacity:0} to{opacity:1} }
+  .term{ position:relative; width:min(92vw,840px); height:min(80vh,620px); display:flex; flex-direction:column;
+    border-radius:14px; overflow:hidden; background:linear-gradient(#03130b,#020a07);
+    box-shadow:0 0 0 5px #0a0b09, 0 40px 90px -20px #000d, 0 0 70px #000a inset, 0 0 60px -10px var(--spill);
+    animation:rise .22s cubic-bezier(.2,.8,.2,1);
+    filter:brightness(calc(.82 + var(--gi)*.42)); }
+  @keyframes rise{ from{transform:translateY(16px) scale(.985); opacity:.3} to{transform:none; opacity:1} }
+  .term::before{ content:""; position:absolute; inset:0; pointer-events:none; z-index:6;
+    background:repeating-linear-gradient(0deg,#0000 0 2px,#00000026 2px 3px); mix-blend-mode:multiply; opacity:var(--scan); }
+  .term::after{ content:""; position:absolute; inset:0; pointer-events:none; z-index:7; border-radius:14px;
+    box-shadow:0 0 120px 10px #000a inset, 0 0 40px 5px #16ff7e14 inset; }
+  .thead{ display:flex; align-items:center; gap:9px; padding:9px 13px; position:relative; z-index:8;
+    border-bottom:1px solid var(--line); background:#08160e; font-size:11.5px; }
+  .thead .tdot{ width:9px;height:9px;border-radius:50%; box-shadow:0 0 7px currentColor; flex:none; }
+  .thead .ttab{ color:var(--ink); font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .thead .tmeta{ color:var(--dim); white-space:nowrap; }
+  .thead .tstate{ margin-left:auto; font-weight:800; letter-spacing:.04em; flex:none; }
+  .thead .tx{ cursor:pointer; color:var(--dim); padding:0 2px 0 6px; font-size:15px; flex:none; }
+  .thead .tx:hover{ color:var(--phos); }
+  .tbody{ flex:1; overflow:auto; padding:14px 16px 16px; position:relative; z-index:5;
+    font-size:13px; line-height:1.62; white-space:pre-wrap; word-break:break-word; color:var(--ink);
+    text-shadow:0 0 6px #16ff7e22; scrollbar-width:thin; scrollbar-color:#1c5a3a #0000; }
+  .tbody::-webkit-scrollbar{ width:8px; } .tbody::-webkit-scrollbar-thumb{ background:#1c5a3a; border-radius:8px; }
+  .t-h{ color:var(--phos); } .t-hp{ color:#eafff2; font-weight:600; }
+  .t-b{ color:var(--phos-d); } .t-tool{ color:var(--cyan); font-weight:700; } .t-arg{ color:var(--dim); }
+  .t-r{ color:#7fb79a; } .t-a{ color:var(--ink); } .t-mut{ color:var(--dim2); }
+  .t-s{ color:var(--phos); } .t-err{ color:var(--red); font-weight:700; } .t-done{ color:var(--phos); font-weight:700; }
+  .t-blk{ color:var(--amber); font-weight:700; } .t-opt{ color:var(--ink); } .t-optc{ color:var(--phos); }
+  .cur{ display:inline-block; width:.62em; height:1.05em; vertical-align:text-bottom; background:var(--phos);
+    box-shadow:0 0 7px var(--phos); animation:blink 1.05s steps(1) infinite; }
+  @keyframes blink{ 50%{opacity:0} }
 </style></head>
 <body>
   <div class="console">
@@ -238,6 +276,11 @@
     <div class="stand"></div>
   </div>
 
+  <div class="modal" id="modal"><div class="term" id="term">
+    <div class="thead" id="thead"></div>
+    <div class="tbody" id="tbody"></div>
+  </div></div>
+
 <script>
 // ---- tab groups (projects) → colour, mirroring TD's coloured tab-group bands ----
 const GROUPS = {
@@ -280,6 +323,7 @@ let A = [
   {g:'shell', tab:'dev@workstation', model:null, eff:0, state:'shell', prompt:'~/code/aurora-api', t:0, tok:0, sess:0},
   {g:'shell', tab:'build-watch',     model:null, eff:0, state:'shell', prompt:'cargo watch -x build · ~/code/terminal-delight', t:0, tok:0, sess:0},
 ];
+A.forEach((a,i)=>a._id=i);   // stable id → a clicked row maps back to its agent
 
 const STATE = {
   working:{glyph:'▶'}, idle:{glyph:'○'}, blocked:{glyph:'‖'},
@@ -345,7 +389,7 @@ function renderWall(){
       else { me = `<span class="model">${a.model}</span><span class="eff"><span class="gauge"><i style="width:${Math.round(a.eff*100)}%"></i></span>${effWord(a.eff)}</span>`; }
       const pg = shell ? '' : (a.state==='working' ? '<span class="g">✷</span>' : (a.state==='done'?'<span class="g" style="color:var(--phos-d)">✓</span>':(a.state==='blocked'?'<span class="g" style="color:var(--amber)">⏸</span>':(a.state==='error'?'<span class="g" style="color:var(--red)">⚠</span>':'<span class="g" style="color:var(--dim2)">·</span>'))));
       const gerund = a.state==='working' ? `<span style="color:var(--dim)">${GERUNDS[(gerundPhase + a.t) % GERUNDS.length]}… </span>` : '';
-      html += `<div class="row ${cls}" style="--gc:${col2}">`
+      html += `<div class="row ${cls}" data-idx="${a._id}" style="--gc:${col2}">`
         + `<div class="glyph">${st.glyph}</div>`
         + `<div class="kind ${shell?'shell':''}">${shell?'SHELL':'CLAUDE'}</div>`
         + `<div class="mid"><div class="where"><span class="grpname">${shell?'~':a.g}</span><span class="sep">›</span><span class="tab">${a.tab}</span></div>`
@@ -384,6 +428,7 @@ function tick(){
   }
   gerundPhase = (gerundPhase + 1) % GERUNDS.length;
   renderWall();
+  if(openId!=null && A[openId] && A[openId].state==='working') refreshModal();
 }
 
 // keep the wall ALIVE — aim for ~5 working; promote when low, retire when plenty
@@ -401,6 +446,7 @@ function churn(){
     a.state = r<0.55 ? 'done' : r<0.82 ? 'blocked' : 'idle';   // mostly finish, sometimes block/idle
   }
   renderWall();
+  if(openId!=null) refreshModal();   // keep an open terminal consistent if its agent's state changed
 }
 
 // ---- knobs: drag (or wheel) to turn; -135°..+135° — like the /tv kiosk ----
@@ -423,6 +469,91 @@ bindKnob(document.getElementById('k-glow'),document.getElementById('v-glow'),'gl
 bindKnob(document.getElementById('k-scan'),document.getElementById('v-scan'),'scan',v=>{
   rs.setProperty('--scan', (v*0.85).toFixed(3));
 });
+
+// ---- click a row → watch that agent in a believable terminal facsimile ----
+// Per-group "stack" so the tool calls read true to the project's language.
+const STACK = {
+  'terminal-delight':{p:'~/code/terminal-delight', dir:'app/src', read:'app/src/pane.rs',          edit:'app/src/pane.rs',        test:'cargo test',    sh:'demo@td'},
+  'aurora-api':      {p:'~/code/aurora-api',        dir:'src',     read:'src/startup.rs',           edit:'src/startup.rs',         test:'cargo test',    sh:'demo@aurora'},
+  'storefront-web':  {p:'~/code/storefront-web',    dir:'src',     read:'src/checkout/Cart.tsx',    edit:'src/checkout/steps.ts',  test:'npm test',      sh:'demo@web'},
+  'ml-pipeline':     {p:'~/code/ml-pipeline',       dir:'pipeline',read:'pipeline/features.py',     edit:'pipeline/features.py',   test:'pytest -q',     sh:'demo@ml'},
+  'docs-site':       {p:'~/code/docs-site',         dir:'docs',    read:'docs/guide.md',            edit:'astro.config.mjs',       test:'npm run build', sh:'demo@docs'},
+  'infra':           {p:'~/code/infra',             dir:'.',       read:'Cargo.toml',               edit:'Cargo.lock',             test:'cargo build',   sh:'demo@infra'},
+  'shell':           {p:'~/code',                   dir:'.',       read:'',                         edit:'',                       test:'',              sh:'dev@workstation'},
+};
+const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+const tool = (t,arg) => `<span class="t-b">●</span> <span class="t-tool">${t}</span>(<span class="t-arg">${esc(arg)}</span>)`;
+const res  = r => `<span class="t-r">  ⎿ ${esc(r)}</span>`;
+const say  = t => `<span class="t-b">●</span> <span class="t-a">${esc(t)}</span>`;
+const CUR  = '<span class="cur"></span>';
+
+// A transcript whose content is consistent with the agent's live state.
+function transcriptFor(a){
+  const s = STACK[a.g] || STACK.shell, L = [];
+  if(a.state==='shell'){
+    L.push(`<span class="t-h">${s.sh} ${a.prompt} $</span> cargo watch -x build`);
+    L.push(`<span class="t-mut">[Running 'cargo build']</span>`);
+    L.push(`<span class="t-mut">   Compiling ${a.g==='shell'?'app':a.g} v0.4.1 (${s.p})</span>`);
+    L.push(`<span class="t-mut">    Finished dev [unoptimized + debuginfo] in 4.2s</span>`);
+    L.push(`<span class="t-h">${s.sh} ${a.prompt} $</span> ${CUR}`);
+    return L.join('\n');
+  }
+  // the human turn (the task), then a few believable steps
+  L.push(`<span class="t-h">❯</span> <span class="t-hp">${esc(a.prompt)}</span>`, '');
+  L.push(say(`I'll start in ${s.dir}/ and work through it.`));
+  L.push(tool('Read', s.read), res(`Read ${120 + (a._id*37)%360} lines`));
+  L.push(tool('Search', `pattern: "${a.tab.split(/[-·]/)[0]}", path: "${s.dir}"`), res(`Found ${2+a._id%7} matches across ${1+a._id%3} files`));
+
+  if(a.state==='working'){
+    L.push(tool('Edit', s.edit), res(`Updated ${s.edit} with ${2+a._id%5} additions and ${a._id%4} removals`), '');
+    L.push(`<span class="t-s">✷ ${GERUNDS[(gerundPhase+a.t)%GERUNDS.length]}… (${mmss(a.t)} · ↓ ${ktok(a.tok)} tokens · still thinking with ${effWord(a.eff)} effort)</span> ${CUR}`);
+  } else if(a.state==='blocked'){
+    L.push(say(`I've drafted the change — this needs your review before I apply it:`));
+    L.push(tool('Edit', s.edit), '');
+    L.push(`<span class="t-a">Do you want to make this edit to <b>${esc(s.edit)}</b>?</span>`);
+    L.push(`<span class="t-optc">❯ 1.</span> <span class="t-opt">Yes</span>`);
+    L.push(`  <span class="t-opt">2. Yes, and don't ask again this session</span>`);
+    L.push(`  <span class="t-opt">3. No, tell Claude what to do differently</span>`, '');
+    L.push(`<span class="t-blk">⏸ blocked — waiting for your response</span> ${CUR}`);
+  } else if(a.state==='error'){
+    L.push(tool('Bash', s.test), '');
+    L.push(`<span class="t-err">✗ API Error (429): rate_limit_exceeded — too many requests.</span>`);
+    L.push(`<span class="t-mut">  Retrying in 38s… (attempt 2/5)</span> ${CUR}`);
+  } else if(a.state==='done'){
+    L.push(tool('Edit', s.edit), res(`+${6+a._id%30} −${a._id%9}`));
+    L.push(tool('Bash', s.test), res(`${8+a._id%20} passed; 0 failed`));
+    L.push(say(`Done — ${a.prompt.charAt(0).toLowerCase()+a.prompt.slice(1)}. All green.`), '');
+    L.push(`<span class="t-done">✓ Done · Σ${ktok(a.sess)} tokens · ${4+a._id%9} tool uses</span>`);
+    L.push(`<span class="t-h">${s.sh} ${s.p} $</span> ${CUR}`);
+  } else { // idle — task queued, no turn running
+    L.push('', `<span class="t-mut">(queued — no turn running yet)</span>`);
+    L.push(`<span class="t-h">${s.sh} ${s.p} $</span> ${CUR}`);
+  }
+  return L.join('\n');
+}
+
+const modal = document.getElementById('modal'), thead = document.getElementById('thead'), tbody = document.getElementById('tbody');
+let openId = null;
+function openModal(a){
+  openId = a._id;
+  const col = (GROUPS[a.g]||GROUPS.shell).c;
+  const stCls = {working:'c-work',blocked:'c-block',error:'c-err',done:'c-done',idle:'c-idle',shell:'c-idle'}[a.state];
+  const stTxt = {working:'working',blocked:'blocked on you',error:'error',done:'done',idle:'idle',shell:'shell'}[a.state];
+  thead.innerHTML = `<span class="tdot" style="background:${col};color:${col}"></span>`
+    + `<span class="ttab">${a.g==='shell'?'~':a.g} › ${esc(a.tab)}</span>`
+    + `<span class="tmeta">· ${a.model ? esc(a.model)+' · '+effWord(a.eff) : 'shell'}</span>`
+    + `<span class="tstate ${stCls}">${stTxt}</span>`
+    + `<span class="tx" id="tx" title="close (Esc)">✕</span>`;
+  tbody.innerHTML = transcriptFor(a);
+  document.getElementById('tx').onclick = closeModal;
+  modal.classList.add('open');
+  tbody.scrollTop = tbody.scrollHeight;
+}
+function closeModal(){ openId = null; modal.classList.remove('open'); }
+function refreshModal(){ if(openId!=null && A[openId]) openModal(A[openId]); }
+wall.addEventListener('click', e=>{ const row = e.target.closest('.row'); if(row) openModal(A[+row.dataset.idx]); });
+modal.addEventListener('click', e=>{ if(e.target===modal) closeModal(); });
+addEventListener('keydown', e=>{ if(e.key==='Escape') closeModal(); });
 
 render();
 setInterval(tick, 1000);
