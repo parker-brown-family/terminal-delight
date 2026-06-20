@@ -15,6 +15,7 @@ mod crt;
 mod csd;
 mod demo;
 mod gamba;
+mod hud;
 mod lang;
 mod mcp;
 mod mcp_tail;
@@ -7108,6 +7109,10 @@ impl Render for Workspace {
                 let preview = self.mcp_theme_preview;
                 let mut list = div().id("mcp-pane-list").flex().flex_col().gap_1();
                 let mut ri = 0usize;
+                // Agent-wall HUD rollup, accumulated across the pane walk (agents only).
+                let (mut n_work, mut n_block, mut n_err, mut n_done) = (0u32, 0u32, 0u32, 0u32);
+                let mut turn_tok_total = 0u64;
+                let mut sess_tok_total = 0u64;
                 for (ti, tab) in self.tabs.iter().enumerate() {
                     let mut leaves = vec![];
                     tab.root.leaves(&mut leaves);
@@ -7124,6 +7129,21 @@ impl Render for Workspace {
                             .unwrap_or_else(|| p.mode.label().to_string());
                         let rt = p.runtime();
                         let exposed = mcp::should_expose(&self.mcp, is_agent);
+                        // Agent-wall HUD: this pane's live status + session tokens
+                        // (Idle and 0 for shells), rolled up for the header.
+                        let status = p.agent_status();
+                        let sess_tok = p.session_tokens();
+                        if is_agent {
+                            match status.state {
+                                hud::AgentState::Working => n_work += 1,
+                                hud::AgentState::Blocked => n_block += 1,
+                                hud::AgentState::Error => n_err += 1,
+                                hud::AgentState::Finished => n_done += 1,
+                                hud::AgentState::Idle => {}
+                            }
+                            turn_tok_total += status.turn_tokens.unwrap_or(0);
+                            sess_tok_total += sess_tok;
+                        }
                         // the pane's own resolved screen colours, for 🎨 preview mode
                         let pth = p.resolved_theme(cx);
 
@@ -7171,6 +7191,37 @@ impl Render for Workspace {
                             row_text.alpha(0.6)
                         };
                         let hover_border = th.accent.alpha(0.7);
+                        // HUD per-row: state badge colour/glyph + a compact metrics
+                        // line (state · elapsed · turn tokens · Σ session). Agents only.
+                        let badge_col = if is_agent {
+                            match status.state {
+                                hud::AgentState::Working => th.accent,
+                                hud::AgentState::Blocked => hsla(0.11, 0.85, 0.60, 1.),
+                                hud::AgentState::Error => hsla(0., 0.75, 0.60, 1.),
+                                hud::AgentState::Finished => th.complement,
+                                hud::AgentState::Idle => row_text.alpha(0.4),
+                            }
+                        } else {
+                            row_text.alpha(0.25)
+                        };
+                        let badge_glyph = if is_agent {
+                            status.state.badge().to_string()
+                        } else {
+                            String::new()
+                        };
+                        let metrics = if is_agent {
+                            let mut parts = vec![status.state.label().to_string()];
+                            if let Some(e) = &status.elapsed {
+                                parts.push(e.clone());
+                            }
+                            if let Some(tk) = status.turn_tokens {
+                                parts.push(hud::fmt_tokens(tk));
+                            }
+                            parts.push(format!("\u{03a3}{}", hud::fmt_tokens(sess_tok)));
+                            parts.join(" \u{00b7} ")
+                        } else {
+                            String::new()
+                        };
 
                         let mut row = div()
                             .id(SharedString::from(format!("mcp-row-{ri}")))
@@ -7209,6 +7260,13 @@ impl Render for Workspace {
                                 ))
                                 .child(
                                     div()
+                                        .w(px(15.))
+                                        .flex_none()
+                                        .text_color(badge_col)
+                                        .child(badge_glyph),
+                                )
+                                .child(
+                                    div()
                                         .w(px(52.))
                                         .flex_none()
                                         .text_size(px(9.))
@@ -7239,6 +7297,16 @@ impl Render for Workspace {
                                                 .text_color(row_text.alpha(0.55))
                                                 .child(sub),
                                         ),
+                                )
+                                .child(
+                                    div()
+                                        .flex_none()
+                                        .text_size(px(9.5))
+                                        .text_color(badge_col)
+                                        .when(is_agent && status.state.needs_you(), |d| {
+                                            d.font_weight(gpui::FontWeight::BOLD)
+                                        })
+                                        .child(metrics),
                                 ),
                             );
                         ri += 1;
@@ -7256,11 +7324,9 @@ impl Render for Workspace {
                     .overflow_y_scroll();
 
                 let panel = div()
-                    .absolute()
-                    .top(px(36.))
-                    .right(px(70.))
-                    .w(px(360.))
-                    .max_h(px((vp_h - 52.).max(200.)))
+                    .w(gpui::relative(0.66))
+                    .max_w(px(880.))
+                    .max_h(gpui::relative(0.86))
                     .overflow_hidden()
                     .p_3()
                     .rounded_md()
@@ -7292,6 +7358,44 @@ impl Render for Workspace {
                             t.m_read_only
                         }
                     )))
+                    .child(
+                        // ---- the agent-wall scoreboard rollup ----
+                        div()
+                            .flex()
+                            .flex_row()
+                            .flex_wrap()
+                            .items_center()
+                            .gap_3()
+                            .text_size(px(12.))
+                            .child(
+                                div()
+                                    .font_weight(gpui::FontWeight::EXTRA_BOLD)
+                                    .text_color(th.complement)
+                                    .child("AGENT WALL"),
+                            )
+                            .child(div().text_color(th.accent).child(format!("\u{25b6} {n_work}")))
+                            .child(
+                                div()
+                                    .text_color(hsla(0.11, 0.85, 0.60, 1.))
+                                    .child(format!("\u{23f8} {n_block}")),
+                            )
+                            .child(
+                                div()
+                                    .text_color(hsla(0., 0.75, 0.60, 1.))
+                                    .child(format!("\u{2715} {n_err}")),
+                            )
+                            .child(
+                                div()
+                                    .text_color(th.complement.alpha(0.85))
+                                    .child(format!("\u{2713} {n_done}")),
+                            )
+                            .child(div().flex_1().min_w(px(0.)))
+                            .child(div().text_color(th.text.alpha(0.7)).child(format!(
+                                "\u{0394} {} \u{00b7} \u{03a3} {}",
+                                hud::fmt_tokens(turn_tok_total),
+                                hud::fmt_tokens(sess_tok_total)
+                            ))),
+                    )
                     .child(enable_btn)
                     .child(expose_btn)
                     .child(events_btn)
@@ -7307,10 +7411,15 @@ impl Render for Workspace {
                     )
                     .child(label(t.m_transport.to_string()));
 
-                // full-screen scrim: a click anywhere outside closes the panel
+                // full-screen scrim: dim the wall + CENTRE the panel (like the help
+                // modal); a click anywhere outside closes it.
                 div()
                     .absolute()
                     .inset_0()
+                    .bg(th.bg.alpha(0.70))
+                    .flex()
+                    .items_center()
+                    .justify_center()
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(|ws, _: &MouseDownEvent, _w, cx| {

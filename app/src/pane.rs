@@ -1411,6 +1411,14 @@ pub struct TerminalView {
     bell_drag: Option<bool>,
     /// Window-space bounds of the bell trim track, for pip drag math.
     bell_track_bounds: Arc<Mutex<Option<Bounds<Pixels>>>>,
+    /// Agent-wall HUD token accounting (agent panes only). `tokens_banked` sums
+    /// the peak token count of every *completed* turn this session;
+    /// `turn_peak_tokens` is the running peak of the turn in flight;
+    /// `tok_was_working` edge-detects turn end to bank the peak. Fed by
+    /// [`TerminalView::accrue_tokens`], read by the agent-wall HUD.
+    tokens_banked: u64,
+    turn_peak_tokens: u64,
+    tok_was_working: bool,
 }
 
 /// Click on the header's theme icon — the workspace opens the breakout menu.
@@ -1725,6 +1733,10 @@ impl TerminalView {
                     // spinner, then advance the reel stack while it rolls.
                     if view.last_think_scan.elapsed() > std::time::Duration::from_millis(120) {
                         view.last_think_scan = Instant::now();
+                        // Agent-wall HUD: accrue per-turn → session token totals off
+                        // the live status line every tick (independent of the bell's
+                        // scroll-settle gate below, which would otherwise skip it).
+                        view.accrue_tokens();
                         // Scroll-settle debounce: Alt+up/down scrollback navigation
                         // moves the "esc to interrupt" line off-screen and would trip
                         // a false agent-done bell. Only run the thinking-scan once the
@@ -1863,6 +1875,9 @@ impl TerminalView {
             not_thinking_since: None,
             bell_drag: None,
             bell_track_bounds: Arc::new(Mutex::new(None)),
+            tokens_banked: 0,
+            turn_peak_tokens: 0,
+            tok_was_working: false,
         }
     }
 
@@ -1902,6 +1917,69 @@ impl TerminalView {
             }
         }
         false
+    }
+
+    /// Snapshot the live bottom screen as plain-text rows (top→bottom) — the same
+    /// region [`TerminalView::agent_is_thinking`] scans. Feeds the HUD parser.
+    fn live_rows(&self) -> Vec<String> {
+        let term = self.session.term.lock();
+        let grid = term.grid();
+        let rows = grid.screen_lines();
+        let cols = grid.columns();
+        let mut out = Vec::with_capacity(rows);
+        for line in 0..rows as i32 {
+            let row = &grid[Line(line)];
+            let mut s = String::with_capacity(cols);
+            for col in 0..cols {
+                let cell = &row[Column(col)];
+                if cell.flags.contains(Flags::WIDE_CHAR_SPACER) {
+                    continue;
+                }
+                s.push(if cell.c == '\0' { ' ' } else { cell.c });
+            }
+            out.push(s);
+        }
+        out
+    }
+
+    /// Parse this pane's live status line into an [`crate::hud::AgentStatus`] for
+    /// the agent-wall HUD. Non-agent panes read Idle; an otherwise-idle agent with
+    /// an unacknowledged finish bell is promoted to `Finished`.
+    pub fn agent_status(&self) -> crate::hud::AgentStatus {
+        if !self.mode.is_agent() {
+            return crate::hud::AgentStatus::default();
+        }
+        let mut st = crate::hud::parse_status_line(&self.live_rows());
+        if st.state == crate::hud::AgentState::Idle && self.bell {
+            st.state = crate::hud::AgentState::Finished;
+        }
+        st
+    }
+
+    /// Tokens this agent has spent this session: banked completed turns plus the
+    /// running peak of any turn in flight. Zero for non-agent panes.
+    pub fn session_tokens(&self) -> u64 {
+        self.tokens_banked.saturating_add(self.turn_peak_tokens)
+    }
+
+    /// Drive HUD token accounting off the live status line: track the current
+    /// turn's peak token count and, on the working→idle edge, bank it into the
+    /// session total. Called (throttled) from the per-pane effects clock.
+    fn accrue_tokens(&mut self) {
+        if !self.mode.is_agent() {
+            return;
+        }
+        let st = self.agent_status();
+        let working = st.working();
+        if working {
+            if let Some(t) = st.turn_tokens {
+                self.turn_peak_tokens = self.turn_peak_tokens.max(t);
+            }
+        } else if self.tok_was_working {
+            self.tokens_banked = self.tokens_banked.saturating_add(self.turn_peak_tokens);
+            self.turn_peak_tokens = 0;
+        }
+        self.tok_was_working = working;
     }
 
     /// Does this pane have an unacknowledged "agent finished" bell raised? Read by
