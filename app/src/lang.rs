@@ -109,6 +109,8 @@ impl Lang {
 /// Every translatable chrome string, grouped by where it appears. Add a field
 /// here and the compiler forces every language below to supply it.
 pub struct Strings {
+    // ── brand · the app name, translated (shared with the /global kiosk) ──
+    pub brand: &'static str,
     // ── help modal · frame ──
     pub help: &'static str,
     pub shortcuts: &'static str,
@@ -310,6 +312,7 @@ pub fn current() -> Lang {
 
 /// English — the source of truth. Strings match the original inline literals.
 pub const EN: Strings = Strings {
+    brand: "TERMINAL DELIGHT",
     help: "HELP",
     shortcuts: "SHORTCUTS",
     features: "FEATURES",
@@ -482,6 +485,7 @@ pub const EN: Strings = Strings {
 
 /// Español.
 pub const ES: Strings = Strings {
+    brand: "DELEITE TERMINAL",
     help: "AYUDA",
     shortcuts: "ATAJOS",
     features: "FUNCIONES",
@@ -654,6 +658,7 @@ pub const ES: Strings = Strings {
 
 /// Deutsch.
 pub const DE: Strings = Strings {
+    brand: "TERMINALE WONNE",
     help: "HILFE",
     shortcuts: "TASTENKÜRZEL",
     features: "FUNKTIONEN",
@@ -826,6 +831,7 @@ pub const DE: Strings = Strings {
 
 /// 中文 (简体).
 pub const ZH: Strings = Strings {
+    brand: "终端之悦",
     help: "帮助",
     shortcuts: "快捷键",
     features: "功能",
@@ -998,6 +1004,7 @@ pub const ZH: Strings = Strings {
 
 /// Français.
 pub const FR: Strings = Strings {
+    brand: "DÉLICE TERMINAL",
     help: "AIDE",
     shortcuts: "RACCOURCIS",
     features: "FONCTIONS",
@@ -1170,6 +1177,7 @@ pub const FR: Strings = Strings {
 
 /// Русский.
 pub const RU: Strings = Strings {
+    brand: "ТЕРМИНАЛЬНОЕ БЛАЖЕНСТВО",
     help: "СПРАВКА",
     shortcuts: "СОЧЕТАНИЯ КЛАВИШ",
     features: "ВОЗМОЖНОСТИ",
@@ -1342,6 +1350,7 @@ pub const RU: Strings = Strings {
 
 /// 日本語.
 pub const JA: Strings = Strings {
+    brand: "端末の悦び",
     help: "ヘルプ",
     shortcuts: "ショートカット",
     features: "機能",
@@ -1514,6 +1523,7 @@ pub const JA: Strings = Strings {
 
 /// 한국어.
 pub const KO: Strings = Strings {
+    brand: "터미널의 기쁨",
     help: "도움말",
     shortcuts: "단축키",
     features: "기능",
@@ -1686,6 +1696,7 @@ pub const KO: Strings = Strings {
 
 /// हिन्दी.
 pub const HI: Strings = Strings {
+    brand: "टर्मिनल आनंद",
     help: "मदद",
     shortcuts: "शॉर्टकट",
     features: "विशेषताएँ",
