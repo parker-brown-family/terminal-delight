@@ -67,13 +67,6 @@ pub enum Expose {
 }
 
 impl Expose {
-    pub fn label(&self) -> &'static str {
-        match self {
-            Expose::AgentsOnly => "agents only",
-            Expose::All => "all panes",
-        }
-    }
-
     /// Cycle the policy for the panel toggle.
     pub fn next(self) -> Self {
         match self {
