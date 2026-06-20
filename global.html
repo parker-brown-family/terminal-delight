@@ -191,12 +191,14 @@ function drawScene(time){
   // the language: autonym · English name
   x.fillStyle=c.bright; x.font=`600 ${(narrow?16:22)*s*dpr}px ${BRAND}`;
   x.fillText(c.native+'  ·  '+c.eng, cx, narrow?H*0.46:H*0.575);
-  // the product wordmark, lowercase mono phosphor
-  x.fillStyle=c.phos; x.font=`${(narrow?12:15)*s*dpr}px ${MONO}`;
-  x.fillText('terminal-delight', cx, narrow?H*0.55:H*0.65);
-  // etymology, Parker's gloss
-  x.fillStyle=c.dim; x.font=`${(narrow?9:11.5)*s*dpr}px ${UI}`;
-  x.fillText('TERMINAL — '+c.term+' · DELIGHT — '+c.dlght, cx, narrow?H*0.63:H*0.74);
+  // the flavourful translation — the BRIGHT payoff line the brand resolves into
+  // (TERMINAL & DELIGHT stay English, the sub-words translate). This replaces the
+  // old lowercase "terminal-delight" wordmark: the name already sits up top, so
+  // one mention is enough — no triple repeat.
+  x.fillStyle=c.bright; x.shadowColor=c.glow; x.shadowBlur=7*s*dpr;
+  x.font=`${(narrow?12:15.5)*s*dpr}px ${UI}`;
+  x.fillText('TERMINAL — '+c.term+'  ·  DELIGHT — '+c.dlght, cx, narrow?H*0.555:H*0.655);
+  x.shadowBlur=0;
   // buttons (wide: a row; narrow: stacked compact)
   btnRects=[]; const bh=(narrow?38:44)*s*dpr, gap=(narrow?10:14)*s*dpr;
   if(narrow){ const bw=Math.min(W*0.8,340*s*dpr); let by=H*0.70;
