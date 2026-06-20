@@ -7366,26 +7366,26 @@ impl Render for Workspace {
                         row("Ctrl+PgUp / PgDn", s.switch_tabs),
                         row("Ctrl+Shift+PgUp / PgDn", s.move_tab),
                         row("Ctrl+Alt+R / D", s.split),
-                        row("Alt + arrows", s.move_focus),
-                        row("drag a sub-tab", s.drag_subtab),
-                        row("right-click a tab", s.rclick_tab),
+                        row(s.k_alt_arrows, s.move_focus),
+                        row(s.k_drag_subtab, s.drag_subtab),
+                        row(s.k_rclick_tab, s.rclick_tab),
                     ],
                 ))
                 .child(section(
                     s.s_edit,
                     vec![
-                        row("right-click", s.rclick),
+                        row(s.k_rclick, s.rclick),
                         row("Ctrl+Shift+C / V", s.copy_paste),
                         row("Ctrl+X", s.cut),
                         row("Ctrl+F", s.find),
                         row("Ctrl+Shift+F", s.find_all),
-                        row("double / triple-click", s.select_wl),
+                        row(s.k_dbl_click, s.select_wl),
                         row("Shift+Enter", s.newline),
                     ],
                 ))
                 .child(section(
                     s.s_links,
-                    vec![row("Shift- or Ctrl-click", s.open_link)],
+                    vec![row(s.k_shift_ctrl_click, s.open_link)],
                 ));
             let col_b = div()
                 .flex()
@@ -7396,30 +7396,30 @@ impl Render for Workspace {
                 .child(section(
                     s.s_scroll,
                     vec![
-                        row("scroll wheel", s.scroll_hist),
+                        row(s.k_scroll_wheel, s.scroll_hist),
                         row("Ctrl+Shift+K", s.clear_scroll),
                     ],
                 ))
                 .child(section(
                     s.s_look,
                     vec![
-                        row("theme icon (top-right)", s.themes_wheel),
-                        row("⛭ DISPLAY tray", s.display_tray),
-                        row("A──A · Ctrl+wheel", s.text_size),
-                        row("warp dial", s.warp),
+                        row(s.k_theme_icon, s.themes_wheel),
+                        row(&format!("⛭ {}", s.k_display_tray), s.display_tray),
+                        row(s.k_text_size_key, s.text_size),
+                        row(s.k_warp_dial, s.warp),
                     ],
                 ))
                 .child(section(
                     s.s_agents,
                     vec![
                         row("Alt + ↑ / ↓", s.jump_msg),
-                        row("▲ ▼ (pane header)", s.nav_msg),
-                        row("👓 (pane header)", s.focus),
-                        row("FOCUS · Inherit theme", s.focus_inherit),
-                        row("wheel / shift+wheel", s.pan_focus),
-                        row("your input colour", s.input_colour),
-                        row("bell on finish", s.bell),
-                        row("🤖 (mother bar)", s.mcp),
+                        row(&format!("▲ ▼ {}", s.k_pane_header), s.nav_msg),
+                        row(&format!("👓 {}", s.k_pane_header), s.focus),
+                        row(s.k_focus_inherit_key, s.focus_inherit),
+                        row(s.k_wheel_key, s.pan_focus),
+                        row(s.k_input_colour, s.input_colour),
+                        row(s.k_bell_finish, s.bell),
+                        row(&format!("🤖 {}", s.k_mother_bar), s.mcp),
                     ],
                 ))
                 .child(section(s.s_window, vec![row("Ctrl+Alt+T", s.new_window)]));
@@ -7434,20 +7434,20 @@ impl Render for Workspace {
                 .child(section(
                     s.s_feat,
                     vec![
-                        row("Tiling tree", s.f_tiling),
-                        row("Tab groups", s.f_groups),
-                        row("Drag a sub-tab", s.f_drag),
-                        row("Rich rename", s.f_rename),
-                        row("Pop-out scratch", s.f_popout),
+                        row(s.kf_tiling, s.f_tiling),
+                        row(s.kf_groups, s.f_groups),
+                        row(s.kf_drag, s.f_drag),
+                        row(s.kf_rename, s.f_rename),
+                        row(s.kf_popout, s.f_popout),
                     ],
                 ))
                 .child(section(
                     s.s_theming,
                     vec![
-                        row("4 themes + custom", s.f_themes),
-                        row("Per-pane look", s.f_perpane),
-                        row("Colour wheel", s.f_wheel),
-                        row("Monitor grade", s.f_grade),
+                        row(s.kf_themes, s.f_themes),
+                        row(s.kf_perpane, s.f_perpane),
+                        row(s.kf_wheel, s.f_wheel),
+                        row(s.kf_grade, s.f_grade),
                     ],
                 ));
             let feat_b = div()
@@ -7459,9 +7459,9 @@ impl Render for Workspace {
                 .child(section(
                     s.s_crt,
                     vec![
-                        row("Barrel warp", s.f_warp),
-                        row("Scanlines · glow", s.f_scan),
-                        row("Text-crawl", s.f_crawl),
+                        row(s.kf_warp, s.f_warp),
+                        row(s.kf_scan, s.f_scan),
+                        row(s.kf_crawl, s.f_crawl),
                         row("🎰 GAMBA", s.f_gamba),
                     ],
                 ))
@@ -7470,8 +7470,8 @@ impl Render for Workspace {
                     vec![
                         row("claude / codex", s.f_detect),
                         row("👓 FOCUS", s.f_focus),
-                        row("Session restore", s.f_restore),
-                        row("🤖 MCP server", s.f_mcp),
+                        row(s.kf_restore, s.f_restore),
+                        row(&format!("🤖 {}", s.kf_mcp), s.f_mcp),
                     ],
                 ));
             // Header pills: SHORTCUTS ⇄ FEATURES. A million features don't fit as
