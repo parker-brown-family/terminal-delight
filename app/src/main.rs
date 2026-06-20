@@ -7490,7 +7490,7 @@ impl Render for Workspace {
                     .flex()
                     .flex_row()
                     .gap_2()
-                    .items_center()
+                    .items_start()
                     .child(
                         div()
                             .min_w(px(150.))
@@ -7500,7 +7500,11 @@ impl Render for Workspace {
                             .child(k.to_string()),
                     )
                     .child(
+                        // flex_1 + min_w(0) lets a long (e.g. German) description
+                        // wrap within the column instead of overflowing the panel.
                         div()
+                            .flex_1()
+                            .min_w(px(0.))
                             .text_color(dc)
                             .text_size(px(11.5))
                             .child(d.to_string()),
