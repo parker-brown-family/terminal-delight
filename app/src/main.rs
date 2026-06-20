@@ -8086,7 +8086,7 @@ impl Render for Workspace {
                     }
                 }
             }
-            let dead = recover::scan_dead(&live, &home_path, 80);
+            let mut dead = recover::scan_dead(&live, &home_path, 80);
 
             // group dead agents by project (the cwd's last path segment), the way
             // the agent wall groups by tab group — a stable colour per project.
@@ -8205,6 +8205,15 @@ impl Render for Workspace {
                     ),
                 );
             }
+            // The scan is newest-first with projects interleaved; stable-sort by each
+            // project's first-seen order (the `groups` order) so a project's agents
+            // are contiguous — one header per project, newest-first within it.
+            dead.sort_by_key(|d| {
+                groups
+                    .iter()
+                    .position(|g| g.0 == project_of(d.cwd.as_deref()))
+                    .unwrap_or(usize::MAX)
+            });
             let mut last_proj: Option<String> = None;
             let mut di = 0usize;
             for da in dead.into_iter() {
