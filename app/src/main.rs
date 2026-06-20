@@ -21,6 +21,7 @@ mod mcp;
 mod mcp_tail;
 mod mcp_transport;
 mod pane;
+mod plugins;
 mod recover;
 mod session;
 mod term;
@@ -1163,6 +1164,11 @@ struct Workspace {
     dead_menu: bool,
     /// Manifest filter: show every dead agent, or just one project. Transient.
     dead_filter: Option<String>,
+    /// The 🧩 plugins panel overlay is open (MCP plugin host — see [`plugins`]).
+    plugins_menu: bool,
+    /// Last plugin action result line (e.g. "wrote …/<id>.cdx"), shown as a
+    /// transient toast in the graveyard / plugins panel.
+    harvest_status: Option<String>,
     /// 🎨 toggle in the MCP panel: tint each pane row with that pane's own
     /// resolved screen background + text colour. Defaults off (session-scoped).
     mcp_theme_preview: bool,
@@ -1499,6 +1505,8 @@ impl Workspace {
             mcp_menu: false,
             dead_menu: false,
             dead_filter: None,
+            plugins_menu: false,
+            harvest_status: None,
             mcp_theme_preview: false,
             mcp_filter: McpFilter::All,
             slider_drag: None,
@@ -2045,6 +2053,34 @@ impl Workspace {
         self.save(cx);
         cx.notify();
         cx.defer_in(window, |ws, window, cx| ws.focus_active(window, cx));
+    }
+
+    /// Harvest one agent session (live pane or 🪦 tombstone) into a portable
+    /// `.cdx` via the context-delight plugin, over MCP. Sets [`Self::harvest_status`]
+    /// with the result (or the reason it couldn't run) for the panel to show.
+    ///
+    /// The whole thing is bounded by the plugin client's per-request deadline, so
+    /// a wedged plugin can never freeze the UI — it just reports a timeout.
+    fn harvest_agent(&mut self, session_id: String, cx: &mut Context<Self>) {
+        let home = session::home_dir();
+        let plugins = plugins::discover(&home);
+        let Some(cdx) = plugins.iter().find(|m| m.name == "context-delight") else {
+            self.harvest_status = Some("context-delight plugin not found (install cdx-mcp)".into());
+            cx.notify();
+            return;
+        };
+        let dir = plugins::harvest_dir(&home);
+        if let Err(e) = std::fs::create_dir_all(&dir) {
+            self.harvest_status = Some(format!("cannot create {}: {e}", dir.display()));
+            cx.notify();
+            return;
+        }
+        let out = dir.join(format!("{session_id}.cdx"));
+        self.harvest_status = match plugins::harvest(cdx, &session_id, &out) {
+            Ok(msg) => Some(msg),
+            Err(e) => Some(format!("harvest failed: {e}")),
+        };
+        cx.notify();
     }
 
     /// Split ONLY the focused terminal; everything else keeps its exact space.
@@ -2935,6 +2971,169 @@ impl Workspace {
     /// languages, looking like the find panel. Its own scrim closes it. The native
     /// names need the script fallback or they'd tofu, since this is a separate
     /// overlay from the help panel that already sets it.
+    /// 🧩 the plugins panel: every discovered MCP plugin and the actions it
+    /// offers. Read-only (discovery only) — running an action happens from the
+    /// surface it targets (e.g. the 🪦 graveyard's ⬇ .cdx button). The
+    /// authoritative tool list still comes from each plugin's live `tools/list`;
+    /// this lists what the manifests advertise.
+    fn render_plugins_overlay(
+        &self,
+        th: &theme::Theme,
+        cx: &mut Context<Self>,
+    ) -> Option<gpui::Div> {
+        if !self.plugins_menu {
+            return None;
+        }
+        let home = session::home_dir();
+        let found = plugins::discover(&home);
+        let n = found.len();
+
+        let mut list = div().flex().flex_col().gap_2();
+        if found.is_empty() {
+            list = list.child(
+                div()
+                    .text_size(px(9.5))
+                    .text_color(th.text.alpha(0.6))
+                    .child(
+                        "no plugins found \u{2014} install cdx-mcp (cargo install --path crates/cdx-mcp) or drop a plugin.json under ~/.config/terminal-delight/plugins/",
+                    ),
+            );
+        }
+        for (pi, m) in found.iter().enumerate() {
+            let mut actions_row = div()
+                .flex()
+                .flex_row()
+                .flex_wrap()
+                .gap_1()
+                .text_size(px(8.5));
+            for a in &m.actions {
+                actions_row = actions_row.child(
+                    div()
+                        .px_2()
+                        .py_0p5()
+                        .rounded_full()
+                        .border_1()
+                        .border_color(th.complement.alpha(0.5))
+                        .text_color(th.complement)
+                        .child(format!("{}  \u{00b7}  {}", a.label, a.surfaces.join("/"))),
+                );
+            }
+            list = list.child(
+                div()
+                    .id(SharedString::from(format!("plg-{pi}")))
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .px_2()
+                    .py_1()
+                    .rounded_sm()
+                    .border_1()
+                    .border_color(th.text.alpha(0.12))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .font_weight(gpui::FontWeight::EXTRA_BOLD)
+                                    .text_color(th.text)
+                                    .child(m.name.clone()),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(8.5))
+                                    .text_color(th.text.alpha(0.45))
+                                    .child(format!("v{}", m.version)),
+                            )
+                            .child(div().flex_1().min_w(px(0.)))
+                            .child(
+                                div()
+                                    .text_size(px(8.))
+                                    .text_color(th.accent.alpha(0.7))
+                                    .child(m.command.clone()),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(9.))
+                            .text_color(th.text.alpha(0.7))
+                            .child(m.description.clone()),
+                    )
+                    .child(actions_row),
+            );
+        }
+
+        let panel = div()
+            .w(gpui::relative(0.6))
+            .max_h(gpui::relative(0.8))
+            .overflow_hidden()
+            .p_3()
+            .rounded_md()
+            .border_2()
+            .border_color(th.accent.alpha(0.85))
+            .bg(darken(th.surface, 0.6))
+            .shadow(float_shadows(th.accent))
+            .flex()
+            .flex_col()
+            .gap_2()
+            .text_size(px(10.))
+            .text_color(th.text)
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|_, _: &MouseDownEvent, _w, cx| cx.stop_propagation()),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_2()
+                    .text_size(px(13.))
+                    .child(div().child("\u{1f9e9}"))
+                    .child(
+                        div()
+                            .font_weight(gpui::FontWeight::EXTRA_BOLD)
+                            .text_color(th.complement)
+                            .child("PLUGINS"),
+                    )
+                    .child(div().flex_1().min_w(px(0.)))
+                    .child(
+                        div()
+                            .text_color(th.text.alpha(0.7))
+                            .child(format!("{n} installed")),
+                    ),
+            )
+            .child(
+                div()
+                    .text_size(px(8.5))
+                    .text_color(th.accent.alpha(0.85))
+                    .child(
+                        "plugins are MCP servers terminal-delight launches on demand \u{2014} run their actions from the agent wall or the 🪦 graveyard",
+                    ),
+            )
+            .child(list);
+
+        Some(
+            div()
+                .absolute()
+                .inset_0()
+                .bg(th.bg.alpha(0.70))
+                .flex()
+                .items_center()
+                .justify_center()
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                        ws.plugins_menu = false;
+                        cx.notify();
+                    }),
+                )
+                .child(panel),
+        )
+    }
+
     fn render_lang_picker(&self, th: &theme::Theme, cx: &mut Context<Self>) -> Option<gpui::Div> {
         let lp = self.lang_picker.as_ref()?;
         let (ww, wh) = self
@@ -3500,6 +3699,7 @@ impl Workspace {
         self.help_open
             || self.mcp_menu
             || self.dead_menu
+            || self.plugins_menu
             || self.confirm_close.is_some()
             || self.find.is_some()
             || self.lang_picker.is_some()
@@ -3519,6 +3719,7 @@ impl Workspace {
             self.help_open = false;
             self.mcp_menu = false;
             self.dead_menu = false;
+            self.plugins_menu = false;
             self.confirm_close = None;
             self.find = None;
             self.lang_picker = None;
@@ -6147,6 +6348,7 @@ impl Render for Workspace {
             self.theme_menu.is_some()
                 || self.osd_menu.is_some()
                 || self.mcp_menu
+                || self.plugins_menu
                 || self.confirm_close.is_some()
                 || self.help_open
                 || self.tab_menu.is_some()
@@ -6699,6 +6901,22 @@ impl Render for Workspace {
                                     cx.stop_propagation();
                                     ws.dead_filter = None;
                                     ws.dead_menu = true;
+                                    cx.notify();
+                                }),
+                            ),
+                    )
+                    .child(
+                        // 🧩 plugins: the MCP plugin host — reach for plugins
+                        // (context-delight harvest, …) that act on the agents.
+                        Self::hicon_s(&th, self.plugins_menu, scale)
+                            .text_size(px(pane::HICON * scale))
+                            .line_height(px(pane::HICON * scale))
+                            .child("\u{1f9e9}")
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                                    cx.stop_propagation();
+                                    ws.plugins_menu = true;
                                     cx.notify();
                                 }),
                             ),
@@ -7364,6 +7582,7 @@ impl Render for Workspace {
         // ---- Find: fuzzy search in this pane (Ctrl+F) or every pane (Ctrl+Shift+F) ----
         let find_overlay = self.render_find(&th, cx);
         let lang_picker_overlay = self.render_lang_picker(&th, cx);
+        let plugins_overlay = self.render_plugins_overlay(&th, cx);
 
         // ---- MCP control: the read-only agent-watch surface (the 🤖 button) ----
         let mcp_overlay =
@@ -8087,6 +8306,11 @@ impl Render for Workspace {
                 }
             }
             let mut dead = recover::scan_dead(&live, &home_path, 80);
+            // only offer ⬇ harvest if a discovered plugin advertises the
+            // "graveyard" surface (the built-in context-delight one does).
+            let can_harvest = plugins::discover(&home_path)
+                .iter()
+                .any(|m| m.action_for("graveyard").is_some());
 
             // group dead agents by project (the cwd's last path segment), the way
             // the agent wall groups by tab group — a stable colour per project.
@@ -8284,6 +8508,7 @@ impl Render for Workspace {
                 );
                 let cwd_click = da.cwd.clone();
                 let resume_click = da.resume_cmd.clone();
+                let sid_harvest = da.session_id.clone();
                 list = list.child(
                     div()
                         .id(SharedString::from(format!("dead-{di}")))
@@ -8330,6 +8555,33 @@ impl Render for Workspace {
                                         .child(meta_line),
                                 ),
                         )
+                        .when(can_harvest, |row| {
+                            // ⬇ harvest this dead session into a portable .cdx
+                            // (the context-delight plugin, over MCP). Own handler
+                            // + stop_propagation so it never also resurrects.
+                            row.child(
+                                div()
+                                    .id(SharedString::from(format!("harv-{di}")))
+                                    .flex_none()
+                                    .px_1()
+                                    .rounded_sm()
+                                    .border_1()
+                                    .border_color(th.complement.alpha(0.5))
+                                    .text_size(px(9.))
+                                    .font_weight(gpui::FontWeight::BOLD)
+                                    .text_color(th.complement)
+                                    .cursor_pointer()
+                                    .hover(|s| s.bg(th.complement.alpha(0.16)))
+                                    .child("\u{2b07} .cdx")
+                                    .on_mouse_down(
+                                        MouseButton::Left,
+                                        cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                                            cx.stop_propagation();
+                                            ws.harvest_agent(sid_harvest.clone(), cx);
+                                        }),
+                                    ),
+                            )
+                        })
                         .child(
                             div()
                                 .flex_none()
@@ -8405,9 +8657,18 @@ impl Render for Workspace {
                         .text_size(px(8.5))
                         .text_color(th.accent.alpha(0.85))
                         .child(
-                            "a saved session with no live pane \u{2014} click to resurrect it in its old directory",
+                            "click a row to resurrect it \u{2014} or \u{2b07} .cdx to harvest its context into a portable package",
                         ),
                 )
+                .when_some(self.harvest_status.clone(), |d, msg| {
+                    d.child(
+                        div()
+                            .text_size(px(9.))
+                            .text_color(th.complement)
+                            .font_weight(gpui::FontWeight::BOLD)
+                            .child(format!("\u{2b07} {msg}")),
+                    )
+                })
                 .child(chips)
                 .child(
                     list.min_h(px(0.))
@@ -9858,6 +10119,7 @@ impl Render for Workspace {
                     .children(osd_overlay)
                     .children(mcp_overlay)
                     .children(dead_overlay)
+                    .children(plugins_overlay)
                     .children(confirm_overlay)
                     .children(help_overlay)
                     .children(tab_menu_overlay)
