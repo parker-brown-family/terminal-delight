@@ -1159,8 +1159,10 @@ struct Workspace {
     mcp: mcp::McpConfig,
     /// The 🤖 MCP control panel is open. Outer-only (global), so a plain bool.
     mcp_menu: bool,
-    /// The 🪦 dead-agent recover manifest overlay is open.
+    /// The 👻 dead-agent recover manifest overlay is open.
     dead_menu: bool,
+    /// Manifest filter: show every dead agent, or just one project. Transient.
+    dead_filter: Option<String>,
     /// 🎨 toggle in the MCP panel: tint each pane row with that pane's own
     /// resolved screen background + text colour. Defaults off (session-scoped).
     mcp_theme_preview: bool,
@@ -1496,6 +1498,7 @@ impl Workspace {
             mcp: saved.mcp.clone().unwrap_or_default(),
             mcp_menu: false,
             dead_menu: false,
+            dead_filter: None,
             mcp_theme_preview: false,
             mcp_filter: McpFilter::All,
             slider_drag: None,
@@ -6622,16 +6625,17 @@ impl Render for Workspace {
                             ),
                     )
                     .child(
-                        // 🪦 recover: the dead-agent manifest — resurrect a
+                        // 👻 recover: the dead-agent manifest — resurrect a
                         // closed agent (Claude/Codex) from its saved session.
                         Self::hicon_s(&th, self.dead_menu, scale)
                             .text_size(px(pane::HICON * scale))
                             .line_height(px(pane::HICON * scale))
-                            .child("\u{1faa6}")
+                            .child("\u{1f47b}")
                             .on_mouse_down(
                                 MouseButton::Left,
                                 cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
                                     cx.stop_propagation();
+                                    ws.dead_filter = None;
                                     ws.dead_menu = true;
                                     cx.notify();
                                 }),
@@ -7901,8 +7905,7 @@ impl Render for Workspace {
                     .overflow_y_scroll();
 
                 let panel = div()
-                    .w(gpui::relative(0.66))
-                    .max_w(px(880.))
+                    .w(gpui::relative(0.7))
                     .max_h(gpui::relative(0.86))
                     .overflow_hidden()
                     .p_3()
@@ -8039,9 +8042,117 @@ impl Render for Workspace {
                     }
                 }
             }
-            let dead = recover::scan_dead(&live, &home_path, 60);
-            let n = dead.len();
+            let dead = recover::scan_dead(&live, &home_path, 80);
 
+            // group dead agents by project (the cwd's last path segment), the way
+            // the agent wall groups by tab group — a stable colour per project.
+            fn project_of(cwd: Option<&str>) -> String {
+                match cwd {
+                    Some(c) => c
+                        .trim_end_matches('/')
+                        .rsplit('/')
+                        .find(|s| !s.is_empty())
+                        .unwrap_or("~")
+                        .to_string(),
+                    None => "unknown".to_string(),
+                }
+            }
+            fn proj_hue(s: &str) -> f32 {
+                let h = s
+                    .bytes()
+                    .fold(0u32, |a, b| a.wrapping_mul(31).wrapping_add(b as u32));
+                (h % 360) as f32 / 360.0
+            }
+            let mut groups: Vec<(String, u32)> = Vec::new();
+            for da in &dead {
+                let proj = project_of(da.cwd.as_deref());
+                match groups.iter_mut().find(|g| g.0 == proj) {
+                    Some(g) => g.1 += 1,
+                    None => groups.push((proj, 1)),
+                }
+            }
+            let n = dead.len();
+            let n_claude = dead
+                .iter()
+                .filter(|d| d.kind == recover::AgentKind::Claude)
+                .count();
+            let n_codex = n - n_claude;
+            let filt = self.dead_filter.clone();
+
+            // ---- chips: ALL · <each project> ----
+            let mut chips = div()
+                .id("dead-chips")
+                .flex()
+                .flex_row()
+                .flex_wrap()
+                .items_center()
+                .gap_1()
+                .text_size(px(9.5));
+            {
+                let on = filt.is_none();
+                chips = chips.child(
+                    div()
+                        .id("deadf-all")
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap_1()
+                        .px_2()
+                        .py_0p5()
+                        .rounded_full()
+                        .border_1()
+                        .border_color(if on { th.accent } else { th.text.alpha(0.2) })
+                        .when(on, |d| d.bg(th.accent.alpha(0.16)))
+                        .text_color(if on { th.text } else { th.text.alpha(0.6) })
+                        .cursor_pointer()
+                        .hover(|s| s.border_color(th.accent.alpha(0.7)))
+                        .child("ALL")
+                        .child(div().text_color(th.text.alpha(0.4)).child(format!("{n}")))
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                                cx.stop_propagation();
+                                ws.dead_filter = None;
+                                cx.notify();
+                            }),
+                        ),
+                );
+            }
+            for (proj, count) in &groups {
+                let col = hsla(proj_hue(proj), 0.6, 0.62, 1.);
+                let on = filt.as_deref() == Some(proj.as_str());
+                let proj_c = proj.clone();
+                chips = chips.child(
+                    div()
+                        .id(SharedString::from(format!("deadf-{proj}")))
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap_1()
+                        .px_2()
+                        .py_0p5()
+                        .rounded_full()
+                        .border_1()
+                        .border_color(if on { col } else { th.text.alpha(0.2) })
+                        .when(on, |d| d.bg(col.alpha(0.16)))
+                        .text_color(if on { th.text } else { th.text.alpha(0.65) })
+                        .cursor_pointer()
+                        .hover(move |s| s.border_color(col.alpha(0.7)))
+                        .child(div().w(px(7.)).h(px(7.)).flex_none().rounded_full().bg(col))
+                        .child(proj.clone())
+                        .child(div().text_color(th.text.alpha(0.4)).child(format!("{count}")))
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                                cx.stop_propagation();
+                                ws.dead_filter = Some(proj_c.clone());
+                                cx.notify();
+                            }),
+                        ),
+                );
+            }
+
+            // ---- grouped, filtered list ----
             let mut list = div().id("dead-list").flex().flex_col().gap_1();
             if dead.is_empty() {
                 list = list.child(
@@ -8050,7 +8161,43 @@ impl Render for Workspace {
                     ),
                 );
             }
-            for (di, da) in dead.into_iter().enumerate() {
+            let mut last_proj: Option<String> = None;
+            let mut di = 0usize;
+            for da in dead.into_iter() {
+                let proj = project_of(da.cwd.as_deref());
+                if let Some(f) = filt.as_deref() {
+                    if proj != f {
+                        continue;
+                    }
+                }
+                let pcol = hsla(proj_hue(&proj), 0.6, 0.62, 1.);
+                if last_proj.as_deref() != Some(proj.as_str()) {
+                    last_proj = Some(proj.clone());
+                    let gcount = groups.iter().find(|g| g.0 == proj).map(|g| g.1).unwrap_or(0);
+                    list = list.child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap_2()
+                            .px_1()
+                            .pt_1()
+                            .text_size(px(8.5))
+                            .text_color(th.text.alpha(0.5))
+                            .child(div().w(px(8.)).h(px(8.)).flex_none().rounded_sm().bg(pcol))
+                            .child(
+                                div()
+                                    .font_weight(gpui::FontWeight::EXTRA_BOLD)
+                                    .child(proj.to_uppercase()),
+                            )
+                            .child(div().flex_1().min_w(px(0.)))
+                            .child(
+                                div()
+                                    .text_color(th.text.alpha(0.35))
+                                    .child(format!("{gcount} dead")),
+                            ),
+                    );
+                }
                 let kind_col = match da.kind {
                     recover::AgentKind::Claude => hsla(0.105, 0.9, 0.55, 1.),
                     recover::AgentKind::Codex => hsla(0.52, 0.8, 0.6, 1.),
@@ -8059,11 +8206,11 @@ impl Render for Workspace {
                 if !home_str.is_empty() {
                     cwd_disp = cwd_disp.replacen(&home_str, "~", 1);
                 }
-                if cwd_disp.chars().count() > 30 {
+                if cwd_disp.chars().count() > 34 {
                     let tail: String = cwd_disp
                         .chars()
                         .rev()
-                        .take(28)
+                        .take(32)
                         .collect::<Vec<_>>()
                         .into_iter()
                         .rev()
@@ -8098,14 +8245,7 @@ impl Render for Workspace {
                         .border_color(hsla(0., 0., 0., 0.))
                         .cursor_pointer()
                         .hover(move |s| s.border_color(kind_col.alpha(0.7)))
-                        .child(
-                            div()
-                                .w(px(3.))
-                                .h(px(26.))
-                                .flex_none()
-                                .rounded_full()
-                                .bg(kind_col),
-                        )
+                        .child(div().w(px(3.)).h(px(26.)).flex_none().rounded_full().bg(pcol))
                         .child(
                             div()
                                 .w(px(46.))
@@ -8158,11 +8298,11 @@ impl Render for Workspace {
                             }),
                         ),
                 );
+                di += 1;
             }
 
             let panel = div()
-                .w(gpui::relative(0.62))
-                .max_w(px(760.))
+                .w(gpui::relative(0.72))
                 .max_h(gpui::relative(0.86))
                 .overflow_hidden()
                 .p_3()
@@ -8193,12 +8333,18 @@ impl Render for Workspace {
                         .items_center()
                         .gap_2()
                         .text_size(px(13.))
-                        .child(div().child("\u{1faa6}"))
+                        .child(div().child("\u{1f47b}"))
                         .child(
                             div()
                                 .font_weight(gpui::FontWeight::EXTRA_BOLD)
                                 .text_color(th.complement)
                                 .child("DEAD AGENTS"),
+                        )
+                        .child(
+                            div()
+                                .text_size(px(10.))
+                                .text_color(th.text.alpha(0.55))
+                                .child(format!("{n_claude} claude \u{00b7} {n_codex} codex")),
                         )
                         .child(div().flex_1().min_w(px(0.)))
                         .child(
@@ -8215,9 +8361,10 @@ impl Render for Workspace {
                             "a saved session with no live pane \u{2014} click to resurrect it in its old directory",
                         ),
                 )
+                .child(chips)
                 .child(
                     list.min_h(px(0.))
-                        .max_h(px((vp_h - 200.).max(140.)))
+                        .max_h(px((vp_h - 220.).max(160.)))
                         .overflow_y_scroll(),
                 );
 
