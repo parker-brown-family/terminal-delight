@@ -19,7 +19,18 @@
     background:linear-gradient(#0000, #1d130a55 40%, #2a1a0e88);
     -webkit-mask:linear-gradient(#0000,#000 60%);mask:linear-gradient(#0000,#000 60%);}
 
-  .stage{ transform-origin:center; }
+  .stage{ transform-origin:center; position:relative; z-index:1; }
+
+  /* the 🌐 from the picker, blown up as a faint "world service" station-ident
+     backdrop behind the console — it glows in the current channel's colour and
+     turns slowly, like a 1950s broadcast globe. */
+  .worldbg{ position:fixed; inset:0; z-index:0; pointer-events:none;
+    display:flex; align-items:center; justify-content:center; overflow:hidden; }
+  .worldbg::before{ content:"🌐"; line-height:1; font-size:min(132vh,132vw);
+    opacity:.20; filter:grayscale(.55) drop-shadow(0 0 80px var(--spill-soft));
+    animation:globe-spin 140s linear infinite; transition:opacity .6s; }
+  @media (prefers-reduced-motion:reduce){ .worldbg::before{ animation:none; } }
+  @keyframes globe-spin{ to{ transform:rotate(360deg); } }
 
   .tv{ position:relative; width:min(92vw, 920px); }
   .cabinet{
@@ -103,6 +114,7 @@
   }
 </style></head>
 <body>
+  <div class="worldbg" aria-hidden="true"></div>
   <div class="stage">
   <div class="tv">
     <div class="cabinet">
