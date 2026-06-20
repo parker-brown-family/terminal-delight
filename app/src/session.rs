@@ -162,12 +162,21 @@ fn looks_like_uuid(v: &str) -> bool {
 /// into a fresh shell, so it must not be able to break out of the command.
 /// Session ids are uuids (hex + dashes) or transcript filename stems; allow
 /// only those plain characters and reject shell metacharacters / whitespace.
-fn safe_resume_id(id: &str) -> bool {
+pub(crate) fn safe_resume_id(id: &str) -> bool {
     !id.is_empty()
         && id.len() <= 128
         && id
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+}
+
+/// The session id inside a resume command — `claude --resume <id>` / `-r <id>`
+/// / `codex resume <id>` — used to match a live pane against its on-disk
+/// transcript (so the recover manifest can tell live agents from dead ones).
+pub fn resume_session_id(resume: &str) -> Option<String> {
+    arg_after(resume, &["--resume", "-r", "resume"])
+        .map(str::to_string)
+        .filter(|id| safe_resume_id(id))
 }
 
 /// Claude Code's per-project transcript dir slug: every non-alphanumeric
@@ -250,7 +259,7 @@ pub fn home_dir() -> PathBuf {
 }
 
 /// `rollout-2026-06-12T10-00-00-<uuid>.jsonl` → uuid (the last 36 chars of the stem).
-fn rollout_uuid(p: &Path) -> Option<String> {
+pub(crate) fn rollout_uuid(p: &Path) -> Option<String> {
     let stem = p.file_stem()?.to_string_lossy();
     let tail: String = stem
         .chars()
@@ -316,7 +325,7 @@ fn newest_jsonl(dir: &Path) -> Option<PathBuf> {
         })
 }
 
-fn collect_jsonl(dir: &Path, out: &mut Vec<PathBuf>, depth: u8) {
+pub(crate) fn collect_jsonl(dir: &Path, out: &mut Vec<PathBuf>, depth: u8) {
     let Ok(rd) = std::fs::read_dir(dir) else {
         return;
     };

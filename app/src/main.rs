@@ -21,6 +21,7 @@ mod mcp;
 mod mcp_tail;
 mod mcp_transport;
 mod pane;
+mod recover;
 mod session;
 mod term;
 mod theme;
@@ -757,6 +758,15 @@ enum TabScope {
     Group,
 }
 
+/// The agent-wall filter (the chip strip above the MCP pane list): show every
+/// pane, just one tab group, or only the ungrouped panes. Transient view state.
+#[derive(Clone, Copy, PartialEq)]
+enum McpFilter {
+    All,
+    Group(u32),
+    Ungrouped,
+}
+
 #[derive(Serialize, Deserialize)]
 struct StateFile {
     active: usize,
@@ -1149,9 +1159,13 @@ struct Workspace {
     mcp: mcp::McpConfig,
     /// The 🤖 MCP control panel is open. Outer-only (global), so a plain bool.
     mcp_menu: bool,
+    /// The 🪦 dead-agent recover manifest overlay is open.
+    dead_menu: bool,
     /// 🎨 toggle in the MCP panel: tint each pane row with that pane's own
     /// resolved screen background + text colour. Defaults off (session-scoped).
     mcp_theme_preview: bool,
+    /// Agent-wall view filter (the chip strip) — transient, not persisted.
+    mcp_filter: McpFilter,
     /// The OSD slider being dragged, if any (which channel).
     slider_drag: Option<theme::GradeKey>,
     /// Live per-slider track rects for ratio math during a drag.
@@ -1481,7 +1495,9 @@ impl Workspace {
             osd_at: None,
             mcp: saved.mcp.clone().unwrap_or_default(),
             mcp_menu: false,
+            dead_menu: false,
             mcp_theme_preview: false,
+            mcp_filter: McpFilter::All,
             slider_drag: None,
             slider_bounds: Arc::new(Mutex::new(std::collections::HashMap::new())),
             wheel_drag: None,
@@ -2002,6 +2018,29 @@ impl Workspace {
         // focus_active here never sticks — the new terminal opens unfocused. Running
         // after the event settles makes the fresh pane light up as the active
         // terminal so the very next keystroke lands in it.
+        cx.defer_in(window, |ws, window, cx| ws.focus_active(window, cx));
+    }
+
+    /// Bring a dead agent back: open a fresh tab whose shell resumes its saved
+    /// conversation (`claude --resume` / `codex resume`) in its original cwd —
+    /// the same restore path a reboot uses. Never writes to a live PTY.
+    fn resurrect_agent(
+        &mut self,
+        cwd: Option<String>,
+        resume: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let restore = session::PaneRestore {
+            cwd,
+            resume: Some(resume),
+        };
+        let pane = make_pane_restored(restore, window, cx);
+        self.tabs.push(Tab::new(Node::Leaf(pane), None));
+        self.active = self.tabs.len() - 1;
+        self.dead_menu = false;
+        self.save(cx);
+        cx.notify();
         cx.defer_in(window, |ws, window, cx| ws.focus_active(window, cx));
     }
 
@@ -6583,6 +6622,22 @@ impl Render for Workspace {
                             ),
                     )
                     .child(
+                        // 🪦 recover: the dead-agent manifest — resurrect a
+                        // closed agent (Claude/Codex) from its saved session.
+                        Self::hicon_s(&th, self.dead_menu, scale)
+                            .text_size(px(pane::HICON * scale))
+                            .line_height(px(pane::HICON * scale))
+                            .child("\u{1faa6}")
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                                    cx.stop_propagation();
+                                    ws.dead_menu = true;
+                                    cx.notify();
+                                }),
+                            ),
+                    )
+                    .child(
                         // help: keys + commands reference, themed by the outer
                         Self::hicon_s(&th, self.help_open, scale)
                             .text_size(px(pane::HICON * scale))
@@ -7385,13 +7440,210 @@ impl Render for Workspace {
                 // Live pane list — walk the REAL tree (not the wire snapshot) so each
                 // row can carry the pane's own resolved colours and focus it on click.
                 let preview = self.mcp_theme_preview;
-                let mut list = div().id("mcp-pane-list").flex().flex_col().gap_1();
-                let mut ri = 0usize;
-                // Agent-wall HUD rollup, accumulated across the pane walk (agents only).
-                let (mut n_work, mut n_block, mut n_err, mut n_done) = (0u32, 0u32, 0u32, 0u32);
+                // ---- pre-pass: whole-fleet counts (unfiltered) + the tab groups
+                // present, for the rollup totals and the filter chips. ----
+                let (mut n_work, mut n_block, mut n_err, mut n_done, mut n_idle) =
+                    (0u32, 0u32, 0u32, 0u32, 0u32);
                 let mut turn_tok_total = 0u64;
                 let mut sess_tok_total = 0u64;
+                let mut total_panes = 0u32;
+                // (group key, display name, band colour, pane count) in first-seen order.
+                let mut groups_present: Vec<(Option<u32>, String, Hsla, u32)> = Vec::new();
                 for (ti, tab) in self.tabs.iter().enumerate() {
+                    let grp = self.group_of(ti);
+                    let key = grp.map(|g| g.id);
+                    let gname = match grp {
+                        Some(g) => g.name.clone().unwrap_or_else(|| format!("group {}", g.id)),
+                        None => "Ungrouped".to_string(),
+                    };
+                    let gcol = match grp {
+                        Some(g) => g.color,
+                        None => th.text.alpha(0.45),
+                    };
+                    let mut leaves = vec![];
+                    tab.root.leaves(&mut leaves);
+                    for leaf in leaves {
+                        let p = leaf.read(cx);
+                        total_panes += 1;
+                        if p.mode.is_agent() {
+                            let st = p.agent_status();
+                            match st.state {
+                                hud::AgentState::Working => n_work += 1,
+                                hud::AgentState::Blocked => n_block += 1,
+                                hud::AgentState::Error => n_err += 1,
+                                hud::AgentState::Finished => n_done += 1,
+                                hud::AgentState::Idle => n_idle += 1,
+                            }
+                            turn_tok_total += st.turn_tokens.unwrap_or(0);
+                            sess_tok_total += p.session_tokens();
+                        }
+                        match groups_present.iter_mut().find(|e| e.0 == key) {
+                            Some(e) => e.3 += 1,
+                            None => groups_present.push((key, gname.clone(), gcol, 1)),
+                        }
+                    }
+                }
+
+                // ---- filter chips: ALL · <each tab group> · Ungrouped ----
+                let filt = self.mcp_filter;
+                let mut chips = div()
+                    .id("mcp-chips")
+                    .flex()
+                    .flex_row()
+                    .flex_wrap()
+                    .items_center()
+                    .gap_1()
+                    .text_size(px(9.5));
+                {
+                    let on = filt == McpFilter::All;
+                    chips = chips.child(
+                        div()
+                            .id("mcpf-all")
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap_1()
+                            .px_2()
+                            .py_0p5()
+                            .rounded_full()
+                            .border_1()
+                            .border_color(if on { th.accent } else { th.text.alpha(0.2) })
+                            .when(on, |d| d.bg(th.accent.alpha(0.16)))
+                            .text_color(if on { th.text } else { th.text.alpha(0.6) })
+                            .cursor_pointer()
+                            .hover(|s| s.border_color(th.accent.alpha(0.7)))
+                            .child("ALL")
+                            .child(
+                                div()
+                                    .text_color(th.text.alpha(0.4))
+                                    .child(format!("{total_panes}")),
+                            )
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                                    cx.stop_propagation();
+                                    ws.mcp_filter = McpFilter::All;
+                                    cx.notify();
+                                }),
+                            ),
+                    );
+                }
+                for (key, name, color, count) in &groups_present {
+                    let f = match key {
+                        Some(id) => McpFilter::Group(*id),
+                        None => McpFilter::Ungrouped,
+                    };
+                    let on = filt == f;
+                    let color = *color;
+                    chips = chips.child(
+                        div()
+                            .id(SharedString::from(format!("mcpf-{key:?}")))
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap_1()
+                            .px_2()
+                            .py_0p5()
+                            .rounded_full()
+                            .border_1()
+                            .border_color(if on { color } else { th.text.alpha(0.2) })
+                            .when(on, |d| d.bg(color.alpha(0.16)))
+                            .text_color(if on { th.text } else { th.text.alpha(0.65) })
+                            .cursor_pointer()
+                            .hover(move |s| s.border_color(color.alpha(0.7)))
+                            .child(
+                                div()
+                                    .w(px(7.))
+                                    .h(px(7.))
+                                    .flex_none()
+                                    .rounded_full()
+                                    .bg(color),
+                            )
+                            .child(name.clone())
+                            .child(
+                                div()
+                                    .text_color(th.text.alpha(0.4))
+                                    .child(format!("{count}")),
+                            )
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                                    cx.stop_propagation();
+                                    ws.mcp_filter = f;
+                                    cx.notify();
+                                }),
+                            ),
+                    );
+                }
+
+                // ---- the grouped, filtered pane list ----
+                let mut list = div().id("mcp-pane-list").flex().flex_col().gap_1();
+                let mut ri = 0usize;
+                let mut last_key: Option<Option<u32>> = None;
+                // best-effort model parse from the agent's launch/resume command.
+                let parse_model = |cmd: &str| -> Option<String> {
+                    let toks: Vec<&str> = cmd.split_whitespace().collect();
+                    for (i, t) in toks.iter().enumerate() {
+                        if let Some(v) = t.strip_prefix("--model=") {
+                            return Some(v.to_string());
+                        }
+                        if (*t == "--model" || *t == "-m") && i + 1 < toks.len() {
+                            return Some(toks[i + 1].to_string());
+                        }
+                    }
+                    None
+                };
+                for (ti, tab) in self.tabs.iter().enumerate() {
+                    let grp = self.group_of(ti);
+                    let key = grp.map(|g| g.id);
+                    let show_tab = match filt {
+                        McpFilter::All => true,
+                        McpFilter::Group(id) => key == Some(id),
+                        McpFilter::Ungrouped => key.is_none(),
+                    };
+                    if !show_tab {
+                        continue;
+                    }
+                    let gname = match grp {
+                        Some(g) => g.name.clone().unwrap_or_else(|| format!("group {}", g.id)),
+                        None => "Ungrouped".to_string(),
+                    };
+                    let gcol = match grp {
+                        Some(g) => g.color,
+                        None => th.text.alpha(0.45),
+                    };
+                    let grouped = key.is_some();
+                    // a group section header whenever the section changes.
+                    if last_key != Some(key) {
+                        last_key = Some(key);
+                        let gcount = groups_present
+                            .iter()
+                            .find(|e| e.0 == key)
+                            .map(|e| e.3)
+                            .unwrap_or(0);
+                        list = list.child(
+                            div()
+                                .flex()
+                                .flex_row()
+                                .items_center()
+                                .gap_2()
+                                .px_1()
+                                .pt_1()
+                                .text_size(px(8.5))
+                                .text_color(th.text.alpha(0.5))
+                                .child(div().w(px(8.)).h(px(8.)).flex_none().rounded_sm().bg(gcol))
+                                .child(
+                                    div()
+                                        .font_weight(gpui::FontWeight::EXTRA_BOLD)
+                                        .child(gname.to_uppercase()),
+                                )
+                                .child(div().flex_1().min_w(px(0.)))
+                                .child(div().text_color(th.text.alpha(0.35)).child(format!(
+                                    "{gcount} {}",
+                                    if gcount == 1 { "pane" } else { "panes" }
+                                ))),
+                        );
+                    }
                     let mut leaves = vec![];
                     tab.root.leaves(&mut leaves);
                     for leaf in leaves {
@@ -7407,23 +7659,12 @@ impl Render for Workspace {
                             .unwrap_or_else(|| p.mode.label().to_string());
                         let rt = p.runtime();
                         let exposed = mcp::should_expose(&self.mcp, is_agent);
-                        // Agent-wall HUD: this pane's live status + session tokens
-                        // (Idle and 0 for shells), rolled up for the header.
                         let status = p.agent_status();
                         let sess_tok = p.session_tokens();
-                        if is_agent {
-                            match status.state {
-                                hud::AgentState::Working => n_work += 1,
-                                hud::AgentState::Blocked => n_block += 1,
-                                hud::AgentState::Error => n_err += 1,
-                                hud::AgentState::Finished => n_done += 1,
-                                hud::AgentState::Idle => {}
-                            }
-                            turn_tok_total += status.turn_tokens.unwrap_or(0);
-                            sess_tok_total += sess_tok;
-                        }
                         // the pane's own resolved screen colours, for 🎨 preview mode
                         let pth = p.resolved_theme(cx);
+                        // best-effort model from the launch/resume command (often absent).
+                        let model = rt.resume.as_deref().and_then(parse_model);
 
                         // Abbreviate so a long cwd / resume id never spills off the panel.
                         let mut cwd = rt.cwd.clone().unwrap_or_else(|| "\u{2014}".to_string());
@@ -7455,6 +7696,18 @@ impl Render for Workspace {
                             }
                             None => cwd,
                         };
+                        // "doing now": when working, lead the 2nd line with the live
+                        // gerund (✷ Accomplishing…); otherwise show the cwd / resume.
+                        let working = is_agent && status.state == hud::AgentState::Working;
+                        let line2_accent = working && status.gerund.is_some();
+                        let line2 = if line2_accent {
+                            format!(
+                                "\u{2737} {}\u{2026}",
+                                status.gerund.clone().unwrap_or_default()
+                            )
+                        } else {
+                            sub
+                        };
 
                         // 🎨 on → the row wears the pane's own background + text colour.
                         let row_text = if preview { pth.text } else { th.text };
@@ -7468,9 +7721,20 @@ impl Render for Workspace {
                         } else {
                             row_text.alpha(0.6)
                         };
+                        // the per-row colour band: the group's colour if grouped, else
+                        // the agent kind's hue (Claude amber / Codex cyan / shell dim).
+                        let band = if grouped {
+                            gcol
+                        } else {
+                            match mode_lbl.as_str() {
+                                "CLAUDE" => hsla(0.105, 0.9, 0.55, 1.),
+                                "CODEX" => hsla(0.52, 0.8, 0.6, 1.),
+                                _ => row_text.alpha(0.22),
+                            }
+                        };
                         let hover_border = th.accent.alpha(0.7);
                         // HUD per-row: state badge colour/glyph + a compact metrics
-                        // line (state · elapsed · turn tokens · Σ session). Agents only.
+                        // line (state · effort · elapsed · turn tokens · Σ session).
                         let badge_col = if is_agent {
                             match status.state {
                                 hud::AgentState::Working => th.accent,
@@ -7489,6 +7753,9 @@ impl Render for Workspace {
                         };
                         let metrics = if is_agent {
                             let mut parts = vec![status.state.label().to_string()];
+                            if let Some(ef) = &status.effort {
+                                parts.push(ef.clone());
+                            }
                             if let Some(e) = &status.elapsed {
                                 parts.push(e.clone());
                             }
@@ -7500,6 +7767,13 @@ impl Render for Workspace {
                         } else {
                             String::new()
                         };
+                        let model_disp = model.map(|m| {
+                            if m.chars().count() > 16 {
+                                format!("{}\u{2026}", m.chars().take(15).collect::<String>())
+                            } else {
+                                m
+                            }
+                        });
 
                         let mut row = div()
                             .id(SharedString::from(format!("mcp-row-{ri}")))
@@ -7533,7 +7807,15 @@ impl Render for Workspace {
                         }
                         list =
                             list.child(
-                                row.child(div().flex_none().text_color(dot_col).child(
+                                row.child(
+                                    div()
+                                        .w(px(3.))
+                                        .h(px(22.))
+                                        .flex_none()
+                                        .rounded_full()
+                                        .bg(band),
+                                )
+                                .child(div().flex_none().text_color(dot_col).child(
                                     if exposed { "\u{25cf}" } else { "\u{25cb}" }.to_string(),
                                 ))
                                 .child(
@@ -7545,12 +7827,25 @@ impl Render for Workspace {
                                 )
                                 .child(
                                     div()
-                                        .w(px(52.))
+                                        .w(px(58.))
                                         .flex_none()
-                                        .text_size(px(9.))
-                                        .font_weight(gpui::FontWeight::EXTRA_BOLD)
-                                        .text_color(mode_col)
-                                        .child(mode_lbl),
+                                        .flex()
+                                        .flex_col()
+                                        .child(
+                                            div()
+                                                .text_size(px(9.))
+                                                .font_weight(gpui::FontWeight::EXTRA_BOLD)
+                                                .text_color(mode_col)
+                                                .child(mode_lbl),
+                                        )
+                                        .when_some(model_disp, |d, m| {
+                                            d.child(
+                                                div()
+                                                    .text_size(px(7.5))
+                                                    .text_color(row_text.alpha(0.5))
+                                                    .child(m),
+                                            )
+                                        }),
                                 )
                                 .child(
                                     // takes the remaining width and clips, so neither the
@@ -7572,8 +7867,12 @@ impl Render for Workspace {
                                             div()
                                                 .overflow_hidden()
                                                 .text_size(px(8.5))
-                                                .text_color(row_text.alpha(0.55))
-                                                .child(sub),
+                                                .text_color(if line2_accent {
+                                                    th.accent.alpha(0.9)
+                                                } else {
+                                                    row_text.alpha(0.55)
+                                                })
+                                                .child(line2),
                                         ),
                                 )
                                 .child(
@@ -7671,6 +7970,11 @@ impl Render for Workspace {
                                     .text_color(th.complement.alpha(0.85))
                                     .child(format!("\u{2713} {n_done}")),
                             )
+                            .child(
+                                div()
+                                    .text_color(th.text.alpha(0.45))
+                                    .child(format!("\u{25cb} {n_idle}")),
+                            )
                             .child(div().flex_1().min_w(px(0.)))
                             .child(div().text_color(th.text.alpha(0.7)).child(format!(
                                 "\u{0394} {} \u{00b7} \u{03a3} {}",
@@ -7684,6 +7988,7 @@ impl Render for Workspace {
                     .child(writes_btn)
                     .child(theme_btn)
                     .child(label(format!("{exposed}/{total} {}", t.m_exposed)))
+                    .child(chips)
                     .child(list)
                     .child(
                         div()
@@ -7713,6 +8018,226 @@ impl Render for Workspace {
             });
 
         // ---- confirm overlay: closing a tab that holds more than one pane ----
+        // ---- 🪦 the dead-agent recover manifest ----
+        let dead_overlay = self.dead_menu.then(|| {
+            let vp_h = f32::from(window.viewport_size().height);
+            let home_path = session::home_dir();
+            let home_str = home_path.to_string_lossy().into_owned();
+            // live = the resume ids of every currently-open agent pane.
+            let mut live: std::collections::HashSet<String> = std::collections::HashSet::new();
+            for tab in &self.tabs {
+                let mut leaves = vec![];
+                tab.root.leaves(&mut leaves);
+                for leaf in leaves {
+                    let p = leaf.read(cx);
+                    let rt = p.runtime();
+                    if p.mode.is_agent() {
+                        if let Some(id) = rt.resume.as_deref().and_then(session::resume_session_id)
+                        {
+                            live.insert(id);
+                        }
+                    }
+                }
+            }
+            let dead = recover::scan_dead(&live, &home_path, 60);
+            let n = dead.len();
+
+            let mut list = div().id("dead-list").flex().flex_col().gap_1();
+            if dead.is_empty() {
+                list = list.child(
+                    div().py_2().text_color(th.text.alpha(0.6)).child(
+                        "No recoverable agents \u{2014} every saved session is either live or already gone.",
+                    ),
+                );
+            }
+            for (di, da) in dead.into_iter().enumerate() {
+                let kind_col = match da.kind {
+                    recover::AgentKind::Claude => hsla(0.105, 0.9, 0.55, 1.),
+                    recover::AgentKind::Codex => hsla(0.52, 0.8, 0.6, 1.),
+                };
+                let mut cwd_disp = da.cwd.clone().unwrap_or_else(|| "\u{2014}".to_string());
+                if !home_str.is_empty() {
+                    cwd_disp = cwd_disp.replacen(&home_str, "~", 1);
+                }
+                if cwd_disp.chars().count() > 30 {
+                    let tail: String = cwd_disp
+                        .chars()
+                        .rev()
+                        .take(28)
+                        .collect::<Vec<_>>()
+                        .into_iter()
+                        .rev()
+                        .collect();
+                    cwd_disp = format!("\u{2026}{tail}");
+                }
+                let title = da
+                    .summary
+                    .clone()
+                    .unwrap_or_else(|| format!("{} session", da.kind.label()));
+                let sid_short: String = da.session_id.chars().take(8).collect();
+                let meta_line = format!(
+                    "{}  \u{00b7}  {}  \u{00b7}  {}  \u{00b7}  {} KB",
+                    cwd_disp,
+                    da.age,
+                    sid_short,
+                    da.bytes / 1024
+                );
+                let cwd_click = da.cwd.clone();
+                let resume_click = da.resume_cmd.clone();
+                list = list.child(
+                    div()
+                        .id(SharedString::from(format!("dead-{di}")))
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap_2()
+                        .px_1()
+                        .py_0p5()
+                        .rounded_sm()
+                        .border_1()
+                        .border_color(hsla(0., 0., 0., 0.))
+                        .cursor_pointer()
+                        .hover(move |s| s.border_color(kind_col.alpha(0.7)))
+                        .child(
+                            div()
+                                .w(px(3.))
+                                .h(px(26.))
+                                .flex_none()
+                                .rounded_full()
+                                .bg(kind_col),
+                        )
+                        .child(
+                            div()
+                                .w(px(46.))
+                                .flex_none()
+                                .text_size(px(9.))
+                                .font_weight(gpui::FontWeight::EXTRA_BOLD)
+                                .text_color(kind_col)
+                                .child(da.kind.label()),
+                        )
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w(px(0.))
+                                .overflow_hidden()
+                                .flex()
+                                .flex_col()
+                                .child(
+                                    div()
+                                        .overflow_hidden()
+                                        .text_size(px(10.))
+                                        .text_color(th.text)
+                                        .child(title),
+                                )
+                                .child(
+                                    div()
+                                        .overflow_hidden()
+                                        .text_size(px(8.))
+                                        .text_color(th.text.alpha(0.5))
+                                        .child(meta_line),
+                                ),
+                        )
+                        .child(
+                            div()
+                                .flex_none()
+                                .text_size(px(9.))
+                                .font_weight(gpui::FontWeight::BOLD)
+                                .text_color(th.accent)
+                                .child("RESURRECT \u{23ce}"),
+                        )
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
+                                cx.stop_propagation();
+                                ws.resurrect_agent(
+                                    cwd_click.clone(),
+                                    resume_click.clone(),
+                                    window,
+                                    cx,
+                                );
+                            }),
+                        ),
+                );
+            }
+
+            let panel = div()
+                .w(gpui::relative(0.62))
+                .max_w(px(760.))
+                .max_h(gpui::relative(0.86))
+                .overflow_hidden()
+                .p_3()
+                .rounded_md()
+                .border_1()
+                .border_color(th.accent.alpha(0.55))
+                .bg(darken(th.surface, 0.6))
+                .shadow(vec![BoxShadow {
+                    color: hsla(0., 0., 0., 0.6),
+                    offset: point(px(4.), px(6.)),
+                    blur_radius: px(18.),
+                    spread_radius: px(0.),
+                    inset: false,
+                }])
+                .flex()
+                .flex_col()
+                .gap_2()
+                .text_size(px(10.))
+                .text_color(th.text)
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|_, _: &MouseDownEvent, _w, cx| cx.stop_propagation()),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap_2()
+                        .text_size(px(13.))
+                        .child(div().child("\u{1faa6}"))
+                        .child(
+                            div()
+                                .font_weight(gpui::FontWeight::EXTRA_BOLD)
+                                .text_color(th.complement)
+                                .child("DEAD AGENTS"),
+                        )
+                        .child(div().flex_1().min_w(px(0.)))
+                        .child(
+                            div()
+                                .text_color(th.text.alpha(0.7))
+                                .child(format!("{n} recoverable")),
+                        ),
+                )
+                .child(
+                    div()
+                        .text_size(px(8.5))
+                        .text_color(th.accent.alpha(0.85))
+                        .child(
+                            "a saved session with no live pane \u{2014} click to resurrect it in its old directory",
+                        ),
+                )
+                .child(
+                    list.min_h(px(0.))
+                        .max_h(px((vp_h - 200.).max(140.)))
+                        .overflow_y_scroll(),
+                );
+
+            div()
+                .absolute()
+                .inset_0()
+                .bg(th.bg.alpha(0.70))
+                .flex()
+                .items_center()
+                .justify_center()
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                        ws.dead_menu = false;
+                        cx.notify();
+                    }),
+                )
+                .child(panel)
+        });
+
         let confirm_overlay = self.confirm_close.and_then(|i| {
             let name = self
                 .tabs
@@ -9155,6 +9680,7 @@ impl Render for Workspace {
                     .children(menu_overlay)
                     .children(osd_overlay)
                     .children(mcp_overlay)
+                    .children(dead_overlay)
                     .children(confirm_overlay)
                     .children(help_overlay)
                     .children(tab_menu_overlay)
