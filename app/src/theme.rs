@@ -204,15 +204,6 @@ impl ColorMode {
         }
     }
 
-    /// Tiny caption under the glyph.
-    pub fn caption(self) -> &'static str {
-        match self {
-            ColorMode::Default => "ansi",
-            ColorMode::Monochrome => "mono",
-            ColorMode::OnTheme => "theme",
-        }
-    }
-
     /// `true` for the serde/skip default (monochrome).
     pub fn is_default(&self) -> bool {
         matches!(self, ColorMode::Monochrome)
@@ -266,16 +257,6 @@ impl SyntaxScheme {
     /// `true` for the serde/skip default (code).
     pub fn is_code(&self) -> bool {
         matches!(self, SyntaxScheme::Code)
-    }
-
-    /// Tiny caption under the glyph in the picker.
-    pub fn caption(self) -> &'static str {
-        match self {
-            SyntaxScheme::Code => "code",
-            SyntaxScheme::Agentic => "agentic",
-            SyntaxScheme::Logs => "logs",
-            SyntaxScheme::Markdown => "mark",
-        }
     }
 
     /// Glyph shown in the picker.

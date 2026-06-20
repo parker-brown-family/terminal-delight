@@ -209,6 +209,19 @@ pub struct Strings {
     pub kf_crawl: &'static str,
     pub kf_restore: &'static str,
     pub kf_mcp: &'static str,
+    // ── theme panel ──
+    pub t_theme: &'static str,
+    pub t_wheel: &'static str,
+    pub t_program: &'static str,
+    pub t_syntax: &'static str,
+    pub cm_ansi: &'static str,
+    pub cm_mono: &'static str,
+    pub cm_theme: &'static str,
+    pub sc_off: &'static str,
+    pub sc_code: &'static str,
+    pub sc_agentic: &'static str,
+    pub sc_logs: &'static str,
+    pub sc_mark: &'static str,
 }
 
 /// English — the source of truth. Strings match the original inline literals.
@@ -331,6 +344,18 @@ pub const EN: Strings = Strings {
     kf_crawl: "Text-crawl",
     kf_restore: "Session restore",
     kf_mcp: "MCP server",
+    t_theme: "THEME",
+    t_wheel: "WHEEL · drag a pip out · ◉ seed T text C comp",
+    t_program: "PROGRAM COLOUR",
+    t_syntax: "SYNTAX",
+    cm_ansi: "ansi",
+    cm_mono: "mono",
+    cm_theme: "theme",
+    sc_off: "off",
+    sc_code: "code",
+    sc_agentic: "agentic",
+    sc_logs: "logs",
+    sc_mark: "mark",
 };
 
 /// Español.
@@ -453,6 +478,18 @@ pub const ES: Strings = Strings {
     kf_crawl: "desplazamiento de texto",
     kf_restore: "restaurar sesión",
     kf_mcp: "servidor MCP",
+    t_theme: "TEMA",
+    t_wheel: "RUEDA · arrastra un pip · ◉ semilla T texto C compl.",
+    t_program: "COLOR DEL PROGRAMA",
+    t_syntax: "SINTAXIS",
+    cm_ansi: "ansi",
+    cm_mono: "mono",
+    cm_theme: "tema",
+    sc_off: "no",
+    sc_code: "código",
+    sc_agentic: "agéntico",
+    sc_logs: "registros",
+    sc_mark: "markdown",
 };
 
 /// Deutsch.
@@ -575,6 +612,18 @@ pub const DE: Strings = Strings {
     kf_crawl: "Text-Crawl",
     kf_restore: "Sitzung wiederherstellen",
     kf_mcp: "MCP-Server",
+    t_theme: "THEME",
+    t_wheel: "RAD · einen Pip herausziehen · ◉ Saat T Text C Kompl.",
+    t_program: "PROGRAMMFARBE",
+    t_syntax: "SYNTAX",
+    cm_ansi: "ansi",
+    cm_mono: "mono",
+    cm_theme: "Theme",
+    sc_off: "aus",
+    sc_code: "Code",
+    sc_agentic: "agentisch",
+    sc_logs: "Logs",
+    sc_mark: "Markdown",
 };
 
 /// 中文 (简体).
@@ -697,6 +746,18 @@ pub const ZH: Strings = Strings {
     kf_crawl: "文字滚屏",
     kf_restore: "会话恢复",
     kf_mcp: "MCP 服务器",
+    t_theme: "主题",
+    t_wheel: "色环 · 拖出一个圆点 · ◉ 种子 T 文字 C 补色",
+    t_program: "程序颜色",
+    t_syntax: "语法",
+    cm_ansi: "ansi",
+    cm_mono: "单色",
+    cm_theme: "主题",
+    sc_off: "关",
+    sc_code: "代码",
+    sc_agentic: "智能体",
+    sc_logs: "日志",
+    sc_mark: "标记",
 };
 
 /// Français.
@@ -819,6 +880,18 @@ pub const FR: Strings = Strings {
     kf_crawl: "défilement de texte",
     kf_restore: "restaurer la session",
     kf_mcp: "serveur MCP",
+    t_theme: "THÈME",
+    t_wheel: "ROUE · sortez un pip · ◉ graine T texte C compl.",
+    t_program: "COULEUR DU PROGRAMME",
+    t_syntax: "SYNTAXE",
+    cm_ansi: "ansi",
+    cm_mono: "mono",
+    cm_theme: "thème",
+    sc_off: "non",
+    sc_code: "code",
+    sc_agentic: "agentique",
+    sc_logs: "journaux",
+    sc_mark: "markdown",
 };
 
 /// Русский.
@@ -941,6 +1014,18 @@ pub const RU: Strings = Strings {
     kf_crawl: "бегущий текст",
     kf_restore: "восстановить сессию",
     kf_mcp: "сервер MCP",
+    t_theme: "ТЕМА",
+    t_wheel: "КРУГ · вытащите точку · ◉ зерно T текст C дополн.",
+    t_program: "ЦВЕТ ПРОГРАММЫ",
+    t_syntax: "СИНТАКСИС",
+    cm_ansi: "ansi",
+    cm_mono: "моно",
+    cm_theme: "тема",
+    sc_off: "выкл",
+    sc_code: "код",
+    sc_agentic: "агентный",
+    sc_logs: "логи",
+    sc_mark: "markdown",
 };
 
 /// 日本語.
@@ -1063,6 +1148,18 @@ pub const JA: Strings = Strings {
     kf_crawl: "テキストクロール",
     kf_restore: "セッション復元",
     kf_mcp: "MCP サーバー",
+    t_theme: "テーマ",
+    t_wheel: "ホイール · ピップを引き出す · ◉ シード T 文字 C 補色",
+    t_program: "プログラム色",
+    t_syntax: "構文",
+    cm_ansi: "ansi",
+    cm_mono: "モノ",
+    cm_theme: "テーマ",
+    sc_off: "オフ",
+    sc_code: "コード",
+    sc_agentic: "エージェント",
+    sc_logs: "ログ",
+    sc_mark: "マーク",
 };
 
 /// 한국어.
@@ -1185,6 +1282,18 @@ pub const KO: Strings = Strings {
     kf_crawl: "텍스트 크롤",
     kf_restore: "세션 복원",
     kf_mcp: "MCP 서버",
+    t_theme: "테마",
+    t_wheel: "휠 · 핍을 끌어내기 · ◉ 시드 T 텍스트 C 보색",
+    t_program: "프로그램 색",
+    t_syntax: "구문",
+    cm_ansi: "ansi",
+    cm_mono: "모노",
+    cm_theme: "테마",
+    sc_off: "끄기",
+    sc_code: "코드",
+    sc_agentic: "에이전트",
+    sc_logs: "로그",
+    sc_mark: "마크",
 };
 
 /// हिन्दी.
@@ -1308,6 +1417,18 @@ pub const HI: Strings = Strings {
     kf_crawl: "टेक्स्ट-क्रॉल",
     kf_restore: "सत्र पुनर्स्थापना",
     kf_mcp: "MCP सर्वर",
+    t_theme: "थीम",
+    t_wheel: "चक्र · एक पिप बाहर खींचें · ◉ सीड T टेक्स्ट C पूरक",
+    t_program: "प्रोग्राम रंग",
+    t_syntax: "सिंटैक्स",
+    cm_ansi: "ansi",
+    cm_mono: "मोनो",
+    cm_theme: "थीम",
+    sc_off: "बंद",
+    sc_code: "कोड",
+    sc_agentic: "एजेंटिक",
+    sc_logs: "लॉग",
+    sc_mark: "मार्क",
 };
 
 #[cfg(test)]
