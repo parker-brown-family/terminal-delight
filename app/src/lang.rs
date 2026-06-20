@@ -251,6 +251,34 @@ pub struct Strings {
     // ── feature names: localized per Parker's note (👓 lens/loupe, 🎰 slot) ──
     pub focus_name: &'static str,
     pub gamba_name: &'static str,
+    // ── mother bar + status bar (front-facing chrome; TERMINAL DELIGHT name TBD) ──
+    pub ch_split: &'static str,
+    pub ch_sub_terminal: &'static str,
+    pub st_tab: &'static str,
+    pub st_tabs: &'static str,
+    pub st_pane: &'static str,
+    pub st_panes: &'static str,
+    pub ch_ready: &'static str,
+    pub ph_live: &'static str,
+    pub ph_exited: &'static str,
+    pub ph_done: &'static str,
+}
+
+use std::sync::atomic::{AtomicUsize, Ordering};
+/// Index into [`Lang::ALL`] of the active UI language, mirrored process-wide so
+/// panes — which render themselves without a workspace handle — can localise
+/// their own header/status chrome. The workspace republishes it each frame.
+static CURRENT: AtomicUsize = AtomicUsize::new(0);
+
+/// Publish the active language (called from the workspace render).
+pub fn set_current(l: Lang) {
+    let i = Lang::ALL.iter().position(|&x| x == l).unwrap_or(0);
+    CURRENT.store(i, Ordering::Relaxed);
+}
+
+/// The active language, for code with no workspace handle (e.g. a pane header).
+pub fn current() -> Lang {
+    Lang::ALL[CURRENT.load(Ordering::Relaxed).min(Lang::ALL.len() - 1)]
 }
 
 /// English — the source of truth. Strings match the original inline literals.
@@ -411,6 +439,16 @@ pub const EN: Strings = Strings {
     thm_custom: "custom",
     focus_name: "FOCUS",
     gamba_name: "GAMBA",
+    ch_split: "split",
+    ch_sub_terminal: "SUB-TERMINAL",
+    st_tab: "tab",
+    st_tabs: "tabs",
+    st_pane: "pane",
+    st_panes: "panes",
+    ch_ready: "READY",
+    ph_live: "live",
+    ph_exited: "exited",
+    ph_done: "done",
 };
 
 /// Español.
@@ -571,6 +609,16 @@ pub const ES: Strings = Strings {
     thm_custom: "personalizado",
     focus_name: "LENTE",
     gamba_name: "TRAGAPERRAS",
+    ch_split: "dividir",
+    ch_sub_terminal: "SUBTERMINAL",
+    st_tab: "pestaña",
+    st_tabs: "pestañas",
+    st_pane: "panel",
+    st_panes: "paneles",
+    ch_ready: "LISTO",
+    ph_live: "en vivo",
+    ph_exited: "salió",
+    ph_done: "listo",
 };
 
 /// Deutsch.
@@ -731,6 +779,16 @@ pub const DE: Strings = Strings {
     thm_custom: "eigenes",
     focus_name: "LUPE",
     gamba_name: "SLOTS",
+    ch_split: "teilen",
+    ch_sub_terminal: "SUB-TERMINAL",
+    st_tab: "Tab",
+    st_tabs: "Tabs",
+    st_pane: "Panel",
+    st_panes: "Panels",
+    ch_ready: "BEREIT",
+    ph_live: "live",
+    ph_exited: "beendet",
+    ph_done: "fertig",
 };
 
 /// 中文 (简体).
@@ -891,6 +949,16 @@ pub const ZH: Strings = Strings {
     thm_custom: "自定义",
     focus_name: "放大镜",
     gamba_name: "老虎机",
+    ch_split: "拆分",
+    ch_sub_terminal: "子终端",
+    st_tab: "标签页",
+    st_tabs: "标签页",
+    st_pane: "面板",
+    st_panes: "面板",
+    ch_ready: "就绪",
+    ph_live: "实时",
+    ph_exited: "已退出",
+    ph_done: "完成",
 };
 
 /// Français.
@@ -1051,6 +1119,16 @@ pub const FR: Strings = Strings {
     thm_custom: "perso",
     focus_name: "LOUPE",
     gamba_name: "CASINO",
+    ch_split: "diviser",
+    ch_sub_terminal: "SOUS-TERMINAL",
+    st_tab: "onglet",
+    st_tabs: "onglets",
+    st_pane: "volet",
+    st_panes: "volets",
+    ch_ready: "PRÊT",
+    ph_live: "en direct",
+    ph_exited: "quitté",
+    ph_done: "terminé",
 };
 
 /// Русский.
@@ -1211,6 +1289,16 @@ pub const RU: Strings = Strings {
     thm_custom: "своя",
     focus_name: "ЛУПА",
     gamba_name: "СЛОТЫ",
+    ch_split: "разделить",
+    ch_sub_terminal: "СУБТЕРМИНАЛ",
+    st_tab: "вкладка",
+    st_tabs: "вкладки",
+    st_pane: "панель",
+    st_panes: "панели",
+    ch_ready: "ГОТОВО",
+    ph_live: "активна",
+    ph_exited: "завершено",
+    ph_done: "готово",
 };
 
 /// 日本語.
@@ -1371,6 +1459,16 @@ pub const JA: Strings = Strings {
     thm_custom: "カスタム",
     focus_name: "ルーペ",
     gamba_name: "スロット",
+    ch_split: "分割",
+    ch_sub_terminal: "サブターミナル",
+    st_tab: "タブ",
+    st_tabs: "タブ",
+    st_pane: "ペイン",
+    st_panes: "ペイン",
+    ch_ready: "準備完了",
+    ph_live: "ライブ",
+    ph_exited: "終了",
+    ph_done: "完了",
 };
 
 /// 한국어.
@@ -1531,6 +1629,16 @@ pub const KO: Strings = Strings {
     thm_custom: "커스텀",
     focus_name: "돋보기",
     gamba_name: "슬롯",
+    ch_split: "분할",
+    ch_sub_terminal: "서브 터미널",
+    st_tab: "탭",
+    st_tabs: "탭",
+    st_pane: "창",
+    st_panes: "창",
+    ch_ready: "준비됨",
+    ph_live: "라이브",
+    ph_exited: "종료됨",
+    ph_done: "완료",
 };
 
 /// हिन्दी.
@@ -1692,6 +1800,16 @@ pub const HI: Strings = Strings {
     thm_custom: "कस्टम",
     focus_name: "लेंस",
     gamba_name: "स्लॉट",
+    ch_split: "विभाजित",
+    ch_sub_terminal: "सब-टर्मिनल",
+    st_tab: "टैब",
+    st_tabs: "टैब",
+    st_pane: "पेन",
+    st_panes: "पेन",
+    ch_ready: "तैयार",
+    ph_live: "लाइव",
+    ph_exited: "बंद",
+    ph_done: "पूर्ण",
 };
 
 #[cfg(test)]

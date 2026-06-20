@@ -5629,6 +5629,9 @@ static FOCUS_OPEN_AT: std::sync::Mutex<Option<std::time::Instant>> = std::sync::
 impl Render for Workspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.reap(window, cx);
+        // Publish the active UI language so panes can localise their own chrome.
+        lang::set_current(self.lang);
+        let s = self.lang.strings();
         warp::begin_frame(); // visible panes re-register their tube rects below
                              // An open overlay (theme breakout / confirm dialog) flattens the glass:
                              // the warp is a pixel post-process, so a panel over a tube would bow out
@@ -5968,13 +5971,13 @@ impl Render for Workspace {
             .flex_row()
             .gap(px(5. * scale))
             .items_center()
-            .child(split_btn("◧ split").on_mouse_down(
+            .child(split_btn(&format!("◧ {}", s.ch_split)).on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|ws, _: &MouseDownEvent, window, cx| {
                     ws.split(SplitDir::Row, window, cx)
                 }),
             ))
-            .child(split_btn("⬓ split").on_mouse_down(
+            .child(split_btn(&format!("⬓ {}", s.ch_split)).on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|ws, _: &MouseDownEvent, window, cx| {
                     ws.split(SplitDir::Col, window, cx)
@@ -6112,7 +6115,7 @@ impl Render for Workspace {
                                 div()
                                     .text_size(px(9. * scale))
                                     .text_color(th.text.alpha(0.4))
-                                    .child("// SUB-TERMINAL"),
+                                    .child(format!("// {}", s.ch_sub_terminal)),
                             ),
                     )
                     .child(tab_strip),
@@ -6213,13 +6216,21 @@ impl Render for Workspace {
                     .gap(px(8. * scale))
                     .items_center()
                     .child(format!(
-                        "{} tab{} · {} pane{}",
+                        "{} {} · {} {}",
                         tab_count,
-                        if tab_count == 1 { "" } else { "s" },
+                        if tab_count == 1 { s.st_tab } else { s.st_tabs },
                         pane_count,
-                        if pane_count == 1 { "" } else { "s" }
+                        if pane_count == 1 {
+                            s.st_pane
+                        } else {
+                            s.st_panes
+                        }
                     ))
-                    .child(div().text_color(th.accent).child("● READY")),
+                    .child(
+                        div()
+                            .text_color(th.accent)
+                            .child(format!("● {}", s.ch_ready)),
+                    ),
             );
 
         // ---- theme breakout: icon grid + seed swatches, per scope ----
