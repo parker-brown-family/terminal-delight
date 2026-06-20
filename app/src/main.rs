@@ -6643,8 +6643,21 @@ impl Render for Workspace {
                     .text_color(th.text.alpha(0.55))
                     .child(s.to_string())
             };
+            let t = self.lang.strings();
             let mut rows = div().flex().flex_col().gap_1();
-            for (key, name) in theme::Grade::CHANNELS {
+            for (key, _name) in theme::Grade::CHANNELS {
+                let name = match key {
+                    theme::GradeKey::TextSize => t.g_text_size,
+                    theme::GradeKey::Brightness => t.g_brightness,
+                    theme::GradeKey::Contrast => t.g_contrast,
+                    theme::GradeKey::Colour => t.g_colour,
+                    theme::GradeKey::Text => t.g_text,
+                    theme::GradeKey::Background => t.g_background,
+                    theme::GradeKey::Gamma => t.g_gamma,
+                    theme::GradeKey::Scale => t.g_menu_bar,
+                    theme::GradeKey::Warp => t.g_warp,
+                    _ => _name,
+                };
                 rows = rows.child(self.slider_row(key, name, grade.get(key), &th, cx));
             }
             const PANEL_W: f32 = 300.;
@@ -6682,14 +6695,14 @@ impl Render for Workspace {
                     MouseButton::Left,
                     cx.listener(|_, _: &MouseDownEvent, _w, cx| cx.stop_propagation()),
                 )
-                .child(label(if is_pane {
-                    "DISPLAY — THIS PANE"
-                } else {
-                    "DISPLAY — OUTER"
-                }))
+                .child(label(&format!(
+                    "{} — {}",
+                    t.d_display,
+                    if is_pane { t.scope_pane } else { t.scope_outer }
+                )))
                 .child(rows)
                 .child(
-                    Self::bezel_btn(&th, "reset", grade.is_neutral()).on_mouse_down(
+                    Self::bezel_btn(&th, t.d_reset, grade.is_neutral()).on_mouse_down(
                         MouseButton::Left,
                         cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
                             cx.stop_propagation();
@@ -6699,16 +6712,16 @@ impl Render for Workspace {
                 )
                 // warp now rides the grade channels above (GradeKey::Warp), so it
                 // scopes to pane/outer like the rest of the DISPLAY tray.
-                .child(self.track_slider(0, "roll", &th, cx))
-                .child(self.track_slider(1, "roll spd", &th, cx))
-                .child(self.track_slider(2, "roll size", &th, cx))
+                .child(self.track_slider(0, t.d_roll, &th, cx))
+                .child(self.track_slider(1, t.d_roll_spd, &th, cx))
+                .child(self.track_slider(2, t.d_roll_size, &th, cx))
                 .child(
                     div()
                         .id("track-reset")
                         .text_size(px(9.))
                         .text_color(th.text.alpha(0.5))
                         .cursor_pointer()
-                        .child("↺ roll → per-theme")
+                        .child(format!("↺ {}", t.d_roll_reset))
                         .on_mouse_down(
                             MouseButton::Left,
                             cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
@@ -6733,14 +6746,14 @@ impl Render for Workspace {
                     .flex()
                     .flex_col()
                     .gap_1()
-                    .child(label("TEXT CRAWL"))
+                    .child(label(t.d_crawl_hdr))
                     .child(
                         Self::bezel_btn(
                             &th,
-                            if crawl_on {
-                                "\u{25a3} crawl on"
+                            &if crawl_on {
+                                format!("\u{25a3} {}", t.d_crawl_on)
                             } else {
-                                "\u{25a2} crawl off"
+                                format!("\u{25a2} {}", t.d_crawl_off)
                             },
                             crawl_on,
                         )
@@ -6756,14 +6769,14 @@ impl Render for Workspace {
                     block = block
                         .child(self.slider_row(
                             theme::GradeKey::CrawlAngle,
-                            "angle",
+                            t.d_angle,
                             grade.crawl_angle,
                             &th,
                             cx,
                         ))
                         .child(self.slider_row(
                             theme::GradeKey::CrawlDepth,
-                            "depth",
+                            t.d_depth,
                             grade.crawl_depth,
                             &th,
                             cx,
@@ -6776,11 +6789,11 @@ impl Render for Workspace {
                 // pane's monitor grade tracks the outer sliders live; off = it
                 // keeps its own. Non-destructive (PaneTheme::toggle_grade).
                 let lbl = if following {
-                    "◉ follow outer"
+                    format!("◉ {}", t.follow_outer)
                 } else {
-                    "◯ follow outer"
+                    format!("◯ {}", t.follow_outer)
                 };
-                panel = panel.child(Self::bezel_btn(&th, lbl, following).on_mouse_down(
+                panel = panel.child(Self::bezel_btn(&th, &lbl, following).on_mouse_down(
                     MouseButton::Left,
                     cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
                         cx.stop_propagation();
