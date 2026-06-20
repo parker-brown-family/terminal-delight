@@ -1175,7 +1175,7 @@ fn classify_markdown(line: &str) -> Vec<Role> {
 }
 
 /// Which independent level a graded cell takes: foreground text vs background.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Channel {
     Text,
     Bg,
@@ -1220,6 +1220,84 @@ fn graded(c: Hsla, g: &crate::theme::Grade, ch: Channel) -> Hsla {
         s,
         l: l.clamp(0.0, 1.0),
         a: c.a,
+    }
+}
+
+/// Frame-constant [`Grade`](crate::theme::Grade) coefficients, precomputed once
+/// per pane render so the per-cell paint loop ([`TerminalView::styled_lines`])
+/// doesn't redo identical work on every one of the thousands of cells in a
+/// frame. The grade is fixed for the whole frame, so the gamma exponent's
+/// `powf` and the six `÷0.5` channel scalings are loop-invariant — hoisting them
+/// here leaves the per-cell hot path with a single `l.powf(gamma)` (its base
+/// genuinely varies per cell) plus a few multiplies.
+///
+/// [`Self::apply`] is **bit-for-bit identical** to calling [`graded`] per cell
+/// with the same grade: the precomputed terms equal their inlined originals
+/// (same inputs ⇒ same `powf`/division), and the per-cell operation order is
+/// unchanged — so no float result moves by even one ULP. The
+/// `grade_coeffs_match_graded` test pins this across a grade × colour × channel
+/// sweep; `graded` stays the single source of truth the fast path is checked
+/// against.
+#[derive(Clone, Copy)]
+struct GradeCoeffs {
+    /// A neutral grade is the identity; `apply` returns the colour untouched —
+    /// the same short-circuit (and the same [`Grade::is_neutral`] predicate)
+    /// `graded` takes.
+    neutral: bool,
+    colour_mul: f32,   // f(g.colour)
+    gamma_exp: f32,    // 2^((0.5 − g.gamma) · 2)
+    contrast_mul: f32, // f(g.contrast)
+    text_bri: f32,     // f(g.brightness).min(1.0) — Text-channel brightness
+    bg_bri: f32,       // f(g.brightness)           — Bg-channel brightness
+    text_lvl: f32,     // f(g.text)
+    bg_lvl: f32,       // f(g.background)
+}
+
+impl GradeCoeffs {
+    /// Compute the per-frame coefficients from a stored grade. Mirrors the
+    /// loop-invariant expressions in [`graded`] exactly.
+    fn new(g: &crate::theme::Grade) -> Self {
+        // 0.5 → 1.0; the slider spans a 0..2 multiplier around neutral — the
+        // same `f` closure `graded` uses.
+        let f = |v: f32| v / 0.5;
+        let bri = f(g.brightness);
+        Self {
+            neutral: g.is_neutral(),
+            colour_mul: f(g.colour),
+            gamma_exp: 2f32.powf((0.5 - g.gamma) * 2.0),
+            contrast_mul: f(g.contrast),
+            text_bri: bri.min(1.0),
+            bg_bri: bri,
+            text_lvl: f(g.text),
+            bg_lvl: f(g.background),
+        }
+    }
+
+    /// Per-cell application — the hot path. Step-for-step the same arithmetic as
+    /// [`graded`], with the frame-constant terms already resolved.
+    #[inline]
+    fn apply(&self, c: Hsla, ch: Channel) -> Hsla {
+        if self.neutral {
+            return c;
+        }
+        let s = (c.s * self.colour_mul).clamp(0.0, 1.0);
+        let mut l = c.l.clamp(0.0, 1.0);
+        l = l.powf(self.gamma_exp);
+        l = (l - 0.5) * self.contrast_mul + 0.5;
+        l *= match ch {
+            Channel::Text => self.text_bri,
+            Channel::Bg => self.bg_bri,
+        };
+        l *= match ch {
+            Channel::Text => self.text_lvl,
+            Channel::Bg => self.bg_lvl,
+        };
+        Hsla {
+            h: c.h,
+            s,
+            l: l.clamp(0.0, 1.0),
+            a: c.a,
+        }
     }
 }
 
@@ -2785,8 +2863,11 @@ impl TerminalView {
         let cursor = content.cursor;
         let show_cursor = content.mode.contains(TermMode::SHOW_CURSOR) && display_offset == 0;
 
+        // Each row fills toward `cols` chars and at most `cols` style runs, so
+        // size both buffers up front — a row never reallocates mid-paint.
+        let cols = self.grid.cols;
         let mut lines: Vec<(String, Vec<TextRun>)> = (0..self.grid.rows)
-            .map(|_| (String::new(), vec![]))
+            .map(|_| (String::with_capacity(cols), Vec::with_capacity(cols)))
             .collect();
 
         // The `syntax` overlay tokenises the literal text, so it needs each full
@@ -2830,6 +2911,10 @@ impl TerminalView {
             Vec::new()
         };
         let mut ords = vec![0usize; self.grid.rows];
+        // Hoist the frame-constant grade math out of the per-cell loop below.
+        // `grade.apply(..)` is bit-identical to `graded(.., &th.grade, ..)` but
+        // computes the gamma exponent and channel scalars once, not per cell.
+        let grade = GradeCoeffs::new(&th.grade);
 
         for indexed in &cells {
             let row = indexed.point.line.0 + display_offset as i32;
@@ -2890,8 +2975,8 @@ impl TerminalView {
             // Monitor OSD: grade the final colours (text + background take their
             // own levels). Neutral grade is the identity, so the default render
             // is byte-for-byte unchanged.
-            fg = graded(fg, &th.grade, Channel::Text);
-            bg = bg.map(|c| graded(c, &th.grade, Channel::Bg));
+            fg = grade.apply(fg, Channel::Text);
+            bg = bg.map(|c| grade.apply(c, Channel::Bg));
 
             let weight = if flags.contains(Flags::BOLD) {
                 FontWeight::BOLD
@@ -4861,6 +4946,97 @@ mod tests {
         extreme.set(GradeKey::Brightness, 1.0);
         let g = graded(Hsla { l: 0.95, ..c }, &extreme, Channel::Text);
         assert!((0.0..=1.0).contains(&g.l) && (0.0..=1.0).contains(&g.s));
+    }
+
+    #[test]
+    fn grade_coeffs_match_graded() {
+        use crate::theme::{Grade, GradeKey};
+        // `GradeCoeffs` is the per-frame fast path the paint loop uses; it MUST be
+        // bit-for-bit identical to `graded`, the canonical per-cell reference.
+        // Sweep neutral, the shipped house default, every paint channel pushed to
+        // each extreme, a scale-only grade (non-neutral but identity math), and a
+        // full mix — across a spread of colours and both channels — asserting
+        // EXACT equality (no epsilon: same inputs ⇒ same `powf`/divisions ⇒ no ULP
+        // drift). If this ever fails, the fast path diverged and must be fixed.
+        let mut grades = vec![Grade::neutral(), Grade::default()];
+        for key in [
+            GradeKey::Brightness,
+            GradeKey::Contrast,
+            GradeKey::Colour,
+            GradeKey::Text,
+            GradeKey::Background,
+            GradeKey::Gamma,
+        ] {
+            for v in [0.0_f32, 0.25, 0.75, 1.0] {
+                let mut g = Grade::neutral();
+                g.set(key, v);
+                grades.push(g);
+            }
+        }
+        // scale moves the `is_neutral` needle but not the paint math.
+        let mut scale_only = Grade::neutral();
+        scale_only.set(GradeKey::Scale, 1.3);
+        grades.push(scale_only);
+        // an all-channel mix
+        let mut mix = Grade::neutral();
+        mix.set(GradeKey::Brightness, 0.23);
+        mix.set(GradeKey::Contrast, 0.77);
+        mix.set(GradeKey::Colour, 0.41);
+        mix.set(GradeKey::Text, 0.62);
+        mix.set(GradeKey::Background, 0.18);
+        mix.set(GradeKey::Gamma, 0.9);
+        grades.push(mix);
+
+        let colours = [
+            Hsla {
+                h: 0.0,
+                s: 0.0,
+                l: 0.0,
+                a: 1.0,
+            },
+            Hsla {
+                h: 0.33,
+                s: 1.0,
+                l: 1.0,
+                a: 1.0,
+            },
+            Hsla {
+                h: 0.5,
+                s: 0.5,
+                l: 0.5,
+                a: 0.8,
+            },
+            Hsla {
+                h: 0.12,
+                s: 0.9,
+                l: 0.05,
+                a: 1.0,
+            },
+            Hsla {
+                h: 0.78,
+                s: 0.3,
+                l: 0.95,
+                a: 0.5,
+            },
+            Hsla {
+                h: 0.95,
+                s: 0.66,
+                l: 0.42,
+                a: 1.0,
+            },
+        ];
+        for g in &grades {
+            let cc = GradeCoeffs::new(g);
+            for &c in &colours {
+                for ch in [Channel::Text, Channel::Bg] {
+                    assert_eq!(
+                        cc.apply(c, ch),
+                        graded(c, g, ch),
+                        "GradeCoeffs::apply must equal graded — grade {g:?}, colour {c:?}, {ch:?}"
+                    );
+                }
+            }
+        }
     }
 
     #[test]
