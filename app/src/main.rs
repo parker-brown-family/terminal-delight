@@ -7491,14 +7491,14 @@ impl Render for Workspace {
                         row(s.kf_warp, s.f_warp),
                         row(s.kf_scan, s.f_scan),
                         row(s.kf_crawl, s.f_crawl),
-                        row("🎰 GAMBA", s.f_gamba),
+                        row(&format!("🎰 {}", s.gamba_name), s.f_gamba),
                     ],
                 ))
                 .child(section(
                     s.s_amcp,
                     vec![
                         row("claude / codex", s.f_detect),
-                        row("👓 FOCUS", s.f_focus),
+                        row(&format!("👓 {}", s.focus_name), s.f_focus),
                         row(s.kf_restore, s.f_restore),
                         row(&format!("🤖 {}", s.kf_mcp), s.f_mcp),
                     ],
