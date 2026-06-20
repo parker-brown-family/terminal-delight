@@ -101,8 +101,15 @@ pub fn parse_status_line(rows: &[String]) -> AgentStatus {
     let status_row = rows
         .iter()
         .zip(&lower)
-        .find(|(_, l)| l.contains("tokens") && (l.contains('\u{00b7}') || l.contains("thinking") || l.contains("interrupt")))
-        .or_else(|| rows.iter().zip(&lower).find(|(_, l)| l.contains("esc to interrupt")))
+        .find(|(_, l)| {
+            l.contains("tokens")
+                && (l.contains('\u{00b7}') || l.contains("thinking") || l.contains("interrupt"))
+        })
+        .or_else(|| {
+            rows.iter()
+                .zip(&lower)
+                .find(|(_, l)| l.contains("esc to interrupt"))
+        })
         .map(|(r, _)| r.as_str());
 
     let mut st = AgentStatus::default();
@@ -271,7 +278,9 @@ mod tests {
 
     #[test]
     fn stock_esc_to_interrupt_is_working() {
-        let st = parse_status_line(&rows(&["\u{273b} Cogitating (45s \u{00b7} 1,234 tokens \u{00b7} esc to interrupt)"]));
+        let st = parse_status_line(&rows(&[
+            "\u{273b} Cogitating (45s \u{00b7} 1,234 tokens \u{00b7} esc to interrupt)",
+        ]));
         assert_eq!(st.state, AgentState::Working);
         assert_eq!(st.turn_tokens, Some(1_234));
         assert_eq!(st.elapsed.as_deref(), Some("45s"));

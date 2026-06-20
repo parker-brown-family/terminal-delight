@@ -7373,7 +7373,11 @@ impl Render for Workspace {
                                     .text_color(th.complement)
                                     .child("AGENT WALL"),
                             )
-                            .child(div().text_color(th.accent).child(format!("\u{25b6} {n_work}")))
+                            .child(
+                                div()
+                                    .text_color(th.accent)
+                                    .child(format!("\u{25b6} {n_work}")),
+                            )
                             .child(
                                 div()
                                     .text_color(hsla(0.11, 0.85, 0.60, 1.))
