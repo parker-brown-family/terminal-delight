@@ -262,6 +262,8 @@ pub struct Strings {
     pub ph_live: &'static str,
     pub ph_exited: &'static str,
     pub ph_done: &'static str,
+    pub ph_shell: &'static str,
+    pub ph_remote: &'static str,
 }
 
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -449,6 +451,8 @@ pub const EN: Strings = Strings {
     ph_live: "live",
     ph_exited: "exited",
     ph_done: "done",
+    ph_shell: "SHELL",
+    ph_remote: "REMOTE",
 };
 
 /// Español.
@@ -619,6 +623,8 @@ pub const ES: Strings = Strings {
     ph_live: "en vivo",
     ph_exited: "salió",
     ph_done: "listo",
+    ph_shell: "CONSOLA",
+    ph_remote: "REMOTO",
 };
 
 /// Deutsch.
@@ -789,6 +795,8 @@ pub const DE: Strings = Strings {
     ph_live: "live",
     ph_exited: "beendet",
     ph_done: "fertig",
+    ph_shell: "KONSOLE",
+    ph_remote: "ENTFERNT",
 };
 
 /// 中文 (简体).
@@ -959,6 +967,8 @@ pub const ZH: Strings = Strings {
     ph_live: "实时",
     ph_exited: "已退出",
     ph_done: "完成",
+    ph_shell: "外壳",
+    ph_remote: "远程",
 };
 
 /// Français.
@@ -1129,6 +1139,8 @@ pub const FR: Strings = Strings {
     ph_live: "en direct",
     ph_exited: "quitté",
     ph_done: "terminé",
+    ph_shell: "CONSOLE",
+    ph_remote: "DISTANT",
 };
 
 /// Русский.
@@ -1299,6 +1311,8 @@ pub const RU: Strings = Strings {
     ph_live: "активна",
     ph_exited: "завершено",
     ph_done: "готово",
+    ph_shell: "ОБОЛОЧКА",
+    ph_remote: "УДАЛЁННЫЙ",
 };
 
 /// 日本語.
@@ -1469,6 +1483,8 @@ pub const JA: Strings = Strings {
     ph_live: "ライブ",
     ph_exited: "終了",
     ph_done: "完了",
+    ph_shell: "シェル",
+    ph_remote: "リモート",
 };
 
 /// 한국어.
@@ -1639,6 +1655,8 @@ pub const KO: Strings = Strings {
     ph_live: "라이브",
     ph_exited: "종료됨",
     ph_done: "완료",
+    ph_shell: "셸",
+    ph_remote: "원격",
 };
 
 /// हिन्दी.
@@ -1810,6 +1828,8 @@ pub const HI: Strings = Strings {
     ph_live: "लाइव",
     ph_exited: "बंद",
     ph_done: "पूर्ण",
+    ph_shell: "शेल",
+    ph_remote: "रिमोट",
 };
 
 #[cfg(test)]

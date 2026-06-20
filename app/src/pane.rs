@@ -63,6 +63,21 @@ impl PaneMode {
         }
     }
 
+    /// Localised header label for the active UI language. SHELL and REMOTE
+    /// translate; CLAUDE / CODEX stay (proper nouns) and `Other` keeps the live
+    /// program name. The plain `label()` stays English for MCP/data callers.
+    pub fn label_i18n(&self) -> std::borrow::Cow<'static, str> {
+        use std::borrow::Cow;
+        let st = crate::lang::current().strings();
+        match self {
+            PaneMode::Shell => Cow::Borrowed(st.ph_shell),
+            PaneMode::Remote => Cow::Borrowed(st.ph_remote),
+            PaneMode::Claude => Cow::Borrowed("CLAUDE"),
+            PaneMode::Codex => Cow::Borrowed("CODEX"),
+            PaneMode::Other(name) => Cow::Owned(name.clone()),
+        }
+    }
+
     /// True when this pane is running a conversational agent (Claude or Codex) —
     /// the modes where "your own input" is a meaningful, navigable, colourable
     /// thing distinct from the agent's replies.
@@ -3588,7 +3603,7 @@ impl Render for TerminalView {
                     .flex()
                     .flex_row()
                     .items_center()
-                    .child(format!("▸ {} · {buf}", self.mode.label()))
+                    .child(format!("▸ {} · {buf}", self.mode.label_i18n()))
                     .child(div().w(px(6.)).h(px(13.)).bg(th.cursor))
                     .into_any_element()
             } else {
@@ -3609,7 +3624,7 @@ impl Render for TerminalView {
                     .items_center()
                     .gap_1()
                     .cursor_pointer()
-                    .child(format!("▸ {} · {label}", self.mode.label()))
+                    .child(format!("▸ {} · {label}", self.mode.label_i18n()))
                     // hover-revealed ✎ affordance (invites the rename)
                     .child(
                         div()
