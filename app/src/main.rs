@@ -2873,15 +2873,9 @@ impl Workspace {
             .rounded(px(10.))
             .overflow_hidden()
             .bg(darken(th.surface, 0.35))
-            .border_1()
-            .border_color(th.accent.alpha(0.6))
-            .shadow(vec![BoxShadow {
-                color: hsla(0., 0., 0., 0.7),
-                offset: point(px(0.), px(10.)),
-                blur_radius: px(36.),
-                spread_radius: px(2.),
-                inset: false,
-            }])
+            .border_2()
+            .border_color(th.accent.alpha(0.85))
+            .shadow(float_shadows(th.accent))
             .child(header)
             .child(div().pb_1().flex().flex_col().child(list))
             .child(
@@ -3501,6 +3495,42 @@ impl Workspace {
         Some(0.7 + ratio * 0.9)
     }
 
+    /// Is any floating surface (modal or menu) open above the workspace?
+    fn any_popup_open(&self) -> bool {
+        self.help_open
+            || self.mcp_menu
+            || self.dead_menu
+            || self.confirm_close.is_some()
+            || self.find.is_some()
+            || self.lang_picker.is_some()
+            || self.theme_menu.is_some()
+            || self.osd_menu.is_some()
+            || self.tab_menu.is_some()
+            || self.group_menu.is_some()
+            || self.focus_read.is_some()
+    }
+
+    /// Close every open popup (modal or menu). Esc and click-outside both funnel
+    /// through here so dismissal is identical everywhere across the app. Returns
+    /// whether anything was open. NEVER touches a terminal pane.
+    fn close_popups(&mut self) -> bool {
+        let open = self.any_popup_open();
+        if open {
+            self.help_open = false;
+            self.mcp_menu = false;
+            self.dead_menu = false;
+            self.confirm_close = None;
+            self.find = None;
+            self.lang_picker = None;
+            self.theme_menu = None;
+            self.osd_menu = None;
+            self.tab_menu = None;
+            self.group_menu = None;
+            self.focus_read = None;
+        }
+        open
+    }
+
     fn on_key(&mut self, ev: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         let ks = &ev.keystroke;
         let m = &ks.modifiers;
@@ -3511,23 +3541,11 @@ impl Workspace {
             cx.notify();
             return;
         }
-        if self.help_open && ks.key.as_str() == "escape" {
-            self.help_open = false;
-            cx.notify();
-            return;
-        }
-        if self.theme_menu.is_some() && ks.key.as_str() == "escape" {
-            self.theme_menu = None;
-            cx.notify();
-            return;
-        }
-        if self.osd_menu.is_some() && ks.key.as_str() == "escape" {
-            self.osd_menu = None;
-            cx.notify();
-            return;
-        }
-        if self.mcp_menu && ks.key.as_str() == "escape" {
-            self.mcp_menu = false;
+        // Esc closes whatever popup (modal or menu) is open — one consistent path
+        // for the whole app. A capture-phase handler (see render) catches it even
+        // while a terminal holds focus; this is the same dismissal for the
+        // no-pane-focused case. Esc NEVER closes a terminal.
+        if ks.key.as_str() == "escape" && self.close_popups() {
             cx.notify();
             return;
         }
@@ -5711,6 +5729,50 @@ fn brighten(mut c: Hsla, f: f32) -> Hsla {
     c
 }
 
+/// Shadow stack for any surface that floats ABOVE the workspace (modals + menus).
+/// It mirrors the focused pane's lit phosphor border — a crisp accent ring plus a
+/// soft accent halo that reads as a *light source* — then casts a broad, dark
+/// shadow straight DOWN onto the panes, so the surface clearly hovers and the
+/// workspace beneath it sits in shadow. `glow` is the rim colour (the theme
+/// accent; a danger hue for destructive dialogs). Pair with `.border_2()` in the
+/// same hue, and `.rounded_*()` so the glow follows the corners.
+fn float_shadows(glow: Hsla) -> Vec<BoxShadow> {
+    vec![
+        // the doubled border: a crisp 1px outer ring in the rim colour
+        BoxShadow {
+            color: glow.alpha(0.9),
+            offset: point(px(0.), px(0.)),
+            blur_radius: px(0.),
+            spread_radius: px(1.),
+            inset: false,
+        },
+        // the lit border casting light: a soft phosphor glow around the rim
+        BoxShadow {
+            color: glow.alpha(0.5),
+            offset: point(px(0.), px(1.)),
+            blur_radius: px(22.),
+            spread_radius: px(2.),
+            inset: false,
+        },
+        // the shadow that light casts on the workspace below — broad, dark, downward
+        BoxShadow {
+            color: hsla(0., 0., 0., 0.62),
+            offset: point(px(0.), px(30.)),
+            blur_radius: px(64.),
+            spread_radius: px(-8.),
+            inset: false,
+        },
+        // a tighter contact shadow for crisp separation from the panes
+        BoxShadow {
+            color: hsla(0., 0., 0., 0.5),
+            offset: point(px(0.), px(8.)),
+            blur_radius: px(22.),
+            spread_radius: px(-2.),
+            inset: false,
+        },
+    ]
+}
+
 /// `Hsla` → `#rrggbb` (drops alpha) for storing a wheel-picked seed colour.
 fn hsla_to_hex(c: Hsla) -> String {
     let (h, s, l) = (
@@ -6630,7 +6692,7 @@ impl Render for Workspace {
                         Self::hicon_s(&th, self.dead_menu, scale)
                             .text_size(px(pane::HICON * scale))
                             .line_height(px(pane::HICON * scale))
-                            .child("\u{1f47b}")
+                            .child("\u{1faa6}")
                             .on_mouse_down(
                                 MouseButton::Left,
                                 cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
@@ -7079,21 +7141,15 @@ impl Render for Workspace {
             panel = panel
                 .p_3()
                 .rounded_md()
-                .border_1()
-                .border_color(th.accent.alpha(0.55))
+                .border_2()
+                .border_color(th.accent.alpha(0.85))
                 .bg(darken(th.surface, 0.6))
                 // never spill past the screen: clip horizontally, scroll a tall
                 // panel vertically rather than overflowing the bottom edge.
                 .max_h(px((vp_h - 16.).max(160.)))
                 .overflow_x_hidden()
                 .overflow_y_scroll()
-                .shadow(vec![BoxShadow {
-                    color: hsla(0., 0., 0., 0.6),
-                    offset: point(px(4.), px(6.)),
-                    blur_radius: px(18.),
-                    spread_radius: px(0.),
-                    inset: false,
-                }])
+                .shadow(float_shadows(th.accent))
                 .flex()
                 .flex_row()
                 .gap_3()
@@ -7170,16 +7226,10 @@ impl Render for Workspace {
             panel = panel
                 .p_3()
                 .rounded_md()
-                .border_1()
-                .border_color(th.accent.alpha(0.55))
+                .border_2()
+                .border_color(th.accent.alpha(0.85))
                 .bg(darken(th.surface, 0.6))
-                .shadow(vec![BoxShadow {
-                    color: hsla(0., 0., 0., 0.6),
-                    offset: point(px(4.), px(6.)),
-                    blur_radius: px(18.),
-                    spread_radius: px(0.),
-                    inset: false,
-                }])
+                .shadow(float_shadows(th.accent))
                 .flex()
                 .flex_col()
                 .gap_2()
@@ -7910,16 +7960,10 @@ impl Render for Workspace {
                     .overflow_hidden()
                     .p_3()
                     .rounded_md()
-                    .border_1()
-                    .border_color(th.accent.alpha(0.55))
+                    .border_2()
+                    .border_color(th.accent.alpha(0.85))
                     .bg(darken(th.surface, 0.6))
-                    .shadow(vec![BoxShadow {
-                        color: hsla(0., 0., 0., 0.6),
-                        offset: point(px(4.), px(6.)),
-                        blur_radius: px(18.),
-                        spread_radius: px(0.),
-                        inset: false,
-                    }])
+                    .shadow(float_shadows(th.accent))
                     .flex()
                     .flex_col()
                     .gap_2()
@@ -8307,16 +8351,10 @@ impl Render for Workspace {
                 .overflow_hidden()
                 .p_3()
                 .rounded_md()
-                .border_1()
-                .border_color(th.accent.alpha(0.55))
+                .border_2()
+                .border_color(th.accent.alpha(0.85))
                 .bg(darken(th.surface, 0.6))
-                .shadow(vec![BoxShadow {
-                    color: hsla(0., 0., 0., 0.6),
-                    offset: point(px(4.), px(6.)),
-                    blur_radius: px(18.),
-                    spread_radius: px(0.),
-                    inset: false,
-                }])
+                .shadow(float_shadows(th.accent))
                 .flex()
                 .flex_col()
                 .gap_2()
@@ -8333,7 +8371,7 @@ impl Render for Workspace {
                         .items_center()
                         .gap_2()
                         .text_size(px(13.))
-                        .child(div().child("\u{1f47b}"))
+                        .child(div().child("\u{1faa6}"))
                         .child(
                             div()
                                 .font_weight(gpui::FontWeight::EXTRA_BOLD)
@@ -8442,25 +8480,10 @@ impl Render for Workspace {
                 .w(px(400.))
                 .rounded_lg()
                 .overflow_hidden()
-                .border_1()
-                .border_color(danger.alpha(0.85))
+                .border_2()
+                .border_color(danger.alpha(0.9))
                 .bg(darken(th.surface, 0.62))
-                .shadow(vec![
-                    BoxShadow {
-                        color: th.accent.alpha((th.glow * 0.5).clamp(0.18, 0.5)),
-                        offset: point(px(0.), px(0.)),
-                        blur_radius: px(28.),
-                        spread_radius: px(1.),
-                        inset: false,
-                    },
-                    BoxShadow {
-                        color: hsla(0., 0., 0., 0.66),
-                        offset: point(px(0.), px(10.)),
-                        blur_radius: px(34.),
-                        spread_radius: px(0.),
-                        inset: false,
-                    },
-                ])
+                .shadow(float_shadows(danger))
                 .text_color(th.text)
                 .on_mouse_down(
                     MouseButton::Left,
@@ -8782,8 +8805,8 @@ impl Render for Workspace {
                 .overflow_hidden()
                 .p_5()
                 .rounded_lg()
-                .border_1()
-                .border_color(th.accent.alpha(0.6))
+                .border_2()
+                .border_color(th.accent.alpha(0.85))
                 .bg(darken(th.surface, 0.45))
                 .text_color(th.text)
                 .font_family(th.font_family.clone())
@@ -8795,13 +8818,7 @@ impl Render for Workspace {
                     }
                     d
                 })
-                .shadow(vec![BoxShadow {
-                    color: hsla(0., 0., 0., 0.6),
-                    offset: point(px(0.), px(8.)),
-                    blur_radius: px(30.),
-                    spread_radius: px(0.),
-                    inset: false,
-                }])
+                .shadow(float_shadows(th.accent))
                 .flex()
                 .flex_col()
                 .gap_4()
@@ -9079,15 +9096,9 @@ impl Render for Workspace {
                     .p_2()
                     .rounded_md()
                     .border_1()
-                    .border_color(th.accent.alpha(0.6))
+                    .border_color(th.accent.alpha(0.85))
                     .bg(darken(th.surface, 0.6))
-                    .shadow(vec![BoxShadow {
-                        color: hsla(0., 0., 0., 0.55),
-                        offset: point(px(3.), px(5.)),
-                        blur_radius: px(16.),
-                        spread_radius: px(0.),
-                        inset: false,
-                    }])
+                    .shadow(float_shadows(th.accent))
                     .flex()
                     .flex_col()
                     .gap_2()
@@ -9761,6 +9772,16 @@ impl Render for Workspace {
             .pb(px(5. + (-jiggle).max(0.)))
             .font_family(th.font_family.clone())
             .track_focus(&self.focus_handle)
+            // Esc closes whatever popup floats above the workspace — caught in the
+            // CAPTURE phase so it fires even while a terminal pane holds focus
+            // (the terminal never sees the Esc, so it can't be sent to the shell).
+            // With no popup open, Esc falls through to the focused terminal as usual.
+            .capture_key_down(cx.listener(|ws, ev: &KeyDownEvent, _w, cx| {
+                if ev.keystroke.key.as_str() == "escape" && ws.close_popups() {
+                    cx.stop_propagation();
+                    cx.notify();
+                }
+            }))
             .on_key_down(cx.listener(Self::on_key))
             .on_scroll_wheel(cx.listener(Self::on_wheel))
             .on_mouse_move(cx.listener(Self::on_mouse_move))
