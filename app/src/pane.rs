@@ -3122,7 +3122,7 @@ const SCRIPT_FALLBACKS: &[&str] = &[
 /// [`resolve_family`]) so we never request an absent family. `None` when the box
 /// has no non-Latin coverage at all — a missing glyph still tofus then, but
 /// nothing regresses. Built lazily, after [`init_font_registry`] has run.
-fn script_fallbacks() -> Option<gpui::FontFallbacks> {
+pub(crate) fn script_fallbacks() -> Option<gpui::FontFallbacks> {
     static FB: OnceLock<Option<gpui::FontFallbacks>> = OnceLock::new();
     FB.get_or_init(|| {
         let present: Vec<String> = SCRIPT_FALLBACKS

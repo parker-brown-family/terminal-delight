@@ -15,6 +15,7 @@ mod crt;
 mod csd;
 mod demo;
 mod gamba;
+mod lang;
 mod mcp;
 mod mcp_tail;
 mod mcp_transport;
@@ -787,6 +788,10 @@ struct StateFile {
     /// files → `false` (the flat reader everyone had before).
     #[serde(default)]
     focus_inherit: bool,
+    /// Chrome language for the UI (the language pack). Absent on old files →
+    /// English; keycaps and symbols are never translated.
+    #[serde(default)]
+    lang: lang::Lang,
 }
 
 fn default_warp() -> f32 {
@@ -822,6 +827,7 @@ impl Default for StateFile {
             groups: Vec::new(),
             mcp: None,
             focus_inherit: false,
+            lang: lang::Lang::default(),
         }
     }
 }
@@ -1090,6 +1096,8 @@ struct Workspace {
     help_open: bool,
     /// Help modal view: false = keyboard shortcuts, true = the full feature list.
     help_features: bool,
+    /// Active chrome language (the language pack); persisted in state.toml.
+    lang: lang::Lang,
     /// Open theme breakout menu, if any.
     theme_menu: Option<MenuScope>,
     /// Window-space point to anchor the open tray at (a sub-tab icon click).
@@ -1477,6 +1485,7 @@ impl Workspace {
             focus_overflow_x: 0.0,
             focus_line_h: 0.0,
             focus_inherit_theme: saved.focus_inherit,
+            lang: saved.lang,
             // a demo window restores a layout (so `scratch` is false to take the
             // restore branch below) yet must never overwrite the real state
             scratch: scratch || demo,
@@ -1642,6 +1651,7 @@ impl Workspace {
                 .collect(),
             mcp: Some(self.mcp.clone()),
             focus_inherit: self.focus_inherit_theme,
+            lang: self.lang,
         }
     }
 
@@ -7291,6 +7301,9 @@ impl Render for Workspace {
 
         // ---- ? help modal: keys + commands, themed by the outer, over a dim scrim ----
         let help_features = self.help_features;
+        // The language pack: every chrome string below comes from this table.
+        let s = self.lang.strings();
+        let cur_lang = self.lang;
         let help_overlay = self.help_open.then(|| {
             let (kc, dc, hc) = (th.accent, th.text.alpha(0.85), th.complement);
             let row = move |k: &str, d: &str| {
@@ -7334,32 +7347,32 @@ impl Render for Workspace {
                 .min_w(px(0.))
                 .gap_4()
                 .child(section(
-                    "TABS & PANES",
+                    s.s_tabs,
                     vec![
-                        row("Ctrl+Shift+T", "New tab"),
-                        row("Ctrl+PgUp / PgDn", "Switch tabs"),
-                        row("Ctrl+Shift+PgUp / PgDn", "Move tab (in / across groups)"),
-                        row("Ctrl+Alt+R / D", "Split ↔ / ↕"),
-                        row("Alt + arrows", "Move focus between panes"),
-                        row("drag a sub-tab", "Move / split · drag out = new window"),
-                        row("right-click a tab", "Rename · colour · group"),
+                        row("Ctrl+Shift+T", s.new_tab),
+                        row("Ctrl+PgUp / PgDn", s.switch_tabs),
+                        row("Ctrl+Shift+PgUp / PgDn", s.move_tab),
+                        row("Ctrl+Alt+R / D", s.split),
+                        row("Alt + arrows", s.move_focus),
+                        row("drag a sub-tab", s.drag_subtab),
+                        row("right-click a tab", s.rclick_tab),
                     ],
                 ))
                 .child(section(
-                    "EDITING & CLIPBOARD",
+                    s.s_edit,
                     vec![
-                        row("right-click", "Copy · Paste · Open link · Clear"),
-                        row("Ctrl+Shift+C / V", "Copy / Paste"),
-                        row("Ctrl+X", "Cut selection (deletes on the input line)"),
-                        row("Ctrl+F", "Find in this pane (fuzzy) — ↵ jumps to it"),
-                        row("Ctrl+Shift+F", "Find across ALL panes (fuzzy)"),
-                        row("double / triple-click", "Select word / line"),
-                        row("Shift+Enter", "Newline (multiline in claude/codex)"),
+                        row("right-click", s.rclick),
+                        row("Ctrl+Shift+C / V", s.copy_paste),
+                        row("Ctrl+X", s.cut),
+                        row("Ctrl+F", s.find),
+                        row("Ctrl+Shift+F", s.find_all),
+                        row("double / triple-click", s.select_wl),
+                        row("Shift+Enter", s.newline),
                     ],
                 ))
                 .child(section(
-                    "LINKS",
-                    vec![row("Shift- or Ctrl-click", "Open a URL or file path")],
+                    s.s_links,
+                    vec![row("Shift- or Ctrl-click", s.open_link)],
                 ));
             let col_b = div()
                 .flex()
@@ -7368,38 +7381,35 @@ impl Render for Workspace {
                 .min_w(px(0.))
                 .gap_4()
                 .child(section(
-                    "SCROLLBACK",
+                    s.s_scroll,
                     vec![
-                        row("scroll wheel", "Scroll history"),
-                        row("Ctrl+Shift+K", "Clear scrollback (not Ctrl+L)"),
+                        row("scroll wheel", s.scroll_hist),
+                        row("Ctrl+Shift+K", s.clear_scroll),
                     ],
                 ))
                 .child(section(
-                    "LOOK & FEEL",
+                    s.s_look,
                     vec![
-                        row("theme icon (top-right)", "Themes & colour wheel"),
-                        row("⛭ DISPLAY tray", "Monitor grade · text size · text-crawl"),
-                        row("A──A · Ctrl+wheel", "Text size"),
-                        row("warp dial", "Curve the glass (0 = flat → fishbowl)"),
+                        row("theme icon (top-right)", s.themes_wheel),
+                        row("⛭ DISPLAY tray", s.display_tray),
+                        row("A──A · Ctrl+wheel", s.text_size),
+                        row("warp dial", s.warp),
                     ],
                 ))
                 .child(section(
-                    "AGENTS · claude / codex",
+                    s.s_agents,
                     vec![
-                        row("Alt + ↑ / ↓", "Jump to your previous / next message"),
-                        row("▲ ▼ (pane header)", "Same — navigate your own messages"),
-                        row("👓 (pane header)", "FOCUS — mirror this pane big"),
-                        row("FOCUS · Inherit theme", "Reader curves + glares like its pane"),
-                        row("wheel / shift+wheel", "Pan a zoomed FOCUS read down / sideways"),
-                        row("your input colour", "Your turns stand out (👤 wheel pip)"),
-                        row("bell on finish", "Pane shows ● done + a per-agent sound"),
-                        row("🤖 (mother bar)", "MCP — read-only agent-watch surface"),
+                        row("Alt + ↑ / ↓", s.jump_msg),
+                        row("▲ ▼ (pane header)", s.nav_msg),
+                        row("👓 (pane header)", s.focus),
+                        row("FOCUS · Inherit theme", s.focus_inherit),
+                        row("wheel / shift+wheel", s.pan_focus),
+                        row("your input colour", s.input_colour),
+                        row("bell on finish", s.bell),
+                        row("🤖 (mother bar)", s.mcp),
                     ],
                 ))
-                .child(section(
-                    "WINDOW",
-                    vec![row("Ctrl+Alt+T", "New window (quick scratch)")],
-                ));
+                .child(section(s.s_window, vec![row("Ctrl+Alt+T", s.new_window)]));
             // The FEATURES view (toggled from the header) — there are far too many
             // to fit as shortcuts, so this is the "what can it even do" tour.
             let feat_a = div()
@@ -7409,22 +7419,22 @@ impl Render for Workspace {
                 .min_w(px(0.))
                 .gap_4()
                 .child(section(
-                    "PANES · TABS · WINDOW",
+                    s.s_feat,
                     vec![
-                        row("Tiling tree", "Splits divide only the focused pane"),
-                        row("Tab groups", "Colour band · handle chip · collapse pill"),
-                        row("Drag a sub-tab", "Split, move, or tear off a new window"),
-                        row("Rich rename", "Caret, selection, word-nav on tab names"),
-                        row("Pop-out scratch", "Quick window · single-instance aware"),
+                        row("Tiling tree", s.f_tiling),
+                        row("Tab groups", s.f_groups),
+                        row("Drag a sub-tab", s.f_drag),
+                        row("Rich rename", s.f_rename),
+                        row("Pop-out scratch", s.f_popout),
                     ],
                 ))
                 .child(section(
-                    "THEMING",
+                    s.s_theming,
                     vec![
-                        row("4 themes + custom", "Live-editable TOML, ~300ms hot reload"),
-                        row("Per-pane look", "Theme & grade inherit · 'follow outer'"),
-                        row("Colour wheel", "3 markers — seed · text · complement"),
-                        row("Monitor grade", "Bright/contrast/colour/text/bg/gamma + size"),
+                        row("4 themes + custom", s.f_themes),
+                        row("Per-pane look", s.f_perpane),
+                        row("Colour wheel", s.f_wheel),
+                        row("Monitor grade", s.f_grade),
                     ],
                 ));
             let feat_b = div()
@@ -7434,21 +7444,21 @@ impl Render for Workspace {
                 .min_w(px(0.))
                 .gap_4()
                 .child(section(
-                    "CRT · MOTION",
+                    s.s_crt,
                     vec![
-                        row("Barrel warp", "GPU curve · 0→1.5 dial · per-pane"),
-                        row("Scanlines · glow", "Vignette · phosphor · tracking · jiggle"),
-                        row("Text-crawl", "Star-Wars perspective recede (angle · depth)"),
-                        row("🎰 GAMBA", "Slot machine spins while an agent thinks"),
+                        row("Barrel warp", s.f_warp),
+                        row("Scanlines · glow", s.f_scan),
+                        row("Text-crawl", s.f_crawl),
+                        row("🎰 GAMBA", s.f_gamba),
                     ],
                 ))
                 .child(section(
-                    "AGENTS · MCP",
+                    s.s_amcp,
                     vec![
-                        row("claude / codex", "Detected · jump messages · done bell"),
-                        row("👓 FOCUS", "Mirror a pane big over a frosted blur"),
-                        row("Session restore", "Crash / quit → resume the exact chat"),
-                        row("🤖 MCP server", "Read-only watch + push · stdio, never TCP"),
+                        row("claude / codex", s.f_detect),
+                        row("👓 FOCUS", s.f_focus),
+                        row("Session restore", s.f_restore),
+                        row("🤖 MCP server", s.f_mcp),
                     ],
                 ));
             // Header pills: SHORTCUTS ⇄ FEATURES. A million features don't fit as
@@ -7477,8 +7487,8 @@ impl Render for Workspace {
                 .flex()
                 .flex_row()
                 .gap_1()
-                .child(pill("SHORTCUTS", !help_features, false))
-                .child(pill("✦ FEATURES", help_features, true));
+                .child(pill(s.shortcuts, !help_features, false))
+                .child(pill(&format!("✦ {}", s.features), help_features, true));
             let close_x = div()
                 .px_2()
                 .py_0p5()
@@ -7495,6 +7505,27 @@ impl Render for Workspace {
                         cx.notify();
                     }),
                 );
+            // Language-pack picker: cycle Lang::ALL, persist, repaint.
+            let lang_pick = div()
+                .px_2()
+                .py_0p5()
+                .rounded_sm()
+                .cursor_pointer()
+                .text_size(px(10.5))
+                .font_weight(gpui::FontWeight::BOLD)
+                .text_color(th.complement)
+                .border_1()
+                .border_color(th.accent.alpha(0.5))
+                .child(format!("🌐 {}", cur_lang.native()))
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                        cx.stop_propagation();
+                        ws.lang = ws.lang.next();
+                        ws.save(cx);
+                        cx.notify();
+                    }),
+                );
             let panel = div()
                 .w(gpui::relative(0.9))
                 .max_w(px(940.))
@@ -7507,6 +7538,14 @@ impl Render for Workspace {
                 .bg(darken(th.surface, 0.45))
                 .text_color(th.text)
                 .font_family(th.font_family.clone())
+                .map(|mut d| {
+                    // CJK/Devanagari fallback so a translated UI (中文 menus) renders
+                    // real glyphs instead of tofu — only fires on a missing glyph.
+                    if let Some(fb) = pane::script_fallbacks() {
+                        d.text_style().font_fallbacks = Some(fb);
+                    }
+                    d
+                })
                 .shadow(vec![BoxShadow {
                     color: hsla(0., 0., 0., 0.6),
                     offset: point(px(0.), px(8.)),
@@ -7532,7 +7571,7 @@ impl Render for Workspace {
                                 .text_size(px(13.))
                                 .font_weight(gpui::FontWeight::EXTRA_BOLD)
                                 .text_color(th.complement)
-                                .child("▸ TERMINAL-DELIGHT · HELP"),
+                                .child(format!("▸ TERMINAL-DELIGHT · {}", s.help)),
                         )
                         .child(
                             div()
@@ -7541,6 +7580,7 @@ impl Render for Workspace {
                                 .items_center()
                                 .gap_3()
                                 .child(tabs)
+                                .child(lang_pick)
                                 .child(close_x),
                         ),
                 )
@@ -7561,7 +7601,7 @@ impl Render for Workspace {
                         .child(
                             Self::bezel_btn(
                                 &th,
-                                "\u{1f5a5}\u{fe0f}  Spin up a demo of this layout",
+                                &format!("\u{1f5a5}\u{fe0f}  {}", s.demo_btn),
                                 false,
                             )
                             .id("help-share-demo")
@@ -7580,17 +7620,14 @@ impl Render for Workspace {
                             div()
                                 .text_size(px(9.))
                                 .text_color(th.text.alpha(0.45))
-                                .child(
-                                    "opens a new window cloning this exact layout, every pane \
-                                     filled with lorem-ipsum — safe to screen-share",
-                                ),
+                                .child(s.demo_sub),
                         ),
                 )
                 .child(
                     div()
                         .text_size(px(10.))
                         .text_color(th.text.alpha(0.5))
-                        .child("Esc or click outside to close · themes are live-editable TOML while it runs"),
+                        .child(s.help_footer),
                 );
             div()
                 .absolute()
@@ -8850,6 +8887,7 @@ id = "hacker"
             groups: vec![],
             mcp: None,
             focus_inherit: false,
+            lang: lang::Lang::default(),
         };
         let body = toml::to_string(&state).expect("serializes");
         let back: StateFile = toml::from_str(&body).expect("round-trips");
@@ -8886,6 +8924,7 @@ id = "hacker"
             groups: vec![],
             mcp: None,
             focus_inherit: false,
+            lang: lang::Lang::default(),
         };
         let body = toml::to_string(&state).expect("serializes");
         let back: StateFile = toml::from_str(&body).expect("round-trips");
@@ -8941,6 +8980,7 @@ id = "hacker"
             }],
             mcp: None,
             focus_inherit: false,
+            lang: lang::Lang::default(),
         };
         let body = toml::to_string(&state).expect("serializes");
         let back: StateFile = toml::from_str(&body).expect("round-trips");
@@ -9147,6 +9187,7 @@ node = "Leaf"
             groups: vec![],
             mcp: None,
             focus_inherit: false,
+            lang: lang::Lang::default(),
         };
         let body = toml::to_string(&state).expect("serializes");
         let back: StateFile = toml::from_str(&body).expect("round-trips");
