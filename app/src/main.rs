@@ -1082,6 +1082,15 @@ struct FindState {
     selected: usize,
 }
 
+/// The language dropdown (click the 🌐 pill in the help header). A fuzzy-search box
+/// over the 9 languages — owns the keyboard while up, like the find panel: typing
+/// filters, ↑/↓ move the selection, ↵ applies, esc closes. Replaces the old
+/// click-to-cycle pill (painful past a few languages).
+struct LangPicker {
+    query: EditBuffer,
+    selected: usize,
+}
+
 /// The FOCUS reader's wrapped layout, captured each render so the mouse handlers
 /// can map a screen click back to a source cell (for selection + copy) through the
 /// exact frame the user is looking at. All metrics are logical px, matching the
@@ -1114,6 +1123,9 @@ struct Workspace {
     /// up, like the rename editors — typing edits the query, ↑/↓ move the
     /// selection, ↵ jumps to the hit, esc closes.
     find: Option<FindState>,
+    /// The language dropdown (🌐 in the help header), if open. Owns the keyboard
+    /// while up, like `find`.
+    lang_picker: Option<LangPicker>,
     renaming: Option<(usize, EditBuffer)>,
     /// Tab index awaiting a "close all its panes?" confirmation, if any.
     confirm_close: Option<usize>,
@@ -1458,6 +1470,7 @@ impl Workspace {
             active: 0,
             focus_handle: cx.focus_handle(),
             find: None,
+            lang_picker: None,
             renaming: None,
             confirm_close: None,
             help_open: false,
@@ -2861,6 +2874,223 @@ impl Workspace {
         )
     }
 
+    /// The languages matching the picker query, best-match first. Empty query →
+    /// all languages in canonical order. Matches the autonym, the English name, or
+    /// the code (so "de", "german", "deutsch" all find German).
+    fn filtered_langs(query: &str) -> Vec<lang::Lang> {
+        let q = query.trim().to_lowercase();
+        if q.is_empty() {
+            return lang::Lang::ALL.to_vec();
+        }
+        let mut scored: Vec<(i64, usize, lang::Lang)> = lang::Lang::ALL
+            .iter()
+            .enumerate()
+            .filter_map(|(i, &l)| {
+                let key = format!("{} {} {}", l.native(), l.english(), l.code()).to_lowercase();
+                pane::fuzzy_match(&key, &q).map(|(s, _)| (s, i, l))
+            })
+            .collect();
+        // higher score first; ties keep canonical order
+        scored.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+        scored.into_iter().map(|(_, _, l)| l).collect()
+    }
+
+    /// The language dropdown (🌐 in the help header): a fuzzy-search box over the 9
+    /// languages, looking like the find panel. Its own scrim closes it. The native
+    /// names need the script fallback or they'd tofu, since this is a separate
+    /// overlay from the help panel that already sets it.
+    fn render_lang_picker(&self, th: &theme::Theme, cx: &mut Context<Self>) -> Option<gpui::Div> {
+        let lp = self.lang_picker.as_ref()?;
+        let (ww, wh) = self
+            .last_win
+            .map(|(_, _, w, h)| (w, h))
+            .unwrap_or((1200., 800.));
+        let langs = Self::filtered_langs(&lp.query.text());
+        let q = lp.query.text();
+        const ROW_H: f32 = 34.;
+        let panel_w = 340.;
+        let shown = langs.len().max(1);
+        let panel_h = 78. + shown as f32 * ROW_H + 24.;
+        let left = (ww * 0.5 - panel_w * 0.5).clamp(8., (ww - panel_w - 8.).max(8.));
+        let top = (wh * 0.28 - panel_h * 0.5).clamp(8., (wh - panel_h - 8.).max(8.));
+        let sel = lp.selected.min(shown - 1);
+
+        let input = {
+            let eb = render_edit_buffer(&lp.query, 1.0, th.text, th.accent, th.accent.alpha(0.3));
+            if q.is_empty() {
+                eb.child(
+                    div()
+                        .text_color(th.text.alpha(0.35))
+                        .child("type a language\u{2026}"),
+                )
+            } else {
+                eb
+            }
+        };
+        let header = div()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .px_2()
+            .pt_2()
+            .pb_1()
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .justify_between()
+                    .child(
+                        div()
+                            .text_size(px(10.))
+                            .font_weight(gpui::FontWeight::EXTRA_BOLD)
+                            .text_color(th.accent)
+                            .child("\u{1f310}  LANGUAGE"),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(9.))
+                            .text_color(th.text.alpha(0.5))
+                            .child(format!("{}/{}", langs.len(), lang::Lang::ALL.len())),
+                    ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .w_full()
+                    .px_2()
+                    .py_1()
+                    .rounded_sm()
+                    .bg(th.bg.alpha(0.55))
+                    .border_1()
+                    .border_color(th.accent.alpha(0.4))
+                    .text_size(px(13.))
+                    .child(input),
+            );
+
+        let mut list = div().flex().flex_col().gap_0p5().px_1();
+        for (i, &l) in langs.iter().enumerate() {
+            let selected = i == sel;
+            let is_current = l == self.lang;
+            let row = div()
+                .id(("lang-row", i))
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap_2()
+                .h(px(ROW_H))
+                .px_2()
+                .rounded_sm()
+                .cursor_pointer()
+                .when(selected, |d| d.bg(th.accent.alpha(0.18)))
+                .child(
+                    div()
+                        .w(px(16.))
+                        .flex_none()
+                        .text_color(th.accent)
+                        .child(if is_current { "\u{2713}" } else { "" }),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w(px(0.))
+                        .text_size(px(14.))
+                        .text_color(th.text)
+                        .child(l.native().to_string()),
+                )
+                .child(
+                    div()
+                        .text_size(px(9.5))
+                        .text_color(th.text.alpha(0.45))
+                        .child(l.english().to_string()),
+                )
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                        cx.stop_propagation();
+                        ws.lang = l;
+                        lang::set_current(l);
+                        ws.lang_picker = None;
+                        ws.save(cx);
+                        cx.notify();
+                    }),
+                );
+            list = list.child(row);
+        }
+        if langs.is_empty() {
+            list = list.child(
+                div()
+                    .px_2()
+                    .py_2()
+                    .text_size(px(10.))
+                    .text_color(th.text.alpha(0.4))
+                    .child(format!("No language matches \u{201c}{}\u{201d}", q.trim())),
+            );
+        }
+
+        let panel = div()
+            .absolute()
+            .left(px(left))
+            .top(px(top))
+            .w(px(panel_w))
+            .flex()
+            .flex_col()
+            .rounded(px(10.))
+            .overflow_hidden()
+            .bg(darken(th.surface, 0.35))
+            .border_1()
+            .border_color(th.accent.alpha(0.6))
+            .font_family(th.font_family.clone())
+            .map(|mut d| {
+                // CJK/Devanagari fallback so 中文 / 日本語 / 한국어 / हिन्दी render as real
+                // glyphs in the list (separate overlay from the help panel).
+                if let Some(fb) = pane::script_fallbacks() {
+                    d.text_style().font_fallbacks = Some(fb);
+                }
+                d
+            })
+            .shadow(vec![BoxShadow {
+                color: hsla(0., 0., 0., 0.7),
+                offset: point(px(0.), px(10.)),
+                blur_radius: px(36.),
+                spread_radius: px(2.),
+                inset: false,
+            }])
+            .child(header)
+            .child(div().pb_1().flex().flex_col().child(list))
+            .child(
+                div()
+                    .px_2()
+                    .pb_1()
+                    .pt_0p5()
+                    .text_size(px(8.5))
+                    .text_color(th.text.alpha(0.45))
+                    .child("\u{2191}\u{2193} select \u{00b7} \u{21b5} choose \u{00b7} esc close"),
+            )
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|_, _: &MouseDownEvent, _w, cx| cx.stop_propagation()),
+            );
+
+        Some(
+            div()
+                .absolute()
+                .inset_0()
+                .occlude()
+                .bg(hsla(0., 0., 0., 0.28))
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                        ws.lang_picker = None;
+                        cx.notify();
+                    }),
+                )
+                .child(panel),
+        )
+    }
+
     /// FOCUS text-size slider range — a multiplier on the auto-fit scale.
     /// 1.0 (fit) sits inside the range so the thumb has travel both ways. The
     /// low end reaches well below fit so a dense read can shrink to a compact,
@@ -3258,6 +3488,52 @@ impl Workspace {
             self.mcp_menu = false;
             cx.notify();
             return;
+        }
+        // The language dropdown owns the keyboard while open: esc closes, ↵ applies
+        // the selected language, ↑/↓ (tab) move, everything else edits the fuzzy query.
+        if let Some(mut lp) = self.lang_picker.take() {
+            match ks.key.as_str() {
+                "escape" => {
+                    cx.notify();
+                    return;
+                }
+                "enter" => {
+                    let langs = Self::filtered_langs(&lp.query.text());
+                    if let Some(&l) = langs.get(lp.selected.min(langs.len().saturating_sub(1))) {
+                        self.lang = l;
+                        lang::set_current(l);
+                        self.save(cx);
+                    }
+                    cx.notify();
+                    return;
+                }
+                "down" | "tab" => {
+                    let n = Self::filtered_langs(&lp.query.text()).len();
+                    if n > 0 {
+                        lp.selected = (lp.selected + 1).min(n - 1);
+                    }
+                    self.lang_picker = Some(lp);
+                    cx.notify();
+                    return;
+                }
+                "up" => {
+                    lp.selected = lp.selected.saturating_sub(1);
+                    self.lang_picker = Some(lp);
+                    cx.notify();
+                    return;
+                }
+                _ => {
+                    let before = lp.query.text();
+                    lp.query
+                        .apply(ks.key.as_str(), m, ks.key_char.as_deref(), 24);
+                    if lp.query.text() != before {
+                        lp.selected = 0;
+                    }
+                    self.lang_picker = Some(lp);
+                    cx.notify();
+                    return;
+                }
+            }
         }
         // The find panel owns the keyboard while open: esc closes, ↵ jumps to the
         // selected hit, ↑/↓ move the selection, everything else edits the query and
@@ -5771,6 +6047,7 @@ impl Render for Workspace {
                 || self.help_open
                 || self.tab_menu.is_some()
                 || self.find.is_some()
+                || self.lang_picker.is_some()
                 || self.focus_read.as_ref().and_then(|w| w.upgrade()).is_some(),
         );
         // drop-hit-test rects are rebuilt every frame by the canvases below, so
@@ -6977,6 +7254,7 @@ impl Render for Workspace {
 
         // ---- Find: fuzzy search in this pane (Ctrl+F) or every pane (Ctrl+Shift+F) ----
         let find_overlay = self.render_find(&th, cx);
+        let lang_picker_overlay = self.render_lang_picker(&th, cx);
 
         // ---- MCP control: the read-only agent-watch surface (the 🤖 button) ----
         let mcp_overlay =
@@ -7801,7 +8079,8 @@ impl Render for Workspace {
                         cx.notify();
                     }),
                 );
-            // Language-pack picker: cycle Lang::ALL, persist, repaint.
+            // Language-pack picker: click opens a fuzzy-search dropdown over all
+            // languages (cycling was painful past a few langs).
             let lang_pick = div()
                 .px_2()
                 .py_0p5()
@@ -7812,13 +8091,15 @@ impl Render for Workspace {
                 .text_color(th.complement)
                 .border_1()
                 .border_color(th.accent.alpha(0.5))
-                .child(format!("🌐 {}", cur_lang.native()))
+                .child(format!("🌐 {} ▾", cur_lang.native()))
                 .on_mouse_down(
                     MouseButton::Left,
                     cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
                         cx.stop_propagation();
-                        ws.lang = ws.lang.next();
-                        ws.save(cx);
+                        ws.lang_picker = Some(LangPicker {
+                            query: EditBuffer::seeded(""),
+                            selected: 0,
+                        });
                         cx.notify();
                     }),
                 );
@@ -8882,7 +9163,9 @@ impl Render for Workspace {
                     // the FOCUS reading modal rides above everything else
                     .children(focus_overlay)
                     // the find panel rides on top too (its own scrim locks input)
-                    .children(find_overlay),
+                    .children(find_overlay)
+                    // the language dropdown rides above even the help modal it opens from
+                    .children(lang_picker_overlay),
             );
         // Frameless: wrap the cabinet in client-side decorations (shadow margin,
         // rounded clip, live resize edges) so it runs with no system titlebar.
@@ -9493,6 +9776,30 @@ node = "Leaf"
         assert!(near_perimeter(rect, point(px(398.), px(150.)), band));
         assert!(near_perimeter(rect, point(px(200.), px(2.)), band));
         assert!(near_perimeter(rect, point(px(200.), px(298.)), band));
+    }
+
+    #[test]
+    fn lang_picker_fuzzy_filters_by_autonym_english_and_code() {
+        use lang::Lang;
+        // empty query → all languages, canonical order
+        assert_eq!(Workspace::filtered_langs(""), Lang::ALL.to_vec());
+        assert_eq!(Workspace::filtered_langs("   "), Lang::ALL.to_vec());
+        // English name finds the language
+        assert_eq!(Workspace::filtered_langs("german").first(), Some(&Lang::De));
+        assert_eq!(
+            Workspace::filtered_langs("japanese").first(),
+            Some(&Lang::Ja)
+        );
+        // two-letter code jumps straight to it
+        assert_eq!(Workspace::filtered_langs("zh").first(), Some(&Lang::Zh));
+        // autonym (its own script) matches
+        assert_eq!(Workspace::filtered_langs("中文").first(), Some(&Lang::Zh));
+        assert_eq!(
+            Workspace::filtered_langs("español").first(),
+            Some(&Lang::Es)
+        );
+        // garbage matches nothing
+        assert!(Workspace::filtered_langs("zzzzq").is_empty());
     }
 
     #[test]
