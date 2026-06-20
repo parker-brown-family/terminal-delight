@@ -58,11 +58,36 @@ impl Lang {
         }
     }
 
-    /// The next language in [`Self::ALL`] (wraps) — drives the click-to-cycle pill.
-    pub fn next(self) -> Lang {
-        let all = Self::ALL;
-        let i = all.iter().position(|&l| l == self).unwrap_or(0);
-        all[(i + 1) % all.len()]
+    /// The language's English name — a fuzzy-search alias (so "german" finds
+    /// Deutsch) and a dim subtitle under the autonym in the picker.
+    pub fn english(self) -> &'static str {
+        match self {
+            Lang::En => "English",
+            Lang::Es => "Spanish",
+            Lang::De => "German",
+            Lang::Fr => "French",
+            Lang::Ru => "Russian",
+            Lang::Zh => "Chinese",
+            Lang::Ja => "Japanese",
+            Lang::Ko => "Korean",
+            Lang::Hi => "Hindi",
+        }
+    }
+
+    /// The lowercase language code — the third fuzzy-search key (so "de", "zh"
+    /// jump straight to a language).
+    pub fn code(self) -> &'static str {
+        match self {
+            Lang::En => "en",
+            Lang::Es => "es",
+            Lang::De => "de",
+            Lang::Fr => "fr",
+            Lang::Ru => "ru",
+            Lang::Zh => "zh",
+            Lang::Ja => "ja",
+            Lang::Ko => "ko",
+            Lang::Hi => "hi",
+        }
     }
 
     /// This language's string table.
@@ -1837,16 +1862,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn every_language_resolves_and_cycles() {
-        // ALL is non-empty, next() cycles through it and returns home.
-        let mut l = Lang::default();
-        for _ in 0..Lang::ALL.len() {
-            // each language has a non-empty autonym, chip, and resolves a table
-            assert!(!l.native().is_empty());
+    fn every_language_resolves_with_search_keys() {
+        // each language has a non-empty autonym, English name, and code, and
+        // resolves a string table — these three are the picker's fuzzy keys.
+        let mut codes = std::collections::HashSet::new();
+        for &l in &Lang::ALL {
+            assert!(!l.native().is_empty(), "autonym");
+            assert!(!l.english().is_empty(), "english name");
+            assert_eq!(l.code().len(), 2, "two-letter code");
+            assert!(codes.insert(l.code()), "codes must be unique: {}", l.code());
             let _ = l.strings();
-            l = l.next();
         }
-        assert_eq!(l, Lang::default(), "next() must cycle back to the start");
+        assert_eq!(codes.len(), Lang::ALL.len());
+        // the default language is the first in picker order
+        assert_eq!(Lang::default(), Lang::ALL[0]);
     }
 
     #[test]
