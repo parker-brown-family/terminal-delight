@@ -317,7 +317,7 @@
             "tool": "Bash", "summary": "cargo test --release" } }
 <span style="color:var(--warn)">notifications/message</span> {
   "data": { "event": "agent_vanished", "pane": "tests" } }</pre>
-        <div class="playnote">Read-only by construction — <b>nothing here can write to a terminal.</b> Locked off by default; when on, agents-only (a plain shell is never exposed). stdio JSON-RPC, <b>never a network port.</b></div>
+        <div class="playnote" style="position:static;background:var(--bg-2);border-top:1px solid var(--line)">Read-only by construction — <b>nothing here can write to a terminal.</b> Locked off by default; when on, agents-only (a plain shell is never exposed). stdio JSON-RPC, <b>never a network port.</b></div>
       </div>
 
       <p style="margin-top:16px">It ships behind a <b>🤖 robot button</b> on the mother bar that opens an <b>MCP CONTROL — READ ONLY</b> panel: a master switch, an expose policy (agents-only / all), an events toggle, and a live list of every pane with a per-pane exposed dot. The danger in any agent-control surface is the <em>write</em> path (bytes into a shell = arbitrary code execution); that path simply does not exist here — the observe plane shipped first, alone.</p>

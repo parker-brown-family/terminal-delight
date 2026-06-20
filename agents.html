@@ -166,44 +166,46 @@
 <script>
 // ---- tab groups (projects) → colour, mirroring TD's coloured tab-group bands ----
 const GROUPS = {
-  'terminal-delight':    {c:'#36ff7e'},
-  'intelliscout':        {c:'#46d9e8'},
-  'brown-family-sports': {c:'#ffb13c'},
-  'markdown-delight':    {c:'#c084fc'},
-  'stephbrownpt':        {c:'#ff7eb6'},
-  'apes':                {c:'#9fe06a'},
-  'shell':               {c:'#3f6354'},
+  'terminal-delight': {c:'#36ff7e'},
+  'aurora-api':       {c:'#46d9e8'},
+  'storefront-web':   {c:'#ffb13c'},
+  'ml-pipeline':      {c:'#c084fc'},
+  'docs-site':        {c:'#ff7eb6'},
+  'infra':            {c:'#9fe06a'},
+  'shell':            {c:'#3f6354'},
 };
 const MODELS = ['opus-4.8','sonnet-4.6','haiku-4.5'];
 // a working agent cycles through these gerunds, like the real "✷ Accomplishing…" line
 const GERUNDS = ['Reading files','Editing','Running tests','Searching','Reasoning','Compiling','Reviewing the diff','Thinking'];
 
-// ---- the fleet: a rich, realistic snapshot drawn from a real BFS multi-agent day ----
-// state: working | idle | blocked | error | done   ·   eff: 0..1 effort   ·   sess: session Σ tokens
+// ---- the fleet: a representative, FICTIONAL snapshot — staged demo data only.
+// No real projects, paths, or business: public demo media must never carry real
+// prompts/paths. (The terminal-delight rows reference its own already-public,
+// shipped features.)  state: working|idle|blocked|error|done · eff 0..1 · sess Σ
 let A = [
-  {g:'terminal-delight', tab:'render-hotpath',   model:'opus-4.8',  eff:.85, state:'working', prompt:'Hoisting the grade coefficients out of the per-cell styled_lines loop', t:24, tok:126,  sess:2200},
-  {g:'terminal-delight', tab:'agents-kiosk',     model:'opus-4.8',  eff:.85, state:'working', prompt:'Building the live agent-wall kiosk with a great set of demo data', t:11, tok:393,  sess:773},
-  {g:'terminal-delight', tab:'i18n-coverage',    model:'opus-4.8',  eff:1.0, state:'done',    prompt:'Localize the entire UI into nine languages', t:0, tok:0, sess:24100},
-  {g:'terminal-delight', tab:'crt-webgl',        model:'sonnet-4.6',eff:.55, state:'working', prompt:'Investigating retro-term WebGL CRT effects on the focus tube', t:33, tok:1800, sess:1800},
-  {g:'terminal-delight', tab:'focus-reader',     model:'opus-4.8',  eff:.85, state:'done',    prompt:'Wrap-to-fit reader with warp-aware select, no side jiggle', t:0, tok:0, sess:6900},
+  {g:'terminal-delight', tab:'render-hotpath', model:'opus-4.8',  eff:.85, state:'working', prompt:'Hoisting the grade coefficients out of the per-cell styled_lines loop', t:24, tok:126,  sess:2200},
+  {g:'terminal-delight', tab:'agents-kiosk',   model:'opus-4.8',  eff:.85, state:'working', prompt:'Building the live agent-wall kiosk with a great set of demo data', t:11, tok:393,  sess:773},
+  {g:'terminal-delight', tab:'i18n-coverage',  model:'opus-4.8',  eff:1.0, state:'done',    prompt:'Localize the entire UI into nine languages', t:0, tok:0, sess:24100},
+  {g:'terminal-delight', tab:'crt-webgl',      model:'sonnet-4.6',eff:.55, state:'working', prompt:'Investigating retro-term WebGL CRT effects on the focus tube', t:33, tok:1800, sess:1800},
+  {g:'terminal-delight', tab:'focus-reader',   model:'opus-4.8',  eff:.85, state:'done',    prompt:'Wrap-to-fit reader with warp-aware select, no side jiggle', t:0, tok:0, sess:6900},
 
-  {g:'intelliscout', tab:'map-cache',        model:'opus-4.8',  eff:.85, state:'working', prompt:'Optimizing map performance with pre-cached KML tiles', t:64, tok:1600, sess:1600},
-  {g:'intelliscout', tab:'map-cache·retry',  model:'opus-4.8',  eff:.85, state:'error',   prompt:'Optimize map performance with pre-cached KML files', t:0, tok:1800, sess:1800},
-  {g:'intelliscout', tab:'patent-filings',   model:'opus-4.8',  eff:1.0, state:'blocked', prompt:'Drive provisional patent filings to completion — needs your sign-off', t:0, tok:0, sess:4100},
-  {g:'intelliscout', tab:'pm-google-chat',   model:'opus-4.8',  eff:.85, state:'done',    prompt:'Integrate the PM tool with Google Chat for status updates', t:0, tok:0, sess:9700},
-  {g:'intelliscout', tab:'north-x-funding',  model:'sonnet-4.6',eff:.55, state:'idle',    prompt:'Review local tasks API and the North X funding stream', t:0, tok:0, sess:0},
+  {g:'aurora-api', tab:'cold-start',       model:'opus-4.8',  eff:.85, state:'working', prompt:'Profiling the cold-start path and caching the slow startup query', t:64, tok:1600, sess:1600},
+  {g:'aurora-api', tab:'cold-start·retry', model:'opus-4.8',  eff:.85, state:'error',   prompt:'Profile the cold-start path and cache the slow startup query', t:0, tok:1800, sess:1800},
+  {g:'aurora-api', tab:'auth-tests',       model:'opus-4.8',  eff:1.0, state:'blocked', prompt:'Add integration tests for the auth middleware — needs your review of the fixtures', t:0, tok:0, sess:4100},
+  {g:'aurora-api', tab:'upload-retry',     model:'opus-4.8',  eff:.85, state:'done',    prompt:'Add retry with exponential backoff to the upload client', t:0, tok:0, sess:9700},
+  {g:'aurora-api', tab:'flaky-ci',         model:'sonnet-4.6',eff:.55, state:'idle',    prompt:'Triage the flaky CI tests and quarantine the worst offenders', t:0, tok:0, sess:0},
 
-  {g:'brown-family-sports', tab:'servo-skills',     model:'opus-4.8',  eff:.85, state:'working', prompt:'Designing agent skills for servo and the web-access tools', t:47, tok:690, sess:2400},
-  {g:'brown-family-sports', tab:'pricing-proposal', model:'opus-4.8',  eff:.85, state:'done',    prompt:'Review website and business pricing proposal', t:0, tok:0, sess:3000},
-  {g:'brown-family-sports', tab:'gmail-access',     model:'opus-4.8',  eff:.55, state:'idle',    prompt:'Set up Gmail access for Parker at Brown Family Sports', t:0, tok:0, sess:0},
+  {g:'storefront-web', tab:'checkout-flow', model:'opus-4.8', eff:.85, state:'working', prompt:'Refactoring the checkout flow into smaller, testable components', t:47, tok:690, sess:2400},
+  {g:'storefront-web', tab:'api-v2-docs',   model:'opus-4.8', eff:.85, state:'done',    prompt:'Draft the API reference for the v2 endpoints', t:0, tok:0, sess:3000},
+  {g:'storefront-web', tab:'onboarding',    model:'opus-4.8', eff:.55, state:'idle',    prompt:'Polish the first-run onboarding copy', t:0, tok:0, sess:0},
 
-  {g:'apes', tab:'localization-section', model:'opus-4.8', eff:.85, state:'done', prompt:'Build the dedicated APES localization knowledge section', t:0, tok:0, sess:5500},
+  {g:'infra', tab:'dep-bump', model:'opus-4.8', eff:.85, state:'done', prompt:'Bump dependencies and fix the breaking changes', t:0, tok:0, sess:5500},
 
-  {g:'markdown-delight', tab:'render-bench', model:'sonnet-4.6', eff:.55, state:'working', prompt:'Benchmarking the markdown render path against very large documents', t:19, tok:540, sess:1100},
-  {g:'stephbrownpt',     tab:'booking-flow', model:'haiku-4.5',  eff:.30, state:'idle',    prompt:'Polish the physiotherapy booking-flow copy', t:0, tok:0, sess:0},
+  {g:'ml-pipeline', tab:'feature-bench', model:'sonnet-4.6', eff:.55, state:'working', prompt:'Benchmarking the feature-extraction stage on large batches', t:19, tok:540, sess:1100},
+  {g:'docs-site',   tab:'static-gen',    model:'haiku-4.5',  eff:.30, state:'idle',    prompt:'Migrate the docs to the new static-site generator', t:0, tok:0, sess:0},
 
-  {g:'shell', tab:'pbrown@brown', model:null, eff:0, state:'shell', prompt:'~/BROWN-FAMILY-SPORTS/Software/terminal-delight', t:0, tok:0, sess:0},
-  {g:'shell', tab:'processor-watch', model:null, eff:0, state:'shell', prompt:'PROCESSOR WATCH · ~/BROWN-FAMILY-SPORTS/HOME', t:0, tok:0, sess:0},
+  {g:'shell', tab:'dev@workstation', model:null, eff:0, state:'shell', prompt:'~/code/aurora-api', t:0, tok:0, sess:0},
+  {g:'shell', tab:'build-watch',     model:null, eff:0, state:'shell', prompt:'cargo watch -x build · ~/code/terminal-delight', t:0, tok:0, sess:0},
 ];
 
 const STATE = {
