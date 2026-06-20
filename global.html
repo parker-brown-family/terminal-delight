@@ -139,6 +139,10 @@
 const cv=document.getElementById('gl'); let gl=cv.getContext('webgl2',{antialias:false,alpha:false}); let ctx2d=null;
 let W,H, dpr=Math.min(2,window.devicePixelRatio||1);
 const scene=document.createElement('canvas'); const x=scene.getContext('2d');
+// cached STATIC layer: everything except the moving auto-surf countdown bar, so
+// the heavy raster (shadow-blur brand text, gradients, buttons) runs only on a
+// real state change — not every animation tick.
+const staticC=document.createElement('canvas'); const sx=staticC.getContext('2d');
 // fonts: the small terminal bits stay monospace; the BRAND needs CJK + Devanagari
 // coverage so 终端之悦 / 端末の悦び / 터미널의 기쁨 / टर्मिनल आनंद render real glyphs.
 const MONO="ui-monospace,'DejaVu Sans Mono',monospace";
@@ -184,7 +188,7 @@ const BTNS=[
 ];
 let btnRects=[], hover=-1;
 const K={barrel:1.0, fade:0.92, track:0.55};
-function layout(){ const r=cv.getBoundingClientRect(); W=Math.max(2,Math.round(r.width*dpr)); H=Math.max(2,Math.round(r.height*dpr)); cv.width=W;cv.height=H;scene.width=W;scene.height=H; }
+function layout(){ const r=cv.getBoundingClientRect(); W=Math.max(2,Math.round(r.width*dpr)); H=Math.max(2,Math.round(r.height*dpr)); cv.width=W;cv.height=H;scene.width=W;scene.height=H; staticC.width=W;staticC.height=H; }
 // shrink a brand string to fit a target width fraction of the screen
 function fitFont(text,base,weight,family,maxFrac){ x.font=`${weight} ${base}px ${family}`;
   const w=x.measureText(text).width, max=W*maxFrac; return w>max ? base*max/w : base; }
@@ -217,15 +221,17 @@ function drawScene(time){
     BTNS.forEach((b,i)=>{ drawBtn(b,i,cx-bw/2,by,bw,bh,s); by+=bh+gap; });
   } else { const bw=210*s*dpr, total=BTNS.length*bw+(BTNS.length-1)*gap; let bx=cx-total/2, by=H*0.83;
     BTNS.forEach((b,i)=>{ drawBtn(b,i,bx,by,bw,bh,s); bx+=bw+gap; }); }
-  // auto-surf countdown — a thin phosphor bar creeping across the bottom, refilling each dwell
-  const prog=Math.min(1,(performance.now()-dwellStart)/DWELL);
-  x.fillStyle=c.accent; x.globalAlpha=0.8; x.shadowColor=c.glow; x.shadowBlur=6*s*dpr;
-  x.fillRect(0, H-4*dpr, W*prog, 4*dpr); x.shadowBlur=0; x.globalAlpha=1;
+  // (the auto-surf countdown bar is drawn per-frame in drawBar over the cached
+  //  static layer, so it can animate without re-rasterising this whole scene)
   // channel OSD (classic top-corner readout) after a change
   if(performance.now()<osdUntil){ x.textAlign=narrow?'center':'right'; x.fillStyle=c.bright; x.shadowColor=c.glow; x.shadowBlur=9*s*dpr;
     x.font=`700 ${(narrow?13:15)*s*dpr}px ${BRAND}`;
     x.fillText('CH '+String(chan+1).padStart(2,'0')+' · '+c.native, narrow?cx:W-18*s*dpr, narrow?H*0.07:H*0.10); x.shadowBlur=0; x.textAlign='center'; }
 }
+// the auto-surf countdown bar — cheap, drawn fresh each composite over the cached static layer
+function drawBar(now){ const c=cur(), s=Math.max(0.5, W/900); const prog=Math.min(1,(now-dwellStart)/DWELL);
+  x.fillStyle=c.accent; x.globalAlpha=0.8; x.shadowColor=c.glow; x.shadowBlur=6*s*dpr;
+  x.fillRect(0, H-4*dpr, W*prog, 4*dpr); x.shadowBlur=0; x.globalAlpha=1; }
 function drawBtn(b,i,bx,by,bw,bh,s){ const c=cur(); btnRects.push({x:bx,y:by,w:bw,h:bh,url:b.url}); const on=hover===i;
   x.fillStyle=b.primary?(on?c.dark2:c.dark):(on?c.dark:'rgba(255,255,255,0.05)'); rr(bx,by,bw,bh,9*dpr); x.fill();
   x.lineWidth=on?2.4*dpr:1.4*dpr; x.strokeStyle=(b.primary||on)?c.accent:c.dim; rr(bx,by,bw,bh,9*dpr); x.stroke();
@@ -268,16 +274,22 @@ if(gl){ try {
 if(!gl){ try { ctx2d=cv.getContext('2d'); } catch(e){} }
 const U=n=>gl.getUniformLocation(pr,n);
 const t0=performance.now(); let lastKey='';
+// scene-texture upload throttle: the heavy work (raster + GPU upload) caps at
+// ~30fps; the CRT shader still animates at the display's full rate off the last
+// uploaded texture, so the page stays smooth at a fraction of the cost.
+let lastUpload=0; const UPLOAD_MS=33;
 function frame(now){ const time=(now-t0)/1000;
   // auto-surf: when the dwell bar fills, advance to the next language
   if(now-dwellStart>=DWELL) go(1);
-  // the countdown bar + OSD animate, so on the GL path we must re-rasterise the
-  // scene every frame while either is live (otherwise the cached texture freezes)
-  const animating = (now<osdUntil) || true; // countdown bar always animates
-  const key = animating ? 'live|'+Math.floor(now/60)+'|'+W+'|'+hover+'|'+chan
-                        : Math.floor((now-t0)/550)+'|'+W+'|'+hover+'|'+chan;
+  // Re-raster the heavy STATIC layer only when state actually changes (size,
+  // hover, channel, OSD visibility); cache it. Per frame we just blit that cache
+  // and draw the cheap moving countdown bar, throttling the GPU upload — while
+  // the CRT shader keeps animating at full rate off the cached texture.
+  const staticKey = W+'|'+hover+'|'+chan+'|'+(now<osdUntil?1:0);
+  if(staticKey!==lastKey){ drawScene(now-t0); sx.clearRect(0,0,W,H); sx.drawImage(scene,0,0); lastKey=staticKey; lastUpload=0; }
+  const composite=()=>{ x.clearRect(0,0,W,H); x.drawImage(staticC,0,0); drawBar(now); };
   if(gl){
-    if(key!==lastKey){drawScene(now-t0);gl.bindTexture(3553,tex);gl.texImage2D(3553,0,6408,6408,5121,scene);lastKey=key;}
+    if(now-lastUpload>=UPLOAD_MS){ composite(); gl.bindTexture(3553,tex); gl.texImage2D(3553,0,6408,6408,5121,scene); lastUpload=now; }
     gl.viewport(0,0,W,H); const c=K.barrel*2.2, t=cur().tint;
     gl.uniform2f(U('res'),W,H); gl.uniform1f(U('k1'),c*0.14); gl.uniform1f(U('k2'),c*0.06);
     gl.uniform1f(U('time'),time); gl.uniform1f(U('fade'),K.fade);
@@ -285,7 +297,7 @@ function frame(now){ const time=(now-t0)/1000;
     gl.uniform1f(U('snow'),snow); gl.uniform3f(U('tint'),t[0],t[1],t[2]); gl.uniform1i(U('tex'),0);
     gl.drawArrays(4,0,3); snow=snow>0.01?snow*0.90:0;
   } else if(ctx2d){
-    if(key!==lastKey){ drawScene(now-t0); ctx2d.clearRect(0,0,W,H); ctx2d.drawImage(scene,0,0,W,H); lastKey=key; }
+    if(now-lastUpload>=UPLOAD_MS){ composite(); ctx2d.clearRect(0,0,W,H); ctx2d.drawImage(scene,0,0,W,H); lastUpload=now; }
   }
   window.__ready=true; requestAnimationFrame(frame);
 }
