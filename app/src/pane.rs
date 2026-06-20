@@ -3379,12 +3379,13 @@ impl Render for TerminalView {
         if th.crawl {
             bottom_anchor_rows(&mut lines, self.grid.rows);
         }
+        let ps = crate::lang::current().strings();
         let status = if self.bell {
-            "● done"
+            format!("● {}", ps.ph_done)
         } else if self.exited {
-            "exited"
+            ps.ph_exited.to_string()
         } else {
-            "live"
+            ps.ph_live.to_string()
         };
         let grid_label = format!("{}×{}", self.grid.cols, self.grid.rows);
         let glow = th.glow;
