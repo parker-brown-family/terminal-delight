@@ -1,0 +1,562 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>terminal-delight — the agent wall</title>
+<meta name="description" content="terminal-delight as mission control for a fleet of coding agents: a read-only console showing every agent's tab group, model, effort, what it's doing right now, live token spend and whether it's blocked on you. Filter by tab group.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' rx='3' fill='%23021107'/><text y='12' x='2' font-size='11' fill='%2336ff7e'>▟</text></svg>">
+<style>
+  :root{
+    --bg:#04100a; --bg2:#020806; --ink:#cfeede; --dim:#5f8f76; --dim2:#3f6354;
+    --phos:#36ff7e; --phos-d:#1f9a52;
+    --amber:#ffb13c; --red:#ff5d52; --cyan:#46d9e8; --violet:#c084fc; --pink:#ff7eb6;
+    --line:#103b28; --row:#07140d;
+    --glow:0 0 8px;
+    /* knob-driven: phosphor brightness + scanline weight */
+    --gi:0.62; --scan:0.5;
+    --spill:rgba(54,255,126,.16);
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{
+    background:radial-gradient(130% 90% at 50% -8%, #0a1c12 0%, var(--bg) 52%, #010504 100%), var(--bg2);
+    color:var(--ink); min-height:100%;
+    font-family:ui-monospace,"SF Mono","Cascadia Code",Menlo,Consolas,monospace;
+    -webkit-font-smoothing:antialiased; letter-spacing:.01em;
+    display:flex; align-items:center; justify-content:center; padding:24px 22px 30px;
+  }
+  /* faint floor, like the /tv stage */
+  body::after{content:"";position:fixed;left:0;right:0;bottom:0;height:26%;pointer-events:none;z-index:0;
+    background:linear-gradient(#0000,#08160e66 45%,#0a1c1299);
+    -webkit-mask:linear-gradient(#0000,#000 70%);mask:linear-gradient(#0000,#000 70%);}
+
+  /* ===== the console (a sibling device to the /tv cabinet) ===== */
+  .console{ position:relative; width:min(97vw,1200px); z-index:1; }
+  .cabinet{
+    position:relative; border-radius:24px 24px 18px 18px; padding:18px 18px 14px;
+    background:
+      repeating-linear-gradient(90deg,#00000014 0 2px,#ffffff05 2px 4px,#00000010 4px 9px),
+      linear-gradient(160deg,#22282a,#11181a 46%,#0a1012);
+    box-shadow:0 2px 0 #ffffff14 inset, 0 -16px 38px #00000055 inset,
+      0 46px 80px -28px #000c, 0 16px 36px #0009, 0 0 50px -8px var(--spill);
+  }
+  .cabinet::before{ content:""; position:absolute; inset:11px; border-radius:16px;
+    box-shadow:0 0 0 2px #0007, 0 0 24px #0006 inset; pointer-events:none; }
+
+  .screen-housing{ position:relative; border-radius:18px/16px; padding:12px;
+    background:linear-gradient(150deg,#0c1110,#11181a);
+    box-shadow:0 0 0 3px #0006, 0 8px 26px #000a inset, 0 2px 0 #ffffff10 inset; }
+  /* phosphor light spilling onto the cabinet around the tube */
+  .screen-housing::after{ content:""; position:absolute; inset:-6px; border-radius:22px/20px; pointer-events:none;
+    box-shadow:0 0 46px 3px var(--spill) inset; mix-blend-mode:screen; }
+
+  /* the curved phosphor glass */
+  .screen{
+    position:relative; border-radius:14px/13px; overflow:hidden;
+    background:linear-gradient(#03130b,#020a07);
+    box-shadow:0 0 0 5px #0a0b09, 0 0 70px #000a inset;
+    padding:16px 18px 12px;
+    height:78vh; min-height:520px; display:flex; flex-direction:column;
+    filter:brightness(calc(.78 + var(--gi)*.5)) saturate(calc(.82 + var(--gi)*.4));
+  }
+  /* scanlines (knob-weighted) + tube vignette + glass sheen — all non-interactive */
+  .screen::before{ content:""; position:absolute; inset:0; pointer-events:none; z-index:6;
+    background:repeating-linear-gradient(0deg,#0000 0 2px,#00000028 2px 3px);
+    mix-blend-mode:multiply; opacity:var(--scan); }
+  .screen::after{ content:""; position:absolute; inset:0; pointer-events:none; z-index:7; border-radius:14px;
+    box-shadow:0 0 130px 12px #000000aa inset, 0 0 46px 5px #16ff7e16 inset;
+    background:radial-gradient(125% 92% at 50% 4%, #36ff7e12, #0000 52%); }
+  .sheen{ position:absolute; inset:0; pointer-events:none; z-index:8; border-radius:14px;
+    background:radial-gradient(150% 56% at 26% -4%, #ffffff12, #fff0 42%); mix-blend-mode:screen; }
+
+  /* ---- header / rollup ---- */
+  .top{ display:flex; align-items:baseline; gap:14px; flex-wrap:wrap;
+    padding-bottom:9px; border-bottom:1px solid var(--line); position:relative; z-index:4; }
+  .eyebrow{ font-size:10.5px; letter-spacing:.32em; color:var(--dim); text-transform:uppercase; }
+  .title{ font-size:17px; font-weight:800; letter-spacing:.16em; color:var(--phos);
+    text-shadow:var(--glow) #36ff7e88; }
+  .roll{ margin-left:auto; display:flex; gap:15px; align-items:baseline; font-size:12.5px; flex-wrap:wrap; }
+  .pill{ display:inline-flex; gap:5px; align-items:baseline; }
+  .pill b{ font-weight:800; }
+  .c-work{ color:var(--phos); } .c-block{ color:var(--amber); }
+  .c-err{ color:var(--red); } .c-done{ color:var(--phos-d); } .c-idle{ color:var(--dim); }
+  .spend{ color:var(--ink); } .spend .k{ color:var(--dim); }
+
+  .sub{ display:flex; gap:10px; align-items:center; font-size:11px; color:var(--dim);
+    padding:7px 0 8px; position:relative; z-index:4; flex-wrap:wrap; }
+  .sub .dot{ width:6px;height:6px;border-radius:50%;background:var(--phos);box-shadow:var(--glow) #36ff7e; animation:beat 1.6s infinite; }
+  @keyframes beat{ 0%,100%{opacity:.35} 50%{opacity:1} }
+
+  /* ---- filter chips: sort the wall by tab group ---- */
+  .chips{ display:flex; gap:7px; flex-wrap:wrap; align-items:center; position:relative; z-index:4;
+    padding:3px 0 9px; border-bottom:1px solid var(--line); margin-bottom:2px; }
+  .chip{ display:inline-flex; gap:7px; align-items:center; cursor:pointer; user-select:none;
+    font-size:11.5px; padding:4px 11px; border-radius:999px;
+    border:1px solid var(--line); background:#08160e; color:var(--dim);
+    transition:background .18s,border-color .18s,color .18s,box-shadow .18s; }
+  .chip:hover{ color:var(--ink); border-color:#1d6a44; }
+  .chip .cdot{ width:8px;height:8px;border-radius:50%; box-shadow:0 0 6px currentColor; }
+  .chip .cct{ color:var(--dim2); font-size:10.5px; }
+  .chip.on{ color:#eafff2; border-color:var(--cc,#36ff7e);
+    background:linear-gradient(#0d2417,#0a1b11); box-shadow:0 0 0 1px var(--cc,#36ff7e) inset, 0 0 12px -2px var(--cc,#36ff7e); }
+  .chip.on .cct{ color:#9fd9bb; }
+
+  /* ---- the wall ---- */
+  .wall{ flex:1; overflow:auto; position:relative; z-index:3; margin:0 -4px; padding:4px 4px 2px;
+    scrollbar-width:thin; scrollbar-color:#1c5a3a #0000; }
+  .wall::-webkit-scrollbar{ width:8px; } .wall::-webkit-scrollbar-thumb{ background:#1c5a3a; border-radius:8px; }
+
+  .grp{ font-size:10px; letter-spacing:.22em; text-transform:uppercase; color:var(--dim2);
+    padding:11px 6px 4px; display:flex; align-items:center; gap:8px; }
+  .grp .bar{ width:9px;height:9px;border-radius:2px; box-shadow:var(--glow); }
+  .grp .ct{ color:var(--dim2); margin-left:auto; letter-spacing:.1em; }
+
+  .row{ display:grid; align-items:center; gap:12px; padding:7px 9px; border-radius:7px;
+    grid-template-columns: 14px 60px 1fr 132px 150px;
+    border:1px solid #0000; position:relative; transition:background .25s,border-color .25s; }
+  .row + .row{ margin-top:2px; }
+  .row::before{ content:""; position:absolute; left:0; top:6px; bottom:6px; width:3px; border-radius:3px;
+    background:var(--gc,#2a4a3a); box-shadow:0 0 6px var(--gc,#0000); opacity:.9; }
+  .row:hover{ background:var(--row); border-color:var(--line); }
+  .row.working{ background:linear-gradient(90deg,#0a1c12,#07140d 60%); }
+  .row.blocked{ border-color:#5a3f12; background:linear-gradient(90deg,#1c1404,#0a0a05 70%); }
+  .row.error{ border-color:#5a1f1c; background:linear-gradient(90deg,#1c0807,#0a0505 70%); }
+  .row.done{ opacity:.86; }
+  .row.idle{ opacity:.62; }
+
+  .glyph{ font-size:12px; text-align:center; }
+  .working .glyph{ color:var(--phos); text-shadow:var(--glow) #36ff7e; animation:beat 1.1s infinite; }
+  .blocked .glyph{ color:var(--amber); text-shadow:var(--glow) #ffb13c; }
+  .error .glyph{ color:var(--red); text-shadow:var(--glow) #ff5d52; }
+  .done .glyph{ color:var(--phos-d); } .idle .glyph{ color:var(--dim2); }
+
+  .kind{ font-size:10px; font-weight:800; letter-spacing:.12em; color:var(--gc,#7fdca6); }
+  .kind.shell{ color:var(--dim); font-weight:700; }
+
+  .mid{ min-width:0; }
+  .where{ display:flex; align-items:baseline; gap:8px; font-size:12.5px; min-width:0; }
+  .grpname{ color:var(--gc,#7fdca6); opacity:.85; flex:none; }
+  .sep{ color:var(--dim2); flex:none; }
+  .tab{ color:var(--ink); font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .prompt{ font-size:12px; color:#9fc7b3; margin-top:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .prompt .g{ color:var(--phos); margin-right:5px; }
+  .working .prompt{ color:#bfe9d2; } .blocked .prompt{ color:#ffd79a; } .error .prompt{ color:#ffb0aa; }
+  .shellrow .prompt{ color:var(--dim); }
+
+  .me{ font-size:11px; color:var(--dim); display:flex; flex-direction:column; gap:2px; }
+  .me .model{ color:#8fb9a6; } .me .eff{ display:inline-flex; gap:5px; align-items:center; }
+  .gauge{ display:inline-block; width:34px; height:5px; border-radius:3px; background:#143524; overflow:hidden; vertical-align:middle; }
+  .gauge i{ display:block; height:100%; background:linear-gradient(90deg,var(--phos-d),var(--phos)); box-shadow:var(--glow) #36ff7e88; }
+
+  .metr{ text-align:right; font-size:11.5px; line-height:1.45; }
+  .state{ font-weight:800; letter-spacing:.04em; }
+  .state.working{ color:var(--phos); } .state.blocked{ color:var(--amber); }
+  .state.error{ color:var(--red); } .state.done{ color:var(--phos-d); } .state.idle{ color:var(--dim); }
+  .metr .ln{ color:var(--dim); } .metr .tok{ color:#8fb9a6; } .metr .sig{ color:var(--phos-d); }
+  .metr .blk{ color:var(--amber); font-weight:700; }
+  .empty{ color:var(--dim2); text-align:center; padding:40px 0; font-size:12px; }
+
+  .foot{ display:flex; gap:14px; align-items:center; font-size:10.5px; color:var(--dim2);
+    padding-top:9px; margin-top:5px; border-top:1px solid var(--line); position:relative; z-index:4; flex-wrap:wrap; }
+  .foot a{ color:var(--phos-d); text-decoration:none; } .foot a:hover{ color:var(--phos); }
+  .foot .right{ margin-left:auto; display:flex; gap:14px; }
+
+  /* ===== the bottom control dock — brand plate, LED, working knobs ===== */
+  .dock{ display:flex; align-items:center; gap:18px; padding:12px 12px 4px; position:relative; }
+  .plate{ font-weight:800; letter-spacing:.14em; font-size:12px; color:#bfe9d2; text-shadow:0 1px 0 #0008; }
+  .plate small{ display:block; font-weight:600; font-size:8.5px; letter-spacing:.26em; color:#5f8f76cc; margin-top:1px; }
+  .led{ width:9px;height:9px;border-radius:50%; background:var(--phos); box-shadow:0 0 9px var(--phos),0 0 2px #fff inset; animation:beat 1.7s infinite; }
+  .ledlab{ font-size:9px; letter-spacing:.2em; color:var(--dim); }
+  .knobs{ margin-left:auto; display:flex; gap:20px; align-items:flex-start; }
+  .knob-wrap{ display:flex; flex-direction:column; align-items:center; gap:3px; }
+  .knob{ width:44px;height:44px;border-radius:50%; position:relative; cursor:ns-resize; touch-action:none;
+    background:radial-gradient(circle at 38% 32%, #cfe9d6, #5f8f76 46%, #1c2c24 100%);
+    box-shadow:0 4px 8px #000a, 0 0 0 4px #161e1b, 0 0 0 6px #0006, inset 0 -3px 6px #00000066, inset 0 2px 3px #ffffff55; }
+  .knob::after{ content:""; position:absolute; left:50%; top:6px; width:3.5px; height:13px; margin-left:-1.75px;
+    border-radius:2px; background:linear-gradient(#0d1512,#040806); box-shadow:0 0 2px #000; }
+  .knob-label{ font-size:9px; letter-spacing:.13em; color:#bfe9d2; font-weight:700; }
+  .knob-val{ font-size:8.5px; color:var(--phos-d); height:10px; }
+
+  /* mid-century-ish desk stand */
+  .stand{ position:relative; width:34%; max-width:240px; height:18px; margin:0 auto;
+    background:linear-gradient(#161e1b,#0a1012); border-radius:0 0 10px 10px;
+    box-shadow:0 14px 22px -8px #000a; }
+  .stand::after{ content:""; position:absolute; left:50%; bottom:-9px; transform:translateX(-50%);
+    width:48%; height:10px; border-radius:0 0 8px 8px; background:linear-gradient(#11181a,#070c0d); box-shadow:0 8px 14px #0009; }
+
+  @media (max-width:760px){
+    body{ padding:12px 10px 22px; }
+    .screen{ height:auto; min-height:60vh; padding:13px 12px; }
+    .row{ grid-template-columns:14px 1fr; row-gap:4px; }
+    .row .kind{ display:none; }
+    .me,.metr{ grid-column:2; text-align:left; flex-direction:row; gap:10px; align-items:baseline; }
+    .metr{ font-size:11px; }
+    .roll{ width:100%; margin-left:0; }
+    .dock{ flex-wrap:wrap; gap:12px; } .knobs{ margin-left:0; }
+    .stand{ display:none; }
+    .term{ width:94vw; height:80vh; }
+  }
+
+  /* ===== agent terminal modal — click a row to watch that agent ===== */
+  .row{ cursor:pointer; }
+  .modal{ position:fixed; inset:0; z-index:50; display:none; align-items:center; justify-content:center; padding:28px;
+    background:rgba(2,6,4,.72); backdrop-filter:blur(7px); -webkit-backdrop-filter:blur(7px); }
+  .modal.open{ display:flex; animation:fade .18s ease; }
+  @keyframes fade{ from{opacity:0} to{opacity:1} }
+  .term{ position:relative; width:min(92vw,840px); height:min(80vh,620px); display:flex; flex-direction:column;
+    border-radius:14px; overflow:hidden; background:linear-gradient(#03130b,#020a07);
+    box-shadow:0 0 0 5px #0a0b09, 0 40px 90px -20px #000d, 0 0 70px #000a inset, 0 0 60px -10px var(--spill);
+    animation:rise .22s cubic-bezier(.2,.8,.2,1);
+    filter:brightness(calc(.82 + var(--gi)*.42)); }
+  @keyframes rise{ from{transform:translateY(16px) scale(.985); opacity:.3} to{transform:none; opacity:1} }
+  .term::before{ content:""; position:absolute; inset:0; pointer-events:none; z-index:6;
+    background:repeating-linear-gradient(0deg,#0000 0 2px,#00000026 2px 3px); mix-blend-mode:multiply; opacity:var(--scan); }
+  .term::after{ content:""; position:absolute; inset:0; pointer-events:none; z-index:7; border-radius:14px;
+    box-shadow:0 0 120px 10px #000a inset, 0 0 40px 5px #16ff7e14 inset; }
+  .thead{ display:flex; align-items:center; gap:9px; padding:9px 13px; position:relative; z-index:8;
+    border-bottom:1px solid var(--line); background:#08160e; font-size:11.5px; }
+  .thead .tdot{ width:9px;height:9px;border-radius:50%; box-shadow:0 0 7px currentColor; flex:none; }
+  .thead .ttab{ color:var(--ink); font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .thead .tmeta{ color:var(--dim); white-space:nowrap; }
+  .thead .tstate{ margin-left:auto; font-weight:800; letter-spacing:.04em; flex:none; }
+  .thead .tx{ cursor:pointer; color:var(--dim); padding:0 2px 0 6px; font-size:15px; flex:none; }
+  .thead .tx:hover{ color:var(--phos); }
+  .tbody{ flex:1; overflow:auto; padding:14px 16px 16px; position:relative; z-index:5;
+    font-size:13px; line-height:1.62; white-space:pre-wrap; word-break:break-word; color:var(--ink);
+    text-shadow:0 0 6px #16ff7e22; scrollbar-width:thin; scrollbar-color:#1c5a3a #0000; }
+  .tbody::-webkit-scrollbar{ width:8px; } .tbody::-webkit-scrollbar-thumb{ background:#1c5a3a; border-radius:8px; }
+  .t-h{ color:var(--phos); } .t-hp{ color:#eafff2; font-weight:600; }
+  .t-b{ color:var(--phos-d); } .t-tool{ color:var(--cyan); font-weight:700; } .t-arg{ color:var(--dim); }
+  .t-r{ color:#7fb79a; } .t-a{ color:var(--ink); } .t-mut{ color:var(--dim2); }
+  .t-s{ color:var(--phos); } .t-err{ color:var(--red); font-weight:700; } .t-done{ color:var(--phos); font-weight:700; }
+  .t-blk{ color:var(--amber); font-weight:700; } .t-opt{ color:var(--ink); } .t-optc{ color:var(--phos); }
+  .cur{ display:inline-block; width:.62em; height:1.05em; vertical-align:text-bottom; background:var(--phos);
+    box-shadow:0 0 7px var(--phos); animation:blink 1.05s steps(1) infinite; }
+  @keyframes blink{ 50%{opacity:0} }
+</style></head>
+<body>
+  <div class="console">
+    <div class="cabinet">
+      <div class="screen-housing"><div class="screen">
+        <div class="sheen"></div>
+
+        <div class="top">
+          <div>
+            <div class="eyebrow">terminal-delight · MCP control · read-only</div>
+            <div class="title">AGENT&nbsp;WALL</div>
+          </div>
+          <div class="roll" id="roll"></div>
+        </div>
+
+        <div class="sub">
+          <span class="dot"></span>
+          <span id="subline">live · watching <b id="npanes">0</b> agent panes · never writes to a PTY</span>
+        </div>
+
+        <div class="chips" id="chips"></div>
+        <div class="wall" id="wall"></div>
+
+        <div class="foot">
+          <span>read-only · OSC-133 prompt marks · status parsed from each agent's own line</span>
+          <span class="right">
+            <a href="info.html">▸ the full site</a>
+            <a href="https://github.com/parker-brown-family/terminal-delight" target="_blank" rel="noopener">★ GitHub</a>
+            <a href="tv.html">📺 the TV</a>
+          </span>
+        </div>
+      </div></div>
+
+      <div class="dock">
+        <div class="plate">AGENT&nbsp;WALL<small>MODEL TD·MCP</small></div>
+        <span class="led"></span><span class="ledlab">ON AIR</span>
+        <div class="knobs">
+          <div class="knob-wrap"><div class="knob" id="k-glow"></div><div class="knob-label">GLOW</div><div class="knob-val" id="v-glow"></div></div>
+          <div class="knob-wrap"><div class="knob" id="k-scan"></div><div class="knob-label">SCAN</div><div class="knob-val" id="v-scan"></div></div>
+        </div>
+      </div>
+    </div>
+    <div class="stand"></div>
+  </div>
+
+  <div class="modal" id="modal"><div class="term" id="term">
+    <div class="thead" id="thead"></div>
+    <div class="tbody" id="tbody"></div>
+  </div></div>
+
+<script>
+// ---- tab groups (projects) → colour, mirroring TD's coloured tab-group bands ----
+const GROUPS = {
+  'terminal-delight': {c:'#36ff7e'},
+  'aurora-api':       {c:'#46d9e8'},
+  'storefront-web':   {c:'#ffb13c'},
+  'ml-pipeline':      {c:'#c084fc'},
+  'docs-site':        {c:'#ff7eb6'},
+  'infra':            {c:'#9fe06a'},
+  'shell':            {c:'#3f6354'},   // rendered as the "Ungrouped" chip
+};
+const GERUNDS = ['Reading files','Editing','Running tests','Searching','Reasoning','Compiling','Reviewing the diff','Thinking'];
+
+// ---- the fleet: a representative, FICTIONAL snapshot — staged demo data only.
+// No real projects, paths, or business: public demo media must never carry real
+// prompts/paths. (The terminal-delight rows reference its own already-public,
+// shipped features.)  state: working|idle|blocked|error|done · eff 0..1 · sess Σ
+let A = [
+  {g:'terminal-delight', tab:'render-hotpath', model:'opus-4.8',  eff:.85, state:'working', prompt:'Hoisting the grade coefficients out of the per-cell styled_lines loop', t:24, tok:126,  sess:2200},
+  {g:'terminal-delight', tab:'agents-kiosk',   model:'opus-4.8',  eff:.85, state:'working', prompt:'Building the live agent-wall kiosk with a great set of demo data', t:11, tok:393,  sess:773},
+  {g:'terminal-delight', tab:'i18n-coverage',  model:'opus-4.8',  eff:1.0, state:'done',    prompt:'Localize the entire UI into nine languages', t:0, tok:0, sess:24100},
+  {g:'terminal-delight', tab:'crt-webgl',      model:'sonnet-4.6',eff:.55, state:'working', prompt:'Investigating retro-term WebGL CRT effects on the focus tube', t:33, tok:1800, sess:1800},
+  {g:'terminal-delight', tab:'focus-reader',   model:'opus-4.8',  eff:.85, state:'done',    prompt:'Wrap-to-fit reader with warp-aware select, no side jiggle', t:0, tok:0, sess:6900},
+
+  {g:'aurora-api', tab:'cold-start',       model:'opus-4.8',  eff:.85, state:'working', prompt:'Profiling the cold-start path and caching the slow startup query', t:64, tok:1600, sess:1600},
+  {g:'aurora-api', tab:'cold-start·retry', model:'opus-4.8',  eff:.85, state:'error',   prompt:'Profile the cold-start path and cache the slow startup query', t:0, tok:1800, sess:1800},
+  {g:'aurora-api', tab:'auth-tests',       model:'opus-4.8',  eff:1.0, state:'blocked', prompt:'Add integration tests for the auth middleware — needs your review of the fixtures', t:0, tok:0, sess:4100},
+  {g:'aurora-api', tab:'upload-retry',     model:'opus-4.8',  eff:.85, state:'done',    prompt:'Add retry with exponential backoff to the upload client', t:0, tok:0, sess:9700},
+  {g:'aurora-api', tab:'flaky-ci',         model:'sonnet-4.6',eff:.55, state:'idle',    prompt:'Triage the flaky CI tests and quarantine the worst offenders', t:0, tok:0, sess:0},
+
+  {g:'storefront-web', tab:'checkout-flow', model:'opus-4.8', eff:.85, state:'working', prompt:'Refactoring the checkout flow into smaller, testable components', t:47, tok:690, sess:2400},
+  {g:'storefront-web', tab:'api-v2-docs',   model:'opus-4.8', eff:.85, state:'done',    prompt:'Draft the API reference for the v2 endpoints', t:0, tok:0, sess:3000},
+  {g:'storefront-web', tab:'onboarding',    model:'opus-4.8', eff:.55, state:'idle',    prompt:'Polish the first-run onboarding copy', t:0, tok:0, sess:0},
+
+  {g:'infra', tab:'dep-bump', model:'opus-4.8', eff:.85, state:'done', prompt:'Bump dependencies and fix the breaking changes', t:0, tok:0, sess:5500},
+
+  {g:'ml-pipeline', tab:'feature-bench', model:'sonnet-4.6', eff:.55, state:'working', prompt:'Benchmarking the feature-extraction stage on large batches', t:19, tok:540, sess:1100},
+  {g:'docs-site',   tab:'static-gen',    model:'haiku-4.5',  eff:.30, state:'idle',    prompt:'Migrate the docs to the new static-site generator', t:0, tok:0, sess:0},
+
+  {g:'shell', tab:'dev@workstation', model:null, eff:0, state:'shell', prompt:'~/code/aurora-api', t:0, tok:0, sess:0},
+  {g:'shell', tab:'build-watch',     model:null, eff:0, state:'shell', prompt:'cargo watch -x build · ~/code/terminal-delight', t:0, tok:0, sess:0},
+];
+A.forEach((a,i)=>a._id=i);   // stable id → a clicked row maps back to its agent
+
+const STATE = {
+  working:{glyph:'▶'}, idle:{glyph:'○'}, blocked:{glyph:'‖'},
+  error:{glyph:'✕'}, done:{glyph:'✓'}, shell:{glyph:'·'},
+};
+const effWord = e => e>=.95?'max':e>=.8?'high':e>=.5?'medium':e>0?'low':'';
+const mmss = s => (s>=60? Math.floor(s/60)+'m '+String(s%60).padStart(2,'0')+'s' : s+'s');
+const ktok = n => n>=1000 ? (n/1000).toFixed(n>=10000?0:1)+'k' : String(n);
+const grpLabel = g => g==='shell' ? 'Ungrouped' : g;
+
+const wall = document.getElementById('wall');
+const roll = document.getElementById('roll');
+const chipsEl = document.getElementById('chips');
+let gerundPhase = 0;
+let filter = 'all';   // 'all' | a group key
+
+function groupOrder(){
+  const order = [], seen = {};
+  for(const a of A){ if(!seen[a.g]){ seen[a.g]=1; order.push(a.g); } }
+  return order;
+}
+
+function renderChips(){
+  const order = groupOrder();
+  const total = A.length;
+  let html = `<div class="chip ${filter==='all'?'on':''}" data-f="all" style="--cc:#cfeede">`
+           + `<span class="cdot" style="background:#cfeede"></span>ALL<span class="cct">${total}</span></div>`;
+  for(const g of order){
+    const col = (GROUPS[g]||GROUPS.shell).c;
+    const ct = A.filter(a=>a.g===g).length;
+    html += `<div class="chip ${filter===g?'on':''}" data-f="${g}" style="--cc:${col}">`
+          + `<span class="cdot" style="background:${col}"></span>${grpLabel(g)}<span class="cct">${ct}</span></div>`;
+  }
+  chipsEl.innerHTML = html;
+  chipsEl.querySelectorAll('.chip').forEach(c=>c.onclick=()=>{ filter=c.dataset.f; renderChips(); renderWall(); });
+}
+
+function renderWall(){
+  const order = groupOrder().filter(g => filter==='all' || g===filter);
+  const byGrp = {};
+  for(const a of A) (byGrp[a.g]=byGrp[a.g]||[]).push(a);
+
+  let html = '';
+  for(const g of order){
+    const col = (GROUPS[g]||GROUPS.shell).c;
+    const items = byGrp[g]||[];
+    const live = items.filter(a=>a.state==='working').length;
+    html += `<div class="grp"><span class="bar" style="background:${col};box-shadow:0 0 7px ${col}"></span>${grpLabel(g)}`
+          + `<span class="ct">${items.length} pane${items.length>1?'s':''}${live?` · ${live} live`:''}</span></div>`;
+    for(const a of items){
+      const st = STATE[a.state], col2 = (GROUPS[a.g]||GROUPS.shell).c;
+      const shell = a.state==='shell';
+      const cls = shell ? 'shellrow' : a.state;
+      let metr;
+      if(shell){ metr = `<span class="ln">shell</span>`; }
+      else if(a.state==='working'){ metr = `<span class="state working">working</span><br><span class="ln">${mmss(a.t)} · </span><span class="tok">${ktok(a.tok)}</span><br><span class="sig">Σ${ktok(a.sess)}</span>`; }
+      else if(a.state==='blocked'){ metr = `<span class="state blocked">blocked</span><br><span class="blk">on you ⏎</span><br><span class="sig">Σ${ktok(a.sess)}</span>`; }
+      else if(a.state==='error'){ metr = `<span class="state error">error</span><br><span class="ln">rate-limit</span><br><span class="sig">Σ${ktok(a.sess)}</span>`; }
+      else if(a.state==='done'){ metr = `<span class="state done">done</span><br><span class="sig">Σ${ktok(a.sess)}</span>`; }
+      else { metr = `<span class="state idle">idle</span><br><span class="ln">Σ0</span>`; }
+      let me;
+      if(shell){ me = `<span class="model">—</span>`; }
+      else { me = `<span class="model">${a.model}</span><span class="eff"><span class="gauge"><i style="width:${Math.round(a.eff*100)}%"></i></span>${effWord(a.eff)}</span>`; }
+      const pg = shell ? '' : (a.state==='working' ? '<span class="g">✷</span>' : (a.state==='done'?'<span class="g" style="color:var(--phos-d)">✓</span>':(a.state==='blocked'?'<span class="g" style="color:var(--amber)">⏸</span>':(a.state==='error'?'<span class="g" style="color:var(--red)">⚠</span>':'<span class="g" style="color:var(--dim2)">·</span>'))));
+      const gerund = a.state==='working' ? `<span style="color:var(--dim)">${GERUNDS[(gerundPhase + a.t) % GERUNDS.length]}… </span>` : '';
+      html += `<div class="row ${cls}" data-idx="${a._id}" style="--gc:${col2}">`
+        + `<div class="glyph">${st.glyph}</div>`
+        + `<div class="kind ${shell?'shell':''}">${shell?'SHELL':'CLAUDE'}</div>`
+        + `<div class="mid"><div class="where"><span class="grpname">${shell?'~':a.g}</span><span class="sep">›</span><span class="tab">${a.tab}</span></div>`
+        + `<div class="prompt">${pg}${gerund}${a.prompt}</div></div>`
+        + `<div class="me">${me}</div>`
+        + `<div class="metr">${metr}</div>`
+        + `</div>`;
+    }
+  }
+  wall.innerHTML = html || `<div class="empty">no panes in this group</div>`;
+
+  // rollup always reflects the WHOLE fleet
+  const n = s => A.filter(a=>a.state===s).length;
+  const dTok = A.filter(a=>a.state==='working').reduce((s,a)=>s+a.tok,0);
+  const sTok = A.reduce((s,a)=>s+a.sess,0);
+  roll.innerHTML =
+      `<span class="pill c-work">▶ <b>${n('working')}</b></span>`
+    + `<span class="pill c-block">‖ <b>${n('blocked')}</b></span>`
+    + `<span class="pill c-err">✕ <b>${n('error')}</b></span>`
+    + `<span class="pill c-done">✓ <b>${n('done')}</b></span>`
+    + `<span class="pill c-idle">○ <b>${n('idle')}</b></span>`
+    + `<span class="pill spend"><span class="k">Δ</span> ${ktok(dTok)}</span>`
+    + `<span class="pill spend"><span class="k">Σ</span> ${ktok(sTok)}</span>`;
+  document.getElementById('npanes').textContent = A.filter(a=>a.state!=='shell').length;
+}
+function render(){ renderChips(); renderWall(); }
+
+// ---- live simulation: timers tick, tokens accrue ----
+function tick(){
+  for(const a of A){
+    if(a.state==='working'){
+      a.t += 1;
+      a.tok += Math.round(20 + Math.random()*180);
+      a.sess += Math.round(8 + Math.random()*40);
+    }
+  }
+  gerundPhase = (gerundPhase + 1) % GERUNDS.length;
+  renderWall();
+  if(openId!=null && A[openId] && A[openId].state==='working') refreshModal();
+}
+
+// keep the wall ALIVE — aim for ~5 working; promote when low, retire when plenty
+function churn(){
+  const live = A.filter(a=>a.state!=='shell');
+  const working = live.filter(a=>a.state==='working');
+  if(working.length < 5){
+    const cand = live.filter(a=>a.state!=='working');
+    const a = cand[Math.floor(Math.random()*cand.length)];
+    if(a){ a.state='working'; a.t=0; a.tok=Math.round(40+Math.random()*120); }
+  } else {
+    const a = working[Math.floor(Math.random()*working.length)];
+    const r = Math.random();
+    a.sess += a.tok; a.tok=0; a.t=0;
+    a.state = r<0.55 ? 'done' : r<0.82 ? 'blocked' : 'idle';   // mostly finish, sometimes block/idle
+  }
+  renderWall();
+  if(openId!=null) refreshModal();   // keep an open terminal consistent if its agent's state changed
+}
+
+// ---- knobs: drag (or wheel) to turn; -135°..+135° — like the /tv kiosk ----
+const K = { glow:0.62, scan:0.5 };
+function bindKnob(el,vEl,name,apply){
+  const set=v=>{ K[name]=Math.max(0,Math.min(1,v)); el.style.transform='rotate('+(K[name]*270-135)+'deg)';
+    if(vEl) vEl.textContent=Math.round(K[name]*100)+'%'; apply(K[name]); };
+  set(K[name]);
+  let drag=false,sy,sv;
+  el.addEventListener('pointerdown',e=>{drag=true;sy=e.clientY;sv=K[name];el.setPointerCapture(e.pointerId);e.preventDefault();});
+  el.addEventListener('pointermove',e=>{if(drag)set(sv+(sy-e.clientY)/150);});
+  el.addEventListener('pointerup',()=>drag=false); el.addEventListener('pointercancel',()=>drag=false);
+  el.addEventListener('wheel',e=>{e.preventDefault();set(K[name]-Math.sign(e.deltaY)*0.06);},{passive:false});
+}
+const rs = document.documentElement.style;
+bindKnob(document.getElementById('k-glow'),document.getElementById('v-glow'),'glow',v=>{
+  rs.setProperty('--gi', v.toFixed(3));
+  rs.setProperty('--spill', `rgba(54,255,126,${(0.07+v*0.18).toFixed(3)})`);
+});
+bindKnob(document.getElementById('k-scan'),document.getElementById('v-scan'),'scan',v=>{
+  rs.setProperty('--scan', (v*0.85).toFixed(3));
+});
+
+// ---- click a row → watch that agent in a believable terminal facsimile ----
+// Per-group "stack" so the tool calls read true to the project's language.
+const STACK = {
+  'terminal-delight':{p:'~/code/terminal-delight', dir:'app/src', read:'app/src/pane.rs',          edit:'app/src/pane.rs',        test:'cargo test',    sh:'demo@td'},
+  'aurora-api':      {p:'~/code/aurora-api',        dir:'src',     read:'src/startup.rs',           edit:'src/startup.rs',         test:'cargo test',    sh:'demo@aurora'},
+  'storefront-web':  {p:'~/code/storefront-web',    dir:'src',     read:'src/checkout/Cart.tsx',    edit:'src/checkout/steps.ts',  test:'npm test',      sh:'demo@web'},
+  'ml-pipeline':     {p:'~/code/ml-pipeline',       dir:'pipeline',read:'pipeline/features.py',     edit:'pipeline/features.py',   test:'pytest -q',     sh:'demo@ml'},
+  'docs-site':       {p:'~/code/docs-site',         dir:'docs',    read:'docs/guide.md',            edit:'astro.config.mjs',       test:'npm run build', sh:'demo@docs'},
+  'infra':           {p:'~/code/infra',             dir:'.',       read:'Cargo.toml',               edit:'Cargo.lock',             test:'cargo build',   sh:'demo@infra'},
+  'shell':           {p:'~/code',                   dir:'.',       read:'',                         edit:'',                       test:'',              sh:'dev@workstation'},
+};
+const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+const tool = (t,arg) => `<span class="t-b">●</span> <span class="t-tool">${t}</span>(<span class="t-arg">${esc(arg)}</span>)`;
+const res  = r => `<span class="t-r">  ⎿ ${esc(r)}</span>`;
+const say  = t => `<span class="t-b">●</span> <span class="t-a">${esc(t)}</span>`;
+const CUR  = '<span class="cur"></span>';
+
+// A transcript whose content is consistent with the agent's live state.
+function transcriptFor(a){
+  const s = STACK[a.g] || STACK.shell, L = [];
+  if(a.state==='shell'){
+    L.push(`<span class="t-h">${s.sh} ${a.prompt} $</span> cargo watch -x build`);
+    L.push(`<span class="t-mut">[Running 'cargo build']</span>`);
+    L.push(`<span class="t-mut">   Compiling ${a.g==='shell'?'app':a.g} v0.4.1 (${s.p})</span>`);
+    L.push(`<span class="t-mut">    Finished dev [unoptimized + debuginfo] in 4.2s</span>`);
+    L.push(`<span class="t-h">${s.sh} ${a.prompt} $</span> ${CUR}`);
+    return L.join('\n');
+  }
+  // the human turn (the task), then a few believable steps
+  L.push(`<span class="t-h">❯</span> <span class="t-hp">${esc(a.prompt)}</span>`, '');
+  L.push(say(`I'll start in ${s.dir}/ and work through it.`));
+  L.push(tool('Read', s.read), res(`Read ${120 + (a._id*37)%360} lines`));
+  L.push(tool('Search', `pattern: "${a.tab.split(/[-·]/)[0]}", path: "${s.dir}"`), res(`Found ${2+a._id%7} matches across ${1+a._id%3} files`));
+
+  if(a.state==='working'){
+    L.push(tool('Edit', s.edit), res(`Updated ${s.edit} with ${2+a._id%5} additions and ${a._id%4} removals`), '');
+    L.push(`<span class="t-s">✷ ${GERUNDS[(gerundPhase+a.t)%GERUNDS.length]}… (${mmss(a.t)} · ↓ ${ktok(a.tok)} tokens · still thinking with ${effWord(a.eff)} effort)</span> ${CUR}`);
+  } else if(a.state==='blocked'){
+    L.push(say(`I've drafted the change — this needs your review before I apply it:`));
+    L.push(tool('Edit', s.edit), '');
+    L.push(`<span class="t-a">Do you want to make this edit to <b>${esc(s.edit)}</b>?</span>`);
+    L.push(`<span class="t-optc">❯ 1.</span> <span class="t-opt">Yes</span>`);
+    L.push(`  <span class="t-opt">2. Yes, and don't ask again this session</span>`);
+    L.push(`  <span class="t-opt">3. No, tell Claude what to do differently</span>`, '');
+    L.push(`<span class="t-blk">⏸ blocked — waiting for your response</span> ${CUR}`);
+  } else if(a.state==='error'){
+    L.push(tool('Bash', s.test), '');
+    L.push(`<span class="t-err">✗ API Error (429): rate_limit_exceeded — too many requests.</span>`);
+    L.push(`<span class="t-mut">  Retrying in 38s… (attempt 2/5)</span> ${CUR}`);
+  } else if(a.state==='done'){
+    L.push(tool('Edit', s.edit), res(`+${6+a._id%30} −${a._id%9}`));
+    L.push(tool('Bash', s.test), res(`${8+a._id%20} passed; 0 failed`));
+    L.push(say(`Done — ${a.prompt.charAt(0).toLowerCase()+a.prompt.slice(1)}. All green.`), '');
+    L.push(`<span class="t-done">✓ Done · Σ${ktok(a.sess)} tokens · ${4+a._id%9} tool uses</span>`);
+    L.push(`<span class="t-h">${s.sh} ${s.p} $</span> ${CUR}`);
+  } else { // idle — task queued, no turn running
+    L.push('', `<span class="t-mut">(queued — no turn running yet)</span>`);
+    L.push(`<span class="t-h">${s.sh} ${s.p} $</span> ${CUR}`);
+  }
+  return L.join('\n');
+}
+
+const modal = document.getElementById('modal'), thead = document.getElementById('thead'), tbody = document.getElementById('tbody');
+let openId = null;
+function openModal(a){
+  openId = a._id;
+  const col = (GROUPS[a.g]||GROUPS.shell).c;
+  const stCls = {working:'c-work',blocked:'c-block',error:'c-err',done:'c-done',idle:'c-idle',shell:'c-idle'}[a.state];
+  const stTxt = {working:'working',blocked:'blocked on you',error:'error',done:'done',idle:'idle',shell:'shell'}[a.state];
+  thead.innerHTML = `<span class="tdot" style="background:${col};color:${col}"></span>`
+    + `<span class="ttab">${a.g==='shell'?'~':a.g} › ${esc(a.tab)}</span>`
+    + `<span class="tmeta">· ${a.model ? esc(a.model)+' · '+effWord(a.eff) : 'shell'}</span>`
+    + `<span class="tstate ${stCls}">${stTxt}</span>`
+    + `<span class="tx" id="tx" title="close (Esc)">✕</span>`;
+  tbody.innerHTML = transcriptFor(a);
+  document.getElementById('tx').onclick = closeModal;
+  modal.classList.add('open');
+  tbody.scrollTop = tbody.scrollHeight;
+}
+function closeModal(){ openId = null; modal.classList.remove('open'); }
+function refreshModal(){ if(openId!=null && A[openId]) openModal(A[openId]); }
+wall.addEventListener('click', e=>{ const row = e.target.closest('.row'); if(row) openModal(A[+row.dataset.idx]); });
+modal.addEventListener('click', e=>{ if(e.target===modal) closeModal(); });
+addEventListener('keydown', e=>{ if(e.key==='Escape') closeModal(); });
+
+render();
+setInterval(tick, 1000);
+setInterval(churn, 5000);
+window.__ready = true;
+</script></body></html>

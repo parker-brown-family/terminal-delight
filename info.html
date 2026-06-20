@@ -171,6 +171,7 @@
       <span class="links">
         <a href="#features" class="hide-sm">features</a>
         <a href="#mcp" style="color:var(--accent)">MCP ★</a>
+        <a href="agents.html" class="hide-sm">agents ↗</a>
         <a href="#gallery" class="hide-sm">gallery</a>
         <a href="#crawl" class="hide-sm">crawl</a>
         <a href="#gamba" class="hide-sm">gamba</a>
@@ -316,12 +317,19 @@
             "tool": "Bash", "summary": "cargo test --release" } }
 <span style="color:var(--warn)">notifications/message</span> {
   "data": { "event": "agent_vanished", "pane": "tests" } }</pre>
-        <div class="playnote">Read-only by construction — <b>nothing here can write to a terminal.</b> Locked off by default; when on, agents-only (a plain shell is never exposed). stdio JSON-RPC, <b>never a network port.</b></div>
+        <div class="playnote" style="position:static;background:var(--bg-2);border-top:1px solid var(--line)">Read-only by construction — <b>nothing here can write to a terminal.</b> Locked off by default; when on, agents-only (a plain shell is never exposed). stdio JSON-RPC, <b>never a network port.</b></div>
       </div>
 
       <p style="margin-top:16px">It ships behind a <b>🤖 robot button</b> on the mother bar that opens an <b>MCP CONTROL — READ ONLY</b> panel: a master switch, an expose policy (agents-only / all), an events toggle, and a live list of every pane with a per-pane exposed dot. The danger in any agent-control surface is the <em>write</em> path (bytes into a shell = arbitrary code execution); that path simply does not exist here — the observe plane shipped first, alone.</p>
+
+      <p style="margin-top:18px;font-size:1.06em">And it's <b>centred into a scoreboard</b> — the <b>agent wall</b>. Every pane becomes a row: its <b>tab group</b> (colour-banded by project), <b>model</b> &amp; <b>effort</b>, and a one-line read of <b>what that agent is doing right now</b> — with a live turn timer, accruing token spend, and a state you can scan in a glance: <span style="color:var(--accent)">working</span>, <span style="color:var(--warn)">blocked on you</span>, <span style="color:#ff5d52">errored</span>, or done. A rollup header totals the fleet's spend.</p>
+      <figure style="margin:14px 0 0">
+        <a href="agents.html"><img loading="lazy" src="assets/agents-wall.png" alt="the terminal-delight agent wall: a green-phosphor CRT scoreboard titled AGENT WALL with a rollup of working/blocked/error/done counts and total token spend, over colour-banded rows — each showing a tab group, the CLAUDE model and effort gauge, and a live one-line summary of what that agent is currently doing, with a turn timer and token totals on the right" style="width:100%;border-radius:12px;display:block"></a>
+        <figcaption style="font-size:.92em;color:var(--text-dim);margin-top:8px">The agent wall — tab group › tab · model · effort · what it's doing <em>now</em> · live tokens. <a href="agents.html">Open the live kiosk ↗</a></figcaption>
+      </figure>
       <div class="cta" style="justify-content:flex-start;margin-top:14px">
-        <a class="btn primary" href="https://github.com/parker-brown-family/terminal-delight/blob/main/docs/mcp.md">▣ Wire it up — the MCP guide ↗</a>
+        <a class="btn primary" href="agents.html">▟ Open the live agent wall ↗</a>
+        <a class="btn" href="https://github.com/parker-brown-family/terminal-delight/blob/main/docs/mcp.md">▣ The MCP guide ↗</a>
         <a class="btn" href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/mcp.rs">Read the server ↗</a>
       </div>
     </div>
@@ -332,6 +340,7 @@
       <div class="eyebrow">Gallery · click any shot to zoom</div>
       <h2>Real captures — staged with demo content</h2>
       <div class="gallery">
+        <figure><a href="agents.html"><img loading="lazy" src="assets/agents-wall.png" alt="the agent wall scoreboard: colour-banded rows showing each agent's tab group, model, effort and what it is doing right now, with live timers and token spend"></a><figcaption>the <a href="agents.html">agent wall</a> — every agent's model, effort &amp; live task, on CRT glass</figcaption></figure>
         <figure><img loading="lazy" src="assets/crt-wall.png" alt="a wall of barrel-warped CRT terminal panes, each a different colour"><figcaption>six curved CRTs — each its own colour &amp; size, colour-banded tab groups</figcaption></figure>
         <figure><img loading="lazy" src="assets/showcase-themes.png" alt="three terminal panes in one window: a flat light 'paper' page with the background dimmed and dark ink, a normal flat dark terminal running git below it, and a tall green-phosphor pane gently curved like a CRT on the right"><figcaption>flat paper · plain dark terminal · one curved CRT — your call</figcaption></figure>
         <figure><img loading="lazy" src="assets/terminal-clean.png" alt="a single full terminal pane"><figcaption>one clean pane, hacker theme</figcaption></figure>
