@@ -1,0 +1,320 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>terminal-delight — the agent wall</title>
+<meta name="description" content="terminal-delight as mission control for a fleet of coding agents: a read-only wall showing every agent's tab group, model, effort, what it's doing right now, live token spend and whether it's blocked on you.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' rx='3' fill='%23021107'/><text y='12' x='2' font-size='11' fill='%2336ff7e'>▟</text></svg>">
+<style>
+  :root{
+    --bg:#04100a; --bg2:#020806; --ink:#cfeede; --dim:#5f8f76; --dim2:#3f6354;
+    --phos:#36ff7e; --phos-d:#1f9a52;
+    --amber:#ffb13c; --red:#ff5d52; --cyan:#46d9e8; --violet:#c084fc; --pink:#ff7eb6;
+    --line:#103b28; --row:#07140d;
+    --glow:0 0 8px;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{
+    background:radial-gradient(120% 90% at 50% -10%, #0a1c12 0%, var(--bg) 55%, var(--bg2) 100%), var(--bg2);
+    color:var(--ink); min-height:100%;
+    font-family:ui-monospace,"SF Mono","Cascadia Code",Menlo,Consolas,monospace;
+    -webkit-font-smoothing:antialiased; letter-spacing:.01em;
+    display:flex; align-items:center; justify-content:center; padding:26px;
+  }
+  /* the monitor bezel */
+  .monitor{
+    position:relative; width:min(96vw,1180px);
+    border-radius:22px; padding:16px;
+    background:linear-gradient(155deg,#1a1410,#0d0b08 60%,#070605);
+    box-shadow:0 1px 0 #ffffff14 inset, 0 -16px 40px #00000066 inset,
+      0 50px 90px -30px #000c, 0 18px 40px #0009;
+  }
+  .monitor::before{ content:""; position:absolute; inset:9px; border-radius:16px;
+    box-shadow:0 0 0 2px #0008, 0 0 24px #0007 inset; pointer-events:none; }
+  /* the glass */
+  .screen{
+    position:relative; border-radius:14px; overflow:hidden;
+    background:linear-gradient(#03110a,#020a07);
+    box-shadow:0 0 0 6px #0b0a08, 0 0 70px #0009 inset;
+    padding:18px 20px 14px;
+    min-height:74vh; max-height:88vh; display:flex; flex-direction:column;
+  }
+  /* phosphor curvature + scanlines + vignette, all non-interactive overlays */
+  .screen::before{ content:""; position:absolute; inset:0; pointer-events:none; z-index:6;
+    background:repeating-linear-gradient(0deg, #0000 0 2px, #00000026 2px 3px);
+    mix-blend-mode:multiply; opacity:.5; }
+  .screen::after{ content:""; position:absolute; inset:0; pointer-events:none; z-index:7; border-radius:14px;
+    box-shadow:0 0 120px 10px #00000088 inset, 0 0 40px 4px #16ff7e14 inset;
+    background:radial-gradient(120% 90% at 50% 6%, #36ff7e10, #0000 50%); }
+  .sheen{ position:absolute; inset:0; pointer-events:none; z-index:8; border-radius:14px;
+    background:radial-gradient(140% 60% at 28% 0%, #ffffff10, #fff0 40%); mix-blend-mode:screen; }
+
+  /* ---- header / rollup ---- */
+  .top{ display:flex; align-items:baseline; gap:14px; flex-wrap:wrap;
+    padding-bottom:10px; border-bottom:1px solid var(--line); position:relative; z-index:4; }
+  .eyebrow{ font-size:10.5px; letter-spacing:.34em; color:var(--dim); text-transform:uppercase; }
+  .title{ font-size:17px; font-weight:800; letter-spacing:.16em; color:var(--phos);
+    text-shadow:var(--glow) #36ff7e88; }
+  .roll{ margin-left:auto; display:flex; gap:16px; align-items:baseline; font-size:12.5px; flex-wrap:wrap; }
+  .pill{ display:inline-flex; gap:5px; align-items:baseline; }
+  .pill b{ font-weight:800; }
+  .c-work{ color:var(--phos); } .c-block{ color:var(--amber); }
+  .c-err{ color:var(--red); } .c-done{ color:var(--phos-d); } .c-idle{ color:var(--dim); }
+  .spend{ color:var(--ink); } .spend .k{ color:var(--dim); }
+
+  .sub{ display:flex; gap:10px; align-items:center; font-size:11px; color:var(--dim);
+    padding:7px 0 9px; position:relative; z-index:4; flex-wrap:wrap; }
+  .sub .dot{ width:6px;height:6px;border-radius:50%;background:var(--phos);box-shadow:var(--glow) #36ff7e; animation:beat 1.6s infinite; }
+  @keyframes beat{ 0%,100%{opacity:.35} 50%{opacity:1} }
+
+  /* ---- the wall ---- */
+  .wall{ flex:1; overflow:auto; position:relative; z-index:3; margin:0 -4px; padding:2px 4px;
+    scrollbar-width:thin; scrollbar-color:#1c5a3a #0000; }
+  .wall::-webkit-scrollbar{ width:8px; } .wall::-webkit-scrollbar-thumb{ background:#1c5a3a; border-radius:8px; }
+
+  .grp{ font-size:10px; letter-spacing:.22em; text-transform:uppercase; color:var(--dim2);
+    padding:11px 6px 4px; display:flex; align-items:center; gap:8px; }
+  .grp .bar{ width:9px;height:9px;border-radius:2px; box-shadow:var(--glow); }
+  .grp .ct{ color:var(--dim2); margin-left:auto; letter-spacing:.1em; }
+
+  .row{ display:grid; align-items:center; gap:12px; padding:7px 9px; border-radius:7px;
+    grid-template-columns: 14px 60px 1fr 132px 150px;
+    border:1px solid #0000; position:relative; transition:background .25s,border-color .25s; }
+  .row + .row{ margin-top:2px; }
+  .row::before{ content:""; position:absolute; left:0; top:6px; bottom:6px; width:3px; border-radius:3px;
+    background:var(--gc,#2a4a3a); box-shadow:0 0 6px var(--gc,#0000); opacity:.9; }
+  .row:hover{ background:var(--row); border-color:var(--line); }
+  .row.working{ background:linear-gradient(90deg,#0a1c12,#07140d 60%); }
+  .row.blocked{ border-color:#5a3f12; background:linear-gradient(90deg,#1c1404,#0a0a05 70%); }
+  .row.error{ border-color:#5a1f1c; background:linear-gradient(90deg,#1c0807,#0a0505 70%); }
+  .row.done{ opacity:.86; }
+  .row.idle{ opacity:.62; }
+
+  .glyph{ font-size:12px; text-align:center; }
+  .working .glyph{ color:var(--phos); text-shadow:var(--glow) #36ff7e; animation:beat 1.1s infinite; }
+  .blocked .glyph{ color:var(--amber); text-shadow:var(--glow) #ffb13c; }
+  .error .glyph{ color:var(--red); text-shadow:var(--glow) #ff5d52; }
+  .done .glyph{ color:var(--phos-d); } .idle .glyph{ color:var(--dim2); }
+
+  .kind{ font-size:10px; font-weight:800; letter-spacing:.12em; color:var(--gc,#7fdca6); }
+  .kind.shell{ color:var(--dim); font-weight:700; }
+
+  .mid{ min-width:0; }
+  .where{ display:flex; align-items:baseline; gap:8px; font-size:12.5px; min-width:0; }
+  .grpname{ color:var(--gc,#7fdca6); opacity:.85; flex:none; }
+  .sep{ color:var(--dim2); flex:none; }
+  .tab{ color:var(--ink); font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .prompt{ font-size:12px; color:#9fc7b3; margin-top:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .prompt .g{ color:var(--phos); margin-right:5px; }
+  .working .prompt{ color:#bfe9d2; } .blocked .prompt{ color:#ffd79a; } .error .prompt{ color:#ffb0aa; }
+  .shellrow .prompt{ color:var(--dim); }
+
+  .me{ font-size:11px; color:var(--dim); display:flex; flex-direction:column; gap:2px; }
+  .me .model{ color:#8fb9a6; } .me .eff{ display:inline-flex; gap:5px; align-items:center; }
+  .gauge{ display:inline-block; width:34px; height:5px; border-radius:3px; background:#143524; overflow:hidden; vertical-align:middle; }
+  .gauge i{ display:block; height:100%; background:linear-gradient(90deg,var(--phos-d),var(--phos)); box-shadow:var(--glow) #36ff7e88; }
+
+  .metr{ text-align:right; font-size:11.5px; line-height:1.45; }
+  .state{ font-weight:800; letter-spacing:.04em; }
+  .state.working{ color:var(--phos); } .state.blocked{ color:var(--amber); }
+  .state.error{ color:var(--red); } .state.done{ color:var(--phos-d); } .state.idle{ color:var(--dim); }
+  .metr .ln{ color:var(--dim); } .metr .tok{ color:#8fb9a6; } .metr .sig{ color:var(--phos-d); }
+  .metr .blk{ color:var(--amber); font-weight:700; }
+
+  .foot{ display:flex; gap:14px; align-items:center; font-size:10.5px; color:var(--dim2);
+    padding-top:10px; margin-top:6px; border-top:1px solid var(--line); position:relative; z-index:4; flex-wrap:wrap; }
+  .foot a{ color:var(--phos-d); text-decoration:none; } .foot a:hover{ color:var(--phos); }
+  .foot .right{ margin-left:auto; display:flex; gap:14px; }
+
+  @media (max-width:720px){
+    body{ padding:10px; }
+    .row{ grid-template-columns:14px 1fr; row-gap:4px; }
+    .row .kind{ display:none; }
+    .me,.metr{ grid-column:2; text-align:left; flex-direction:row; gap:10px; align-items:baseline; }
+    .metr{ font-size:11px; }
+    .roll{ width:100%; margin-left:0; }
+  }
+</style></head>
+<body>
+  <div class="monitor"><div class="screen">
+    <div class="sheen"></div>
+
+    <div class="top">
+      <div>
+        <div class="eyebrow">terminal-delight · MCP control · read-only</div>
+        <div class="title">AGENT&nbsp;WALL</div>
+      </div>
+      <div class="roll" id="roll"></div>
+    </div>
+
+    <div class="sub">
+      <span class="dot"></span>
+      <span id="subline">live · watching <b id="npanes">0</b> agent panes · never writes to a PTY</span>
+    </div>
+
+    <div class="wall" id="wall"></div>
+
+    <div class="foot">
+      <span>read-only · OSC-133 prompt marks · status parsed from each agent's own line</span>
+      <span class="right">
+        <a href="info.html">▸ the full site</a>
+        <a href="https://github.com/parker-brown-family/terminal-delight" target="_blank" rel="noopener">★ GitHub</a>
+        <a href="tv.html">📺 the TV</a>
+      </span>
+    </div>
+  </div></div>
+
+<script>
+// ---- tab groups (projects) → colour, mirroring TD's coloured tab-group bands ----
+const GROUPS = {
+  'terminal-delight':    {c:'#36ff7e'},
+  'intelliscout':        {c:'#46d9e8'},
+  'brown-family-sports': {c:'#ffb13c'},
+  'markdown-delight':    {c:'#c084fc'},
+  'stephbrownpt':        {c:'#ff7eb6'},
+  'apes':                {c:'#9fe06a'},
+  'shell':               {c:'#3f6354'},
+};
+const MODELS = ['opus-4.8','sonnet-4.6','haiku-4.5'];
+// a working agent cycles through these gerunds, like the real "✷ Accomplishing…" line
+const GERUNDS = ['Reading files','Editing','Running tests','Searching','Reasoning','Compiling','Reviewing the diff','Thinking'];
+
+// ---- the fleet: a rich, realistic snapshot drawn from a real BFS multi-agent day ----
+// state: working | idle | blocked | error | done   ·   eff: 0..1 effort   ·   sess: session Σ tokens
+let A = [
+  {g:'terminal-delight', tab:'render-hotpath',   model:'opus-4.8',  eff:.85, state:'working', prompt:'Hoisting the grade coefficients out of the per-cell styled_lines loop', t:24, tok:126,  sess:2200},
+  {g:'terminal-delight', tab:'agents-kiosk',     model:'opus-4.8',  eff:.85, state:'working', prompt:'Building the live agent-wall kiosk with a great set of demo data', t:11, tok:393,  sess:773},
+  {g:'terminal-delight', tab:'i18n-coverage',    model:'opus-4.8',  eff:1.0, state:'done',    prompt:'Localize the entire UI into nine languages', t:0, tok:0, sess:24100},
+  {g:'terminal-delight', tab:'crt-webgl',        model:'sonnet-4.6',eff:.55, state:'working', prompt:'Investigating retro-term WebGL CRT effects on the focus tube', t:33, tok:1800, sess:1800},
+  {g:'terminal-delight', tab:'focus-reader',     model:'opus-4.8',  eff:.85, state:'done',    prompt:'Wrap-to-fit reader with warp-aware select, no side jiggle', t:0, tok:0, sess:6900},
+
+  {g:'intelliscout', tab:'map-cache',        model:'opus-4.8',  eff:.85, state:'working', prompt:'Optimizing map performance with pre-cached KML tiles', t:64, tok:1600, sess:1600},
+  {g:'intelliscout', tab:'map-cache·retry',  model:'opus-4.8',  eff:.85, state:'error',   prompt:'Optimize map performance with pre-cached KML files', t:0, tok:1800, sess:1800},
+  {g:'intelliscout', tab:'patent-filings',   model:'opus-4.8',  eff:1.0, state:'blocked', prompt:'Drive provisional patent filings to completion — needs your sign-off', t:0, tok:0, sess:4100},
+  {g:'intelliscout', tab:'pm-google-chat',   model:'opus-4.8',  eff:.85, state:'done',    prompt:'Integrate the PM tool with Google Chat for status updates', t:0, tok:0, sess:9700},
+  {g:'intelliscout', tab:'north-x-funding',  model:'sonnet-4.6',eff:.55, state:'idle',    prompt:'Review local tasks API and the North X funding stream', t:0, tok:0, sess:0},
+
+  {g:'brown-family-sports', tab:'servo-skills',     model:'opus-4.8',  eff:.85, state:'working', prompt:'Designing agent skills for servo and the web-access tools', t:47, tok:690, sess:2400},
+  {g:'brown-family-sports', tab:'pricing-proposal', model:'opus-4.8',  eff:.85, state:'done',    prompt:'Review website and business pricing proposal', t:0, tok:0, sess:3000},
+  {g:'brown-family-sports', tab:'gmail-access',     model:'opus-4.8',  eff:.55, state:'idle',    prompt:'Set up Gmail access for Parker at Brown Family Sports', t:0, tok:0, sess:0},
+
+  {g:'apes', tab:'localization-section', model:'opus-4.8', eff:.85, state:'done', prompt:'Build the dedicated APES localization knowledge section', t:0, tok:0, sess:5500},
+
+  {g:'markdown-delight', tab:'render-bench', model:'sonnet-4.6', eff:.55, state:'working', prompt:'Benchmarking the markdown render path against very large documents', t:19, tok:540, sess:1100},
+  {g:'stephbrownpt',     tab:'booking-flow', model:'haiku-4.5',  eff:.30, state:'idle',    prompt:'Polish the physiotherapy booking-flow copy', t:0, tok:0, sess:0},
+
+  {g:'shell', tab:'pbrown@brown', model:null, eff:0, state:'shell', prompt:'~/BROWN-FAMILY-SPORTS/Software/terminal-delight', t:0, tok:0, sess:0},
+  {g:'shell', tab:'processor-watch', model:null, eff:0, state:'shell', prompt:'PROCESSOR WATCH · ~/BROWN-FAMILY-SPORTS/HOME', t:0, tok:0, sess:0},
+];
+
+const STATE = {
+  working:{glyph:'▶', label:'working'}, idle:{glyph:'○', label:'idle'},
+  blocked:{glyph:'‖', label:'blocked'}, error:{glyph:'✕', label:'error'},
+  done:{glyph:'✓', label:'done'}, shell:{glyph:'·', label:''},
+};
+const effWord = e => e>=.95?'max':e>=.8?'high':e>=.5?'medium':e>0?'low':'';
+const mmss = s => (s>=60? Math.floor(s/60)+'m '+String(s%60).padStart(2,'0')+'s' : s+'s');
+const ktok = n => n>=1000 ? (n/1000).toFixed(n>=10000?0:1)+'k' : String(n);
+
+const wall = document.getElementById('wall');
+const roll = document.getElementById('roll');
+let gerundPhase = 0;
+
+function render(){
+  // group the agents, preserving first-seen group order
+  const order = [], byGrp = {};
+  for(const a of A){ if(!byGrp[a.g]){ byGrp[a.g]=[]; order.push(a.g); } byGrp[a.g].push(a); }
+
+  let html = '';
+  for(const g of order){
+    const col = (GROUPS[g]||GROUPS.shell).c;
+    const live = byGrp[g].filter(a=>a.state==='working').length;
+    const name = g==='shell' ? 'shells' : g;
+    html += `<div class="grp"><span class="bar" style="background:${col};box-shadow:0 0 7px ${col}"></span>${name}`
+          + `<span class="ct">${byGrp[g].length} pane${byGrp[g].length>1?'s':''}${live?` · ${live} live`:''}</span></div>`;
+    for(const a of byGrp[g]){
+      const st = STATE[a.state], col2 = (GROUPS[a.g]||GROUPS.shell).c;
+      const shell = a.state==='shell';
+      const cls = shell ? 'shellrow' : a.state;
+      // right-hand metrics
+      let metr;
+      if(shell){ metr = `<span class="ln">shell</span>`; }
+      else if(a.state==='working'){ metr = `<span class="state working">working</span><br><span class="ln">${mmss(a.t)} · </span><span class="tok">${ktok(a.tok)}</span><br><span class="sig">Σ${ktok(a.sess)}</span>`; }
+      else if(a.state==='blocked'){ metr = `<span class="state blocked">blocked</span><br><span class="blk">on you ⏎</span><br><span class="sig">Σ${ktok(a.sess)}</span>`; }
+      else if(a.state==='error'){ metr = `<span class="state error">error</span><br><span class="ln">rate-limit</span><br><span class="sig">Σ${ktok(a.sess)}</span>`; }
+      else if(a.state==='done'){ metr = `<span class="state done">done</span><br><span class="sig">Σ${ktok(a.sess)}</span>`; }
+      else { metr = `<span class="state idle">idle</span><br><span class="ln">Σ0</span>`; }
+      // model · effort cell
+      let me;
+      if(shell){ me = `<span class="model">—</span>`; }
+      else {
+        const ew = effWord(a.eff);
+        me = `<span class="model">${a.model}</span><span class="eff"><span class="gauge"><i style="width:${Math.round(a.eff*100)}%"></i></span>${ew}</span>`;
+      }
+      const promptGlyph = shell ? '' : (a.state==='working' ? '<span class="g">✷</span>' : (a.state==='done'?'<span class="g" style="color:var(--phos-d)">✓</span>':(a.state==='blocked'?'<span class="g" style="color:var(--amber)">⏸</span>':(a.state==='error'?'<span class="g" style="color:var(--red)">⚠</span>':'<span class="g" style="color:var(--dim2)">·</span>'))));
+      const gerund = a.state==='working' ? `<span style="color:var(--dim)">${GERUNDS[(gerundPhase + a.t) % GERUNDS.length]}… </span>` : '';
+      html += `<div class="row ${cls}" style="--gc:${col2}">`
+        + `<div class="glyph">${st.glyph}</div>`
+        + `<div class="kind ${shell?'shell':''}">${shell?'SHELL':'CLAUDE'}</div>`
+        + `<div class="mid"><div class="where"><span class="grpname">${shell?'~':a.g}</span><span class="sep">›</span><span class="tab">${a.tab}</span></div>`
+        + `<div class="prompt">${promptGlyph}${gerund}${a.prompt}</div></div>`
+        + `<div class="me">${me}</div>`
+        + `<div class="metr">${metr}</div>`
+        + `</div>`;
+    }
+  }
+  wall.innerHTML = html;
+
+  // ---- rollup header ----
+  const n = s => A.filter(a=>a.state===s).length;
+  const dTok = A.filter(a=>a.state==='working').reduce((s,a)=>s+a.tok,0);
+  const sTok = A.reduce((s,a)=>s+a.sess,0);
+  roll.innerHTML =
+      `<span class="pill c-work">▶ <b>${n('working')}</b></span>`
+    + `<span class="pill c-block">‖ <b>${n('blocked')}</b></span>`
+    + `<span class="pill c-err">✕ <b>${n('error')}</b></span>`
+    + `<span class="pill c-done">✓ <b>${n('done')}</b></span>`
+    + `<span class="pill c-idle">○ <b>${n('idle')}</b></span>`
+    + `<span class="pill spend"><span class="k">Δ</span> ${ktok(dTok)}</span>`
+    + `<span class="pill spend"><span class="k">Σ</span> ${ktok(sTok)}</span>`;
+  document.getElementById('npanes').textContent = A.filter(a=>a.state!=='shell').length;
+}
+
+// ---- the live simulation: timers tick, tokens accrue, states drift ----
+function tick(){
+  for(const a of A){
+    if(a.state==='working'){
+      a.t += 1;
+      a.tok += Math.round(20 + Math.random()*180);
+      a.sess += Math.round(8 + Math.random()*40);
+    }
+  }
+  gerundPhase = (gerundPhase + 1) % GERUNDS.length;
+  render();
+}
+
+// occasional state churn so the wall feels alive (finish, pick up, get blocked)
+function churn(){
+  const workers = A.filter(a=>a.state==='working');
+  const idlers  = A.filter(a=>a.state==='idle');
+  const r = Math.random();
+  if(r < 0.40 && workers.length > 2){
+    // a worker finishes
+    const a = workers[Math.floor(Math.random()*workers.length)];
+    a.sess += a.tok; a.tok = 0; a.t = 0; a.state = 'done';
+  } else if(r < 0.78 && idlers.length){
+    // an idle agent picks up its prompt and starts working
+    const a = idlers[Math.floor(Math.random()*idlers.length)];
+    a.state='working'; a.t=0; a.tok=Math.round(40+Math.random()*120);
+  } else if(workers.length){
+    // a worker becomes blocked-on-you
+    const a = workers[Math.floor(Math.random()*workers.length)];
+    a.sess += a.tok; a.tok=0; a.t=0; a.state='blocked';
+  }
+  render();
+}
+
+render();
+setInterval(tick, 1000);
+setInterval(churn, 6500);
+window.__ready = true;
+</script></body></html>
