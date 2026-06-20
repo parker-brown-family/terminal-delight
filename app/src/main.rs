@@ -6226,6 +6226,7 @@ impl Render for Workspace {
         let menu_overlay = self.theme_menu.clone().map(|scope| {
             let is_pane = matches!(scope, MenuScope::Pane(_));
             let cur = self.menu_choice(cx);
+            let t = self.lang.strings();
             // Theme-group "follow outer" state — only panes can inherit.
             let following = match &scope {
                 MenuScope::Pane(p) => p.read(cx).appearance.inherit_theme,
@@ -6253,7 +6254,16 @@ impl Render for Workspace {
                     })
                     .into()
                 };
-                let btn = theme_icon_btn(&th, &icon, &lbl, active)
+                let tlbl = match lbl.as_str() {
+                    "quiet" => t.thm_quiet,
+                    "field" => t.thm_field,
+                    "tactical" => t.thm_tactical,
+                    "hacker" => t.thm_hacker,
+                    "gamba" => t.thm_gamba,
+                    "custom" => t.thm_custom,
+                    _ => lbl.as_str(),
+                };
+                let btn = theme_icon_btn(&th, &icon, tlbl, active)
                     .id(SharedString::from(format!("theme-btn-{id}")))
                     .tooltip_show_delay(Duration::from_millis(1500))
                     .map(|b| {
@@ -6368,7 +6378,6 @@ impl Render for Workspace {
                         ),
                 );
             }
-            let t = self.lang.strings();
             let mut color_row = div().flex().flex_row().gap_2();
             for mode in theme::ColorMode::ALL {
                 let active = cur.color == mode;
@@ -6832,339 +6841,348 @@ impl Render for Workspace {
         let find_overlay = self.render_find(&th, cx);
 
         // ---- MCP control: the read-only agent-watch surface (the 🤖 button) ----
-        let mcp_overlay = self.mcp_menu.then(|| {
-            let cfg = self.mcp.clone();
-            let panes = self.mcp_snapshot(cx);
-            let total = panes.len();
-            let exposed = panes.iter().filter(|p| p.exposed).count();
-            let vp_h = f32::from(window.viewport_size().height);
-            let home = std::env::var("HOME").unwrap_or_default();
-            let label = |s: String| {
-                div()
-                    .text_size(px(9.))
-                    .text_color(th.text.alpha(0.55))
-                    .child(s)
-            };
-            let enable_btn = Self::bezel_btn(
-                &th,
-                if cfg.enabled {
-                    "\u{25c9} server enabled"
-                } else {
-                    "\u{25cb} server disabled"
-                },
-                cfg.enabled,
-            )
-            .id("mcp-btn-enable")
-            .hover(|s| s.border_color(th.accent))
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                    cx.stop_propagation();
-                    ws.mcp.enabled = !ws.mcp.enabled;
-                    ws.save(cx);
-                    cx.notify();
-                }),
-            );
-            let expose_btn = Self::bezel_btn(
-                &th,
-                format!("expose: {}", cfg.expose.label()).as_str(),
-                false,
-            )
-            .id("mcp-btn-expose")
-            .hover(|s| s.border_color(th.accent))
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                    cx.stop_propagation();
-                    ws.mcp.expose = ws.mcp.expose.next();
-                    ws.save(cx);
-                    cx.notify();
-                }),
-            );
-            let events_btn = Self::bezel_btn(
-                &th,
-                if cfg.events {
-                    "\u{25c9} stream tool-call events"
-                } else {
-                    "\u{25cb} events off"
-                },
-                cfg.events,
-            )
-            .id("mcp-btn-events")
-            .hover(|s| s.border_color(th.accent))
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                    cx.stop_propagation();
-                    ws.mcp.events = !ws.mcp.events;
-                    ws.save(cx);
-                    cx.notify();
-                }),
-            );
-            // 🎨 tint toggle: paint each pane row with that pane's own screen
-            // background + text colour (off by default).
-            let theme_btn = Self::bezel_btn(
-                &th,
-                if self.mcp_theme_preview {
-                    "\u{1f3a8} theme \u{00b7} on"
-                } else {
-                    "\u{1f3a8} theme \u{00b7} off"
-                },
-                self.mcp_theme_preview,
-            )
-            .id("mcp-btn-theme")
-            .hover(|s| s.border_color(th.accent))
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                    cx.stop_propagation();
-                    ws.mcp_theme_preview = !ws.mcp_theme_preview;
-                    cx.notify();
-                }),
-            );
-
-            // Writes opt-in: promotes the read-only watch surface to a
-            // remote-control one (set_pane_config). A deliberate second switch —
-            // appearance only, never a PTY. Mirrors the TD_MCP_WRITE env var.
-            let writes_btn = Self::bezel_btn(
-                &th,
-                if cfg.writable {
-                    "\u{25c9} writes on \u{00b7} agents can restyle"
-                } else {
-                    "\u{25cb} writes off \u{00b7} read-only"
-                },
-                cfg.writable,
-            )
-            .id("mcp-btn-writes")
-            .hover(|s| s.border_color(th.accent))
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                    cx.stop_propagation();
-                    ws.mcp.writable = !ws.mcp.writable;
-                    ws.save(cx);
-                    cx.notify();
-                }),
-            );
-
-            // Live pane list — walk the REAL tree (not the wire snapshot) so each
-            // row can carry the pane's own resolved colours and focus it on click.
-            let preview = self.mcp_theme_preview;
-            let mut list = div().id("mcp-pane-list").flex().flex_col().gap_1();
-            let mut ri = 0usize;
-            for (ti, tab) in self.tabs.iter().enumerate() {
-                let mut leaves = vec![];
-                tab.root.leaves(&mut leaves);
-                for leaf in leaves {
-                    let id = leaf.entity_id();
-                    let p = leaf.read(cx);
-                    let is_agent = p.mode.is_agent();
-                    let mode_lbl = p.mode.label().to_string();
-                    let title = p
-                        .name
-                        .clone()
-                        .filter(|n| !n.is_empty())
-                        .or_else(|| (!p.title.is_empty()).then(|| p.title.clone()))
-                        .unwrap_or_else(|| p.mode.label().to_string());
-                    let rt = p.runtime();
-                    let exposed = mcp::should_expose(&self.mcp, is_agent);
-                    // the pane's own resolved screen colours, for 🎨 preview mode
-                    let pth = p.resolved_theme(cx);
-
-                    // Abbreviate so a long cwd / resume id never spills off the panel.
-                    let mut cwd = rt.cwd.clone().unwrap_or_else(|| "\u{2014}".to_string());
-                    if !home.is_empty() {
-                        cwd = cwd.replacen(&home, "~", 1);
-                    }
-                    if cwd.chars().count() > 34 {
-                        let tail: String = cwd
-                            .chars()
-                            .rev()
-                            .take(32)
-                            .collect::<Vec<_>>()
-                            .into_iter()
-                            .rev()
-                            .collect();
-                        cwd = format!("\u{2026}{tail}");
-                    }
-                    let sub = match &rt.resume {
-                        Some(sess) => {
-                            let agent = sess.split_whitespace().next().unwrap_or("agent");
-                            let sid = sess
-                                .split_whitespace()
-                                .last()
-                                .filter(|t| t.len() >= 8 && !t.starts_with("--"));
-                            match sid {
-                                Some(i) => format!("{cwd}   {agent} \u{00b7} {}", &i[..8]),
-                                None => format!("{cwd}   {agent}"),
-                            }
-                        }
-                        None => cwd,
-                    };
-
-                    // 🎨 on → the row wears the pane's own background + text colour.
-                    let row_text = if preview { pth.text } else { th.text };
-                    let dot_col = if exposed {
-                        th.accent
-                    } else {
-                        row_text.alpha(0.3)
-                    };
-                    let mode_col = if is_agent {
-                        th.accent
-                    } else {
-                        row_text.alpha(0.6)
-                    };
-                    let hover_border = th.accent.alpha(0.7);
-
-                    let mut row = div()
-                        .id(SharedString::from(format!("mcp-row-{ri}")))
-                        .flex()
-                        .flex_row()
-                        .items_center()
-                        .gap_2()
-                        .px_1()
-                        .py_0p5()
-                        .rounded_sm()
-                        .border_1()
-                        .border_color(hsla(0., 0., 0., 0.))
-                        .cursor_pointer()
-                        // hover turns each pane into a clickable chip
-                        .hover(move |s| s.border_color(hover_border))
-                        // click → hop to that tab and focus that exact pane, just
-                        // as if the terminal itself had been clicked.
-                        .on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
-                                cx.stop_propagation();
-                                if let Some(t) = ws.tabs.get_mut(ti) {
-                                    t.focused = Some(id);
-                                }
-                                ws.mcp_menu = false;
-                                ws.activate_tab(ti, window, cx);
-                            }),
-                        );
-                    if preview {
-                        row = row.bg(pth.bg);
-                    }
-                    list = list.child(
-                        row.child(
-                            div()
-                                .flex_none()
-                                .text_color(dot_col)
-                                .child(if exposed { "\u{25cf}" } else { "\u{25cb}" }.to_string()),
-                        )
-                        .child(
-                            div()
-                                .w(px(52.))
-                                .flex_none()
-                                .text_size(px(9.))
-                                .font_weight(gpui::FontWeight::EXTRA_BOLD)
-                                .text_color(mode_col)
-                                .child(mode_lbl),
-                        )
-                        .child(
-                            // takes the remaining width and clips, so neither the
-                            // title nor the path can push the row off the panel.
-                            div()
-                                .flex_1()
-                                .min_w(px(0.))
-                                .overflow_hidden()
-                                .flex()
-                                .flex_col()
-                                .child(
-                                    div()
-                                        .overflow_hidden()
-                                        .text_size(px(10.))
-                                        .text_color(row_text)
-                                        .child(title),
-                                )
-                                .child(
-                                    div()
-                                        .overflow_hidden()
-                                        .text_size(px(8.5))
-                                        .text_color(row_text.alpha(0.55))
-                                        .child(sub),
-                                ),
-                        ),
-                    );
-                    ri += 1;
-                }
-            }
-            if ri == 0 {
-                list = list.child(label("no panes".to_string()));
-            }
-
-            // The pane list scrolls within a height cap, so the toggles above and
-            // the notes below stay pinned and on-screen no matter how many panes.
-            let list = list
-                .min_h(px(0.))
-                .max_h(px((vp_h - 220.).max(140.)))
-                .overflow_y_scroll();
-
-            let panel = div()
-                .absolute()
-                .top(px(36.))
-                .right(px(70.))
-                .w(px(360.))
-                .max_h(px((vp_h - 52.).max(200.)))
-                .overflow_hidden()
-                .p_3()
-                .rounded_md()
-                .border_1()
-                .border_color(th.accent.alpha(0.55))
-                .bg(darken(th.surface, 0.6))
-                .shadow(vec![BoxShadow {
-                    color: hsla(0., 0., 0., 0.6),
-                    offset: point(px(4.), px(6.)),
-                    blur_radius: px(18.),
-                    spread_radius: px(0.),
-                    inset: false,
-                }])
-                .flex()
-                .flex_col()
-                .gap_2()
-                .text_size(px(10.))
-                .text_color(th.text)
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(|_, _: &MouseDownEvent, _w, cx| cx.stop_propagation()),
-                )
-                .child(label(format!(
-                    "MCP CONTROL \u{2014} {}",
-                    if cfg.writable {
-                        "READ + WRITE"
-                    } else {
-                        "READ ONLY"
-                    }
-                )))
-                .child(enable_btn)
-                .child(expose_btn)
-                .child(events_btn)
-                .child(writes_btn)
-                .child(theme_btn)
-                .child(label(format!("{exposed}/{total} pane(s) exposed")))
-                .child(list)
-                .child(
+        let mcp_overlay =
+            self.mcp_menu.then(|| {
+                let cfg = self.mcp.clone();
+                let t = self.lang.strings();
+                let panes = self.mcp_snapshot(cx);
+                let total = panes.len();
+                let exposed = panes.iter().filter(|p| p.exposed).count();
+                let vp_h = f32::from(window.viewport_size().height);
+                let home = std::env::var("HOME").unwrap_or_default();
+                let label = |s: String| {
                     div()
-                        .text_size(px(8.5))
-                        .text_color(th.accent.alpha(0.85))
-                        .child("watches agent panes \u{00b7} never writes to a PTY".to_string()),
+                        .text_size(px(9.))
+                        .text_color(th.text.alpha(0.55))
+                        .child(s)
+                };
+                let enable_btn = Self::bezel_btn(
+                    &th,
+                    &if cfg.enabled {
+                        format!("\u{25c9} {}", t.m_server_on)
+                    } else {
+                        format!("\u{25cb} {}", t.m_server_off)
+                    },
+                    cfg.enabled,
                 )
-                .child(label("live server transport: next increment".to_string()));
-
-            // full-screen scrim: a click anywhere outside closes the panel
-            div()
-                .absolute()
-                .inset_0()
+                .id("mcp-btn-enable")
+                .hover(|s| s.border_color(th.accent))
                 .on_mouse_down(
                     MouseButton::Left,
                     cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                        ws.mcp_menu = false;
+                        cx.stop_propagation();
+                        ws.mcp.enabled = !ws.mcp.enabled;
+                        ws.save(cx);
                         cx.notify();
                     }),
+                );
+                let expose_btn = Self::bezel_btn(
+                    &th,
+                    format!(
+                        "{} {}",
+                        t.m_expose,
+                        match cfg.expose {
+                            mcp::Expose::AgentsOnly => t.exp_agents,
+                            mcp::Expose::All => t.exp_all,
+                        }
+                    )
+                    .as_str(),
+                    false,
                 )
-                .child(panel)
-        });
+                .id("mcp-btn-expose")
+                .hover(|s| s.border_color(th.accent))
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                        cx.stop_propagation();
+                        ws.mcp.expose = ws.mcp.expose.next();
+                        ws.save(cx);
+                        cx.notify();
+                    }),
+                );
+                let events_btn = Self::bezel_btn(
+                    &th,
+                    &if cfg.events {
+                        format!("\u{25c9} {}", t.m_events_on)
+                    } else {
+                        format!("\u{25cb} {}", t.m_events_off)
+                    },
+                    cfg.events,
+                )
+                .id("mcp-btn-events")
+                .hover(|s| s.border_color(th.accent))
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                        cx.stop_propagation();
+                        ws.mcp.events = !ws.mcp.events;
+                        ws.save(cx);
+                        cx.notify();
+                    }),
+                );
+                // 🎨 tint toggle: paint each pane row with that pane's own screen
+                // background + text colour (off by default).
+                let theme_btn = Self::bezel_btn(
+                    &th,
+                    &if self.mcp_theme_preview {
+                        format!("\u{1f3a8} {}", t.m_theme_on)
+                    } else {
+                        format!("\u{1f3a8} {}", t.m_theme_off)
+                    },
+                    self.mcp_theme_preview,
+                )
+                .id("mcp-btn-theme")
+                .hover(|s| s.border_color(th.accent))
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                        cx.stop_propagation();
+                        ws.mcp_theme_preview = !ws.mcp_theme_preview;
+                        cx.notify();
+                    }),
+                );
+
+                // Writes opt-in: promotes the read-only watch surface to a
+                // remote-control one (set_pane_config). A deliberate second switch —
+                // appearance only, never a PTY. Mirrors the TD_MCP_WRITE env var.
+                let writes_btn = Self::bezel_btn(
+                    &th,
+                    &if cfg.writable {
+                        format!("\u{25c9} {}", t.m_writes_on)
+                    } else {
+                        format!("\u{25cb} {}", t.m_writes_off)
+                    },
+                    cfg.writable,
+                )
+                .id("mcp-btn-writes")
+                .hover(|s| s.border_color(th.accent))
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                        cx.stop_propagation();
+                        ws.mcp.writable = !ws.mcp.writable;
+                        ws.save(cx);
+                        cx.notify();
+                    }),
+                );
+
+                // Live pane list — walk the REAL tree (not the wire snapshot) so each
+                // row can carry the pane's own resolved colours and focus it on click.
+                let preview = self.mcp_theme_preview;
+                let mut list = div().id("mcp-pane-list").flex().flex_col().gap_1();
+                let mut ri = 0usize;
+                for (ti, tab) in self.tabs.iter().enumerate() {
+                    let mut leaves = vec![];
+                    tab.root.leaves(&mut leaves);
+                    for leaf in leaves {
+                        let id = leaf.entity_id();
+                        let p = leaf.read(cx);
+                        let is_agent = p.mode.is_agent();
+                        let mode_lbl = p.mode.label().to_string();
+                        let title = p
+                            .name
+                            .clone()
+                            .filter(|n| !n.is_empty())
+                            .or_else(|| (!p.title.is_empty()).then(|| p.title.clone()))
+                            .unwrap_or_else(|| p.mode.label().to_string());
+                        let rt = p.runtime();
+                        let exposed = mcp::should_expose(&self.mcp, is_agent);
+                        // the pane's own resolved screen colours, for 🎨 preview mode
+                        let pth = p.resolved_theme(cx);
+
+                        // Abbreviate so a long cwd / resume id never spills off the panel.
+                        let mut cwd = rt.cwd.clone().unwrap_or_else(|| "\u{2014}".to_string());
+                        if !home.is_empty() {
+                            cwd = cwd.replacen(&home, "~", 1);
+                        }
+                        if cwd.chars().count() > 34 {
+                            let tail: String = cwd
+                                .chars()
+                                .rev()
+                                .take(32)
+                                .collect::<Vec<_>>()
+                                .into_iter()
+                                .rev()
+                                .collect();
+                            cwd = format!("\u{2026}{tail}");
+                        }
+                        let sub = match &rt.resume {
+                            Some(sess) => {
+                                let agent = sess.split_whitespace().next().unwrap_or("agent");
+                                let sid = sess
+                                    .split_whitespace()
+                                    .last()
+                                    .filter(|t| t.len() >= 8 && !t.starts_with("--"));
+                                match sid {
+                                    Some(i) => format!("{cwd}   {agent} \u{00b7} {}", &i[..8]),
+                                    None => format!("{cwd}   {agent}"),
+                                }
+                            }
+                            None => cwd,
+                        };
+
+                        // 🎨 on → the row wears the pane's own background + text colour.
+                        let row_text = if preview { pth.text } else { th.text };
+                        let dot_col = if exposed {
+                            th.accent
+                        } else {
+                            row_text.alpha(0.3)
+                        };
+                        let mode_col = if is_agent {
+                            th.accent
+                        } else {
+                            row_text.alpha(0.6)
+                        };
+                        let hover_border = th.accent.alpha(0.7);
+
+                        let mut row = div()
+                            .id(SharedString::from(format!("mcp-row-{ri}")))
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap_2()
+                            .px_1()
+                            .py_0p5()
+                            .rounded_sm()
+                            .border_1()
+                            .border_color(hsla(0., 0., 0., 0.))
+                            .cursor_pointer()
+                            // hover turns each pane into a clickable chip
+                            .hover(move |s| s.border_color(hover_border))
+                            // click → hop to that tab and focus that exact pane, just
+                            // as if the terminal itself had been clicked.
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
+                                    cx.stop_propagation();
+                                    if let Some(t) = ws.tabs.get_mut(ti) {
+                                        t.focused = Some(id);
+                                    }
+                                    ws.mcp_menu = false;
+                                    ws.activate_tab(ti, window, cx);
+                                }),
+                            );
+                        if preview {
+                            row = row.bg(pth.bg);
+                        }
+                        list =
+                            list.child(
+                                row.child(div().flex_none().text_color(dot_col).child(
+                                    if exposed { "\u{25cf}" } else { "\u{25cb}" }.to_string(),
+                                ))
+                                .child(
+                                    div()
+                                        .w(px(52.))
+                                        .flex_none()
+                                        .text_size(px(9.))
+                                        .font_weight(gpui::FontWeight::EXTRA_BOLD)
+                                        .text_color(mode_col)
+                                        .child(mode_lbl),
+                                )
+                                .child(
+                                    // takes the remaining width and clips, so neither the
+                                    // title nor the path can push the row off the panel.
+                                    div()
+                                        .flex_1()
+                                        .min_w(px(0.))
+                                        .overflow_hidden()
+                                        .flex()
+                                        .flex_col()
+                                        .child(
+                                            div()
+                                                .overflow_hidden()
+                                                .text_size(px(10.))
+                                                .text_color(row_text)
+                                                .child(title),
+                                        )
+                                        .child(
+                                            div()
+                                                .overflow_hidden()
+                                                .text_size(px(8.5))
+                                                .text_color(row_text.alpha(0.55))
+                                                .child(sub),
+                                        ),
+                                ),
+                            );
+                        ri += 1;
+                    }
+                }
+                if ri == 0 {
+                    list = list.child(label(t.m_no_panes.to_string()));
+                }
+
+                // The pane list scrolls within a height cap, so the toggles above and
+                // the notes below stay pinned and on-screen no matter how many panes.
+                let list = list
+                    .min_h(px(0.))
+                    .max_h(px((vp_h - 220.).max(140.)))
+                    .overflow_y_scroll();
+
+                let panel = div()
+                    .absolute()
+                    .top(px(36.))
+                    .right(px(70.))
+                    .w(px(360.))
+                    .max_h(px((vp_h - 52.).max(200.)))
+                    .overflow_hidden()
+                    .p_3()
+                    .rounded_md()
+                    .border_1()
+                    .border_color(th.accent.alpha(0.55))
+                    .bg(darken(th.surface, 0.6))
+                    .shadow(vec![BoxShadow {
+                        color: hsla(0., 0., 0., 0.6),
+                        offset: point(px(4.), px(6.)),
+                        blur_radius: px(18.),
+                        spread_radius: px(0.),
+                        inset: false,
+                    }])
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .text_size(px(10.))
+                    .text_color(th.text)
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|_, _: &MouseDownEvent, _w, cx| cx.stop_propagation()),
+                    )
+                    .child(label(format!(
+                        "MCP {} \u{2014} {}",
+                        t.m_control,
+                        if cfg.writable {
+                            t.m_read_write
+                        } else {
+                            t.m_read_only
+                        }
+                    )))
+                    .child(enable_btn)
+                    .child(expose_btn)
+                    .child(events_btn)
+                    .child(writes_btn)
+                    .child(theme_btn)
+                    .child(label(format!("{exposed}/{total} {}", t.m_exposed)))
+                    .child(list)
+                    .child(
+                        div()
+                            .text_size(px(8.5))
+                            .text_color(th.accent.alpha(0.85))
+                            .child(t.m_watches.to_string()),
+                    )
+                    .child(label(t.m_transport.to_string()));
+
+                // full-screen scrim: a click anywhere outside closes the panel
+                div()
+                    .absolute()
+                    .inset_0()
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                            ws.mcp_menu = false;
+                            cx.notify();
+                        }),
+                    )
+                    .child(panel)
+            });
 
         // ---- confirm overlay: closing a tab that holds more than one pane ----
         let confirm_overlay = self.confirm_close.and_then(|i| {
