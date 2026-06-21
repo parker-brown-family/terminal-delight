@@ -6349,6 +6349,8 @@ impl Render for Workspace {
                 || self.osd_menu.is_some()
                 || self.mcp_menu
                 || self.plugins_menu
+                || self.dead_menu
+                || self.group_menu.is_some()
                 || self.confirm_close.is_some()
                 || self.help_open
                 || self.tab_menu.is_some()
