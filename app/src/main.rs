@@ -43,7 +43,8 @@ use gpui::{
 use gpui_platform::application;
 use pane::{
     CloseFocusRead, ClosePane, DragPaneStart, OpenAgentPanel, OpenDisplayMenu, OpenFind,
-    OpenFocusRead, OpenHelp, OpenThemeMenu, PaneRenamed, RequestCloseTab, TerminalView,
+    OpenFocusRead, OpenHelp, OpenLogoPicker, OpenThemeMenu, PaneRenamed, RequestCloseTab,
+    TerminalView,
 };
 use serde::{Deserialize, Serialize};
 use theme::{PaneTheme, ThemeChoice};
@@ -307,6 +308,7 @@ impl<L: Clone> Tree<L> {
                     cwd: s.cwd,
                     resume: s.resume,
                     name: s.name,
+                    logo: s.logo,
                 }
             }
             Tree::Split {
@@ -337,6 +339,7 @@ impl Node {
                 cwd: rt.cwd,
                 resume: rt.resume,
                 name: view.name.clone(),
+                logo: view.logo.clone(),
             }
         })
     }
@@ -350,6 +353,7 @@ struct LeafState {
     cwd: Option<String>,
     resume: Option<String>,
     name: Option<String>,
+    logo: Option<String>,
 }
 
 // A transient (de)serialization DTO for the layout tree — built, written, and
@@ -367,6 +371,8 @@ enum SavedNode {
         resume: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         name: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        logo: Option<String>,
     },
     Split {
         dir: SplitDir,
@@ -394,6 +400,8 @@ impl<'de> Deserialize<'de> for SavedNode {
             resume: Option<String>,
             #[serde(default)]
             name: Option<String>,
+            #[serde(default)]
+            logo: Option<String>,
         }
         // A leaf's appearance: the new per-group form if present, else migrate a
         // legacy `theme` override, else pristine (follows outer for everything).
@@ -424,6 +432,7 @@ impl<'de> Deserialize<'de> for SavedNode {
                         cwd: None,
                         resume: None,
                         name: None,
+                        logo: None,
                     }),
                     other => Err(E::custom(format!("unknown node: {other}"))),
                 }
@@ -444,6 +453,7 @@ impl<'de> Deserialize<'de> for SavedNode {
                             cwd: f.cwd.take(),
                             resume: f.resume.take(),
                             name: f.name.take(),
+                            logo: f.logo.take(),
                         })
                     }
                     "Split" => {
@@ -1296,6 +1306,130 @@ struct LangPicker {
     selected: usize,
 }
 
+/// The per-pane header-logo image picker (md-open style): a centred modal with a
+/// query input and a fuzzy-ranked list of image files. Owns the keyboard while up
+/// (esc cancels, ↵ sets the highlighted file as the target pane's logo, ↑/↓ move,
+/// typing filters). Must be registered in `any_popup_open` / `close_popups` /
+/// `warp::set_suppressed` like every other overlay, or it bows with the glass.
+struct LogoPicker {
+    /// Which pane gets the chosen logo.
+    target: gpui::EntityId,
+    query: EditBuffer,
+    selected: usize,
+    /// All scanned candidates: `(absolute path, basename, ~/relative dir)`.
+    candidates: Vec<LogoCandidate>,
+}
+
+#[derive(Clone)]
+struct LogoCandidate {
+    path: String,
+    base: String,
+    dir: String,
+}
+
+/// Walk a bounded set of roots for image files (`png/jpg/jpeg/svg`), skipping
+/// hidden + heavy dirs, capped so the picker stays snappy. Returns candidates
+/// pre-formatted as `(path, basename, ~/relative dir)`, sorted by basename.
+fn scan_logo_candidates() -> Vec<LogoCandidate> {
+    const CAP: usize = 4000;
+    const MAX_DEPTH: usize = 6;
+    let home = std::env::var("HOME").unwrap_or_default();
+    let home_path = PathBuf::from(&home);
+    // A focused set of roots: the picture-ish dirs first, then the home root
+    // (shallow) — enough to find a logo without trawling the whole disk.
+    let roots: Vec<PathBuf> = ["Pictures", "Downloads", "Desktop", "Documents", "Images"]
+        .iter()
+        .map(|d| home_path.join(d))
+        .chain(std::iter::once(home_path.clone()))
+        .collect();
+    let is_img = |name: &str| {
+        let n = name.to_ascii_lowercase();
+        n.ends_with(".png")
+            || n.ends_with(".jpg")
+            || n.ends_with(".jpeg")
+            || n.ends_with(".svg")
+    };
+    let skip_dir = |name: &str| {
+        name.starts_with('.')
+            || matches!(
+                name,
+                "node_modules" | "target" | "vendor" | ".git" | "__pycache__"
+            )
+    };
+    let mut out: Vec<LogoCandidate> = Vec::new();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    // Iterative bounded walk (depth-limited, no symlink following).
+    let mut stack: Vec<(PathBuf, usize)> = roots
+        .iter()
+        .filter(|r| r.is_dir())
+        .map(|r| (r.clone(), 0usize))
+        .collect();
+    while let Some((dir, depth)) = stack.pop() {
+        if out.len() >= CAP {
+            break;
+        }
+        let Ok(rd) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in rd.flatten() {
+            if out.len() >= CAP {
+                break;
+            }
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let Ok(ft) = entry.file_type() else { continue };
+            if ft.is_dir() {
+                if depth < MAX_DEPTH && !skip_dir(&name) {
+                    stack.push((entry.path(), depth + 1));
+                }
+            } else if (ft.is_file() || ft.is_symlink()) && is_img(&name) {
+                let path = entry.path();
+                let abs = path.to_string_lossy().into_owned();
+                if !seen.insert(abs.clone()) {
+                    continue;
+                }
+                let dir_disp = path
+                    .parent()
+                    .map(|p| {
+                        let s = p.to_string_lossy();
+                        if !home.is_empty() && s.starts_with(&home) {
+                            format!("~{}", &s[home.len()..])
+                        } else {
+                            s.into_owned()
+                        }
+                    })
+                    .unwrap_or_default();
+                out.push(LogoCandidate {
+                    path: abs,
+                    base: name,
+                    dir: dir_disp,
+                });
+            }
+        }
+    }
+    out.sort_by_key(|c| c.base.to_ascii_lowercase());
+    out
+}
+
+/// Fuzzy-rank `candidates` against `query` (empty query → all, in scan order).
+/// Returns indices into `candidates`, best match first.
+fn filter_logo_candidates(candidates: &[LogoCandidate], query: &str) -> Vec<usize> {
+    let q = query.trim();
+    if q.is_empty() {
+        return (0..candidates.len()).collect();
+    }
+    let mut scored: Vec<(i64, usize)> = candidates
+        .iter()
+        .enumerate()
+        .filter_map(|(i, c)| {
+            // match against "basename dir" so either part can hit.
+            let hay = format!("{} {}", c.base, c.dir);
+            pane::fuzzy_match(&hay, q).map(|(s, _)| (s, i))
+        })
+        .collect();
+    scored.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+    scored.into_iter().map(|(_, i)| i).collect()
+}
+
 /// The FOCUS reader's wrapped layout, captured each render so the mouse handlers
 /// can map a screen click back to a source cell (for selection + copy) through the
 /// exact frame the user is looking at. All metrics are logical px, matching the
@@ -1331,6 +1465,9 @@ struct Workspace {
     /// The language dropdown (🌐 in the help header), if open. Owns the keyboard
     /// while up, like `find`.
     lang_picker: Option<LangPicker>,
+    /// The per-pane header-logo image picker (header `＋ logo` / logo click), if
+    /// open. Owns the keyboard while up, like `lang_picker`.
+    logo_picker: Option<LogoPicker>,
     renaming: Option<(usize, EditBuffer)>,
     /// Tab index awaiting a "close all its panes?" confirmation, if any.
     confirm_close: Option<usize>,
@@ -1551,6 +1688,11 @@ fn make_pane_restored(
         cx.notify();
     })
     .detach();
+    // the header logo / `＋ logo` placeholder → open the image picker for this pane
+    cx.subscribe(&pane, |ws, pane, _ev: &OpenLogoPicker, cx| {
+        ws.open_logo_picker(pane.entity_id(), cx);
+    })
+    .detach();
     // the header display icon → open this pane's monitor-OSD tray at the click
     cx.subscribe(&pane, |ws, pane, ev: &OpenDisplayMenu, cx| {
         ws.osd_menu = Some(MenuScope::Pane(pane));
@@ -1631,11 +1773,13 @@ fn build_node(saved: &SavedNode, window: &mut Window, cx: &mut Context<Workspace
             cwd,
             resume,
             name,
+            logo,
         } => {
             let pane = make_pane_restored(
                 session::PaneRestore {
                     cwd: cwd.clone(),
                     resume: resume.clone(),
+                    logo: logo.clone(),
                 },
                 window,
                 cx,
@@ -1723,6 +1867,7 @@ impl Workspace {
             focus_handle: cx.focus_handle(),
             find: None,
             lang_picker: None,
+            logo_picker: None,
             renaming: None,
             confirm_close: None,
             help_open: false,
@@ -2294,6 +2439,7 @@ impl Workspace {
         let restore = session::PaneRestore {
             cwd,
             resume: Some(resume),
+            logo: None,
         };
         let pane = make_pane_restored(restore, window, cx);
         self.tabs.push(Tab::new(Node::Leaf(pane), None));
@@ -2696,7 +2842,15 @@ impl Workspace {
         // inherit the split pane's live working directory — a split stays in the
         // same project (TAB = project), instead of dropping back to $HOME.
         let cwd = target_pane.read(cx).runtime().cwd;
-        let new_pane = make_pane_restored(session::PaneRestore { cwd, resume: None }, window, cx);
+        let new_pane = make_pane_restored(
+            session::PaneRestore {
+                cwd,
+                resume: None,
+                logo: None,
+            },
+            window,
+            cx,
+        );
         // Keep a handle so we can focus it AFTER it's mounted in the tree —
         // make_pane's focus-at-creation doesn't stick before the split inserts it.
         let fresh = new_pane.clone();
@@ -3107,6 +3261,37 @@ impl Workspace {
         cx.defer_in(window, |ws, window, cx| {
             window.focus(&ws.focus_handle, cx);
         });
+        cx.notify();
+    }
+
+    /// Open the header-logo image picker scoped to `target`. Scans the candidate
+    /// image files up front (bounded) and grabs the keyboard so typing filters.
+    fn open_logo_picker(&mut self, target: gpui::EntityId, cx: &mut Context<Self>) {
+        self.logo_picker = Some(LogoPicker {
+            target,
+            query: EditBuffer::seeded(""),
+            selected: 0,
+            candidates: scan_logo_candidates(),
+        });
+        cx.notify();
+    }
+
+    /// Set (or clear) `target`'s header logo, persist it, and close the picker.
+    fn set_pane_logo(
+        &mut self,
+        target: gpui::EntityId,
+        logo: Option<String>,
+        cx: &mut Context<Self>,
+    ) {
+        for tab in &self.tabs {
+            let mut leaves = vec![];
+            tab.root.leaves(&mut leaves);
+            if let Some(pane) = leaves.iter().find(|p| p.entity_id() == target) {
+                pane.update(cx, |view, _| view.logo = logo.clone());
+            }
+        }
+        self.logo_picker = None;
+        self.save(cx);
         cx.notify();
     }
 
@@ -3907,6 +4092,264 @@ impl Workspace {
         )
     }
 
+    /// The header-logo image picker (md-open style): a centred modal with a query
+    /// input and a fuzzy-ranked list of `basename + ~/dir` rows. ↑/↓ move, ↵ sets
+    /// the highlighted file as the target pane's logo, click a row to set it, esc
+    /// closes. A "remove logo" row leads when the target already has one.
+    fn render_logo_picker(&self, th: &theme::Theme, cx: &mut Context<Self>) -> Option<gpui::Div> {
+        let lp = self.logo_picker.as_ref()?;
+        let (ww, wh) = self
+            .last_win
+            .map(|(_, _, w, h)| (w, h))
+            .unwrap_or((1200., 800.));
+        let order = filter_logo_candidates(&lp.candidates, &lp.query.text());
+        let q = lp.query.text();
+        // Cap rendered rows so a 4000-file scan never builds a giant element tree.
+        const MAX_ROWS: usize = 200;
+        const ROW_H: f32 = 36.;
+        let panel_w = 460.;
+        let total = lp.candidates.len();
+        let shown_n = order.len().clamp(1, MAX_ROWS);
+        let panel_h = (96. + shown_n as f32 * ROW_H + 28.).min(wh - 32.);
+        let left = (ww * 0.5 - panel_w * 0.5).clamp(8., (ww - panel_w - 8.).max(8.));
+        let top = (wh * 0.22).clamp(8., (wh - panel_h - 8.).max(8.));
+        let sel = lp.selected.min(order.len().saturating_sub(1));
+        let target = lp.target;
+        // Does the target already carry a logo? (Lets us offer a "remove" row.)
+        let has_logo = {
+            let mut found = false;
+            'scan: for tab in &self.tabs {
+                let mut leaves = vec![];
+                tab.root.leaves(&mut leaves);
+                for p in &leaves {
+                    if p.entity_id() == target && p.read(cx).logo.is_some() {
+                        found = true;
+                        break 'scan;
+                    }
+                }
+            }
+            found
+        };
+
+        let input = {
+            let eb = render_edit_buffer(&lp.query, 1.0, th.text, th.accent, th.accent.alpha(0.3));
+            if q.is_empty() {
+                eb.child(
+                    div()
+                        .text_color(th.text.alpha(0.35))
+                        .child("type to filter\u{2026}"),
+                )
+            } else {
+                eb
+            }
+        };
+        let header = div()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .px_2()
+            .pt_2()
+            .pb_1()
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .justify_between()
+                    .child(
+                        div()
+                            .text_size(px(10.))
+                            .font_weight(gpui::FontWeight::EXTRA_BOLD)
+                            .text_color(th.accent)
+                            .child("\u{1f5bc}  PANE LOGO"),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(9.))
+                            .text_color(th.text.alpha(0.5))
+                            .child(format!("{}/{}", order.len(), total)),
+                    ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .w_full()
+                    .px_2()
+                    .py_1()
+                    .rounded_sm()
+                    .bg(th.bg.alpha(0.55))
+                    .border_1()
+                    .border_color(th.accent.alpha(0.4))
+                    .text_size(px(13.))
+                    .child(input),
+            );
+
+        let mut list = div().flex().flex_col().gap_0p5().px_1();
+        if has_logo {
+            list = list.child(
+                div()
+                    .id("logo-remove")
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_2()
+                    .h(px(ROW_H))
+                    .px_2()
+                    .rounded_sm()
+                    .cursor_pointer()
+                    .text_color(th.text.alpha(0.7))
+                    .child(div().w(px(16.)).flex_none().child("\u{2715}"))
+                    .child(div().flex_1().min_w(px(0.)).child("Remove logo"))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                            cx.stop_propagation();
+                            ws.set_pane_logo(target, None, cx);
+                        }),
+                    ),
+            );
+        }
+        for (vis, &ci) in order.iter().take(MAX_ROWS).enumerate() {
+            let Some(c) = lp.candidates.get(ci) else {
+                continue;
+            };
+            let selected = vis == sel;
+            let path = c.path.clone();
+            let row = div()
+                .id(("logo-row", vis))
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap_2()
+                .h(px(ROW_H))
+                .px_2()
+                .rounded_sm()
+                .cursor_pointer()
+                .when(selected, |d| d.bg(th.accent.alpha(0.18)))
+                // a small thumbnail of the candidate, cover-cropped
+                .child(
+                    div()
+                        .w(px(24.))
+                        .h(px(24.))
+                        .flex_none()
+                        .overflow_hidden()
+                        .rounded_sm()
+                        .border_1()
+                        .border_color(th.text.alpha(0.15))
+                        .child(
+                            gpui::img(PathBuf::from(c.path.clone()))
+                                .size_full()
+                                .object_fit(gpui::ObjectFit::Cover),
+                        ),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w(px(0.))
+                        .overflow_hidden()
+                        .whitespace_nowrap()
+                        .text_size(px(14.))
+                        .text_color(th.text)
+                        .child(c.base.clone()),
+                )
+                .child(
+                    div()
+                        .flex_none()
+                        .max_w(px(190.))
+                        .overflow_hidden()
+                        .whitespace_nowrap()
+                        .text_size(px(9.5))
+                        .text_color(th.text.alpha(0.45))
+                        .child(c.dir.clone()),
+                )
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                        cx.stop_propagation();
+                        ws.set_pane_logo(target, Some(path.clone()), cx);
+                    }),
+                );
+            list = list.child(row);
+        }
+        if order.is_empty() {
+            list = list.child(
+                div()
+                    .px_2()
+                    .py_2()
+                    .text_size(px(10.))
+                    .text_color(th.text.alpha(0.4))
+                    .child(if total == 0 {
+                        "No image files found (png/jpg/jpeg/svg)".to_string()
+                    } else {
+                        format!("No image matches \u{201c}{}\u{201d}", q.trim())
+                    }),
+            );
+        }
+
+        let panel = div()
+            .absolute()
+            .left(px(left))
+            .top(px(top))
+            .w(px(panel_w))
+            .max_h(px(panel_h))
+            .flex()
+            .flex_col()
+            .rounded(px(10.))
+            .overflow_hidden()
+            .bg(darken(th.surface, 0.35))
+            .border_1()
+            .border_color(th.accent.alpha(0.6))
+            .font_family(th.font_family.clone())
+            .shadow(vec![BoxShadow {
+                color: hsla(0., 0., 0., 0.7),
+                offset: point(px(0.), px(10.)),
+                blur_radius: px(36.),
+                spread_radius: px(2.),
+                inset: false,
+            }])
+            .child(header)
+            .child(
+                div()
+                    .id("logo-list-scroll")
+                    .flex_1()
+                    .min_h(px(0.))
+                    .overflow_y_scroll()
+                    .pb_1()
+                    .child(list),
+            )
+            .child(
+                div()
+                    .px_2()
+                    .pb_1()
+                    .pt_0p5()
+                    .text_size(px(8.5))
+                    .text_color(th.text.alpha(0.45))
+                    .child("\u{2191}\u{2193} select \u{00b7} \u{21b5} choose \u{00b7} esc close"),
+            )
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|_, _: &MouseDownEvent, _w, cx| cx.stop_propagation()),
+            );
+
+        Some(
+            div()
+                .absolute()
+                .inset_0()
+                .occlude()
+                .bg(hsla(0., 0., 0., 0.28))
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                        ws.logo_picker = None;
+                        cx.notify();
+                    }),
+                )
+                .child(panel),
+        )
+    }
+
     /// FOCUS text-size slider range — a multiplier on the auto-fit scale.
     /// 1.0 (fit) sits inside the range so the thumb has travel both ways. The
     /// low end reaches well below fit so a dense read can shrink to a compact,
@@ -4287,6 +4730,7 @@ impl Workspace {
             || self.confirm_close.is_some()
             || self.find.is_some()
             || self.lang_picker.is_some()
+            || self.logo_picker.is_some()
             || self.theme_menu.is_some()
             || self.osd_menu.is_some()
             || self.tab_menu.is_some()
@@ -4308,6 +4752,7 @@ impl Workspace {
             self.confirm_close = None;
             self.find = None;
             self.lang_picker = None;
+            self.logo_picker = None;
             self.theme_menu = None;
             self.osd_menu = None;
             self.tab_menu = None;
@@ -4376,6 +4821,55 @@ impl Workspace {
                         lp.selected = 0;
                     }
                     self.lang_picker = Some(lp);
+                    cx.notify();
+                    return;
+                }
+            }
+        }
+        // The logo picker owns the keyboard while open: esc closes, ↵ sets the
+        // highlighted image as the target pane's logo, ↑/↓ move, anything else
+        // edits the fuzzy query.
+        if let Some(mut lp) = self.logo_picker.take() {
+            match ks.key.as_str() {
+                "escape" => {
+                    cx.notify();
+                    return;
+                }
+                "enter" => {
+                    let order = filter_logo_candidates(&lp.candidates, &lp.query.text());
+                    let pick = order
+                        .get(lp.selected.min(order.len().saturating_sub(1)))
+                        .and_then(|&i| lp.candidates.get(i))
+                        .map(|c| c.path.clone());
+                    if let Some(path) = pick {
+                        self.set_pane_logo(lp.target, Some(path), cx);
+                    }
+                    cx.notify();
+                    return;
+                }
+                "down" | "tab" => {
+                    let n = filter_logo_candidates(&lp.candidates, &lp.query.text()).len();
+                    if n > 0 {
+                        lp.selected = (lp.selected + 1).min(n - 1);
+                    }
+                    self.logo_picker = Some(lp);
+                    cx.notify();
+                    return;
+                }
+                "up" => {
+                    lp.selected = lp.selected.saturating_sub(1);
+                    self.logo_picker = Some(lp);
+                    cx.notify();
+                    return;
+                }
+                _ => {
+                    let before = lp.query.text();
+                    lp.query
+                        .apply(ks.key.as_str(), m, ks.key_char.as_deref(), 64);
+                    if lp.query.text() != before {
+                        lp.selected = 0;
+                    }
+                    self.logo_picker = Some(lp);
                     cx.notify();
                     return;
                 }
@@ -7023,6 +7517,7 @@ impl Render for Workspace {
                 || self.tab_menu.is_some()
                 || self.find.is_some()
                 || self.lang_picker.is_some()
+                || self.logo_picker.is_some()
                 || self.focus_read.as_ref().and_then(|w| w.upgrade()).is_some(),
         );
         // drop-hit-test rects are rebuilt every frame by the canvases below, so
@@ -8305,6 +8800,7 @@ impl Render for Workspace {
         // ---- Find: fuzzy search in this pane (Ctrl+F) or every pane (Ctrl+Shift+F) ----
         let find_overlay = self.render_find(&th, cx);
         let lang_picker_overlay = self.render_lang_picker(&th, cx);
+        let logo_picker_overlay = self.render_logo_picker(&th, cx);
         let plugins_overlay = self.render_plugins_overlay(&th, cx);
         let savings_overlay = self.render_savings_overlay(&th, cx);
 
@@ -11423,7 +11919,9 @@ impl Render for Workspace {
                     // the find panel rides on top too (its own scrim locks input)
                     .children(find_overlay)
                     // the language dropdown rides above even the help modal it opens from
-                    .children(lang_picker_overlay),
+                    .children(lang_picker_overlay)
+                    // the per-pane logo picker rides on top too (its scrim locks input)
+                    .children(logo_picker_overlay),
             );
         // Frameless: wrap the cabinet in client-side decorations (shadow margin,
         // rounded clip, live resize edges) so it runs with no system titlebar.
@@ -11668,6 +12166,7 @@ mod tests {
             cwd: None,
             resume: None,
             name: None,
+            logo: None,
         };
         assert_eq!(count_saved_leaves(&leaf()), 1);
         let split = SavedNode::Split {
@@ -11909,6 +12408,7 @@ id = "hacker"
                     cwd: None,
                     resume: None,
                     name: None,
+                    logo: None,
                 },
             }],
             groups: vec![],
@@ -11946,6 +12446,7 @@ id = "hacker"
                     cwd: Some("/home/user/proj".into()),
                     resume: Some("claude --resume 48be90b8-5777-44b6-bb6f-1c6069205c0d".into()),
                     name: None,
+                    logo: None,
                 },
             }],
             groups: vec![],
@@ -11974,6 +12475,7 @@ id = "hacker"
             cwd: None,
             resume: None,
             name: None,
+            logo: None,
         };
         let state = StateFile {
             active: 0,
@@ -12151,6 +12653,64 @@ node = "Leaf"
     }
 
     #[test]
+    fn logo_filter_ranks_and_falls_back_to_all() {
+        let cands = vec![
+            LogoCandidate {
+                path: "/a/acme-logo.png".into(),
+                base: "acme-logo.png".into(),
+                dir: "~/Pictures".into(),
+            },
+            LogoCandidate {
+                path: "/b/banner.jpg".into(),
+                base: "banner.jpg".into(),
+                dir: "~/Downloads".into(),
+            },
+            LogoCandidate {
+                path: "/c/icon.svg".into(),
+                base: "icon.svg".into(),
+                dir: "~/Pictures/brand".into(),
+            },
+        ];
+        // empty query → every candidate, in order
+        assert_eq!(filter_logo_candidates(&cands, ""), vec![0, 1, 2]);
+        assert_eq!(filter_logo_candidates(&cands, "   "), vec![0, 1, 2]);
+        // a basename substring ranks its candidate first
+        assert_eq!(filter_logo_candidates(&cands, "acme").first(), Some(&0));
+        assert_eq!(filter_logo_candidates(&cands, "icon").first(), Some(&2));
+        // the directory text is searchable too
+        assert!(filter_logo_candidates(&cands, "brand").contains(&2));
+        // no match → empty
+        assert!(filter_logo_candidates(&cands, "zzzqq").is_empty());
+    }
+
+    #[test]
+    fn pane_restore_logo_round_trips_through_state_toml() {
+        // A leaf with a logo serializes it and reads it back via build_node's DTO.
+        let node = SavedNode::Leaf {
+            appearance: PaneTheme::default(),
+            cwd: None,
+            resume: None,
+            name: None,
+            logo: Some("/home/u/Pictures/acme.png".to_string()),
+        };
+        let toml = toml::to_string(&node).expect("serialize leaf");
+        assert!(
+            toml.contains("/home/u/Pictures/acme.png"),
+            "logo path must persist: {toml}"
+        );
+        let back: SavedNode = toml::from_str(&toml).expect("deserialize leaf");
+        match back {
+            SavedNode::Leaf { logo, .. } => {
+                assert_eq!(logo.as_deref(), Some("/home/u/Pictures/acme.png"));
+            }
+            _ => panic!("expected a leaf"),
+        }
+        // A legacy leaf with no `logo` key defaults to None (back-compat).
+        let legacy: SavedNode = toml::from_str("Leaf = {}").expect("legacy leaf");
+        assert!(matches!(legacy, SavedNode::Leaf { logo: None, .. }));
+    }
+
+    #[test]
     fn split_for_maps_edges_to_axes() {
         assert!(matches!(split_for(Zone::Left), (SplitDir::Row, true)));
         assert!(matches!(split_for(Zone::Right), (SplitDir::Row, false)));
@@ -12211,6 +12771,7 @@ node = "Leaf"
             cwd: None,
             resume: None,
             name: None,
+            logo: None,
         };
         let node = SavedNode::Split {
             dir: SplitDir::Row,
@@ -12320,7 +12881,11 @@ fn scratch_decision(
 ) -> (bool, Option<session::PaneRestore>) {
     let seeded = cwd.is_some() || resume.is_some();
     let seed = if seeded {
-        Some(session::PaneRestore { cwd, resume })
+        Some(session::PaneRestore {
+            cwd,
+            resume,
+            logo: None,
+        })
     } else {
         None
     };

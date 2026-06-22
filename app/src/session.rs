@@ -23,6 +23,10 @@ pub struct PaneRestore {
     pub cwd: Option<String>,
     /// Command typed into the fresh shell (newline appended by the caller's PTY writer).
     pub resume: Option<String>,
+    /// Filesystem path to a user-chosen header logo image (png/jpg/jpeg/svg), if set.
+    /// Shown to the left of the program label in this pane's header; a user setting
+    /// (not kernel-captured), so it lives only here, threaded through save/restore.
+    pub logo: Option<String>,
 }
 
 /// What capture() learned about a live pane. Field-for-field what we persist.
