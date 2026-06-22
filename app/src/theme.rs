@@ -635,20 +635,27 @@ pub fn house_outer() -> ThemeChoice {
     }
 }
 
-/// The shipped **INNER** (terminal screen) look — the green phosphor CRT: the
-/// `custom` base as authored, real ANSI + code highlighting, and the green
-/// [`Grade::default`] house grade. Fresh panes pin this and deliberately do NOT
-/// follow the warm outer cabinet (green screens in a wooden cabinet), see
+/// The shipped **INNER** (terminal screen) look — the WOOD · HACKER · AGENTIC ·
+/// THEME house design: the `hacker` base under the warm Wood colour set, the
+/// program emitting OnTheme ("theme") colours, and the agentic syntax overlay
+/// for agent-watch markers. The GAUGES (grade) start neutral but carry the house
+/// near-fishbowl warp. Fresh panes pin this and deliberately do NOT follow the
+/// warm outer cabinet (its own design lives inside the cabinet), see
 /// [`PaneTheme::house`].
 pub fn house_terminal() -> ThemeChoice {
     ThemeChoice {
-        id: "custom".into(),
-        seed: None,
-        color: ColorMode::Default, // "ansi"
+        id: "hacker".into(),
+        seed: None,                // Wood's signature seed supplies the palette
+        color: ColorMode::OnTheme, // "theme" program colour
         syntax: true,
-        syntax_scheme: SyntaxScheme::Code,
-        grade: Grade::default(), // the green house grade
-        dynamic: Dynamic::Plain,
+        syntax_scheme: SyntaxScheme::Agentic,
+        // GAUGES default = neutral sliders + the house warp (matches the shipped
+        // DISPLAY/GAUGES tray: everything +0/100%, warp +143).
+        grade: Grade {
+            warp: WARP_DEFAULT,
+            ..Grade::neutral()
+        },
+        dynamic: Dynamic::Wood,
         text: None,
         complement: None,
         human: None,
@@ -2170,12 +2177,23 @@ mod tests {
     }
 
     #[test]
-    fn house_terminal_is_green_and_a_fresh_pane_does_not_follow_the_warm_outer() {
+    fn house_terminal_is_the_wood_design_and_does_not_follow_the_warm_outer() {
+        // The shipped INNER design: WOOD colour set · HACKER base · AGENTIC
+        // syntax · THEME (OnTheme) program colour, GAUGES neutral but warped.
         let t = house_terminal();
-        assert_eq!(t.id, "custom");
-        assert!(t.seed.is_none(), "green base — no warm seed");
-        assert_eq!(t.color, ColorMode::Default, "ansi");
-        assert!(t.syntax && t.dynamic.is_plain());
+        assert_eq!(t.id, "hacker");
+        assert!(
+            t.seed.is_none(),
+            "the Wood set supplies the seed, not an override"
+        );
+        assert_eq!(t.color, ColorMode::OnTheme, "theme program colour");
+        assert!(t.syntax && t.syntax_scheme == SyntaxScheme::Agentic);
+        assert_eq!(t.dynamic, Dynamic::Wood);
+        assert_eq!(t.grade.warp, WARP_DEFAULT, "carries the house warp");
+        assert!(
+            (t.grade.brightness - 0.5).abs() < f32::EPSILON,
+            "GAUGES sliders start neutral"
+        );
 
         let p = PaneTheme::house();
         assert!(
@@ -2183,13 +2201,14 @@ mod tests {
             "a fresh terminal is pinned, NOT following the warm cabinet"
         );
         assert!(!p.is_pristine());
-        // rendered against the amber cabinet, the pane keeps the green look
+        // rendered against the amber cabinet, the pane keeps its own Wood design
         let eff = p.effective(&house_outer());
-        assert!(
-            eff.seed.is_none() && eff.dynamic.is_plain(),
-            "green screen inside the wooden cabinet"
+        assert_eq!(
+            eff.dynamic,
+            Dynamic::Wood,
+            "the pane's own Wood design inside the cabinet"
         );
-        assert!(eff.grade.is_default(), "pane keeps the green house grade");
+        assert_eq!(eff.grade.warp, WARP_DEFAULT, "pane keeps the warped GAUGES");
     }
 
     #[test]

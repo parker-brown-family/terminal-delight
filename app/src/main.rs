@@ -42,8 +42,8 @@ use gpui::{
 };
 use gpui_platform::application;
 use pane::{
-    CloseFocusRead, ClosePane, DragPaneStart, OpenDisplayMenu, OpenFind, OpenFocusRead, OpenHelp,
-    OpenThemeMenu, PaneRenamed, RequestCloseTab, TerminalView,
+    CloseFocusRead, ClosePane, DragPaneStart, OpenAgentPanel, OpenDisplayMenu, OpenFind,
+    OpenFocusRead, OpenHelp, OpenThemeMenu, PaneRenamed, RequestCloseTab, TerminalView,
 };
 use serde::{Deserialize, Serialize};
 use theme::{PaneTheme, ThemeChoice};
@@ -1303,7 +1303,7 @@ struct Workspace {
 }
 
 fn make_pane(window: &mut Window, cx: &mut Context<Workspace>) -> Entity<TerminalView> {
-    // A brand-new terminal with no restore context. The pinned green house
+    // A brand-new terminal with no restore context. The pinned house DESIGN
     // appearance is applied by make_pane_restored, so this is a thin alias.
     make_pane_restored(session::PaneRestore::default(), window, cx)
 }
@@ -1314,8 +1314,9 @@ fn make_pane_restored(
     cx: &mut Context<Workspace>,
 ) -> Entity<TerminalView> {
     let pane = cx.new(|cx| TerminalView::new_restored(restore, cx));
-    // Every freshly-built pane ships as the pinned green house screen — it does
-    // NOT follow the warm outer cabinet. Centralising the default HERE (not just
+    // Every freshly-built pane ships as the pinned house DESIGN screen (Wood ·
+    // hacker · agentic · theme) — it does NOT follow the warm outer cabinet.
+    // Centralising the default HERE (not just
     // in make_pane) is what kills the orange-overglow CLASS: split, tear-off and
     // any future creation site inherit the right look for free. The restore path
     // (build_node) is the sole exception and re-applies the pane's SAVED
@@ -1353,6 +1354,13 @@ fn make_pane_restored(
     // F1 in any pane toggles the help modal
     cx.subscribe(&pane, |ws, _pane, _ev: &OpenHelp, cx| {
         ws.help_open = !ws.help_open;
+        cx.notify();
+    })
+    .detach();
+    // Ctrl+Shift+A in any pane opens the agent-watch (MCP) panel — same surface
+    // the header robot icon toggles on.
+    cx.subscribe(&pane, |ws, _pane, _ev: &OpenAgentPanel, cx| {
+        ws.mcp_menu = true;
         cx.notify();
     })
     .detach();
@@ -8932,7 +8940,9 @@ impl Render for Workspace {
                     s.s_look,
                     vec![
                         row(s.k_theme_icon, s.themes_wheel),
+                        row("Ctrl+Shift+D", s.themes_wheel),
                         row(&format!("⛭ {}", s.k_display_tray), s.display_tray),
+                        row("Ctrl+Shift+G", s.display_tray),
                         row(s.k_text_size_key, s.text_size),
                         row(s.k_warp_dial, s.warp),
                     ],
@@ -8948,6 +8958,7 @@ impl Render for Workspace {
                         row(s.k_input_colour, s.input_colour),
                         row(s.k_bell_finish, s.bell),
                         row(&format!("🤖 {}", s.k_mother_bar), s.mcp),
+                        row("Ctrl+Shift+A", s.mcp),
                     ],
                 ))
                 .child(section(s.s_window, vec![row("Ctrl+Alt+T", s.new_window)]));
