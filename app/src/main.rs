@@ -8931,6 +8931,8 @@ impl Render for Workspace {
                     let rt = p.runtime();
                     let exposed = mcp::should_expose(&self.mcp, is_agent);
                     let status = p.agent_status();
+                    // the agent's last output lines for the card's chat-scroller (#2)
+                    let feed: Vec<String> = if is_agent { p.recent_lines(2) } else { Vec::new() };
                     if let Some(program) = program_filt.as_deref() {
                         if mode_lbl.as_str() != program {
                             continue;
@@ -9050,16 +9052,17 @@ impl Render for Workspace {
                         }
                     });
 
+                    let agentic = is_agent && !feed.is_empty();
                     let row = div()
                         .id(SharedString::from(format!("mcp-row-{ri}")))
                         .flex()
                         .flex_row()
                         .items_stretch()
                         .gap_2()
-                        .w(px(316.))
-                        .min_w(px(316.))
-                        .max_w(px(316.))
-                        .h(px(88.))
+                        .w(px(320.))
+                        .min_w(px(320.))
+                        .max_w(px(320.))
+                        .h(px(if agentic { 122. } else { 80. }))
                         .flex_none()
                         .flex_shrink_0()
                         .px_2()
@@ -9070,11 +9073,7 @@ impl Render for Workspace {
                         .bg(card_bg)
                         .shadow(agent_card_shadows(status_glow, live_glow))
                         .cursor_pointer()
-                        // hover intensifies the same state phosphor, so the
-                        // click target reads like a terminal pane border.
                         .hover(move |s| s.border_color(hover_border))
-                        // click → hop to that tab and focus that exact pane, just
-                        // as if the terminal itself had been clicked.
                         .on_mouse_down(
                             MouseButton::Left,
                             cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
@@ -9086,8 +9085,48 @@ impl Render for Workspace {
                                 ws.activate_tab(ti, window, cx);
                             }),
                         );
+                    // #3: a full-height LEFT STATUS SPINE — vivid by state, glows
+                    // when the agent is live. The at-a-glance "what is this doing".
+                    let spine = div()
+                        .w(px(5.))
+                        .h_full()
+                        .flex_none()
+                        .rounded_full()
+                        .bg(if is_agent { status_glow } else { kind_col.alpha(0.5) })
+                        .when(live_glow, |d| {
+                            d.shadow(vec![gpui::BoxShadow {
+                                color: status_glow.alpha(0.85),
+                                offset: point(px(0.), px(0.)),
+                                blur_radius: px(7.),
+                                spread_radius: px(0.5),
+                                inset: false,
+                            }])
+                        });
+                    // #2: the chat-scroller — the agent's last lines, dim monospace.
+                    let mut feed_box = div()
+                        .flex()
+                        .flex_col()
+                        .gap_0p5()
+                        .px_1()
+                        .py_0p5()
+                        .rounded_sm()
+                        .border_1()
+                        .border_color(row_text.alpha(0.10))
+                        .bg(th.bg.alpha(0.38))
+                        .overflow_hidden();
+                    for fl in feed.iter() {
+                        let t: String = fl.chars().take(48).collect();
+                        feed_box = feed_box.child(
+                            div()
+                                .overflow_hidden()
+                                .whitespace_nowrap()
+                                .text_size(px(8.))
+                                .text_color(row_text.alpha(0.62))
+                                .child(t),
+                        );
+                    }
                     list = list.child(
-                        row.child(
+                        row.child(spine).child(
                             div()
                                 .flex_1()
                                 .min_w(px(0.))
@@ -9104,10 +9143,35 @@ impl Render for Workspace {
                                         .gap_1()
                                         .min_w(px(0.))
                                         .child(
-                                            div().flex_none().text_color(dot_col).child(
-                                                if exposed { "\u{25cf}" } else { "\u{25cb}" }
-                                                    .to_string(),
-                                            ),
+                                            // #3: the pip — bigger, STATUS-coloured,
+                                            // glows when live; filled = MCP-exposed.
+                                            div()
+                                                .flex_none()
+                                                .w(px(10.))
+                                                .h(px(10.))
+                                                .rounded_full()
+                                                .border_1()
+                                                .border_color(if is_agent {
+                                                    status_glow
+                                                } else {
+                                                    dot_col.alpha(0.6)
+                                                })
+                                                .bg(if !exposed {
+                                                    gpui::transparent_black()
+                                                } else if is_agent {
+                                                    status_glow
+                                                } else {
+                                                    dot_col
+                                                })
+                                                .when(live_glow, |d| {
+                                                    d.shadow(vec![gpui::BoxShadow {
+                                                        color: status_glow.alpha(0.9),
+                                                        offset: point(px(0.), px(0.)),
+                                                        blur_radius: px(6.),
+                                                        spread_radius: px(0.5),
+                                                        inset: false,
+                                                    }])
+                                                }),
                                         )
                                         .child(
                                             div()
@@ -9151,6 +9215,7 @@ impl Render for Workspace {
                                         })
                                         .child(line2),
                                 )
+                                .when(agentic, |d| d.child(feed_box))
                                 .child(
                                     div()
                                         .flex()
