@@ -7507,6 +7507,10 @@ impl Render for Workspace {
                 div()
                     .flex_1()
                     .min_w(px(0.))
+                    // clip instead of paint-over: when the window narrows past the
+                    // brand + tab strip, the fixed-size children must truncate, not
+                    // bleed onto the always-kept right-side controls (issue #86).
+                    .overflow_hidden()
                     .flex()
                     .flex_row()
                     .items_start()
