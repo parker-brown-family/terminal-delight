@@ -20,6 +20,11 @@ use std::sync::Mutex;
 /// — see `theme::crawl_coeffs` and `fs_crt` in `crt_pass.wgsl`.
 type Tube = ([f32; 4], f32, f32, f32, [f32; 3]);
 
+/// Max simultaneous warp tubes the renderer reads. MUST match the `array<…, N>`
+/// sizes in `crt_pass.wgsl` and the `[_; N]` packing in `gpui_wgpu::wgpu_renderer`.
+/// Raised from 8 → 32 so the agent-wall can warp each card's logo square.
+pub const MAX_TUBES: usize = 32;
+
 static RECTS: Mutex<Vec<Tube>> = Mutex::new(Vec::new());
 static SUPPRESSED: AtomicBool = AtomicBool::new(false);
 
@@ -80,7 +85,21 @@ pub fn register_tube(rect: [f32; 4], glare: f32, k1: f32, k2: f32, crawl: [f32; 
         return;
     }
     let mut rects = RECTS.lock().unwrap();
-    if rects.len() < 8 {
+    if rects.len() < MAX_TUBES {
+        rects.push((rect, glare.clamp(0.0, 1.0), k1, k2, crawl));
+    }
+    push(&rects);
+}
+
+/// Register one OVERLAY tube (an agent-wall card's logo square) — like
+/// [`register_tube`] but it IGNORES suppression. The dashboard is a suppressed
+/// overlay (so the panes behind read flat), yet we still want each card's art to
+/// bend by the theme's own curvature. The whole card stays a flat click target;
+/// only these logo-square pixels are post-warped. Appends (capped at `MAX_TUBES`)
+/// so many cards coexist — unlike `register_focus_tube`, which replaces the set.
+pub fn register_overlay_tube(rect: [f32; 4], glare: f32, k1: f32, k2: f32, crawl: [f32; 3]) {
+    let mut rects = RECTS.lock().unwrap();
+    if rects.len() < MAX_TUBES {
         rects.push((rect, glare.clamp(0.0, 1.0), k1, k2, crawl));
     }
     push(&rects);
@@ -141,12 +160,16 @@ mod tests {
         register_tube(r, 0.5, 0.14, 0.06, CRAWL_OFF);
         assert_eq!(rect_count(), 1, "warp resumes once the overlay closes");
 
-        // never bank more than the 8 the renderer reads
+        // never bank more than MAX_TUBES the renderer reads
         begin_frame();
-        for _ in 0..12 {
+        for _ in 0..(MAX_TUBES + 8) {
             register_tube(r, 0.5, 0.14, 0.06, CRAWL_OFF);
         }
-        assert_eq!(rect_count(), 8, "the tube set is capped at the shader's 8");
+        assert_eq!(
+            rect_count(),
+            MAX_TUBES,
+            "the tube set is capped at the shader's MAX_TUBES"
+        );
 
         // per-pane override: a flat (tactical) tube and a bent (hacker) tube
         // each keep their OWN curvature — the window theme doesn't flatten or
