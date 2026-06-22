@@ -768,6 +768,100 @@ enum McpFilter {
     Ungrouped,
 }
 
+/// One agent's slice of the savings rollup (from the leanctx-savings plugin).
+#[derive(Clone, Default)]
+struct SavingsAgent {
+    id: String,
+    kind: String,
+    calls: u64,
+    saved_est: u64,
+    last_seen: String,
+}
+
+/// One hot file's compression slice.
+#[derive(Clone, Default)]
+struct SavingsFile {
+    path: String,
+    saved: u64,
+    pct: f32,
+}
+
+/// Parsed result of the `</> savings` action: lean-ctx's precomputed token-savings
+/// rollup. The global trio is exact; per-agent `saved_est` is an estimate (≈) until
+/// lean-ctx stamps the agent id into its savings ledger.
+#[derive(Clone, Default)]
+struct SavingsView {
+    tokens_saved: u64,
+    gain_pct: f32,
+    usd: f64,
+    score: u32,
+    level: String,
+    agent_count: usize,
+    agents: Vec<SavingsAgent>,
+    top_files: Vec<SavingsFile>,
+    note: String,
+}
+
+impl SavingsView {
+    /// Parse the plugin's compact JSON payload. Returns `None` if it isn't the
+    /// shape we expect (the caller shows the raw text as a status line instead).
+    fn from_json(s: &str) -> Option<Self> {
+        let v: serde_json::Value = serde_json::from_str(s.trim()).ok()?;
+        let u = |k: &str| v.get(k).and_then(serde_json::Value::as_u64).unwrap_or(0);
+        let f = |k: &str| v.get(k).and_then(serde_json::Value::as_f64).unwrap_or(0.0);
+        let s_ = |k: &str| {
+            v.get(k)
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default()
+                .to_string()
+        };
+        let agents = v
+            .get("agents")
+            .and_then(serde_json::Value::as_array)
+            .map(|a| {
+                a.iter()
+                    .map(|x| SavingsAgent {
+                        id: x.get("id").and_then(|y| y.as_str()).unwrap_or("").to_string(),
+                        kind: x.get("type").and_then(|y| y.as_str()).unwrap_or("").to_string(),
+                        calls: x.get("calls").and_then(|y| y.as_u64()).unwrap_or(0),
+                        saved_est: x.get("saved_est").and_then(|y| y.as_u64()).unwrap_or(0),
+                        last_seen: x
+                            .get("last_seen")
+                            .and_then(|y| y.as_str())
+                            .unwrap_or("")
+                            .to_string(),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let top_files = v
+            .get("top_files")
+            .and_then(serde_json::Value::as_array)
+            .map(|a| {
+                a.iter()
+                    .map(|x| SavingsFile {
+                        path: x.get("path").and_then(|y| y.as_str()).unwrap_or("").to_string(),
+                        saved: x.get("saved").and_then(|y| y.as_u64()).unwrap_or(0),
+                        pct: x.get("pct").and_then(|y| y.as_f64()).unwrap_or(0.0) as f32,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        Some(SavingsView {
+            tokens_saved: u("tokens_saved"),
+            gain_pct: f("gain_pct") as f32,
+            usd: f("usd"),
+            score: u("score") as u32,
+            level: s_("level"),
+            agent_count: u("agent_count") as usize,
+            agents,
+            top_files,
+            note: s_("note"),
+        })
+    }
+}
+
+
 #[derive(Serialize, Deserialize)]
 struct StateFile {
     active: usize,
@@ -1169,6 +1263,14 @@ struct Workspace {
     /// Last plugin action result line (e.g. "wrote …/<id>.cdx"), shown as a
     /// transient toast in the graveyard / plugins panel.
     harvest_status: Option<String>,
+    /// The </> LeanCTX token-savings overlay is open (leanctx-savings plugin).
+    savings_menu: bool,
+    /// Parsed savings rollup (the number + per-agent/file breakdown), or `None`
+    /// before the first fetch.
+    savings_view: Option<SavingsView>,
+    /// Why the savings fetch couldn't run (plugin missing / error), shown in the
+    /// overlay instead of the card.
+    savings_status: Option<String>,
     /// 🎨 toggle in the MCP panel: tint each pane row with that pane's own
     /// resolved screen background + text colour. Defaults off (session-scoped).
     mcp_theme_preview: bool,
@@ -1515,6 +1617,9 @@ impl Workspace {
             dead_filter: None,
             plugins_menu: false,
             harvest_status: None,
+            savings_menu: false,
+            savings_view: None,
+            savings_status: None,
             mcp_theme_preview: false,
             mcp_filter: McpFilter::All,
             slider_drag: None,
@@ -2090,6 +2195,329 @@ impl Workspace {
         };
         cx.notify();
     }
+
+    /// Fetch lean-ctx's token-savings rollup via the leanctx-savings plugin and
+    /// open the </> overlay with it. `agent_id` focuses one agent (the per-agent
+    /// button); `None` is the whole-fleet total. Synchronous but bounded by the
+    /// plugin client's deadline — lean-ctx's `gain` returns in ~180ms — and the
+    /// numbers are precomputed, so this never tokenizes anything itself.
+    fn fetch_savings(&mut self, agent_id: Option<String>, cx: &mut Context<Self>) {
+        let home = session::home_dir();
+        let plugins = plugins::discover(&home);
+        let Some(lc) = plugins.iter().find(|m| m.name == "leanctx-savings") else {
+            self.savings_status =
+                Some("leanctx-savings plugin not found (install leanctx-mcp)".into());
+            self.savings_view = None;
+            self.savings_menu = true;
+            cx.notify();
+            return;
+        };
+        match plugins::savings(lc, agent_id.as_deref()) {
+            Ok(text) => match SavingsView::from_json(&text) {
+                Some(v) => {
+                    self.savings_view = Some(v);
+                    self.savings_status = None;
+                }
+                None => {
+                    self.savings_view = None;
+                    self.savings_status = Some(text);
+                }
+            },
+            Err(e) => {
+                self.savings_view = None;
+                self.savings_status = Some(format!("savings failed: {e}"));
+            }
+        }
+        self.savings_menu = true;
+        cx.notify();
+    }
+
+    /// The </> LeanCTX token-savings overlay: lean-ctx's precomputed savings as a
+    /// big headline number plus the per-agent and top-file breakdown. A flat
+    /// (warp-suppressed) float card — registered in `set_suppressed`/`close_popups`
+    /// so it floats above the CRT glass instead of bowing with it.
+    fn render_savings_overlay(
+        &self,
+        th: &theme::Theme,
+        cx: &mut Context<Self>,
+    ) -> Option<gpui::Div> {
+        if !self.savings_menu {
+            return None;
+        }
+        // brand: "Lean" in text, "CTX" + </> in lean-ctx green.
+        let green = hsla(0.42, 0.72, 0.55, 1.);
+        let brand = div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap_2()
+            .child(
+                div()
+                    .px_1p5()
+                    .py_0p5()
+                    .rounded_sm()
+                    .bg(hsla(0., 0., 0.06, 1.))
+                    .border_1()
+                    .border_color(green.alpha(0.5))
+                    .font_weight(gpui::FontWeight::EXTRA_BOLD)
+                    .text_color(green)
+                    .text_size(px(13.))
+                    .child("\u{003c}/\u{003e}"),
+            )
+            .child(
+                div()
+                    .font_weight(gpui::FontWeight::EXTRA_BOLD)
+                    .text_size(px(15.))
+                    .text_color(th.text)
+                    .child("Lean"),
+            )
+            .child(
+                div()
+                    .font_weight(gpui::FontWeight::EXTRA_BOLD)
+                    .text_size(px(15.))
+                    .text_color(green)
+                    .child("CTX"),
+            )
+            .child(
+                div()
+                    .text_size(px(10.))
+                    .text_color(th.text.alpha(0.5))
+                    .child("token savings"),
+            );
+
+        let mut body = div().flex().flex_col().gap_2();
+
+        if let Some(v) = &self.savings_view {
+            // ---- headline trio: saved tokens · compression · USD ----
+            let stat = |big: String, sub: &str, col: gpui::Hsla| {
+                div()
+                    .flex()
+                    .flex_col()
+                    .child(
+                        div()
+                            .font_weight(gpui::FontWeight::EXTRA_BOLD)
+                            .text_size(px(26.))
+                            .text_color(col)
+                            .child(big),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(9.))
+                            .text_color(th.text.alpha(0.5))
+                            .child(sub.to_string()),
+                    )
+            };
+            body = body.child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_end()
+                    .gap_6()
+                    .child(stat(hud::fmt_tokens(v.tokens_saved), "tokens saved", green))
+                    .child(stat(format!("{:.0}%", v.gain_pct), "compression", th.accent))
+                    .child(stat(format!("${:.0}", v.usd), "USD saved", th.complement))
+                    .child(div().flex_1().min_w(px(0.)))
+                    .child(
+                        div()
+                            .px_2()
+                            .py_0p5()
+                            .rounded_full()
+                            .border_1()
+                            .border_color(green.alpha(0.5))
+                            .text_size(px(10.))
+                            .text_color(green)
+                            .child(format!("\u{2605} {}  \u{00b7}  {}", v.score, v.level)),
+                    ),
+            );
+            // ---- "across N agents" + per-agent estimate list ----
+            body = body.child(
+                div()
+                    .text_size(px(10.))
+                    .text_color(th.text.alpha(0.75))
+                    .child(format!(
+                        "across {} agents (per-agent \u{2248} estimated):",
+                        v.agent_count
+                    )),
+            );
+            let mut alist = div().flex().flex_col().gap_1();
+            for a in v.agents.iter().take(10) {
+                let seen: String = a.last_seen.chars().take(16).collect();
+                let seen = seen.replace('T', " ");
+                alist = alist.child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap_2()
+                        .px_2()
+                        .py_0p5()
+                        .rounded_sm()
+                        .border_1()
+                        .border_color(th.text.alpha(0.10))
+                        .text_size(px(9.5))
+                        .child(
+                            div()
+                                .w(px(150.))
+                                .flex_none()
+                                .overflow_hidden()
+                                .text_color(th.text)
+                                .child(a.id.clone()),
+                        )
+                        .child(
+                            div()
+                                .w(px(110.))
+                                .flex_none()
+                                .text_color(th.text.alpha(0.5))
+                                .child(a.kind.clone()),
+                        )
+                        .child(
+                            div()
+                                .w(px(64.))
+                                .flex_none()
+                                .text_color(th.text.alpha(0.55))
+                                .child(format!("{} calls", a.calls)),
+                        )
+                        .child(div().flex_1().min_w(px(0.)))
+                        .child(
+                            div()
+                                .font_weight(gpui::FontWeight::BOLD)
+                                .text_color(green)
+                                .child(format!("\u{2248} {}", hud::fmt_tokens(a.saved_est))),
+                        )
+                        .child(
+                            div()
+                                .w(px(110.))
+                                .flex_none()
+                                .text_size(px(8.))
+                                .text_color(th.text.alpha(0.4))
+                                .child(seen),
+                        ),
+                );
+            }
+            body = body.child(
+                alist
+                    .id("savings-agents")
+                    .min_h(px(0.))
+                    .max_h(px(180.))
+                    .overflow_y_scroll(),
+            );
+            // ---- top files by compression ----
+            if !v.top_files.is_empty() {
+                let mut flist = div().flex().flex_col().gap_0p5().text_size(px(9.));
+                for f in v.top_files.iter().take(5) {
+                    let short: String = f
+                        .path
+                        .rsplit('/')
+                        .next()
+                        .unwrap_or(&f.path)
+                        .chars()
+                        .take(40)
+                        .collect();
+                    flist = flist.child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w(px(0.))
+                                    .overflow_hidden()
+                                    .text_color(th.text.alpha(0.7))
+                                    .child(short),
+                            )
+                            .child(
+                                div()
+                                    .text_color(green.alpha(0.85))
+                                    .child(hud::fmt_tokens(f.saved)),
+                            )
+                            .child(
+                                div()
+                                    .w(px(46.))
+                                    .flex_none()
+                                    .text_color(th.text.alpha(0.45))
+                                    .child(format!("{:.0}%", f.pct)),
+                            ),
+                    );
+                }
+                body = body.child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_1()
+                        .child(
+                            div()
+                                .text_size(px(9.5))
+                                .text_color(th.text.alpha(0.55))
+                                .child("top files by compression:"),
+                        )
+                        .child(flist),
+                );
+            }
+            // ---- honesty caveat ----
+            body = body.child(
+                div()
+                    .text_size(px(8.))
+                    .text_color(th.text.alpha(0.45))
+                    .child(v.note.clone()),
+            );
+        } else if let Some(err) = &self.savings_status {
+            body = body.child(
+                div()
+                    .text_size(px(10.5))
+                    .text_color(hsla(0., 0.7, 0.62, 1.))
+                    .child(err.clone()),
+            );
+        }
+
+        let panel = div()
+            .absolute()
+            .top(px(46.))
+            .left(px(46.))
+            .right(px(46.))
+            .bottom(px(46.))
+            .overflow_hidden()
+            .p_4()
+            .rounded_md()
+            .border_2()
+            .border_color(th.accent.alpha(0.85))
+            .bg(darken(th.surface, 0.62))
+            .shadow(float_shadows(th.accent))
+            .flex()
+            .flex_col()
+            .gap_3()
+            .text_size(px(10.))
+            .text_color(th.text)
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|_, _: &MouseDownEvent, _w, cx| cx.stop_propagation()),
+            )
+            .child(brand)
+            .child(body)
+            .child(
+                div()
+                    .text_size(px(8.5))
+                    .text_color(th.accent.alpha(0.8))
+                    .child("esc or click outside to close"),
+            );
+
+        Some(
+            div()
+                .absolute()
+                .inset_0()
+                .occlude()
+                .bg(th.bg.alpha(0.70))
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                        ws.savings_menu = false;
+                        cx.notify();
+                    }),
+                )
+                .child(panel),
+        )
+    }
+
 
     /// Split ONLY the focused terminal; everything else keeps its exact space.
     fn split(&mut self, dir: SplitDir, window: &mut Window, cx: &mut Context<Self>) {
@@ -3708,6 +4136,7 @@ impl Workspace {
             || self.mcp_menu
             || self.dead_menu
             || self.plugins_menu
+            || self.savings_menu
             || self.confirm_close.is_some()
             || self.find.is_some()
             || self.lang_picker.is_some()
@@ -3728,6 +4157,7 @@ impl Workspace {
             self.mcp_menu = false;
             self.dead_menu = false;
             self.plugins_menu = false;
+            self.savings_menu = false;
             self.confirm_close = None;
             self.find = None;
             self.lang_picker = None;
@@ -6337,6 +6767,12 @@ fn render_node(
 // on the 👓 glyph. Inert (never armed) unless the env var is present.
 static FOCUS_DEMO_ARMED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
+// Capture/demo hook: TD_SAVINGS_DEMO opens the </> LeanCTX savings overlay once
+// with fictional data so it can be screenshotted leak-free. Inert unless set.
+static SAVINGS_DEMO_ARMED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+
 // When the FOCUS modal opened — drives a ~220ms ease-in of the dim + frosted
 // blur so the backdrop melts behind the panel instead of snapping. Set lazily
 // in render while the modal is open, cleared when it closes.
@@ -6357,6 +6793,7 @@ impl Render for Workspace {
                 || self.osd_menu.is_some()
                 || self.mcp_menu
                 || self.plugins_menu
+                || self.savings_menu
                 || self.dead_menu
                 || self.group_menu.is_some()
                 || self.confirm_close.is_some()
@@ -6405,6 +6842,42 @@ impl Render for Workspace {
         // once, so the serious dialog can be screenshotted without a keystroke.
         if std::env::var("TD_CONFIRM_DEMO").is_ok() && self.confirm_close.is_none() {
             self.confirm_close = Some(self.active);
+            cx.notify();
+        }
+        // demo/capture hook (TD_SAVINGS_DEMO): open the </> LeanCTX savings overlay
+        // with FICTIONAL data (never the real ~/.lean-ctx ledger), so the surface
+        // can be screenshotted for the lean-ctx issue without leaking real agent
+        // ids or file paths. Fires once.
+        if std::env::var("TD_SAVINGS_DEMO").is_ok()
+            && !SAVINGS_DEMO_ARMED.load(std::sync::atomic::Ordering::Relaxed)
+        {
+            SAVINGS_DEMO_ARMED.store(true, std::sync::atomic::Ordering::Relaxed);
+            self.mcp_menu = true;
+            self.savings_view = Some(SavingsView {
+                tokens_saved: 64_600_000,
+                gain_pct: 82.0,
+                usd: 161.0,
+                score: 70,
+                level: "Lv4 Guardian".into(),
+                agent_count: 36,
+                agents: vec![
+                    SavingsAgent { id: "agent-aurora-01".into(), kind: "claude-code".into(), calls: 172, saved_est: 8_910_000, last_seen: "2026-06-22T07:20".into() },
+                    SavingsAgent { id: "agent-borealis-02".into(), kind: "claude-code".into(), calls: 141, saved_est: 6_240_000, last_seen: "2026-06-22T07:18".into() },
+                    SavingsAgent { id: "agent-cinder-03".into(), kind: "codex-mcp-client".into(), calls: 98, saved_est: 4_010_000, last_seen: "2026-06-22T07:12".into() },
+                    SavingsAgent { id: "agent-delta-04".into(), kind: "claude-code".into(), calls: 64, saved_est: 2_770_000, last_seen: "2026-06-22T07:05".into() },
+                    SavingsAgent { id: "agent-ember-05".into(), kind: "codex-mcp-client".into(), calls: 41, saved_est: 1_540_000, last_seen: "2026-06-22T06:58".into() },
+                    SavingsAgent { id: "agent-flux-06".into(), kind: "claude-code".into(), calls: 22, saved_est: 760_000, last_seen: "2026-06-22T06:40".into() },
+                ],
+                top_files: vec![
+                    SavingsFile { path: "src/main.rs".into(), saved: 10_131_759, pct: 98.2 },
+                    SavingsFile { path: "src/app.tsx".into(), saved: 5_163_134, pct: 96.9 },
+                    SavingsFile { path: "schema.sql".into(), saved: 2_440_000, pct: 95.1 },
+                ],
+                note: "context saved by lean-ctx (compression on lean-ctx-touched traffic, not your full provider bill) \u{00b7} per-agent \u{2248} estimated until lean-ctx stamps agent_id into the savings ledger".into(),
+            });
+            self.savings_status = None;
+            self.savings_menu = true;
+            eprintln!("terminal-delight: TD_SAVINGS_DEMO — auto-opening </> savings overlay (fictional data)");
             cx.notify();
         }
         // remember which pane currently holds focus in the active tab, so a later
@@ -7593,6 +8066,7 @@ impl Render for Workspace {
         let find_overlay = self.render_find(&th, cx);
         let lang_picker_overlay = self.render_lang_picker(&th, cx);
         let plugins_overlay = self.render_plugins_overlay(&th, cx);
+        let savings_overlay = self.render_savings_overlay(&th, cx);
 
         // ---- MCP control: the read-only agent-watch surface (the 🤖 button) ----
         let mcp_overlay =
@@ -8256,7 +8730,34 @@ impl Render for Workspace {
                                 "\u{0394} {} \u{00b7} \u{03a3} {}",
                                 hud::fmt_tokens(turn_tok_total),
                                 hud::fmt_tokens(sess_tok_total)
-                            ))),
+                            )))
+                            // </> LeanCTX savings: read lean-ctx's precomputed
+                            // token-savings rollup over the leanctx-savings plugin
+                            // and pop the </> overlay. Own handler + stop_propagation.
+                            .child(
+                                div()
+                                    .id("mcp-btn-savings")
+                                    .flex_none()
+                                    .px_2()
+                                    .py_0p5()
+                                    .rounded_sm()
+                                    .border_1()
+                                    .border_color(th.complement.alpha(0.6))
+                                    .bg(th.complement.alpha(0.10))
+                                    .text_size(px(10.))
+                                    .font_weight(gpui::FontWeight::EXTRA_BOLD)
+                                    .text_color(th.complement)
+                                    .cursor_pointer()
+                                    .hover(|s| s.bg(th.complement.alpha(0.22)))
+                                    .child("\u{003c}/\u{003e} savings")
+                                    .on_mouse_down(
+                                        MouseButton::Left,
+                                        cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                                            cx.stop_propagation();
+                                            ws.fetch_savings(None, cx);
+                                        }),
+                                    ),
+                            ),
                     )
                     .child(enable_btn)
                     .child(expose_btn)
@@ -10133,6 +10634,7 @@ impl Render for Workspace {
                     .children(mcp_overlay)
                     .children(dead_overlay)
                     .children(plugins_overlay)
+                    .children(savings_overlay)
                     .children(confirm_overlay)
                     .children(help_overlay)
                     .children(tab_menu_overlay)
@@ -10154,6 +10656,31 @@ impl Render for Workspace {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn savings_view_parses_plugin_payload() {
+        let json = r#"{
+            "ok": true, "tokens_saved": 66080267, "gain_pct": 81.8, "usd": 165.2,
+            "score": 70, "level": "Lv4 Guardian", "agent_count": 2,
+            "agents": [
+              {"id":"mcp-1-abcd","type":"claude-code","calls":41,"saved_est":1541782,"last_seen":"2026-06-22T07:20:07Z"},
+              {"id":"mcp-2-ef01","type":"codex-mcp-client","calls":7,"saved_est":12000,"last_seen":"2026-06-22T06:00:00Z"}
+            ],
+            "top_files": [{"path":"/a/b/main.rs","saved":10131759,"pct":98.2}],
+            "note": "context saved by lean-ctx"
+        }"#;
+        let v = SavingsView::from_json(json).expect("parses");
+        assert_eq!(v.tokens_saved, 66080267);
+        assert_eq!(v.score, 70);
+        assert_eq!(v.agent_count, 2);
+        assert_eq!(v.agents.len(), 2);
+        assert_eq!(v.agents[0].kind, "claude-code");
+        assert_eq!(v.agents[0].saved_est, 1541782);
+        assert_eq!(v.top_files.len(), 1);
+        assert_eq!(v.top_files[0].saved, 10131759);
+        // garbage / wrong shape → None (caller shows raw text instead)
+        assert!(SavingsView::from_json("not json").is_none());
+    }
 
     fn leaf_ids(t: &Tree<u32>) -> Vec<u32> {
         let mut v = vec![];

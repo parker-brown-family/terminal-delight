@@ -146,6 +146,11 @@ pub fn discover(home: &Path) -> Vec<PluginManifest> {
             out.push(builtin_context_delight(cmd));
         }
     }
+    if !out.iter().any(|m| m.name == "leanctx-savings") {
+        if let Some(cmd) = resolve_leanctx_mcp(home) {
+            out.push(builtin_leanctx_savings(cmd));
+        }
+    }
     out
 }
 
@@ -165,6 +170,51 @@ fn builtin_context_delight(command: String) -> PluginManifest {
             surfaces: vec!["agent".into(), "graveyard".into()],
         }],
     }
+}
+
+/// The bundled leanctx-savings plugin definition (plugin #2): surfaces lean-ctx's
+/// precomputed token-savings rollup on the agent wall (global) and per agent.
+fn builtin_leanctx_savings(command: String) -> PluginManifest {
+    PluginManifest {
+        name: "leanctx-savings".into(),
+        version: "0.1.0".into(),
+        description: "Token savings from lean-ctx context compression.".into(),
+        command,
+        args: vec![],
+        env: vec![],
+        scope: "global".into(),
+        actions: vec![PluginAction {
+            tool: "savings".into(),
+            label: "</> savings".into(),
+            surfaces: vec!["global".into(), "agent".into()],
+        }],
+    }
+}
+
+/// Find the `leanctx-mcp` server: PATH, a couple of well-known spots, then the
+/// bundled copy that ships in this checkout (`plugins/leanctx-mcp/leanctx-mcp`,
+/// found by walking up from the running exe — the dev layout).
+fn resolve_leanctx_mcp(home: &Path) -> Option<String> {
+    if let Ok(p) = which("leanctx-mcp") {
+        return Some(p);
+    }
+    let mut candidates: Vec<PathBuf> = vec![
+        home.join(".local/bin/leanctx-mcp"),
+        home.join(".cargo/bin/leanctx-mcp"),
+    ];
+    // dev: the bundled script under the terminal-delight checkout root.
+    if let Ok(exe) = std::env::current_exe() {
+        for anc in exe.ancestors() {
+            let cand = anc.join("plugins/leanctx-mcp/leanctx-mcp");
+            if cand.is_file() {
+                candidates.push(cand);
+                break;
+            }
+        }
+    }
+    candidates.into_iter().find(|p| p.is_file()).map(|p| {
+        p.to_string_lossy().into_owned()
+    })
 }
 
 /// Find a `cdx-mcp` binary: PATH, then a few well-known spots, then a sibling
@@ -341,6 +391,17 @@ pub fn harvest(manifest: &PluginManifest, session_id: &str, out: &Path) -> Resul
         "write_package",
         json!({ "target": session_id, "format": "cdx", "out": out.to_string_lossy(), "redact": true }),
     )
+}
+
+/// Ask the leanctx-savings plugin for the token-savings rollup. `agent_id`
+/// focuses one agent (the per-agent button); `None` is the whole-fleet total.
+/// Returns the plugin's text payload (a compact JSON blob TD then parses).
+pub fn savings(manifest: &PluginManifest, agent_id: Option<&str>) -> Result<String, String> {
+    let args = match agent_id {
+        Some(a) => json!({ "agent_id": a }),
+        None => json!({}),
+    };
+    run_action(manifest, "savings", args)
 }
 
 /// Where harvested packages land: `~/.local/share/context-delight/`.
