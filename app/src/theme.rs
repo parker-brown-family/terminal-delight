@@ -645,8 +645,8 @@ pub fn house_outer() -> ThemeChoice {
 pub fn house_terminal() -> ThemeChoice {
     ThemeChoice {
         id: "hacker".into(),
-        seed: None,                       // Wood's signature seed supplies the palette
-        color: ColorMode::OnTheme,        // "theme" program colour
+        seed: None,                // Wood's signature seed supplies the palette
+        color: ColorMode::OnTheme, // "theme" program colour
         syntax: true,
         syntax_scheme: SyntaxScheme::Agentic,
         // GAUGES default = neutral sliders + the house warp (matches the shipped
@@ -2182,7 +2182,10 @@ mod tests {
         // syntax · THEME (OnTheme) program colour, GAUGES neutral but warped.
         let t = house_terminal();
         assert_eq!(t.id, "hacker");
-        assert!(t.seed.is_none(), "the Wood set supplies the seed, not an override");
+        assert!(
+            t.seed.is_none(),
+            "the Wood set supplies the seed, not an override"
+        );
         assert_eq!(t.color, ColorMode::OnTheme, "theme program colour");
         assert!(t.syntax && t.syntax_scheme == SyntaxScheme::Agentic);
         assert_eq!(t.dynamic, Dynamic::Wood);
