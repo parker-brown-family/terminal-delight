@@ -1,0 +1,127 @@
+--- a/crates/gpui_wgpu/src/crt_pass.wgsl	2026-06-22 14:27:01.492896781 -0700
++++ b/crates/gpui_wgpu/src/crt_pass.wgsl	2026-06-22 14:27:01.492896781 -0700
+@@ -17,11 +17,11 @@
+ 
+ struct CrtParams {
+     k: vec4<f32>,                  // global k1, k2 (gate only), rect_count, _pad
+-    rects: array<vec4<f32>, 8>,    // x, y, w, h (physical px)
+-    glare: array<vec4<f32>, 8>,    // strength, k1, k2, _pad (per-rect curvature)
++    rects: array<vec4<f32>, 32>,    // x, y, w, h (physical px)
++    glare: array<vec4<f32>, 32>,    // strength, k1, k2, _pad (per-rect curvature)
+     focus_rect: vec4<f32>,         // x, y, w, h (physical px) — the sharp panel
+     focus_params: vec4<f32>,       // blur_radius_px, feather_px, tint, corner_radius_px
+-    crawl: array<vec4<f32>, 8>,    // per-rect Star-Wars crawl: enabled(0/1), a (top
++    crawl: array<vec4<f32>, 32>,    // per-rect Star-Wars crawl: enabled(0/1), a (top
+                                    // width ratio), D (depth = h_bottom/h_top), _pad
+ }
+ 
+--- a/crates/gpui_wgpu/src/wgpu_renderer.rs	2026-06-22 14:27:01.497896830 -0700
++++ b/crates/gpui_wgpu/src/wgpu_renderer.rs	2026-06-22 14:27:01.497896830 -0700
+@@ -129,7 +129,7 @@
+     guard.extend(
+         rects
+             .iter()
+-            .take(8)
++            .take(32)
+             .map(|rect| (*rect, 0.0, 0.0, 0.0, CRAWL_IDENTITY)),
+     );
+ }
+@@ -141,7 +141,7 @@
+     guard.extend(
+         rects
+             .iter()
+-            .take(8)
++            .take(32)
+             .map(|(rect, glare)| (*rect, glare.clamp(0.0, 1.0), 0.0, 0.0, CRAWL_IDENTITY)),
+     );
+ }
+@@ -155,7 +155,7 @@
+     guard.extend(
+         rects
+             .iter()
+-            .take(8)
++            .take(32)
+             .map(|(rect, glare, k1, k2, crawl)| (*rect, glare.clamp(0.0, 1.0), *k1, *k2, *crawl)),
+     );
+ }
+@@ -165,13 +165,13 @@
+ /// the pass on when any tube bends, even if the global dial is flat — and a tube
+ /// with crawl on also forces the pass active (`max_k` is bumped) so the
+ /// perspective is applied even on an otherwise-flat pane.
+-fn crt_rects() -> ([[f32; 4]; 8], [[f32; 4]; 8], [[f32; 4]; 8], u32, f32) {
++fn crt_rects() -> ([[f32; 4]; 32], [[f32; 4]; 32], [[f32; 4]; 32], u32, f32) {
+     let guard = CRT_RECTS.lock().unwrap();
+-    let mut rects = [[0.0f32; 4]; 8];
+-    let mut glare = [[0.0f32; 4]; 8];
+-    let mut crawl = [[0.0f32, 1.0, 1.0, 0.0]; 8];
++    let mut rects = [[0.0f32; 4]; 32];
++    let mut glare = [[0.0f32; 4]; 32];
++    let mut crawl = [[0.0f32, 1.0, 1.0, 0.0]; 32];
+     let mut max_k = 0.0f32;
+-    for (i, (r, g, k1, k2, c)) in guard.iter().take(8).enumerate() {
++    for (i, (r, g, k1, k2, c)) in guard.iter().take(32).enumerate() {
+         rects[i] = *r;
+         glare[i] = [*g, *k1, *k2, 0.0];
+         crawl[i] = [c[0], c[1], c[2], 0.0];
+@@ -181,7 +181,7 @@
+             max_k = max_k.max(1.0);
+         }
+     }
+-    (rects, glare, crawl, guard.len().min(8) as u32, max_k)
++    (rects, glare, crawl, guard.len().min(32) as u32, max_k)
+ }
+ 
+ // ---- terminal-delight FOCUS frosted-glass backdrop ----
+@@ -304,9 +304,9 @@
+         });
+         let params_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+             label: Some("crt_pass_params"),
+-            // k(16) + rects(8*16) + glare(8*16) + focus_rect(16) + focus_params(16)
+-            // + crawl(8*16)
+-            size: 16 + 8 * 16 + 8 * 16 + 32 + 8 * 16,
++            // k(16) + rects(32*16) + glare(32*16) + focus_rect(16) + focus_params(16)
++            // + crawl(32*16) = 1584 bytes (32 tubes; must match crt_pass.wgsl arrays)
++            size: 16 + 32 * 16 + 32 * 16 + 32 + 32 * 16,
+             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+             mapped_at_creation: false,
+         });
+@@ -1618,10 +1618,10 @@
+             if let (true, Some(scene_view)) = (crt_active, crt_scene_view.as_ref()) {
+                 if let Some(crt) = self.crt.as_ref() {
+                     let resources = self.resources();
+-                    // k(4) + rects(32) + glare(32) + focus_rect(4) + focus_params(4)
+-                    // + crawl(32) = 108 floats. crawl appended last so the existing
+-                    // field offsets are unchanged.
+-                    let mut params = [0.0f32; 4 + 32 + 32 + 8 + 32];
++                    // k(4) + rects(128) + glare(128) + focus_rect(4) + focus_params(4)
++                    // + crawl(128) = 396 floats (32 tubes). crawl appended last so
++                    // its field stays after focus; all offsets recomputed for N=32.
++                    let mut params = [0.0f32; 4 + 128 + 128 + 8 + 128];
+                     params[0] = crt_k1;
+                     params[1] = crt_k2;
+                     params[2] = crt_rect_count as f32;
+@@ -1629,17 +1629,17 @@
+                         params[4 + i * 4..4 + i * 4 + 4].copy_from_slice(r);
+                     }
+                     for (i, g) in crt_glare_arr.iter().enumerate() {
+-                        params[4 + 32 + i * 4..4 + 32 + i * 4 + 4].copy_from_slice(g);
++                        params[4 + 128 + i * 4..4 + 128 + i * 4 + 4].copy_from_slice(g);
+                     }
+                     // focus_rect (panel, physical px) + focus_params
+-                    params[68..72].copy_from_slice(&fb_rect);
+-                    params[72] = fb_radius;
+-                    params[73] = fb_feather;
+-                    params[74] = fb_tint;
+-                    params[75] = fb_corner;
++                    params[260..264].copy_from_slice(&fb_rect);
++                    params[264] = fb_radius;
++                    params[265] = fb_feather;
++                    params[266] = fb_tint;
++                    params[267] = fb_corner;
+                     // crawl[enabled, a, depth, _] per rect
+                     for (i, c) in crt_crawl_arr.iter().enumerate() {
+-                        params[76 + i * 4..76 + i * 4 + 4].copy_from_slice(c);
++                        params[268 + i * 4..268 + i * 4 + 4].copy_from_slice(c);
+                     }
+                     resources.queue.write_buffer(
+                         &crt.params_buffer,

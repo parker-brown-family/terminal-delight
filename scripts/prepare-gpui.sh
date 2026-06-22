@@ -21,10 +21,11 @@ zed_rev="$(sed -n 's/^zed_rev = "\(.*\)"/\1/p' "$repo_root/app/Cargo.toml")"
 patch_crt="$repo_root/docs/patches/0001-td-crt-pass.patch"
 patch_blur="$repo_root/docs/patches/0002-focus-blur.patch"
 patch_crawl="$repo_root/docs/patches/0003-text-crawl.patch"
+patch_tubes="$repo_root/docs/patches/0004-warp-tube-cap-32.patch"
 patch_gpl="$repo_root/docs/patches/0002-sever-gpl-crates.patch"
 
 [ -n "$zed_rev" ] || { echo "zed_rev not found in app/Cargo.toml" >&2; exit 1; }
-for p in "$patch_crt" "$patch_blur" "$patch_crawl" "$patch_gpl"; do
+for p in "$patch_crt" "$patch_blur" "$patch_crawl" "$patch_tubes" "$patch_gpl"; do
     [ -f "$p" ] || { echo "missing $p" >&2; exit 1; }
 done
 
@@ -68,6 +69,12 @@ apply_patch "$patch_blur" "focus-blur" \
 # sentinel: the per-rect crawl uniform present means the crawl is already in the tree
 apply_patch "$patch_crawl" "text-crawl" \
     'git grep -q "crawl: array" -- crates/gpui_wgpu/src'
+# 0004-warp-tube-cap-32 bumps the per-rect tube cap 8 -> 32 (shader arrays +
+# uniform packing + buffer size) so the agent wall can warp each card's logo
+# square. Delta on 0001+0003; must apply after them.
+# sentinel: the 32-wide rects array present means the cap bump is already in the tree
+apply_patch "$patch_tubes" "warp-tube-cap-32" \
+    'git grep -q "array<vec4<f32>, 32>" -- crates/gpui_wgpu/src'
 # sentinel: ztracing/zlog gone from sum_tree means the sever is already in the tree
 apply_patch "$patch_gpl" "sever-gpl-crates" \
     '! git grep -q "ztracing" -- crates/sum_tree'

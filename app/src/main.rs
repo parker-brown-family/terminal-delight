@@ -9750,6 +9750,21 @@ impl Render for Workspace {
                     } else {
                         String::new()
                     };
+                    // PER-CARD WARP: when the wall theme is on, the logo square (the
+                    // art window) is barrel-warped + crawl-angled by the theme's own
+                    // curvature — the rest of the card stays flat, so the whole card
+                    // remains a true (flat) click target. Values captured by copy so
+                    // the measurement canvas closure is 'static.
+                    let (warp_k1, warp_k2) = theme::warp_coeffs(th.warp);
+                    let art_glare = th.screen_glare;
+                    let art_crawl: [f32; 3] = if th.crawl {
+                        let (a, d) = theme::crawl_coeffs(th.crawl_angle, th.crawl_depth);
+                        [1.0, a, d]
+                    } else {
+                        [0.0, 1.0, 1.0]
+                    };
+                    let warp_card = preview
+                        && (warp_k1.abs() > 0.0005 || warp_k2.abs() > 0.0005 || th.crawl);
                     if let Some(program) = program_filt.as_deref() {
                         if mode_lbl.as_str() != program {
                             continue;
@@ -10025,6 +10040,7 @@ impl Render for Workspace {
                                 .w_full()
                                 .h(px(116. * cs))
                                 .overflow_hidden()
+                                .relative()
                                 .rounded_md()
                                 .border_1()
                                 .border_color(status_glow.alpha(0.3))
@@ -10032,6 +10048,41 @@ impl Render for Workspace {
                                 .flex()
                                 .items_center()
                                 .justify_center()
+                                // PER-CARD WARP: a zero-paint measurement canvas that
+                                // registers this logo square as a CRT overlay tube
+                                // (theme curvature/crawl), viewport-culled to the
+                                // MAX_TUBES budget. The card itself stays a flat hit box.
+                                .when(warp_card, |d| {
+                                    d.child(div().absolute().inset_0().child(
+                                        canvas(
+                                            move |bounds, window, _cx| {
+                                                let sf = window.scale_factor();
+                                                let vp = window.viewport_size();
+                                                let x = f32::from(bounds.origin.x) * sf;
+                                                let y = f32::from(bounds.origin.y) * sf;
+                                                let w = f32::from(bounds.size.width) * sf;
+                                                let h = f32::from(bounds.size.height) * sf;
+                                                let vw = f32::from(vp.width) * sf;
+                                                let vh = f32::from(vp.height) * sf;
+                                                if x + w > 0.0
+                                                    && y + h > 0.0
+                                                    && x < vw
+                                                    && y < vh
+                                                {
+                                                    crate::warp::register_overlay_tube(
+                                                        [x, y, w, h],
+                                                        art_glare,
+                                                        warp_k1,
+                                                        warp_k2,
+                                                        art_crawl,
+                                                    );
+                                                }
+                                            },
+                                            |_, _, _, _| {},
+                                        )
+                                        .size_full(),
+                                    ))
+                                })
                                 .when_some(logo_path.clone(), |d, path| {
                                     d.child(
                                         gpui::img(std::path::PathBuf::from(path))
