@@ -1328,6 +1328,10 @@ pub struct TerminalView {
     /// A user-set name (right-click the header to rename). Wins over `title`
     /// and survives OSC title updates; persisted per leaf in the state file.
     pub name: Option<String>,
+    /// Filesystem path to a user-chosen header logo image (png/jpg/jpeg/svg). Shown
+    /// to the left of the program label; click the logo (or the `＋ logo`
+    /// placeholder when unset) to pick one. Persisted per leaf in the state file.
+    pub logo: Option<String>,
     /// Active inline-rename buffer; `Some` steals the keyboard from the PTY.
     renaming: Option<String>,
     pub exited: bool,
@@ -1458,6 +1462,11 @@ impl gpui::EventEmitter<RequestCloseTab> for TerminalView {}
 /// persists the layout so the custom name survives a restart.
 pub struct PaneRenamed;
 impl gpui::EventEmitter<PaneRenamed> for TerminalView {}
+
+/// Click on this pane's header logo (or the `＋ logo` placeholder when none is
+/// set) — ask the workspace to open the image-file picker scoped to this pane.
+pub struct OpenLogoPicker;
+impl gpui::EventEmitter<OpenLogoPicker> for TerminalView {}
 
 /// F1 was pressed in this pane — ask the workspace to open the help modal.
 pub struct OpenHelp;
@@ -1682,6 +1691,7 @@ impl TerminalView {
             cols: 100,
             rows: 28,
         };
+        let logo = restore.logo.clone();
         let cwd = restore.cwd.clone().map(std::path::PathBuf::from);
         let mut session = term::spawn_in(grid, 8, 20, cwd).expect("spawn shell");
         if let Some(cmd) = restore.resume.as_deref() {
@@ -1841,6 +1851,7 @@ impl TerminalView {
             session,
             title: "shell".into(),
             name: None,
+            logo,
             renaming: None,
             exited: false,
             grid,
@@ -3863,6 +3874,61 @@ impl Render for TerminalView {
         lighter.l = (lighter.l * 1.9).min(0.9);
         // a per-pane hover group so the ✎ affordance only reveals for THIS header
         let hdr_grp = gpui::SharedString::from(format!("pane-hdr-{}", cx.entity_id()));
+
+        // Per-pane header LOGO, immediately left of the `▸ {label}` text. When a
+        // logo is set we render it cover-cropped into a fixed square (a non-square
+        // image fills + centre-crops via `.size_full()` inside an `.overflow_hidden()`
+        // box). When none is set we show a dim, clickable `＋ logo` placeholder.
+        // Either way a left-click emits `OpenLogoPicker` so the workspace opens the
+        // image picker scoped to this pane. The square scales with the header.
+        let logo_box = (header_h - 10. * scale).max(12.);
+        let logo_el = {
+            let base = div()
+                .flex_none()
+                .h(px(logo_box))
+                .flex()
+                .flex_row()
+                .items_center()
+                .justify_center()
+                .cursor_pointer()
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|_view, _ev: &MouseDownEvent, _w, cx| {
+                        cx.stop_propagation();
+                        cx.emit(OpenLogoPicker);
+                    }),
+                );
+            if let Some(path) = self.logo.clone() {
+                base.w(px(logo_box))
+                    .overflow_hidden()
+                    .rounded(px(4. * scale))
+                    .border_1()
+                    .border_color(th.accent.alpha(0.35))
+                    .child(
+                        gpui::img(std::path::PathBuf::from(path))
+                            .size_full()
+                            .object_fit(gpui::ObjectFit::Cover),
+                    )
+                    .into_any_element()
+            } else {
+                // Dim, tasteful placeholder: a `＋` upload glyph + tiny label that
+                // brightens on header hover (shares the per-pane hover group).
+                base.gap_1()
+                    .px(px(5. * scale))
+                    .rounded(px(4. * scale))
+                    .border_1()
+                    .border_color(bar_fg.alpha(0.18))
+                    .text_color(bar_fg.alpha(0.4))
+                    .group_hover(hdr_grp.clone(), move |s| {
+                        s.text_color(bar_fg.alpha(0.85))
+                            .border_color(th.accent.alpha(0.5))
+                    })
+                    .child(div().text_size(px(13. * scale)).child("\u{ff0b}"))
+                    .child(div().text_size(px(9.5 * scale)).child("logo"))
+                    .into_any_element()
+            }
+        };
+
         let mut header = div()
             .group(hdr_grp.clone())
             .h(px(header_h))
@@ -3895,6 +3961,8 @@ impl Render for TerminalView {
                     .flex()
                     .flex_row()
                     .items_center()
+                    .gap_2()
+                    .child(logo_el)
                     .child(format!("▸ {} · {buf}", self.mode.label_i18n()))
                     .child(div().w(px(6.)).h(px(13.)).bg(th.cursor))
                     .into_any_element()
@@ -3914,8 +3982,9 @@ impl Render for TerminalView {
                     .flex()
                     .flex_row()
                     .items_center()
-                    .gap_1()
+                    .gap_2()
                     .cursor_pointer()
+                    .child(logo_el)
                     .child(format!("▸ {} · {label}", self.mode.label_i18n()))
                     // hover-revealed ✎ affordance (invites the rename)
                     .child(
