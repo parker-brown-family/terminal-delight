@@ -3173,12 +3173,36 @@ impl TerminalView {
     }
 }
 
-/// Bottom-anchor painted rows for crawl mode: slide content down until the last
-/// non-blank row sits on the bottom (near) edge, with blank padding pushed to the
-/// (receding) top. This is what makes a crawl pane read as a Star-Wars crawl —
-/// prompt at the near edge, output stacking up into the distance — and lands the
-/// prompt at the bottom after a clear/Ctrl+L. Row count is preserved (layout
-/// height unchanged). No-op when the screen is full (offset 0) or all-blank. Pure.
+/// Global "anchor terminal content to TOP" toggle. When `false` (the default)
+/// panes hug their content to the BOTTOM of the pane via [`bottom_anchor_rows`];
+/// when `true` that bottom pad is skipped, so the grid's naturally top-anchored
+/// rows are left as-is and the prompt/typing area sits near the TOP of the pane
+/// (easier on the neck on a tall monitor). This is a single GLOBAL setting, not
+/// per-pane: the pane render can't reach `&Workspace`, so the workspace publishes
+/// the live value into this process-global atomic each frame (mirrors
+/// [`crate::warp::set_suppressed`] / [`crate::lang::set_current`]).
+static ANCHOR_TOP: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Publish the live global anchor-to-top setting (called from `Workspace::render`
+/// each frame, beside `lang::set_current` / `warp::set_suppressed`).
+pub fn set_anchor_top(top: bool) {
+    ANCHOR_TOP.store(top, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Read the global anchor-to-top setting. `true` ⇒ content hugs the TOP (skip the
+/// bottom pad); `false` (default) ⇒ content hugs the BOTTOM.
+pub fn anchor_top() -> bool {
+    ANCHOR_TOP.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Bottom-anchor painted rows: slide content down until the last non-blank row
+/// sits on the bottom (near) edge, with blank padding pushed to the top. This is
+/// what makes a crawl pane read as a Star-Wars crawl — prompt at the near edge,
+/// output stacking up into the distance — and, in normal mode, keeps a short
+/// session's prompt hugging the bottom of the pane (the default). When the global
+/// [`anchor_top`] toggle is on, callers skip this so content stays top-aligned.
+/// Row count is preserved (layout height unchanged). No-op when the screen is
+/// full (offset 0) or all-blank. Pure.
 fn bottom_anchor_rows(lines: &mut Vec<(String, Vec<TextRun>)>, rows: usize) {
     let Some(last) = lines.iter().rposition(|(t, _)| !t.trim_end().is_empty()) else {
         return;
@@ -3694,7 +3718,11 @@ impl Render for TerminalView {
         // layout height is identical; a full screen (vim/less, all rows used)
         // gives offset 0 and is left exactly as-is. Visual only — the grid model,
         // PTY, and shell are untouched (so the perspective shader composes on top).
-        if th.crawl {
+        // Crawl mode ALWAYS bottom-anchors (the prompt belongs at the near edge).
+        // In normal mode, content hugs the bottom too UNLESS the global
+        // anchor-to-top toggle is on — then we skip the bottom pad and leave the
+        // grid's naturally top-aligned rows as-is, so the prompt sits near the top.
+        if th.crawl || !anchor_top() {
             bottom_anchor_rows(&mut lines, self.grid.rows);
         }
         let ps = crate::lang::current().strings();
@@ -5193,6 +5221,46 @@ mod tests {
         bottom_anchor_rows(&mut lines, 5);
         assert_eq!(lines.len(), 5);
         assert_eq!(texts(&lines).last().unwrap(), "x");
+    }
+
+    #[test]
+    fn anchor_top_atomic_round_trips_and_gates_the_bottom_pad() {
+        let row = |s: &str| (s.to_string(), Vec::<TextRun>::new());
+        let texts =
+            |l: &[(String, Vec<TextRun>)]| l.iter().map(|(t, _)| t.clone()).collect::<Vec<_>>();
+
+        // default is bottom-anchored (toggle off)
+        assert!(!anchor_top(), "default anchors to the bottom");
+
+        // toggle on: the global atomic publishes the live value …
+        set_anchor_top(true);
+        assert!(anchor_top(), "set_anchor_top(true) is observed");
+
+        // … and the render gate (`th.crawl || !anchor_top()`) skips the bottom pad,
+        // so a short session's content stays top-aligned where the grid put it.
+        let mut lines = vec![row("$ "), row(""), row(""), row("")];
+        let crawl = false;
+        if crawl || !anchor_top() {
+            bottom_anchor_rows(&mut lines, 4);
+        }
+        assert_eq!(
+            texts(&lines),
+            vec!["$ ", "", "", ""],
+            "top-anchor leaves the prompt at the top"
+        );
+
+        // toggle back off: the same gate now bottom-anchors as before.
+        set_anchor_top(false);
+        assert!(!anchor_top(), "set_anchor_top(false) restores the default");
+        let mut lines = vec![row("$ "), row(""), row(""), row("")];
+        if crawl || !anchor_top() {
+            bottom_anchor_rows(&mut lines, 4);
+        }
+        assert_eq!(
+            texts(&lines),
+            vec!["", "", "", "$ "],
+            "bottom-anchor slides the prompt to the bottom"
+        );
     }
 
     #[test]

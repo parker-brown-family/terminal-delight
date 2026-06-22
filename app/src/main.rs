@@ -915,6 +915,11 @@ struct StateFile {
     /// files → `false` (the flat reader everyone had before).
     #[serde(default)]
     focus_inherit: bool,
+    /// Global "anchor terminal content to TOP" preference. Absent on old files →
+    /// `false` (the classic bottom-anchored prompt). When `true`, every pane skips
+    /// the bottom pad so the prompt/typing area sits near the TOP of the pane.
+    #[serde(default)]
+    anchor_top: bool,
     /// Chrome language for the UI (the language pack). Absent on old files →
     /// English; keycaps and symbols are never translated.
     #[serde(default)]
@@ -954,6 +959,7 @@ impl Default for StateFile {
             groups: Vec::new(),
             mcp: None,
             focus_inherit: false,
+            anchor_top: false,
             lang: lang::Lang::default(),
         }
     }
@@ -1700,6 +1706,12 @@ struct Workspace {
     /// look (barrel curvature + screen glare) instead of the flat default. One
     /// toggle in the modal header; applies to every reader open from then on.
     focus_inherit_theme: bool,
+    /// Global, persisted: when on, terminal content anchors to the TOP of each
+    /// pane (the prompt/typing area sits near the top) instead of hugging the
+    /// bottom. Published into [`pane::set_anchor_top`] each render frame so the
+    /// panes (which can't reach `&Workspace`) read the live value. One toggle in
+    /// the OUTER design panel.
+    anchor_top: bool,
     /// A scratch window (opened while another instance is already running, or a
     /// torn-off pane): one fresh terminal, never restores or persists session
     /// state — so it can't clobber the primary window's saved layout.
@@ -2002,6 +2014,7 @@ impl Workspace {
             focus_sel: None,
             focus_sel_drag: false,
             focus_inherit_theme: saved.focus_inherit,
+            anchor_top: saved.anchor_top,
             lang: saved.lang,
             // a demo window restores a layout (so `scratch` is false to take the
             // restore branch below) yet must never overwrite the real state
@@ -2176,6 +2189,7 @@ impl Workspace {
                 .collect(),
             mcp: Some(self.mcp.clone()),
             focus_inherit: self.focus_inherit_theme,
+            anchor_top: self.anchor_top,
             lang: self.lang,
         }
     }
@@ -4749,6 +4763,39 @@ impl Workspace {
                     cx.notify();
                 }),
             )
+    }
+
+    /// Flip the GLOBAL "anchor content to TOP" preference, persist it, and
+    /// repaint. Off (default) ⇒ content hugs the bottom of each pane; on ⇒ the
+    /// prompt/typing area sits near the TOP. The live value is published to
+    /// [`pane::set_anchor_top`] every render frame (see `Workspace::render`).
+    fn toggle_anchor_top(&mut self, cx: &mut Context<Self>) {
+        self.anchor_top = !self.anchor_top;
+        self.save(cx);
+        cx.notify();
+    }
+
+    /// The OUTER design-panel "anchor" control: a small row with an anchor glyph
+    /// ⚓, the active edge (TOP / BOTTOM), and up/down arrows ▲▼ marking which way
+    /// content hugs. Clicking it flips the global toggle. Styled like the panel's
+    /// other rows (a bezel button), accent-lit when anchoring to the top.
+    fn anchor_top_toggle(&self, th: &theme::Theme, cx: &mut Context<Self>) -> gpui::Div {
+        let on = self.anchor_top;
+        // ⚓ <edge> <arrow>: ▲ points up when anchoring to the top, ▼ down for the
+        // (default) bottom anchor — a glanceable direction cue beside the word.
+        let label = if on {
+            format!("\u{2693} TOP \u{25b2}")
+        } else {
+            format!("\u{2693} BOTTOM \u{25bc}")
+        };
+        Self::bezel_btn(th, &label, on).on_mouse_down(
+            MouseButton::Left,
+            cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                // keep the panel/scrim from seeing this (no close)
+                cx.stop_propagation();
+                ws.toggle_anchor_top(cx);
+            }),
+        )
     }
 
     fn activate_tab(&mut self, i: usize, window: &mut Window, cx: &mut Context<Self>) {
@@ -7674,6 +7721,9 @@ impl Render for Workspace {
         self.reap(window, cx);
         // Publish the active UI language so panes can localise their own chrome.
         lang::set_current(self.lang);
+        // Publish the global anchor-to-top setting so every pane's render (which
+        // can't reach `&Workspace`) reads the live value when building its rows.
+        pane::set_anchor_top(self.anchor_top);
         let s = self.lang.strings();
         warp::begin_frame(); // visible panes re-register their tube rects below
                              // An open overlay (theme breakout / confirm dialog) flattens the glass:
@@ -8713,6 +8763,13 @@ impl Render for Workspace {
                 .child(color_row)
                 .child(label(t.t_syntax))
                 .child(syntax_row);
+            // The anchor toggle is GLOBAL (not per-pane), so it shows only in the
+            // OUTER design panel. A short ANCHOR label + the ⚓ TOP/BOTTOM ▲▼ pill.
+            if !is_pane {
+                controls = controls
+                    .child(label("ANCHOR"))
+                    .child(div().flex().child(self.anchor_top_toggle(&th, cx)));
+            }
             if is_pane {
                 // Per-group toggle: on = this pane's theme follows the outer scope
                 // live; off = it keeps its own retained theme. Non-destructive.
@@ -12724,6 +12781,7 @@ id = "hacker"
             groups: vec![],
             mcp: None,
             focus_inherit: false,
+            anchor_top: false,
             lang: lang::Lang::default(),
         };
         let body = toml::to_string(&state).expect("serializes");
@@ -12762,6 +12820,7 @@ id = "hacker"
             groups: vec![],
             mcp: None,
             focus_inherit: false,
+            anchor_top: false,
             lang: lang::Lang::default(),
         };
         let body = toml::to_string(&state).expect("serializes");
@@ -12819,6 +12878,7 @@ id = "hacker"
             }],
             mcp: None,
             focus_inherit: false,
+            anchor_top: false,
             lang: lang::Lang::default(),
         };
         let body = toml::to_string(&state).expect("serializes");
@@ -12866,6 +12926,25 @@ node = "Leaf"
         let body = toml::to_string(&state).expect("serializes");
         let back: StateFile = toml::from_str(&body).expect("round-trips");
         assert!(back.focus_inherit, "the inherit-theme toggle persists");
+    }
+
+    #[test]
+    fn anchor_top_preference_round_trips() {
+        // The global "anchor content to TOP" preference survives a save/load …
+        let state = StateFile {
+            anchor_top: true,
+            ..Default::default()
+        };
+        let body = toml::to_string(&state).expect("serializes");
+        let back: StateFile = toml::from_str(&body).expect("round-trips");
+        assert!(back.anchor_top, "the anchor-to-top toggle persists");
+        // … and is absent (⇒ false: the classic bottom anchor) on pre-feature files.
+        let old: StateFile =
+            toml::from_str("active = 0\n[[tabs]]\nnode = \"Leaf\"\n").expect("loads old file");
+        assert!(
+            !old.anchor_top,
+            "missing key defaults to the bottom anchor"
+        );
     }
 
     #[test]
@@ -13114,6 +13193,7 @@ node = "Leaf"
             groups: vec![],
             mcp: None,
             focus_inherit: false,
+            anchor_top: false,
             lang: lang::Lang::default(),
         };
         let body = toml::to_string(&state).expect("serializes");
