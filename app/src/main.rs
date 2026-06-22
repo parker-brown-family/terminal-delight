@@ -9201,8 +9201,6 @@ impl Render for Workspace {
                 .max_h(px((vp_h * 0.8 - 170.).max(140.)))
                 .overflow_y_scroll();
 
-            let (mcp_k1, mcp_k2) = theme::warp_coeffs(th.warp);
-            let mcp_glare = th.screen_glare;
             let mcp_preview = preview;
             let vp_w = f32::from(window.viewport_size().width);
             let panel = div()
@@ -9339,10 +9337,11 @@ impl Render for Workspace {
                         .child(t.m_watches.to_string()),
                 )
                 .child(label(t.m_transport.to_string()))
-                // Theme-on makes the dashboard itself a curved-glass tube
-                // using the OUTER display gauges. This mirrors FOCUS: the
-                // rect is measured from the real prepaint bounds so the warp
-                // and frosted edge stay pixel-aligned as the window resizes.
+                // Theme-on frosts the dashboard (premium glass) using the OUTER
+                // gauges, but stays FLAT — no barrel tube. A curved panel would
+                // bend the cards visually while their gpui hit-boxes stayed flat,
+                // so corner clicks landed off-target (#81). Frost only → the visual
+                // matches the hit-boxes → clicks are pixel-accurate.
                 .child(
                     div().absolute().inset_0().child(
                         gpui::canvas(
@@ -9363,13 +9362,6 @@ impl Render for Workspace {
                                     16.0 * sf,
                                     0.78,
                                     8.0 * sf,
-                                );
-                                crate::warp::register_focus_tube(
-                                    rect,
-                                    mcp_glare,
-                                    mcp_k1,
-                                    mcp_k2,
-                                    [0.0, 1.0, 1.0],
                                 );
                             },
                             |_, _, _, _| {},
