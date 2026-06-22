@@ -6987,6 +6987,11 @@ static FOCUS_DEMO_ARMED: std::sync::atomic::AtomicBool = std::sync::atomic::Atom
 static SAVINGS_DEMO_ARMED: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
+// Capture/demo hook: TD_GRAVEYARD_DEMO opens the graveyard once with FICTIONAL
+// entries so the dead-agent cards can be screenshotted leak-free.
+static GRAVEYARD_DEMO_ARMED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
 // When the FOCUS modal opened — drives a ~220ms ease-in of the dim + frosted
 // blur so the backdrop melts behind the panel instead of snapping. Set lazily
 // in render while the modal is open, cleared when it closes.
@@ -7092,6 +7097,16 @@ impl Render for Workspace {
             self.savings_status = None;
             self.savings_menu = true;
             eprintln!("terminal-delight: TD_SAVINGS_DEMO — auto-opening </> savings overlay (fictional data)");
+            cx.notify();
+        }
+        // demo/capture hook (TD_GRAVEYARD_DEMO): open the dead-agent manifest with
+        // fictional cards (the override lives in the overlay). Fires once.
+        if std::env::var("TD_GRAVEYARD_DEMO").is_ok()
+            && !GRAVEYARD_DEMO_ARMED.load(std::sync::atomic::Ordering::Relaxed)
+        {
+            GRAVEYARD_DEMO_ARMED.store(true, std::sync::atomic::Ordering::Relaxed);
+            self.dead_menu = true;
+            eprintln!("terminal-delight: TD_GRAVEYARD_DEMO — auto-opening graveyard (fictional data)");
             cx.notify();
         }
         // remember which pane currently holds focus in the active tab, so a later
@@ -9395,6 +9410,25 @@ impl Render for Workspace {
                 }
             }
             let mut dead = recover::scan_dead(&live, &home_path, 80);
+            // leak-safe demo data for screenshots (never real session paths/ids).
+            if std::env::var("TD_GRAVEYARD_DEMO").is_ok() {
+                let mk = |kind, sid: &str, cwd: &str, summary: &str, age: &str, kb: u64| {
+                    recover::DeadAgent {
+                        kind,
+                        session_id: sid.into(),
+                        cwd: Some(cwd.into()),
+                        resume_cmd: String::new(),
+                        summary: Some(summary.into()),
+                        age: age.into(),
+                        bytes: kb * 1024,
+                    }
+                };
+                dead = vec![
+                    mk(recover::AgentKind::Claude, "a1b2c3d4", "~/aurora/web", "Wire up the onboarding flow and its tests", "4d ago", 226),
+                    mk(recover::AgentKind::Codex, "e5f6a7b8", "~/aurora/api", "Refactor the billing service into modules", "2d ago", 512),
+                    mk(recover::AgentKind::Claude, "c9d0e1f2", "~/borealis/ml", "Tune the ranking model hyperparameters", "6h ago", 98),
+                ];
+            }
             // only offer ⬇ harvest if a discovered plugin advertises the
             // "graveyard" surface (the built-in context-delight one does).
             let can_harvest = plugins::discover(&home_path)
@@ -9581,11 +9615,9 @@ impl Render for Workspace {
                 };
                 // Graveyard entries are agents with no live pane. Keep the
                 // raised physical card, but run the phosphor off: muted project
-                // hue, weak rim, no active halo. The left chip rim matches.
+                // hue, weak rim, no active halo.
                 let dead_glow = pcol;
                 let dead_border = dead_glow.alpha(0.26);
-                let dead_chip_fill = dead_glow.alpha(0.09);
-                let dead_chip_rim = dead_glow.alpha(0.32);
                 let dead_bg = darken(th.surface, 0.40);
                 let dead_hover = dead_glow.alpha(0.52);
                 let mut cwd_disp = da.cwd.clone().unwrap_or_else(|| "\u{2014}".to_string());
@@ -9623,12 +9655,12 @@ impl Render for Workspace {
                         .id(SharedString::from(format!("dead-{di}")))
                         .flex()
                         .flex_row()
-                        .items_stretch()
+                        .items_center()
                         .gap_2()
                         .w(px(364.))
                         .min_w(px(364.))
                         .max_w(px(364.))
-                        .h(px(82.))
+                        .h(px(76.))
                         .flex_none()
                         .flex_shrink_0()
                         .px_2()
@@ -9640,30 +9672,10 @@ impl Render for Workspace {
                         .shadow(agent_card_shadows(dead_glow, false))
                         .cursor_pointer()
                         .hover(move |s| s.border_color(dead_hover))
-                        .child(
-                            div()
-                                .w(px(8.))
-                                .h_full()
-                                .flex_none()
-                                .rounded_full()
-                                .border_1()
-                                .border_color(dead_chip_rim)
-                                .bg(dead_chip_fill),
-                        )
-                        .child(
-                            div()
-                                .w(px(46.))
-                                .flex_none()
-                                .text_size(px(9.))
-                                .font_weight(gpui::FontWeight::EXTRA_BOLD)
-                                .text_color(kind_col)
-                                .px_1()
-                                .rounded_sm()
-                                .border_1()
-                                .border_color(kind_col.alpha(0.34))
-                                .bg(kind_col.alpha(0.10))
-                                .child(da.kind.label()),
-                        )
+                        // ---- content column: a dim dead-dot, the kind chip, the
+                        // title, then the meta line. No full-height pill and no
+                        // stretched chrome — it reads as the same family as the
+                        // live agent-wall card.
                         .child(
                             div()
                                 .flex_1()
@@ -9671,12 +9683,44 @@ impl Render for Workspace {
                                 .overflow_hidden()
                                 .flex()
                                 .flex_col()
+                                .gap_1()
                                 .child(
                                     div()
-                                        .overflow_hidden()
-                                        .text_size(px(10.))
-                                        .text_color(th.text)
-                                        .child(title),
+                                        .flex()
+                                        .flex_row()
+                                        .items_center()
+                                        .gap_1()
+                                        .min_w(px(0.))
+                                        .child(
+                                            div()
+                                                .flex_none()
+                                                .text_size(px(7.))
+                                                .text_color(dead_glow.alpha(0.7))
+                                                .child("\u{25cf}"),
+                                        )
+                                        .child(
+                                            div()
+                                                .flex_none()
+                                                .text_size(px(8.5))
+                                                .font_weight(gpui::FontWeight::EXTRA_BOLD)
+                                                .text_color(kind_col)
+                                                .px_1()
+                                                .rounded_sm()
+                                                .border_1()
+                                                .border_color(kind_col.alpha(0.42))
+                                                .bg(kind_col.alpha(0.12))
+                                                .child(da.kind.label()),
+                                        )
+                                        .child(
+                                            div()
+                                                .flex_1()
+                                                .min_w(px(0.))
+                                                .overflow_hidden()
+                                                .text_size(px(10.5))
+                                                .font_weight(gpui::FontWeight::BOLD)
+                                                .text_color(th.text)
+                                                .child(title),
+                                        ),
                                 )
                                 .child(
                                     div()
@@ -9686,45 +9730,59 @@ impl Render for Workspace {
                                         .child(meta_line),
                                 ),
                         )
-                        .when(can_harvest, |row| {
-                            // ⬇ harvest this dead session into a portable .cdx
-                            // (the context-delight plugin, over MCP). Own handler
-                            // + stop_propagation so it never also resurrects.
-                            row.child(
-                                div()
-                                    .id(SharedString::from(format!("harv-{di}")))
-                                    .flex_none()
-                                    .px_1()
-                                    .rounded_sm()
-                                    .border_1()
-                                    .border_color(th.complement.alpha(0.5))
-                                    .text_size(px(9.))
-                                    .font_weight(gpui::FontWeight::BOLD)
-                                    .text_color(th.complement)
-                                    .cursor_pointer()
-                                    .hover(|s| s.bg(th.complement.alpha(0.16)))
-                                    .child("\u{2b07} .cdx")
-                                    .on_mouse_down(
-                                        MouseButton::Left,
-                                        cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
-                                            cx.stop_propagation();
-                                            ws.harvest_agent(sid_harvest.clone(), cx);
-                                        }),
-                                    ),
-                            )
-                        })
+                        // ---- actions, tucked in: a right-aligned, vertically
+                        // centred stack of compact pills (never full-height).
                         .child(
                             div()
                                 .flex_none()
-                                .px_1()
-                                .rounded_sm()
-                                .border_1()
-                                .border_color(th.complement.alpha(0.38))
-                                .text_size(px(9.))
-                                .font_weight(gpui::FontWeight::BOLD)
-                                .text_color(th.accent)
-                                .bg(th.accent.alpha(0.08))
-                                .child("RESURRECT \u{23ce}"),
+                                .flex()
+                                .flex_col()
+                                .items_end()
+                                .justify_center()
+                                .gap_1()
+                                .when(can_harvest, |col| {
+                                    // \u{2b07} harvest this dead session into a portable
+                                    // .cdx (context-delight plugin, over MCP). Own handler
+                                    // + stop_propagation so it never also resurrects.
+                                    col.child(
+                                        div()
+                                            .id(SharedString::from(format!("harv-{di}")))
+                                            .flex_none()
+                                            .px_2()
+                                            .py_0p5()
+                                            .rounded_md()
+                                            .border_1()
+                                            .border_color(th.complement.alpha(0.5))
+                                            .text_size(px(8.5))
+                                            .font_weight(gpui::FontWeight::BOLD)
+                                            .text_color(th.complement)
+                                            .cursor_pointer()
+                                            .hover(|s| s.bg(th.complement.alpha(0.16)))
+                                            .child("\u{2b07} .cdx")
+                                            .on_mouse_down(
+                                                MouseButton::Left,
+                                                cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                                                    cx.stop_propagation();
+                                                    ws.harvest_agent(sid_harvest.clone(), cx);
+                                                }),
+                                            ),
+                                    )
+                                })
+                                .child(
+                                    div()
+                                        .flex_none()
+                                        .px_2()
+                                        .py_0p5()
+                                        .rounded_md()
+                                        .border_1()
+                                        .border_color(th.accent.alpha(0.5))
+                                        .text_size(px(8.5))
+                                        .font_weight(gpui::FontWeight::BOLD)
+                                        .text_color(th.accent)
+                                        .bg(th.accent.alpha(0.08))
+                                        .hover(|s| s.bg(th.accent.alpha(0.18)))
+                                        .child("RESURRECT \u{23ce}"),
+                                ),
                         )
                         .on_mouse_down(
                             MouseButton::Left,
