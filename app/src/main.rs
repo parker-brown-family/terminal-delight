@@ -9600,7 +9600,7 @@ impl Render for Workspace {
                         .w(px(320. * cs))
                         .min_w(px(320. * cs))
                         .max_w(px(320. * cs))
-                        .h(px(if agentic { 122. * cs } else { 80. * cs }))
+                        .h(px(118. * cs))
                         .flex_none()
                         .flex_shrink_0()
                         .px_2()
@@ -9623,23 +9623,6 @@ impl Render for Workspace {
                                 ws.activate_tab(ti, window, cx);
                             }),
                         );
-                    // #3: a full-height LEFT STATUS SPINE — vivid by state, glows
-                    // when the agent is live. The at-a-glance "what is this doing".
-                    let spine = div()
-                        .w(px(5. * cs))
-                        .h_full()
-                        .flex_none()
-                        .rounded_full()
-                        .bg(if is_agent { status_glow } else { kind_col.alpha(0.5) })
-                        .when(live_glow, |d| {
-                            d.shadow(vec![gpui::BoxShadow {
-                                color: status_glow.alpha(0.85),
-                                offset: point(px(0.), px(0.)),
-                                blur_radius: px(7.),
-                                spread_radius: px(0.5),
-                                inset: false,
-                            }])
-                        });
                     // #2: the chat-scroller — the agent's last lines, dim monospace.
                     let mut feed_box = div()
                         .flex()
@@ -9664,7 +9647,7 @@ impl Render for Workspace {
                         );
                     }
                     list = list.child(
-                        row.child(spine).child(
+                        row.child(
                             div()
                                 .flex_1()
                                 .min_w(px(0.))
@@ -9681,42 +9664,38 @@ impl Render for Workspace {
                                         .gap_1()
                                         .min_w(px(0.))
                                         .child(
-                                            // #3: the pip — bigger, STATUS-coloured,
-                                            // glows when live; filled = MCP-exposed.
+                                            // a SINGLE glowing status pip: the state
+                                            // glyph (✓ / ✕ / ○ / ▶ / ⏸) in its
+                                            // status colour, haloed when the agent is live.
                                             div()
                                                 .flex_none()
-                                                .w(px(10. * cs))
-                                                .h(px(10. * cs))
+                                                .flex()
+                                                .items_center()
+                                                .justify_center()
+                                                .w(px(16. * cs))
+                                                .h(px(16. * cs))
                                                 .rounded_full()
-                                                .border_1()
-                                                .border_color(if is_agent {
-                                                    status_glow
-                                                } else {
-                                                    dot_col.alpha(0.6)
-                                                })
-                                                .bg(if !exposed {
-                                                    gpui::transparent_black()
-                                                } else if is_agent {
-                                                    status_glow
-                                                } else {
-                                                    dot_col
-                                                })
+                                                .text_size(px(11. * cs))
+                                                .font_weight(gpui::FontWeight::EXTRA_BOLD)
+                                                .text_color(if is_agent { status_glow } else { dot_col })
                                                 .when(live_glow, |d| {
                                                     d.shadow(vec![gpui::BoxShadow {
-                                                        color: status_glow.alpha(0.9),
+                                                        color: status_glow.alpha(0.85),
                                                         offset: point(px(0.), px(0.)),
-                                                        blur_radius: px(6.),
+                                                        blur_radius: px(9.),
                                                         spread_radius: px(0.5),
                                                         inset: false,
                                                     }])
-                                                }),
-                                        )
-                                        .child(
-                                            div()
-                                                .w(px(14. * cs))
-                                                .flex_none()
-                                                .text_color(badge_col)
-                                                .child(badge_glyph),
+                                                })
+                                                .child(
+                                                    if !is_agent
+                                                        || status.state == hud::AgentState::Idle
+                                                    {
+                                                        "\u{25cb}".to_string()
+                                                    } else {
+                                                        badge_glyph
+                                                    },
+                                                ),
                                         )
                                         .child(
                                             div()
