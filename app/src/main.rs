@@ -2614,8 +2614,8 @@ impl Workspace {
         }
 
         let panel = div()
-            .w(px(420.))
-            .max_h(px(500.))
+            .w(px(840.))
+            .max_h(px(560.))
             .overflow_hidden()
             .p_3()
             .rounded_md()
