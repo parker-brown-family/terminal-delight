@@ -1667,6 +1667,10 @@ struct Workspace {
     /// On-screen box of the FOCUS slider track (captured each frame), so a drag
     /// anywhere in the window maps the cursor-x back to a 0..1 track fraction.
     focus_zoom_bounds: Arc<Mutex<Option<Bounds<Pixels>>>>,
+    /// True while the dashboard card-size slider is being dragged.
+    card_scale_drag: bool,
+    /// Live card-slider track rect, for ratio math during a drag.
+    card_scale_bounds: Arc<Mutex<Option<Bounds<Pixels>>>>,
     /// Vertical pan offset (px) of the zoomed mirror inside the FOCUS panel. When
     /// the text is scaled up past the panel it overflows the bottom; the wheel
     /// pans this 0..=`focus_overflow` so you can reach the last row. Reset on open.
@@ -1988,6 +1992,8 @@ impl Workspace {
             focus_zoom: 1.0,
             focus_zoom_drag: false,
             focus_zoom_bounds: Arc::new(Mutex::new(None)),
+            card_scale_drag: false,
+            card_scale_bounds: Arc::new(Mutex::new(None)),
             focus_scroll_y: 0.0,
             focus_overflow: 0.0,
             focus_line_h: 0.0,
@@ -4498,6 +4504,107 @@ impl Workspace {
         }
     }
 
+    const CARD_MIN: f32 = 0.7;
+    const CARD_MAX: f32 = 1.6;
+    /// Window-x → 0..1 fraction along the dashboard card-size slider track.
+    fn card_scale_from_pos(&self, x: Pixels) -> Option<f32> {
+        let b = (*self.card_scale_bounds.lock().unwrap())?;
+        let w = f32::from(b.size.width);
+        if w <= 0.0 {
+            return None;
+        }
+        Some(((f32::from(x) - f32::from(b.origin.x)) / w).clamp(0.0, 1.0))
+    }
+    /// Set card_scale from a 0..1 track fraction (CARD_MIN..=CARD_MAX).
+    fn set_card_scale(&mut self, frac: f32, cx: &mut Context<Self>) {
+        let v = Self::CARD_MIN + frac.clamp(0.0, 1.0) * (Self::CARD_MAX - Self::CARD_MIN);
+        if (v - self.card_scale).abs() > f32::EPSILON {
+            self.card_scale = v;
+            cx.notify();
+        }
+    }
+
+    /// The dashboard card text-size slider — "A ──●── A", same look + feel as the
+    /// FOCUS reader's. Drives `card_scale` CARD_MIN..=CARD_MAX; live-only.
+    fn card_scale_slider(
+        &self,
+        accent: gpui::Hsla,
+        text: gpui::Hsla,
+        cx: &mut Context<Self>,
+    ) -> gpui::Div {
+        const TRACK: f32 = 96.;
+        let store = self.card_scale_bounds.clone();
+        let frac =
+            ((self.card_scale - Self::CARD_MIN) / (Self::CARD_MAX - Self::CARD_MIN)).clamp(0., 1.);
+        div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap_1()
+            .child(div().text_size(px(8.5)).text_color(text.alpha(0.7)).child("A"))
+            .child(
+                div()
+                    .w(px(TRACK))
+                    .h(px(14.))
+                    .relative()
+                    .cursor_pointer()
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |ws, ev: &MouseDownEvent, _w, cx| {
+                            cx.stop_propagation();
+                            ws.card_scale_drag = true;
+                            if let Some(fr) = ws.card_scale_from_pos(ev.position.x) {
+                                ws.set_card_scale(fr, cx);
+                            }
+                        }),
+                    )
+                    .child(
+                        canvas(
+                            move |bounds, _, _| {
+                                *store.lock().unwrap() = Some(bounds);
+                            },
+                            |_, _, _, _| {},
+                        )
+                        .size_full(),
+                    )
+                    .child(
+                        div()
+                            .absolute()
+                            .left_0()
+                            .right_0()
+                            .top(px(6.))
+                            .h(px(3.))
+                            .rounded_full()
+                            .bg(accent.alpha(0.18)),
+                    )
+                    .child(
+                        div()
+                            .absolute()
+                            .left_0()
+                            .top(px(6.))
+                            .h(px(3.))
+                            .w(px(TRACK * frac))
+                            .rounded_full()
+                            .bg(accent),
+                    )
+                    .child(
+                        div()
+                            .absolute()
+                            .left(px((TRACK * frac - 5.).max(0.)))
+                            .top(px(2.))
+                            .w(px(10.))
+                            .h(px(10.))
+                            .rounded_full()
+                            .bg(linear_gradient(
+                                135.,
+                                linear_color_stop(brighten(accent, 1.4), 0.),
+                                linear_color_stop(darken(accent, 0.7), 1.),
+                            )),
+                    ),
+            )
+            .child(div().text_size(px(13.)).text_color(text.alpha(0.7)).child("A"))
+    }
+
     /// The FOCUS modal's header text-size slider: a small "A …──●── A" track
     /// that scales the mirror's text `FZ_MIN..=FZ_MAX`× the auto-fit size. The
     /// track box is captured each frame into `focus_zoom_bounds`, so a drag that
@@ -5244,6 +5351,7 @@ impl Workspace {
                 || self.tab_wheel_drag.is_some()
                 || self.tab_light_drag
                 || self.focus_zoom_drag
+                || self.card_scale_drag
                 || self.focus_sel_drag
                 || self.drag_split.is_some())
         {
@@ -5255,6 +5363,7 @@ impl Workspace {
             self.tab_wheel_drag = None;
             self.tab_light_drag = false;
             self.focus_zoom_drag = false;
+            self.card_scale_drag = false;
             self.focus_sel_drag = false;
             self.drag_split = None;
             cx.notify();
@@ -5305,6 +5414,11 @@ impl Workspace {
         if self.focus_zoom_drag && ev.pressed_button == Some(MouseButton::Left) {
             if let Some(frac) = self.focus_zoom_from_pos(ev.position.x) {
                 self.set_focus_zoom(frac, cx);
+            }
+        }
+        if self.card_scale_drag && ev.pressed_button == Some(MouseButton::Left) {
+            if let Some(frac) = self.card_scale_from_pos(ev.position.x) {
+                self.set_card_scale(frac, cx);
             }
         }
         // Extend the FOCUS reader selection as the cursor drags — the head moves to
@@ -5390,6 +5504,10 @@ impl Workspace {
         }
         // FOCUS text-size: live-only, never persisted, so just drop the latch.
         if std::mem::take(&mut self.focus_zoom_drag) {
+            cx.notify();
+            return;
+        }
+        if std::mem::take(&mut self.card_scale_drag) {
             cx.notify();
             return;
         }
@@ -8994,28 +9112,7 @@ impl Render for Workspace {
             // row can carry the pane's own resolved colours and focus it on click.
             let preview = self.mcp_theme_preview;
             let cs = self.card_scale.clamp(0.7, 1.6);
-            let card_smaller = Self::bezel_btn(&th, "A\u{2212}", false)
-                .id("mcp-card-smaller")
-                .hover(|s| s.border_color(th.accent))
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                        cx.stop_propagation();
-                        ws.card_scale = (ws.card_scale - 0.1).clamp(0.7, 1.6);
-                        cx.notify();
-                    }),
-                );
-            let card_bigger = Self::bezel_btn(&th, "A\u{207a}", false)
-                .id("mcp-card-bigger")
-                .hover(|s| s.border_color(th.accent))
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                        cx.stop_propagation();
-                        ws.card_scale = (ws.card_scale + 0.1).clamp(0.7, 1.6);
-                        cx.notify();
-                    }),
-                );
+            let card_slider = self.card_scale_slider(th.accent, th.text, cx);
             // ---- pre-pass: whole-fleet counts (unfiltered) + context-aware
             // filter domains. Group chips come from tab groups; program chips
             // come from live pane modes; state chips only come from matching
@@ -9963,8 +10060,7 @@ impl Render for Workspace {
                         .child(events_btn)
                         .child(writes_btn)
                         .child(theme_btn)
-                        .child(card_smaller)
-                        .child(card_bigger),
+                        .child(card_slider),
                 )
                 .child(label(format!("{exposed}/{total} {}", t.m_exposed)))
                 .child(chips)
