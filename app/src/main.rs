@@ -2435,7 +2435,7 @@ impl Workspace {
                     .child(
                         div()
                             .font_weight(gpui::FontWeight::EXTRA_BOLD)
-                            .text_size(px(26.))
+                            .text_size(px(20.))
                             .text_color(col)
                             .child(big),
                     )
@@ -2483,7 +2483,7 @@ impl Workspace {
                     )),
             );
             let mut alist = div().flex().flex_col().gap_1();
-            for a in v.agents.iter().take(10) {
+            for a in v.agents.iter().take(6) {
                 let seen: String = a.last_seen.chars().take(16).collect();
                 let seen = seen.replace('T', " ");
                 alist = alist.child(
@@ -2614,13 +2614,10 @@ impl Workspace {
         }
 
         let panel = div()
-            .absolute()
-            .top(px(46.))
-            .left(px(46.))
-            .right(px(46.))
-            .bottom(px(46.))
+            .w(px(420.))
+            .max_h(px(500.))
             .overflow_hidden()
-            .p_4()
+            .p_3()
             .rounded_md()
             .border_2()
             .border_color(th.accent.alpha(0.85))
@@ -2650,6 +2647,9 @@ impl Workspace {
                 .inset_0()
                 .occlude()
                 .bg(th.bg.alpha(0.70))
+                .flex()
+                .items_center()
+                .justify_center()
                 .on_mouse_down(
                     MouseButton::Left,
                     cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
