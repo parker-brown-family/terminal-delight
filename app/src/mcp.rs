@@ -1184,7 +1184,7 @@ mod tests {
             "params": { "name": "grep", "arguments": { "query": "boom" } } })
         .to_string();
         let on = snap(true, false, vec![agent_pane(42, true)]);
-        let r = resp(&handle_line_with(&line, &on, no_tail, no_apply, &search).unwrap())["result"]
+        let r = resp(&handle_line_with(&line, &on, no_tail, no_apply, search).unwrap())["result"]
             .clone();
         assert!(r.get("isError").is_none(), "enabled grep is not an error");
         let panes = r["structuredContent"]["panes"].as_array().unwrap();
@@ -1194,7 +1194,7 @@ mod tests {
 
         // exposure disabled → error result (search closure never consulted).
         let off = snap(false, false, vec![agent_pane(42, true)]);
-        let r = resp(&handle_line_with(&line, &off, no_tail, no_apply, &search).unwrap())["result"]
+        let r = resp(&handle_line_with(&line, &off, no_tail, no_apply, search).unwrap())["result"]
             .clone();
         assert_eq!(r["isError"], true);
     }

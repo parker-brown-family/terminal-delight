@@ -1651,7 +1651,9 @@ pub(crate) fn parse(source: &str) -> Result<Theme, String> {
     })
 }
 
+// theme_path/open_in_default_app/init live after the tests by design.
 #[cfg(test)]
+#[allow(clippy::items_after_test_module)]
 mod tests {
     use super::*;
 
