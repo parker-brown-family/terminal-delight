@@ -980,6 +980,96 @@ fn load_state() -> StateFile {
         .unwrap_or_default()
 }
 
+/// Count the terminal leaves (panes) under a saved node — the "richness" metric
+/// the regression guard compares before letting a save overwrite the session.
+fn count_saved_leaves(n: &SavedNode) -> usize {
+    match n {
+        SavedNode::Leaf { .. } => 1,
+        SavedNode::Split { a, b, .. } => count_saved_leaves(a) + count_saved_leaves(b),
+    }
+}
+
+/// Decide whether `new` (panes,tabs) is a CATASTROPHIC shrink versus what is
+/// already on disk — losing more than half the panes or tabs of a non-trivial
+/// session. A deliberate close (`allow_shrink`) is always fine; this only fires
+/// for an *unintended* collapse (a checkpoint or dead-agent reap writing a tree
+/// that mysteriously lost most of its panes). Pure, so it is unit-testable.
+fn is_catastrophic_shrink(
+    old_leaves: usize,
+    old_tabs: usize,
+    new_leaves: usize,
+    new_tabs: usize,
+    allow_shrink: bool,
+) -> bool {
+    if allow_shrink {
+        return false;
+    }
+    (old_leaves >= 4 && new_leaves * 2 < old_leaves)
+        || (old_tabs >= 3 && new_tabs * 2 < old_tabs)
+}
+
+/// Keep the newest ~10 timestamped snapshots of `state.toml` under a `backups/`
+/// sibling dir, copying the CURRENT good file in before it is overwritten. Makes
+/// any bad save recoverable with a single `cp` — defense in depth behind the
+/// richness guard.
+fn rotate_state_backup(path: &std::path::Path) {
+    let Some(dir) = path.parent() else { return };
+    if !path.exists() {
+        return;
+    }
+    let backups = dir.join("backups");
+    if fs::create_dir_all(&backups).is_err() {
+        return;
+    }
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let _ = fs::copy(path, backups.join(format!("state-{stamp:020}.toml")));
+    // prune to the newest 10 (names sort chronologically by the zero-padded stamp)
+    if let Ok(entries) = fs::read_dir(&backups) {
+        let mut files: Vec<PathBuf> = entries
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| {
+                p.file_name()
+                    .and_then(|s| s.to_str())
+                    .is_some_and(|s| s.starts_with("state-") && s.ends_with(".toml"))
+            })
+            .collect();
+        files.sort();
+        const KEEP: usize = 10;
+        if files.len() > KEEP {
+            for f in &files[..files.len() - KEEP] {
+                let _ = fs::remove_file(f);
+            }
+        }
+    }
+}
+
+/// The single primary-state write chokepoint. Applies the richness-regression
+/// guard (refusing an unintended catastrophic shrink, preserving the on-disk
+/// session and snapshotting it as `state.toml.last-good`) and rotates a backup
+/// before every accepted write. `new_leaves`/`new_tabs` describe the tree being
+/// written; `allow_shrink` is true only for an explicit user close.
+fn persist_primary_state(body: &str, new_leaves: usize, new_tabs: usize, allow_shrink: bool) {
+    let path = state_path();
+    let disk = load_state();
+    let old_leaves: usize = disk.tabs.iter().map(|t| count_saved_leaves(&t.node)).sum();
+    let old_tabs = disk.tabs.len();
+    if is_catastrophic_shrink(old_leaves, old_tabs, new_leaves, new_tabs, allow_shrink) {
+        // Keep the rich on-disk session; stash a copy as last-good for recovery.
+        let _ = fs::copy(&path, path.with_file_name("state.toml.last-good"));
+        eprintln!(
+            "terminal-delight: REFUSED a session shrink ({old_leaves}->{new_leaves} panes, \
+             {old_tabs}->{new_tabs} tabs) — kept on-disk session + wrote state.toml.last-good"
+        );
+        return;
+    }
+    rotate_state_backup(&path);
+    let _ = session::write_atomic(&path, body);
+}
+
 /// The layout for a demo window: the throwaway state file named by
 /// `TD_DEMO_STATE` (written by [`Workspace::share_demo`]), NOT the real session.
 fn load_demo_state() -> StateFile {
@@ -1402,6 +1492,18 @@ struct Workspace {
     /// mouse-move while armed hands off to the compositor's window-move (so a
     /// plain click on the bar doesn't get eaten). Cleared on mouse-up.
     should_move: bool,
+    /// One-shot "this save is an EXPLICIT user shrink" flag (set by `close_tab`
+    /// / `close_pane` just before `save`). It is the sole thing that lets the
+    /// richness-regression guard accept a save that drops >50% of panes/tabs —
+    /// so a deliberate close persists, but a checkpoint or dead-agent reap can
+    /// never silently shrink the saved session. Consumed (reset) on read.
+    permit_shrink: std::cell::Cell<bool>,
+    /// Set when an auto-`reap` removed panes (a shell/agent exited). While true,
+    /// the 30s checkpoint does NOT persist — so a startup where several resumed
+    /// agents died can't bake its shrink into `state.toml` before you act (e.g.
+    /// resurrect them via the 🪦 dead-agents tool). Cleared by any real user
+    /// save (which supersedes the staleness with intent).
+    degraded: std::cell::Cell<bool>,
 }
 
 fn make_pane(window: &mut Window, cx: &mut Context<Workspace>) -> Entity<TerminalView> {
@@ -1676,6 +1778,8 @@ impl Workspace {
             // restore branch below) yet must never overwrite the real state
             scratch: scratch || demo,
             should_move: false,
+            permit_shrink: std::cell::Cell::new(false),
+            degraded: std::cell::Cell::new(false),
         };
         if scratch {
             // one terminal, seeded if this is a torn-off pane
@@ -1761,7 +1865,13 @@ impl Workspace {
                     .timer(Duration::from_secs(30))
                     .await;
                 if this
-                    .update(cx, |ws: &mut Workspace, cx| ws.save(cx))
+                    .update(cx, |ws: &mut Workspace, cx| {
+                        // D: never let the timer bake in a reap-shrunk tree —
+                        // wait for the user to act (a real save clears `degraded`).
+                        if !ws.degraded.get() {
+                            ws.save(cx);
+                        }
+                    })
                     .is_err()
                 {
                     break;
@@ -1846,8 +1956,13 @@ impl Workspace {
         if self.scratch {
             return;
         }
+        // A real (user-driven) save supersedes any reap staleness: the user has
+        // engaged with the current tree, so it becomes the new truth.
+        self.degraded.set(false);
+        // EXPLICIT user shrink? (set by close_tab / close_pane). Consume it.
+        let allow_shrink = self.permit_shrink.replace(false);
         if let Ok(body) = toml::to_string(&self.build_state(cx)) {
-            let _ = session::write_atomic(&state_path(), &body);
+            persist_primary_state(&body, self.pane_count(), self.tabs.len(), allow_shrink);
         }
     }
 
@@ -4077,6 +4192,8 @@ impl Workspace {
         self.prune_groups();
         self.active = self.active.min(self.tabs.len() - 1);
         self.focus_active(window, cx);
+        // Closing a whole tab is an EXPLICIT shrink — allow it past the guard.
+        self.permit_shrink.set(true);
         self.save(cx);
         cx.notify();
     }
@@ -4783,6 +4900,8 @@ impl Workspace {
         }
         self.active = self.active.min(self.tabs.len() - 1);
         self.focus_active(window, cx);
+        // Closing a pane is an EXPLICIT shrink — allow it past the guard.
+        self.permit_shrink.set(true);
         self.save(cx);
         cx.notify();
     }
@@ -4996,7 +5115,13 @@ impl Workspace {
             self.prune_groups();
             self.active = self.active.min(self.tabs.len() - 1);
             self.focus_active(window, cx);
-            self.save(cx);
+            // D: an auto-reap (a shell/agent exited) shrinks the live tree, but
+            // we do NOT persist it here. Mark the session degraded so the 30s
+            // checkpoint holds off — the rich on-disk session (with the now-dead
+            // panes) survives until the user acts (resurrect via 🪦, or any real
+            // structural change, which saves and clears `degraded`). A genuine
+            // mass die-off is also caught by the richness guard in `save`.
+            self.degraded.set(true);
         }
     }
 
@@ -10809,25 +10934,18 @@ mod tests {
     }
 
     #[test]
-    fn comm_truncates_to_the_kernel_15_char_limit() {
-        // "terminal-delight" is 16 chars; /proc/<pid>/comm shows only 15
-        assert_eq!(truncated_comm("terminal-delight"), "terminal-deligh");
-        assert_eq!(truncated_comm("short"), "short");
-    }
-
-    #[test]
-    fn scratch_decision_covers_force_seed_and_peer() {
-        // lone launch, nothing running → primary restore, no seed
+    fn scratch_decision_covers_force_seed_and_master() {
+        // lone launch, no live master → primary restore, no seed
         let (scratch, seed) = scratch_decision(false, false, None, None);
         assert!(!scratch);
         assert!(seed.is_none());
 
-        // a sibling is already running → scratch, still no seed
+        // a live master already holds the session → scratch, still no seed
         let (scratch, seed) = scratch_decision(false, true, None, None);
         assert!(scratch);
         assert!(seed.is_none());
 
-        // forced scratch with no peer (TD_SCRATCH=1)
+        // forced scratch with no master (TD_SCRATCH=1)
         assert!(scratch_decision(true, false, None, None).0);
 
         // a torn-off pane seeds cwd/resume and is always scratch
@@ -10841,6 +10959,72 @@ mod tests {
         let seed = seed.expect("seeded");
         assert_eq!(seed.cwd.as_deref(), Some("/tmp/work"));
         assert_eq!(seed.resume.as_deref(), Some("claude --resume x"));
+    }
+
+    #[test]
+    fn master_lock_is_exclusive_and_releases() {
+        // Unique path per run so the test is parallel-safe and env-free.
+        let path = std::env::temp_dir().join(format!(
+            "td-master-lock-test-{}-{}.lock",
+            std::process::id(),
+            line!(),
+        ));
+        let _ = std::fs::remove_file(&path);
+
+        // First taker wins and holds the fd.
+        let held = try_lock_at(&path).expect("open ok").expect("first acquires");
+        // While held, a second non-blocking attempt is refused.
+        assert!(try_lock_at(&path).is_err(), "second taker must be refused");
+
+        // Releasing (dropping the fd) frees the lock for the next taker.
+        drop(held);
+        let again = try_lock_at(&path)
+            .expect("open ok")
+            .expect("re-acquires after release");
+        drop(again);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn richness_guard_blocks_unintended_collapse_only() {
+        // A catastrophic, UNINTENDED shrink (8→1 panes) is refused.
+        assert!(is_catastrophic_shrink(8, 4, 1, 1, false));
+        // …but the SAME shrink is allowed when the user explicitly closed.
+        assert!(!is_catastrophic_shrink(8, 4, 1, 1, true));
+        // A mass tab collapse (10→1 tabs) is refused.
+        assert!(is_catastrophic_shrink(10, 10, 1, 1, false));
+        // Normal incremental closes are never blocked (8→7, 4→3 tabs).
+        assert!(!is_catastrophic_shrink(8, 4, 7, 4, false));
+        assert!(!is_catastrophic_shrink(6, 4, 6, 3, false));
+        // Growth / steady state never blocked.
+        assert!(!is_catastrophic_shrink(3, 2, 9, 5, false));
+        // Tiny sessions are exempt (a 2→1 close is normal, not catastrophic).
+        assert!(!is_catastrophic_shrink(2, 1, 1, 1, false));
+        // The first-ever save (nothing on disk) is never blocked.
+        assert!(!is_catastrophic_shrink(0, 0, 3, 3, false));
+    }
+
+    #[test]
+    fn count_saved_leaves_walks_the_split_tree() {
+        let leaf = || SavedNode::Leaf {
+            appearance: PaneTheme::default(),
+            cwd: None,
+            resume: None,
+            name: None,
+        };
+        assert_eq!(count_saved_leaves(&leaf()), 1);
+        let split = SavedNode::Split {
+            dir: SplitDir::Row,
+            ratio: 0.5,
+            a: Box::new(leaf()),
+            b: Box::new(SavedNode::Split {
+                dir: SplitDir::Col,
+                ratio: 0.5,
+                a: Box::new(leaf()),
+                b: Box::new(leaf()),
+            }),
+        };
+        assert_eq!(count_saved_leaves(&split), 3);
     }
 
     #[test]
@@ -11465,17 +11649,13 @@ fn reorder_indices(from: usize, to: usize, len: usize, active: usize) -> (usize,
     (dest, new_active)
 }
 
-/// `/proc/<pid>/comm` truncates the process name to 15 visible chars; mirror that
-/// so the running-instance check compares like with like.
-fn truncated_comm(name: &str) -> String {
-    name.chars().take(15).collect()
-}
-
 /// Resolve scratch-mode + an optional seed from the inputs. Factored out (pure)
-/// so the env/proc plumbing in `main` stays testable.
+/// so the env/lock plumbing in `main` stays testable. `master_taken` is true when
+/// a live MASTER already holds the session lock (see [`acquire_master_lock`]), so
+/// this launch must open a non-persisting scratch window instead of restoring.
 fn scratch_decision(
     force: bool,
-    peer_running: bool,
+    master_taken: bool,
     cwd: Option<String>,
     resume: Option<String>,
 ) -> (bool, Option<session::PaneRestore>) {
@@ -11485,42 +11665,102 @@ fn scratch_decision(
     } else {
         None
     };
-    (force || seeded || peer_running, seed)
+    (force || seeded || master_taken, seed)
 }
 
-/// Is another terminal-delight process already alive? Cheap, permissionless
-/// `/proc` comm scan — no lockfile to leak. Drives the conditional boot: a second
-/// launch (e.g. the Ctrl+Alt+T hotkey) opens a quick scratch window instead of
-/// re-restoring the whole saved session.
-fn another_instance_running() -> bool {
-    let me = std::process::id();
-    let want = std::env::current_exe()
-        .ok()
-        .and_then(|p| p.file_name().map(|s| s.to_string_lossy().into_owned()))
-        .map(|n| truncated_comm(&n));
-    let Some(want) = want else { return false };
-    let Ok(entries) = std::fs::read_dir("/proc") else {
-        return false;
-    };
-    for e in entries.flatten() {
-        let Some(pid) = e.file_name().to_str().and_then(|s| s.parse::<u32>().ok()) else {
-            continue;
-        };
-        if pid == me {
-            continue;
+/// The MASTER-window lock. Exactly one live terminal-delight process holds this
+/// advisory file lock at a time; that process is THE master and the sole owner of
+/// the saved session (`state.toml`) — it restores the full layout on boot and is
+/// the only window that writes changes back. Every OTHER concurrently-running
+/// window — the Ctrl+Alt+T quick window, a torn-off pane, or a fresh launch that
+/// races a still-shutting-down master — fails to take this lock and boots as a
+/// non-persisting *scratch* window, so it can never clobber the master's layout.
+///
+/// Held for the process lifetime (the kernel drops it on exit, covering crashes /
+/// SIGKILL) and released EARLY at quit-start via [`release_master_lock`] wired
+/// into `on_app_quit`. That early release is the whole point: a close → immediate
+/// reopen re-acquires cleanly and RESTORES, instead of the old `/proc` comm-scan
+/// mistaking the dying master for a live peer and degrading the reopen to a lone
+/// scratch terminal.
+static MASTER_LOCK: std::sync::Mutex<Option<std::os::fd::OwnedFd>> =
+    std::sync::Mutex::new(None);
+
+/// Per-user path for the master lock. `$XDG_RUNTIME_DIR` (tmpfs, cleared on
+/// logout) is ideal; fall back to the temp dir if it is unset.
+fn master_lock_path() -> PathBuf {
+    std::env::var_os("XDG_RUNTIME_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir)
+        .join("terminal-delight-master.lock")
+}
+
+/// Try to become THE master by taking the advisory lock without blocking.
+/// Returns true if we got it (this process is now master and must restore +
+/// persist the session); false if a live master already holds it (this launch
+/// should open a scratch window). On a lock-file open error we fail OPEN —
+/// returning true — so a permissions glitch can never trap the user in a
+/// single scratch terminal with no way back to their session.
+fn acquire_master_lock() -> bool {
+    match try_lock_at(&master_lock_path()) {
+        // Got it (or the lock file was unopenable → fail OPEN as master).
+        Ok(Some(fd)) => {
+            *MASTER_LOCK.lock().unwrap() = Some(fd);
+            true
         }
-        if let Ok(comm) = std::fs::read_to_string(e.path().join("comm")) {
-            if comm.trim() == want {
-                return true;
-            }
-        }
+        Ok(None) => true,
+        // A live master holds the lock → we are a scratch window.
+        Err(()) => false,
     }
-    false
+}
+
+/// The path-free core of [`acquire_master_lock`], split out so it is unit-testable
+/// without touching process env or the `MASTER_LOCK` static. `Ok(Some(fd))` = we
+/// took the lock (hold the fd to keep it); `Err(())` = a live holder has it;
+/// `Ok(None)` = the lock file could not be opened (caller treats this as master,
+/// failing open so a glitch never traps the user in scratch mode).
+fn try_lock_at(path: &std::path::Path) -> Result<Option<std::os::fd::OwnedFd>, ()> {
+    use std::io::Write;
+    use std::os::fd::AsRawFd;
+    let file = match std::fs::OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .truncate(false)
+        .open(path)
+    {
+        Ok(f) => f,
+        Err(_) => return Ok(None),
+    };
+    // SAFETY: a valid fd; LOCK_NB guarantees flock never blocks.
+    let rc = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+    if rc != 0 {
+        // EWOULDBLOCK → a live master already holds the lock.
+        return Err(());
+    }
+    // Stamp our pid (purely informational for `cat`-ing the lock file).
+    let _ = file.set_len(0);
+    let mut f = &file;
+    let _ = f.write_all(format!("{}\n", std::process::id()).as_bytes());
+    Ok(Some(std::os::fd::OwnedFd::from(file)))
+}
+
+/// Release the master lock immediately. Called at quit-start (before the slow
+/// PTY/GPU teardown that makes a closing instance linger for seconds), so a
+/// close → reopen re-elects a master and restores instead of seeing a dying
+/// peer. Idempotent.
+fn release_master_lock() {
+    use std::os::fd::AsRawFd;
+    if let Some(fd) = MASTER_LOCK.lock().unwrap().take() {
+        // SAFETY: a valid, still-open fd we own.
+        unsafe { libc::flock(fd.as_raw_fd(), libc::LOCK_UN) };
+        // fd dropped here → file closed.
+    }
 }
 
 /// Launch a fresh, detached terminal-delight seeded with a torn-off pane's cwd
-/// and agent session. The child sees a peer (us) running, so it boots as a
-/// scratch window automatically; the seed env tells it what to reopen.
+/// and agent session. It is launched with TD_SCRATCH=1 so it boots as a scratch
+/// window (never contends for the master lock); the seed env tells it what to
+/// reopen.
 fn spawn_seeded_window(rt: &session::PaneRuntime) {
     let Ok(exe) = std::env::current_exe() else {
         return;
@@ -11562,23 +11802,47 @@ fn main() {
     // spawned; it mutates the process env, so keep it ahead of the gpui app/threads.
     alacritty_terminal::tty::setup_env();
 
-    // Decide boot mode before the window opens: forced scratch (TD_SCRATCH),
-    // a seeded tear-off (TD_SEED_*), or "a sibling is already running" all open
-    // a small single-terminal window; a lone launch restores the full session.
+    // Decide boot mode before the window opens. An EXPLICITLY-scratch launch —
+    // forced scratch (TD_SCRATCH, the Ctrl+Alt+T quick window), a seeded tear-off
+    // (TD_SEED_*), or a demo (TD_DEMO_STATE) — opens a small single-terminal
+    // window and never contends to own the session. ANY other launch tries to
+    // take the MASTER lock: winning means "restore the full session and own
+    // `state.toml`"; losing means a live master already has the window open, so
+    // this becomes a scratch window too. The lock (held by exactly one live
+    // process, released early at quit-start) replaces the old `/proc` comm-scan,
+    // which counted a still-shutting-down master as a live peer and dropped a
+    // plain close→reopen to a single scratch terminal.
     let force = std::env::var_os("TD_SCRATCH").is_some();
     let seed_cwd = std::env::var("TD_SEED_CWD").ok().filter(|s| !s.is_empty());
     let seed_resume = std::env::var("TD_SEED_RESUME")
         .ok()
         .filter(|s| !s.is_empty());
-    let (scratch, seed) =
-        scratch_decision(force, another_instance_running(), seed_cwd, seed_resume);
     // A demo window (spawned by "Share a demo of this layout") restores a cloned
     // layout from TD_DEMO_STATE and fills every pane with the frozen emitter.
     let demo = std::env::var_os("TD_DEMO_STATE").is_some();
+    let explicit_scratch = force || seed_cwd.is_some() || seed_resume.is_some() || demo;
+    // Only a would-be master takes the lock; explicit-scratch launches leave it
+    // untouched so they never steal it from (or wait on) the real master.
+    let master_taken = if explicit_scratch {
+        false
+    } else {
+        !acquire_master_lock()
+    };
+    let (scratch, seed) = scratch_decision(force, master_taken, seed_cwd, seed_resume);
 
     application().run(move |cx: &mut App| {
         theme::init(cx);
         bell::ensure_seeded(); // populate the sounds dir from bundled defaults if empty
+        // Release the MASTER lock at the very start of shutdown — `on_app_quit`
+        // handlers run BEFORE windows/PTYs tear down (App::shutdown), so this
+        // frees the lock seconds ahead of actual process exit. That is what lets
+        // a close → immediate reopen re-elect a master and restore, instead of
+        // the reopen racing the closing process's PTY teardown linger.
+        cx.on_app_quit(|_cx| {
+            release_master_lock();
+            async move {}
+        })
+        .detach();
         let bounds = if demo {
             // open the demo at the cloned window's geometry, else a generous centre
             match load_demo_state().win {
