@@ -7511,6 +7511,10 @@ impl Render for Workspace {
                     // brand + tab strip, the fixed-size children must truncate, not
                     // bleed onto the always-kept right-side controls (issue #86).
                     .overflow_hidden()
+                    // headroom for the ACTIVE tab, which lifts mt(-4) + reads 20%
+                    // bigger: without it the overflow_hidden clip box (above) would
+                    // shave the raised tab's top against the bar border.
+                    .pt(px(6. * scale))
                     .flex()
                     .flex_row()
                     .items_start()
