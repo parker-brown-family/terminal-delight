@@ -33,7 +33,7 @@ jobs:
         with:
           components: clippy, rustfmt
 
-      - name: Prepare patched gpui (td-crt-pass + focus-blur + sever-gpl)
+      - name: Prepare patched gpui (crt-pass + focus-blur + text-crawl + tube-cap-32 + gpl-sever)
         run: ../scripts/prepare-gpui.sh
 
       - name: Cache cargo artifacts
@@ -82,7 +82,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - name: Prepare patched gpui (td-crt-pass + focus-blur + sever-gpl)
+      - name: Prepare patched gpui (crt-pass + focus-blur + text-crawl + tube-cap-32 + gpl-sever)
         run: ../scripts/prepare-gpui.sh
       - uses: taiki-e/install-action@cargo-audit
       - uses: taiki-e/install-action@cargo-deny
@@ -122,7 +122,7 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
-      - name: Prepare patched gpui (td-crt-pass + focus-blur + sever-gpl)
+      - name: Prepare patched gpui (crt-pass + focus-blur + text-crawl + tube-cap-32 + gpl-sever)
         run: ./scripts/prepare-gpui.sh
 
       # No rust-cache here on purpose: this job runs on ubuntu-22.04 while the rust

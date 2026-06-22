@@ -1381,7 +1381,11 @@ fn demo_logo_for(seed: &str) -> Option<String> {
         h ^= b as u64;
         h = h.wrapping_mul(0x100000001b3);
     }
-    Some(files[(h as usize) % files.len()].to_string_lossy().into_owned())
+    Some(
+        files[(h as usize) % files.len()]
+            .to_string_lossy()
+            .into_owned(),
+    )
 }
 
 /// Walk a bounded set of roots for image files (`png/jpg/jpeg/svg`), skipping
@@ -1400,10 +1404,7 @@ fn scan_logo_candidates_in(home_path: &std::path::Path) -> Vec<LogoCandidate> {
     let home = home_path.to_string_lossy().into_owned();
     let is_img = |name: &str| {
         let n = name.to_ascii_lowercase();
-        n.ends_with(".png")
-            || n.ends_with(".jpg")
-            || n.ends_with(".jpeg")
-            || n.ends_with(".svg")
+        n.ends_with(".png") || n.ends_with(".jpg") || n.ends_with(".jpeg") || n.ends_with(".svg")
     };
     let skip_dir = |name: &str| {
         name.starts_with('.')
@@ -1517,9 +1518,11 @@ fn group_section(header: gpui::Div, gcol: gpui::Hsla, cards: Vec<gpui::AnyElemen
 /// Newest first (a just-taken screenshot surfaces at the top), tie-broken A-Z.
 fn logo_sort_by_recency(out: &mut [LogoCandidate]) {
     out.sort_by(|a, b| {
-        b.mtime
-            .cmp(&a.mtime)
-            .then_with(|| a.base.to_ascii_lowercase().cmp(&b.base.to_ascii_lowercase()))
+        b.mtime.cmp(&a.mtime).then_with(|| {
+            a.base
+                .to_ascii_lowercase()
+                .cmp(&b.base.to_ascii_lowercase())
+        })
     });
 }
 
@@ -4605,7 +4608,12 @@ impl Workspace {
             .flex_row()
             .items_center()
             .gap_1()
-            .child(div().text_size(px(8.5)).text_color(text.alpha(0.7)).child("A"))
+            .child(
+                div()
+                    .text_size(px(8.5))
+                    .text_color(text.alpha(0.7))
+                    .child("A"),
+            )
             .child(
                 div()
                     .w(px(TRACK))
@@ -4666,7 +4674,12 @@ impl Workspace {
                             )),
                     ),
             )
-            .child(div().text_size(px(13.)).text_color(text.alpha(0.7)).child("A"))
+            .child(
+                div()
+                    .text_size(px(13.))
+                    .text_color(text.alpha(0.7))
+                    .child("A"),
+            )
     }
 
     /// The FOCUS modal's header text-size slider: a small "A …──●── A" track
@@ -7884,7 +7897,9 @@ impl Render for Workspace {
         {
             GRAVEYARD_DEMO_ARMED.store(true, std::sync::atomic::Ordering::Relaxed);
             self.dead_menu = true;
-            eprintln!("terminal-delight: TD_GRAVEYARD_DEMO — auto-opening graveyard (fictional data)");
+            eprintln!(
+                "terminal-delight: TD_GRAVEYARD_DEMO — auto-opening graveyard (fictional data)"
+            );
             cx.notify();
         }
         // remember which pane currently holds focus in the active tab, so a later
@@ -9726,7 +9741,11 @@ impl Render for Workspace {
                     let exposed = mcp::should_expose(&self.mcp, is_agent);
                     let status = p.agent_status();
                     // the agent's last output lines for the card's chat-scroller (#2)
-                    let feed: Vec<String> = if is_agent { p.recent_lines(4) } else { Vec::new() };
+                    let feed: Vec<String> = if is_agent {
+                        p.recent_lines(4)
+                    } else {
+                        Vec::new()
+                    };
                     let logo_path = p
                         .logo
                         .clone()
@@ -9742,7 +9761,11 @@ impl Render for Workspace {
                             .filter_map(|s| s.chars().next())
                             .collect::<String>()
                             .to_uppercase();
-                        if m.is_empty() { "\u{00b7}".to_string() } else { m }
+                        if m.is_empty() {
+                            "\u{00b7}".to_string()
+                        } else {
+                            m
+                        }
                     };
                     let art_kind = mode_lbl.clone();
                     let art_state = if is_agent {
@@ -9763,8 +9786,8 @@ impl Render for Workspace {
                     } else {
                         [0.0, 1.0, 1.0]
                     };
-                    let warp_card = preview
-                        && (warp_k1.abs() > 0.0005 || warp_k2.abs() > 0.0005 || th.crawl);
+                    let warp_card =
+                        preview && (warp_k1.abs() > 0.0005 || warp_k2.abs() > 0.0005 || th.crawl);
                     if let Some(program) = program_filt.as_deref() {
                         if mode_lbl.as_str() != program {
                             continue;
@@ -10053,35 +10076,37 @@ impl Render for Workspace {
                                 // (theme curvature/crawl), viewport-culled to the
                                 // MAX_TUBES budget. The card itself stays a flat hit box.
                                 .when(warp_card, |d| {
-                                    d.child(div().absolute().inset_0().child(
-                                        canvas(
-                                            move |bounds, window, _cx| {
-                                                let sf = window.scale_factor();
-                                                let vp = window.viewport_size();
-                                                let x = f32::from(bounds.origin.x) * sf;
-                                                let y = f32::from(bounds.origin.y) * sf;
-                                                let w = f32::from(bounds.size.width) * sf;
-                                                let h = f32::from(bounds.size.height) * sf;
-                                                let vw = f32::from(vp.width) * sf;
-                                                let vh = f32::from(vp.height) * sf;
-                                                if x + w > 0.0
-                                                    && y + h > 0.0
-                                                    && x < vw
-                                                    && y < vh
-                                                {
-                                                    crate::warp::register_overlay_tube(
-                                                        [x, y, w, h],
-                                                        art_glare,
-                                                        warp_k1,
-                                                        warp_k2,
-                                                        art_crawl,
-                                                    );
-                                                }
-                                            },
-                                            |_, _, _, _| {},
-                                        )
-                                        .size_full(),
-                                    ))
+                                    d.child(
+                                        div().absolute().inset_0().child(
+                                            canvas(
+                                                move |bounds, window, _cx| {
+                                                    let sf = window.scale_factor();
+                                                    let vp = window.viewport_size();
+                                                    let x = f32::from(bounds.origin.x) * sf;
+                                                    let y = f32::from(bounds.origin.y) * sf;
+                                                    let w = f32::from(bounds.size.width) * sf;
+                                                    let h = f32::from(bounds.size.height) * sf;
+                                                    let vw = f32::from(vp.width) * sf;
+                                                    let vh = f32::from(vp.height) * sf;
+                                                    if x + w > 0.0
+                                                        && y + h > 0.0
+                                                        && x < vw
+                                                        && y < vh
+                                                    {
+                                                        crate::warp::register_overlay_tube(
+                                                            [x, y, w, h],
+                                                            art_glare,
+                                                            warp_k1,
+                                                            warp_k2,
+                                                            art_crawl,
+                                                        );
+                                                    }
+                                                },
+                                                |_, _, _, _| {},
+                                            )
+                                            .size_full(),
+                                        ),
+                                    )
                                 })
                                 .when_some(logo_path.clone(), |d, path| {
                                     d.child(
@@ -10182,7 +10207,9 @@ impl Render for Workspace {
                                         .text_color(status_glow.alpha(0.85))
                                         .child(format!("\u{0394}{}", hud::fmt_tokens(turn_tok))),
                                 )
-                                .child(div().child(format!("\u{03a3}{}", hud::fmt_tokens(sess_tok))))
+                                .child(
+                                    div().child(format!("\u{03a3}{}", hud::fmt_tokens(sess_tok))),
+                                )
                                 // POWER (SWCCG): model + effort, beside the destiny numbers.
                                 .when_some(power_txt, |d, pw| {
                                     d.child(
@@ -10325,9 +10352,9 @@ impl Render for Workspace {
                                     MouseButton::Left,
                                     cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
                                         cx.stop_propagation();
-                                        ws.mcp_state_filter =
-                                            (ws.mcp_state_filter != Some(hud::AgentState::Working))
-                                                .then_some(hud::AgentState::Working);
+                                        ws.mcp_state_filter = (ws.mcp_state_filter
+                                            != Some(hud::AgentState::Working))
+                                        .then_some(hud::AgentState::Working);
                                         cx.notify();
                                     }),
                                 ),
@@ -10347,9 +10374,9 @@ impl Render for Workspace {
                                     MouseButton::Left,
                                     cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
                                         cx.stop_propagation();
-                                        ws.mcp_state_filter =
-                                            (ws.mcp_state_filter != Some(hud::AgentState::Blocked))
-                                                .then_some(hud::AgentState::Blocked);
+                                        ws.mcp_state_filter = (ws.mcp_state_filter
+                                            != Some(hud::AgentState::Blocked))
+                                        .then_some(hud::AgentState::Blocked);
                                         cx.notify();
                                     }),
                                 ),
@@ -10369,9 +10396,9 @@ impl Render for Workspace {
                                     MouseButton::Left,
                                     cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
                                         cx.stop_propagation();
-                                        ws.mcp_state_filter =
-                                            (ws.mcp_state_filter != Some(hud::AgentState::Error))
-                                                .then_some(hud::AgentState::Error);
+                                        ws.mcp_state_filter = (ws.mcp_state_filter
+                                            != Some(hud::AgentState::Error))
+                                        .then_some(hud::AgentState::Error);
                                         cx.notify();
                                     }),
                                 ),
@@ -10391,9 +10418,9 @@ impl Render for Workspace {
                                     MouseButton::Left,
                                     cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
                                         cx.stop_propagation();
-                                        ws.mcp_state_filter =
-                                            (ws.mcp_state_filter != Some(hud::AgentState::Finished))
-                                                .then_some(hud::AgentState::Finished);
+                                        ws.mcp_state_filter = (ws.mcp_state_filter
+                                            != Some(hud::AgentState::Finished))
+                                        .then_some(hud::AgentState::Finished);
                                         cx.notify();
                                     }),
                                 ),
@@ -10413,9 +10440,9 @@ impl Render for Workspace {
                                     MouseButton::Left,
                                     cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
                                         cx.stop_propagation();
-                                        ws.mcp_state_filter =
-                                            (ws.mcp_state_filter != Some(hud::AgentState::Idle))
-                                                .then_some(hud::AgentState::Idle);
+                                        ws.mcp_state_filter = (ws.mcp_state_filter
+                                            != Some(hud::AgentState::Idle))
+                                        .then_some(hud::AgentState::Idle);
                                         cx.notify();
                                     }),
                                 ),
@@ -12529,9 +12556,24 @@ mod tests {
     #[test]
     fn logo_sort_puts_newest_first() {
         let mut v = vec![
-            LogoCandidate { path: "a".into(), base: "old.png".into(), dir: "~/Pictures".into(), mtime: 10 },
-            LogoCandidate { path: "b".into(), base: "new.png".into(), dir: "~/Pictures/Screenshots".into(), mtime: 99 },
-            LogoCandidate { path: "c".into(), base: "mid.png".into(), dir: "~/Downloads".into(), mtime: 50 },
+            LogoCandidate {
+                path: "a".into(),
+                base: "old.png".into(),
+                dir: "~/Pictures".into(),
+                mtime: 10,
+            },
+            LogoCandidate {
+                path: "b".into(),
+                base: "new.png".into(),
+                dir: "~/Pictures/Screenshots".into(),
+                mtime: 99,
+            },
+            LogoCandidate {
+                path: "c".into(),
+                base: "mid.png".into(),
+                dir: "~/Downloads".into(),
+                mtime: 50,
+            },
         ];
         logo_sort_by_recency(&mut v);
         assert_eq!(v[0].base, "new.png", "newest first");
@@ -13177,10 +13219,7 @@ node = "Leaf"
         // … and is absent (⇒ false: the classic bottom anchor) on pre-feature files.
         let old: StateFile =
             toml::from_str("active = 0\n[[tabs]]\nnode = \"Leaf\"\n").expect("loads old file");
-        assert!(
-            !old.anchor_top,
-            "missing key defaults to the bottom anchor"
-        );
+        assert!(!old.anchor_top, "missing key defaults to the bottom anchor");
     }
 
     #[test]

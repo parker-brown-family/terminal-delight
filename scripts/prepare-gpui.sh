@@ -59,22 +59,22 @@ apply_patch() {
 }
 
 apply_patch "$patch_crt" "td-crt-pass" \
-    'git grep -q "set_crt_rects" -- crates/gpui_wgpu/src'
+    'grep -rqF "set_crt_rects" crates/gpui_wgpu/src'
 # 0002-focus-blur is a delta on top of 0001-td-crt-pass; must apply after it.
 # sentinel: set_focus_blur present in gpui_wgpu means the blur is already in the tree
 apply_patch "$patch_blur" "focus-blur" \
-    'git grep -q "set_focus_blur" -- crates/gpui_wgpu/src'
+    'grep -rqF "set_focus_blur" crates/gpui_wgpu/src'
 # 0003-text-crawl is a delta on top of 0001+0002 (it patches the v3 shader and the
 # tube renderer); must apply after focus-blur.
 # sentinel: the per-rect crawl uniform present means the crawl is already in the tree
 apply_patch "$patch_crawl" "text-crawl" \
-    'git grep -q "crawl: array" -- crates/gpui_wgpu/src'
+    'grep -rqF "crawl: array" crates/gpui_wgpu/src'
 # 0004-warp-tube-cap-32 bumps the per-rect tube cap 8 -> 32 (shader arrays +
 # uniform packing + buffer size) so the agent wall can warp each card's logo
 # square. Delta on 0001+0003; must apply after them.
 # sentinel: the 32-wide rects array present means the cap bump is already in the tree
 apply_patch "$patch_tubes" "warp-tube-cap-32" \
-    'git grep -q "array<vec4<f32>, 32>" -- crates/gpui_wgpu/src'
+    'grep -rqF "array<vec4<f32>, 32>" crates/gpui_wgpu/src'
 # sentinel: ztracing/zlog gone from sum_tree means the sever is already in the tree
 apply_patch "$patch_gpl" "sever-gpl-crates" \
-    '! git grep -q "ztracing" -- crates/sum_tree'
+    '! grep -rqF "ztracing" crates/sum_tree'
