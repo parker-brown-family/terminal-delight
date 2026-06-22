@@ -1325,6 +1325,7 @@ struct LogoCandidate {
     path: String,
     base: String,
     dir: String,
+    mtime: u64,
 }
 
 /// Walk a bounded set of roots for image files (`png/jpg/jpeg/svg`), skipping
@@ -1335,13 +1336,6 @@ fn scan_logo_candidates() -> Vec<LogoCandidate> {
     const MAX_DEPTH: usize = 6;
     let home = std::env::var("HOME").unwrap_or_default();
     let home_path = PathBuf::from(&home);
-    // A focused set of roots: the picture-ish dirs first, then the home root
-    // (shallow) — enough to find a logo without trawling the whole disk.
-    let roots: Vec<PathBuf> = ["Pictures", "Downloads", "Desktop", "Documents", "Images"]
-        .iter()
-        .map(|d| home_path.join(d))
-        .chain(std::iter::once(home_path.clone()))
-        .collect();
     let is_img = |name: &str| {
         let n = name.to_ascii_lowercase();
         n.ends_with(".png")
@@ -1358,12 +1352,20 @@ fn scan_logo_candidates() -> Vec<LogoCandidate> {
     };
     let mut out: Vec<LogoCandidate> = Vec::new();
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
-    // Iterative bounded walk (depth-limited, no symlink following).
-    let mut stack: Vec<(PathBuf, usize)> = roots
-        .iter()
-        .filter(|r| r.is_dir())
-        .map(|r| (r.clone(), 0usize))
-        .collect();
+    // Iterative bounded walk (depth-limited, no symlink following). The picture
+    // dirs are walked FULL depth and popped FIRST (LIFO → push last); the home
+    // root is walked only SHALLOW so a deep $HOME can't flood the cap before the
+    // picture dirs are reached (that hid ~/Pictures/Screenshots/<your shot>).
+    let mut stack: Vec<(PathBuf, usize)> = Vec::new();
+    if home_path.is_dir() {
+        stack.push((home_path.clone(), MAX_DEPTH.saturating_sub(1)));
+    }
+    for d in ["Images", "Documents", "Desktop", "Downloads", "Pictures"] {
+        let r = home_path.join(d);
+        if r.is_dir() {
+            stack.push((r, 0));
+        }
+    }
     while let Some((dir, depth)) = stack.pop() {
         if out.len() >= CAP {
             break;
@@ -1398,15 +1400,29 @@ fn scan_logo_candidates() -> Vec<LogoCandidate> {
                         }
                     })
                     .unwrap_or_default();
+                let mtime = entry
+                    .metadata()
+                    .ok()
+                    .and_then(|m| m.modified().ok())
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
                 out.push(LogoCandidate {
                     path: abs,
                     base: name,
                     dir: dir_disp,
+                    mtime,
                 });
             }
         }
     }
-    out.sort_by_key(|c| c.base.to_ascii_lowercase());
+    // Newest first — a screenshot you just took surfaces at the very top, so an
+    // empty query (or a quick type) shows it right away.
+    out.sort_by(|a, b| {
+        b.mtime
+            .cmp(&a.mtime)
+            .then_with(|| a.base.to_ascii_lowercase().cmp(&b.base.to_ascii_lowercase()))
+    });
     out
 }
 
