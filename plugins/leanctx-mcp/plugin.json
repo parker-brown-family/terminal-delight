@@ -1,0 +1,14 @@
+{
+  "name": "leanctx-savings",
+  "version": "0.1.0",
+  "description": "Token savings from lean-ctx context compression — exact global total + per-agent breakdown.",
+  "command": "leanctx-mcp",
+  "scope": "global",
+  "actions": [
+    {
+      "tool": "savings",
+      "label": "</> savings",
+      "surfaces": ["global", "agent"]
+    }
+  ]
+}

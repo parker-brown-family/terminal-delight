@@ -1,0 +1,199 @@
+#!/usr/bin/env python3
+"""leanctx-mcp — terminal-delight plugin #2.
+
+A tiny MCP server (newline-delimited JSON-RPC 2.0 over stdio, same transport as
+TD's host in `app/src/plugins.rs`) that surfaces lean-ctx's token-savings rollup.
+
+It computes nothing: lean-ctx already tokenizes baseline-vs-actual at every
+`ctx_*` call and persists the precomputed savings. This server just reads them —
+`lean-ctx gain --json` for the exact global total, and `cost_attribution.json`
+for per-agent identity (joining in an *estimated* per-agent saved-tokens split,
+since lean-ctx doesn't yet stamp the real agent id into the savings ledger — see
+docs/2026-06-21-leanctx-savings-plugin-gap-analysis.md).
+
+One tool: `savings`. Returns a compact JSON blob (as MCP text content) that TD
+parses for the headline number + the per-agent / top-file breakdown.
+"""
+import json
+import os
+import shutil
+import subprocess
+import sys
+
+PROTOCOL = "2024-11-05"
+NAME = "leanctx-savings"
+VERSION = "0.1.0"
+
+# tools whose output lean-ctx compresses → they carry the token savings. Used to
+# apportion the (exact) global saved-tokens total across agents as an estimate.
+COMP_HINTS = ("read", "search", "tree", "shell", "grep", "map", "full",
+              "aggressive", "signatures", "overview", "compose")
+
+
+def _leanctx_bin():
+    p = shutil.which("lean-ctx")
+    if p:
+        return p
+    for c in (os.path.expanduser("~/.local/bin/lean-ctx"),
+              os.path.expanduser("~/.cargo/bin/lean-ctx")):
+        if os.path.isfile(c):
+            return c
+    return None
+
+
+def _leanctx_dir():
+    return os.environ.get("LEANCTX_DIR", os.path.expanduser("~/.lean-ctx"))
+
+
+def _gain_json():
+    """Exact global rollup from `lean-ctx gain --json` (≈180ms). {} on failure."""
+    binp = _leanctx_bin()
+    if not binp:
+        return {}
+    try:
+        out = subprocess.run([binp, "gain", "--json"], capture_output=True,
+                             text=True, timeout=8)
+        return json.loads(out.stdout or "{}")
+    except Exception:
+        return {}
+
+
+def _level(score):
+    # mirror lean-ctx's own ladder loosely (Lv1..Lv5) for a friendly badge
+    tiers = [(90, "Lv5 Sage"), (70, "Lv4 Guardian"), (50, "Lv3 Adept"),
+             (25, "Lv2 Scout"), (0, "Lv1 Initiate")]
+    for floor, name in tiers:
+        if score >= floor:
+            return name
+    return "Lv1 Initiate"
+
+
+def _per_agent(total_saved):
+    """Read cost_attribution.json → [{id,type,calls,saved_est,last_seen}], newest
+    first. saved_est apportions the EXACT global total by each agent's share of
+    compression-bearing tool calls (marked ≈ in the UI)."""
+    path = os.path.join(_leanctx_dir(), "cost_attribution.json")
+    try:
+        with open(path) as f:
+            data = json.load(f)
+    except Exception:
+        return []
+    agents = data.get("agents", {})
+    rows = []
+    for aid, a in agents.items():
+        tools = a.get("tools_used", {}) or {}
+        comp = sum(v for k, v in tools.items()
+                   if any(h in k for h in COMP_HINTS))
+        rows.append({
+            "id": aid,
+            "type": a.get("agent_type", "?"),
+            "calls": a.get("total_calls", 0),
+            "comp": comp,
+            "last_seen": a.get("last_seen", ""),
+        })
+    comp_sum = sum(r["comp"] for r in rows) or 1
+    for r in rows:
+        r["saved_est"] = int(total_saved * r["comp"] / comp_sum)
+        del r["comp"]
+    rows.sort(key=lambda r: r["last_seen"], reverse=True)
+    return rows
+
+
+def build_savings(args):
+    g = _gain_json()
+    summ = g.get("summary", {})
+    saved = int(summ.get("tokens_saved", 0))
+    pct = float(summ.get("gain_rate_pct", 0.0))
+    usd = float(summ.get("avoided_usd", 0.0))
+    score = int((summ.get("score") or {}).get("total", 0))
+    heat = g.get("heatmap", []) or []
+    top_files = [{"path": h.get("path", ""),
+                  "saved": int(h.get("tokens_saved", 0)),
+                  "pct": round(float(h.get("compression_pct", 0.0)), 1)}
+                 for h in heat[:6]]
+    agents = _per_agent(saved)
+    # optional single-agent focus (the per-agent button passes agent_id)
+    want = (args or {}).get("agent_id")
+    if want:
+        agents = [a for a in agents if a["id"] == want] or agents
+    return {
+        "ok": bool(saved) or bool(agents),
+        "tokens_saved": saved,
+        "gain_pct": round(pct, 1),
+        "usd": round(usd, 2),
+        "score": score,
+        "level": _level(score),
+        "agent_count": len(agents),
+        "agents": agents[:40],
+        "top_files": top_files,
+        "note": ("context saved by lean-ctx (compression on lean-ctx-touched "
+                 "traffic, not your full provider bill) · per-agent ≈ "
+                 "estimated until lean-ctx stamps agent_id into the savings ledger"),
+    }
+
+
+def _send(obj):
+    sys.stdout.write(json.dumps(obj) + "\n")
+    sys.stdout.flush()
+
+
+def _result(rid, result):
+    _send({"jsonrpc": "2.0", "id": rid, "result": result})
+
+
+def _error(rid, code, msg):
+    _send({"jsonrpc": "2.0", "id": rid, "error": {"code": code, "message": msg}})
+
+
+TOOLS = [{
+    "name": "savings",
+    "description": "Token savings from lean-ctx context compression: exact global "
+                   "total + estimated per-agent breakdown. Optional agent_id to focus one.",
+    "inputSchema": {
+        "type": "object",
+        "properties": {"agent_id": {"type": "string"}},
+    },
+}]
+
+
+def main():
+    for line in sys.stdin:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            req = json.loads(line)
+        except Exception:
+            continue
+        method = req.get("method")
+        rid = req.get("id")
+        if method == "initialize":
+            _result(rid, {
+                "protocolVersion": PROTOCOL,
+                "capabilities": {"tools": {}},
+                "serverInfo": {"name": NAME, "version": VERSION},
+            })
+        elif method == "notifications/initialized":
+            pass  # no response to a notification
+        elif method == "tools/list":
+            _result(rid, {"tools": TOOLS})
+        elif method == "tools/call":
+            params = req.get("params") or {}
+            if params.get("name") != "savings":
+                _error(rid, -32601, "unknown tool: %s" % params.get("name"))
+                continue
+            try:
+                payload = build_savings(params.get("arguments") or {})
+                _result(rid, {"content": [{"type": "text",
+                                           "text": json.dumps(payload)}]})
+            except Exception as e:  # never crash the host
+                _error(rid, -32000, "savings failed: %s" % e)
+        elif rid is not None:
+            _error(rid, -32601, "unknown method: %s" % method)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (BrokenPipeError, KeyboardInterrupt):
+        pass
