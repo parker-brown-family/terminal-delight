@@ -1947,6 +1947,21 @@ impl TerminalView {
         out
     }
 
+    /// The last `n` non-blank rows of the live bottom screen, top→bottom — the
+    /// agent's most recent output, for the dashboard card's mini "chat scroller".
+    /// Trimmed of trailing whitespace; blank rows dropped so the feed stays dense.
+    pub fn recent_lines(&self, n: usize) -> Vec<String> {
+        let mut lines: Vec<String> = self
+            .live_rows()
+            .into_iter()
+            .map(|r| r.trim_end().to_string())
+            .filter(|r| !r.trim().is_empty())
+            .collect();
+        let start = lines.len().saturating_sub(n);
+        lines.drain(..start);
+        lines
+    }
+
     /// Parse this pane's live status line into an [`crate::hud::AgentStatus`] for
     /// the agent-wall HUD. Non-agent panes read Idle; an otherwise-idle agent with
     /// an unacknowledged finish bell is promoted to `Finished`.
