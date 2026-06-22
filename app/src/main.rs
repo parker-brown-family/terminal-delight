@@ -1334,6 +1334,50 @@ struct LogoCandidate {
     mtime: u64,
 }
 
+/// DEMO ONLY: deterministically assign a stock "logo" to a card from the
+/// demo-logo dir so the agent wall shows off per-card art without real uploads.
+/// Gated entirely behind `TD_DEMO_LOGOS` / `TD_WALL_DEMO` — returns `None`
+/// (zero cost: no dir read) in normal operation. The dir defaults to
+/// `~/.local/share/terminal-delight/demo-logos` (override via `TD_DEMO_LOGO_DIR`).
+/// `seed` is hashed (FNV-1a) so a given agent always lands on the same picture.
+fn demo_logo_for(seed: &str) -> Option<String> {
+    if std::env::var_os("TD_DEMO_LOGOS").is_none() && std::env::var_os("TD_WALL_DEMO").is_none() {
+        return None;
+    }
+    let dir = std::env::var_os("TD_DEMO_LOGO_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| {
+            let home = std::env::var("HOME").unwrap_or_default();
+            std::path::Path::new(&home).join(".local/share/terminal-delight/demo-logos")
+        });
+    let is_img = |p: &std::path::Path| {
+        matches!(
+            p.extension()
+                .and_then(|e| e.to_str())
+                .map(|e| e.to_ascii_lowercase())
+                .as_deref(),
+            Some("png" | "jpg" | "jpeg" | "svg" | "webp")
+        )
+    };
+    let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(&dir)
+        .ok()?
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.is_file() && is_img(p))
+        .collect();
+    if files.is_empty() {
+        return None;
+    }
+    files.sort();
+    // FNV-1a so the same agent deterministically maps to the same stock art.
+    let mut h: u64 = 0xcbf29ce484222325;
+    for b in seed.bytes() {
+        h ^= b as u64;
+        h = h.wrapping_mul(0x100000001b3);
+    }
+    Some(files[(h as usize) % files.len()].to_string_lossy().into_owned())
+}
+
 /// Walk a bounded set of roots for image files (`png/jpg/jpeg/svg`), skipping
 /// hidden + heavy dirs, capped so the picker stays snappy. Returns candidates
 /// pre-formatted as `(path, basename, ~/relative dir)`, sorted by basename.
@@ -9677,7 +9721,10 @@ impl Render for Workspace {
                     let status = p.agent_status();
                     // the agent's last output lines for the card's chat-scroller (#2)
                     let feed: Vec<String> = if is_agent { p.recent_lines(4) } else { Vec::new() };
-                    let logo_path = p.logo.clone();
+                    let logo_path = p
+                        .logo
+                        .clone()
+                        .or_else(|| is_agent.then(|| demo_logo_for(&format!("{title}/{id:?}"))).flatten());
                     if let Some(program) = program_filt.as_deref() {
                         if mode_lbl.as_str() != program {
                             continue;
@@ -9775,6 +9822,18 @@ impl Render for Workspace {
                             m
                         }
                     });
+                    // SWCCG POWER print (bottom-right corner): the agent's model +
+                    // reasoning effort, e.g. "OPUS · MAX" / "GPT-5-CODEX · HIGH".
+                    let power_txt = {
+                        let mut parts: Vec<String> = Vec::new();
+                        if let Some(m) = model_disp.as_ref() {
+                            parts.push(m.to_uppercase());
+                        }
+                        if let Some(e) = status.effort.as_ref() {
+                            parts.push(e.to_uppercase());
+                        }
+                        (is_agent && !parts.is_empty()).then(|| parts.join(" \u{00b7} "))
+                    };
 
                     let agentic = is_agent && !feed.is_empty();
                     let turn_tok = status.turn_tokens.unwrap_or(0);
@@ -9994,14 +10053,8 @@ impl Render for Workspace {
                                     status.state.label().to_uppercase(),
                                     status_glow,
                                 ))
-                                .when_some(status.effort.clone(), |d, e| {
-                                    d.child(stat_box("EFFORT", e.to_uppercase(), th.accent))
-                                })
                                 .when_some(status.elapsed.clone(), |d, e| {
                                     d.child(stat_box("TIME", e, th.complement))
-                                })
-                                .when_some(model_disp, |d, m| {
-                                    d.child(stat_box("MODEL", m, kind_col))
                                 }),
                         )
                         // RULES TEXT: the recent message feed
@@ -10021,7 +10074,38 @@ impl Render for Workspace {
                                         .text_color(status_glow.alpha(0.85))
                                         .child(format!("\u{0394}{}", hud::fmt_tokens(turn_tok))),
                                 )
-                                .child(div().child(format!("\u{03a3}{}", hud::fmt_tokens(sess_tok)))),
+                                .child(div().child(format!("\u{03a3}{}", hud::fmt_tokens(sess_tok))))
+                                // POWER corner (SWCCG): model + effort, pushed right.
+                                .child(div().flex_1().min_w(px(0.)))
+                                .when_some(power_txt, |d, pw| {
+                                    d.child(
+                                        div()
+                                            .flex_none()
+                                            .flex()
+                                            .flex_row()
+                                            .items_center()
+                                            .gap_1()
+                                            .px_1()
+                                            .py_0p5()
+                                            .rounded_md()
+                                            .border_1()
+                                            .border_color(kind_col.alpha(0.55))
+                                            .bg(kind_col.alpha(0.14))
+                                            .child(
+                                                div()
+                                                    .text_size(px(7. * cs))
+                                                    .text_color(kind_col.alpha(0.75))
+                                                    .child("\u{26a1}"),
+                                            )
+                                            .child(
+                                                div()
+                                                    .text_size(px(7.5 * cs))
+                                                    .font_weight(gpui::FontWeight::EXTRA_BOLD)
+                                                    .text_color(kind_col)
+                                                    .child(pw),
+                                            ),
+                                    )
+                                }),
                         );
                     section_cards.push(row.into_any_element());
                     ri += 1;

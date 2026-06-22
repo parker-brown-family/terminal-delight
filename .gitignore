@@ -9,3 +9,6 @@ app/target/
 app/.cargo/config.toml
 # local agent scratch: Claude Code settings + linked git worktrees
 .claude/
+
+# Local-only demo logo/art assets (never committed — populate the demo wall)
+demo-assets/
