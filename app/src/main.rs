@@ -7786,6 +7786,11 @@ impl Render for Workspace {
             self.confirm_close = Some(self.active);
             cx.notify();
         }
+        // demo/capture hook (TD_WALL_DEMO): open just the agent wall for screenshots.
+        if std::env::var("TD_WALL_DEMO").is_ok() && !self.mcp_menu {
+            self.mcp_menu = true;
+            cx.notify();
+        }
         // demo/capture hook (TD_SAVINGS_DEMO): open the </> LeanCTX savings overlay
         // with FICTIONAL data (never the real ~/.lean-ctx ledger), so the surface
         // can be screenshotted for the lean-ctx issue without leaking real agent
@@ -9758,29 +9763,8 @@ impl Render for Workspace {
                     };
                     let card_border = status_glow.alpha(if live_glow { 0.74 } else { 0.24 });
                     let hover_border = status_glow.alpha(if live_glow { 0.95 } else { 0.48 });
-                    let badge_col = if is_agent {
-                        status_glow
-                    } else {
-                        kind_col.alpha(0.78)
-                    };
                     let badge_glyph = if is_agent {
                         status.state.badge().to_string()
-                    } else {
-                        String::new()
-                    };
-                    let metrics = if is_agent {
-                        let mut parts = vec![status.state.label().to_string()];
-                        if let Some(ef) = &status.effort {
-                            parts.push(ef.clone());
-                        }
-                        if let Some(e) = &status.elapsed {
-                            parts.push(e.clone());
-                        }
-                        if let Some(tk) = status.turn_tokens {
-                            parts.push(hud::fmt_tokens(tk));
-                        }
-                        parts.push(format!("\u{03a3}{}", hud::fmt_tokens(sess_tok)));
-                        parts.join(" \u{00b7} ")
                     } else {
                         String::new()
                     };
@@ -9793,21 +9777,87 @@ impl Render for Workspace {
                     });
 
                     let agentic = is_agent && !feed.is_empty();
+                    let turn_tok = status.turn_tokens.unwrap_or(0);
+                    // the single glowing status pip (top-right, beside the type tag)
+                    let pip_glyph = if !is_agent || status.state == hud::AgentState::Idle {
+                        "\u{25cb}".to_string()
+                    } else {
+                        badge_glyph
+                    };
+                    // a small beveled SWCCG-style stat box (label + value)
+                    let stat_box = |label: &str, val: String, col: gpui::Hsla| {
+                        div()
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap_1()
+                            .px_1()
+                            .py_0p5()
+                            .rounded_sm()
+                            .border_1()
+                            .border_color(col.alpha(0.5))
+                            .bg(col.alpha(0.10))
+                            .child(
+                                div()
+                                    .text_size(px(6.5 * cs))
+                                    .text_color(col.alpha(0.7))
+                                    .child(label.to_string()),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(8. * cs))
+                                    .font_weight(gpui::FontWeight::EXTRA_BOLD)
+                                    .text_color(col)
+                                    .child(val),
+                            )
+                    };
+                    // the SWCCG "rules text" box = the agent's recent message feed
+                    let mut rules = div()
+                        .flex()
+                        .flex_col()
+                        .flex_1()
+                        .gap_0p5()
+                        .px_1()
+                        .py_1()
+                        .rounded_sm()
+                        .border_1()
+                        .border_color(status_glow.alpha(0.20))
+                        .bg(th.bg.alpha(0.45))
+                        .overflow_hidden();
+                    if agentic {
+                        for fl in feed.iter() {
+                            let t: String = fl.chars().take(40).collect();
+                            rules = rules.child(
+                                div()
+                                    .overflow_hidden()
+                                    .whitespace_nowrap()
+                                    .text_size(px(7.5 * cs))
+                                    .text_color(row_text.alpha(0.6))
+                                    .child(t),
+                            );
+                        }
+                    } else {
+                        rules = rules.child(
+                            div()
+                                .text_size(px(7.5 * cs))
+                                .text_color(row_text.alpha(0.4))
+                                .child(line2.clone()),
+                        );
+                    }
+                    // ---- the card: a Star Wars CCG-style portrait ----
                     let row = div()
                         .id(SharedString::from(format!("mcp-row-{ri}")))
                         .flex()
-                        .flex_row()
-                        .items_stretch()
-                        .gap_2()
-                        .w(px(320. * cs))
-                        .min_w(px(320. * cs))
-                        .max_w(px(320. * cs))
-                        .h(px(140. * cs))
+                        .flex_col()
+                        .gap_1()
+                        .w(px(228. * cs))
+                        .min_w(px(228. * cs))
+                        .max_w(px(228. * cs))
+                        .h(px(296. * cs))
                         .flex_none()
                         .flex_shrink_0()
-                        .px_2()
-                        .py_1()
-                        .rounded_md()
+                        .p_2()
+                        .rounded_lg()
                         .border_2()
                         .border_color(card_border)
                         .bg(card_bg)
@@ -9824,186 +9874,156 @@ impl Render for Workspace {
                                 ws.mcp_menu = false;
                                 ws.activate_tab(ti, window, cx);
                             }),
-                        );
-                    // #2: the chat-scroller — the agent's last lines, dim monospace.
-                    let mut feed_box = div()
-                        .flex()
-                        .flex_col()
-                        .gap_0p5()
-                        .px_1()
-                        .py_0p5()
-                        .rounded_sm()
-                        .border_1()
-                        .border_color(row_text.alpha(0.10))
-                        .bg(th.bg.alpha(0.38))
-                        .min_h(px(40. * cs))
-                        .overflow_hidden();
-                    for fl in feed.iter() {
-                        let t: String = fl.chars().take(48).collect();
-                        feed_box = feed_box.child(
+                        )
+                        // TITLE BAND: crest · name · status pip · type tag
+                        .child(
+                            div()
+                                .flex()
+                                .flex_row()
+                                .items_center()
+                                .gap_1()
+                                .min_w(px(0.))
+                                .child(
+                                    div()
+                                        .flex_none()
+                                        .text_size(px(9. * cs))
+                                        .text_color(kind_col.alpha(0.7))
+                                        .child(if exposed { "\u{25c8}" } else { "\u{25c7}" }),
+                                )
+                                .when(is_agent && status.state.needs_you(), |d| {
+                                    d.child(
+                                        div()
+                                            .flex_none()
+                                            .text_size(px(9. * cs))
+                                            .font_weight(gpui::FontWeight::EXTRA_BOLD)
+                                            .text_color(hsla(0., 0.85, 0.62, 1.))
+                                            .child("\u{26a0}"),
+                                    )
+                                })
+                                .child(
+                                    div()
+                                        .flex_1()
+                                        .min_w(px(0.))
+                                        .overflow_hidden()
+                                        .whitespace_nowrap()
+                                        .text_size(px(9.5 * cs))
+                                        .font_weight(gpui::FontWeight::BOLD)
+                                        .text_color(row_text)
+                                        .child(title),
+                                )
+                                .child(
+                                    div()
+                                        .flex_none()
+                                        .text_size(px(10. * cs))
+                                        .font_weight(gpui::FontWeight::EXTRA_BOLD)
+                                        .text_color(if is_agent { status_glow } else { dot_col })
+                                        .when(live_glow, |d| {
+                                            d.shadow(vec![gpui::BoxShadow {
+                                                color: status_glow.alpha(0.85),
+                                                offset: point(px(0.), px(0.)),
+                                                blur_radius: px(8.),
+                                                spread_radius: px(0.5),
+                                                inset: false,
+                                            }])
+                                        })
+                                        .child(pip_glyph),
+                                )
+                                .child(
+                                    div()
+                                        .flex_none()
+                                        .text_size(px(7.5 * cs))
+                                        .font_weight(gpui::FontWeight::EXTRA_BOLD)
+                                        .text_color(mode_col)
+                                        .px_1()
+                                        .rounded_sm()
+                                        .border_1()
+                                        .border_color(kind_col.alpha(0.42))
+                                        .bg(kind_col.alpha(0.12))
+                                        .child(mode_lbl),
+                                ),
+                        )
+                        // LORE STRIP: the cwd / sub line
+                        .child(
                             div()
                                 .overflow_hidden()
                                 .whitespace_nowrap()
-                                .text_size(px(8. * cs))
-                                .text_color(row_text.alpha(0.62))
-                                .child(t),
-                        );
-                    }
-                    // #2: the ENTIRE left square is the per-terminal logo badge,
-                    // full card height. No logo → a dim, on-theme placeholder.
-                    let has_logo = logo_path.is_some();
-                    let logo_square = div()
-                        .flex_none()
-                        .w(px(104. * cs))
-                        .h_full()
-                        .overflow_hidden()
-                        .rounded_md()
-                        .border_1()
-                        .border_color(kind_col.alpha(0.25))
-                        .when_some(logo_path.clone(), |d, path| {
-                            d.child(
-                                gpui::img(std::path::PathBuf::from(path))
-                                    .size_full()
-                                    .object_fit(gpui::ObjectFit::Cover),
-                            )
-                        })
-                        .when(!has_logo, |d| {
-                            d.bg(kind_col.alpha(0.06))
+                                .text_size(px(7. * cs))
+                                .text_color(row_text.alpha(0.4))
+                                .child(line2),
+                        )
+                        // ART WINDOW: the per-terminal logo as the card "portrait"
+                        .child(
+                            div()
+                                .flex_none()
+                                .w_full()
+                                .h(px(116. * cs))
+                                .overflow_hidden()
+                                .rounded_md()
+                                .border_1()
+                                .border_color(status_glow.alpha(0.3))
+                                .bg(th.bg.alpha(0.5))
                                 .flex()
                                 .items_center()
                                 .justify_center()
-                                .child(
-                                    div()
-                                        .text_size(px(15. * cs))
-                                        .text_color(kind_col.alpha(0.32))
-                                        .child("\u{25a6}"),
-                                )
-                        });
-                    section_cards.push(
-                        row.child(logo_square).child(
-                            div()
-                                .flex_1()
-                                .min_w(px(0.))
-                                .overflow_hidden()
-                                .flex()
-                                .flex_col()
-                                .justify_between()
-                                .gap_1()
-                                .child(
-                                    div()
-                                        .flex()
-                                        .flex_row()
-                                        .items_center()
-                                        .gap_1()
-                                        .min_w(px(0.))
-                                        .child(
-                                            // a SINGLE glowing status pip: the state
-                                            // glyph (✓ / ✕ / ○ / ▶ / ⏸) in its
-                                            // status colour, haloed when the agent is live.
-                                            div()
-                                                .flex_none()
-                                                .flex()
-                                                .items_center()
-                                                .justify_center()
-                                                .w(px(16. * cs))
-                                                .h(px(16. * cs))
-                                                .rounded_full()
-                                                .text_size(px(11. * cs))
-                                                .font_weight(gpui::FontWeight::EXTRA_BOLD)
-                                                .text_color(if is_agent { status_glow } else { dot_col })
-                                                .when(live_glow, |d| {
-                                                    d.shadow(vec![gpui::BoxShadow {
-                                                        color: status_glow.alpha(0.85),
-                                                        offset: point(px(0.), px(0.)),
-                                                        blur_radius: px(9.),
-                                                        spread_radius: px(0.5),
-                                                        inset: false,
-                                                    }])
-                                                })
-                                                .child(
-                                                    if !is_agent
-                                                        || status.state == hud::AgentState::Idle
-                                                    {
-                                                        "\u{25cb}".to_string()
-                                                    } else {
-                                                        badge_glyph
-                                                    },
-                                                ),
-                                        )
-                                        .child(
-                                            div()
-                                                .flex_1()
-                                                .min_w(px(0.))
-                                                .overflow_hidden()
-                                                .text_size(px(10.5 * cs))
-                                                .font_weight(gpui::FontWeight::BOLD)
-                                                .text_color(row_text)
-                                                .child(title),
-                                        )
-                                        .child(
-                                            // #2: the type tag, top-right of the card
-                                            div()
-                                                .flex_none()
-                                                .text_size(px(8. * cs))
-                                                .font_weight(gpui::FontWeight::EXTRA_BOLD)
-                                                .text_color(mode_col)
-                                                .px_1()
-                                                .rounded_sm()
-                                                .border_1()
-                                                .border_color(kind_col.alpha(0.42))
-                                                .bg(kind_col.alpha(0.12))
-                                                .child(mode_lbl),
-                                        ),
-                                )
-                                // #4: agents lead with the feed; shells keep the cwd line
-                                .when(!is_agent, |d| {
-                                    let _ = line2_accent;
+                                .when_some(logo_path.clone(), |d, path| {
                                     d.child(
-                                        div()
-                                            .overflow_hidden()
-                                            .text_size(px(8.5 * cs))
-                                            .text_color(row_text.alpha(0.55))
-                                            .child(line2),
+                                        gpui::img(std::path::PathBuf::from(path))
+                                            .size_full()
+                                            .object_fit(gpui::ObjectFit::Cover),
                                     )
                                 })
-                                .when(agentic, |d| d.child(feed_box))
+                                .when(logo_path.is_none(), |d| {
+                                    d.child(
+                                        div()
+                                            .text_size(px(30. * cs))
+                                            .text_color(kind_col.alpha(0.25))
+                                            .child("\u{25a6}"),
+                                    )
+                                }),
+                        )
+                        // STAT BAR: SWCCG POWER/ABILITY-style boxes
+                        .child(
+                            div()
+                                .flex()
+                                .flex_row()
+                                .items_center()
+                                .flex_wrap()
+                                .gap_1()
+                                .child(stat_box(
+                                    "STATE",
+                                    status.state.label().to_uppercase(),
+                                    status_glow,
+                                ))
+                                .when_some(status.effort.clone(), |d, e| {
+                                    d.child(stat_box("EFFORT", e.to_uppercase(), th.accent))
+                                })
+                                .when_some(status.elapsed.clone(), |d, e| {
+                                    d.child(stat_box("TIME", e, th.complement))
+                                })
+                                .when_some(model_disp, |d, m| {
+                                    d.child(stat_box("MODEL", m, kind_col))
+                                }),
+                        )
+                        // RULES TEXT: the recent message feed
+                        .child(rules)
+                        // CORNER STATS: the destiny/power numbers
+                        .child(
+                            div()
+                                .flex()
+                                .flex_row()
+                                .items_center()
+                                .gap_2()
+                                .text_size(px(7.5 * cs))
+                                .text_color(row_text.alpha(0.55))
                                 .child(
                                     div()
-                                        .flex()
-                                        .flex_row()
-                                        .items_center()
-                                        .gap_1()
-                                        .min_w(px(0.))
-                                        .when_some(model_disp, |d, m| {
-                                            d.child(
-                                                div()
-                                                    .flex_none()
-                                                    .text_size(px(7.5 * cs))
-                                                    .text_color(kind_col)
-                                                    .px_1()
-                                                    .rounded_sm()
-                                                    .border_1()
-                                                    .border_color(kind_col.alpha(0.30))
-                                                    .bg(kind_col.alpha(0.10))
-                                                    .child(m),
-                                            )
-                                        })
-                                        .child(
-                                            div()
-                                                .flex_1()
-                                                .min_w(px(0.))
-                                                .overflow_hidden()
-                                                .text_size(px(8.5 * cs))
-                                                .text_color(badge_col)
-                                                .when(is_agent && status.state.needs_you(), |d| {
-                                                    d.font_weight(gpui::FontWeight::BOLD)
-                                                })
-                                                .child(metrics),
-                                        ),
-                                ),
-                        )
-                        .into_any_element(),
-                    );
+                                        .font_weight(gpui::FontWeight::BOLD)
+                                        .text_color(status_glow.alpha(0.85))
+                                        .child(format!("\u{0394}{}", hud::fmt_tokens(turn_tok))),
+                                )
+                                .child(div().child(format!("\u{03a3}{}", hud::fmt_tokens(sess_tok)))),
+                        );
+                    section_cards.push(row.into_any_element());
                     ri += 1;
                 }
             }
