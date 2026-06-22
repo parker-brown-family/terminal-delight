@@ -2377,8 +2377,11 @@ impl Workspace {
         if !self.savings_menu {
             return None;
         }
-        // brand: "Lean" in text, "CTX" + </> in lean-ctx green.
-        let green = hsla(0.42, 0.72, 0.55, 1.);
+        // brand: theme-INDEPENDENT lean-ctx identity — white "Lean", green "CTX",
+        // and a </> chip (white brackets, green slash) on a dark ground, so the
+        // logo + colour read identically under every TD theme.
+        let green = hsla(0.43, 0.68, 0.55, 1.);
+        let white = hsla(0., 0., 0.96, 1.);
         let brand = div()
             .flex()
             .flex_row()
@@ -2386,6 +2389,8 @@ impl Workspace {
             .gap_2()
             .child(
                 div()
+                    .flex()
+                    .flex_row()
                     .px_1p5()
                     .py_0p5()
                     .rounded_sm()
@@ -2393,15 +2398,16 @@ impl Workspace {
                     .border_1()
                     .border_color(green.alpha(0.5))
                     .font_weight(gpui::FontWeight::EXTRA_BOLD)
-                    .text_color(green)
                     .text_size(px(13.))
-                    .child("\u{003c}/\u{003e}"),
+                    .child(div().text_color(white).child("\u{003c}"))
+                    .child(div().text_color(green).child("/"))
+                    .child(div().text_color(white).child("\u{003e}")),
             )
             .child(
                 div()
                     .font_weight(gpui::FontWeight::EXTRA_BOLD)
                     .text_size(px(15.))
-                    .text_color(th.text)
+                    .text_color(white)
                     .child("Lean"),
             )
             .child(
@@ -2414,7 +2420,7 @@ impl Workspace {
             .child(
                 div()
                     .text_size(px(10.))
-                    .text_color(th.text.alpha(0.5))
+                    .text_color(white.alpha(0.5))
                     .child("token savings"),
             );
 
@@ -8978,14 +8984,6 @@ impl Render for Workspace {
                         kind_col
                     };
                     let live_glow = is_agent && !matches!(status.state, hud::AgentState::Idle);
-                    // The left rail is the status chip. Its rim is exactly the
-                    // same colour as the raised card glow/border.
-                    let chip_fill = if live_glow {
-                        status_glow.alpha(0.30)
-                    } else {
-                        status_glow.alpha(0.10)
-                    };
-                    let chip_rim = status_glow.alpha(if live_glow { 0.88 } else { 0.30 });
                     let card_bg = if preview {
                         darken(th.bg, if live_glow { 0.72 } else { 0.64 })
                     } else if live_glow {
@@ -9067,23 +9065,6 @@ impl Render for Workspace {
                         );
                     list = list.child(
                         row.child(
-                            div()
-                                .w(px(8.))
-                                .h_full()
-                                .flex_none()
-                                .rounded_full()
-                                .border_1()
-                                .border_color(chip_rim)
-                                .bg(chip_fill)
-                                .shadow(vec![BoxShadow {
-                                    color: status_glow.alpha(if live_glow { 0.32 } else { 0.08 }),
-                                    offset: point(px(0.), px(0.)),
-                                    blur_radius: px(if live_glow { 14. } else { 6. }),
-                                    spread_radius: px(1.),
-                                    inset: false,
-                                }]),
-                        )
-                        .child(
                             div()
                                 .flex_1()
                                 .min_w(px(0.))
@@ -9194,18 +9175,19 @@ impl Render for Workspace {
             // the notes below stay pinned and on-screen no matter how many panes.
             let list = list
                 .min_h(px(0.))
-                .max_h(px((vp_h - 220.).max(140.)))
+                .max_h(px((vp_h * 0.8 - 170.).max(140.)))
                 .overflow_y_scroll();
 
             let (mcp_k1, mcp_k2) = theme::warp_coeffs(th.warp);
             let mcp_glare = th.screen_glare;
             let mcp_preview = preview;
+            let vp_w = f32::from(window.viewport_size().width);
             let panel = div()
                 .absolute()
-                .top(px(28.))
-                .left(px(28.))
-                .right(px(28.))
-                .bottom(px(28.))
+                .top(px(vp_h * 0.10))
+                .left(px(vp_w * 0.17))
+                .right(px(vp_w * 0.17))
+                .bottom(px(vp_h * 0.10))
                 .overflow_hidden()
                 .p_3()
                 .rounded_md()
@@ -9292,13 +9274,13 @@ impl Render for Workspace {
                                 .py_0p5()
                                 .rounded_sm()
                                 .border_1()
-                                .border_color(th.complement.alpha(0.6))
-                                .bg(th.complement.alpha(0.10))
+                                .border_color(hsla(0.43, 0.68, 0.55, 0.6))
+                                .bg(hsla(0.43, 0.68, 0.55, 0.10))
                                 .text_size(px(10.))
                                 .font_weight(gpui::FontWeight::EXTRA_BOLD)
-                                .text_color(th.complement)
+                                .text_color(hsla(0.43, 0.68, 0.55, 1.))
                                 .cursor_pointer()
-                                .hover(|s| s.bg(th.complement.alpha(0.22)))
+                                .hover(|s| s.bg(hsla(0.43, 0.68, 0.55, 0.22)))
                                 .child("\u{003c}/\u{003e} savings")
                                 .on_mouse_down(
                                     MouseButton::Left,
@@ -9760,12 +9742,13 @@ impl Render for Workspace {
                 di += 1;
             }
 
+            let vp_w = f32::from(window.viewport_size().width);
             let panel = div()
                 .absolute()
-                .top(px(28.))
-                .left(px(28.))
-                .right(px(28.))
-                .bottom(px(28.))
+                .top(px(vp_h * 0.10))
+                .left(px(vp_w * 0.17))
+                .right(px(vp_w * 0.17))
+                .bottom(px(vp_h * 0.10))
                 .overflow_hidden()
                 .p_3()
                 .rounded_md()
@@ -9829,7 +9812,7 @@ impl Render for Workspace {
                 .child(chips)
                 .child(
                     list.min_h(px(0.))
-                        .max_h(px((vp_h - 220.).max(160.)))
+                        .max_h(px((vp_h * 0.8 - 170.).max(160.)))
                         .overflow_y_scroll(),
                 );
 
