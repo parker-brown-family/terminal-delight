@@ -1374,6 +1374,8 @@ struct Workspace {
     /// 🎨 toggle in the MCP panel: tint each pane row with that pane's own
     /// resolved screen background + text colour. Defaults off (session-scoped).
     mcp_theme_preview: bool,
+    /// Text+size scale for ALL agent-wall cards (the A-/A+ control). Session-scoped.
+    card_scale: f32,
     /// Agent-wall view filter (the chip strip) — transient, not persisted.
     mcp_filter: McpFilter,
     /// Agent-wall state filter. Combines with [`Self::mcp_filter`] so a group
@@ -1739,6 +1741,7 @@ impl Workspace {
             savings_view: None,
             savings_status: None,
             mcp_theme_preview: false,
+            card_scale: 1.0,
             mcp_filter: McpFilter::All,
             mcp_state_filter: None,
             mcp_program_filter: None,
@@ -8437,6 +8440,29 @@ impl Render for Workspace {
             // Live pane list — walk the REAL tree (not the wire snapshot) so each
             // row can carry the pane's own resolved colours and focus it on click.
             let preview = self.mcp_theme_preview;
+            let cs = self.card_scale.clamp(0.7, 1.6);
+            let card_smaller = Self::bezel_btn(&th, "A\u{2212}", false)
+                .id("mcp-card-smaller")
+                .hover(|s| s.border_color(th.accent))
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                        cx.stop_propagation();
+                        ws.card_scale = (ws.card_scale - 0.1).clamp(0.7, 1.6);
+                        cx.notify();
+                    }),
+                );
+            let card_bigger = Self::bezel_btn(&th, "A\u{207a}", false)
+                .id("mcp-card-bigger")
+                .hover(|s| s.border_color(th.accent))
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                        cx.stop_propagation();
+                        ws.card_scale = (ws.card_scale + 0.1).clamp(0.7, 1.6);
+                        cx.notify();
+                    }),
+                );
             // ---- pre-pass: whole-fleet counts (unfiltered) + context-aware
             // filter domains. Group chips come from tab groups; program chips
             // come from live pane modes; state chips only come from matching
@@ -9059,10 +9085,10 @@ impl Render for Workspace {
                         .flex_row()
                         .items_stretch()
                         .gap_2()
-                        .w(px(320.))
-                        .min_w(px(320.))
-                        .max_w(px(320.))
-                        .h(px(if agentic { 122. } else { 80. }))
+                        .w(px(320. * cs))
+                        .min_w(px(320. * cs))
+                        .max_w(px(320. * cs))
+                        .h(px(if agentic { 122. * cs } else { 80. * cs }))
                         .flex_none()
                         .flex_shrink_0()
                         .px_2()
@@ -9088,7 +9114,7 @@ impl Render for Workspace {
                     // #3: a full-height LEFT STATUS SPINE — vivid by state, glows
                     // when the agent is live. The at-a-glance "what is this doing".
                     let spine = div()
-                        .w(px(5.))
+                        .w(px(5. * cs))
                         .h_full()
                         .flex_none()
                         .rounded_full()
@@ -9120,7 +9146,7 @@ impl Render for Workspace {
                             div()
                                 .overflow_hidden()
                                 .whitespace_nowrap()
-                                .text_size(px(8.))
+                                .text_size(px(8. * cs))
                                 .text_color(row_text.alpha(0.62))
                                 .child(t),
                         );
@@ -9147,8 +9173,8 @@ impl Render for Workspace {
                                             // glows when live; filled = MCP-exposed.
                                             div()
                                                 .flex_none()
-                                                .w(px(10.))
-                                                .h(px(10.))
+                                                .w(px(10. * cs))
+                                                .h(px(10. * cs))
                                                 .rounded_full()
                                                 .border_1()
                                                 .border_color(if is_agent {
@@ -9175,7 +9201,7 @@ impl Render for Workspace {
                                         )
                                         .child(
                                             div()
-                                                .w(px(14.))
+                                                .w(px(14. * cs))
                                                 .flex_none()
                                                 .text_color(badge_col)
                                                 .child(badge_glyph),
@@ -9183,7 +9209,7 @@ impl Render for Workspace {
                                         .child(
                                             div()
                                                 .flex_none()
-                                                .text_size(px(8.5))
+                                                .text_size(px(8.5 * cs))
                                                 .font_weight(gpui::FontWeight::EXTRA_BOLD)
                                                 .text_color(mode_col)
                                                 .px_1()
@@ -9198,7 +9224,7 @@ impl Render for Workspace {
                                                 .flex_1()
                                                 .min_w(px(0.))
                                                 .overflow_hidden()
-                                                .text_size(px(10.5))
+                                                .text_size(px(10.5 * cs))
                                                 .font_weight(gpui::FontWeight::BOLD)
                                                 .text_color(row_text)
                                                 .child(title),
@@ -9207,7 +9233,7 @@ impl Render for Workspace {
                                 .child(
                                     div()
                                         .overflow_hidden()
-                                        .text_size(px(8.5))
+                                        .text_size(px(8.5 * cs))
                                         .text_color(if line2_accent {
                                             status_glow.alpha(0.92)
                                         } else {
@@ -9227,7 +9253,7 @@ impl Render for Workspace {
                                             d.child(
                                                 div()
                                                     .flex_none()
-                                                    .text_size(px(7.5))
+                                                    .text_size(px(7.5 * cs))
                                                     .text_color(kind_col)
                                                     .px_1()
                                                     .rounded_sm()
@@ -9242,7 +9268,7 @@ impl Render for Workspace {
                                                 .flex_1()
                                                 .min_w(px(0.))
                                                 .overflow_hidden()
-                                                .text_size(px(8.5))
+                                                .text_size(px(8.5 * cs))
                                                 .text_color(badge_col)
                                                 .when(is_agent && status.state.needs_you(), |d| {
                                                     d.font_weight(gpui::FontWeight::BOLD)
@@ -9388,7 +9414,9 @@ impl Render for Workspace {
                         .child(expose_btn)
                         .child(events_btn)
                         .child(writes_btn)
-                        .child(theme_btn),
+                        .child(theme_btn)
+                        .child(card_smaller)
+                        .child(card_bigger),
                 )
                 .child(label(format!("{exposed}/{total} {}", t.m_exposed)))
                 .child(chips)
