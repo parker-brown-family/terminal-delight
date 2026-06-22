@@ -9731,6 +9731,25 @@ impl Render for Workspace {
                         .logo
                         .clone()
                         .or_else(|| demo_logo_for(&format!("{title}/{id:?}")));
+                    // DEFAULT CARD ART (no uploaded logo): a generated crest built
+                    // from the identity hierarchy GROUP > TITLE > AGENT/SHELL > STATE.
+                    // An uploaded logo (p.logo) always overrides this.
+                    let monogram: String = {
+                        let m: String = title
+                            .split(|c: char| !c.is_alphanumeric())
+                            .filter(|s| !s.is_empty())
+                            .take(2)
+                            .filter_map(|s| s.chars().next())
+                            .collect::<String>()
+                            .to_uppercase();
+                        if m.is_empty() { "\u{00b7}".to_string() } else { m }
+                    };
+                    let art_kind = mode_lbl.clone();
+                    let art_state = if is_agent {
+                        status.state.badge().to_string()
+                    } else {
+                        String::new()
+                    };
                     if let Some(program) = program_filt.as_deref() {
                         if mode_lbl.as_str() != program {
                             continue;
@@ -10023,9 +10042,58 @@ impl Render for Workspace {
                                 .when(logo_path.is_none(), |d| {
                                     d.child(
                                         div()
-                                            .text_size(px(30. * cs))
-                                            .text_color(kind_col.alpha(0.25))
-                                            .child("\u{25a6}"),
+                                            .size_full()
+                                            .flex()
+                                            .flex_col()
+                                            .items_center()
+                                            .justify_center()
+                                            .gap_1()
+                                            // GROUP: a wash of the tab-group colour
+                                            .bg(linear_gradient(
+                                                160.,
+                                                linear_color_stop(section_gcol.alpha(0.34), 0.),
+                                                linear_color_stop(section_gcol.alpha(0.0), 1.),
+                                            ))
+                                            // TITLE: a monogram in a group-tinted ring
+                                            .child(
+                                                div()
+                                                    .flex_none()
+                                                    .w(px(52. * cs))
+                                                    .h(px(52. * cs))
+                                                    .rounded_full()
+                                                    .border_2()
+                                                    .border_color(section_gcol.alpha(0.55))
+                                                    .bg(section_gcol.alpha(0.14))
+                                                    .flex()
+                                                    .items_center()
+                                                    .justify_center()
+                                                    .text_size(px(22. * cs))
+                                                    .font_weight(gpui::FontWeight::EXTRA_BOLD)
+                                                    .text_color(kind_col)
+                                                    .child(monogram),
+                                            )
+                                            // AGENT/SHELL · STATE
+                                            .child(
+                                                div()
+                                                    .flex()
+                                                    .flex_row()
+                                                    .items_center()
+                                                    .gap_1()
+                                                    .text_size(px(8. * cs))
+                                                    .font_weight(gpui::FontWeight::BOLD)
+                                                    .child(
+                                                        div()
+                                                            .text_color(kind_col.alpha(0.85))
+                                                            .child(art_kind),
+                                                    )
+                                                    .when(!art_state.is_empty(), |d| {
+                                                        d.child(
+                                                            div()
+                                                                .text_color(status_glow)
+                                                                .child(art_state),
+                                                        )
+                                                    }),
+                                            ),
                                     )
                                 }),
                         )
