@@ -9784,6 +9784,8 @@ impl Render for Workspace {
                 .overflow_y_scroll();
 
             let mcp_preview = preview;
+            let (mcp_k1, mcp_k2) = theme::warp_coeffs(th.warp);
+            let mcp_glare = th.screen_glare;
             let vp_w = f32::from(window.viewport_size().width);
             let panel = div()
                 .absolute()
@@ -9921,18 +9923,15 @@ impl Render for Workspace {
                         .child(t.m_watches.to_string()),
                 )
                 .child(label(t.m_transport.to_string()))
-                // Theme-on frosts the dashboard (premium glass) using the OUTER
-                // gauges, but stays FLAT — no barrel tube. A curved panel would
-                // bend the cards visually while their gpui hit-boxes stayed flat,
-                // so corner clicks landed off-target (#81). Frost only → the visual
-                // matches the hit-boxes → clicks are pixel-accurate.
+                // The dashboard ALWAYS frosts the panes behind it (premium glass).
+                // Theme-on additionally bends the panel into a curved-glass CRT tube
+                // (the OUTER gauges' warp). NB: under the curve the cards' flat gpui
+                // hit-boxes no longer match the bent visual, so corner clicks offset
+                // (the #81 tradeoff) — the real fix is warp-aware click dispatch.
                 .child(
                     div().absolute().inset_0().child(
                         gpui::canvas(
                             move |bounds, window, _cx| {
-                                if !mcp_preview {
-                                    return;
-                                }
                                 let sf = window.scale_factor();
                                 let rect = [
                                     f32::from(bounds.origin.x) * sf,
@@ -9940,6 +9939,7 @@ impl Render for Workspace {
                                     f32::from(bounds.size.width) * sf,
                                     f32::from(bounds.size.height) * sf,
                                 ];
+                                // always blur the background
                                 crate::warp::set_focus_blur(
                                     rect,
                                     28.0 * sf,
@@ -9947,6 +9947,16 @@ impl Render for Workspace {
                                     0.78,
                                     8.0 * sf,
                                 );
+                                // theme-on → curved glass
+                                if mcp_preview {
+                                    crate::warp::register_focus_tube(
+                                        rect,
+                                        mcp_glare,
+                                        mcp_k1,
+                                        mcp_k2,
+                                        [0.0, 1.0, 1.0],
+                                    );
+                                }
                             },
                             |_, _, _, _| {},
                         )
