@@ -9614,7 +9614,7 @@ impl Render for Workspace {
                     let exposed = mcp::should_expose(&self.mcp, is_agent);
                     let status = p.agent_status();
                     // the agent's last output lines for the card's chat-scroller (#2)
-                    let feed: Vec<String> = if is_agent { p.recent_lines(2) } else { Vec::new() };
+                    let feed: Vec<String> = if is_agent { p.recent_lines(4) } else { Vec::new() };
                     let logo_path = p.logo.clone();
                     if let Some(program) = program_filt.as_deref() {
                         if mode_lbl.as_str() != program {
@@ -9745,7 +9745,7 @@ impl Render for Workspace {
                         .w(px(320. * cs))
                         .min_w(px(320. * cs))
                         .max_w(px(320. * cs))
-                        .h(px(118. * cs))
+                        .h(px(140. * cs))
                         .flex_none()
                         .flex_shrink_0()
                         .px_2()
@@ -9779,6 +9779,7 @@ impl Render for Workspace {
                         .border_1()
                         .border_color(row_text.alpha(0.10))
                         .bg(th.bg.alpha(0.38))
+                        .min_h(px(40. * cs))
                         .overflow_hidden();
                     for fl in feed.iter() {
                         let t: String = fl.chars().take(48).collect();
@@ -9791,47 +9792,38 @@ impl Render for Workspace {
                                 .child(t),
                         );
                     }
-                    // #3: logo (if set) stacked ABOVE the CLAUDE/CODEX/SHELL chip,
-                    // forming a square avatar block on the card's left.
-                    let avatar = div()
+                    // #2: the ENTIRE left square is the per-terminal logo badge,
+                    // full card height. No logo → a dim, on-theme placeholder.
+                    let has_logo = logo_path.is_some();
+                    let logo_square = div()
                         .flex_none()
-                        .flex()
-                        .flex_col()
-                        .items_center()
-                        .justify_center()
-                        .gap_0p5()
+                        .w(px(104. * cs))
+                        .h_full()
+                        .overflow_hidden()
+                        .rounded_md()
+                        .border_1()
+                        .border_color(kind_col.alpha(0.25))
                         .when_some(logo_path.clone(), |d, path| {
                             d.child(
-                                div()
-                                    .w(px(28. * cs))
-                                    .h(px(28. * cs))
-                                    .flex_none()
-                                    .overflow_hidden()
-                                    .rounded_sm()
-                                    .border_1()
-                                    .border_color(kind_col.alpha(0.3))
-                                    .child(
-                                        gpui::img(std::path::PathBuf::from(path))
-                                            .size_full()
-                                            .object_fit(gpui::ObjectFit::Cover),
-                                    ),
+                                gpui::img(std::path::PathBuf::from(path))
+                                    .size_full()
+                                    .object_fit(gpui::ObjectFit::Cover),
                             )
                         })
-                        .child(
-                            div()
-                                .flex_none()
-                                .text_size(px(8.5 * cs))
-                                .font_weight(gpui::FontWeight::EXTRA_BOLD)
-                                .text_color(mode_col)
-                                .px_1()
-                                .rounded_sm()
-                                .border_1()
-                                .border_color(kind_col.alpha(0.42))
-                                .bg(kind_col.alpha(0.12))
-                                .child(mode_lbl),
-                        );
+                        .when(!has_logo, |d| {
+                            d.bg(kind_col.alpha(0.06))
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .child(
+                                    div()
+                                        .text_size(px(15. * cs))
+                                        .text_color(kind_col.alpha(0.32))
+                                        .child("\u{25a6}"),
+                                )
+                        });
                     section_cards.push(
-                        row.child(avatar).child(
+                        row.child(logo_square).child(
                             div()
                                 .flex_1()
                                 .min_w(px(0.))
@@ -9890,19 +9882,33 @@ impl Render for Workspace {
                                                 .font_weight(gpui::FontWeight::BOLD)
                                                 .text_color(row_text)
                                                 .child(title),
+                                        )
+                                        .child(
+                                            // #2: the type tag, top-right of the card
+                                            div()
+                                                .flex_none()
+                                                .text_size(px(8. * cs))
+                                                .font_weight(gpui::FontWeight::EXTRA_BOLD)
+                                                .text_color(mode_col)
+                                                .px_1()
+                                                .rounded_sm()
+                                                .border_1()
+                                                .border_color(kind_col.alpha(0.42))
+                                                .bg(kind_col.alpha(0.12))
+                                                .child(mode_lbl),
                                         ),
                                 )
-                                .child(
-                                    div()
-                                        .overflow_hidden()
-                                        .text_size(px(8.5 * cs))
-                                        .text_color(if line2_accent {
-                                            status_glow.alpha(0.92)
-                                        } else {
-                                            row_text.alpha(0.55)
-                                        })
-                                        .child(line2),
-                                )
+                                // #4: agents lead with the feed; shells keep the cwd line
+                                .when(!is_agent, |d| {
+                                    let _ = line2_accent;
+                                    d.child(
+                                        div()
+                                            .overflow_hidden()
+                                            .text_size(px(8.5 * cs))
+                                            .text_color(row_text.alpha(0.55))
+                                            .child(line2),
+                                    )
+                                })
                                 .when(agentic, |d| d.child(feed_box))
                                 .child(
                                     div()
@@ -9968,12 +9974,12 @@ impl Render for Workspace {
             let vp_w = f32::from(window.viewport_size().width);
             let panel = div()
                 .absolute()
-                .top(px(vp_h * 0.10))
-                .left(px(vp_w * 0.17))
-                .right(px(vp_w * 0.17))
-                .bottom(px(vp_h * 0.10))
+                .top(px(vp_h * 0.08))
+                .left(px(vp_w * 0.22))
+                .right(px(vp_w * 0.22))
+                .bottom(px(vp_h * 0.08))
                 .overflow_hidden()
-                .p_3()
+                .p_4()
                 .rounded_md()
                 .border_2()
                 .border_color(th.accent.alpha(0.85))
@@ -10175,9 +10181,17 @@ impl Render for Workspace {
                         .child(card_slider),
                 )
                 .child(label(format!("{exposed}/{total} {}", t.m_exposed)))
-                .child(chips)
-                .child(program_chips)
-                .when(show_state_chips, |d| d.child(state_chips))
+                .child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .flex_wrap()
+                        .items_center()
+                        .gap_2()
+                        .child(chips)
+                        .child(program_chips)
+                        .when(show_state_chips, |d| d.child(state_chips)),
+                )
                 .child(list)
                 .child(
                     div()
