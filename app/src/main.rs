@@ -9979,23 +9979,6 @@ impl Render for Workspace {
                                 .child(
                                     div()
                                         .flex_none()
-                                        .text_size(px(10. * cs))
-                                        .font_weight(gpui::FontWeight::EXTRA_BOLD)
-                                        .text_color(if is_agent { status_glow } else { dot_col })
-                                        .when(live_glow, |d| {
-                                            d.shadow(vec![gpui::BoxShadow {
-                                                color: status_glow.alpha(0.85),
-                                                offset: point(px(0.), px(0.)),
-                                                blur_radius: px(8.),
-                                                spread_radius: px(0.5),
-                                                inset: false,
-                                            }])
-                                        })
-                                        .child(pip_glyph),
-                                )
-                                .child(
-                                    div()
-                                        .flex_none()
                                         .text_size(px(7.5 * cs))
                                         .font_weight(gpui::FontWeight::EXTRA_BOLD)
                                         .text_color(mode_col)
@@ -10081,8 +10064,7 @@ impl Render for Workspace {
                                         .child(format!("\u{0394}{}", hud::fmt_tokens(turn_tok))),
                                 )
                                 .child(div().child(format!("\u{03a3}{}", hud::fmt_tokens(sess_tok))))
-                                // POWER corner (SWCCG): model + effort, pushed right.
-                                .child(div().flex_1().min_w(px(0.)))
+                                // POWER (SWCCG): model + effort, beside the destiny numbers.
                                 .when_some(power_txt, |d, pw| {
                                     d.child(
                                         div()
@@ -10111,7 +10093,27 @@ impl Render for Workspace {
                                                     .child(pw),
                                             ),
                                     )
-                                }),
+                                })
+                                .child(div().flex_1().min_w(px(0.)))
+                                // BIG STATUS, bottom-right corner (2× the old top pip):
+                                // play \u{25b6} / pause / blocked / done \u{2713} / idle \u{25cb}.
+                                .child(
+                                    div()
+                                        .flex_none()
+                                        .text_size(px(20. * cs))
+                                        .font_weight(gpui::FontWeight::EXTRA_BOLD)
+                                        .text_color(if is_agent { status_glow } else { dot_col })
+                                        .when(live_glow, |d| {
+                                            d.shadow(vec![gpui::BoxShadow {
+                                                color: status_glow.alpha(0.85),
+                                                offset: point(px(0.), px(0.)),
+                                                blur_radius: px(11.),
+                                                spread_radius: px(0.7),
+                                                inset: false,
+                                            }])
+                                        })
+                                        .child(pip_glyph),
+                                ),
                         );
                     section_cards.push(row.into_any_element());
                     ri += 1;
@@ -10429,6 +10431,8 @@ impl Render for Workspace {
         // ---- 🪦 the dead-agent recover manifest ----
         let dead_overlay = self.dead_menu.then(|| {
             let vp_h = f32::from(window.viewport_size().height);
+            // shared "card text size" scrubber value (same as the agent wall)
+            let gs = self.card_scale;
             let home_path = session::home_dir();
             let home_str = home_path.to_string_lossy().into_owned();
             // live = the resume ids of every currently-open agent pane.
@@ -10516,7 +10520,7 @@ impl Render for Workspace {
                 .flex_wrap()
                 .items_center()
                 .gap_1()
-                .text_size(px(9.5));
+                .text_size(px(9.5 * gs));
             {
                 let on = filt.is_none();
                 chips = chips.child(
@@ -10631,7 +10635,7 @@ impl Render for Workspace {
                             .gap_2()
                             .px_1()
                             .pt_1()
-                            .text_size(px(8.5))
+                            .text_size(px(8.5 * gs))
                             .text_color(th.text.alpha(0.5))
                             .child(div().w(px(8.)).h(px(8.)).flex_none().rounded_sm().bg(pcol))
                             .child(
@@ -10698,7 +10702,7 @@ impl Render for Workspace {
                         .w(px(364.))
                         .min_w(px(364.))
                         .max_w(px(364.))
-                        .h(px(76.))
+                        .h(px(76. * gs))
                         .flex_none()
                         .flex_shrink_0()
                         .px_2()
@@ -10732,14 +10736,14 @@ impl Render for Workspace {
                                         .child(
                                             div()
                                                 .flex_none()
-                                                .text_size(px(7.))
+                                                .text_size(px(7. * gs))
                                                 .text_color(dead_glow.alpha(0.7))
                                                 .child("\u{25cf}"),
                                         )
                                         .child(
                                             div()
                                                 .flex_none()
-                                                .text_size(px(8.5))
+                                                .text_size(px(8.5 * gs))
                                                 .font_weight(gpui::FontWeight::EXTRA_BOLD)
                                                 .text_color(kind_col)
                                                 .px_1()
@@ -10754,7 +10758,7 @@ impl Render for Workspace {
                                                 .flex_1()
                                                 .min_w(px(0.))
                                                 .overflow_hidden()
-                                                .text_size(px(10.5))
+                                                .text_size(px(10.5 * gs))
                                                 .font_weight(gpui::FontWeight::BOLD)
                                                 .text_color(th.text)
                                                 .child(title),
@@ -10763,7 +10767,7 @@ impl Render for Workspace {
                                 .child(
                                     div()
                                         .overflow_hidden()
-                                        .text_size(px(8.))
+                                        .text_size(px(8. * gs))
                                         .text_color(th.text.alpha(0.5))
                                         .child(meta_line),
                                 ),
@@ -10791,7 +10795,7 @@ impl Render for Workspace {
                                             .rounded_md()
                                             .border_1()
                                             .border_color(th.complement.alpha(0.5))
-                                            .text_size(px(8.5))
+                                            .text_size(px(8.5 * gs))
                                             .font_weight(gpui::FontWeight::BOLD)
                                             .text_color(th.complement)
                                             .cursor_pointer()
@@ -10814,7 +10818,7 @@ impl Render for Workspace {
                                         .rounded_md()
                                         .border_1()
                                         .border_color(th.accent.alpha(0.5))
-                                        .text_size(px(8.5))
+                                        .text_size(px(8.5 * gs))
                                         .font_weight(gpui::FontWeight::BOLD)
                                         .text_color(th.accent)
                                         .bg(th.accent.alpha(0.08))
@@ -10855,7 +10859,7 @@ impl Render for Workspace {
                 .flex()
                 .flex_col()
                 .gap_2()
-                .text_size(px(10.))
+                .text_size(px(10. * gs))
                 .text_color(th.text)
                 .on_mouse_down(
                     MouseButton::Left,
@@ -10867,7 +10871,7 @@ impl Render for Workspace {
                         .flex_row()
                         .items_center()
                         .gap_2()
-                        .text_size(px(13.))
+                        .text_size(px(13. * gs))
                         .child(div().child("\u{1faa6}"))
                         .child(
                             div()
@@ -10877,11 +10881,14 @@ impl Render for Workspace {
                         )
                         .child(
                             div()
-                                .text_size(px(10.))
+                                .text_size(px(10. * gs))
                                 .text_color(th.text.alpha(0.55))
                                 .child(format!("{n_claude} claude \u{00b7} {n_codex} codex")),
                         )
                         .child(div().flex_1().min_w(px(0.)))
+                        // text-size scrubber — same A──●──A control as the FOCUS
+                        // reader + agent wall; shares the card_scale preference.
+                        .child(self.card_scale_slider(th.accent, th.text, cx))
                         .child(
                             div()
                                 .text_color(th.text.alpha(0.7))
@@ -10890,7 +10897,7 @@ impl Render for Workspace {
                 )
                 .child(
                     div()
-                        .text_size(px(8.5))
+                        .text_size(px(8.5 * gs))
                         .text_color(th.accent.alpha(0.85))
                         .child(
                             "click a row to resurrect it \u{2014} or \u{2b07} .cdx to harvest its context into a portable package",
@@ -10899,7 +10906,7 @@ impl Render for Workspace {
                 .when_some(self.harvest_status.clone(), |d, msg| {
                     d.child(
                         div()
-                            .text_size(px(9.))
+                            .text_size(px(9. * gs))
                             .text_color(th.complement)
                             .font_weight(gpui::FontWeight::BOLD)
                             .child(format!("\u{2b07} {msg}")),
