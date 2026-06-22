@@ -4784,11 +4784,11 @@ impl Workspace {
         // ⚓ <edge> <arrow>: ▲ points up when anchoring to the top, ▼ down for the
         // (default) bottom anchor — a glanceable direction cue beside the word.
         let label = if on {
-            format!("\u{2693} TOP \u{25b2}")
+            "\u{2693} TOP \u{25b2}"
         } else {
-            format!("\u{2693} BOTTOM \u{25bc}")
+            "\u{2693} BOTTOM \u{25bc}"
         };
-        Self::bezel_btn(th, &label, on).on_mouse_down(
+        Self::bezel_btn(th, label, on).on_mouse_down(
             MouseButton::Left,
             cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
                 // keep the panel/scrim from seeing this (no close)
