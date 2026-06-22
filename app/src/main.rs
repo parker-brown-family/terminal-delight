@@ -821,8 +821,16 @@ impl SavingsView {
             .map(|a| {
                 a.iter()
                     .map(|x| SavingsAgent {
-                        id: x.get("id").and_then(|y| y.as_str()).unwrap_or("").to_string(),
-                        kind: x.get("type").and_then(|y| y.as_str()).unwrap_or("").to_string(),
+                        id: x
+                            .get("id")
+                            .and_then(|y| y.as_str())
+                            .unwrap_or("")
+                            .to_string(),
+                        kind: x
+                            .get("type")
+                            .and_then(|y| y.as_str())
+                            .unwrap_or("")
+                            .to_string(),
                         calls: x.get("calls").and_then(|y| y.as_u64()).unwrap_or(0),
                         saved_est: x.get("saved_est").and_then(|y| y.as_u64()).unwrap_or(0),
                         last_seen: x
@@ -840,7 +848,11 @@ impl SavingsView {
             .map(|a| {
                 a.iter()
                     .map(|x| SavingsFile {
-                        path: x.get("path").and_then(|y| y.as_str()).unwrap_or("").to_string(),
+                        path: x
+                            .get("path")
+                            .and_then(|y| y.as_str())
+                            .unwrap_or("")
+                            .to_string(),
                         saved: x.get("saved").and_then(|y| y.as_u64()).unwrap_or(0),
                         pct: x.get("pct").and_then(|y| y.as_f64()).unwrap_or(0.0) as f32,
                     })
@@ -860,7 +872,6 @@ impl SavingsView {
         })
     }
 }
-
 
 #[derive(Serialize, Deserialize)]
 struct StateFile {
@@ -1004,8 +1015,7 @@ fn is_catastrophic_shrink(
     if allow_shrink {
         return false;
     }
-    (old_leaves >= 4 && new_leaves * 2 < old_leaves)
-        || (old_tabs >= 3 && new_tabs * 2 < old_tabs)
+    (old_leaves >= 4 && new_leaves * 2 < old_leaves) || (old_tabs >= 3 && new_tabs * 2 < old_tabs)
 }
 
 /// Keep the newest ~10 timestamped snapshots of `state.toml` under a `backups/`
@@ -2429,7 +2439,11 @@ impl Workspace {
                     .items_end()
                     .gap_6()
                     .child(stat(hud::fmt_tokens(v.tokens_saved), "tokens saved", green))
-                    .child(stat(format!("{:.0}%", v.gain_pct), "compression", th.accent))
+                    .child(stat(
+                        format!("{:.0}%", v.gain_pct),
+                        "compression",
+                        th.accent,
+                    ))
                     .child(stat(format!("${:.0}", v.usd), "USD saved", th.complement))
                     .child(div().flex_1().min_w(px(0.)))
                     .child(
@@ -2632,7 +2646,6 @@ impl Workspace {
                 .child(panel),
         )
     }
-
 
     /// Split ONLY the focused terminal; everything else keeps its exact space.
     fn split(&mut self, dir: SplitDir, window: &mut Window, cx: &mut Context<Self>) {
@@ -6897,7 +6910,6 @@ static FOCUS_DEMO_ARMED: std::sync::atomic::AtomicBool = std::sync::atomic::Atom
 static SAVINGS_DEMO_ARMED: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
-
 // When the FOCUS modal opened — drives a ~220ms ease-in of the dim + frosted
 // blur so the backdrop melts behind the panel instead of snapping. Set lazily
 // in render while the modal is open, cleared when it closes.
@@ -10972,7 +10984,9 @@ mod tests {
         let _ = std::fs::remove_file(&path);
 
         // First taker wins and holds the fd.
-        let held = try_lock_at(&path).expect("open ok").expect("first acquires");
+        let held = try_lock_at(&path)
+            .expect("open ok")
+            .expect("first acquires");
         // While held, a second non-blocking attempt is refused.
         assert!(try_lock_at(&path).is_err(), "second taker must be refused");
 
@@ -11682,8 +11696,7 @@ fn scratch_decision(
 /// reopen re-acquires cleanly and RESTORES, instead of the old `/proc` comm-scan
 /// mistaking the dying master for a live peer and degrading the reopen to a lone
 /// scratch terminal.
-static MASTER_LOCK: std::sync::Mutex<Option<std::os::fd::OwnedFd>> =
-    std::sync::Mutex::new(None);
+static MASTER_LOCK: std::sync::Mutex<Option<std::os::fd::OwnedFd>> = std::sync::Mutex::new(None);
 
 /// Per-user path for the master lock. `$XDG_RUNTIME_DIR` (tmpfs, cleared on
 /// logout) is ideal; fall back to the temp dir if it is unset.
@@ -11833,11 +11846,11 @@ fn main() {
     application().run(move |cx: &mut App| {
         theme::init(cx);
         bell::ensure_seeded(); // populate the sounds dir from bundled defaults if empty
-        // Release the MASTER lock at the very start of shutdown — `on_app_quit`
-        // handlers run BEFORE windows/PTYs tear down (App::shutdown), so this
-        // frees the lock seconds ahead of actual process exit. That is what lets
-        // a close → immediate reopen re-elect a master and restore, instead of
-        // the reopen racing the closing process's PTY teardown linger.
+                               // Release the MASTER lock at the very start of shutdown — `on_app_quit`
+                               // handlers run BEFORE windows/PTYs tear down (App::shutdown), so this
+                               // frees the lock seconds ahead of actual process exit. That is what lets
+                               // a close → immediate reopen re-elect a master and restore, instead of
+                               // the reopen racing the closing process's PTY teardown linger.
         cx.on_app_quit(|_cx| {
             release_master_lock();
             async move {}

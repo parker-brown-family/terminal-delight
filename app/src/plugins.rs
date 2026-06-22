@@ -212,9 +212,10 @@ fn resolve_leanctx_mcp(home: &Path) -> Option<String> {
             }
         }
     }
-    candidates.into_iter().find(|p| p.is_file()).map(|p| {
-        p.to_string_lossy().into_owned()
-    })
+    candidates
+        .into_iter()
+        .find(|p| p.is_file())
+        .map(|p| p.to_string_lossy().into_owned())
 }
 
 /// Find a `cdx-mcp` binary: PATH, then a few well-known spots, then a sibling
