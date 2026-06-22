@@ -9224,7 +9224,7 @@ impl Render for Workspace {
                 .flex_wrap()
                 .items_center()
                 .gap_1()
-                .text_size(px(9.5));
+                .text_size(px(9.5 * cs));
             {
                 let on = filt == McpFilter::All;
                 chips = chips.child(
@@ -9316,7 +9316,7 @@ impl Render for Workspace {
                 .flex_wrap()
                 .items_center()
                 .gap_1()
-                .text_size(px(9.5));
+                .text_size(px(9.5 * cs));
             {
                 let on = program_filt.is_none();
                 program_chips = program_chips.child(
@@ -9409,7 +9409,7 @@ impl Render for Workspace {
                 .flex_wrap()
                 .items_center()
                 .gap_1()
-                .text_size(px(9.5));
+                .text_size(px(9.5 * cs));
             {
                 let on = state_filt.is_none();
                 state_chips = state_chips.child(
@@ -9615,6 +9615,7 @@ impl Render for Workspace {
                     let status = p.agent_status();
                     // the agent's last output lines for the card's chat-scroller (#2)
                     let feed: Vec<String> = if is_agent { p.recent_lines(2) } else { Vec::new() };
+                    let logo_path = p.logo.clone();
                     if let Some(program) = program_filt.as_deref() {
                         if mode_lbl.as_str() != program {
                             continue;
@@ -9790,8 +9791,47 @@ impl Render for Workspace {
                                 .child(t),
                         );
                     }
+                    // #3: logo (if set) stacked ABOVE the CLAUDE/CODEX/SHELL chip,
+                    // forming a square avatar block on the card's left.
+                    let avatar = div()
+                        .flex_none()
+                        .flex()
+                        .flex_col()
+                        .items_center()
+                        .justify_center()
+                        .gap_0p5()
+                        .when_some(logo_path.clone(), |d, path| {
+                            d.child(
+                                div()
+                                    .w(px(28. * cs))
+                                    .h(px(28. * cs))
+                                    .flex_none()
+                                    .overflow_hidden()
+                                    .rounded_sm()
+                                    .border_1()
+                                    .border_color(kind_col.alpha(0.3))
+                                    .child(
+                                        gpui::img(std::path::PathBuf::from(path))
+                                            .size_full()
+                                            .object_fit(gpui::ObjectFit::Cover),
+                                    ),
+                            )
+                        })
+                        .child(
+                            div()
+                                .flex_none()
+                                .text_size(px(8.5 * cs))
+                                .font_weight(gpui::FontWeight::EXTRA_BOLD)
+                                .text_color(mode_col)
+                                .px_1()
+                                .rounded_sm()
+                                .border_1()
+                                .border_color(kind_col.alpha(0.42))
+                                .bg(kind_col.alpha(0.12))
+                                .child(mode_lbl),
+                        );
                     section_cards.push(
-                        row.child(
+                        row.child(avatar).child(
                             div()
                                 .flex_1()
                                 .min_w(px(0.))
@@ -9840,19 +9880,6 @@ impl Render for Workspace {
                                                         badge_glyph
                                                     },
                                                 ),
-                                        )
-                                        .child(
-                                            div()
-                                                .flex_none()
-                                                .text_size(px(8.5 * cs))
-                                                .font_weight(gpui::FontWeight::EXTRA_BOLD)
-                                                .text_color(mode_col)
-                                                .px_1()
-                                                .rounded_sm()
-                                                .border_1()
-                                                .border_color(kind_col.alpha(0.42))
-                                                .bg(kind_col.alpha(0.12))
-                                                .child(mode_lbl),
                                         )
                                         .child(
                                             div()
@@ -9992,27 +10019,112 @@ impl Render for Workspace {
                         .child(
                             div()
                                 .text_color(th.accent)
-                                .child(format!("\u{25b6} {n_work}")),
+                                .cursor_pointer()
+                                .px_1()
+                                .rounded_sm()
+                                .when(state_filt == Some(hud::AgentState::Working), |d| {
+                                    d.bg(th.accent.alpha(0.22))
+                                })
+                                .hover(|s| s.bg(th.accent.alpha(0.12)))
+                                .child(format!("\u{25b6} {n_work}"))
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                                        cx.stop_propagation();
+                                        ws.mcp_state_filter =
+                                            (ws.mcp_state_filter != Some(hud::AgentState::Working))
+                                                .then_some(hud::AgentState::Working);
+                                        cx.notify();
+                                    }),
+                                ),
                         )
                         .child(
                             div()
                                 .text_color(hsla(0.11, 0.85, 0.60, 1.))
-                                .child(format!("\u{23f8} {n_block}")),
+                                .cursor_pointer()
+                                .px_1()
+                                .rounded_sm()
+                                .when(state_filt == Some(hud::AgentState::Blocked), |d| {
+                                    d.bg(hsla(0.11, 0.85, 0.60, 1.).alpha(0.22))
+                                })
+                                .hover(|s| s.bg(hsla(0.11, 0.85, 0.60, 1.).alpha(0.12)))
+                                .child(format!("\u{23f8} {n_block}"))
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                                        cx.stop_propagation();
+                                        ws.mcp_state_filter =
+                                            (ws.mcp_state_filter != Some(hud::AgentState::Blocked))
+                                                .then_some(hud::AgentState::Blocked);
+                                        cx.notify();
+                                    }),
+                                ),
                         )
                         .child(
                             div()
                                 .text_color(hsla(0., 0.75, 0.60, 1.))
-                                .child(format!("\u{2715} {n_err}")),
+                                .cursor_pointer()
+                                .px_1()
+                                .rounded_sm()
+                                .when(state_filt == Some(hud::AgentState::Error), |d| {
+                                    d.bg(hsla(0., 0.75, 0.60, 1.).alpha(0.22))
+                                })
+                                .hover(|s| s.bg(hsla(0., 0.75, 0.60, 1.).alpha(0.12)))
+                                .child(format!("\u{2715} {n_err}"))
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                                        cx.stop_propagation();
+                                        ws.mcp_state_filter =
+                                            (ws.mcp_state_filter != Some(hud::AgentState::Error))
+                                                .then_some(hud::AgentState::Error);
+                                        cx.notify();
+                                    }),
+                                ),
                         )
                         .child(
                             div()
                                 .text_color(th.complement.alpha(0.85))
-                                .child(format!("\u{2713} {n_done}")),
+                                .cursor_pointer()
+                                .px_1()
+                                .rounded_sm()
+                                .when(state_filt == Some(hud::AgentState::Finished), |d| {
+                                    d.bg(th.complement.alpha(0.85).alpha(0.22))
+                                })
+                                .hover(|s| s.bg(th.complement.alpha(0.85).alpha(0.12)))
+                                .child(format!("\u{2713} {n_done}"))
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                                        cx.stop_propagation();
+                                        ws.mcp_state_filter =
+                                            (ws.mcp_state_filter != Some(hud::AgentState::Finished))
+                                                .then_some(hud::AgentState::Finished);
+                                        cx.notify();
+                                    }),
+                                ),
                         )
                         .child(
                             div()
                                 .text_color(th.text.alpha(0.45))
-                                .child(format!("\u{25cb} {n_idle}")),
+                                .cursor_pointer()
+                                .px_1()
+                                .rounded_sm()
+                                .when(state_filt == Some(hud::AgentState::Idle), |d| {
+                                    d.bg(th.text.alpha(0.45).alpha(0.22))
+                                })
+                                .hover(|s| s.bg(th.text.alpha(0.45).alpha(0.12)))
+                                .child(format!("\u{25cb} {n_idle}"))
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                                        cx.stop_propagation();
+                                        ws.mcp_state_filter =
+                                            (ws.mcp_state_filter != Some(hud::AgentState::Idle))
+                                                .then_some(hud::AgentState::Idle);
+                                        cx.notify();
+                                    }),
+                                ),
                         )
                         .child(div().flex_1().min_w(px(0.)))
                         .child(div().text_color(th.text.alpha(0.7)).child(format!(
