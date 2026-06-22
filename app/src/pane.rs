@@ -1463,6 +1463,11 @@ impl gpui::EventEmitter<PaneRenamed> for TerminalView {}
 pub struct OpenHelp;
 impl gpui::EventEmitter<OpenHelp> for TerminalView {}
 
+/// Ctrl+Shift+A in this pane — ask the workspace to open the agent-watch (MCP)
+/// panel. It spans every pane, so the workspace owns it; the pane just signals.
+pub struct OpenAgentPanel;
+impl gpui::EventEmitter<OpenAgentPanel> for TerminalView {}
+
 /// Ctrl+F (`global = false`) / Ctrl+Shift+F (`global = true`) was pressed in this
 /// pane — ask the workspace to open the find panel. In-pane find searches just
 /// this pane (and the panel centres over it); global find searches every pane.
@@ -2070,6 +2075,17 @@ impl TerminalView {
         }
     }
 
+    /// Window-space anchor for a keyboard-opened header menu (theme/display):
+    /// the pane's top-right, level with the header icons, so a Ctrl+Shift+G/D
+    /// chord opens the tray in the same spot the icon click would. Falls back to
+    /// the top-left header line before the first layout caches the bounds.
+    fn header_anchor(&self) -> gpui::Point<Pixels> {
+        match *self.content_bounds.lock().unwrap() {
+            Some(b) => point(b.origin.x + b.size.width, b.origin.y),
+            None => point(px(0.), px(HEADER_H)),
+        }
+    }
+
     /// Map a screen point to a viewport cell (row, col in 0..rows/cols) plus the
     /// side of the cell, inverting the tube's barrel warp so hit-testing follows
     /// the curved glass. Shared by selection (`cell_at`) and link hit-testing.
@@ -2344,6 +2360,27 @@ impl TerminalView {
                 }
                 "k" => {
                     self.clear_scrollback(cx);
+                    return;
+                }
+                // Ctrl+Shift+A → agent-watch (MCP) panel; Ctrl+Shift+D → this
+                // pane's DESIGN menu (theme); Ctrl+Shift+G → this pane's GAUGES
+                // tray (display). The Shift guard keeps raw Ctrl+A/D/G (line-start
+                // / EOF / BEL) reaching the PTY. The menus anchor at this pane's
+                // top-right, under the header, where the icon click opens them.
+                "a" => {
+                    cx.emit(OpenAgentPanel);
+                    return;
+                }
+                "d" => {
+                    cx.emit(OpenThemeMenu {
+                        at: self.header_anchor(),
+                    });
+                    return;
+                }
+                "g" => {
+                    cx.emit(OpenDisplayMenu {
+                        at: self.header_anchor(),
+                    });
                     return;
                 }
                 _ => {}
