@@ -1426,6 +1426,38 @@ fn scan_logo_candidates_in(home_path: &std::path::Path) -> Vec<LogoCandidate> {
     out
 }
 
+/// Wrap one tab-group's header + its agent cards in a section with a SUBTLE
+/// background glow in the group's theme colour, so each group reads as one stack.
+fn group_section(header: gpui::Div, gcol: gpui::Hsla, cards: Vec<gpui::AnyElement>) -> gpui::Div {
+    div()
+        .w_full()
+        .flex()
+        .flex_col()
+        .gap_2()
+        .p_2()
+        .rounded_md()
+        .bg(gcol.alpha(0.05))
+        .border_1()
+        .border_color(gcol.alpha(0.14))
+        .shadow(vec![gpui::BoxShadow {
+            color: gcol.alpha(0.13),
+            offset: point(px(0.), px(0.)),
+            blur_radius: px(18.),
+            spread_radius: px(0.),
+            inset: false,
+        }])
+        .child(header)
+        .child(
+            div()
+                .flex()
+                .flex_row()
+                .flex_wrap()
+                .items_start()
+                .gap_2()
+                .children(cards),
+        )
+}
+
 /// Newest first (a just-taken screenshot surfaces at the top), tie-broken A-Z.
 fn logo_sort_by_recency(out: &mut [LogoCandidate]) {
     out.sort_by(|a, b| {
@@ -9362,15 +9394,13 @@ impl Render for Workspace {
             }
 
             // ---- the grouped, filtered pane list ----
-            let mut list = div()
-                .id("mcp-pane-list")
-                .flex()
-                .flex_row()
-                .flex_wrap()
-                .items_start()
-                .gap_2();
+            let mut list = div().id("mcp-pane-list").flex().flex_col().gap_3();
             let mut ri = 0usize;
             let mut last_key: Option<Option<u32>> = None;
+            // accumulate each group's cards, then flush as one glowing section.
+            let mut section_cards: Vec<gpui::AnyElement> = Vec::new();
+            let mut section_header: Option<gpui::Div> = None;
+            let mut section_gcol: gpui::Hsla = th.text;
             // best-effort model parse from the agent's launch/resume command.
             let parse_model = |cmd: &str| -> Option<String> {
                 let toks: Vec<&str> = cmd.split_whitespace().collect();
@@ -9425,7 +9455,15 @@ impl Render for Workspace {
                 };
                 // a group section header whenever the section changes.
                 if last_key != Some(key) {
+                    if let Some(hdr) = section_header.take() {
+                        list = list.child(group_section(
+                            hdr,
+                            section_gcol,
+                            std::mem::take(&mut section_cards),
+                        ));
+                    }
                     last_key = Some(key);
+                    section_gcol = gcol;
                     let gcount = groups_present
                         .iter()
                         .find(|e| e.0 == key)
@@ -9440,7 +9478,7 @@ impl Render for Workspace {
                     } else {
                         gcount
                     };
-                    list = list.child(
+                    section_header = Some(
                         div()
                             .w_full()
                             .flex()
@@ -9655,7 +9693,7 @@ impl Render for Workspace {
                                 .child(t),
                         );
                     }
-                    list = list.child(
+                    section_cards.push(
                         row.child(
                             div()
                                 .flex_1()
@@ -9776,10 +9814,18 @@ impl Render for Workspace {
                                                 .child(metrics),
                                         ),
                                 ),
-                        ),
+                        )
+                        .into_any_element(),
                     );
                     ri += 1;
                 }
+            }
+            if let Some(hdr) = section_header.take() {
+                list = list.child(group_section(
+                    hdr,
+                    section_gcol,
+                    std::mem::take(&mut section_cards),
+                ));
             }
             if ri == 0 {
                 list = list.child(label(t.m_no_panes.to_string()));
