@@ -677,6 +677,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::assertions_on_constants)] // sanity-checks on compile-time consts
     fn reels_land_fast_left_to_right_with_a_last_reel_tease() {
         // columns lock at 0.3/0.8/1.2s after the roll — snappy — and the last
         // column eases in slowest (the hopeful pause).

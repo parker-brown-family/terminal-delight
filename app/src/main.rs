@@ -11338,7 +11338,9 @@ impl Render for Workspace {
     }
 }
 
+// Helpers + main() live below the tests by design; silence the stylistic lint.
 #[cfg(test)]
+#[allow(clippy::items_after_test_module)]
 mod tests {
     use super::*;
 
@@ -11952,8 +11954,10 @@ node = "Leaf"
     #[test]
     fn focus_inherit_preference_round_trips() {
         // The global "Inherit theme" reader preference survives a save/load.
-        let mut state = StateFile::default();
-        state.focus_inherit = true;
+        let state = StateFile {
+            focus_inherit: true,
+            ..Default::default()
+        };
         let body = toml::to_string(&state).expect("serializes");
         let back: StateFile = toml::from_str(&body).expect("round-trips");
         assert!(back.focus_inherit, "the inherit-theme toggle persists");
