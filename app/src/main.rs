@@ -1376,6 +1376,12 @@ struct Workspace {
     mcp_theme_preview: bool,
     /// Agent-wall view filter (the chip strip) — transient, not persisted.
     mcp_filter: McpFilter,
+    /// Agent-wall state filter. Combines with [`Self::mcp_filter`] so a group
+    /// chip plus "blocked" means blocked agents in that group only.
+    mcp_state_filter: Option<hud::AgentState>,
+    /// Agent-wall program/mode filter, generated from the live pane modes.
+    /// Combines with group and state filters.
+    mcp_program_filter: Option<String>,
     /// The OSD slider being dragged, if any (which channel).
     slider_drag: Option<theme::GradeKey>,
     /// Live per-slider track rects for ratio math during a drag.
@@ -1734,6 +1740,8 @@ impl Workspace {
             savings_status: None,
             mcp_theme_preview: false,
             mcp_filter: McpFilter::All,
+            mcp_state_filter: None,
+            mcp_program_filter: None,
             slider_drag: None,
             slider_bounds: Arc::new(Mutex::new(std::collections::HashMap::new())),
             wheel_drag: None,
@@ -6506,6 +6514,69 @@ fn brighten(mut c: Hsla, f: f32) -> Hsla {
     c
 }
 
+fn agent_state_glow(th: &theme::Theme, idle: Hsla, state: hud::AgentState) -> Hsla {
+    match state {
+        hud::AgentState::Working => th.accent,
+        hud::AgentState::Blocked => hsla(0.11, 0.85, 0.60, 1.),
+        hud::AgentState::Error => hsla(0., 0.75, 0.60, 1.),
+        hud::AgentState::Finished => th.complement,
+        hud::AgentState::Idle => idle,
+    }
+}
+
+fn agent_program_glow(fallback: Hsla, label: &str) -> Hsla {
+    match label {
+        "CLAUDE" => hsla(0.105, 0.9, 0.55, 1.),
+        "CODEX" => hsla(0.52, 0.8, 0.6, 1.),
+        // Warm matrix green: green/yellow bias, deliberately away from the
+        // blue-green Codex lane.
+        "SHELL" => hsla(0.285, 0.82, 0.58, 1.),
+        _ => fallback,
+    }
+}
+
+/// Raised row chrome for the Agent Wall and graveyard. It is deliberately the
+/// same grammar as focused terminal panes and floating panels: a crisp phosphor
+/// rim, soft bloom, downward cast shadow, and tight contact shadow. `live=false`
+/// keeps the physical lift but turns the phosphor mostly off for idle/dead rows.
+fn agent_card_shadows(glow: Hsla, live: bool) -> Vec<BoxShadow> {
+    let (rim, halo, cast, contact) = if live {
+        (0.82, 0.38, 0.48, 0.42)
+    } else {
+        (0.26, 0.10, 0.34, 0.32)
+    };
+    vec![
+        BoxShadow {
+            color: glow.alpha(rim),
+            offset: point(px(0.), px(0.)),
+            blur_radius: px(0.),
+            spread_radius: px(1.),
+            inset: false,
+        },
+        BoxShadow {
+            color: glow.alpha(halo),
+            offset: point(px(0.), px(1.)),
+            blur_radius: px(if live { 18. } else { 10. }),
+            spread_radius: px(if live { 1. } else { 0. }),
+            inset: false,
+        },
+        BoxShadow {
+            color: hsla(0., 0., 0., cast),
+            offset: point(px(0.), px(12.)),
+            blur_radius: px(28.),
+            spread_radius: px(-8.),
+            inset: false,
+        },
+        BoxShadow {
+            color: hsla(0., 0., 0., contact),
+            offset: point(px(0.), px(3.)),
+            blur_radius: px(8.),
+            spread_radius: px(-2.),
+            inset: false,
+        },
+    ]
+}
+
 /// Shadow stack for any surface that floats ABOVE the workspace (modals + menus).
 /// It mirrors the focused pane's lit phosphor border — a crisp accent ring plus a
 /// soft accent halo that reads as a *light source* — then casts a broad, dark
@@ -8206,730 +8277,1118 @@ impl Render for Workspace {
         let savings_overlay = self.render_savings_overlay(&th, cx);
 
         // ---- MCP control: the read-only agent-watch surface (the 🤖 button) ----
-        let mcp_overlay =
-            self.mcp_menu.then(|| {
-                let cfg = self.mcp.clone();
-                let t = self.lang.strings();
-                let panes = self.mcp_snapshot(cx);
-                let total = panes.len();
-                let exposed = panes.iter().filter(|p| p.exposed).count();
-                let vp_h = f32::from(window.viewport_size().height);
-                let home = std::env::var("HOME").unwrap_or_default();
-                let label = |s: String| {
-                    div()
-                        .text_size(px(9.))
-                        .text_color(th.text.alpha(0.55))
-                        .child(s)
-                };
-                let enable_btn = Self::bezel_btn(
-                    &th,
-                    &if cfg.enabled {
-                        format!("\u{25c9} {}", t.m_server_on)
-                    } else {
-                        format!("\u{25cb} {}", t.m_server_off)
-                    },
-                    cfg.enabled,
-                )
-                .id("mcp-btn-enable")
-                .hover(|s| s.border_color(th.accent))
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                        cx.stop_propagation();
-                        ws.mcp.enabled = !ws.mcp.enabled;
-                        ws.save(cx);
-                        cx.notify();
-                    }),
-                );
-                let expose_btn = Self::bezel_btn(
-                    &th,
-                    format!(
-                        "{} {}",
-                        t.m_expose,
-                        match cfg.expose {
-                            mcp::Expose::AgentsOnly => t.exp_agents,
-                            mcp::Expose::All => t.exp_all,
-                        }
-                    )
-                    .as_str(),
-                    false,
-                )
-                .id("mcp-btn-expose")
-                .hover(|s| s.border_color(th.accent))
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                        cx.stop_propagation();
-                        ws.mcp.expose = ws.mcp.expose.next();
-                        ws.save(cx);
-                        cx.notify();
-                    }),
-                );
-                let events_btn = Self::bezel_btn(
-                    &th,
-                    &if cfg.events {
-                        format!("\u{25c9} {}", t.m_events_on)
-                    } else {
-                        format!("\u{25cb} {}", t.m_events_off)
-                    },
-                    cfg.events,
-                )
-                .id("mcp-btn-events")
-                .hover(|s| s.border_color(th.accent))
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                        cx.stop_propagation();
-                        ws.mcp.events = !ws.mcp.events;
-                        ws.save(cx);
-                        cx.notify();
-                    }),
-                );
-                // 🎨 tint toggle: paint each pane row with that pane's own screen
-                // background + text colour (off by default).
-                let theme_btn = Self::bezel_btn(
-                    &th,
-                    &if self.mcp_theme_preview {
-                        format!("\u{1f3a8} {}", t.m_theme_on)
-                    } else {
-                        format!("\u{1f3a8} {}", t.m_theme_off)
-                    },
-                    self.mcp_theme_preview,
-                )
-                .id("mcp-btn-theme")
-                .hover(|s| s.border_color(th.accent))
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                        cx.stop_propagation();
-                        ws.mcp_theme_preview = !ws.mcp_theme_preview;
-                        cx.notify();
-                    }),
-                );
-
-                // Writes opt-in: promotes the read-only watch surface to a
-                // remote-control one (set_pane_config). A deliberate second switch —
-                // appearance only, never a PTY. Mirrors the TD_MCP_WRITE env var.
-                let writes_btn = Self::bezel_btn(
-                    &th,
-                    &if cfg.writable {
-                        format!("\u{25c9} {}", t.m_writes_on)
-                    } else {
-                        format!("\u{25cb} {}", t.m_writes_off)
-                    },
-                    cfg.writable,
-                )
-                .id("mcp-btn-writes")
-                .hover(|s| s.border_color(th.accent))
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                        cx.stop_propagation();
-                        ws.mcp.writable = !ws.mcp.writable;
-                        ws.save(cx);
-                        cx.notify();
-                    }),
-                );
-
-                // Live pane list — walk the REAL tree (not the wire snapshot) so each
-                // row can carry the pane's own resolved colours and focus it on click.
-                let preview = self.mcp_theme_preview;
-                // ---- pre-pass: whole-fleet counts (unfiltered) + the tab groups
-                // present, for the rollup totals and the filter chips. ----
-                let (mut n_work, mut n_block, mut n_err, mut n_done, mut n_idle) =
-                    (0u32, 0u32, 0u32, 0u32, 0u32);
-                let mut turn_tok_total = 0u64;
-                let mut sess_tok_total = 0u64;
-                let mut total_panes = 0u32;
-                // (group key, display name, band colour, pane count) in first-seen order.
-                let mut groups_present: Vec<(Option<u32>, String, Hsla, u32)> = Vec::new();
-                for (ti, tab) in self.tabs.iter().enumerate() {
-                    let grp = self.group_of(ti);
-                    let key = grp.map(|g| g.id);
-                    let gname = match grp {
-                        Some(g) => g.name.clone().unwrap_or_else(|| format!("group {}", g.id)),
-                        None => "Ungrouped".to_string(),
-                    };
-                    let gcol = match grp {
-                        Some(g) => g.color,
-                        None => th.text.alpha(0.45),
-                    };
-                    let mut leaves = vec![];
-                    tab.root.leaves(&mut leaves);
-                    for leaf in leaves {
-                        let p = leaf.read(cx);
-                        total_panes += 1;
-                        if p.mode.is_agent() {
-                            let st = p.agent_status();
-                            match st.state {
-                                hud::AgentState::Working => n_work += 1,
-                                hud::AgentState::Blocked => n_block += 1,
-                                hud::AgentState::Error => n_err += 1,
-                                hud::AgentState::Finished => n_done += 1,
-                                hud::AgentState::Idle => n_idle += 1,
-                            }
-                            turn_tok_total += st.turn_tokens.unwrap_or(0);
-                            sess_tok_total += p.session_tokens();
-                        }
-                        match groups_present.iter_mut().find(|e| e.0 == key) {
-                            Some(e) => e.3 += 1,
-                            None => groups_present.push((key, gname.clone(), gcol, 1)),
-                        }
+        let mcp_overlay = self.mcp_menu.then(|| {
+            let cfg = self.mcp.clone();
+            let t = self.lang.strings();
+            let panes = self.mcp_snapshot(cx);
+            let total = panes.len();
+            let exposed = panes.iter().filter(|p| p.exposed).count();
+            let vp_h = f32::from(window.viewport_size().height);
+            let home = std::env::var("HOME").unwrap_or_default();
+            let filt = self.mcp_filter;
+            let state_filt = self.mcp_state_filter;
+            let program_filt = self.mcp_program_filter.clone();
+            let label = |s: String| {
+                div()
+                    .text_size(px(9.))
+                    .text_color(th.text.alpha(0.55))
+                    .child(s)
+            };
+            let enable_btn = Self::bezel_btn(
+                &th,
+                &if cfg.enabled {
+                    format!("\u{25c9} {}", t.m_server_on)
+                } else {
+                    format!("\u{25cb} {}", t.m_server_off)
+                },
+                cfg.enabled,
+            )
+            .id("mcp-btn-enable")
+            .hover(|s| s.border_color(th.accent))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                    cx.stop_propagation();
+                    ws.mcp.enabled = !ws.mcp.enabled;
+                    ws.save(cx);
+                    cx.notify();
+                }),
+            );
+            let expose_btn = Self::bezel_btn(
+                &th,
+                format!(
+                    "{} {}",
+                    t.m_expose,
+                    match cfg.expose {
+                        mcp::Expose::AgentsOnly => t.exp_agents,
+                        mcp::Expose::All => t.exp_all,
                     }
-                }
+                )
+                .as_str(),
+                false,
+            )
+            .id("mcp-btn-expose")
+            .hover(|s| s.border_color(th.accent))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                    cx.stop_propagation();
+                    ws.mcp.expose = ws.mcp.expose.next();
+                    ws.save(cx);
+                    cx.notify();
+                }),
+            );
+            let events_btn = Self::bezel_btn(
+                &th,
+                &if cfg.events {
+                    format!("\u{25c9} {}", t.m_events_on)
+                } else {
+                    format!("\u{25cb} {}", t.m_events_off)
+                },
+                cfg.events,
+            )
+            .id("mcp-btn-events")
+            .hover(|s| s.border_color(th.accent))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                    cx.stop_propagation();
+                    ws.mcp.events = !ws.mcp.events;
+                    ws.save(cx);
+                    cx.notify();
+                }),
+            );
+            // 🎨 inherit toggle: when on, the Agent Wall wears the outer TD
+            // theme as one coherent dashboard instead of mixing every pane's
+            // own colours. The chrome stays flat so hit targets remain honest.
+            let theme_btn = Self::bezel_btn(
+                &th,
+                &if self.mcp_theme_preview {
+                    format!("\u{1f3a8} {}", t.m_theme_on)
+                } else {
+                    format!("\u{1f3a8} {}", t.m_theme_off)
+                },
+                self.mcp_theme_preview,
+            )
+            .id("mcp-btn-theme")
+            .hover(|s| s.border_color(th.accent))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                    cx.stop_propagation();
+                    ws.mcp_theme_preview = !ws.mcp_theme_preview;
+                    cx.notify();
+                }),
+            );
 
-                // ---- filter chips: ALL · <each tab group> · Ungrouped ----
-                let filt = self.mcp_filter;
-                let mut chips = div()
-                    .id("mcp-chips")
-                    .flex()
-                    .flex_row()
-                    .flex_wrap()
-                    .items_center()
-                    .gap_1()
-                    .text_size(px(9.5));
-                {
-                    let on = filt == McpFilter::All;
-                    chips = chips.child(
-                        div()
-                            .id("mcpf-all")
-                            .flex()
-                            .flex_row()
-                            .items_center()
-                            .gap_1()
-                            .px_2()
-                            .py_0p5()
-                            .rounded_full()
-                            .border_1()
-                            .border_color(if on { th.accent } else { th.text.alpha(0.2) })
-                            .when(on, |d| d.bg(th.accent.alpha(0.16)))
-                            .text_color(if on { th.text } else { th.text.alpha(0.6) })
-                            .cursor_pointer()
-                            .hover(|s| s.border_color(th.accent.alpha(0.7)))
-                            .child("ALL")
-                            .child(
-                                div()
-                                    .text_color(th.text.alpha(0.4))
-                                    .child(format!("{total_panes}")),
-                            )
-                            .on_mouse_down(
-                                MouseButton::Left,
-                                cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                                    cx.stop_propagation();
-                                    ws.mcp_filter = McpFilter::All;
-                                    cx.notify();
-                                }),
-                            ),
-                    );
-                }
-                for (key, name, color, count) in &groups_present {
-                    let f = match key {
-                        Some(id) => McpFilter::Group(*id),
-                        None => McpFilter::Ungrouped,
-                    };
-                    let on = filt == f;
-                    let color = *color;
-                    chips = chips.child(
-                        div()
-                            .id(SharedString::from(format!("mcpf-{key:?}")))
-                            .flex()
-                            .flex_row()
-                            .items_center()
-                            .gap_1()
-                            .px_2()
-                            .py_0p5()
-                            .rounded_full()
-                            .border_1()
-                            .border_color(if on { color } else { th.text.alpha(0.2) })
-                            .when(on, |d| d.bg(color.alpha(0.16)))
-                            .text_color(if on { th.text } else { th.text.alpha(0.65) })
-                            .cursor_pointer()
-                            .hover(move |s| s.border_color(color.alpha(0.7)))
-                            .child(
-                                div()
-                                    .w(px(7.))
-                                    .h(px(7.))
-                                    .flex_none()
-                                    .rounded_full()
-                                    .bg(color),
-                            )
-                            .child(name.clone())
-                            .child(
-                                div()
-                                    .text_color(th.text.alpha(0.4))
-                                    .child(format!("{count}")),
-                            )
-                            .on_mouse_down(
-                                MouseButton::Left,
-                                cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
-                                    cx.stop_propagation();
-                                    ws.mcp_filter = f;
-                                    cx.notify();
-                                }),
-                            ),
-                    );
-                }
+            // Writes opt-in: promotes the read-only watch surface to a
+            // remote-control one (set_pane_config). A deliberate second switch —
+            // appearance only, never a PTY. Mirrors the TD_MCP_WRITE env var.
+            let writes_btn = Self::bezel_btn(
+                &th,
+                &if cfg.writable {
+                    format!("\u{25c9} {}", t.m_writes_on)
+                } else {
+                    format!("\u{25cb} {}", t.m_writes_off)
+                },
+                cfg.writable,
+            )
+            .id("mcp-btn-writes")
+            .hover(|s| s.border_color(th.accent))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                    cx.stop_propagation();
+                    ws.mcp.writable = !ws.mcp.writable;
+                    ws.save(cx);
+                    cx.notify();
+                }),
+            );
 
-                // ---- the grouped, filtered pane list ----
-                let mut list = div().id("mcp-pane-list").flex().flex_col().gap_1();
-                let mut ri = 0usize;
-                let mut last_key: Option<Option<u32>> = None;
-                // best-effort model parse from the agent's launch/resume command.
-                let parse_model = |cmd: &str| -> Option<String> {
-                    let toks: Vec<&str> = cmd.split_whitespace().collect();
-                    for (i, t) in toks.iter().enumerate() {
-                        if let Some(v) = t.strip_prefix("--model=") {
-                            return Some(v.to_string());
-                        }
-                        if (*t == "--model" || *t == "-m") && i + 1 < toks.len() {
-                            return Some(toks[i + 1].to_string());
-                        }
-                    }
-                    None
+            // Live pane list — walk the REAL tree (not the wire snapshot) so each
+            // row can carry the pane's own resolved colours and focus it on click.
+            let preview = self.mcp_theme_preview;
+            // ---- pre-pass: whole-fleet counts (unfiltered) + context-aware
+            // filter domains. Group chips come from tab groups; program chips
+            // come from live pane modes; state chips only come from matching
+            // agents. ----
+            let (mut n_work, mut n_block, mut n_err, mut n_done, mut n_idle) =
+                (0u32, 0u32, 0u32, 0u32, 0u32);
+            let mut turn_tok_total = 0u64;
+            let mut sess_tok_total = 0u64;
+            let mut total_panes = 0u32;
+            let mut visible_agent_total = 0u32;
+            let (mut v_work, mut v_block, mut v_err, mut v_done, mut v_idle) =
+                (0u32, 0u32, 0u32, 0u32, 0u32);
+            let mut visible_program_total = 0u32;
+            let mut programs_present: Vec<(String, Hsla, u32)> = Vec::new();
+            // (group key, display name, band colour, pane count) in first-seen order.
+            let mut groups_present: Vec<(Option<u32>, String, Hsla, u32)> = Vec::new();
+            // Fully filtered counts per group, used for group headers when a
+            // program or state chip is active. Same first-seen order as groups_present.
+            let mut group_visible: Vec<(Option<u32>, u32)> = Vec::new();
+            for (ti, tab) in self.tabs.iter().enumerate() {
+                let grp = self.group_of(ti);
+                let key = grp.map(|g| g.id);
+                let gname = match grp {
+                    Some(g) => g.name.clone().unwrap_or_else(|| format!("group {}", g.id)),
+                    None => "Ungrouped".to_string(),
                 };
-                for (ti, tab) in self.tabs.iter().enumerate() {
-                    let grp = self.group_of(ti);
-                    let key = grp.map(|g| g.id);
-                    let show_tab = match filt {
+                let gcol = match grp {
+                    Some(g) => g.color,
+                    None => th.text.alpha(0.45),
+                };
+                let mut leaves = vec![];
+                tab.root.leaves(&mut leaves);
+                for leaf in leaves {
+                    let p = leaf.read(cx);
+                    total_panes += 1;
+                    let show_group = match filt {
                         McpFilter::All => true,
                         McpFilter::Group(id) => key == Some(id),
                         McpFilter::Ungrouped => key.is_none(),
                     };
-                    if !show_tab {
-                        continue;
+                    let mode_lbl = p.mode.label().to_string();
+                    let program_matches = program_filt
+                        .as_deref()
+                        .is_none_or(|program| program == mode_lbl.as_str());
+                    if p.mode.is_agent() {
+                        let st = p.agent_status();
+                        match st.state {
+                            hud::AgentState::Working => n_work += 1,
+                            hud::AgentState::Blocked => n_block += 1,
+                            hud::AgentState::Error => n_err += 1,
+                            hud::AgentState::Finished => n_done += 1,
+                            hud::AgentState::Idle => n_idle += 1,
+                        }
+                        turn_tok_total += st.turn_tokens.unwrap_or(0);
+                        sess_tok_total += p.session_tokens();
+                        if show_group && program_matches {
+                            visible_agent_total += 1;
+                            match st.state {
+                                hud::AgentState::Working => v_work += 1,
+                                hud::AgentState::Blocked => v_block += 1,
+                                hud::AgentState::Error => v_err += 1,
+                                hud::AgentState::Finished => v_done += 1,
+                                hud::AgentState::Idle => v_idle += 1,
+                            }
+                        }
+                        let state_matches = state_filt.is_none_or(|s| st.state == s);
+                        if show_group && state_matches {
+                            visible_program_total += 1;
+                            let color = agent_program_glow(th.text.alpha(0.55), mode_lbl.as_str());
+                            match programs_present.iter_mut().find(|e| e.0 == mode_lbl) {
+                                Some(e) => e.2 += 1,
+                                None => programs_present.push((mode_lbl.clone(), color, 1)),
+                            }
+                        }
+                        if state_matches && program_matches {
+                            match group_visible.iter_mut().find(|e| e.0 == key) {
+                                Some(e) => e.1 += 1,
+                                None => group_visible.push((key, 1)),
+                            }
+                        }
+                    } else {
+                        if show_group && state_filt.is_none() {
+                            visible_program_total += 1;
+                            let color = agent_program_glow(th.text.alpha(0.55), mode_lbl.as_str());
+                            match programs_present.iter_mut().find(|e| e.0 == mode_lbl) {
+                                Some(e) => e.2 += 1,
+                                None => programs_present.push((mode_lbl.clone(), color, 1)),
+                            }
+                        }
+                        if state_filt.is_none() && program_matches {
+                            match group_visible.iter_mut().find(|e| e.0 == key) {
+                                Some(e) => e.1 += 1,
+                                None => group_visible.push((key, 1)),
+                            }
+                        }
                     }
-                    let gname = match grp {
-                        Some(g) => g.name.clone().unwrap_or_else(|| format!("group {}", g.id)),
-                        None => "Ungrouped".to_string(),
-                    };
-                    let gcol = match grp {
-                        Some(g) => g.color,
-                        None => th.text.alpha(0.45),
-                    };
-                    let grouped = key.is_some();
-                    // a group section header whenever the section changes.
-                    if last_key != Some(key) {
-                        last_key = Some(key);
-                        let gcount = groups_present
+                    match groups_present.iter_mut().find(|e| e.0 == key) {
+                        Some(e) => e.3 += 1,
+                        None => groups_present.push((key, gname.clone(), gcol, 1)),
+                    }
+                }
+            }
+
+            // ---- filter chips: ALL · <each tab group> · Ungrouped ----
+            let mut chips = div()
+                .id("mcp-chips")
+                .flex()
+                .flex_row()
+                .flex_wrap()
+                .items_center()
+                .gap_1()
+                .text_size(px(9.5));
+            {
+                let on = filt == McpFilter::All;
+                chips = chips.child(
+                    div()
+                        .id("mcpf-all")
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap_1()
+                        .px_2()
+                        .py_0p5()
+                        .rounded_full()
+                        .border_1()
+                        .border_color(if on { th.accent } else { th.text.alpha(0.2) })
+                        .when(on, |d| d.bg(th.accent.alpha(0.16)))
+                        .text_color(if on { th.text } else { th.text.alpha(0.6) })
+                        .cursor_pointer()
+                        .hover(|s| s.border_color(th.accent.alpha(0.7)))
+                        .child("ALL")
+                        .child(
+                            div()
+                                .text_color(th.text.alpha(0.4))
+                                .child(format!("{total_panes}")),
+                        )
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                                cx.stop_propagation();
+                                ws.mcp_filter = McpFilter::All;
+                                cx.notify();
+                            }),
+                        ),
+                );
+            }
+            for (key, name, color, count) in &groups_present {
+                let f = match key {
+                    Some(id) => McpFilter::Group(*id),
+                    None => McpFilter::Ungrouped,
+                };
+                let on = filt == f;
+                let color = *color;
+                chips = chips.child(
+                    div()
+                        .id(SharedString::from(format!("mcpf-{key:?}")))
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap_1()
+                        .px_2()
+                        .py_0p5()
+                        .rounded_full()
+                        .border_1()
+                        .border_color(if on { color } else { th.text.alpha(0.2) })
+                        .when(on, |d| d.bg(color.alpha(0.16)))
+                        .text_color(if on { th.text } else { th.text.alpha(0.65) })
+                        .cursor_pointer()
+                        .hover(move |s| s.border_color(color.alpha(0.7)))
+                        .child(
+                            div()
+                                .w(px(7.))
+                                .h(px(7.))
+                                .flex_none()
+                                .rounded_full()
+                                .bg(color),
+                        )
+                        .child(name.clone())
+                        .child(
+                            div()
+                                .text_color(th.text.alpha(0.4))
+                                .child(format!("{count}")),
+                        )
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                                cx.stop_propagation();
+                                ws.mcp_filter = f;
+                                cx.notify();
+                            }),
+                        ),
+                );
+            }
+
+            // ---- program chips: generated from the pane modes in the current
+            // group/state context. Zero-count modes never render. ----
+            let mut program_chips = div()
+                .id("mcp-program-chips")
+                .flex()
+                .flex_row()
+                .flex_wrap()
+                .items_center()
+                .gap_1()
+                .text_size(px(9.5));
+            {
+                let on = program_filt.is_none();
+                program_chips = program_chips.child(
+                    div()
+                        .id("mcpp-all")
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap_1()
+                        .px_2()
+                        .py_0p5()
+                        .rounded_full()
+                        .border_1()
+                        .border_color(if on { th.accent } else { th.text.alpha(0.2) })
+                        .when(on, |d| d.bg(th.accent.alpha(0.16)))
+                        .text_color(if on { th.text } else { th.text.alpha(0.6) })
+                        .cursor_pointer()
+                        .hover(|s| s.border_color(th.accent.alpha(0.7)))
+                        .child("ANY PROGRAM")
+                        .child(
+                            div()
+                                .text_color(th.text.alpha(0.4))
+                                .child(format!("{visible_program_total}")),
+                        )
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                                cx.stop_propagation();
+                                ws.mcp_program_filter = None;
+                                cx.notify();
+                            }),
+                        ),
+                );
+            }
+            for (program, color, count) in &programs_present {
+                if *count == 0 {
+                    continue;
+                }
+                let on = program_filt.as_deref() == Some(program.as_str());
+                let color = *color;
+                let program_value = program.clone();
+                program_chips = program_chips.child(
+                    div()
+                        .id(SharedString::from(format!("mcpp-{program}")))
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap_1()
+                        .px_2()
+                        .py_0p5()
+                        .rounded_full()
+                        .border_1()
+                        .border_color(if on { color } else { color.alpha(0.34) })
+                        .when(on, |d| d.bg(color.alpha(0.18)))
+                        .text_color(if on { th.text } else { th.text.alpha(0.68) })
+                        .cursor_pointer()
+                        .hover(move |s| s.border_color(color.alpha(0.78)))
+                        .child(
+                            div()
+                                .w(px(7.))
+                                .h(px(7.))
+                                .flex_none()
+                                .rounded_full()
+                                .bg(color),
+                        )
+                        .child(program.clone())
+                        .child(
+                            div()
+                                .text_color(th.text.alpha(0.4))
+                                .child(format!("{count}")),
+                        )
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                                cx.stop_propagation();
+                                ws.mcp_program_filter = Some(program_value.clone());
+                                cx.notify();
+                            }),
+                        ),
+                );
+            }
+
+            // ---- state chips: generated from matching live agents in the
+            // current group/program context. Hidden entirely at zero. ----
+            let show_state_chips = visible_agent_total > 0;
+            let mut state_chips = div()
+                .id("mcp-state-chips")
+                .flex()
+                .flex_row()
+                .flex_wrap()
+                .items_center()
+                .gap_1()
+                .text_size(px(9.5));
+            {
+                let on = state_filt.is_none();
+                state_chips = state_chips.child(
+                    div()
+                        .id("mcps-all")
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap_1()
+                        .px_2()
+                        .py_0p5()
+                        .rounded_full()
+                        .border_1()
+                        .border_color(if on { th.accent } else { th.text.alpha(0.2) })
+                        .when(on, |d| d.bg(th.accent.alpha(0.16)))
+                        .text_color(if on { th.text } else { th.text.alpha(0.6) })
+                        .cursor_pointer()
+                        .hover(|s| s.border_color(th.accent.alpha(0.7)))
+                        .child("ANY STATE")
+                        .child(
+                            div()
+                                .text_color(th.text.alpha(0.4))
+                                .child(format!("{visible_agent_total}")),
+                        )
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                                cx.stop_propagation();
+                                ws.mcp_state_filter = None;
+                                cx.notify();
+                            }),
+                        ),
+                );
+            }
+            for (state, count) in [
+                (hud::AgentState::Working, v_work),
+                (hud::AgentState::Blocked, v_block),
+                (hud::AgentState::Error, v_err),
+                (hud::AgentState::Finished, v_done),
+                (hud::AgentState::Idle, v_idle),
+            ] {
+                if count == 0 {
+                    continue;
+                }
+                let on = state_filt == Some(state);
+                let color = agent_state_glow(&th, th.text.alpha(0.48), state);
+                state_chips = state_chips.child(
+                    div()
+                        .id(SharedString::from(format!("mcps-{}", state.label())))
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap_1()
+                        .px_2()
+                        .py_0p5()
+                        .rounded_full()
+                        .border_1()
+                        .border_color(if on { color } else { color.alpha(0.34) })
+                        .when(on, |d| d.bg(color.alpha(0.18)))
+                        .text_color(if on { th.text } else { th.text.alpha(0.68) })
+                        .cursor_pointer()
+                        .hover(move |s| s.border_color(color.alpha(0.78)))
+                        .child(div().text_color(color).child(state.badge().to_string()))
+                        .child(state.label().to_uppercase())
+                        .child(
+                            div()
+                                .text_color(th.text.alpha(0.4))
+                                .child(format!("{count}")),
+                        )
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                                cx.stop_propagation();
+                                ws.mcp_state_filter = Some(state);
+                                cx.notify();
+                            }),
+                        ),
+                );
+            }
+
+            // ---- the grouped, filtered pane list ----
+            let mut list = div()
+                .id("mcp-pane-list")
+                .flex()
+                .flex_row()
+                .flex_wrap()
+                .items_start()
+                .gap_2();
+            let mut ri = 0usize;
+            let mut last_key: Option<Option<u32>> = None;
+            // best-effort model parse from the agent's launch/resume command.
+            let parse_model = |cmd: &str| -> Option<String> {
+                let toks: Vec<&str> = cmd.split_whitespace().collect();
+                for (i, t) in toks.iter().enumerate() {
+                    if let Some(v) = t.strip_prefix("--model=") {
+                        return Some(v.to_string());
+                    }
+                    if (*t == "--model" || *t == "-m") && i + 1 < toks.len() {
+                        return Some(toks[i + 1].to_string());
+                    }
+                }
+                None
+            };
+            for (ti, tab) in self.tabs.iter().enumerate() {
+                let grp = self.group_of(ti);
+                let key = grp.map(|g| g.id);
+                let show_tab = match filt {
+                    McpFilter::All => true,
+                    McpFilter::Group(id) => key == Some(id),
+                    McpFilter::Ungrouped => key.is_none(),
+                };
+                if !show_tab {
+                    continue;
+                }
+                let mut leaves = vec![];
+                tab.root.leaves(&mut leaves);
+                let tab_visible = leaves.iter().any(|leaf| {
+                    let p = leaf.read(cx);
+                    let mode_lbl = p.mode.label().to_string();
+                    let program_matches = program_filt
+                        .as_deref()
+                        .is_none_or(|program| program == mode_lbl.as_str());
+                    if !program_matches {
+                        return false;
+                    }
+                    if let Some(state) = state_filt {
+                        p.mode.is_agent() && p.agent_status().state == state
+                    } else {
+                        true
+                    }
+                });
+                if !tab_visible {
+                    continue;
+                }
+                let gname = match grp {
+                    Some(g) => g.name.clone().unwrap_or_else(|| format!("group {}", g.id)),
+                    None => "Ungrouped".to_string(),
+                };
+                let gcol = match grp {
+                    Some(g) => g.color,
+                    None => th.text.alpha(0.45),
+                };
+                // a group section header whenever the section changes.
+                if last_key != Some(key) {
+                    last_key = Some(key);
+                    let gcount = groups_present
+                        .iter()
+                        .find(|e| e.0 == key)
+                        .map(|e| e.3)
+                        .unwrap_or(0);
+                    let gcount = if state_filt.is_some() || program_filt.is_some() {
+                        group_visible
                             .iter()
                             .find(|e| e.0 == key)
-                            .map(|e| e.3)
-                            .unwrap_or(0);
-                        list = list.child(
-                            div()
-                                .flex()
-                                .flex_row()
-                                .items_center()
-                                .gap_2()
-                                .px_1()
-                                .pt_1()
-                                .text_size(px(8.5))
-                                .text_color(th.text.alpha(0.5))
-                                .child(div().w(px(8.)).h(px(8.)).flex_none().rounded_sm().bg(gcol))
-                                .child(
-                                    div()
-                                        .font_weight(gpui::FontWeight::EXTRA_BOLD)
-                                        .child(gname.to_uppercase()),
-                                )
-                                .child(div().flex_1().min_w(px(0.)))
-                                .child(div().text_color(th.text.alpha(0.35)).child(format!(
-                                    "{gcount} {}",
-                                    if gcount == 1 { "pane" } else { "panes" }
-                                ))),
-                        );
-                    }
-                    let mut leaves = vec![];
-                    tab.root.leaves(&mut leaves);
-                    for leaf in leaves {
-                        let id = leaf.entity_id();
-                        let p = leaf.read(cx);
-                        let is_agent = p.mode.is_agent();
-                        let mode_lbl = p.mode.label().to_string();
-                        let title = p
-                            .name
-                            .clone()
-                            .filter(|n| !n.is_empty())
-                            .or_else(|| (!p.title.is_empty()).then(|| p.title.clone()))
-                            .unwrap_or_else(|| p.mode.label().to_string());
-                        let rt = p.runtime();
-                        let exposed = mcp::should_expose(&self.mcp, is_agent);
-                        let status = p.agent_status();
-                        let sess_tok = p.session_tokens();
-                        // the pane's own resolved screen colours, for 🎨 preview mode
-                        let pth = p.resolved_theme(cx);
-                        // best-effort model from the launch/resume command (often absent).
-                        let model = rt.resume.as_deref().and_then(parse_model);
-
-                        // Abbreviate so a long cwd / resume id never spills off the panel.
-                        let mut cwd = rt.cwd.clone().unwrap_or_else(|| "\u{2014}".to_string());
-                        if !home.is_empty() {
-                            cwd = cwd.replacen(&home, "~", 1);
-                        }
-                        if cwd.chars().count() > 34 {
-                            let tail: String = cwd
-                                .chars()
-                                .rev()
-                                .take(32)
-                                .collect::<Vec<_>>()
-                                .into_iter()
-                                .rev()
-                                .collect();
-                            cwd = format!("\u{2026}{tail}");
-                        }
-                        let sub = match &rt.resume {
-                            Some(sess) => {
-                                let agent = sess.split_whitespace().next().unwrap_or("agent");
-                                let sid = sess
-                                    .split_whitespace()
-                                    .last()
-                                    .filter(|t| t.len() >= 8 && !t.starts_with("--"));
-                                match sid {
-                                    Some(i) => format!("{cwd}   {agent} \u{00b7} {}", &i[..8]),
-                                    None => format!("{cwd}   {agent}"),
-                                }
-                            }
-                            None => cwd,
-                        };
-                        // "doing now": when working, lead the 2nd line with the live
-                        // gerund (✷ Accomplishing…); otherwise show the cwd / resume.
-                        let working = is_agent && status.state == hud::AgentState::Working;
-                        let line2_accent = working && status.gerund.is_some();
-                        let line2 = if line2_accent {
-                            format!(
-                                "\u{2737} {}\u{2026}",
-                                status.gerund.clone().unwrap_or_default()
-                            )
-                        } else {
-                            sub
-                        };
-
-                        // 🎨 on → the row wears the pane's own background + text colour.
-                        let row_text = if preview { pth.text } else { th.text };
-                        let dot_col = if exposed {
-                            th.accent
-                        } else {
-                            row_text.alpha(0.3)
-                        };
-                        let mode_col = if is_agent {
-                            th.accent
-                        } else {
-                            row_text.alpha(0.6)
-                        };
-                        // the per-row colour band: the group's colour if grouped, else
-                        // the agent kind's hue (Claude amber / Codex cyan / shell dim).
-                        let band = if grouped {
-                            gcol
-                        } else {
-                            match mode_lbl.as_str() {
-                                "CLAUDE" => hsla(0.105, 0.9, 0.55, 1.),
-                                "CODEX" => hsla(0.52, 0.8, 0.6, 1.),
-                                _ => row_text.alpha(0.22),
-                            }
-                        };
-                        let hover_border = th.accent.alpha(0.7);
-                        // HUD per-row: state badge colour/glyph + a compact metrics
-                        // line (state · effort · elapsed · turn tokens · Σ session).
-                        let badge_col = if is_agent {
-                            match status.state {
-                                hud::AgentState::Working => th.accent,
-                                hud::AgentState::Blocked => hsla(0.11, 0.85, 0.60, 1.),
-                                hud::AgentState::Error => hsla(0., 0.75, 0.60, 1.),
-                                hud::AgentState::Finished => th.complement,
-                                hud::AgentState::Idle => row_text.alpha(0.4),
-                            }
-                        } else {
-                            row_text.alpha(0.25)
-                        };
-                        let badge_glyph = if is_agent {
-                            status.state.badge().to_string()
-                        } else {
-                            String::new()
-                        };
-                        let metrics = if is_agent {
-                            let mut parts = vec![status.state.label().to_string()];
-                            if let Some(ef) = &status.effort {
-                                parts.push(ef.clone());
-                            }
-                            if let Some(e) = &status.elapsed {
-                                parts.push(e.clone());
-                            }
-                            if let Some(tk) = status.turn_tokens {
-                                parts.push(hud::fmt_tokens(tk));
-                            }
-                            parts.push(format!("\u{03a3}{}", hud::fmt_tokens(sess_tok)));
-                            parts.join(" \u{00b7} ")
-                        } else {
-                            String::new()
-                        };
-                        let model_disp = model.map(|m| {
-                            if m.chars().count() > 16 {
-                                format!("{}\u{2026}", m.chars().take(15).collect::<String>())
-                            } else {
-                                m
-                            }
-                        });
-
-                        let mut row = div()
-                            .id(SharedString::from(format!("mcp-row-{ri}")))
+                            .map(|e| e.1)
+                            .unwrap_or(0)
+                    } else {
+                        gcount
+                    };
+                    list = list.child(
+                        div()
+                            .w_full()
                             .flex()
                             .flex_row()
                             .items_center()
                             .gap_2()
                             .px_1()
-                            .py_0p5()
-                            .rounded_sm()
-                            .border_1()
-                            .border_color(hsla(0., 0., 0., 0.))
-                            .cursor_pointer()
-                            // hover turns each pane into a clickable chip
-                            .hover(move |s| s.border_color(hover_border))
-                            // click → hop to that tab and focus that exact pane, just
-                            // as if the terminal itself had been clicked.
-                            .on_mouse_down(
-                                MouseButton::Left,
-                                cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
-                                    cx.stop_propagation();
-                                    if let Some(t) = ws.tabs.get_mut(ti) {
-                                        t.focused = Some(id);
-                                    }
-                                    ws.mcp_menu = false;
-                                    ws.activate_tab(ti, window, cx);
-                                }),
-                            );
-                        if preview {
-                            row = row.bg(pth.bg);
+                            .pt_1()
+                            .text_size(px(8.5))
+                            .text_color(th.text.alpha(0.5))
+                            .child(div().w(px(8.)).h(px(8.)).flex_none().rounded_sm().bg(gcol))
+                            .child(
+                                div()
+                                    .font_weight(gpui::FontWeight::EXTRA_BOLD)
+                                    .child(gname.to_uppercase()),
+                            )
+                            .child(div().flex_1().min_w(px(0.)))
+                            .child(div().text_color(th.text.alpha(0.35)).child(format!(
+                                "{gcount} {}",
+                                if gcount == 1 { "pane" } else { "panes" }
+                            ))),
+                    );
+                }
+                for leaf in leaves {
+                    let id = leaf.entity_id();
+                    let p = leaf.read(cx);
+                    let is_agent = p.mode.is_agent();
+                    let mode_lbl = p.mode.label().to_string();
+                    let title = p
+                        .name
+                        .clone()
+                        .filter(|n| !n.is_empty())
+                        .or_else(|| (!p.title.is_empty()).then(|| p.title.clone()))
+                        .unwrap_or_else(|| p.mode.label().to_string());
+                    let rt = p.runtime();
+                    let exposed = mcp::should_expose(&self.mcp, is_agent);
+                    let status = p.agent_status();
+                    if let Some(program) = program_filt.as_deref() {
+                        if mode_lbl.as_str() != program {
+                            continue;
                         }
-                        list =
-                            list.child(
-                                row.child(
-                                    div()
-                                        .w(px(3.))
-                                        .h(px(22.))
-                                        .flex_none()
-                                        .rounded_full()
-                                        .bg(band),
-                                )
-                                .child(div().flex_none().text_color(dot_col).child(
-                                    if exposed { "\u{25cf}" } else { "\u{25cb}" }.to_string(),
-                                ))
+                    }
+                    if let Some(state) = state_filt {
+                        if !is_agent || status.state != state {
+                            continue;
+                        }
+                    }
+                    let sess_tok = p.session_tokens();
+                    // best-effort model from the launch/resume command (often absent).
+                    let model = rt.resume.as_deref().and_then(parse_model);
+
+                    // Abbreviate so a long cwd / resume id never spills off the panel.
+                    let mut cwd = rt.cwd.clone().unwrap_or_else(|| "\u{2014}".to_string());
+                    if !home.is_empty() {
+                        cwd = cwd.replacen(&home, "~", 1);
+                    }
+                    if cwd.chars().count() > 34 {
+                        let tail: String = cwd
+                            .chars()
+                            .rev()
+                            .take(32)
+                            .collect::<Vec<_>>()
+                            .into_iter()
+                            .rev()
+                            .collect();
+                        cwd = format!("\u{2026}{tail}");
+                    }
+                    let sub = match &rt.resume {
+                        Some(sess) => {
+                            let agent = sess.split_whitespace().next().unwrap_or("agent");
+                            let sid = sess
+                                .split_whitespace()
+                                .last()
+                                .filter(|t| t.len() >= 8 && !t.starts_with("--"));
+                            match sid {
+                                Some(i) => format!("{cwd}   {agent} \u{00b7} {}", &i[..8]),
+                                None => format!("{cwd}   {agent}"),
+                            }
+                        }
+                        None => cwd,
+                    };
+                    // "doing now": when working, lead the 2nd line with the live
+                    // gerund (✷ Accomplishing…); otherwise show the cwd / resume.
+                    let working = is_agent && status.state == hud::AgentState::Working;
+                    let line2_accent = working && status.gerund.is_some();
+                    let line2 = if line2_accent {
+                        format!(
+                            "\u{2737} {}\u{2026}",
+                            status.gerund.clone().unwrap_or_default()
+                        )
+                    } else {
+                        sub
+                    };
+
+                    // In inherited-theme mode, every card uses the same outer
+                    // TD palette. Status/kind colours still carry meaning, but
+                    // the board itself no longer jitters between pane skins.
+                    let row_text = th.text;
+                    let dot_col = if exposed {
+                        th.accent
+                    } else {
+                        row_text.alpha(0.3)
+                    };
+                    let kind_col = agent_program_glow(row_text.alpha(0.55), mode_lbl.as_str());
+                    let mode_col = kind_col;
+                    // HUD per-row: state badge colour/glyph + a compact metrics
+                    // line (state · effort · elapsed · turn tokens · Σ session).
+                    let status_glow = if is_agent {
+                        agent_state_glow(&th, row_text.alpha(0.38), status.state)
+                    } else {
+                        kind_col
+                    };
+                    let live_glow = is_agent && !matches!(status.state, hud::AgentState::Idle);
+                    // The left rail is the status chip. Its rim is exactly the
+                    // same colour as the raised card glow/border.
+                    let chip_fill = if live_glow {
+                        status_glow.alpha(0.30)
+                    } else {
+                        status_glow.alpha(0.10)
+                    };
+                    let chip_rim = status_glow.alpha(if live_glow { 0.88 } else { 0.30 });
+                    let card_bg = if preview {
+                        darken(th.bg, if live_glow { 0.72 } else { 0.64 })
+                    } else if live_glow {
+                        darken(th.surface, 0.50)
+                    } else {
+                        darken(th.surface, 0.42)
+                    };
+                    let card_border = status_glow.alpha(if live_glow { 0.74 } else { 0.24 });
+                    let hover_border = status_glow.alpha(if live_glow { 0.95 } else { 0.48 });
+                    let badge_col = if is_agent {
+                        status_glow
+                    } else {
+                        kind_col.alpha(0.78)
+                    };
+                    let badge_glyph = if is_agent {
+                        status.state.badge().to_string()
+                    } else {
+                        String::new()
+                    };
+                    let metrics = if is_agent {
+                        let mut parts = vec![status.state.label().to_string()];
+                        if let Some(ef) = &status.effort {
+                            parts.push(ef.clone());
+                        }
+                        if let Some(e) = &status.elapsed {
+                            parts.push(e.clone());
+                        }
+                        if let Some(tk) = status.turn_tokens {
+                            parts.push(hud::fmt_tokens(tk));
+                        }
+                        parts.push(format!("\u{03a3}{}", hud::fmt_tokens(sess_tok)));
+                        parts.join(" \u{00b7} ")
+                    } else {
+                        String::new()
+                    };
+                    let model_disp = model.map(|m| {
+                        if m.chars().count() > 16 {
+                            format!("{}\u{2026}", m.chars().take(15).collect::<String>())
+                        } else {
+                            m
+                        }
+                    });
+
+                    let row = div()
+                        .id(SharedString::from(format!("mcp-row-{ri}")))
+                        .flex()
+                        .flex_row()
+                        .items_stretch()
+                        .gap_2()
+                        .w(px(316.))
+                        .min_w(px(316.))
+                        .max_w(px(316.))
+                        .h(px(88.))
+                        .flex_none()
+                        .flex_shrink_0()
+                        .px_2()
+                        .py_1()
+                        .rounded_md()
+                        .border_2()
+                        .border_color(card_border)
+                        .bg(card_bg)
+                        .shadow(agent_card_shadows(status_glow, live_glow))
+                        .cursor_pointer()
+                        // hover intensifies the same state phosphor, so the
+                        // click target reads like a terminal pane border.
+                        .hover(move |s| s.border_color(hover_border))
+                        // click → hop to that tab and focus that exact pane, just
+                        // as if the terminal itself had been clicked.
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
+                                cx.stop_propagation();
+                                if let Some(t) = ws.tabs.get_mut(ti) {
+                                    t.focused = Some(id);
+                                }
+                                ws.mcp_menu = false;
+                                ws.activate_tab(ti, window, cx);
+                            }),
+                        );
+                    list = list.child(
+                        row.child(
+                            div()
+                                .w(px(8.))
+                                .h_full()
+                                .flex_none()
+                                .rounded_full()
+                                .border_1()
+                                .border_color(chip_rim)
+                                .bg(chip_fill)
+                                .shadow(vec![BoxShadow {
+                                    color: status_glow.alpha(if live_glow { 0.32 } else { 0.08 }),
+                                    offset: point(px(0.), px(0.)),
+                                    blur_radius: px(if live_glow { 14. } else { 6. }),
+                                    spread_radius: px(1.),
+                                    inset: false,
+                                }]),
+                        )
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w(px(0.))
+                                .overflow_hidden()
+                                .flex()
+                                .flex_col()
+                                .justify_between()
+                                .gap_1()
                                 .child(
                                     div()
-                                        .w(px(15.))
-                                        .flex_none()
-                                        .text_color(badge_col)
-                                        .child(badge_glyph),
-                                )
-                                .child(
-                                    div()
-                                        .w(px(58.))
-                                        .flex_none()
                                         .flex()
-                                        .flex_col()
+                                        .flex_row()
+                                        .items_center()
+                                        .gap_1()
+                                        .min_w(px(0.))
+                                        .child(
+                                            div().flex_none().text_color(dot_col).child(
+                                                if exposed { "\u{25cf}" } else { "\u{25cb}" }
+                                                    .to_string(),
+                                            ),
+                                        )
                                         .child(
                                             div()
-                                                .text_size(px(9.))
+                                                .w(px(14.))
+                                                .flex_none()
+                                                .text_color(badge_col)
+                                                .child(badge_glyph),
+                                        )
+                                        .child(
+                                            div()
+                                                .flex_none()
+                                                .text_size(px(8.5))
                                                 .font_weight(gpui::FontWeight::EXTRA_BOLD)
                                                 .text_color(mode_col)
+                                                .px_1()
+                                                .rounded_sm()
+                                                .border_1()
+                                                .border_color(kind_col.alpha(0.42))
+                                                .bg(kind_col.alpha(0.12))
                                                 .child(mode_lbl),
                                         )
-                                        .when_some(model_disp, |d, m| {
-                                            d.child(
-                                                div()
-                                                    .text_size(px(7.5))
-                                                    .text_color(row_text.alpha(0.5))
-                                                    .child(m),
-                                            )
-                                        }),
-                                )
-                                .child(
-                                    // takes the remaining width and clips, so neither the
-                                    // title nor the path can push the row off the panel.
-                                    div()
-                                        .flex_1()
-                                        .min_w(px(0.))
-                                        .overflow_hidden()
-                                        .flex()
-                                        .flex_col()
                                         .child(
                                             div()
+                                                .flex_1()
+                                                .min_w(px(0.))
                                                 .overflow_hidden()
-                                                .text_size(px(10.))
+                                                .text_size(px(10.5))
+                                                .font_weight(gpui::FontWeight::BOLD)
                                                 .text_color(row_text)
                                                 .child(title),
-                                        )
-                                        .child(
-                                            div()
-                                                .overflow_hidden()
-                                                .text_size(px(8.5))
-                                                .text_color(if line2_accent {
-                                                    th.accent.alpha(0.9)
-                                                } else {
-                                                    row_text.alpha(0.55)
-                                                })
-                                                .child(line2),
                                         ),
                                 )
                                 .child(
                                     div()
-                                        .flex_none()
-                                        .text_size(px(9.5))
-                                        .text_color(badge_col)
-                                        .when(is_agent && status.state.needs_you(), |d| {
-                                            d.font_weight(gpui::FontWeight::BOLD)
+                                        .overflow_hidden()
+                                        .text_size(px(8.5))
+                                        .text_color(if line2_accent {
+                                            status_glow.alpha(0.92)
+                                        } else {
+                                            row_text.alpha(0.55)
                                         })
-                                        .child(metrics),
+                                        .child(line2),
+                                )
+                                .child(
+                                    div()
+                                        .flex()
+                                        .flex_row()
+                                        .items_center()
+                                        .gap_1()
+                                        .min_w(px(0.))
+                                        .when_some(model_disp, |d, m| {
+                                            d.child(
+                                                div()
+                                                    .flex_none()
+                                                    .text_size(px(7.5))
+                                                    .text_color(kind_col)
+                                                    .px_1()
+                                                    .rounded_sm()
+                                                    .border_1()
+                                                    .border_color(kind_col.alpha(0.30))
+                                                    .bg(kind_col.alpha(0.10))
+                                                    .child(m),
+                                            )
+                                        })
+                                        .child(
+                                            div()
+                                                .flex_1()
+                                                .min_w(px(0.))
+                                                .overflow_hidden()
+                                                .text_size(px(8.5))
+                                                .text_color(badge_col)
+                                                .when(is_agent && status.state.needs_you(), |d| {
+                                                    d.font_weight(gpui::FontWeight::BOLD)
+                                                })
+                                                .child(metrics),
+                                        ),
                                 ),
-                            );
-                        ri += 1;
+                        ),
+                    );
+                    ri += 1;
+                }
+            }
+            if ri == 0 {
+                list = list.child(label(t.m_no_panes.to_string()));
+            }
+
+            // The pane list scrolls within a height cap, so the toggles above and
+            // the notes below stay pinned and on-screen no matter how many panes.
+            let list = list
+                .min_h(px(0.))
+                .max_h(px((vp_h - 220.).max(140.)))
+                .overflow_y_scroll();
+
+            let (mcp_k1, mcp_k2) = theme::warp_coeffs(th.warp);
+            let mcp_glare = th.screen_glare;
+            let mcp_preview = preview;
+            let panel = div()
+                .absolute()
+                .top(px(28.))
+                .left(px(28.))
+                .right(px(28.))
+                .bottom(px(28.))
+                .overflow_hidden()
+                .p_3()
+                .rounded_md()
+                .border_2()
+                .border_color(th.accent.alpha(0.85))
+                .bg(if preview {
+                    darken(th.bg, 0.78)
+                } else {
+                    darken(th.surface, 0.6)
+                })
+                .shadow(float_shadows(th.accent))
+                .flex()
+                .flex_col()
+                .gap_2()
+                .text_size(px(10.))
+                .text_color(th.text)
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|_, _: &MouseDownEvent, _w, cx| cx.stop_propagation()),
+                )
+                .child(label(format!(
+                    "MCP {} \u{2014} {}",
+                    t.m_control,
+                    if cfg.writable {
+                        t.m_read_write
+                    } else {
+                        t.m_read_only
                     }
-                }
-                if ri == 0 {
-                    list = list.child(label(t.m_no_panes.to_string()));
-                }
+                )))
+                .child(
+                    // ---- the agent-wall scoreboard rollup ----
+                    div()
+                        .flex()
+                        .flex_row()
+                        .flex_wrap()
+                        .items_center()
+                        .gap_3()
+                        .text_size(px(12.))
+                        .child(
+                            div()
+                                .font_weight(gpui::FontWeight::EXTRA_BOLD)
+                                .text_color(th.complement)
+                                .child("AGENT WALL"),
+                        )
+                        .child(
+                            div()
+                                .text_color(th.accent)
+                                .child(format!("\u{25b6} {n_work}")),
+                        )
+                        .child(
+                            div()
+                                .text_color(hsla(0.11, 0.85, 0.60, 1.))
+                                .child(format!("\u{23f8} {n_block}")),
+                        )
+                        .child(
+                            div()
+                                .text_color(hsla(0., 0.75, 0.60, 1.))
+                                .child(format!("\u{2715} {n_err}")),
+                        )
+                        .child(
+                            div()
+                                .text_color(th.complement.alpha(0.85))
+                                .child(format!("\u{2713} {n_done}")),
+                        )
+                        .child(
+                            div()
+                                .text_color(th.text.alpha(0.45))
+                                .child(format!("\u{25cb} {n_idle}")),
+                        )
+                        .child(div().flex_1().min_w(px(0.)))
+                        .child(div().text_color(th.text.alpha(0.7)).child(format!(
+                            "\u{0394} {} \u{00b7} \u{03a3} {}",
+                            hud::fmt_tokens(turn_tok_total),
+                            hud::fmt_tokens(sess_tok_total)
+                        )))
+                        // </> LeanCTX savings: read lean-ctx's precomputed
+                        // token-savings rollup over the leanctx-savings plugin
+                        // and pop the </> overlay. Own handler + stop_propagation.
+                        .child(
+                            div()
+                                .id("mcp-btn-savings")
+                                .flex_none()
+                                .px_2()
+                                .py_0p5()
+                                .rounded_sm()
+                                .border_1()
+                                .border_color(th.complement.alpha(0.6))
+                                .bg(th.complement.alpha(0.10))
+                                .text_size(px(10.))
+                                .font_weight(gpui::FontWeight::EXTRA_BOLD)
+                                .text_color(th.complement)
+                                .cursor_pointer()
+                                .hover(|s| s.bg(th.complement.alpha(0.22)))
+                                .child("\u{003c}/\u{003e} savings")
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                                        cx.stop_propagation();
+                                        ws.fetch_savings(None, cx);
+                                    }),
+                                ),
+                        ),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .flex_wrap()
+                        .items_center()
+                        .gap_1()
+                        .child(enable_btn)
+                        .child(expose_btn)
+                        .child(events_btn)
+                        .child(writes_btn)
+                        .child(theme_btn),
+                )
+                .child(label(format!("{exposed}/{total} {}", t.m_exposed)))
+                .child(chips)
+                .child(program_chips)
+                .when(show_state_chips, |d| d.child(state_chips))
+                .child(list)
+                .child(
+                    div()
+                        .text_size(px(8.5))
+                        .text_color(th.accent.alpha(0.85))
+                        .child(t.m_watches.to_string()),
+                )
+                .child(label(t.m_transport.to_string()))
+                // Theme-on makes the dashboard itself a curved-glass tube
+                // using the OUTER display gauges. This mirrors FOCUS: the
+                // rect is measured from the real prepaint bounds so the warp
+                // and frosted edge stay pixel-aligned as the window resizes.
+                .child(
+                    div().absolute().inset_0().child(
+                        gpui::canvas(
+                            move |bounds, window, _cx| {
+                                if !mcp_preview {
+                                    return;
+                                }
+                                let sf = window.scale_factor();
+                                let rect = [
+                                    f32::from(bounds.origin.x) * sf,
+                                    f32::from(bounds.origin.y) * sf,
+                                    f32::from(bounds.size.width) * sf,
+                                    f32::from(bounds.size.height) * sf,
+                                ];
+                                crate::warp::set_focus_blur(
+                                    rect,
+                                    28.0 * sf,
+                                    16.0 * sf,
+                                    0.78,
+                                    8.0 * sf,
+                                );
+                                crate::warp::register_focus_tube(
+                                    rect,
+                                    mcp_glare,
+                                    mcp_k1,
+                                    mcp_k2,
+                                    [0.0, 1.0, 1.0],
+                                );
+                            },
+                            |_, _, _, _| {},
+                        )
+                        .size_full(),
+                    ),
+                );
 
-                // The pane list scrolls within a height cap, so the toggles above and
-                // the notes below stay pinned and on-screen no matter how many panes.
-                let list = list
-                    .min_h(px(0.))
-                    .max_h(px((vp_h - 220.).max(140.)))
-                    .overflow_y_scroll();
-
-                let panel = div()
-                    .w(gpui::relative(0.7))
-                    .max_h(gpui::relative(0.86))
-                    .overflow_hidden()
-                    .p_3()
-                    .rounded_md()
-                    .border_2()
-                    .border_color(th.accent.alpha(0.85))
-                    .bg(darken(th.surface, 0.6))
-                    .shadow(float_shadows(th.accent))
-                    .flex()
-                    .flex_col()
-                    .gap_2()
-                    .text_size(px(10.))
-                    .text_color(th.text)
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(|_, _: &MouseDownEvent, _w, cx| cx.stop_propagation()),
-                    )
-                    .child(label(format!(
-                        "MCP {} \u{2014} {}",
-                        t.m_control,
-                        if cfg.writable {
-                            t.m_read_write
-                        } else {
-                            t.m_read_only
-                        }
-                    )))
-                    .child(
-                        // ---- the agent-wall scoreboard rollup ----
-                        div()
-                            .flex()
-                            .flex_row()
-                            .flex_wrap()
-                            .items_center()
-                            .gap_3()
-                            .text_size(px(12.))
-                            .child(
-                                div()
-                                    .font_weight(gpui::FontWeight::EXTRA_BOLD)
-                                    .text_color(th.complement)
-                                    .child("AGENT WALL"),
-                            )
-                            .child(
-                                div()
-                                    .text_color(th.accent)
-                                    .child(format!("\u{25b6} {n_work}")),
-                            )
-                            .child(
-                                div()
-                                    .text_color(hsla(0.11, 0.85, 0.60, 1.))
-                                    .child(format!("\u{23f8} {n_block}")),
-                            )
-                            .child(
-                                div()
-                                    .text_color(hsla(0., 0.75, 0.60, 1.))
-                                    .child(format!("\u{2715} {n_err}")),
-                            )
-                            .child(
-                                div()
-                                    .text_color(th.complement.alpha(0.85))
-                                    .child(format!("\u{2713} {n_done}")),
-                            )
-                            .child(
-                                div()
-                                    .text_color(th.text.alpha(0.45))
-                                    .child(format!("\u{25cb} {n_idle}")),
-                            )
-                            .child(div().flex_1().min_w(px(0.)))
-                            .child(div().text_color(th.text.alpha(0.7)).child(format!(
-                                "\u{0394} {} \u{00b7} \u{03a3} {}",
-                                hud::fmt_tokens(turn_tok_total),
-                                hud::fmt_tokens(sess_tok_total)
-                            )))
-                            // </> LeanCTX savings: read lean-ctx's precomputed
-                            // token-savings rollup over the leanctx-savings plugin
-                            // and pop the </> overlay. Own handler + stop_propagation.
-                            .child(
-                                div()
-                                    .id("mcp-btn-savings")
-                                    .flex_none()
-                                    .px_2()
-                                    .py_0p5()
-                                    .rounded_sm()
-                                    .border_1()
-                                    .border_color(th.complement.alpha(0.6))
-                                    .bg(th.complement.alpha(0.10))
-                                    .text_size(px(10.))
-                                    .font_weight(gpui::FontWeight::EXTRA_BOLD)
-                                    .text_color(th.complement)
-                                    .cursor_pointer()
-                                    .hover(|s| s.bg(th.complement.alpha(0.22)))
-                                    .child("\u{003c}/\u{003e} savings")
-                                    .on_mouse_down(
-                                        MouseButton::Left,
-                                        cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                                            cx.stop_propagation();
-                                            ws.fetch_savings(None, cx);
-                                        }),
-                                    ),
-                            ),
-                    )
-                    .child(enable_btn)
-                    .child(expose_btn)
-                    .child(events_btn)
-                    .child(writes_btn)
-                    .child(theme_btn)
-                    .child(label(format!("{exposed}/{total} {}", t.m_exposed)))
-                    .child(chips)
-                    .child(list)
-                    .child(
-                        div()
-                            .text_size(px(8.5))
-                            .text_color(th.accent.alpha(0.85))
-                            .child(t.m_watches.to_string()),
-                    )
-                    .child(label(t.m_transport.to_string()));
-
-                // full-screen scrim: dim the wall + CENTRE the panel (like the help
-                // modal); a click anywhere outside closes it.
-                div()
-                    .absolute()
-                    .inset_0()
-                    .bg(th.bg.alpha(0.70))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                            ws.mcp_menu = false;
-                            cx.notify();
-                        }),
-                    )
-                    .child(panel)
-            });
+            // Full-screen scrim with a fixed-position panel. Filters can change
+            // the card count, but the dashboard's screen rectangle never moves.
+            div()
+                .absolute()
+                .inset_0()
+                .occlude()
+                .bg(th.bg.alpha(if preview { 0.52 } else { 0.70 }))
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                        ws.mcp_menu = false;
+                        cx.notify();
+                    }),
+                )
+                .child(panel)
+        });
 
         // ---- confirm overlay: closing a tab that holds more than one pane ----
         // ---- 🪦 the dead-agent recover manifest ----
@@ -9069,12 +9528,22 @@ impl Render for Workspace {
             }
 
             // ---- grouped, filtered list ----
-            let mut list = div().id("dead-list").flex().flex_col().gap_1();
+            let mut list = div()
+                .id("dead-list")
+                .flex()
+                .flex_row()
+                .flex_wrap()
+                .items_start()
+                .gap_2();
             if dead.is_empty() {
                 list = list.child(
-                    div().py_2().text_color(th.text.alpha(0.6)).child(
-                        "No recoverable agents \u{2014} every saved session is either live or already gone.",
-                    ),
+                    div()
+                        .w_full()
+                        .py_2()
+                        .text_color(th.text.alpha(0.6))
+                        .child(
+                            "No recoverable agents \u{2014} every saved session is either live or already gone.",
+                        ),
                 );
             }
             // The scan is newest-first with projects interleaved; stable-sort by each
@@ -9101,6 +9570,7 @@ impl Render for Workspace {
                     let gcount = groups.iter().find(|g| g.0 == proj).map(|g| g.1).unwrap_or(0);
                     list = list.child(
                         div()
+                            .w_full()
                             .flex()
                             .flex_row()
                             .items_center()
@@ -9127,6 +9597,15 @@ impl Render for Workspace {
                     recover::AgentKind::Claude => hsla(0.105, 0.9, 0.55, 1.),
                     recover::AgentKind::Codex => hsla(0.52, 0.8, 0.6, 1.),
                 };
+                // Graveyard entries are agents with no live pane. Keep the
+                // raised physical card, but run the phosphor off: muted project
+                // hue, weak rim, no active halo. The left chip rim matches.
+                let dead_glow = pcol;
+                let dead_border = dead_glow.alpha(0.26);
+                let dead_chip_fill = dead_glow.alpha(0.09);
+                let dead_chip_rim = dead_glow.alpha(0.32);
+                let dead_bg = darken(th.surface, 0.40);
+                let dead_hover = dead_glow.alpha(0.52);
                 let mut cwd_disp = da.cwd.clone().unwrap_or_else(|| "\u{2014}".to_string());
                 if !home_str.is_empty() {
                     cwd_disp = cwd_disp.replacen(&home_str, "~", 1);
@@ -9162,16 +9641,33 @@ impl Render for Workspace {
                         .id(SharedString::from(format!("dead-{di}")))
                         .flex()
                         .flex_row()
-                        .items_center()
+                        .items_stretch()
                         .gap_2()
-                        .px_1()
-                        .py_0p5()
-                        .rounded_sm()
-                        .border_1()
-                        .border_color(hsla(0., 0., 0., 0.))
+                        .w(px(364.))
+                        .min_w(px(364.))
+                        .max_w(px(364.))
+                        .h(px(82.))
+                        .flex_none()
+                        .flex_shrink_0()
+                        .px_2()
+                        .py_1()
+                        .rounded_md()
+                        .border_2()
+                        .border_color(dead_border)
+                        .bg(dead_bg)
+                        .shadow(agent_card_shadows(dead_glow, false))
                         .cursor_pointer()
-                        .hover(move |s| s.border_color(kind_col.alpha(0.7)))
-                        .child(div().w(px(3.)).h(px(26.)).flex_none().rounded_full().bg(pcol))
+                        .hover(move |s| s.border_color(dead_hover))
+                        .child(
+                            div()
+                                .w(px(8.))
+                                .h_full()
+                                .flex_none()
+                                .rounded_full()
+                                .border_1()
+                                .border_color(dead_chip_rim)
+                                .bg(dead_chip_fill),
+                        )
                         .child(
                             div()
                                 .w(px(46.))
@@ -9179,6 +9675,11 @@ impl Render for Workspace {
                                 .text_size(px(9.))
                                 .font_weight(gpui::FontWeight::EXTRA_BOLD)
                                 .text_color(kind_col)
+                                .px_1()
+                                .rounded_sm()
+                                .border_1()
+                                .border_color(kind_col.alpha(0.34))
+                                .bg(kind_col.alpha(0.10))
                                 .child(da.kind.label()),
                         )
                         .child(
@@ -9233,9 +9734,14 @@ impl Render for Workspace {
                         .child(
                             div()
                                 .flex_none()
+                                .px_1()
+                                .rounded_sm()
+                                .border_1()
+                                .border_color(th.complement.alpha(0.38))
                                 .text_size(px(9.))
                                 .font_weight(gpui::FontWeight::BOLD)
                                 .text_color(th.accent)
+                                .bg(th.accent.alpha(0.08))
                                 .child("RESURRECT \u{23ce}"),
                         )
                         .on_mouse_down(
@@ -9255,8 +9761,11 @@ impl Render for Workspace {
             }
 
             let panel = div()
-                .w(gpui::relative(0.72))
-                .max_h(gpui::relative(0.86))
+                .absolute()
+                .top(px(28.))
+                .left(px(28.))
+                .right(px(28.))
+                .bottom(px(28.))
                 .overflow_hidden()
                 .p_3()
                 .rounded_md()
@@ -9327,10 +9836,8 @@ impl Render for Workspace {
             div()
                 .absolute()
                 .inset_0()
+                .occlude()
                 .bg(th.bg.alpha(0.70))
-                .flex()
-                .items_center()
-                .justify_center()
                 .on_mouse_down(
                     MouseButton::Left,
                     cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
