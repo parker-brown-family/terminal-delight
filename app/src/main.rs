@@ -12675,16 +12675,19 @@ node = "Leaf"
                 path: "/a/acme-logo.png".into(),
                 base: "acme-logo.png".into(),
                 dir: "~/Pictures".into(),
+                mtime: 30,
             },
             LogoCandidate {
                 path: "/b/banner.jpg".into(),
                 base: "banner.jpg".into(),
                 dir: "~/Downloads".into(),
+                mtime: 20,
             },
             LogoCandidate {
                 path: "/c/icon.svg".into(),
                 base: "icon.svg".into(),
                 dir: "~/Pictures/brand".into(),
+                mtime: 10,
             },
         ];
         // empty query → every candidate, in order
