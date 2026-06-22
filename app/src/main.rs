@@ -1341,7 +1341,13 @@ struct LogoCandidate {
 /// `~/.local/share/terminal-delight/demo-logos` (override via `TD_DEMO_LOGO_DIR`).
 /// `seed` is hashed (FNV-1a) so a given agent always lands on the same picture.
 fn demo_logo_for(seed: &str) -> Option<String> {
-    if std::env::var_os("TD_DEMO_LOGOS").is_none() && std::env::var_os("TD_WALL_DEMO").is_none() {
+    // "Spin up a demo of this layout" launches the child with TD_DEMO=1; the
+    // headless capture hooks use TD_WALL_DEMO / TD_DEMO_LOGOS. Any of them arms
+    // the stock art. Normal sessions match none → zero cost, real uploads only.
+    if std::env::var_os("TD_DEMO_LOGOS").is_none()
+        && std::env::var_os("TD_WALL_DEMO").is_none()
+        && std::env::var_os("TD_DEMO").is_none()
+    {
         return None;
     }
     let dir = std::env::var_os("TD_DEMO_LOGO_DIR")
@@ -9724,7 +9730,7 @@ impl Render for Workspace {
                     let logo_path = p
                         .logo
                         .clone()
-                        .or_else(|| is_agent.then(|| demo_logo_for(&format!("{title}/{id:?}"))).flatten());
+                        .or_else(|| demo_logo_for(&format!("{title}/{id:?}")));
                     if let Some(program) = program_filt.as_deref() {
                         if mode_lbl.as_str() != program {
                             continue;
