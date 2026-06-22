@@ -1332,10 +1332,16 @@ struct LogoCandidate {
 /// hidden + heavy dirs, capped so the picker stays snappy. Returns candidates
 /// pre-formatted as `(path, basename, ~/relative dir)`, sorted by basename.
 fn scan_logo_candidates() -> Vec<LogoCandidate> {
+    let home = std::env::var("HOME").unwrap_or_default();
+    scan_logo_candidates_in(std::path::Path::new(&home))
+}
+
+/// Testable core: walk `home`'s picture dirs first (full depth), then a SHALLOW
+/// home root, returning image candidates newest-first.
+fn scan_logo_candidates_in(home_path: &std::path::Path) -> Vec<LogoCandidate> {
     const CAP: usize = 4000;
     const MAX_DEPTH: usize = 6;
-    let home = std::env::var("HOME").unwrap_or_default();
-    let home_path = PathBuf::from(&home);
+    let home = home_path.to_string_lossy().into_owned();
     let is_img = |name: &str| {
         let n = name.to_ascii_lowercase();
         n.ends_with(".png")
@@ -1358,7 +1364,7 @@ fn scan_logo_candidates() -> Vec<LogoCandidate> {
     // picture dirs are reached (that hid ~/Pictures/Screenshots/<your shot>).
     let mut stack: Vec<(PathBuf, usize)> = Vec::new();
     if home_path.is_dir() {
-        stack.push((home_path.clone(), MAX_DEPTH.saturating_sub(1)));
+        stack.push((home_path.to_path_buf(), MAX_DEPTH.saturating_sub(1)));
     }
     for d in ["Images", "Documents", "Desktop", "Downloads", "Pictures"] {
         let r = home_path.join(d);
@@ -1416,14 +1422,17 @@ fn scan_logo_candidates() -> Vec<LogoCandidate> {
             }
         }
     }
-    // Newest first — a screenshot you just took surfaces at the very top, so an
-    // empty query (or a quick type) shows it right away.
+    logo_sort_by_recency(&mut out);
+    out
+}
+
+/// Newest first (a just-taken screenshot surfaces at the top), tie-broken A-Z.
+fn logo_sort_by_recency(out: &mut [LogoCandidate]) {
     out.sort_by(|a, b| {
         b.mtime
             .cmp(&a.mtime)
             .then_with(|| a.base.to_ascii_lowercase().cmp(&b.base.to_ascii_lowercase()))
     });
-    out
 }
 
 /// Fuzzy-rank `candidates` against `query` (empty query → all, in scan order).
@@ -11939,6 +11948,34 @@ impl Render for Workspace {
 #[allow(clippy::items_after_test_module)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn logo_scan_reaches_screenshots() {
+        use std::io::Write;
+        let tmp = std::env::temp_dir().join(format!("td-logo-{}", std::process::id()));
+        let shots = tmp.join("Pictures/Screenshots");
+        std::fs::create_dir_all(&shots).unwrap();
+        std::fs::File::create(shots.join("fresh-shot.png"))
+            .unwrap()
+            .write_all(b"x")
+            .unwrap();
+        let found = scan_logo_candidates_in(&tmp);
+        let ok = found.iter().any(|c| c.base == "fresh-shot.png");
+        std::fs::remove_dir_all(&tmp).ok();
+        assert!(ok, "a shot under ~/Pictures/Screenshots must be reachable");
+    }
+
+    #[test]
+    fn logo_sort_puts_newest_first() {
+        let mut v = vec![
+            LogoCandidate { path: "a".into(), base: "old.png".into(), dir: "~/Pictures".into(), mtime: 10 },
+            LogoCandidate { path: "b".into(), base: "new.png".into(), dir: "~/Pictures/Screenshots".into(), mtime: 99 },
+            LogoCandidate { path: "c".into(), base: "mid.png".into(), dir: "~/Downloads".into(), mtime: 50 },
+        ];
+        logo_sort_by_recency(&mut v);
+        assert_eq!(v[0].base, "new.png", "newest first");
+        assert_eq!(v[2].base, "old.png", "oldest last");
+    }
 
     #[test]
     fn savings_view_parses_plugin_payload() {
