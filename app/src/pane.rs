@@ -4643,24 +4643,13 @@ impl Render for TerminalView {
                         .px_4()
                         .py(px(8.))
                         .rounded_lg()
-                        .border_1()
-                        .border_color(acc.alpha(0.7))
+                        .border_2()
+                        .border_color(acc.alpha(0.85))
                         .bg(panel_bg)
                         .text_color(txt)
                         .text_size(px(12.))
                         .font_family(ff.clone())
-                        .shadow(vec![BoxShadow {
-                            color: Hsla {
-                                h: 0.,
-                                s: 0.,
-                                l: 0.,
-                                a: 0.55,
-                            },
-                            offset: point(px(0.), px(6.)),
-                            blur_radius: px(22.),
-                            spread_radius: px(0.),
-                            inset: false,
-                        }])
+                        .shadow(crate::float_shadows(acc))
                         .flex()
                         .flex_col()
                         .items_center()

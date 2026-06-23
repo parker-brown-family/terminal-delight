@@ -4301,8 +4301,8 @@ impl Workspace {
             .rounded(px(10.))
             .overflow_hidden()
             .bg(darken(th.surface, 0.35))
-            .border_1()
-            .border_color(th.accent.alpha(0.6))
+            .border_2()
+            .border_color(th.accent.alpha(0.85))
             .font_family(th.font_family.clone())
             .map(|mut d| {
                 // CJK/Devanagari fallback so 中文 / 日本語 / 한국어 / हिन्दी render as real
@@ -4312,13 +4312,7 @@ impl Workspace {
                 }
                 d
             })
-            .shadow(vec![BoxShadow {
-                color: hsla(0., 0., 0., 0.7),
-                offset: point(px(0.), px(10.)),
-                blur_radius: px(36.),
-                spread_radius: px(2.),
-                inset: false,
-            }])
+            .shadow(float_shadows(th.accent))
             .child(header)
             .child(div().pb_1().flex().flex_col().child(list))
             .child(
@@ -7628,7 +7622,7 @@ fn agent_card_shadows(glow: Hsla, live: bool) -> Vec<BoxShadow> {
 /// workspace beneath it sits in shadow. `glow` is the rim colour (the theme
 /// accent; a danger hue for destructive dialogs). Pair with `.border_2()` in the
 /// same hue, and `.rounded_*()` so the glow follows the corners.
-fn float_shadows(glow: Hsla) -> Vec<BoxShadow> {
+pub(crate) fn float_shadows(glow: Hsla) -> Vec<BoxShadow> {
     vec![
         // the doubled border: a crisp 1px outer ring in the rim colour
         BoxShadow {
@@ -12240,16 +12234,10 @@ impl Render for Workspace {
                 .top(px(f32::from(at.y) + 8.))
                 .p_2()
                 .rounded_md()
-                .border_1()
-                .border_color(th.accent.alpha(0.6))
+                .border_2()
+                .border_color(th.accent.alpha(0.85))
                 .bg(darken(th.surface, 0.6))
-                .shadow(vec![BoxShadow {
-                    color: hsla(0., 0., 0., 0.55),
-                    offset: point(px(3.), px(5.)),
-                    blur_radius: px(16.),
-                    spread_radius: px(0.),
-                    inset: false,
-                }])
+                .shadow(float_shadows(th.accent))
                 .flex()
                 .flex_col()
                 .gap_2()
