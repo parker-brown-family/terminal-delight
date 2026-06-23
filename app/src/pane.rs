@@ -2011,11 +2011,26 @@ impl TerminalView {
     /// agent-wall card so an IDLE agent shows what you last ASKED it instead of a
     /// blank input window.
     pub fn last_human_message(&self, max_lines: usize) -> Vec<String> {
-        let rows: Vec<String> = self
-            .live_rows()
-            .into_iter()
-            .map(|r| r.trim_end().to_string())
-            .collect();
+        let term = self.session.term.lock();
+        let grid = term.grid();
+        let cols = grid.columns();
+        let screen = grid.screen_lines() as i32;
+        let hist = grid.history_size() as i32;
+        // Read a grid line by absolute index — NEGATIVE indices are SCROLLBACK, so
+        // the prompt is found even when the agent's reply has scrolled it off the
+        // visible screen (the whole point: an idle agent's last ask).
+        let read = |line: i32| -> String {
+            let row = &grid[Line(line)];
+            let mut s = String::with_capacity(cols);
+            for col in 0..cols {
+                let cell = &row[Column(col)];
+                if cell.flags.contains(Flags::WIDE_CHAR_SPACER) {
+                    continue;
+                }
+                s.push(if cell.c == '\0' { ' ' } else { cell.c });
+            }
+            s.trim_end().to_string()
+        };
         let strip = |t: &str| -> String {
             t.trim_start()
                 .trim_start_matches(|c| {
@@ -2024,18 +2039,22 @@ impl TerminalView {
                 .trim()
                 .to_string()
         };
-        // walk up to the last human-input line that actually carries text.
-        let start = (0..rows.len())
+        // walk UP from the bottom (incl. scrollback) to the last human-input line
+        // that actually carries text (skip the empty live input box).
+        let start = (-hist..screen)
             .rev()
-            .find(|&i| is_human_input_line(&rows[i]) && !strip(&rows[i]).is_empty());
+            .find(|&l| is_human_input_line(&read(l)) && !strip(&read(l)).is_empty());
         let Some(start) = start else {
             return Vec::new();
         };
-        let mut out = vec![strip(&rows[start])];
-        for r in rows.iter().skip(start + 1) {
-            let t = r.trim();
-            // stop at a blank, the next turn, or the input-box hint/echo.
-            if t.is_empty() || is_human_input_line(r) || t.starts_with('?') || t.starts_with("esc ")
+        let mut out = vec![strip(&read(start))];
+        for l in (start + 1)..screen {
+            let s = read(l);
+            let t = s.trim();
+            if t.is_empty()
+                || is_human_input_line(&s)
+                || t.starts_with('?')
+                || t.starts_with("esc ")
             {
                 break;
             }
