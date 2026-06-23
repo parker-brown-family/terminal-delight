@@ -7779,6 +7779,19 @@ static GRAVEYARD_DEMO_ARMED: std::sync::atomic::AtomicBool =
 // in render while the modal is open, cleared when it closes.
 static FOCUS_OPEN_AT: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
 
+/// `TD_ANCHOR_TOP=1` forces the inverted anchor-to-top read on, independent of
+/// the saved/UI preference — a headless capture + test hook so the inverted
+/// layout can be exercised without driving the toggle by mouse. Read once and
+/// cached (env vars don't change mid-process), so this costs nothing per frame.
+fn td_anchor_top_forced() -> bool {
+    static FORCED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *FORCED.get_or_init(|| {
+        std::env::var("TD_ANCHOR_TOP")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false)
+    })
+}
+
 impl Render for Workspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.reap(window, cx);
@@ -7786,7 +7799,10 @@ impl Render for Workspace {
         lang::set_current(self.lang);
         // Publish the global anchor-to-top setting so every pane's render (which
         // can't reach `&Workspace`) reads the live value when building its rows.
-        pane::set_anchor_top(self.anchor_top);
+        // `TD_ANCHOR_TOP=1` forces it on regardless of the saved preference — a
+        // headless/test hook so the inverted read can be captured without a click
+        // (read once, cached; checked here so it covers every Workspace path).
+        pane::set_anchor_top(self.anchor_top || td_anchor_top_forced());
         let s = self.lang.strings();
         warp::begin_frame(); // visible panes re-register their tube rects below
                              // An open overlay (theme breakout / confirm dialog) flattens the glass:

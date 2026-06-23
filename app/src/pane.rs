@@ -1357,6 +1357,14 @@ pub struct TerminalView {
     /// Barrel coefficients for the optional renderer patch. Public upstream
     /// GPUI builds keep this at zero so mouse hit testing stays linear.
     warp_k: (f32, f32),
+    /// Painted-row → grid-viewport-row transform recorded each frame so hit-test
+    /// (`cell_at` / `link_under`) and wheel scrolling can invert the same visual
+    /// transform the render applied. `paint_offset` is the `bottom_anchor_rows`
+    /// shift; `paint_inverted` is true in anchor-to-top inverted mode (the rows
+    /// were bottom-anchored THEN reversed, so the prompt sits on top). Default
+    /// `(0, false)` ⇒ no-op, byte-identical to the un-anchored path.
+    paint_offset: usize,
+    paint_inverted: bool,
     pub mode: PaneMode,
     /// Per-pane appearance: retained theme/grade overrides plus two independent
     /// follow-outer switches. A pristine pane inherits both groups (+ mode tint).
@@ -1633,7 +1641,17 @@ impl TerminalView {
     /// whenever this pane notifies). No second terminal, no extra PTY work.
     pub fn mirror_snapshot(&self, cx: &App) -> MirrorSnapshot {
         let th = self.resolved_theme(cx);
-        let lines = self.styled_lines(&th);
+        let mut lines = self.styled_lines(&th);
+        // Mirror the live pane's anchor-to-top inverted read: bottom-anchor the
+        // rows (prompt to the bottom) THEN reverse, so the FOCUS reader shows the
+        // prompt on TOP with older output flowing down, exactly like the pane.
+        // Crawl keeps its own bottom-anchor look (handled in the modal), so it is
+        // excluded — matching the live render's `anchor_top() && !th.crawl` gate.
+        // Off (the default) leaves `lines` untouched → byte-identical to before.
+        if anchor_top() && !th.crawl {
+            bottom_anchor_rows(&mut lines, self.grid.rows);
+            lines.reverse();
+        }
         // The pane's own resolved CRT curvature + glare, so the FOCUS reader can
         // inherit the look on demand (flat 0/0/0 for a flat pane → no-op).
         let (k1, k2) = crate::theme::warp_coeffs(th.warp);
@@ -1868,6 +1886,8 @@ impl TerminalView {
             spawned: Instant::now(),
             fx: crt::Fx::new(seed),
             warp_k: (0., 0.),
+            paint_offset: 0,
+            paint_inverted: false,
             mode: PaneMode::Shell,
             appearance: PaneTheme::default(),
             ctx_menu: None,
@@ -2176,8 +2196,20 @@ impl TerminalView {
         (row, col, side)
     }
 
+    /// Invert the per-frame paint transform: a PAINTED/visual viewport row `p`
+    /// (what `viewport_cell` returns) → the GRID viewport row `g` the renderer
+    /// drew there. The render either bottom-anchored (`g = p - offset`, incl.
+    /// crawl) or, in anchor-to-top inverted mode, bottom-anchored THEN reversed
+    /// (`g = (rows-1 - p) - offset`). Clamped to `0..rows-1`. With the default
+    /// `paint_offset == 0 && !paint_inverted`, this is the identity (`g == p`),
+    /// so the un-anchored path is byte-identical to before.
+    fn paint_row_to_grid_row(&self, p: usize) -> usize {
+        paint_row_to_grid_row_impl(p, self.grid.rows, self.paint_offset, self.paint_inverted)
+    }
+
     fn cell_at(&self, pos: gpui::Point<Pixels>, display_offset: usize) -> (TermPoint, Side) {
         let (row, col, side) = self.viewport_cell(pos);
+        let row = self.paint_row_to_grid_row(row);
         (
             viewport_to_point(display_offset, TermPoint::new(row, Column(col))),
             side,
@@ -2189,6 +2221,10 @@ impl TerminalView {
     /// against the pane's cwd (only returning paths that actually exist).
     fn link_under(&self, pos: gpui::Point<Pixels>) -> Option<String> {
         let (vrow, vcol, _) = self.viewport_cell(pos);
+        // Map the painted/visual row back to the grid viewport row it shows
+        // (identity in the default un-anchored path; inverts the anchor-to-top
+        // flip + any bottom-anchor offset otherwise).
+        let vrow = self.paint_row_to_grid_row(vrow);
         // Read the whole visible grid plus per-row soft-wrap flags, then stitch
         // the clicked row to its neighbours so a URL/path wrapped across rows is
         // recognised as one token (see `stitch_wrapped_line`).
@@ -2535,10 +2571,16 @@ impl TerminalView {
         if ev.modifiers.control {
             return; // workspace handles ctrl+wheel = text-size scrub
         }
-        let dy = match ev.delta {
+        let mut dy = match ev.delta {
             gpui::ScrollDelta::Lines(l) => l.y * 3.0,
             gpui::ScrollDelta::Pixels(p) => f32::from(p.y) / self.cell_h,
         };
+        // In inverted (anchor-to-top) mode "older is DOWN", so a scroll-DOWN
+        // gesture should reveal OLDER lines. Flip the sign so the wheel feels
+        // natural; the default path is untouched.
+        if self.paint_inverted {
+            dy = -dy;
+        }
         self.scroll_accum += dy;
         let lines = self.scroll_accum.trunc() as i32;
         if lines != 0 {
@@ -3214,14 +3256,15 @@ pub fn anchor_top() -> bool {
 /// session's prompt hugging the bottom of the pane (the default). When the global
 /// [`anchor_top`] toggle is on, callers skip this so content stays top-aligned.
 /// Row count is preserved (layout height unchanged). No-op when the screen is
-/// full (offset 0) or all-blank. Pure.
-fn bottom_anchor_rows(lines: &mut Vec<(String, Vec<TextRun>)>, rows: usize) {
+/// full (offset 0) or all-blank. Pure. Returns the `offset` it applied (0 when
+/// no-op) so the render can record it for the hit-test inverse.
+fn bottom_anchor_rows(lines: &mut Vec<(String, Vec<TextRun>)>, rows: usize) -> usize {
     let Some(last) = lines.iter().rposition(|(t, _)| !t.trim_end().is_empty()) else {
-        return;
+        return 0;
     };
     let offset = rows.saturating_sub(last + 1);
     if offset == 0 {
-        return;
+        return 0;
     }
     lines.truncate(last + 1); // drop the trailing blank rows we're re-adding on top
     let mut shifted: Vec<(String, Vec<TextRun>)> =
@@ -3230,6 +3273,26 @@ fn bottom_anchor_rows(lines: &mut Vec<(String, Vec<TextRun>)>, rows: usize) {
             .collect();
     shifted.append(lines); // moves content below the blank padding
     *lines = shifted;
+    offset
+}
+
+/// Invert the per-frame paint transform (pure): a PAINTED/visual viewport row
+/// `p` → the GRID viewport row `g` the renderer drew there, given the grid
+/// `rows`, the `bottom_anchor_rows` `offset`, and whether the render `inverted`
+/// (anchor-to-top: bottom-anchored THEN reversed). Result clamped to `0..rows-1`.
+///   inverted: g = (rows-1 - p) - offset
+///   else:     g = p - offset
+/// With `offset == 0 && !inverted` this is the identity, so the un-anchored path
+/// is byte-identical to before the feature. Split out so it's unit-testable
+/// without a live `Pane`.
+fn paint_row_to_grid_row_impl(p: usize, rows: usize, offset: usize, inverted: bool) -> usize {
+    let last = rows.max(1) - 1;
+    let g = if inverted {
+        last.saturating_sub(p).saturating_sub(offset)
+    } else {
+        p.saturating_sub(offset)
+    };
+    g.min(last)
 }
 
 /// Font families installed on this system, captured once at startup so the grid
@@ -3732,10 +3795,30 @@ impl Render for TerminalView {
         // PTY, and shell are untouched (so the perspective shader composes on top).
         // Crawl mode ALWAYS bottom-anchors (the prompt belongs at the near edge).
         // In normal mode, content hugs the bottom too UNLESS the global
-        // anchor-to-top toggle is on — then we skip the bottom pad and leave the
-        // grid's naturally top-aligned rows as-is, so the prompt sits near the top.
+        // anchor-to-top toggle is on — then we INVERT the read: bottom-anchor
+        // first (push the prompt to the grid bottom) THEN reverse the rows, so
+        // the prompt lands on TOP, recent output just under it, older output
+        // flowing DOWN, blank padding at the bottom ("neck looks up a tiny bit").
+        //
+        // Record the transform on `self` so the hit-test (`cell_at` /
+        // `link_under`) and wheel scrolling can invert it: painted row `p` shows
+        //   inverted: g = (rows-1 - p) - offset
+        //   else:     g = p - offset            (incl. crawl)
+        // The default un-anchored path leaves `(0, false)` ⇒ identity, so it is
+        // byte-identical to before this feature.
+        let inverted = anchor_top() && !th.crawl;
         if th.crawl || !anchor_top() {
-            bottom_anchor_rows(&mut lines, self.grid.rows);
+            // Bottom-anchor (crawl + default normal mode).
+            self.paint_offset = bottom_anchor_rows(&mut lines, self.grid.rows);
+            self.paint_inverted = false;
+        } else if inverted {
+            // anchor-to-top: bottom-anchor THEN reverse → prompt on top.
+            self.paint_offset = bottom_anchor_rows(&mut lines, self.grid.rows);
+            lines.reverse();
+            self.paint_inverted = true;
+        } else {
+            self.paint_offset = 0;
+            self.paint_inverted = false;
         }
         let ps = crate::lang::current().strings();
         let status = if self.bell {
@@ -5273,6 +5356,97 @@ mod tests {
             vec!["", "", "", "$ "],
             "bottom-anchor slides the prompt to the bottom"
         );
+    }
+
+    #[test]
+    fn inverted_anchor_top_puts_the_prompt_on_top_with_older_descending() {
+        let row = |s: &str| (s.to_string(), Vec::<TextRun>::new());
+        let texts =
+            |l: &[(String, Vec<TextRun>)]| l.iter().map(|(t, _)| t.clone()).collect::<Vec<_>>();
+
+        // Inverted read = bottom-anchor THEN reverse. A short session (prompt on
+        // grid row 0) should end with the PROMPT at index 0 (top), recent output
+        // just under it, older output descending, and the blank pad at the bottom.
+        // grid order (top→bottom): ls, a b c, $ , <blank>
+        let mut lines = vec![row("ls"), row("a b c"), row("$ "), row("")];
+        let offset = bottom_anchor_rows(&mut lines, 4); // → ["", "ls", "a b c", "$ "]
+        assert_eq!(offset, 1, "one blank row of bottom-anchor shift");
+        lines.reverse(); // → ["$ ", "a b c", "ls", ""]
+        assert_eq!(
+            texts(&lines),
+            vec!["$ ", "a b c", "ls", ""],
+            "prompt on top, recent under it, older descending, blank at the bottom"
+        );
+        // the last non-blank (the prompt) lands at painted index 0
+        assert_eq!(lines[0].0, "$ ", "prompt is the top painted row");
+
+        // cleared screen: prompt alone on grid row 0 → bottom-anchor (offset 3)
+        // then reverse puts the prompt at index 0 with blanks below it.
+        let mut lines = vec![row("$ "), row(""), row(""), row("")];
+        let offset = bottom_anchor_rows(&mut lines, 4); // → ["", "", "", "$ "]
+        assert_eq!(offset, 3);
+        lines.reverse(); // → ["$ ", "", "", ""]
+        assert_eq!(texts(&lines), vec!["$ ", "", "", ""]);
+
+        // a full screen (offset 0) just reverses: top↔bottom flip, no padding.
+        let mut lines = vec![row("a"), row("b"), row("c"), row("d")];
+        let offset = bottom_anchor_rows(&mut lines, 4);
+        assert_eq!(offset, 0, "full screen has no bottom-anchor shift");
+        lines.reverse();
+        assert_eq!(texts(&lines), vec!["d", "c", "b", "a"]);
+    }
+
+    #[test]
+    fn paint_row_to_grid_row_inverts_the_paint_transform() {
+        // Default un-anchored path (offset 0, not inverted) is the identity:
+        // every painted row maps to the same grid row → byte-identical to before.
+        for p in 0..6 {
+            assert_eq!(
+                paint_row_to_grid_row_impl(p, 6, 0, false),
+                p,
+                "identity in the default path"
+            );
+        }
+
+        // Bottom-anchored with offset>0 (normal-mode + crawl): g = p - offset.
+        // This is the latent pre-existing-bug fix — selection now accounts for
+        // the shift instead of being off by `offset`.
+        let rows = 4;
+        let offset = 1; // content shifted DOWN by one (one blank row on top)
+                        // painted row 0 is the blank pad → clamps to grid row 0
+        assert_eq!(paint_row_to_grid_row_impl(0, rows, offset, false), 0);
+        // painted rows 1..3 map back to grid rows 0..2
+        assert_eq!(paint_row_to_grid_row_impl(1, rows, offset, false), 0);
+        assert_eq!(paint_row_to_grid_row_impl(2, rows, offset, false), 1);
+        assert_eq!(paint_row_to_grid_row_impl(3, rows, offset, false), 2);
+
+        // Inverted, offset 0: g = (rows-1) - p — a pure top↔bottom flip, and it
+        // round-trips (applying it twice returns the original row).
+        let rows = 5;
+        for p in 0..rows {
+            let g = paint_row_to_grid_row_impl(p, rows, 0, true);
+            assert_eq!(g, rows - 1 - p, "inverted offset-0 flips the row");
+            assert_eq!(
+                paint_row_to_grid_row_impl(g, rows, 0, true),
+                p,
+                "the flip is its own inverse"
+            );
+        }
+
+        // Inverted with offset>0: g = (rows-1 - p) - offset. Reproduces the
+        // example from `inverted_anchor_top_puts_the_prompt_on_top_…`:
+        //   grid rows 0..3 = [ls, a b c, $ , <blank>], offset 1, painted (after
+        //   reverse) = [$ , a b c, ls, <pad>] at indices 0..3.
+        let rows = 4;
+        let offset = 1;
+        // painted index 0 ($ ) is grid row 2 ($ )
+        assert_eq!(paint_row_to_grid_row_impl(0, rows, offset, true), 2);
+        // painted index 1 (a b c) is grid row 1
+        assert_eq!(paint_row_to_grid_row_impl(1, rows, offset, true), 1);
+        // painted index 2 (ls) is grid row 0
+        assert_eq!(paint_row_to_grid_row_impl(2, rows, offset, true), 0);
+        // painted index 3 (the blank pad) underflows → clamps to grid row 0
+        assert_eq!(paint_row_to_grid_row_impl(3, rows, offset, true), 0);
     }
 
     #[test]
