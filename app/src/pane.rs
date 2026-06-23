@@ -2143,8 +2143,15 @@ impl TerminalView {
         let col = (fx.max(0.) as usize).min(self.grid.cols.saturating_sub(1));
         let row = y.min(self.grid.rows.saturating_sub(1));
         if std::env::var("TD_HITDEBUG").is_ok() {
+            // Fractional row/col BEFORE flooring: a value landing near .0 (a cell
+            // boundary) is where an off-by-one shows up. Click a KNOWN link row and
+            // compare `frac=rN.NN` to its visual row: a consistent offset at the
+            // bottom of tall panes means the grid is painted off from where the
+            // hit-test models it (a placement delta), not a warp-coefficient delta.
+            let frac_row = (ly * bh - pad_y) / self.cell_h;
+            let frac_col = (lx * bw - pad_x) / self.cell_w;
             eprintln!(
-                "hit pos=({:.0},{:.0}) rect=({:.0},{:.0},{:.0},{:.0}) k={:?} local=({:.3},{:.3}) cell=(r{row},c{col})",
+                "hit pos=({:.0},{:.0}) rect=({:.0},{:.0},{:.0},{:.0}) k={:?} local=({:.3},{:.3}) frac=(r{frac_row:.2},c{frac_col:.2}) cell=(r{row},c{col}) cellhw=({:.1},{:.1}) pad=({:.1},{:.1}) rows={}",
                 f32::from(pos.x),
                 f32::from(pos.y),
                 bx,
@@ -2154,6 +2161,11 @@ impl TerminalView {
                 self.warp_k,
                 lx,
                 ly,
+                self.cell_w,
+                self.cell_h,
+                pad_x,
+                pad_y,
+                self.grid.rows,
             );
         }
         let side = if fx.fract() < 0.5 {
@@ -5383,6 +5395,65 @@ mod tests {
         let (sx, _) = grid_pad(640.0, 480.0, k1, k2);
         let (_, sy) = grid_pad(480.0, 640.0, k1, k2);
         assert!((sx - sy).abs() < 1e-3, "equal axis lengths ⇒ equal pad");
+    }
+
+    /// #88 regression guard: the click→cell hit-test is the EXACT inverse of the
+    /// shader gather, including the bottom rows of a TALL pane (where the barrel
+    /// bows hardest). We forward-map each cell's content centre to its screen
+    /// position (the numerical inverse of `warp_screen_to_content`), then run the
+    /// `viewport_cell` math on it and assert we recover the same (row, col). If
+    /// this passes, any live drift is a PARAMETER mismatch (stale `warp_k`, a rect
+    /// or cell-size disagreement), NOT the formula — so don't "fix" the formula.
+    #[test]
+    fn warp_hit_test_round_trips_even_at_the_bottom_of_a_tall_pane() {
+        // forward map: content-norm (cx,cy) → screen-norm, inverting the radial
+        // barrel scale r_c = r_s·(1 + k1·r_s² + k2·r_s⁴) by bisection.
+        fn content_to_screen(cx: f32, cy: f32, k1: f32, k2: f32) -> (f32, f32) {
+            let (dx, dy) = (cx - 0.5, cy - 0.5);
+            let rc = (dx * dx + dy * dy).sqrt();
+            if rc < 1e-9 {
+                return (cx, cy);
+            }
+            let (mut lo, mut hi) = (0.0f32, 1.5f32);
+            for _ in 0..80 {
+                let m = 0.5 * (lo + hi);
+                let f = m * (1.0 + k1 * m * m + k2 * m * m * m * m);
+                if f < rc {
+                    lo = m;
+                } else {
+                    hi = m;
+                }
+            }
+            let rs = 0.5 * (lo + hi);
+            let s = rs / rc;
+            (0.5 + dx * s, 0.5 + dy * s)
+        }
+        let (k1, k2) = crate::theme::warp_coeffs(crate::theme::WARP_DEFAULT);
+        // a deliberately TALL pane (the reported failure shape) + a square control.
+        for &(bw, bh) in &[(420.0f32, 1400.0f32), (900.0, 520.0), (700.0, 700.0)] {
+            let (cell_w, cell_h) = (9.0f32, 20.0f32);
+            let (pad_x, pad_y) = grid_pad(bw, bh, k1, k2);
+            let cols = (((bw - 2.0 * pad_x) / cell_w).floor() as usize).max(10);
+            let rows = (((bh - 2.0 * pad_y) / cell_h).floor() as usize).max(3);
+            for &row in &[0usize, rows / 2, rows - 2, rows - 1] {
+                for &col in &[0usize, cols / 2, cols - 1] {
+                    // where the renderer puts this cell's centre (content-norm)…
+                    let cx = (pad_x + (col as f32 + 0.5) * cell_w) / bw;
+                    let cy = (pad_y + (row as f32 + 0.5) * cell_h) / bh;
+                    // …forward-warped to the screen pixel it's DISPLAYED at…
+                    let (sx, sy) = content_to_screen(cx, cy, k1, k2);
+                    // …then the viewport_cell math run on that screen pixel.
+                    let (lx, ly) = warp_screen_to_content(sx, sy, k1, k2);
+                    let rr = ((ly * bh - pad_y) / cell_h).max(0.0) as usize;
+                    let cc = ((lx * bw - pad_x) / cell_w).max(0.0) as usize;
+                    assert_eq!(
+                        (rr.min(rows - 1), cc.min(cols - 1)),
+                        (row, col),
+                        "round-trip drift at pane {bw}x{bh} cell (r{row},c{col})"
+                    );
+                }
+            }
+        }
     }
 
     #[test]
