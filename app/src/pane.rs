@@ -2781,6 +2781,11 @@ impl TerminalView {
     /// scroll so it lands at the top. Stepping past the newest snaps to live.
     /// Driven by the ▲/▼ header buttons and the `Alt+↑/↓` hotkeys (Workspace).
     pub fn scroll_to_human(&mut self, next: bool, cx: &mut Context<Self>) {
+        // In the anchor-top INVERTED read the newest message sits at the TOP, so
+        // the ▲/▼ (and Alt+↑/↓) directions flip: "up" steps toward NEWER, "down"
+        // toward OLDER — the opposite of the default bottom-anchored read. The
+        // overshoot snap-to-live still lands on the newest (rendered at top).
+        let next = next ^ self.paint_inverted;
         let idx = self.human_line_indices();
         if idx.is_empty() {
             return;
