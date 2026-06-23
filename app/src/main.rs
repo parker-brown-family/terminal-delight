@@ -1491,19 +1491,37 @@ fn group_section(header: gpui::Div, gcol: gpui::Hsla, cards: Vec<gpui::AnyElemen
         .flex()
         .flex_col()
         .gap_2()
-        .p_2()
-        .rounded_md()
-        .bg(gcol.alpha(0.05))
+        .p_3()
+        .rounded_xl()
+        // a distinct, lightly-themed PANEL per tab group so each reads as its own
+        // bordered section (a left accent rule on the header carries the colour).
+        .bg(gcol.alpha(0.07))
         .border_1()
-        .border_color(gcol.alpha(0.14))
+        .border_color(gcol.alpha(0.30))
         .shadow(vec![gpui::BoxShadow {
-            color: gcol.alpha(0.13),
+            color: gcol.alpha(0.16),
             offset: point(px(0.), px(0.)),
-            blur_radius: px(18.),
+            blur_radius: px(24.),
             spread_radius: px(0.),
             inset: false,
         }])
-        .child(header)
+        .child(
+            // a coloured rule + the group header, so the panel is titled + themed.
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap_2()
+                .child(
+                    div()
+                        .w(px(3.))
+                        .h(px(13.))
+                        .flex_none()
+                        .rounded_full()
+                        .bg(gcol),
+                )
+                .child(header),
+        )
         .child(
             div()
                 .flex()
@@ -9641,7 +9659,8 @@ impl Render for Workspace {
                 }
 
                 // ---- the grouped, filtered pane list ----
-                let mut list = div().id("mcp-pane-list").flex().flex_col().gap_3();
+                // gap_6 so each tab-group PANEL is clearly separated from the next.
+                let mut list = div().id("mcp-pane-list").flex().flex_col().gap_6();
                 let mut ri = 0usize;
                 let mut last_key: Option<Option<u32>> = None;
                 // accumulate each group's cards, then flush as one glowing section.
@@ -9818,9 +9837,9 @@ impl Render for Workspace {
                         // gentle theme. Extra glass glare sells the tiny-screen look.
                         // Values captured by copy so the measurement closure is 'static.
                         let (base_k1, base_k2) = theme::warp_coeffs(th.warp);
-                        let warp_k1 = (base_k1 * 2.6).max(0.5);
-                        let warp_k2 = (base_k2 * 2.6).max(0.18);
-                        let art_glare = (th.screen_glare + 0.45).min(1.0);
+                        let warp_k1 = (base_k1 * 3.0).max(0.95);
+                        let warp_k2 = (base_k2 * 3.0).max(0.42);
+                        let art_glare = (th.screen_glare + 0.5).min(1.0);
                         let art_crawl: [f32; 3] = if th.crawl {
                             let (a, d) = theme::crawl_coeffs(th.crawl_angle, th.crawl_depth);
                             [1.0, a, d]
@@ -9909,8 +9928,17 @@ impl Render for Workspace {
                             kind_col
                         };
                         let live_glow = is_agent && !matches!(status.state, hud::AgentState::Idle);
+                        // Parker's "FRAME" = the card's INTERIOR negative space (NOT the
+                        // rim): a dark wash of THIS terminal's THEME seed, so every card
+                        // body wears its own theme colour. Only when the wall theme is on;
+                        // off → a plain neutral dark.
                         let card_bg = if preview {
-                            darken(th.bg, if live_glow { 0.72 } else { 0.64 })
+                            hsla(
+                                theme_col.h,
+                                (theme_col.s * 0.8).min(0.55),
+                                if live_glow { 0.12 } else { 0.085 },
+                                1.0,
+                            )
                         } else if live_glow {
                             darken(th.surface, 0.50)
                         } else {
@@ -10031,8 +10059,8 @@ impl Render for Workspace {
                                 .border_color(kind_col.alpha(if live_glow { 0.42 } else { 0.32 }))
                                 .bg(linear_gradient(
                                     135.,
-                                    linear_color_stop(brighten(theme_col, 1.2).alpha(0.62), 0.),
-                                    linear_color_stop(darken(theme_col, 0.45).alpha(0.82), 1.),
+                                    linear_color_stop(brighten(theme_col, 1.1).alpha(0.34), 0.),
+                                    linear_color_stop(darken(theme_col, 0.5).alpha(0.5), 1.),
                                 ))
                                 .shadow(agent_card_shadows(status_glow, live_glow))
                                 .cursor_pointer()
@@ -10144,10 +10172,10 @@ impl Render for Workspace {
                                                 // edge falloff, so the logo reads as a
                                                 // bulging convex screen, not a flat sticker.
                                                 .shadow(vec![gpui::BoxShadow {
-                                                    color: gpui::black().alpha(0.72),
+                                                    color: gpui::black().alpha(0.85),
                                                     offset: point(px(0.), px(0.)),
-                                                    blur_radius: px(9. * cs),
-                                                    spread_radius: px(3.5 * cs),
+                                                    blur_radius: px(16. * cs),
+                                                    spread_radius: px(6.5 * cs),
                                                     inset: true,
                                                 }])
                                                 .flex()
@@ -10259,8 +10287,8 @@ impl Render for Workspace {
                                                 .child(div().absolute().inset_0().rounded_lg().bg(
                                                     linear_gradient(
                                                         180.,
-                                                        linear_color_stop(white().alpha(0.30), 0.),
-                                                        linear_color_stop(white().alpha(0.0), 0.5),
+                                                        linear_color_stop(white().alpha(0.45), 0.),
+                                                        linear_color_stop(white().alpha(0.0), 0.55),
                                                     ),
                                                 )),
                                         )
