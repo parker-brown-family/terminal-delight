@@ -1654,8 +1654,13 @@ impl TerminalView {
         // excluded — matching the live render's `anchor_top() && !th.crawl` gate.
         // Off (the default) leaves `lines` untouched → byte-identical to before.
         if anchor_top() && !th.crawl {
-            let wraps = self.row_wraps();
-            let (new_lines, _perm) = invert_logical_read(lines, &wraps);
+            let block_mode = self.mode.is_agent();
+            let wraps = if block_mode {
+                Vec::new()
+            } else {
+                self.row_wraps()
+            };
+            let (new_lines, _perm) = invert_logical_read(lines, &wraps, block_mode);
             lines = new_lines;
         }
         // The pane's own resolved CRT curvature + glare, so the FOCUS reader can
@@ -3330,40 +3335,77 @@ fn paint_row_to_grid_row_impl(p: usize, rows: usize, offset: usize, inverted: bo
     g.min(last)
 }
 
-/// Anchor-to-top INVERTED read, WRAP-AWARE (pure). Reverses the order of LOGICAL
-/// lines so the prompt's logical line lands on top and older lines flow down —
-/// while keeping each logical line's wrapped continuation rows in reading order.
-/// (A pure row-reverse flips a wrapped human prompt bottom-to-top; this groups it
-/// first.) `wraps[i]` is the WRAPLINE flag on grid row `i` (it continues into row
-/// `i+1`). Returns the reordered lines plus `perm`, where `perm[p]` is the grid
-/// viewport row drawn at painted row `p` (the hit-test inverts via this). Trailing
-/// blank rows stay at the bottom as padding; the row count is preserved.
+/// Anchor-to-top INVERTED read (pure): reverse the ORDER of logical groups so the
+/// live input/prompt lands on top and older content flows down, while keeping each
+/// group's rows in natural reading order. Two grouping modes:
+///
+/// - **`block_mode` (agent panes):** a group is a maximal run of consecutive
+///   NON-BLANK rows — a whole message or the input BOX. Agents draw multi-row
+///   input/output by cursor positioning (no soft-wrap flag), so line-level reverse
+///   flips them bottom-to-top; block grouping keeps each box/message UPRIGHT and
+///   lets the input grow DOWN as you type. Blanks separate the reversed blocks.
+/// - **line mode (shells):** a group is a soft-wrapped logical line (WRAPLINE-
+///   chained via `wraps`), so a wrapped line stays in order but each line reverses.
+///
+/// Returns the reordered lines + `perm`, where `perm[p]` is the grid viewport row
+/// drawn at painted row `p` (the hit-test inverts via this). Row count preserved.
 fn invert_logical_read(
     lines: Vec<(String, Vec<TextRun>)>,
     wraps: &[bool],
+    block_mode: bool,
 ) -> (Vec<(String, Vec<TextRun>)>, Vec<usize>) {
     let n = lines.len();
-    let Some(last) = lines.iter().rposition(|(t, _)| !t.trim_end().is_empty()) else {
+    let is_blank: Vec<bool> = lines.iter().map(|(t, _)| t.trim_end().is_empty()).collect();
+    let Some(last) = (0..n).rev().find(|&i| !is_blank[i]) else {
         return (lines, (0..n).collect()); // all blank → identity
     };
-    // Group content rows 0..=last into logical lines: a run ends on the first row
-    // whose WRAPLINE flag is clear (it does not continue into the next row).
+    // Build logical groups over the content rows 0..=last.
     let mut groups: Vec<Vec<usize>> = Vec::new();
-    let mut cur: Vec<usize> = Vec::new();
-    for i in 0..=last {
-        cur.push(i);
-        if !wraps.get(i).copied().unwrap_or(false) {
-            groups.push(std::mem::take(&mut cur));
+    if block_mode {
+        let mut i = 0;
+        while i <= last {
+            if is_blank[i] {
+                i += 1;
+                continue;
+            }
+            let start = i;
+            while i <= last && !is_blank[i] {
+                i += 1;
+            }
+            groups.push((start..i).collect());
+        }
+    } else {
+        let mut cur: Vec<usize> = Vec::new();
+        for i in 0..=last {
+            cur.push(i);
+            if !wraps.get(i).copied().unwrap_or(false) {
+                groups.push(std::mem::take(&mut cur));
+            }
+        }
+        if !cur.is_empty() {
+            groups.push(cur);
         }
     }
-    if !cur.is_empty() {
-        groups.push(cur);
+    // Reverse group ORDER (newest on top), rows within a group natural. Blank rows
+    // become padding: one separator between reversed blocks (block mode breathing
+    // room), the remainder at the bottom so the input/prompt hugs the top.
+    let mut blanks: Vec<usize> = (0..n).filter(|&i| is_blank[i]).collect();
+    let mut perm: Vec<usize> = Vec::with_capacity(n);
+    let g = groups.len();
+    for (bi, grp) in groups.iter().rev().enumerate() {
+        perm.extend(grp.iter().copied());
+        if block_mode && bi + 1 < g {
+            if let Some(b) = blanks.pop() {
+                perm.push(b);
+            }
+        }
     }
-    // Reverse the ORDER of logical lines (newest on top), keep each line's rows in
-    // order, then keep trailing blank rows as bottom padding.
-    let mut perm: Vec<usize> = groups.iter().rev().flatten().copied().collect();
-    perm.extend((last + 1)..n);
-    let new_lines: Vec<(String, Vec<TextRun>)> = perm.iter().map(|&g| lines[g].clone()).collect();
+    perm.extend(blanks); // remaining blanks pad the bottom
+    while perm.len() < n {
+        perm.push(perm.len().min(n - 1)); // safety; normally never hit
+    }
+    perm.truncate(n);
+    let new_lines: Vec<(String, Vec<TextRun>)> = perm.iter().map(|&gi| lines[gi].clone()).collect();
     (new_lines, perm)
 }
 
@@ -3885,11 +3927,17 @@ impl Render for TerminalView {
             self.paint_inverted = false;
             self.paint_to_grid = None;
         } else if inverted {
-            // anchor-to-top: WRAP-AWARE logical-line reverse → the prompt's logical
-            // line lands on top, older lines flow down, and a wrapped line's
-            // continuation rows stay in reading order (no bottom-to-top flip).
-            let wraps = self.row_wraps();
-            let (new_lines, perm) = invert_logical_read(lines, &wraps);
+            // anchor-to-top inverted read → the live input/prompt lands on top,
+            // older content flows down. Agent panes group by message/box (so the
+            // input box stays upright + grows DOWN as you type); shells reverse by
+            // soft-wrapped logical line.
+            let block_mode = self.mode.is_agent();
+            let wraps = if block_mode {
+                Vec::new()
+            } else {
+                self.row_wraps()
+            };
+            let (new_lines, perm) = invert_logical_read(lines, &wraps, block_mode);
             lines = new_lines;
             self.paint_to_grid = Some(perm);
             self.paint_inverted = true;
@@ -5491,7 +5539,7 @@ mod tests {
             row(""),
         ];
         let wraps = vec![false, true, false, false, false]; // row1 → row2 are one line
-        let (out, perm) = invert_logical_read(lines, &wraps);
+        let (out, perm) = invert_logical_read(lines, &wraps, false);
 
         // Logical lines reverse (prompt on top, older descending) BUT the wrapped
         // line's two rows stay in reading order — NOT flipped bottom-to-top.
@@ -5512,9 +5560,47 @@ mod tests {
 
         // A non-wrapped screen still fully reverses by logical line.
         let lines = vec![row("a"), row("b"), row("c")];
-        let (out, perm) = invert_logical_read(lines, &[false, false, false]);
+        let (out, perm) = invert_logical_read(lines, &[false, false, false], false);
         assert_eq!(texts(&out), vec!["c", "b", "a"]);
         assert_eq!(perm, vec![2, 1, 0]);
+    }
+
+    #[test]
+    fn invert_logical_read_block_mode_keeps_agent_input_box_upright() {
+        let row = |s: &str| (s.to_string(), Vec::<TextRun>::new());
+        let texts =
+            |l: &[(String, Vec<TextRun>)]| l.iter().map(|(t, _)| t.clone()).collect::<Vec<_>>();
+
+        // An agent pane: an OUTPUT message (rows 0-1), a blank, then the live INPUT
+        // box (rows 3-5, a 3-row box the agent drew by cursor positioning — NOT
+        // soft-wrapped), then a trailing blank. Block mode must keep the input box
+        // UPRIGHT and on top (so typing reads top→bottom), with the older message
+        // below it — never flipping a box's rows bottom-to-top.
+        let lines = vec![
+            row("agent: first line"),  // 0  output block
+            row("agent: second line"), // 1
+            row(""),                   // 2  separator
+            row("> a long prompt"),    // 3  input box, line 1
+            row("that I am typing"),   // 4  input box, line 2 (grows DOWN)
+            row("right now"),          // 5  input box, line 3 (cursor)
+            row(""),                   // 6  trailing blank
+        ];
+        // block mode ignores `wraps`.
+        let (out, perm) = invert_logical_read(lines, &[], true);
+        let t = texts(&out);
+        // input box on top, IN ORDER (not reversed), then a blank, then the older
+        // output message in order, then bottom padding.
+        assert_eq!(
+            &t[0..3],
+            &["> a long prompt", "that I am typing", "right now"]
+        );
+        assert!(
+            t[3].is_empty(),
+            "a blank separates the reversed blocks for breathing room"
+        );
+        assert_eq!(&t[4..6], &["agent: first line", "agent: second line"]);
+        // hit-test perm: painted rows 0-2 map to grid rows 3-5 (the input box).
+        assert_eq!(&perm[0..3], &[3usize, 4, 5]);
     }
 
     #[test]
