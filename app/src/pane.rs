@@ -1365,6 +1365,11 @@ pub struct TerminalView {
     /// `(0, false)` ⇒ no-op, byte-identical to the un-anchored path.
     paint_offset: usize,
     paint_inverted: bool,
+    /// In wrap-aware inverted mode, `paint_to_grid[p]` = the grid viewport row
+    /// drawn at painted row `p` (logical-line reverse permutes rows non-uniformly,
+    /// so a formula won't do). `None` ⇒ use the `paint_offset`/`paint_inverted`
+    /// formula (default + crawl).
+    paint_to_grid: Option<Vec<usize>>,
     pub mode: PaneMode,
     /// Per-pane appearance: retained theme/grade overrides plus two independent
     /// follow-outer switches. A pristine pane inherits both groups (+ mode tint).
@@ -1649,8 +1654,9 @@ impl TerminalView {
         // excluded — matching the live render's `anchor_top() && !th.crawl` gate.
         // Off (the default) leaves `lines` untouched → byte-identical to before.
         if anchor_top() && !th.crawl {
-            bottom_anchor_rows(&mut lines, self.grid.rows);
-            lines.reverse();
+            let wraps = self.row_wraps();
+            let (new_lines, _perm) = invert_logical_read(lines, &wraps);
+            lines = new_lines;
         }
         // The pane's own resolved CRT curvature + glare, so the FOCUS reader can
         // inherit the look on demand (flat 0/0/0 for a flat pane → no-op).
@@ -1888,6 +1894,7 @@ impl TerminalView {
             warp_k: (0., 0.),
             paint_offset: 0,
             paint_inverted: false,
+            paint_to_grid: None,
             mode: PaneMode::Shell,
             appearance: PaneTheme::default(),
             ctx_menu: None,
@@ -2204,7 +2211,35 @@ impl TerminalView {
     /// `paint_offset == 0 && !paint_inverted`, this is the identity (`g == p`),
     /// so the un-anchored path is byte-identical to before.
     fn paint_row_to_grid_row(&self, p: usize) -> usize {
+        if let Some(perm) = &self.paint_to_grid {
+            return perm
+                .get(p)
+                .copied()
+                .unwrap_or(0)
+                .min(self.grid.rows.saturating_sub(1));
+        }
         paint_row_to_grid_row_impl(p, self.grid.rows, self.paint_offset, self.paint_inverted)
+    }
+
+    /// Per-row WRAPLINE flags in grid viewport order: `wraps[r]` ⇒ grid row `r`
+    /// soft-wraps into `r+1`. Lets the wrap-aware inverted read keep a wrapped
+    /// logical line grouped. Cheap: one term lock + a `display_iter` pass.
+    fn row_wraps(&self) -> Vec<bool> {
+        let term = self.session.term.lock();
+        let content = term.renderable_content();
+        let display_offset = content.display_offset;
+        let rows = self.grid.rows;
+        let mut wraps = vec![false; rows];
+        for indexed in content.display_iter {
+            let r = indexed.point.line.0 + display_offset as i32;
+            if r < 0 || r as usize >= rows {
+                continue;
+            }
+            if indexed.cell.flags.contains(Flags::WRAPLINE) {
+                wraps[r as usize] = true;
+            }
+        }
+        wraps
     }
 
     fn cell_at(&self, pos: gpui::Point<Pixels>, display_offset: usize) -> (TermPoint, Side) {
@@ -3295,6 +3330,43 @@ fn paint_row_to_grid_row_impl(p: usize, rows: usize, offset: usize, inverted: bo
     g.min(last)
 }
 
+/// Anchor-to-top INVERTED read, WRAP-AWARE (pure). Reverses the order of LOGICAL
+/// lines so the prompt's logical line lands on top and older lines flow down —
+/// while keeping each logical line's wrapped continuation rows in reading order.
+/// (A pure row-reverse flips a wrapped human prompt bottom-to-top; this groups it
+/// first.) `wraps[i]` is the WRAPLINE flag on grid row `i` (it continues into row
+/// `i+1`). Returns the reordered lines plus `perm`, where `perm[p]` is the grid
+/// viewport row drawn at painted row `p` (the hit-test inverts via this). Trailing
+/// blank rows stay at the bottom as padding; the row count is preserved.
+fn invert_logical_read(
+    lines: Vec<(String, Vec<TextRun>)>,
+    wraps: &[bool],
+) -> (Vec<(String, Vec<TextRun>)>, Vec<usize>) {
+    let n = lines.len();
+    let Some(last) = lines.iter().rposition(|(t, _)| !t.trim_end().is_empty()) else {
+        return (lines, (0..n).collect()); // all blank → identity
+    };
+    // Group content rows 0..=last into logical lines: a run ends on the first row
+    // whose WRAPLINE flag is clear (it does not continue into the next row).
+    let mut groups: Vec<Vec<usize>> = Vec::new();
+    let mut cur: Vec<usize> = Vec::new();
+    for i in 0..=last {
+        cur.push(i);
+        if !wraps.get(i).copied().unwrap_or(false) {
+            groups.push(std::mem::take(&mut cur));
+        }
+    }
+    if !cur.is_empty() {
+        groups.push(cur);
+    }
+    // Reverse the ORDER of logical lines (newest on top), keep each line's rows in
+    // order, then keep trailing blank rows as bottom padding.
+    let mut perm: Vec<usize> = groups.iter().rev().flatten().copied().collect();
+    perm.extend((last + 1)..n);
+    let new_lines: Vec<(String, Vec<TextRun>)> = perm.iter().map(|&g| lines[g].clone()).collect();
+    (new_lines, perm)
+}
+
 /// Font families installed on this system, captured once at startup so the grid
 /// can fall back deliberately instead of letting gpui pick a silent substitute
 /// (a past bug shipped DejaVu Sans without anyone noticing).
@@ -3811,14 +3883,21 @@ impl Render for TerminalView {
             // Bottom-anchor (crawl + default normal mode).
             self.paint_offset = bottom_anchor_rows(&mut lines, self.grid.rows);
             self.paint_inverted = false;
+            self.paint_to_grid = None;
         } else if inverted {
-            // anchor-to-top: bottom-anchor THEN reverse → prompt on top.
-            self.paint_offset = bottom_anchor_rows(&mut lines, self.grid.rows);
-            lines.reverse();
+            // anchor-to-top: WRAP-AWARE logical-line reverse → the prompt's logical
+            // line lands on top, older lines flow down, and a wrapped line's
+            // continuation rows stay in reading order (no bottom-to-top flip).
+            let wraps = self.row_wraps();
+            let (new_lines, perm) = invert_logical_read(lines, &wraps);
+            lines = new_lines;
+            self.paint_to_grid = Some(perm);
             self.paint_inverted = true;
+            self.paint_offset = 0;
         } else {
             self.paint_offset = 0;
             self.paint_inverted = false;
+            self.paint_to_grid = None;
         }
         let ps = crate::lang::current().strings();
         let status = if self.bell {
@@ -5394,6 +5473,48 @@ mod tests {
         assert_eq!(offset, 0, "full screen has no bottom-anchor shift");
         lines.reverse();
         assert_eq!(texts(&lines), vec!["d", "c", "b", "a"]);
+    }
+
+    #[test]
+    fn invert_logical_read_keeps_wrapped_lines_in_order() {
+        let row = |s: &str| (s.to_string(), Vec::<TextRun>::new());
+        let texts =
+            |l: &[(String, Vec<TextRun>)]| l.iter().map(|(t, _)| t.clone()).collect::<Vec<_>>();
+
+        // grid order: row0 old output; rows1-2 a WRAPPED human prompt (row1 soft-
+        // wraps into row2); row3 the live prompt; row4 trailing blank.
+        let lines = vec![
+            row("old output"),
+            row("a long human"),
+            row("message wrapped"),
+            row("> live prompt"),
+            row(""),
+        ];
+        let wraps = vec![false, true, false, false, false]; // row1 → row2 are one line
+        let (out, perm) = invert_logical_read(lines, &wraps);
+
+        // Logical lines reverse (prompt on top, older descending) BUT the wrapped
+        // line's two rows stay in reading order — NOT flipped bottom-to-top.
+        assert_eq!(
+            texts(&out),
+            vec![
+                "> live prompt",
+                "a long human",
+                "message wrapped",
+                "old output",
+                "",
+            ],
+            "wrapped human prompt must read top-to-bottom, not reversed"
+        );
+        // perm maps painted→grid for the hit-test; the wrapped rows ascend (1,2).
+        assert_eq!(perm, vec![3, 1, 2, 0, 4]);
+        assert_eq!((perm[1], perm[2]), (1, 2), "wrapped rows keep grid order");
+
+        // A non-wrapped screen still fully reverses by logical line.
+        let lines = vec![row("a"), row("b"), row("c")];
+        let (out, perm) = invert_logical_read(lines, &[false, false, false]);
+        assert_eq!(texts(&out), vec!["c", "b", "a"]);
+        assert_eq!(perm, vec![2, 1, 0]);
     }
 
     #[test]
