@@ -2523,16 +2523,54 @@ impl Workspace {
                     }
                     match hit {
                         Some((leaf, true)) => {
-                            let outer = theme::outer_choice(cx);
-                            let report = leaf.update(cx, |view, cx| {
-                                let mut g = view.appearance.effective(&outer).grade;
-                                Self::apply_config_patch(&mut g, patch);
-                                view.appearance.set_grade(g);
-                                cx.notify();
-                                Self::grade_report(&g)
-                            });
-                            changed = true;
-                            out.push((target.clone(), Ok(report)));
+                            // Validate any logo attach/clear BEFORE mutating, so a bad
+                            // path is a clean per-target error (None = no change,
+                            // Some(None) = clear, Some(Some(p)) = attach image p).
+                            let logo_change: Result<Option<Option<String>>, String> =
+                                match patch.logo.as_deref() {
+                                    None => Ok(None),
+                                    Some(s) if s.trim().is_empty() => Ok(Some(None)),
+                                    Some(s) => {
+                                        let path = std::path::Path::new(s);
+                                        let is_img = path
+                                            .extension()
+                                            .and_then(|e| e.to_str())
+                                            .map(|e| e.to_ascii_lowercase())
+                                            .is_some_and(|e| {
+                                                matches!(
+                                                    e.as_str(),
+                                                    "png" | "jpg" | "jpeg" | "svg" | "webp"
+                                                )
+                                            });
+                                        if !is_img {
+                                            Err(format!(
+                                            "logo \"{s}\" is not an image (png/jpg/jpeg/svg/webp)"
+                                        ))
+                                        } else if !path.exists() {
+                                            Err(format!("logo \"{s}\" does not exist on disk"))
+                                        } else {
+                                            Ok(Some(Some(s.to_string())))
+                                        }
+                                    }
+                                };
+                            match logo_change {
+                                Err(e) => out.push((target.clone(), Err(e))),
+                                Ok(logo_change) => {
+                                    let outer = theme::outer_choice(cx);
+                                    let report = leaf.update(cx, |view, cx| {
+                                        let mut g = view.appearance.effective(&outer).grade;
+                                        Self::apply_config_patch(&mut g, patch);
+                                        view.appearance.set_grade(g);
+                                        if let Some(new_logo) = logo_change {
+                                            view.logo = new_logo;
+                                        }
+                                        cx.notify();
+                                        Self::grade_report(&g)
+                                    });
+                                    changed = true;
+                                    out.push((target.clone(), Ok(report)));
+                                }
+                            }
                         }
                         Some((_, false)) => out.push((
                             target.clone(),
