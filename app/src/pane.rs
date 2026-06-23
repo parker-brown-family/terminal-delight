@@ -2005,6 +2005,48 @@ impl TerminalView {
         lines
     }
 
+    /// The most recent USER prompt visible in this pane — its first line (marker
+    /// stripped) plus any wrapped continuation, up to `max_lines`. Empty if none.
+    /// Skips the empty live-input box (a prompt marker with no text). Used by the
+    /// agent-wall card so an IDLE agent shows what you last ASKED it instead of a
+    /// blank input window.
+    pub fn last_human_message(&self, max_lines: usize) -> Vec<String> {
+        let rows: Vec<String> = self
+            .live_rows()
+            .into_iter()
+            .map(|r| r.trim_end().to_string())
+            .collect();
+        let strip = |t: &str| -> String {
+            t.trim_start()
+                .trim_start_matches(|c| {
+                    matches!(c, '\u{276f}' | '>' | '\u{258c}' | '\u{00b7}' | ' ')
+                })
+                .trim()
+                .to_string()
+        };
+        // walk up to the last human-input line that actually carries text.
+        let start = (0..rows.len())
+            .rev()
+            .find(|&i| is_human_input_line(&rows[i]) && !strip(&rows[i]).is_empty());
+        let Some(start) = start else {
+            return Vec::new();
+        };
+        let mut out = vec![strip(&rows[start])];
+        for r in rows.iter().skip(start + 1) {
+            let t = r.trim();
+            // stop at a blank, the next turn, or the input-box hint/echo.
+            if t.is_empty() || is_human_input_line(r) || t.starts_with('?') || t.starts_with("esc ")
+            {
+                break;
+            }
+            if out.len() >= max_lines {
+                break;
+            }
+            out.push(t.to_string());
+        }
+        out
+    }
+
     /// Parse this pane's live status line into an [`crate::hud::AgentStatus`] for
     /// the agent-wall HUD. Non-agent panes read Idle; an otherwise-idle agent with
     /// an unacknowledged finish bell is promoted to `Finished`.
