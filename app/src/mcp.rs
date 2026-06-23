@@ -147,7 +147,7 @@ pub struct GradeReport {
 /// number it is given, it does not interpret "20% lower"; the agent does that
 /// math and posts the resulting absolute value). `deny_unknown_fields` makes a
 /// typo'd channel a loud error rather than a silent no-op.
-#[derive(Clone, Copy, PartialEq, Debug, Deserialize, Default)]
+#[derive(Clone, PartialEq, Debug, Deserialize, Default)]
 #[serde(default, deny_unknown_fields)]
 pub struct ConfigPatch {
     pub brightness: Option<f32>,
@@ -162,6 +162,10 @@ pub struct ConfigPatch {
     pub crawl: Option<bool>,
     pub crawl_angle: Option<f32>,
     pub crawl_depth: Option<f32>,
+    /// Attach (or clear) the pane's card LOGO: an absolute path to an image file
+    /// (png/jpg/jpeg/svg/webp). An empty string clears it. Lets an agent brand the
+    /// terminal it's working in — shown as the card portrait on the agent wall.
+    pub logo: Option<String>,
 }
 
 impl ConfigPatch {
@@ -484,8 +488,12 @@ fn tool_defs() -> Value {
                  interpret relative asks like \"20% lower\"; read the current \
                  value with get_pane_config, do that math yourself, and post the \
                  result. Setting `outer` re-grades every pane that inherits it — \
-                 the one-shot way to change every terminal at once. Requires the \
-                 server's writes toggle (TD_MCP_WRITE).",
+                 the one-shot way to change every terminal at once. A pane update \
+                 may ALSO carry `logo` — an absolute path to an image (png/jpg/\
+                 jpeg/svg/webp) — to BRAND the terminal it targets: the image shows \
+                 as that pane's card portrait on the agent wall (\"\" clears it). \
+                 That lets an agent attach a logo to the terminal it's working in. \
+                 Requires the server's writes toggle (TD_MCP_WRITE).",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -501,7 +509,7 @@ fn tool_defs() -> Value {
                                 },
                                 "config": {
                                     "type": "object",
-                                    "description": "partial grade; any of brightness/contrast/colour/text/background/gamma/menu_bar/text_size/warp/crawl_angle/crawl_depth (0..100) and crawl (bool)"
+                                    "description": "partial grade — any of brightness/contrast/colour/text/background/gamma/menu_bar/text_size/warp/crawl_angle/crawl_depth (0..100) and crawl (bool) — AND `logo`: an absolute path to an image file (png/jpg/jpeg/svg/webp) to ATTACH as this pane's card logo (the agent wall portrait); an empty string clears it. Pane targets only."
                                 }
                             },
                             "required": ["target", "config"],
@@ -1294,6 +1302,35 @@ mod tests {
             "params": { "name": "set_pane_config", "arguments": { "updates": updates } } })
         .to_string();
         resp(&handle_line_with(&line, snap, no_tail, apply, no_search).unwrap())["result"].clone()
+    }
+
+    #[test]
+    fn set_pane_config_carries_a_logo_attach() {
+        // a logo-only config is NOT empty and parses the path.
+        let patch: ConfigPatch =
+            serde_json::from_value(json!({ "logo": "/tmp/brand.png" })).unwrap();
+        assert!(
+            !patch.is_empty(),
+            "a logo-only config has something to change"
+        );
+        assert_eq!(patch.logo.as_deref(), Some("/tmp/brand.png"));
+
+        // end-to-end: the parsed logo path reaches the `apply` closure intact, so an
+        // agent can attach a logo to the terminal it's working in.
+        let seen: std::sync::Arc<std::sync::Mutex<Option<String>>> = Default::default();
+        let seen2 = seen.clone();
+        let apply = move |ups: &[ConfigUpdate]| -> Vec<ApplyOutcome> {
+            *seen2.lock().unwrap() = ups[0].1.logo.clone();
+            vec![(ups[0].0.clone(), Ok(GradeReport::default()))]
+        };
+        let s = snap_writable(vec![agent_pane(100, true)]);
+        let line = json!({ "id": 9, "method": "tools/call", "params": {
+            "name": "set_pane_config",
+            "arguments": { "updates": [{ "target": 100, "config": { "logo": "/tmp/brand.png" } }] }
+        }})
+        .to_string();
+        let _ = handle_line_with(&line, &s, no_tail, apply, no_search);
+        assert_eq!(seen.lock().unwrap().as_deref(), Some("/tmp/brand.png"));
     }
 
     #[test]
