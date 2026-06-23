@@ -2126,14 +2126,19 @@ impl Workspace {
             ws.groups = saved
                 .groups
                 .iter()
-                .filter_map(|g| {
-                    Some(TabGroup {
+                .map(|g| {
+                    TabGroup {
                         id: g.id,
                         name: g.name.clone(),
-                        color: theme::parse_hex(&g.color)?,
+                        // NEVER drop a group on a colour-parse failure — that would
+                        // remove its id from `live` below and silently scatter every
+                        // member tab into Ungrouped on the next restore. Fall back to
+                        // a hue derived from the id so the group simply keeps a colour.
+                        color: theme::parse_hex(&g.color)
+                            .unwrap_or_else(|| hsla((g.id as f32 * 0.137).fract(), 0.55, 0.6, 1.0)),
                         text_color: g.text_color.as_deref().and_then(theme::parse_hex),
                         collapsed: g.collapsed,
-                    })
+                    }
                 })
                 .collect();
             ws.next_group_id = ws.groups.iter().map(|g| g.id + 1).max().unwrap_or(1);
@@ -9662,11 +9667,11 @@ impl Render for Workspace {
                 // gap_6 so each tab-group PANEL is clearly separated from the next.
                 let mut list = div().id("mcp-pane-list").flex().flex_col().gap_6();
                 let mut ri = 0usize;
-                let mut last_key: Option<Option<u32>> = None;
-                // accumulate each group's cards, then flush as one glowing section.
-                let mut section_cards: Vec<gpui::AnyElement> = Vec::new();
-                let mut section_header: Option<gpui::Div> = None;
-                let mut section_gcol: gpui::Hsla = th.text;
+                // Accumulate cards per GROUP KEY (not per contiguous run), so a tab
+                // group whose tabs are split across non-adjacent positions still
+                // renders as ONE panel. First-seen order: (key, name, colour, cards).
+                let mut group_cards: Vec<(Option<u32>, String, gpui::Hsla, Vec<gpui::AnyElement>)> =
+                    Vec::new();
                 // best-effort model parse from the agent's launch/resume command.
                 let parse_model = |cmd: &str| -> Option<String> {
                     let toks: Vec<&str> = cmd.split_whitespace().collect();
@@ -9719,55 +9724,16 @@ impl Render for Workspace {
                         Some(g) => g.color,
                         None => th.text.alpha(0.45),
                     };
-                    // a group section header whenever the section changes.
-                    if last_key != Some(key) {
-                        if let Some(hdr) = section_header.take() {
-                            list = list.child(group_section(
-                                hdr,
-                                section_gcol,
-                                std::mem::take(&mut section_cards),
-                            ));
+                    // find-or-create THIS group's accumulator (first-seen order), so
+                    // every card of a tab group lands in ONE panel even when the
+                    // group's tabs are scattered across the tab bar.
+                    let gi = match group_cards.iter().position(|e| e.0 == key) {
+                        Some(i) => i,
+                        None => {
+                            group_cards.push((key, gname.clone(), gcol, Vec::new()));
+                            group_cards.len() - 1
                         }
-                        last_key = Some(key);
-                        section_gcol = gcol;
-                        let gcount = groups_present
-                            .iter()
-                            .find(|e| e.0 == key)
-                            .map(|e| e.3)
-                            .unwrap_or(0);
-                        let gcount = if state_filt.is_some() || program_filt.is_some() {
-                            group_visible
-                                .iter()
-                                .find(|e| e.0 == key)
-                                .map(|e| e.1)
-                                .unwrap_or(0)
-                        } else {
-                            gcount
-                        };
-                        section_header = Some(
-                            div()
-                                .w_full()
-                                .flex()
-                                .flex_row()
-                                .items_center()
-                                .gap_2()
-                                .px_1()
-                                .pt_1()
-                                .text_size(px(8.5))
-                                .text_color(th.text.alpha(0.5))
-                                .child(div().w(px(8.)).h(px(8.)).flex_none().rounded_sm().bg(gcol))
-                                .child(
-                                    div()
-                                        .font_weight(gpui::FontWeight::EXTRA_BOLD)
-                                        .child(gname.to_uppercase()),
-                                )
-                                .child(div().flex_1().min_w(px(0.)))
-                                .child(div().text_color(th.text.alpha(0.35)).child(format!(
-                                    "{gcount} {}",
-                                    if gcount == 1 { "pane" } else { "panes" }
-                                ))),
-                        );
-                    }
+                    };
                     for leaf in leaves {
                         let id = leaf.entity_id();
                         let p = leaf.read(cx);
@@ -10237,8 +10203,8 @@ impl Render for Workspace {
                                             // GROUP: a wash of the tab-group colour
                                             .bg(linear_gradient(
                                                 160.,
-                                                linear_color_stop(section_gcol.alpha(0.34), 0.),
-                                                linear_color_stop(section_gcol.alpha(0.0), 1.),
+                                                linear_color_stop(gcol.alpha(0.34), 0.),
+                                                linear_color_stop(gcol.alpha(0.0), 1.),
                                             ))
                                             // TITLE: a monogram in a group-tinted ring
                                             .child(
@@ -10248,8 +10214,8 @@ impl Render for Workspace {
                                                     .h(px(52. * cs))
                                                     .rounded_full()
                                                     .border_2()
-                                                    .border_color(section_gcol.alpha(0.55))
-                                                    .bg(section_gcol.alpha(0.14))
+                                                    .border_color(gcol.alpha(0.55))
+                                                    .bg(gcol.alpha(0.14))
                                                     .flex()
                                                     .items_center()
                                                     .justify_center()
@@ -10389,16 +10355,31 @@ impl Render for Workspace {
                                                 ),
                                         ),
                                 );
-                        section_cards.push(row.into_any_element());
+                        group_cards[gi].3.push(row.into_any_element());
                         ri += 1;
                     }
                 }
-                if let Some(hdr) = section_header.take() {
-                    list = list.child(group_section(
-                        hdr,
-                        section_gcol,
-                        std::mem::take(&mut section_cards),
-                    ));
+                // Flush each group as ONE titled, themed panel (first-seen order).
+                for (_key, gname, gcol, cards) in group_cards {
+                    if cards.is_empty() {
+                        continue;
+                    }
+                    let header = div()
+                        .w_full()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap_2()
+                        .px_1()
+                        .pt_1()
+                        .text_size(px(8.5))
+                        .text_color(th.text.alpha(0.5))
+                        .child(
+                            div()
+                                .font_weight(gpui::FontWeight::EXTRA_BOLD)
+                                .child(gname.to_uppercase()),
+                        );
+                    list = list.child(group_section(header, gcol, cards));
                 }
                 if ri == 0 {
                     list = list.child(label(t.m_no_panes.to_string()));
