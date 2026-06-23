@@ -1653,7 +1653,15 @@ impl TerminalView {
         // Crawl keeps its own bottom-anchor look (handled in the modal), so it is
         // excluded — matching the live render's `anchor_top() && !th.crawl` gate.
         // Off (the default) leaves `lines` untouched → byte-identical to before.
-        if anchor_top() && !th.crawl {
+        // Alt-screen TUIs (vim/htop) must not be inverted in the mirror either —
+        // same guard as the live render. One lock, dropped immediately.
+        let alt_screen_active = self
+            .session
+            .term
+            .lock()
+            .mode()
+            .contains(TermMode::ALT_SCREEN);
+        if should_invert(anchor_top(), th.crawl, alt_screen_active) {
             let block_mode = self.mode.is_agent();
             let wraps = if block_mode {
                 Vec::new()
@@ -3355,6 +3363,17 @@ pub fn anchor_top() -> bool {
     ANCHOR_TOP.load(std::sync::atomic::Ordering::Relaxed)
 }
 
+/// Whether the inverted anchor-to-top read should apply. The read reverses row
+/// order so the prompt lands on TOP; that is correct for a scrolling shell but
+/// CORRUPTS a full-screen TUI on the alternate screen (vim/htop/less), whose
+/// box-drawing assumes a fixed top-to-bottom layout. So invert ONLY when the
+/// top-anchor toggle is on, the pane is not a crawl, AND the terminal is not on
+/// the alternate screen. Pure (no locks) — the caller passes the live alt-screen
+/// flag from a single `term.lock()`.
+fn should_invert(anchor_top: bool, crawl: bool, alt_screen: bool) -> bool {
+    anchor_top && !crawl && !alt_screen
+}
+
 /// Bottom-anchor painted rows: slide content down until the last non-blank row
 /// sits on the bottom (near) edge, with blank padding pushed to the top. This is
 /// what makes a crawl pane read as a Star-Wars crawl — prompt at the near edge,
@@ -3986,7 +4005,17 @@ impl Render for TerminalView {
         //   else:     g = p - offset            (incl. crawl)
         // The default un-anchored path leaves `(0, false)` ⇒ identity, so it is
         // byte-identical to before this feature.
-        let inverted = anchor_top() && !th.crawl;
+        // Guard the inverted read against alt-screen TUIs: a full-screen program
+        // (vim/htop/less) on the alternate screen lays out top-to-bottom and
+        // reversing its rows corrupts the box-drawing. One lock, dropped before any
+        // later `term.lock()` in this scope (no double-lock on the FairMutex).
+        let alt_screen_active = self
+            .session
+            .term
+            .lock()
+            .mode()
+            .contains(TermMode::ALT_SCREEN);
+        let inverted = should_invert(anchor_top(), th.crawl, alt_screen_active);
         if th.crawl || !anchor_top() {
             // Bottom-anchor (crawl + default normal mode).
             self.paint_offset = bottom_anchor_rows(&mut lines, self.grid.rows);
@@ -5549,6 +5578,31 @@ mod tests {
             vec!["", "", "", "$ "],
             "bottom-anchor slides the prompt to the bottom"
         );
+    }
+
+    #[test]
+    fn should_invert_truth_table_guards_alt_screen() {
+        // Invert ONLY when anchor_top is on, not a crawl, and NOT on the alternate
+        // screen. The alt-screen leg is the #127 guard: a full-screen TUI
+        // (vim/htop) must never have its rows reversed.
+        // (anchor_top, crawl, alt_screen) -> expected
+        let cases = [
+            (false, false, false, false), // toggle off → never invert
+            (false, false, true, false),
+            (false, true, false, false),
+            (true, false, false, true), // the ONLY inverting case
+            (true, false, true, false), // alt-screen TUI → guarded OFF (#127)
+            (true, true, false, false), // crawl keeps its own bottom-anchor look
+            (true, true, true, false),
+            (false, true, true, false),
+        ];
+        for (anchor, crawl, alt, expected) in cases {
+            assert_eq!(
+                should_invert(anchor, crawl, alt),
+                expected,
+                "should_invert(anchor_top={anchor}, crawl={crawl}, alt_screen={alt})"
+            );
+        }
     }
 
     #[test]
