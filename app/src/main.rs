@@ -9763,9 +9763,22 @@ impl Render for Workspace {
                         let rt = p.runtime();
                         let exposed = mcp::should_expose(&self.mcp, is_agent);
                         let status = p.agent_status();
-                        // the agent's last output lines for the card's chat-scroller (#2)
+                        // The card's chat-scroller. An IDLE agent's live input box is
+                        // wasted space — show the LAST USER PROMPT (what you asked it)
+                        // instead, marked with a ❯. Working agents show live output;
+                        // fall back to recent output if there's no visible prompt.
                         let feed: Vec<String> = if is_agent {
-                            p.recent_lines(4)
+                            if status.state == hud::AgentState::Idle {
+                                let mut v = p.last_human_message(3);
+                                if v.is_empty() {
+                                    p.recent_lines(4)
+                                } else {
+                                    v[0] = format!("\u{276f} {}", v[0]);
+                                    v
+                                }
+                            } else {
+                                p.recent_lines(4)
+                            }
                         } else {
                             Vec::new()
                         };
@@ -9883,6 +9896,10 @@ impl Render for Workspace {
                             row_text.alpha(0.3)
                         };
                         let kind_col = agent_program_glow(row_text.alpha(0.55), mode_lbl.as_str());
+                        // The MTG "mana colour" of the card FRAME = this terminal's own
+                        // resolved THEME accent (so a themed pane's card wears its theme);
+                        // the thin border keeps the program identity (claude/codex/shell).
+                        let theme_col = p.resolved_theme(cx).accent;
                         let mode_col = kind_col;
                         // HUD per-row: state badge colour/glyph + a compact metrics
                         // line (state · effort · elapsed · turn tokens · Σ session).
@@ -10003,22 +10020,23 @@ impl Render for Workspace {
                                 .h(px(296. * cs))
                                 .flex_none()
                                 .flex_shrink_0()
-                                // MTG-style DECK-COLOUR FRAME: a thick rim in the agent's
-                                // identity colour (claude amber / codex cyan / shell green) +
-                                // a metallic gradient, so the colour identity reads instantly
-                                // across a wall of cards. The dark card FACE sits inset within.
+                                // MTG-style card FRAME: the metallic body takes this
+                                // terminal's THEME colour (its "mana colour"), and a thin
+                                // rim carries the PROGRAM identity (claude/codex/shell) —
+                                // dialed ~60% back so it's a quiet accent, not a neon edge.
+                                // The dark card FACE sits inset within.
                                 .p(px(5. * cs))
                                 .rounded_lg()
                                 .border_2()
-                                .border_color(kind_col.alpha(if live_glow { 0.95 } else { 0.8 }))
+                                .border_color(kind_col.alpha(if live_glow { 0.42 } else { 0.32 }))
                                 .bg(linear_gradient(
                                     135.,
-                                    linear_color_stop(brighten(kind_col, 1.25).alpha(0.5), 0.),
-                                    linear_color_stop(darken(kind_col, 0.55).alpha(0.72), 1.),
+                                    linear_color_stop(brighten(theme_col, 1.1).alpha(0.22), 0.),
+                                    linear_color_stop(darken(theme_col, 0.5).alpha(0.3), 1.),
                                 ))
                                 .shadow(agent_card_shadows(status_glow, live_glow))
                                 .cursor_pointer()
-                                .hover(move |s| s.border_color(kind_col))
+                                .hover(move |s| s.border_color(kind_col.alpha(0.6)))
                                 .on_mouse_down(
                                     MouseButton::Left,
                                     cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
@@ -10232,7 +10250,16 @@ impl Render for Workspace {
                                                     }),
                                             ),
                                     )
-                                                }),
+                                                })
+                                                // CURVED-GLASS SHEEN over the logo so the art reads as
+                                                // convex glass even when the barrel warp is subtle.
+                                                .child(div().absolute().inset_0().rounded_lg().bg(
+                                                    linear_gradient(
+                                                        180.,
+                                                        linear_color_stop(white().alpha(0.16), 0.),
+                                                        linear_color_stop(white().alpha(0.0), 0.42),
+                                                    ),
+                                                )),
                                         )
                                         // STAT BAR: SWCCG POWER/ABILITY-style boxes
                                         .child(
