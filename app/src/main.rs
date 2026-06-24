@@ -5227,46 +5227,47 @@ impl Workspace {
         Some(0.7 + ratio * 0.9)
     }
 
-    /// Is any floating surface (modal or menu) open above the workspace?
-    fn any_popup_open(&self) -> bool {
-        self.help_open
-            || self.mcp_menu
-            || self.dead_menu
-            || self.plugins_menu
-            || self.savings_menu
-            || self.confirm_close.is_some()
-            || self.find.is_some()
-            || self.lang_picker.is_some()
-            || self.logo_picker.is_some()
-            || self.theme_menu.is_some()
-            || self.osd_menu.is_some()
-            || self.tab_menu.is_some()
-            || self.group_menu.is_some()
-            || self.focus_read.is_some()
-    }
-
-    /// Close every open popup (modal or menu). Esc and click-outside both funnel
-    /// through here so dismissal is identical everywhere across the app. Returns
-    /// whether anything was open. NEVER touches a terminal pane.
+    /// Close the TOP-MOST open popup only, so esc / click-outside peel back ONE
+    /// layer at a time: a modal stacked on the agent wall (the savings overlay,
+    /// graveyard, plugins) closes first — a second esc then closes the wall.
+    /// Returns whether anything was closed. NEVER touches a terminal pane.
     fn close_popups(&mut self) -> bool {
-        let open = self.any_popup_open();
-        if open {
-            self.help_open = false;
-            self.mcp_menu = false;
-            self.dead_menu = false;
-            self.plugins_menu = false;
+        // Overlays that stack ON TOP of the agent wall — peel these first.
+        if self.savings_menu {
             self.savings_menu = false;
-            self.confirm_close = None;
-            self.find = None;
-            self.lang_picker = None;
-            self.logo_picker = None;
-            self.theme_menu = None;
-            self.osd_menu = None;
-            self.tab_menu = None;
-            self.group_menu = None;
-            self.focus_read = None;
+            return true;
         }
-        open
+        if self.dead_menu {
+            self.dead_menu = false;
+            return true;
+        }
+        if self.plugins_menu {
+            self.plugins_menu = false;
+            return true;
+        }
+        // Standalone modals (only one is ever open at a time; order is moot).
+        if self.confirm_close.take().is_some()
+            || self.find.take().is_some()
+            || self.lang_picker.take().is_some()
+            || self.logo_picker.take().is_some()
+            || self.theme_menu.take().is_some()
+            || self.osd_menu.take().is_some()
+            || self.tab_menu.take().is_some()
+            || self.group_menu.take().is_some()
+            || self.focus_read.take().is_some()
+        {
+            return true;
+        }
+        if self.help_open {
+            self.help_open = false;
+            return true;
+        }
+        // The base layer: the agent wall itself.
+        if self.mcp_menu {
+            self.mcp_menu = false;
+            return true;
+        }
+        false
     }
 
     fn on_key(&mut self, ev: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
@@ -10202,8 +10203,9 @@ impl Render for Workspace {
                         // terminal's THEME colour (its "mana colour"), and a thin
                         // rim carries the PROGRAM identity (claude/codex/shell) —
                         // dialed ~60% back so it's a quiet accent, not a neon edge.
-                        // The dark card FACE sits inset within.
-                        .p(px(5. * cs))
+                        // The dark card FACE sits inset within. Frame band is 66% of
+                        // its old thickness (5→3.3) — same outline + glow, slimmer.
+                        .p(px(3.3 * cs))
                         .rounded_lg()
                         .border_2()
                         .border_color(kind_col.alpha(if live_glow { 0.42 } else { 0.32 }))
@@ -10801,17 +10803,37 @@ impl Render for Workspace {
                         .child(card_slider),
                 )
                 .child(label(format!("{exposed}/{total} {}", t.m_exposed)))
-                .child(
+                .child({
+                    // Each filter DIMENSION (group · program · state) lives in its
+                    // own lightly-themed card so they read as distinct controls; the
+                    // cards are spaced apart (gap_3).
+                    let filter_card = |inner: gpui::AnyElement| {
+                        div()
+                            .flex()
+                            .flex_row()
+                            .flex_wrap()
+                            .items_center()
+                            .gap_1()
+                            .px_2()
+                            .py_1()
+                            .rounded_lg()
+                            .bg(th.accent.alpha(0.06))
+                            .border_1()
+                            .border_color(th.accent.alpha(0.18))
+                            .child(inner)
+                    };
                     div()
                         .flex()
                         .flex_row()
                         .flex_wrap()
                         .items_center()
-                        .gap_2()
-                        .child(chips)
-                        .child(program_chips)
-                        .when(show_state_chips, |d| d.child(state_chips)),
-                )
+                        .gap_3()
+                        .child(filter_card(chips.into_any_element()))
+                        .child(filter_card(program_chips.into_any_element()))
+                        .when(show_state_chips, |d| {
+                            d.child(filter_card(state_chips.into_any_element()))
+                        })
+                })
                 .child(list)
                 .child(
                     div()
