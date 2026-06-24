@@ -1320,10 +1320,34 @@ struct LangPicker {
 struct LogoPicker {
     /// Which pane gets the chosen logo.
     target: gpui::EntityId,
-    query: EditBuffer,
+    /// Searches ONLY the file basename. Fuzzy gating: it does not initiate
+    /// until the 3rd char UNLESS `loc` is already set (see `filter_logo_two_field`).
+    name: EditBuffer,
+    /// Fuzzy-scopes WHERE to look — matches against candidate dirs. A partial
+    /// `loc` narrows the NAME search to the fuzzy-matched directories.
+    loc: EditBuffer,
+    /// Which field typing edits (Tab toggles).
+    field: LogoField,
     selected: usize,
+    /// CACHED filtered + ranked indices into `candidates`, recomputed only when
+    /// a field edits (NOT per render — that was the old slowness).
+    order: Vec<usize>,
     /// All scanned candidates: `(absolute path, basename, ~/relative dir)`.
     candidates: Vec<LogoCandidate>,
+}
+
+/// Which logo-picker input field the keyboard is editing. Tab toggles.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum LogoField {
+    Name,
+    Loc,
+}
+
+impl LogoPicker {
+    /// Recompute the cached `order` from the current NAME / IN fields.
+    fn recompute(&mut self) {
+        self.order = filter_logo_two_field(&self.candidates, &self.name.text(), &self.loc.text());
+    }
 }
 
 #[derive(Clone)]
@@ -1544,21 +1568,44 @@ fn logo_sort_by_recency(out: &mut [LogoCandidate]) {
     });
 }
 
-/// Fuzzy-rank `candidates` against `query` (empty query → all, in scan order).
-/// Returns indices into `candidates`, best match first.
-fn filter_logo_candidates(candidates: &[LogoCandidate], query: &str) -> Vec<usize> {
-    let q = query.trim();
-    if q.is_empty() {
-        return (0..candidates.len()).collect();
+/// Two-field logo filter: NAME searches the basename, IN (`loc`) fuzzy-scopes
+/// which directories to look in. Returns indices into `candidates`.
+///
+/// The gate logic (the crux — nothing must fall through the cracks):
+///  1. `loc_set = !loc.trim().is_empty()`.
+///  2. SCOPE by IN: if `loc_set`, scope = indices whose `dir` fuzzy-matches
+///     `loc`; else scope = ALL. Scope stays in input (recency) order.
+///  3. GATE the NAME fuzzy: empty `name` → return scope as-is (recency). If
+///     `!loc_set` AND `name` has < 3 chars → return scope as-is (the "don't
+///     initiate until the 3rd keystroke unless IN is set" rule).
+///  4. Otherwise fuzzy-rank scope by `fuzzy_match(base, name)`, score desc /
+///     index asc.
+fn filter_logo_two_field(candidates: &[LogoCandidate], name: &str, loc: &str) -> Vec<usize> {
+    let name = name.trim();
+    let loc = loc.trim();
+    let loc_set = !loc.is_empty();
+
+    // 2. Scope by IN (recency order preserved — `candidates` is recency-sorted).
+    let scope: Vec<usize> = if loc_set {
+        (0..candidates.len())
+            .filter(|&i| pane::fuzzy_match(&candidates[i].dir, loc).is_some())
+            .collect()
+    } else {
+        (0..candidates.len()).collect()
+    };
+
+    // 3. Gate the NAME fuzzy.
+    if name.is_empty() {
+        return scope;
     }
-    let mut scored: Vec<(i64, usize)> = candidates
-        .iter()
-        .enumerate()
-        .filter_map(|(i, c)| {
-            // match against "basename dir" so either part can hit.
-            let hay = format!("{} {}", c.base, c.dir);
-            pane::fuzzy_match(&hay, q).map(|(s, _)| (s, i))
-        })
+    if !loc_set && name.chars().count() < 3 {
+        return scope;
+    }
+
+    // 4. Fuzzy-rank the scoped set by basename.
+    let mut scored: Vec<(i64, usize)> = scope
+        .into_iter()
+        .filter_map(|i| pane::fuzzy_match(&candidates[i].base, name).map(|(s, _)| (s, i)))
         .collect();
     scored.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
     scored.into_iter().map(|(_, i)| i).collect()
@@ -1833,9 +1880,13 @@ fn make_pane_restored(
     })
     .detach();
     // the header logo / `＋ logo` placeholder → open the image picker for this pane
-    cx.subscribe(&pane, |ws, pane, _ev: &OpenLogoPicker, cx| {
-        ws.open_logo_picker(pane.entity_id(), cx);
-    })
+    cx.subscribe_in(
+        &pane,
+        window,
+        |ws, pane, _ev: &OpenLogoPicker, window, cx| {
+            ws.open_logo_picker(pane.entity_id(), window, cx);
+        },
+    )
     .detach();
     // the header display icon → open this pane's monitor-OSD tray at the click
     cx.subscribe(&pane, |ws, pane, ev: &OpenDisplayMenu, cx| {
@@ -3461,13 +3512,27 @@ impl Workspace {
 
     /// Open the header-logo image picker scoped to `target`. Scans the candidate
     /// image files up front (bounded) and grabs the keyboard so typing filters.
-    fn open_logo_picker(&mut self, target: gpui::EntityId, cx: &mut Context<Self>) {
+    fn open_logo_picker(
+        &mut self,
+        target: gpui::EntityId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let candidates = scan_logo_candidates();
+        let order = (0..candidates.len()).collect();
         self.logo_picker = Some(LogoPicker {
             target,
-            query: EditBuffer::seeded(""),
+            name: EditBuffer::seeded(""),
+            loc: EditBuffer::seeded(""),
+            field: LogoField::Name,
             selected: 0,
-            candidates: scan_logo_candidates(),
+            order,
+            candidates,
         });
+        // Take the keyboard off the focused pane (whose `on_key` writes to the
+        // PTY) so typing filters the picker instead of leaking into the shell —
+        // exactly like `open_find`.
+        window.focus(&self.focus_handle, cx);
         cx.notify();
     }
 
@@ -4297,15 +4362,21 @@ impl Workspace {
             .last_win
             .map(|(_, _, w, h)| (w, h))
             .unwrap_or((1200., 800.));
-        let order = filter_logo_candidates(&lp.candidates, &lp.query.text());
-        let q = lp.query.text();
+        // Read the CACHED, pre-ranked order — never re-filter per render.
+        let order = &lp.order;
+        let name_q = lp.name.text();
+        let loc_q = lp.loc.text();
+        let loc_set = !loc_q.trim().is_empty();
+        // The NAME fuzzy is gated off until 3 chars unless IN is set — surface that.
+        let gated =
+            !loc_set && name_q.trim().chars().count() > 0 && name_q.trim().chars().count() < 3;
         // Cap rendered rows so a 4000-file scan never builds a giant element tree.
         const MAX_ROWS: usize = 200;
         const ROW_H: f32 = 36.;
         let panel_w = 460.;
         let total = lp.candidates.len();
         let shown_n = order.len().clamp(1, MAX_ROWS);
-        let panel_h = (96. + shown_n as f32 * ROW_H + 28.).min(wh - 32.);
+        let panel_h = (124. + shown_n as f32 * ROW_H + 28.).min(wh - 32.);
         let left = (ww * 0.5 - panel_w * 0.5).clamp(8., (ww - panel_w - 8.).max(8.));
         let top = (wh * 0.22).clamp(8., (wh - panel_h - 8.).max(8.));
         let sel = lp.selected.min(order.len().saturating_sub(1));
@@ -4326,18 +4397,51 @@ impl Workspace {
             found
         };
 
-        let input = {
-            let eb = render_edit_buffer(&lp.query, 1.0, th.text, th.accent, th.accent.alpha(0.3));
-            if q.is_empty() {
-                eb.child(
-                    div()
-                        .text_color(th.text.alpha(0.35))
-                        .child("type to filter\u{2026}"),
-                )
-            } else {
-                eb
-            }
-        };
+        // One labelled input row. `active` highlights the field the keyboard is
+        // editing; `placeholder` shows when its buffer is empty.
+        let field_row =
+            |label: &str, eb: &EditBuffer, active: bool, placeholder: &'static str| -> gpui::Div {
+                let text = eb.text();
+                let inner = render_edit_buffer(eb, 1.0, th.text, th.accent, th.accent.alpha(0.3))
+                    .when(text.is_empty(), |d| {
+                        d.child(
+                            div()
+                                .text_color(th.text.alpha(0.32))
+                                .child(placeholder.to_string()),
+                        )
+                    });
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_1()
+                    .w_full()
+                    .px_2()
+                    .py_1()
+                    .rounded_sm()
+                    .bg(th.bg.alpha(if active { 0.65 } else { 0.4 }))
+                    .border_1()
+                    .border_color(if active {
+                        th.accent.alpha(0.8)
+                    } else {
+                        th.accent.alpha(0.25)
+                    })
+                    .text_size(px(13.))
+                    .child(
+                        div()
+                            .flex_none()
+                            .w(px(30.))
+                            .text_size(px(9.))
+                            .font_weight(gpui::FontWeight::EXTRA_BOLD)
+                            .text_color(if active {
+                                th.accent
+                            } else {
+                                th.text.alpha(0.45)
+                            })
+                            .child(label.to_string()),
+                    )
+                    .child(inner)
+            };
         let header = div()
             .flex()
             .flex_col()
@@ -4365,20 +4469,31 @@ impl Workspace {
                             .child(format!("{}/{}", order.len(), total)),
                     ),
             )
+            .child(field_row(
+                "NAME",
+                &lp.name,
+                lp.field == LogoField::Name,
+                "file name\u{2026}",
+            ))
+            .child(field_row(
+                "IN",
+                &lp.loc,
+                lp.field == LogoField::Loc,
+                "any folder\u{2026}",
+            ))
             .child(
                 div()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .w_full()
-                    .px_2()
-                    .py_1()
-                    .rounded_sm()
-                    .bg(th.bg.alpha(0.55))
-                    .border_1()
-                    .border_color(th.accent.alpha(0.4))
-                    .text_size(px(13.))
-                    .child(input),
+                    .text_size(px(8.5))
+                    .text_color(if gated {
+                        th.accent.alpha(0.8)
+                    } else {
+                        th.text.alpha(0.4)
+                    })
+                    .child(if gated {
+                        "type 3+ chars, or set IN to search now".to_string()
+                    } else {
+                        "Tab switches NAME / IN".to_string()
+                    }),
             );
 
         let mut list = div().flex().flex_col().gap_0p5().px_1();
@@ -4399,9 +4514,10 @@ impl Workspace {
                     .child(div().flex_1().min_w(px(0.)).child("Remove logo"))
                     .on_mouse_down(
                         MouseButton::Left,
-                        cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                        cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
                             cx.stop_propagation();
                             ws.set_pane_logo(target, None, cx);
+                            ws.focus_active(window, cx);
                         }),
                     ),
             );
@@ -4461,9 +4577,10 @@ impl Workspace {
                 )
                 .on_mouse_down(
                     MouseButton::Left,
-                    cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                    cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
                         cx.stop_propagation();
                         ws.set_pane_logo(target, Some(path.clone()), cx);
+                        ws.focus_active(window, cx);
                     }),
                 );
             list = list.child(row);
@@ -4477,8 +4594,10 @@ impl Workspace {
                     .text_color(th.text.alpha(0.4))
                     .child(if total == 0 {
                         "No image files found (png/jpg/jpeg/svg)".to_string()
+                    } else if gated {
+                        "type 3+ chars, or set IN to search".to_string()
                     } else {
-                        format!("No image matches \u{201c}{}\u{201d}", q.trim())
+                        format!("No image matches \u{201c}{}\u{201d}", name_q.trim())
                     }),
             );
         }
@@ -4521,7 +4640,9 @@ impl Workspace {
                     .pt_0p5()
                     .text_size(px(8.5))
                     .text_color(th.text.alpha(0.45))
-                    .child("\u{2191}\u{2193} select \u{00b7} \u{21b5} choose \u{00b7} esc close"),
+                    .child(
+                        "\u{2191}\u{2193} select \u{00b7} \u{21b9} field \u{00b7} \u{21b5} choose \u{00b7} esc close",
+                    ),
             )
             .on_mouse_down(
                 MouseButton::Left,
@@ -4536,8 +4657,9 @@ impl Workspace {
                 .bg(hsla(0., 0., 0., 0.28))
                 .on_mouse_down(
                     MouseButton::Left,
-                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                    cx.listener(|ws, _: &MouseDownEvent, window, cx| {
                         ws.logo_picker = None;
+                        ws.focus_active(window, cx);
                         cx.notify();
                     }),
                 )
@@ -5166,28 +5288,46 @@ impl Workspace {
             }
         }
         // The logo picker owns the keyboard while open: esc closes, ↵ sets the
-        // highlighted image as the target pane's logo, ↑/↓ move, anything else
-        // edits the fuzzy query.
+        // highlighted image as the target pane's logo, ↑/↓ move the selection,
+        // Tab toggles the active field (NAME ↔ IN), anything else edits the
+        // active field's buffer. Selection + ranking read the CACHED `order`.
         if let Some(mut lp) = self.logo_picker.take() {
             match ks.key.as_str() {
                 "escape" => {
+                    // restore the keyboard to the pane (mirrors `find`).
+                    self.focus_active(window, cx);
                     cx.notify();
                     return;
                 }
                 "enter" => {
-                    let order = filter_logo_candidates(&lp.candidates, &lp.query.text());
-                    let pick = order
-                        .get(lp.selected.min(order.len().saturating_sub(1)))
+                    let sel = lp.selected.min(lp.order.len().saturating_sub(1));
+                    let pick = lp
+                        .order
+                        .get(sel)
                         .and_then(|&i| lp.candidates.get(i))
                         .map(|c| c.path.clone());
                     if let Some(path) = pick {
+                        // set_pane_logo closes the picker; hand the keyboard back.
                         self.set_pane_logo(lp.target, Some(path), cx);
+                        self.focus_active(window, cx);
+                    } else {
+                        self.logo_picker = Some(lp);
                     }
                     cx.notify();
                     return;
                 }
-                "down" | "tab" => {
-                    let n = filter_logo_candidates(&lp.candidates, &lp.query.text()).len();
+                "tab" => {
+                    // Tab switches the field being edited — NOT the selection.
+                    lp.field = match lp.field {
+                        LogoField::Name => LogoField::Loc,
+                        LogoField::Loc => LogoField::Name,
+                    };
+                    self.logo_picker = Some(lp);
+                    cx.notify();
+                    return;
+                }
+                "down" => {
+                    let n = lp.order.len();
                     if n > 0 {
                         lp.selected = (lp.selected + 1).min(n - 1);
                     }
@@ -5202,10 +5342,14 @@ impl Workspace {
                     return;
                 }
                 _ => {
-                    let before = lp.query.text();
-                    lp.query
-                        .apply(ks.key.as_str(), m, ks.key_char.as_deref(), 64);
-                    if lp.query.text() != before {
+                    let eb = match lp.field {
+                        LogoField::Name => &mut lp.name,
+                        LogoField::Loc => &mut lp.loc,
+                    };
+                    let before = eb.text();
+                    eb.apply(ks.key.as_str(), m, ks.key_char.as_deref(), 64);
+                    if eb.text() != before {
+                        lp.recompute();
                         lp.selected = 0;
                     }
                     self.logo_picker = Some(lp);
@@ -12695,6 +12839,148 @@ mod tests {
         assert_eq!(v[2].base, "old.png", "oldest last");
     }
 
+    /// Build a fixed, recency-ordered candidate set for the two-field tests.
+    /// Index order doubles as recency order (idx 0 = newest), matching the real
+    /// scan which hands `filter_logo_two_field` a recency-sorted slice.
+    fn sample_logo_candidates() -> Vec<LogoCandidate> {
+        let mk = |base: &str, dir: &str| LogoCandidate {
+            path: format!("{dir}/{base}"),
+            base: base.into(),
+            dir: dir.into(),
+            mtime: 0,
+        };
+        vec![
+            mk("td-logo.svg", "~/Pictures/terminal-delight"), // 0 (newest)
+            mk("avatar.png", "~/Pictures"),                   // 1
+            mk("logo-dark.png", "~/Downloads"),               // 2
+            mk("banner.jpg", "~/Documents/brand"),            // 3
+            mk("td-badge.png", "~/Desktop"),                  // 4 (oldest)
+        ]
+    }
+
+    fn bases(cands: &[LogoCandidate], idxs: &[usize]) -> Vec<String> {
+        idxs.iter().map(|&i| cands[i].base.clone()).collect()
+    }
+
+    #[test]
+    fn two_field_empty_name_empty_loc_returns_all_in_recency_order() {
+        let c = sample_logo_candidates();
+        let out = filter_logo_two_field(&c, "", "");
+        assert_eq!(
+            out,
+            vec![0, 1, 2, 3, 4],
+            "all, recency (input) order preserved"
+        );
+    }
+
+    #[test]
+    fn two_field_name_one_char_no_loc_not_initiated() {
+        let c = sample_logo_candidates();
+        // 1 char, no loc → gate suppresses the fuzzy → unfiltered scope (all).
+        let out = filter_logo_two_field(&c, "t", "");
+        assert_eq!(out, vec![0, 1, 2, 3, 4], "1 char must not initiate a fuzzy");
+    }
+
+    #[test]
+    fn two_field_name_two_chars_no_loc_still_not_initiated() {
+        let c = sample_logo_candidates();
+        let out = filter_logo_two_field(&c, "td", "");
+        assert_eq!(out, vec![0, 1, 2, 3, 4], "2 chars must not initiate either");
+    }
+
+    #[test]
+    fn two_field_name_three_chars_no_loc_runs_fuzzy_and_ranks() {
+        let c = sample_logo_candidates();
+        // 3 chars → fuzzy runs over basenames only.
+        let out = filter_logo_two_field(&c, "logo", "");
+        let got = bases(&c, &out);
+        // td-logo.svg and logo-dark.png both contain "logo"; avatar/banner/badge don't.
+        assert!(got.contains(&"td-logo.svg".to_string()), "td-logo matches");
+        assert!(
+            got.contains(&"logo-dark.png".to_string()),
+            "logo-dark matches"
+        );
+        assert!(
+            !got.contains(&"avatar.png".to_string()),
+            "non-matching basename excluded"
+        );
+        assert!(!got.contains(&"banner.jpg".to_string()));
+    }
+
+    #[test]
+    fn two_field_loc_set_bypasses_the_name_gate_at_one_char() {
+        let c = sample_logo_candidates();
+        // loc set (even 1 char) → NAME fuzzy runs immediately even at 1 char.
+        let out = filter_logo_two_field(&c, "t", "pictures");
+        let got = bases(&c, &out);
+        // scope = dirs fuzzy-matching "pictures" → idx 0,1; name "t" fuzzes basenames:
+        // td-logo.svg matches "t", avatar.png also contains a 't' (avaTar) so fuzzy hits.
+        assert!(
+            got.contains(&"td-logo.svg".to_string()),
+            "1-char name runs when IN set"
+        );
+        // logo-dark (~/Downloads) is out of the pictures scope entirely.
+        assert!(
+            !got.contains(&"logo-dark.png".to_string()),
+            "out-of-scope dir excluded"
+        );
+    }
+
+    #[test]
+    fn two_field_partial_loc_excludes_perfect_name_in_wrong_dir() {
+        let c = sample_logo_candidates();
+        // loc "down" scopes to ~/Downloads only. Name "td-badge" is a PERFECT
+        // basename match but lives in ~/Desktop → it MUST be excluded.
+        let out = filter_logo_two_field(&c, "td-badge", "down");
+        let got = bases(&c, &out);
+        assert!(
+            !got.contains(&"td-badge.png".to_string()),
+            "a perfect name match in a non-matching dir must be excluded"
+        );
+        // ~/Downloads holds only logo-dark.png, which doesn't match "td-badge".
+        assert!(
+            got.is_empty(),
+            "no basename in the scoped dir matches td-badge"
+        );
+    }
+
+    #[test]
+    fn two_field_loc_set_empty_name_returns_all_in_matched_dirs() {
+        let c = sample_logo_candidates();
+        let out = filter_logo_two_field(&c, "", "pictures");
+        // dirs fuzzy-matching "pictures": idx 0 (~/Pictures/terminal-delight), 1 (~/Pictures).
+        assert_eq!(out, vec![0, 1], "all files in matched dirs, recency order");
+    }
+
+    #[test]
+    fn two_field_td_logo_found_by_name_and_by_loc_plus_name() {
+        let c = sample_logo_candidates();
+        // by name "td-logo" with NO loc (3+ chars → fuzzy runs).
+        let by_name = filter_logo_two_field(&c, "td-logo", "");
+        assert!(
+            bases(&c, &by_name).contains(&"td-logo.svg".to_string()),
+            "td-logo.svg found by name alone"
+        );
+        // by loc "pictures" + name "td" (loc bypasses the gate).
+        let by_loc = filter_logo_two_field(&c, "td", "pictures");
+        assert!(
+            bases(&c, &by_loc).contains(&"td-logo.svg".to_string()),
+            "td-logo.svg found by loc=pictures + name=td"
+        );
+    }
+
+    #[test]
+    fn two_field_no_valid_file_falls_through_when_loc_and_name_both_match() {
+        let c = sample_logo_candidates();
+        // loc matches the dir AND name matches the base → the file MUST appear.
+        let out = filter_logo_two_field(&c, "badge", "desktop");
+        assert_eq!(
+            bases(&c, &out),
+            vec!["td-badge.png".to_string()],
+            "a file whose dir matches loc and base matches name must be returned"
+        );
+    }
+
     #[test]
     fn savings_view_parses_plugin_payload() {
         let json = r#"{
@@ -13453,16 +13739,17 @@ node = "Leaf"
                 mtime: 10,
             },
         ];
-        // empty query → every candidate, in order
-        assert_eq!(filter_logo_candidates(&cands, ""), vec![0, 1, 2]);
-        assert_eq!(filter_logo_candidates(&cands, "   "), vec![0, 1, 2]);
-        // a basename substring ranks its candidate first
-        assert_eq!(filter_logo_candidates(&cands, "acme").first(), Some(&0));
-        assert_eq!(filter_logo_candidates(&cands, "icon").first(), Some(&2));
-        // the directory text is searchable too
-        assert!(filter_logo_candidates(&cands, "brand").contains(&2));
-        // no match → empty
-        assert!(filter_logo_candidates(&cands, "zzzqq").is_empty());
+        // empty name + empty loc → every candidate, in order
+        assert_eq!(filter_logo_two_field(&cands, "", ""), vec![0, 1, 2]);
+        assert_eq!(filter_logo_two_field(&cands, "   ", "   "), vec![0, 1, 2]);
+        // a basename substring (3+ chars, no loc) ranks its candidate first
+        assert_eq!(filter_logo_two_field(&cands, "acme", "").first(), Some(&0));
+        assert_eq!(filter_logo_two_field(&cands, "icon", "").first(), Some(&2));
+        // directory text is searched via the IN field, NOT the NAME field now
+        assert!(filter_logo_two_field(&cands, "", "brand").contains(&2));
+        assert!(!filter_logo_two_field(&cands, "brand", "").contains(&2));
+        // no NAME match (3+ chars) → empty
+        assert!(filter_logo_two_field(&cands, "zzzqq", "").is_empty());
     }
 
     #[test]
