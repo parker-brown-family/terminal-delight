@@ -10072,6 +10072,11 @@ impl Render for Workspace {
                     // resolved THEME accent (so a themed pane's card wears its theme);
                     // the thin border keeps the program identity (claude/codex/shell).
                     let theme_col = p.resolved_theme(cx).accent;
+                    // THEME ICON: this card's effective colour-set swatch glyph,
+                    // docked on the middle-right frame edge (mirrors the theme tray).
+                    let card_choice = p.appearance.effective(&theme::outer_choice(cx));
+                    let theme_glyph = card_choice.dynamic.glyph();
+                    let theme_tint = card_choice.dynamic.swatch().unwrap_or(theme_col);
                     let mode_col = kind_col;
                     // HUD per-row: state badge colour/glyph + a compact metrics
                     // line (state · effort · elapsed · turn tokens · Σ session).
@@ -10225,6 +10230,7 @@ impl Render for Workspace {
                         .child(
                             div()
                                 .size_full()
+                                .relative()
                                 .flex()
                                 .flex_col()
                                 .gap_1()
@@ -10445,8 +10451,13 @@ impl Render for Workspace {
                                 // STAT BAR: model/service + effort. Status lives in
                                 // the bottom-right chip beside the ✓/✕/○ marker.
                                 .child({
-                                    let mut stats =
-                                        div().flex().flex_row().items_center().flex_wrap().gap_1();
+                                    let mut stats = div()
+                                        .flex()
+                                        .flex_row()
+                                        .items_center()
+                                        .w_full()
+                                        .flex_wrap()
+                                        .gap_1();
                                     if is_agent {
                                         let model_val = model_disp
                                             .clone()
@@ -10467,7 +10478,27 @@ impl Render for Workspace {
                                             kind_col,
                                         ));
                                     }
-                                    stats
+                                    // THEME ICON: the card's colour-set swatch glyph,
+                                    // pushed to the RIGHT edge of the stat bar (mirrors
+                                    // the theme tray) and tinted with the set's swatch
+                                    // colour so it reads as the card's themed identity.
+                                    stats.child(
+                                        div()
+                                            .ml_auto()
+                                            .flex_none()
+                                            .flex()
+                                            .items_center()
+                                            .justify_center()
+                                            .w(px(18. * cs))
+                                            .h(px(18. * cs))
+                                            .rounded_md()
+                                            .border_1()
+                                            .border_color(theme_tint.alpha(0.6))
+                                            .bg(theme_tint.alpha(0.15))
+                                            .text_size(px(11. * cs))
+                                            .text_color(theme_tint)
+                                            .child(theme_glyph),
+                                    )
                                 })
                                 // RULES TEXT: the recent message feed
                                 .child(rules)
