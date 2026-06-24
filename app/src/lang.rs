@@ -291,6 +291,13 @@ pub struct Strings {
     pub ph_done: &'static str,
     pub ph_shell: &'static str,
     pub ph_remote: &'static str,
+    // ── 🪦 dead-agents dashboard + recover tool (claude/codex stay brand) ──
+    pub dead_agents: &'static str,
+    pub resurrect: &'static str,
+    pub recoverable: &'static str,
+    pub dead: &'static str,
+    pub no_recoverable: &'static str,
+    pub dead_hint: &'static str,
 }
 
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -481,6 +488,12 @@ pub const EN: Strings = Strings {
     ph_done: "done",
     ph_shell: "SHELL",
     ph_remote: "REMOTE",
+    dead_agents: "DEAD AGENTS",
+    resurrect: "RESURRECT",
+    recoverable: "recoverable",
+    dead: "dead",
+    no_recoverable: "No recoverable agents \u{2014} every saved session is either live or already gone.",
+    dead_hint: "click a row to resurrect it \u{2014} or \u{2b07} .cdx to harvest its context into a portable package",
 };
 
 /// Español.
@@ -654,6 +667,12 @@ pub const ES: Strings = Strings {
     ph_done: "listo",
     ph_shell: "CONSOLA",
     ph_remote: "REMOTO",
+    dead_agents: "AGENTES MUERTOS",
+    resurrect: "RESUCITAR",
+    recoverable: "recuperables",
+    dead: "muertos",
+    no_recoverable: "No hay agentes recuperables \u{2014} cada sesión guardada está activa o ya desaparecida.",
+    dead_hint: "haz clic en una fila para resucitarla \u{2014} o \u{2b07} .cdx para extraer su contexto a un paquete portátil",
 };
 
 /// Deutsch.
@@ -827,6 +846,12 @@ pub const DE: Strings = Strings {
     ph_done: "fertig",
     ph_shell: "KONSOLE",
     ph_remote: "ENTFERNT",
+    dead_agents: "TOTE AGENTEN",
+    resurrect: "WIEDERBELEBEN",
+    recoverable: "wiederherstellbar",
+    dead: "tot",
+    no_recoverable: "Keine wiederherstellbaren Agenten \u{2014} jede gespeicherte Sitzung ist entweder aktiv oder bereits weg.",
+    dead_hint: "Klicke auf eine Zeile, um sie wiederzubeleben \u{2014} oder \u{2b07} .cdx, um ihren Kontext in ein portables Paket zu sichern",
 };
 
 /// 中文 (简体).
@@ -1000,6 +1025,12 @@ pub const ZH: Strings = Strings {
     ph_done: "完成",
     ph_shell: "外壳",
     ph_remote: "远程",
+    dead_agents: "已死代理",
+    resurrect: "复活",
+    recoverable: "可恢复",
+    dead: "已死",
+    no_recoverable: "没有可恢复的代理 \u{2014} 每个已保存的会话要么仍在运行，要么已经消失。",
+    dead_hint: "点击某一行即可复活它 \u{2014} 或点击 \u{2b07} .cdx 将其上下文导出为可移植的包",
 };
 
 /// Français.
@@ -1173,6 +1204,12 @@ pub const FR: Strings = Strings {
     ph_done: "terminé",
     ph_shell: "CONSOLE",
     ph_remote: "DISTANT",
+    dead_agents: "AGENTS MORTS",
+    resurrect: "RESSUSCITER",
+    recoverable: "récupérables",
+    dead: "morts",
+    no_recoverable: "Aucun agent récupérable \u{2014} chaque session enregistrée est soit active, soit déjà disparue.",
+    dead_hint: "cliquez sur une ligne pour la ressusciter \u{2014} ou \u{2b07} .cdx pour exporter son contexte dans un paquet portable",
 };
 
 /// Русский.
@@ -1346,6 +1383,12 @@ pub const RU: Strings = Strings {
     ph_done: "готово",
     ph_shell: "ОБОЛОЧКА",
     ph_remote: "УДАЛЁННЫЙ",
+    dead_agents: "МЁРТВЫЕ АГЕНТЫ",
+    resurrect: "ВОСКРЕСИТЬ",
+    recoverable: "восстановимых",
+    dead: "мёртвых",
+    no_recoverable: "Нет восстановимых агентов \u{2014} каждая сохранённая сессия либо активна, либо уже исчезла.",
+    dead_hint: "нажмите на строку, чтобы воскресить её \u{2014} или \u{2b07} .cdx, чтобы выгрузить её контекст в переносимый пакет",
 };
 
 /// 日本語.
@@ -1519,6 +1562,12 @@ pub const JA: Strings = Strings {
     ph_done: "完了",
     ph_shell: "シェル",
     ph_remote: "リモート",
+    dead_agents: "停止エージェント",
+    resurrect: "復活",
+    recoverable: "復元可能",
+    dead: "停止",
+    no_recoverable: "復元可能なエージェントはありません \u{2014} 保存済みセッションはすべて稼働中か、すでに消失しています。",
+    dead_hint: "行をクリックして復活させる \u{2014} または \u{2b07} .cdx でそのコンテキストを可搬パッケージに取り込む",
 };
 
 /// 한국어.
@@ -1692,6 +1741,12 @@ pub const KO: Strings = Strings {
     ph_done: "완료",
     ph_shell: "셸",
     ph_remote: "원격",
+    dead_agents: "종료된 에이전트",
+    resurrect: "되살리기",
+    recoverable: "복구 가능",
+    dead: "종료됨",
+    no_recoverable: "복구할 수 있는 에이전트가 없습니다 \u{2014} 저장된 모든 세션은 실행 중이거나 이미 사라졌습니다.",
+    dead_hint: "행을 클릭해 되살리거나 \u{2014} \u{2b07} .cdx로 컨텍스트를 이식 가능한 패키지로 내보내세요",
 };
 
 /// हिन्दी.
@@ -1866,6 +1921,12 @@ pub const HI: Strings = Strings {
     ph_done: "पूर्ण",
     ph_shell: "शेल",
     ph_remote: "रिमोट",
+    dead_agents: "मृत एजेंट",
+    resurrect: "पुनर्जीवित करें",
+    recoverable: "पुनर्प्राप्त करने योग्य",
+    dead: "मृत",
+    no_recoverable: "कोई पुनर्प्राप्त करने योग्य एजेंट नहीं \u{2014} हर सहेजा गया सत्र या तो सक्रिय है या पहले ही समाप्त हो चुका है।",
+    dead_hint: "किसी पंक्ति पर क्लिक करके उसे पुनर्जीवित करें \u{2014} या \u{2b07} .cdx से उसके संदर्भ को एक पोर्टेबल पैकेज में सहेजें",
 };
 
 #[cfg(test)]

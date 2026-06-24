@@ -10898,6 +10898,7 @@ impl Render for Workspace {
         // ---- 🪦 the dead-agent recover manifest ----
         let dead_overlay = self.dead_menu.then(|| {
             let vp_h = f32::from(window.viewport_size().height);
+            let s = self.lang.strings();
             // shared "card text size" scrubber value (same as the agent wall)
             let gs = self.card_scale;
             let home_path = session::home_dir();
@@ -10933,9 +10934,30 @@ impl Render for Workspace {
                     }
                 };
                 dead = vec![
-                    mk(recover::AgentKind::Claude, "a1b2c3d4", "~/aurora/web", "Wire up the onboarding flow and its tests", "4d ago", 226),
-                    mk(recover::AgentKind::Codex, "e5f6a7b8", "~/aurora/api", "Refactor the billing service into modules", "2d ago", 512),
-                    mk(recover::AgentKind::Claude, "c9d0e1f2", "~/borealis/ml", "Tune the ranking model hyperparameters", "6h ago", 98),
+                    mk(
+                        recover::AgentKind::Claude,
+                        "a1b2c3d4",
+                        "~/aurora/web",
+                        "Wire up the onboarding flow and its tests",
+                        "4d ago",
+                        226,
+                    ),
+                    mk(
+                        recover::AgentKind::Codex,
+                        "e5f6a7b8",
+                        "~/aurora/api",
+                        "Refactor the billing service into modules",
+                        "2d ago",
+                        512,
+                    ),
+                    mk(
+                        recover::AgentKind::Claude,
+                        "c9d0e1f2",
+                        "~/borealis/ml",
+                        "Tune the ranking model hyperparameters",
+                        "6h ago",
+                        98,
+                    ),
                 ];
             }
             // only offer ⬇ harvest if a discovered plugin advertises the
@@ -11040,7 +11062,11 @@ impl Render for Workspace {
                         .hover(move |s| s.border_color(col.alpha(0.7)))
                         .child(div().w(px(7.)).h(px(7.)).flex_none().rounded_full().bg(col))
                         .child(proj.clone())
-                        .child(div().text_color(th.text.alpha(0.4)).child(format!("{count}")))
+                        .child(
+                            div()
+                                .text_color(th.text.alpha(0.4))
+                                .child(format!("{count}")),
+                        )
                         .on_mouse_down(
                             MouseButton::Left,
                             cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
@@ -11066,9 +11092,7 @@ impl Render for Workspace {
                         .w_full()
                         .py_2()
                         .text_color(th.text.alpha(0.6))
-                        .child(
-                            "No recoverable agents \u{2014} every saved session is either live or already gone.",
-                        ),
+                        .child(s.no_recoverable),
                 );
             }
             // The scan is newest-first with projects interleaved; stable-sort by each
@@ -11092,7 +11116,11 @@ impl Render for Workspace {
                 let pcol = hsla(proj_hue(&proj), 0.6, 0.62, 1.);
                 if last_proj.as_deref() != Some(proj.as_str()) {
                     last_proj = Some(proj.clone());
-                    let gcount = groups.iter().find(|g| g.0 == proj).map(|g| g.1).unwrap_or(0);
+                    let gcount = groups
+                        .iter()
+                        .find(|g| g.0 == proj)
+                        .map(|g| g.1)
+                        .unwrap_or(0);
                     list = list.child(
                         div()
                             .w_full()
@@ -11114,7 +11142,7 @@ impl Render for Workspace {
                             .child(
                                 div()
                                     .text_color(th.text.alpha(0.35))
-                                    .child(format!("{gcount} dead")),
+                                    .child(format!("{gcount} {}", s.dead)),
                             ),
                     );
                 }
@@ -11270,10 +11298,12 @@ impl Render for Workspace {
                                             .child("\u{2b07} .cdx")
                                             .on_mouse_down(
                                                 MouseButton::Left,
-                                                cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
-                                                    cx.stop_propagation();
-                                                    ws.harvest_agent(sid_harvest.clone(), cx);
-                                                }),
+                                                cx.listener(
+                                                    move |ws, _: &MouseDownEvent, _w, cx| {
+                                                        cx.stop_propagation();
+                                                        ws.harvest_agent(sid_harvest.clone(), cx);
+                                                    },
+                                                ),
                                             ),
                                     )
                                 })
@@ -11290,7 +11320,7 @@ impl Render for Workspace {
                                         .text_color(th.accent)
                                         .bg(th.accent.alpha(0.08))
                                         .hover(|s| s.bg(th.accent.alpha(0.18)))
-                                        .child("RESURRECT \u{23ce}"),
+                                        .child(format!("{} \u{23ce}", s.resurrect)),
                                 ),
                         )
                         .on_mouse_down(
@@ -11344,7 +11374,7 @@ impl Render for Workspace {
                             div()
                                 .font_weight(gpui::FontWeight::EXTRA_BOLD)
                                 .text_color(th.complement)
-                                .child("DEAD AGENTS"),
+                                .child(s.dead_agents),
                         )
                         .child(
                             div()
@@ -11359,16 +11389,14 @@ impl Render for Workspace {
                         .child(
                             div()
                                 .text_color(th.text.alpha(0.7))
-                                .child(format!("{n} recoverable")),
+                                .child(format!("{n} {}", s.recoverable)),
                         ),
                 )
                 .child(
                     div()
                         .text_size(px(8.5 * gs))
                         .text_color(th.accent.alpha(0.85))
-                        .child(
-                            "click a row to resurrect it \u{2014} or \u{2b07} .cdx to harvest its context into a portable package",
-                        ),
+                        .child(s.dead_hint),
                 )
                 .when_some(self.harvest_status.clone(), |d, msg| {
                     d.child(

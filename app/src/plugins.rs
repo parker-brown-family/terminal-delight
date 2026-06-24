@@ -518,9 +518,16 @@ mod tests {
                 return;
             }
         };
-        // the synthetic fixture lives in the sibling checkout
+        // the synthetic fixture lives in the sibling checkout. Resolve it
+        // relative to the `Software/` ancestor of the test binary — but skip
+        // (don't panic) when the binary lives outside that tree, e.g. a custom
+        // CARGO_TARGET_DIR, so the test honours its own "skips when absent"
+        // contract instead of unwrapping a None.
         let exe = std::env::current_exe().unwrap();
-        let software = exe.ancestors().find(|a| a.ends_with("Software")).unwrap();
+        let Some(software) = exe.ancestors().find(|a| a.ends_with("Software")) else {
+            eprintln!("skip: test binary not under a Software/ checkout");
+            return;
+        };
         let fixture =
             software.join("context-delight/crates/cdx-core/tests/fixtures/synthetic-claude.jsonl");
         if !fixture.is_file() {
