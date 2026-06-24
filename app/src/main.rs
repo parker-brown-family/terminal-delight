@@ -10066,12 +10066,18 @@ impl Render for Workspace {
                     // In inherited-theme mode, every card uses the same outer
                     // TD palette. Status/kind colours still carry meaning, but
                     // the board itself no longer jitters between pane skins.
-                    let row_text = th.text;
-                    let kind_col = agent_program_glow(row_text.alpha(0.55), mode_lbl.as_str());
+                    // When the wall theme is on, the card wears its terminal's OWN
+                    // resolved theme: BRIGHT accent/text for the lettering, dark seed
+                    // for the frame — so a bat pane's card reads bat (dark purple +
+                    // bright purple), a cherry pane reads cherry, etc. The program/deck
+                    // colour stays keyed off the neutral wall text (claude=amber,
+                    // codex=cyan, shell=green) so program identity never shifts.
+                    let pane_th = p.resolved_theme(cx);
+                    let kind_col = agent_program_glow(th.text.alpha(0.55), mode_lbl.as_str());
                     // The MTG "mana colour" of the card FRAME = this terminal's own
-                    // resolved THEME accent (so a themed pane's card wears its theme);
-                    // the thin border keeps the program identity (claude/codex/shell).
-                    let theme_col = p.resolved_theme(cx).accent;
+                    // resolved THEME accent; the thin rim keeps the program identity.
+                    let theme_col = pane_th.accent;
+                    let row_text = if preview { pane_th.text } else { th.text };
                     // THEME ICON: this card's effective colour-set swatch glyph,
                     // docked on the middle-right frame edge (mirrors the theme tray).
                     let card_choice = p.appearance.effective(&theme::outer_choice(cx));
@@ -10091,10 +10097,12 @@ impl Render for Workspace {
                     // body wears its own theme colour. Only when the wall theme is on;
                     // off → a plain neutral dark.
                     let card_bg = if preview {
+                        // A visible DARK seed of the theme hue (not near-black), so
+                        // the bat frame reads as dark PURPLE, cherry as dark red, etc.
                         hsla(
                             theme_col.h,
-                            (theme_col.s * 0.8).min(0.55),
-                            if live_glow { 0.12 } else { 0.085 },
+                            (theme_col.s * 0.95).min(0.7),
+                            if live_glow { 0.20 } else { 0.155 },
                             1.0,
                         )
                     } else if live_glow {
