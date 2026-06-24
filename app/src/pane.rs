@@ -1646,7 +1646,6 @@ impl TerminalView {
     /// whenever this pane notifies). No second terminal, no extra PTY work.
     pub fn mirror_snapshot(&self, cx: &App) -> MirrorSnapshot {
         let th = self.resolved_theme(cx);
-        let mut lines = self.styled_lines(&th);
         // Mirror the live pane's anchor-to-top inverted read: bottom-anchor the
         // rows (prompt to the bottom) THEN reverse, so the FOCUS reader shows the
         // prompt on TOP with older output flowing down, exactly like the pane.
@@ -1662,14 +1661,19 @@ impl TerminalView {
             .mode()
             .contains(TermMode::ALT_SCREEN);
         let agent_mode = self.mode.is_agent();
-        if should_invert(anchor_top(), th.crawl, alt_screen_active, agent_mode) {
+        let inverted = should_invert(anchor_top(), th.crawl, alt_screen_active, agent_mode);
+        let mut lines = self.styled_lines(&th, inverted);
+        if inverted {
             let wraps = if agent_mode {
                 Vec::new()
             } else {
                 self.row_wraps()
             };
-            let (new_lines, _perm) = invert_logical_read(lines, &wraps, agent_mode);
+            let (new_lines, perm) = invert_logical_read(lines, &wraps, agent_mode);
             lines = new_lines;
+            // #149: the FOCUS mirror gets the same visual-order selection as the
+            // live pane (the highlight was skipped in styled_lines).
+            self.apply_visual_selection(&mut lines, &perm, &th);
         }
         // The pane's own resolved CRT curvature + glare, so the FOCUS reader can
         // inherit the look on demand (flat 0/0/0 for a flat pane → no-op).
@@ -2881,9 +2885,115 @@ impl TerminalView {
         cx.notify();
     }
 
-    /// Copy the current selection to the system clipboard (no-op if empty).
+    /// Map a logical grid `point` to a `(painted_row, col)` visual position under
+    /// the current inverted permutation `perm` (`perm[p]` = grid viewport row drawn
+    /// at painted row `p`). The viewport row is `point.line + display_offset`,
+    /// clamped on-screen; the painted row is the `perm` slot that draws it.
+    fn point_to_painted(&self, point: TermPoint, perm: &[usize], display_offset: usize) -> (usize, usize) {
+        let rows = self.grid.rows.max(1);
+        let vr = (point.line.0 + display_offset as i32).clamp(0, rows as i32 - 1) as usize;
+        let painted = perm
+            .iter()
+            .position(|&g| g == vr)
+            .unwrap_or_else(|| vr.min(rows - 1));
+        (painted, point.column.0)
+    }
+
+    /// #149: re-apply the current selection to already-permuted `lines` in VISUAL
+    /// (painted) order. styled_lines skipped the logical highlight in inverted
+    /// mode; here every painted row in the visual span between the two drag
+    /// endpoints is inverted, so a cross-section drag fills the cells you SEE
+    /// (not the whole reversed blocks a logical range would cover).
+    fn apply_visual_selection(
+        &self,
+        lines: &mut [(String, Vec<TextRun>)],
+        perm: &[usize],
+        th: &Theme,
+    ) {
+        let (start, end, is_block, display_offset) = {
+            let term = self.session.term.lock();
+            let Some(range) = term.selection.as_ref().and_then(|s| s.to_range(&*term)) else {
+                return;
+            };
+            (
+                range.start,
+                range.end,
+                range.is_block,
+                term.grid().display_offset(),
+            )
+        };
+        let a = self.point_to_painted(start, perm, display_offset);
+        let b = self.point_to_painted(end, perm, display_offset);
+        let last_col = self.grid.cols.saturating_sub(1);
+        // Match styled_lines' INVERSE default background (graded th.bg) so the
+        // visual highlight is the same colour as the non-inverted selection.
+        let default_bg = GradeCoeffs::new(&th.grade).apply(th.bg, Channel::Bg);
+        for (p, c_lo, c_hi) in visual_selection_spans(a, b, last_col, is_block) {
+            if let Some(row) = lines.get_mut(p) {
+                invert_run_range(row, c_lo, c_hi, default_bg);
+            }
+        }
+    }
+
+    /// #149: the selected text in VISUAL reading order for an inverted pane — walk
+    /// the painted-row span and read each row's grid cells through `paint_to_grid`,
+    /// so what-you-copy == what-you-see. `None` when nothing is selected. The
+    /// default (non-inverted) path keeps alacritty's logical `selection_to_string`.
+    fn visual_selection_to_string(&self) -> Option<String> {
+        let perm = self.paint_to_grid.as_ref()?;
+        let rows = self.grid.rows;
+        let cols = self.grid.cols;
+        let (start, end, is_block, display_offset, grid) = {
+            let term = self.session.term.lock();
+            let range = term.selection.as_ref().and_then(|s| s.to_range(&*term))?;
+            let content = term.renderable_content();
+            let display_offset = content.display_offset;
+            let mut grid = vec![vec![' '; cols]; rows];
+            for indexed in content.display_iter {
+                let r = indexed.point.line.0 + display_offset as i32;
+                if r < 0 || r as usize >= rows {
+                    continue;
+                }
+                if indexed.cell.flags.contains(Flags::WIDE_CHAR_SPACER) {
+                    continue;
+                }
+                let c = indexed.point.column.0;
+                if c < cols {
+                    grid[r as usize][c] = if indexed.cell.c == '\0' {
+                        ' '
+                    } else {
+                        indexed.cell.c
+                    };
+                }
+            }
+            (range.start, range.end, range.is_block, display_offset, grid)
+        };
+        let a = self.point_to_painted(start, perm, display_offset);
+        let b = self.point_to_painted(end, perm, display_offset);
+        let last_col = cols.saturating_sub(1);
+        let mut out = String::new();
+        for (p, c_lo, c_hi) in visual_selection_spans(a, b, last_col, is_block) {
+            let g = *perm.get(p).unwrap_or(&p);
+            if g >= rows {
+                continue;
+            }
+            let line: String = (c_lo..=c_hi).map(|c| grid[g][c]).collect();
+            out.push_str(line.trim_end());
+            out.push('\n');
+        }
+        let out = out.trim_end_matches('\n').to_string();
+        (!out.is_empty()).then_some(out)
+    }
+
+    /// Copy the current selection to the system clipboard (no-op if empty). In an
+    /// inverted (anchor-to-top) pane the copy follows VISUAL reading order (#149).
     fn copy_selection(&self, cx: &mut Context<Self>) {
-        if let Some(text) = self.session.term.lock().selection_to_string() {
+        let text = if self.paint_inverted {
+            self.visual_selection_to_string()
+        } else {
+            self.session.term.lock().selection_to_string()
+        };
+        if let Some(text) = text {
             if !text.is_empty() {
                 cx.write_to_clipboard(ClipboardItem::new_string(text.clone()));
                 // Mirror to the X11 PRIMARY selection so middle-click paste works
@@ -3179,7 +3289,11 @@ impl TerminalView {
     }
 
     /// Snapshot the viewport into one styled line per row.
-    fn styled_lines(&self, th: &Theme) -> Vec<(String, Vec<TextRun>)> {
+    /// Build the per-row styled text from the grid. `sel_visual` ⇒ inverted
+    /// (anchor-to-top) mode: SKIP the logical selection highlight here, because the
+    /// caller re-applies it in painted/visual order after the permutation (#149).
+    /// In the default path `sel_visual` is false and this is byte-identical.
+    fn styled_lines(&self, th: &Theme, sel_visual: bool) -> Vec<(String, Vec<TextRun>)> {
         let term = self.session.term.lock();
         let content = term.renderable_content();
         let display_offset = content.display_offset;
@@ -3276,7 +3390,7 @@ impl TerminalView {
                 other => Some(ansi_to_hsla(other, th, th.bg)),
             };
             let mut flags = cell.flags;
-            if selection.is_some_and(|s| s.contains(indexed.point)) {
+            if !sel_visual && selection.is_some_and(|s| s.contains(indexed.point)) {
                 flags.insert(Flags::INVERSE);
             }
             if flags.contains(Flags::INVERSE) {
@@ -3416,6 +3530,99 @@ fn paint_row_to_grid_row_impl(p: usize, rows: usize, offset: usize, inverted: bo
         p.saturating_sub(offset)
     };
     g.min(last)
+}
+
+/// Per-PAINTED-row inclusive column spans for a VISUAL (painted-order) selection
+/// between two viewport endpoints `a` and `b` (each `(painted_row, col)`, in any
+/// order). This is the fix for #149: in an inverted (anchor-to-top) pane the
+/// display is a group-reversed permutation, so a logically-contiguous range paints
+/// as a visually DISJOINT set. Defining the selection in painted-row order instead
+/// makes "drag from here to there" fill exactly the cells you see between them.
+///
+/// - `block` ⇒ rectangular: every row clipped to the same `[c0..=c1]` column band.
+/// - else (linear): the first visual row runs from the anchor column to the row
+///   end, whole rows fill the middle, and the last visual row runs from the start
+///   to the active column — i.e. crossing into a section first highlights only its
+///   TOP visual line, then fills downward. Pure + unit-tested.
+fn visual_selection_spans(
+    a: (usize, usize),
+    b: (usize, usize),
+    last_col: usize,
+    block: bool,
+) -> Vec<(usize, usize, usize)> {
+    if block {
+        let (r0, r1) = (a.0.min(b.0), a.0.max(b.0));
+        let (c0, c1) = (a.1.min(b.1).min(last_col), a.1.max(b.1).min(last_col));
+        return (r0..=r1).map(|r| (r, c0, c1)).collect();
+    }
+    // Linear: order the endpoints in visual reading order (row, then column).
+    let (lo, hi) = if a <= b { (a, b) } else { (b, a) };
+    if lo.0 == hi.0 {
+        return vec![(lo.0, lo.1.min(last_col), hi.1.min(last_col))];
+    }
+    let mut out = Vec::with_capacity(hi.0 - lo.0 + 1);
+    out.push((lo.0, lo.1.min(last_col), last_col)); // anchor row → end
+    for r in (lo.0 + 1)..hi.0 {
+        out.push((r, 0, last_col)); // middle rows: whole row
+    }
+    out.push((hi.0, 0, hi.1.min(last_col))); // start → active row
+    out
+}
+
+/// Flip INVERSE (swap fg/bg) on char columns `c_lo..=c_hi` of one already-built
+/// painted row, in place: expand the row's coalesced runs to per-cell styles, swap
+/// the selected cells (a cell with no background takes `default_bg`), then
+/// re-coalesce. Char column == cell here (one char pushed per non-spacer cell).
+/// This applies a selection highlight AFTER the inverted permutation, where rows
+/// are already in visual order, so the highlight is visually contiguous (#149).
+fn invert_run_range(row: &mut (String, Vec<TextRun>), c_lo: usize, c_hi: usize, default_bg: Hsla) {
+    let (text, runs) = row;
+    let nchars = text.chars().count();
+    if nchars == 0 || c_lo >= nchars {
+        return;
+    }
+    let c_hi = c_hi.min(nchars - 1);
+    // Expand coalesced runs → one TextRun per char (run.len is BYTES, so walk the
+    // text slice each run covers and clone the style per char).
+    let mut cells: Vec<TextRun> = Vec::with_capacity(nchars);
+    let mut byte = 0usize;
+    for run in runs.iter() {
+        let end = (byte + run.len).min(text.len());
+        for ch in text[byte..end].chars() {
+            cells.push(TextRun {
+                len: ch.len_utf8(),
+                font: run.font.clone(),
+                color: run.color,
+                background_color: run.background_color,
+                underline: run.underline,
+                strikethrough: run.strikethrough,
+            });
+        }
+        byte = end;
+    }
+    for (i, c) in cells.iter_mut().enumerate() {
+        if i >= c_lo && i <= c_hi {
+            let new_fg = c.background_color.unwrap_or(default_bg);
+            c.background_color = Some(c.color);
+            c.color = new_fg;
+        }
+    }
+    // Re-coalesce adjacent cells that share a style (mirrors styled_lines).
+    let mut merged: Vec<TextRun> = Vec::with_capacity(cells.len());
+    for c in cells {
+        if let Some(last) = merged.last_mut() {
+            if last.color == c.color
+                && last.background_color == c.background_color
+                && last.font.weight == c.font.weight
+                && last.underline.is_some() == c.underline.is_some()
+            {
+                last.len += c.len;
+                continue;
+            }
+        }
+        merged.push(c);
+    }
+    *runs = merged;
 }
 
 /// Anchor-to-top INVERTED read (pure): reverse the ORDER of logical groups so the
@@ -3980,7 +4187,19 @@ impl Render for TerminalView {
                 });
             }
         }
-        let mut lines = self.styled_lines(&th);
+        // The inverted-read decision is needed up-front: styled_lines SKIPS the
+        // logical selection highlight when inverted, because #149 re-applies the
+        // selection in painted/visual order after the permutation below (a logical
+        // range paints as a visually disjoint set once groups are reversed).
+        let alt_screen_active = self
+            .session
+            .term
+            .lock()
+            .mode()
+            .contains(TermMode::ALT_SCREEN);
+        let agent_mode = self.mode.is_agent();
+        let inverted = should_invert(anchor_top(), th.crawl, alt_screen_active, agent_mode);
+        let mut lines = self.styled_lines(&th, inverted);
         // Crawl mode reads as a Star-Wars crawl: the prompt belongs at the near
         // (bottom) edge with output stacking UP into the distance. The grid
         // paints top-anchored, so after a clear/Ctrl+L the prompt would land at
@@ -4003,18 +4222,6 @@ impl Render for TerminalView {
         //   else:     g = p - offset            (incl. crawl)
         // The default un-anchored path leaves `(0, false)` ⇒ identity, so it is
         // byte-identical to before this feature.
-        // Guard the inverted read against non-agent alt-screen TUIs: a
-        // full-screen program (vim/htop/less) lays out top-to-bottom and reversing
-        // its rows corrupts box drawing. Agent TUIs still opt in so Codex gets the
-        // same prompt-first top-anchor flow as Claude.
-        let alt_screen_active = self
-            .session
-            .term
-            .lock()
-            .mode()
-            .contains(TermMode::ALT_SCREEN);
-        let agent_mode = self.mode.is_agent();
-        let inverted = should_invert(anchor_top(), th.crawl, alt_screen_active, agent_mode);
         if th.crawl || !anchor_top() {
             // Bottom-anchor (crawl + default normal mode).
             self.paint_offset = bottom_anchor_rows(&mut lines, self.grid.rows);
@@ -4032,6 +4239,10 @@ impl Render for TerminalView {
             };
             let (new_lines, perm) = invert_logical_read(lines, &wraps, agent_mode);
             lines = new_lines;
+            // #149: paint the selection in VISUAL order now that rows are permuted,
+            // so a cross-section drag highlights the visually-contiguous span (not
+            // whole reversed blocks). styled_lines skipped the logical highlight.
+            self.apply_visual_selection(&mut lines, &perm, &th);
             self.paint_to_grid = Some(perm);
             self.paint_inverted = true;
             self.paint_offset = 0;
@@ -5761,6 +5972,73 @@ mod tests {
         assert_eq!(paint_row_to_grid_row_impl(2, rows, offset, true), 0);
         // painted index 3 (the blank pad) underflows → clamps to grid row 0
         assert_eq!(paint_row_to_grid_row_impl(3, rows, offset, true), 0);
+    }
+
+    #[test]
+    fn visual_selection_spans_fills_visually_contiguous_rows() {
+        // #149: a drag from visual (row 1, col 5) into (row 3, col 2) selects the
+        // anchor row from col 5 to the end, the whole middle row, and the last row
+        // from the start to col 2 — i.e. crossing a section first highlights only
+        // its TOP visual line, then fills down. NOT whole reversed blocks.
+        let spans = visual_selection_spans((1, 5), (3, 2), 9, false);
+        assert_eq!(spans, vec![(1, 5, 9), (2, 0, 9), (3, 0, 2)]);
+        // Endpoint order is irrelevant — dragging up gives the identical span.
+        assert_eq!(visual_selection_spans((3, 2), (1, 5), 9, false), spans);
+    }
+
+    #[test]
+    fn visual_selection_spans_single_row_is_a_column_range() {
+        assert_eq!(
+            visual_selection_spans((2, 7), (2, 3), 20, false),
+            vec![(2, 3, 7)]
+        );
+        // columns clamp to last_col so a span can't run off the row.
+        assert_eq!(
+            visual_selection_spans((2, 3), (2, 99), 9, false),
+            vec![(2, 3, 9)]
+        );
+    }
+
+    #[test]
+    fn visual_selection_spans_block_is_rectangular() {
+        // Block (alt-drag): every row clipped to the same column band, ordered.
+        assert_eq!(
+            visual_selection_spans((3, 8), (1, 2), 20, true),
+            vec![(1, 2, 8), (2, 2, 8), (3, 2, 8)]
+        );
+    }
+
+    #[test]
+    fn invert_run_range_swaps_only_selected_cells() {
+        let fg = gpui::hsla(0.1, 0.5, 0.5, 1.0);
+        let bg = gpui::hsla(0.6, 0.5, 0.2, 1.0);
+        let mk = |s: &str| TextRun {
+            len: s.len(),
+            font: gpui::font("monospace"),
+            color: fg,
+            background_color: None,
+            underline: None,
+            strikethrough: None,
+        };
+        // Row "ABCDE", one run, no background. Invert cols 1..=3 → those cells take
+        // fg=default_bg, bg=old fg; cols 0 and 4 are untouched. Text is preserved.
+        let mut row = ("ABCDE".to_string(), vec![mk("ABCDE")]);
+        invert_run_range(&mut row, 1, 3, bg);
+        assert_eq!(row.0, "ABCDE", "text content never changes");
+        // Re-coalesced into [A][BCD][E]: untouched / inverted / untouched.
+        assert_eq!(row.1.len(), 3);
+        assert_eq!(row.1[0].len, 1); // "A" untouched
+        assert_eq!(row.1[0].color, fg);
+        assert_eq!(row.1[0].background_color, None);
+        assert_eq!(row.1[1].len, 3); // "BCD" inverted
+        assert_eq!(row.1[1].color, bg); // fg ← default_bg (cell had no bg)
+        assert_eq!(row.1[1].background_color, Some(fg)); // bg ← old fg
+        assert_eq!(row.1[2].len, 1); // "E" untouched
+        assert_eq!(row.1[2].color, fg);
+        // A column range past the row end is a no-op (no panic, no change).
+        let mut short = ("AB".to_string(), vec![mk("AB")]);
+        invert_run_range(&mut short, 5, 9, bg);
+        assert_eq!(short.1[0].color, fg);
     }
 
     #[test]
