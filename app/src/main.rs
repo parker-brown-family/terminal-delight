@@ -10096,12 +10096,14 @@ impl Render for Workspace {
                     // rim): a dark wash of THIS terminal's THEME seed, so every card
                     // body wears its own theme colour. Only when the wall theme is on;
                     // off → a plain neutral dark.
+                    // A visible DARK seed of the theme, keyed off the colour-set SWATCH
+                    // hue (theme_tint) so the frame ALWAYS matches the glyph + the
+                    // pane's intended theme (bat → dark purple, cherry → dark red),
+                    // even when the resolved accent drifts toward grey.
                     let card_bg = if preview {
-                        // A visible DARK seed of the theme hue (not near-black), so
-                        // the bat frame reads as dark PURPLE, cherry as dark red, etc.
                         hsla(
-                            theme_col.h,
-                            (theme_col.s * 0.95).min(0.7),
+                            theme_tint.h,
+                            (theme_tint.s * 0.9).min(0.7),
                             if live_glow { 0.20 } else { 0.155 },
                             1.0,
                         )
@@ -10109,6 +10111,14 @@ impl Render for Workspace {
                         darken(th.surface, 0.50)
                     } else {
                         darken(th.surface, 0.42)
+                    };
+                    // A slightly deeper seed of the same hue for the inner WELLS (the
+                    // feed box + the logo bezel) so they nest into the themed frame
+                    // instead of cutting GREY holes in it. Off-theme → the neutral bg.
+                    let well_bg = if preview {
+                        hsla(theme_tint.h, (theme_tint.s * 0.8).min(0.6), 0.09, 1.0)
+                    } else {
+                        th.bg
                     };
                     // (card frame border now derives from the deck colour `kind_col`)
                     let badge_glyph = if is_agent {
@@ -10175,7 +10185,7 @@ impl Render for Workspace {
                         .rounded_sm()
                         .border_1()
                         .border_color(status_glow.alpha(0.20))
-                        .bg(th.bg.alpha(0.45))
+                        .bg(well_bg.alpha(0.55))
                         .overflow_hidden();
                     if agentic {
                         for fl in feed.iter() {
@@ -10325,7 +10335,7 @@ impl Render for Workspace {
                                         .rounded_lg()
                                         .border_2()
                                         .border_color(darken(kind_col, 0.62))
-                                        .bg(th.bg.alpha(0.7))
+                                        .bg(well_bg.alpha(0.7))
                                         // heavy inset vignette = the curved-glass
                                         // edge falloff, so the logo reads as a
                                         // bulging convex screen, not a flat sticker.
