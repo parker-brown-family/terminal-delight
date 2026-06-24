@@ -1653,14 +1653,22 @@ impl TerminalView {
         // Crawl keeps its own bottom-anchor look (handled in the modal), so it is
         // excluded — matching the live render's `anchor_top() && !th.crawl` gate.
         // Off (the default) leaves `lines` untouched → byte-identical to before.
-        if anchor_top() && !th.crawl {
-            let block_mode = self.mode.is_agent();
-            let wraps = if block_mode {
+        // Alt-screen shell TUIs (vim/htop) must not be inverted in the mirror
+        // either, but agent TUIs (Codex) still need the prompt-first read.
+        let alt_screen_active = self
+            .session
+            .term
+            .lock()
+            .mode()
+            .contains(TermMode::ALT_SCREEN);
+        let agent_mode = self.mode.is_agent();
+        if should_invert(anchor_top(), th.crawl, alt_screen_active, agent_mode) {
+            let wraps = if agent_mode {
                 Vec::new()
             } else {
                 self.row_wraps()
             };
-            let (new_lines, _perm) = invert_logical_read(lines, &wraps, block_mode);
+            let (new_lines, _perm) = invert_logical_read(lines, &wraps, agent_mode);
             lines = new_lines;
         }
         // The pane's own resolved CRT curvature + glare, so the FOCUS reader can
@@ -3355,6 +3363,15 @@ pub fn anchor_top() -> bool {
     ANCHOR_TOP.load(std::sync::atomic::Ordering::Relaxed)
 }
 
+/// Whether the inverted anchor-to-top read should apply. The read reverses row
+/// order so the prompt lands on TOP. That is correct for scrolling shells and
+/// conversational agents, including Codex's alternate-screen TUI, but corrupts
+/// non-agent full-screen TUIs (vim/htop/less) whose box drawing assumes a fixed
+/// top-to-bottom layout.
+fn should_invert(anchor_top: bool, crawl: bool, alt_screen: bool, agent_mode: bool) -> bool {
+    anchor_top && !crawl && (!alt_screen || agent_mode)
+}
+
 /// Bottom-anchor painted rows: slide content down until the last non-blank row
 /// sits on the bottom (near) edge, with blank padding pushed to the top. This is
 /// what makes a crawl pane read as a Star-Wars crawl — prompt at the near edge,
@@ -3986,7 +4003,18 @@ impl Render for TerminalView {
         //   else:     g = p - offset            (incl. crawl)
         // The default un-anchored path leaves `(0, false)` ⇒ identity, so it is
         // byte-identical to before this feature.
-        let inverted = anchor_top() && !th.crawl;
+        // Guard the inverted read against non-agent alt-screen TUIs: a
+        // full-screen program (vim/htop/less) lays out top-to-bottom and reversing
+        // its rows corrupts box drawing. Agent TUIs still opt in so Codex gets the
+        // same prompt-first top-anchor flow as Claude.
+        let alt_screen_active = self
+            .session
+            .term
+            .lock()
+            .mode()
+            .contains(TermMode::ALT_SCREEN);
+        let agent_mode = self.mode.is_agent();
+        let inverted = should_invert(anchor_top(), th.crawl, alt_screen_active, agent_mode);
         if th.crawl || !anchor_top() {
             // Bottom-anchor (crawl + default normal mode).
             self.paint_offset = bottom_anchor_rows(&mut lines, self.grid.rows);
@@ -3997,13 +4025,12 @@ impl Render for TerminalView {
             // older content flows down. Agent panes group by message/box (so the
             // input box stays upright + grows DOWN as you type); shells reverse by
             // soft-wrapped logical line.
-            let block_mode = self.mode.is_agent();
-            let wraps = if block_mode {
+            let wraps = if agent_mode {
                 Vec::new()
             } else {
                 self.row_wraps()
             };
-            let (new_lines, perm) = invert_logical_read(lines, &wraps, block_mode);
+            let (new_lines, perm) = invert_logical_read(lines, &wraps, agent_mode);
             lines = new_lines;
             self.paint_to_grid = Some(perm);
             self.paint_inverted = true;
@@ -5549,6 +5576,31 @@ mod tests {
             vec!["", "", "", "$ "],
             "bottom-anchor slides the prompt to the bottom"
         );
+    }
+
+    #[test]
+    fn should_invert_truth_table_preserves_codex_alt_screen() {
+        // Invert when anchor_top is on and this is not crawl. Alternate-screen
+        // shell TUIs are guarded off, but agent TUIs such as Codex still invert
+        // so they get the same prompt-first top-anchor flow as Claude.
+        // (anchor_top, crawl, alt_screen, agent_mode) -> expected
+        let cases = [
+            (false, false, false, false, false), // toggle off -> never invert
+            (false, false, true, true, false),
+            (true, true, false, true, false), // crawl keeps its own bottom-anchor
+            (true, true, true, true, false),
+            (true, false, false, false, true), // shell, normal screen
+            (true, false, false, true, true),  // agent, normal screen
+            (true, false, true, false, false), // vim/htop/less alt-screen guard
+            (true, false, true, true, true),   // Codex/Claude alt-screen agent
+        ];
+        for (anchor, crawl, alt, agent, expected) in cases {
+            assert_eq!(
+                should_invert(anchor, crawl, alt, agent),
+                expected,
+                "should_invert(anchor_top={anchor}, crawl={crawl}, alt_screen={alt}, agent_mode={agent})"
+            );
+        }
     }
 
     #[test]
