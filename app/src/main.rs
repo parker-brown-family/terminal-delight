@@ -4400,7 +4400,12 @@ impl Workspace {
         // One labelled input row. `active` highlights the field the keyboard is
         // editing; `placeholder` shows when its buffer is empty.
         let field_row =
-            |label: &str, eb: &EditBuffer, active: bool, placeholder: &'static str| -> gpui::Div {
+            |label: &str,
+             eb: &EditBuffer,
+             active: bool,
+             placeholder: &'static str,
+             icon: &'static str|
+             -> gpui::Div {
                 let text = eb.text();
                 let inner = render_edit_buffer(eb, 1.0, th.text, th.accent, th.accent.alpha(0.3))
                     .when(text.is_empty(), |d| {
@@ -4414,23 +4419,24 @@ impl Workspace {
                     .flex()
                     .flex_row()
                     .items_center()
-                    .gap_1()
+                    .gap_2()
                     .w_full()
                     .px_2()
-                    .py_1()
-                    .rounded_sm()
-                    .bg(th.bg.alpha(if active { 0.65 } else { 0.4 }))
-                    .border_1()
+                    .py(px(7.))
+                    .rounded_md()
+                    .bg(th.bg.alpha(if active { 0.7 } else { 0.35 }))
+                    .border_2()
                     .border_color(if active {
-                        th.accent.alpha(0.8)
+                        th.accent.alpha(0.85)
                     } else {
-                        th.accent.alpha(0.25)
+                        th.accent.alpha(0.22)
                     })
                     .text_size(px(13.))
+                    // the field LABEL chip (NAME / IN)
                     .child(
                         div()
                             .flex_none()
-                            .w(px(30.))
+                            .w(px(34.))
                             .text_size(px(9.))
                             .font_weight(gpui::FontWeight::EXTRA_BOLD)
                             .text_color(if active {
@@ -4440,15 +4446,25 @@ impl Workspace {
                             })
                             .child(label.to_string()),
                     )
+                    // optional leading glyph (a folder for IN)
+                    .when(!icon.is_empty(), |d| {
+                        d.child(
+                            div()
+                                .flex_none()
+                                .text_size(px(12.))
+                                .text_color(th.text.alpha(0.55))
+                                .child(icon),
+                        )
+                    })
                     .child(inner)
             };
         let header = div()
             .flex()
             .flex_col()
-            .gap_1()
+            .gap_2()
             .px_2()
             .pt_2()
-            .pb_1()
+            .pb_2()
             .child(
                 div()
                     .flex()
@@ -4469,18 +4485,48 @@ impl Workspace {
                             .child(format!("{}/{}", order.len(), total)),
                     ),
             )
-            .child(field_row(
-                "NAME",
-                &lp.name,
-                lp.field == LogoField::Name,
-                "file name\u{2026}",
-            ))
-            .child(field_row(
-                "IN",
-                &lp.loc,
-                lp.field == LogoField::Loc,
-                "any folder\u{2026}",
-            ))
+            .child(
+                field_row(
+                    "NAME",
+                    &lp.name,
+                    lp.field == LogoField::Name,
+                    "file name\u{2026}",
+                    "",
+                )
+                .id("logo-fld-name")
+                .cursor_text()
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                        cx.stop_propagation();
+                        if let Some(lp) = ws.logo_picker.as_mut() {
+                            lp.field = LogoField::Name;
+                        }
+                        cx.notify();
+                    }),
+                ),
+            )
+            .child(
+                field_row(
+                    "IN",
+                    &lp.loc,
+                    lp.field == LogoField::Loc,
+                    "any folder\u{2026}",
+                    "\u{1f4c1}",
+                )
+                .id("logo-fld-in")
+                .cursor_text()
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                        cx.stop_propagation();
+                        if let Some(lp) = ws.logo_picker.as_mut() {
+                            lp.field = LogoField::Loc;
+                        }
+                        cx.notify();
+                    }),
+                ),
+            )
             .child(
                 div()
                     .text_size(px(8.5))
