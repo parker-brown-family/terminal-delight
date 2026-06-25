@@ -249,6 +249,44 @@
   .cur{ display:inline-block; width:.62em; height:1.05em; vertical-align:text-bottom; background:var(--phos);
     box-shadow:0 0 7px var(--phos); animation:blink 1.05s steps(1) infinite; }
   @keyframes blink{ 50%{opacity:0} }
+
+  /* ===== program-flavoured watch modal (Claude warm · Codex cyan) ===== */
+  .thead .tkind{ font-weight:800; letter-spacing:.1em; font-size:10px; flex:none; }
+  .t-cx{ color:var(--cyan); } .t-cmd{ color:#bfe9d2; } .t-cxc{ color:var(--cyan); font-weight:700; }
+  .term.k-codex .t-h{ color:var(--cyan); } .term.k-codex .tbody{ text-shadow:0 0 6px #29e3ed22; }
+  .term.k-claude .t-b{ color:#e0934e; } .term.k-claude .t-a{ color:#f1e7de; }
+  .term.k-claude .t-s{ color:#e0934e; } .term.k-claude .t-h{ color:#e0934e; }
+  .term.k-claude .tbody{ text-shadow:0 0 6px #e0934e1f; }
+
+  /* ===== </> savings pill + the LeanCTX savings panel (mirrors the in-app plugin) ===== */
+  .sv{ cursor:pointer; border:1px solid var(--phos-d); color:var(--phos); background:#0c2417;
+    border-radius:8px; padding:3px 9px; font-weight:700; box-shadow:0 0 10px -3px var(--phos); transition:.15s; }
+  .sv:hover{ border-color:var(--phos); box-shadow:0 0 14px -2px var(--phos); }
+  .svpanel{ position:relative; width:min(92vw,820px); max-height:84vh; overflow:auto; border-radius:14px;
+    background:linear-gradient(#071a10,#04120b); border:1px solid var(--line);
+    box-shadow:0 0 0 5px #0a0b09, 0 40px 90px -20px #000d, 0 0 60px -10px var(--spill);
+    padding:20px 22px; font-size:13px; animation:rise .22s cubic-bezier(.2,.8,.2,1);
+    scrollbar-width:thin; scrollbar-color:#1c5a3a #0000; }
+  .svpanel::-webkit-scrollbar{ width:8px; } .svpanel::-webkit-scrollbar-thumb{ background:#1c5a3a; border-radius:8px; }
+  .sv-h{ display:flex; align-items:center; gap:10px; padding-bottom:13px; border-bottom:1px solid var(--line); }
+  .sv-logo{ display:flex; align-items:center; gap:8px; font-weight:800; font-size:15px; color:var(--ink); }
+  .sv-logo .lb{ background:#0c2417; border:1px solid var(--phos-d); border-radius:7px; padding:2px 7px; color:var(--phos); font-size:12px; }
+  .sv-logo .lc{ color:var(--cyan); }
+  .sv-h .sub2{ color:var(--dim); font-size:11px; }
+  .sv-badge{ margin-left:auto; border:1px solid var(--phos-d); border-radius:999px; padding:4px 13px; color:var(--phos); font-weight:700; font-size:12px; }
+  .sv-stats{ display:flex; gap:38px; padding:17px 2px 8px; flex-wrap:wrap; }
+  .sv-stat .v{ font-size:27px; font-weight:800; line-height:1; }
+  .sv-stat .v.g{ color:var(--phos); } .sv-stat .v.c{ color:var(--cyan); } .sv-stat .v.w{ color:#eafff2; }
+  .sv-stat .l{ color:var(--dim); font-size:11px; margin-top:4px; }
+  .sv-secn{ color:var(--dim); font-size:11px; margin:10px 0 6px; }
+  .sv-row{ display:grid; grid-template-columns:1.5fr 1fr 64px 1fr; gap:10px; align-items:center;
+    padding:7px 11px; border-radius:7px; background:#08160e; margin-bottom:4px; }
+  .sv-row .id{ color:var(--phos); } .sv-row .kk{ color:var(--dim); } .sv-row .ca{ color:#9fc7b3; }
+  .sv-row .s2{ text-align:right; color:var(--phos); font-weight:700; }
+  .sv-file{ display:flex; gap:10px; padding:3px 11px; font-size:12px; }
+  .sv-file .fn{ color:#9fc7b3; flex:1; } .sv-file .fm{ color:var(--phos); font-weight:700; } .sv-file .fp{ color:var(--dim); width:46px; text-align:right; }
+  .sv-foot{ color:var(--dim2); font-size:11px; margin-top:14px; border-top:1px solid var(--line); padding-top:12px; line-height:1.55; }
+  .sv-foot a{ color:var(--phos-d); text-decoration:none; } .sv-foot a:hover{ color:var(--phos); }
 </style></head>
 <body>
   <div class="console">
@@ -301,6 +339,8 @@
     <div class="thead" id="thead"></div>
     <div class="tbody" id="tbody"></div>
   </div></div>
+
+  <div class="modal" id="svmodal"><div class="svpanel" id="svpanel"></div></div>
 
 <script>
 // ---- projects (tab groups) → frame colour, theme tint+glyph, logo art ----
@@ -430,7 +470,9 @@ function render(){
       `<span class="pill c-work">▶ <b>${n('working')}</b></span><span class="pill c-block">‖ <b>${n('blocked')}</b></span>`
     + `<span class="pill c-err">✕ <b>${n('error')}</b></span><span class="pill c-done">✓ <b>${n('done')}</b></span>`
     + `<span class="pill c-idle">○ <b>${n('idle')}</b></span>`
-    + `<span class="pill spend"><span class="k">Δ</span> ${ktok(dTok)}</span><span class="pill spend"><span class="k">Σ</span> ${ktok(sTok)}</span>`;
+    + `<span class="pill spend"><span class="k">Δ</span> ${ktok(dTok)}</span><span class="pill spend"><span class="k">Σ</span> ${ktok(sTok)}</span>`
+    + `<span class="pill sv" id="sv-btn" title="lean-ctx token savings — click">&lt;/&gt; savings</span>`;
+  const svb=document.getElementById('sv-btn'); if(svb) svb.onclick=openSavings;
   document.getElementById('npanes').textContent = A.filter(a=>a.state!=='shell').length;
 }
 
@@ -475,45 +517,73 @@ const STACK = {
   'infra':           {p:'~/code/infra', dir:'.', read:'Cargo.toml', edit:'Cargo.lock', test:'cargo build', sh:'demo@infra'},
   'workstation':     {p:'~/code', dir:'.', read:'', edit:'', test:'', sh:'dev@workstation'},
 };
-const tool=(t,arg)=>`<span class="t-b">●</span> <span class="t-tool">${t}</span>(<span class="t-arg">${esc(arg)}</span>)`;
-const resL=r=>`<span class="t-r">  ⎿ ${esc(r)}</span>`;
-const say=t=>`<span class="t-b">●</span> <span class="t-a">${esc(t)}</span>`;
 const CUR='<span class="cur"></span>';
-function transcriptFor(a){
-  const s=STACK[a.g]||STACK.workstation, L=[];
-  if(a.state==='shell'){
-    L.push(`<span class="t-h">${s.sh} ${esc(a.prompt)} $</span> cargo watch -x build`,`<span class="t-mut">    Finished dev [unoptimized + debuginfo] in 4.2s</span>`,`<span class="t-h">${s.sh} ${s.p} $</span> ${CUR}`);
-    return L.join('\n');
-  }
+
+// Claude Code look: ❯ prompt · ● bullets · Tool(args) + ⎿ result · ✻ Cogitating · 1/2/3 perms.
+function claudeTx(a,s){
+  const L=[], bul=t=>`<span class="t-b">●</span> <span class="t-a">${esc(t)}</span>`,
+    tl=(t,arg)=>`<span class="t-b">●</span> <span class="t-tool">${t}</span>(<span class="t-arg">${esc(arg)}</span>)`,
+    rs=r=>`<span class="t-r">  ⎿ ${esc(r)}</span>`;
   L.push(`<span class="t-h">❯</span> <span class="t-hp">${esc(a.prompt)}</span>`,'');
-  L.push(say(`I'll start in ${s.dir}/ and work through it.`));
-  L.push(tool('Read',s.read), resL(`Read ${120+(a._id*37)%360} lines`));
-  L.push(tool('Search',`pattern: "${esc(a.tab.split(/[-·]/)[0])}", path: "${s.dir}"`), resL(`Found ${2+a._id%7} matches`));
+  L.push(bul(`I'll start in ${s.dir}/ and work through it.`));
+  L.push(tl('Read',s.read), rs(`Read ${120+(a._id*37)%360} lines`));
+  L.push(tl('Search',`pattern: "${esc(a.tab.split(/[-·]/)[0])}", path: "${s.dir}"`), rs(`Found ${2+a._id%7} matches`));
   if(a.state==='working'){
-    L.push(tool('Edit',s.edit), resL(`Updated with ${2+a._id%5} additions and ${a._id%4} removals`),'');
-    L.push(`<span class="t-done" style="color:var(--phos)">✷ ${GERUNDS[(gerundPhase+a.t)%GERUNDS.length]}… (${mmss(a.t)} · ↓ ${ktok(a.tok)} tokens · still thinking with ${effWord(a.eff)} effort)</span> ${CUR}`);
+    L.push(tl('Edit',s.edit), rs(`Updated with ${2+a._id%5} additions and ${a._id%4} removals`),'');
+    L.push(`<span class="t-s">✻ ${GERUNDS[(gerundPhase+a.t)%GERUNDS.length]}… (${mmss(a.t)} · ↓ ${ktok(a.tok)} tokens · esc to interrupt)</span> ${CUR}`);
   } else if(a.state==='blocked'){
-    L.push(say(`I've drafted the change — this needs your review before I apply it:`), tool('Edit',s.edit),'');
+    L.push(bul(`I've drafted the change — this needs your review before I apply it:`), tl('Edit',s.edit),'');
     L.push(`<span class="t-a">Do you want to make this edit to <b>${esc(s.edit)}</b>?</span>`,`<span class="t-optc">❯ 1.</span> <span class="t-opt">Yes</span>`,`  <span class="t-opt">2. Yes, and don't ask again this session</span>`,`  <span class="t-opt">3. No, tell Claude what to do differently</span>`,'');
     L.push(`<span class="t-blk">⏸ blocked — waiting for your response</span> ${CUR}`);
   } else if(a.state==='error'){
-    L.push(tool('Bash',s.test),'',`<span class="t-err">✗ API Error (429): rate_limit_exceeded — too many requests.</span>`,`<span class="t-mut">  Retrying in 38s… (attempt 2/5)</span> ${CUR}`);
+    L.push(tl('Bash',s.test),'',`<span class="t-err">✗ API Error (429): rate_limit_exceeded — too many requests.</span>`,`<span class="t-mut">  Retrying in 38s… (attempt 2/5)</span> ${CUR}`);
   } else if(a.state==='done'){
-    L.push(tool('Edit',s.edit), resL(`+${6+a._id%30} −${a._id%9}`), tool('Bash',s.test), resL(`${8+a._id%20} passed; 0 failed`));
-    L.push(say(`Done — ${a.prompt.charAt(0).toLowerCase()+a.prompt.slice(1)}. All green.`),'',`<span class="t-done">✓ Done · Σ${ktok(a.sess)} tokens · ${4+a._id%9} tool uses</span>`,`<span class="t-h">${s.sh} ${s.p} $</span> ${CUR}`);
-  } else {
-    L.push('',`<span class="t-mut">(queued — no turn running yet)</span>`,`<span class="t-h">${s.sh} ${s.p} $</span> ${CUR}`);
-  }
+    L.push(tl('Edit',s.edit), rs(`+${6+a._id%30} −${a._id%9}`), tl('Bash',s.test), rs(`${8+a._id%20} passed; 0 failed`));
+    L.push(bul(`Done — ${a.prompt.charAt(0).toLowerCase()+a.prompt.slice(1)}. All green.`),'',`<span class="t-done">✓ Done · Σ${ktok(a.sess)} tokens · ${4+a._id%9} tool uses</span>`,`<span class="t-h">${s.sh} ${s.p} $</span> ${CUR}`);
+  } else { L.push('',`<span class="t-mut">(queued — no turn running yet)</span>`,`<span class="t-h">${s.sh} ${s.p} $</span> ${CUR}`); }
   return L.join('\n');
+}
+// Codex CLI look: › turn · • thought · $ exec + → result · • Working · y/a/n approval · cyan.
+function codexTx(a,s){
+  const L=[], exec=(cmd,out)=>`<span class="t-cx">$</span> <span class="t-cmd">${esc(cmd)}</span>\n<span class="t-r">  → ${esc(out)}</span>`;
+  L.push(`<span class="t-cx">›</span> <span class="t-hp">${esc(a.prompt)}</span>`,'');
+  L.push(`<span class="t-mut">• thought for ${1+a._id%4}s</span>`);
+  L.push(exec(`grep -rn "${esc(a.tab.split(/[-·]/)[0])}" ${s.dir}`, `${2+a._id%7} matches · ${1+a._id%3} files`));
+  L.push(exec(`sed -n '1,40p' ${s.read}`, `read ${40+(a._id*13)%120} lines`));
+  if(a.state==='working'){
+    L.push(exec(`apply_patch ${s.edit}`, `patched ${s.edit}`),'');
+    L.push(`<span class="t-cx">• Working</span> <span class="t-mut">(${mmss(a.t)} · ↓ ${ktok(a.tok)} tokens · esc to interrupt)</span> ${CUR}`);
+  } else if(a.state==='blocked'){
+    L.push(`<span class="t-a">Allow Codex to run <b>${esc(s.test)}</b>?</span>`,`<span class="t-cxc">› y</span> <span class="t-opt">yes (once)</span>`,`  <span class="t-opt">a  yes, and don't ask again this session</span>`,`  <span class="t-opt">n  no, tell Codex what to change</span>`,'');
+    L.push(`<span class="t-blk">⏸ waiting for approval</span> ${CUR}`);
+  } else if(a.state==='error'){
+    L.push(exec(s.test,'…'),'',`<span class="t-err">✗ stream error: 429 rate_limit_exceeded</span>`,`<span class="t-mut">  retrying (2/5)…</span> ${CUR}`);
+  } else if(a.state==='done'){
+    L.push(exec(`apply_patch ${s.edit}`, `+${6+a._id%30} −${a._id%9}`), exec(s.test, `${8+a._id%20} passed; 0 failed`));
+    L.push(`<span class="t-cx">•</span> <span class="t-a">Done — ${esc(a.prompt.charAt(0).toLowerCase()+a.prompt.slice(1))}.</span>`,'',`<span class="t-done" style="color:var(--cyan)">✓ completed · Σ${ktok(a.sess)} tokens</span>`,`<span class="t-cx">${s.sh}:~$</span> ${CUR}`);
+  } else { L.push('',`<span class="t-mut">(idle — no task running)</span>`,`<span class="t-cx">${s.sh}:~$</span> ${CUR}`); }
+  return L.join('\n');
+}
+function transcriptFor(a){
+  const s=STACK[a.g]||STACK.workstation;
+  if(a.state==='shell'){
+    return [`<span class="t-h">${s.sh} ${esc(a.prompt)} $</span> cargo watch -x build`,`<span class="t-mut">    Finished dev [unoptimized + debuginfo] in 4.2s</span>`,`<span class="t-h">${s.sh} ${s.p} $</span> ${CUR}`].join('\n');
+  }
+  return a.kind==='codex' ? codexTx(a,s) : claudeTx(a,s);
 }
 
 const modal=document.getElementById('modal'), thead=document.getElementById('thead'), tbody=document.getElementById('tbody');
 let openId=null;
 function openModal(a){
-  openId=a._id; const G=GROUPS[a.g]||GROUPS.workstation;
+  openId=a._id;
+  const kind=a.kind||'shell';
+  const kcol=kind==='claude'?'#ffb13c':kind==='codex'?'#46d9e8':'#5f8f76';
+  document.getElementById('term').className='term'+(kind==='codex'?' k-codex':kind==='claude'?' k-claude':'');
   const stCls={working:'c-work',blocked:'c-block',error:'c-err',done:'c-done',idle:'c-idle',shell:'c-idle'}[a.state];
   const stTxt={working:'working',blocked:'blocked on you',error:'error',done:'done',idle:'idle',shell:'shell'}[a.state];
-  thead.innerHTML=`<span class="tdot" style="background:${G.c};color:${G.c}"></span><span class="ttab">${esc(a.g)} › ${esc(a.tab)}</span>`
+  thead.innerHTML=`<span class="tdot" style="background:${kcol};color:${kcol}"></span>`
+    +`<span class="tkind" style="color:${kcol}">${kind.toUpperCase()}</span>`
+    +`<span class="ttab">${esc(a.g)} › ${esc(a.tab)}</span>`
     +`<span class="tmeta">· ${a.model?esc(a.model)+' · '+effWord(a.eff):'shell'}</span><span class="tstate ${stCls}">${stTxt}</span><span class="tx" id="tx" title="close (Esc)">✕</span>`;
   tbody.innerHTML=transcriptFor(a);
   document.getElementById('tx').onclick=closeModal; modal.classList.add('open'); tbody.scrollTop=tbody.scrollHeight;
@@ -522,7 +592,38 @@ function closeModal(){ openId=null; modal.classList.remove('open'); }
 function refreshModal(){ if(openId!=null && A[openId]) openModal(A[openId]); }
 wall.addEventListener('click', e=>{ const c=e.target.closest('.card'); if(c) openModal(A[+c.dataset.idx]); });
 modal.addEventListener('click', e=>{ if(e.target===modal) closeModal(); });
-addEventListener('keydown', e=>{ if(e.key==='Escape') closeModal(); });
+// ---- the </> LeanCTX savings panel — mirrors the in-app plugin, ties to leanctx.com ----
+const svmodal=document.getElementById('svmodal'), svpanel=document.getElementById('svpanel');
+function svm(n){ return n>=1e6?(n/1e6).toFixed(1)+'M':n>=1e3?(n/1e3).toFixed(1)+'k':String(Math.round(n)); }
+function buildSavings(){
+  const agents=A.filter(a=>a.state!=='shell');
+  const rows=agents.slice(0,7).map(a=>{
+    const hex=(0x100000+(a._id*81773)%0x900000).toString(16);
+    return { id:'mcp-'+hex+'-'+(a.kind==='codex'?'cdx':'cc')+(a._id%9),
+      kind:a.kind==='codex'?'codex-cli':'claude-code', calls:3+(a._id*7)%150,
+      saved:Math.round(a.sess*9 + 22000 + (a._id*8123)%980000) };
+  });
+  const total=82e6 + agents.reduce((s,a)=>s+a.sess,0)*55;
+  const usd=Math.round(total/400000);
+  const files=[['app/src/main.rs',11.8e6,98],['agents.html',5.2e6,97],['app/src/pane.rs',3.3e6,92],['docs/features/01-agentic-mcp.md',1.2e6,88],['app/src/theme.rs',1.0e6,86]];
+  svpanel.innerHTML =
+      `<div class="sv-h"><div class="sv-logo"><span class="lb">&lt;/&gt;</span> Lean<span class="lc">CTX</span> <span class="sub2">token savings</span></div>`
+    + `<span class="sv-badge">★ 73 · Lv4 Guardian</span></div>`
+    + `<div class="sv-stats">`
+    + `<div class="sv-stat"><div class="v g">${svm(total)}</div><div class="l">tokens saved</div></div>`
+    + `<div class="sv-stat"><div class="v c">85%</div><div class="l">compression</div></div>`
+    + `<div class="sv-stat"><div class="v w">$${usd}</div><div class="l">USD saved</div></div></div>`
+    + `<div class="sv-secn">across 188 agents (per-agent = estimated):</div>`
+    + rows.map(r=>`<div class="sv-row"><span class="id">${r.id}</span><span class="kk">${r.kind}</span><span class="ca">${r.calls} calls</span><span class="s2">≈ ${svm(r.saved)}</span></div>`).join('')
+    + `<div class="sv-secn">top files by compression:</div>`
+    + files.map(f=>`<div class="sv-file"><span class="fn">${f[0]}</span><span class="fm">${svm(f[1])}</span><span class="fp">${f[2]}%</span></div>`).join('')
+    + `<div class="sv-foot">context saved by <a href="https://leanctx.com/" target="_blank" rel="noopener">lean-ctx</a> (compression on lean-ctx-touched traffic, not your full provider bill) · per-agent = estimated until lean-ctx stamps <code>agent_id</code> into the savings ledger.<br>esc or click outside to close · <a href="https://leanctx.com/" target="_blank" rel="noopener">leanctx.com →</a></div>`;
+}
+function openSavings(){ buildSavings(); svmodal.classList.add('open'); }
+function closeSavings(){ svmodal.classList.remove('open'); }
+svmodal.addEventListener('click', e=>{ if(e.target===svmodal) closeSavings(); });
+
+addEventListener('keydown', e=>{ if(e.key==='Escape'){ closeModal(); closeSavings(); } });
 
 render();
 setInterval(tick,1000); setInterval(churn,5000);
