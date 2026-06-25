@@ -2889,7 +2889,12 @@ impl TerminalView {
     /// the current inverted permutation `perm` (`perm[p]` = grid viewport row drawn
     /// at painted row `p`). The viewport row is `point.line + display_offset`,
     /// clamped on-screen; the painted row is the `perm` slot that draws it.
-    fn point_to_painted(&self, point: TermPoint, perm: &[usize], display_offset: usize) -> (usize, usize) {
+    fn point_to_painted(
+        &self,
+        point: TermPoint,
+        perm: &[usize],
+        display_offset: usize,
+    ) -> (usize, usize) {
         let rows = self.grid.rows.max(1);
         let vr = (point.line.0 + display_offset as i32).clamp(0, rows as i32 - 1) as usize;
         let painted = perm
