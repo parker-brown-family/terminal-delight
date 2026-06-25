@@ -18,7 +18,7 @@
 
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700;800&family=Inter:wght@400;600;800&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=JetBrains+Mono:wght@400;700;800&family=Inter:wght@400;600;800&display=swap" rel="stylesheet" />
 
   <style>
     :root {
@@ -34,6 +34,7 @@
       --danger:   #ff6b6b;
       --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
       --sans: "Inter", system-ui, sans-serif;
+      --display: "Space Grotesk", "Inter", system-ui, sans-serif;
       --maxw: 1080px;
     }
     * { box-sizing: border-box; }
@@ -60,7 +61,7 @@
     a { color: var(--accent); text-decoration: none; }
     a:hover { text-decoration: underline; }
     code, kbd { font-family: var(--mono); background: var(--surface); border: 1px solid var(--line); border-radius: 5px; padding: 1px 6px; font-size: 0.85em; color: var(--text); }
-    h1, h2, h3 { font-weight: 800; letter-spacing: -0.01em; line-height: 1.1; }
+    h1, h2, h3 { font-family: var(--display); font-weight: 700; letter-spacing: -0.01em; line-height: 1.1; }
     section { padding: 64px 0; border-top: 1px solid var(--line); }
     .eyebrow { font-family: var(--mono); color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.18em; font-size: 12px; }
 
@@ -162,6 +163,29 @@
     footer a { color: var(--text-dim); }
     footer a:hover { color: var(--accent); }
     .pill { font-family: var(--mono); font-size: 11px; border: 1px solid var(--line); border-radius: 999px; padding: 3px 10px; color: var(--text-dim); }
+
+    /* ---- brand hero wordmark ---- */
+    .wordmark { font-family: var(--display); font-weight: 700; font-size: clamp(40px, 8vw, 76px); letter-spacing: -0.01em;
+      margin: 10px 0 2px; line-height: 1; background: linear-gradient(90deg, #67F454, #29E3ED);
+      -webkit-background-clip: text; background-clip: text; color: transparent; }
+    .agtag { font-family: var(--mono); letter-spacing: 0.35em; text-transform: uppercase; color: #9a6bd0; font-size: 13px; margin: 0 0 16px; }
+
+    /* ---- feature pillars (basic-first → unroll) ---- */
+    .pillars { margin-top: 26px; display: flex; flex-direction: column; gap: 10px; }
+    .pillar { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; transition: 120ms; }
+    .pillar:hover { border-color: var(--accent-d); }
+    .pillar > summary { list-style: none; cursor: pointer; display: flex; align-items: center; gap: 14px; padding: 15px 18px; flex-wrap: wrap; }
+    .pillar > summary::-webkit-details-marker { display: none; }
+    .pillar > summary::after { content: "＋"; margin-left: auto; color: var(--text-dim); font-family: var(--mono); }
+    .pillar[open] > summary::after { content: "－"; }
+    .pillar .pic { font-size: 19px; flex: none; width: 26px; text-align: center; }
+    .pillar .pt { font-family: var(--display); font-weight: 700; color: #eafff2; font-size: 16.5px; }
+    .pillar .pone { color: var(--text-dim); font-size: 13.5px; flex: 1 1 240px; }
+    .pillar[open] > summary { border-bottom: 1px solid var(--line); }
+    .pillar .pbody { padding: 14px 18px 18px; color: var(--text-dim); font-size: 14.5px; line-height: 1.62; }
+    .pillar .pbody a { white-space: nowrap; }
+    .pillar.hero-pillar { border-color: var(--accent); box-shadow: 0 0 0 1px rgba(54,255,134,.22), 0 0 26px -10px var(--accent); }
+    @media (max-width: 560px) { .pillar .pone { flex-basis: 100%; } }
   </style>
 </head>
 <body>
@@ -169,14 +193,12 @@
     <div class="wrap">
       <span class="brand">▸ terminal-delight<span class="blink">_</span></span>
       <span class="links">
-        <a href="#features" class="hide-sm">features</a>
-        <a href="#mcp" style="color:var(--accent)">MCP ★</a>
-        <a href="agents.html" class="hide-sm">agents ↗</a>
+        <a href="#mcp" style="color:var(--accent)">agentic ★</a>
+        <a href="agents.html" class="hide-sm">live wall ↗</a>
+        <a href="#pillars" class="hide-sm">features</a>
         <a href="#gallery" class="hide-sm">gallery</a>
-        <a href="#crawl" class="hide-sm">crawl</a>
-        <a href="#gamba" class="hide-sm">gamba</a>
-        <a href="#vision">vision</a>
-        <a href="#build">build</a>
+        <a href="#build">install</a>
+        <a href="https://leanctx.com/" class="hide-sm">LeanCTX ↗</a>
         <a href="https://github.com/parker-brown-family/terminal-delight">GitHub ↗</a>
       </span>
     </div>
@@ -184,49 +206,77 @@
 
   <header class="hero">
     <div class="wrap">
-      <div class="eyebrow">GPU-native · Rust · Linux · v0.1.0</div>
-      <h1>terminal-<span class="u">delight</span></h1>
-      <p class="tag">A GPU-native Linux terminal with a hot-reloadable, CRT-flavored visual identity.</p>
-      <p class="sub">Rust end-to-end: <a href="https://github.com/zed-industries/zed/tree/main/crates/gpui">gpui</a> renders every pixel on the GPU, <code>alacritty_terminal</code> does the VT emulation, your real shell runs on a real PTY. Tiling multi-pane, per-pane theming &amp; monitor-OSD grading, scanlines and a real barrel warp.</p>
+      <div class="eyebrow">GPU-native · Rust · Linux · on the v1 doorstep</div>
+      <h1 class="wordmark">terminal delight</h1>
+      <p class="agtag">Agentic&nbsp;Forward</p>
+      <p class="tag">The terminal you <b>watch your fleet of agents</b> through — a real, fast Linux terminal with a read-only agent-monitoring layer built in.</p>
+      <p class="sub">Run a wall of coding agents (Claude, Codex). terminal-delight reads each one's own transcript and shows you, at a glance, who's working, who's <span style="color:var(--warn)">blocked on you</span>, who <span style="color:var(--danger)">errored</span>, and what every agent is spending — <b>without ever writing to a shell.</b></p>
       <div class="cta">
-        <a class="btn primary" href="https://github.com/parker-brown-family/terminal-delight/releases/latest">▾ Download the AppImage</a>
-        <a class="btn" href="https://github.com/parker-brown-family/terminal-delight">★ Star on GitHub</a>
-        <a class="btn" href="#build">⌨ Build from source</a>
+        <a class="btn primary" href="agents.html">▟ See the live agent wall ↗</a>
+        <a class="btn" href="#mcp">★ How the monitoring works</a>
+        <a class="btn" href="https://github.com/parker-brown-family/terminal-delight/releases/latest">▾ Download (MIT AppImage)</a>
       </div>
 
-      <!-- HERO. A real capture, staged with demo content only (no real paths /
-           usernames). To swap in a live recording later, drop an asciinema cast at
-           assets/demo.cast and uncomment the asciinema-player block at the bottom of
-           this file — but ONLY of a demo-staged session. -->
+      <!-- HERO: lead with the agentic hook. Real capture, staged demo data only. -->
       <div class="screen" id="hero-demo">
-        <div class="bar"><span class="dot"></span> terminal-delight — a full-height text crawl beside a wall of curved glass</div>
-        <img src="assets/crawl-hero.png" alt="terminal-delight filling the screen: a tall narrow Star-Wars-style text-crawl pane runs the full height of the far-left fifth of the window, its News-Gothic lines receding to a vanishing point at the top, while the remaining four-fifths is a 2x2 wall of barrel-warped curved-CRT terminals tinted green, cyan, amber and violet showing code, a passing test run and migration logs" />
-        <div class="playnote">▶ Real capture — a full-height text crawl receding to a point on the left, squashing a 2×2 wall of curved-CRT terminals (each its own colour) into the right. One window, one GPU pass.</div>
+        <div class="bar"><span class="dot"></span> the agent wall — every agent's project · model · effort · live task · token spend</div>
+        <a href="agents.html"><img src="assets/agents-wall.png" alt="the terminal-delight agent wall: a CRT scoreboard of agent cards grouped by project, each card showing the model, effort, what the agent is doing right now, and live token spend, with working/blocked/error/done states colour-coded" /></a>
+        <div class="playnote">▶ The in-app wall, live on the web — <a href="agents.html" style="color:var(--accent)">open the kiosk ↗</a>. Read-only; staged demo data, never real prompts.</div>
       </div>
     </div>
   </header>
 
-  <section id="overview">
-    <div class="wrap prose">
-      <div class="eyebrow">Overview</div>
-      <h2>A real terminal that looks like a thing you'd want open.</h2>
-      <p>Most terminals pick one: fast, or pretty. terminal-delight renders entirely on the GPU, so the CRT look — scanlines, glow, vignette, a genuine per-pane barrel warp — costs nothing at the keyboard. Key-to-echo lands at <b>p50 ~121µs</b>; <code>seq 1 100000</code> finishes in <b>0.089s</b>. The aesthetic is data: themes are TOML files you edit while the app runs, no recompile.</p>
+  <section id="pillars">
+    <div class="wrap">
+      <div class="eyebrow">What it is — start here, unroll for more</div>
+      <h2>The whole thing, simply.</h2>
+      <p class="prose" style="color:var(--text-dim);max-width:720px;margin-top:6px">The one big idea first, then everything else. Click any row to unroll it — each links to its full feature doc.</p>
+      <div class="pillars">
+
+        <details class="pillar hero-pillar" open>
+          <summary><span class="pic">⭐</span><span class="pt">Watch your whole agent fleet</span><span class="pone">a read-only MCP surface monitors every agent's transcript &amp; state</span></summary>
+          <div class="pbody">This is the headline. An orchestrator — or the in-app wall — sees who's running where, what each agent is doing <em>right now</em>, its token spend, and whether it's blocked on you. The data comes from each agent's own on-disk transcript, pushed live, and <b>nothing can ever write to a shell</b>. <a href="#mcp">The deep dive ↓</a> · <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/docs/features/01-agentic-mcp.md">full doc ↗</a></div>
+        </details>
+
+        <details class="pillar">
+          <summary><span class="pic">▟</span><span class="pt">The agent dashboard</span><span class="pone">a living scoreboard — grouped cards, live state, needs-you first</span></summary>
+          <div class="pbody">One themed card per agent, grouped by project: model, effort, the live action, Δ/Σ token spend, and a state you scan in a glance (working · blocked · error · done · idle). Blocked and errored agents are surfaced first, so your attention goes where it's needed. <a href="agents.html">Open the live wall ↗</a> · <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/docs/features/02-agent-dashboard.md">full doc ↗</a></div>
+        </details>
+
+        <details class="pillar">
+          <summary><span class="pic">🪦</span><span class="pt">The agent graveyard</span><span class="pone">find dead sessions on disk and one-click resurrect them</span></summary>
+          <div class="pbody">Closed a terminal, rebooted, or a session crashed? The conversation isn't gone — the transcript is still on disk. The graveyard finds those, shows each one's task summary and age, and resurrects any of them into a fresh pane that resumes exactly where it left off. <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/docs/features/03-agent-graveyard.md">full doc ↗</a></div>
+        </details>
+
+        <details class="pillar">
+          <summary><span class="pic">&lt;/&gt;</span><span class="pt">Plugins &amp; LeanCTX</span><span class="pone">the wall is extensible — token-savings, context harvest, your own</span></summary>
+          <div class="pbody">terminal-delight is an MCP client too: plugins light up surfaces on the wall. The flagship is <b>LeanCTX</b> — it shows, live, how many tokens <a href="https://leanctx.com/">lean-ctx</a> saved by compressing each agent's context. Plus context-delight: harvest a session into a portable <code>.cdx</code> package. <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/docs/features/04-plugins.md">full doc ↗</a></div>
+        </details>
+
+        <details class="pillar">
+          <summary><span class="pic">◍</span><span class="pt">The look is the brand</span><span class="pone">true GPU barrel-warp CRT, the 👓 FOCUS reader, per-pane themes</span></summary>
+          <div class="pbody">A real fullscreen GPU post-process — barrel warp, scanlines, phosphor, glare, text-crawl — that adds ≤1 ms of frame time and <b>zero</b> input latency. The 👓 FOCUS reader mirrors a pane big over a GPU frosted blur. Hot-reloadable, per-pane themes. <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/docs/features/05-visuals-crt.md">visuals doc ↗</a> · <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/docs/features/06-themes.md">themes doc ↗</a></div>
+        </details>
+
+        <details class="pillar">
+          <summary><span class="pic">▤</span><span class="pt">A real, fast terminal first</span><span class="pone">PTY + full VT, tiling, session restore — Alacritty-class latency</span></summary>
+          <div class="pbody">Before any agent magic, it's a genuine terminal: real PTYs, full VT (vim/htop/tmux/git unmodified), tiling splits, tabs, find, selection, crash-safe session restore — at key→photon <b>p50 ≈ 121 µs</b>, in Alacritty's class. <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/docs/features/07-terminal-core.md">full doc ↗</a></div>
+        </details>
+
+        <details class="pillar">
+          <summary><span class="pic">🌐</span><span class="pt">Nine languages</span><span class="pone">the whole UI, compiler-checked, in 9 languages</span></summary>
+          <div class="pbody">Every piece of chrome is translated into English, Español, Deutsch, Français, Русский, 中文, 日本語, 한국어, हिन्दी — with completeness enforced by the compiler, so a release can never ship half-translated. <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/docs/features/08-i18n.md">full doc ↗</a></div>
+        </details>
+
+      </div>
     </div>
   </section>
 
   <section id="features">
     <div class="wrap">
-      <div class="eyebrow">Features</div>
-      <h2>What's in 0.1.0</h2>
-      <div class="grid">
-        <div class="card"><div class="ic">▦</div><h3>Tiling multi-pane</h3><p>True tiling-tree splits that divide only the focused pane, tabs, sub-tab drag-to-split, and a pop-out scratch window with tear-off.</p></div>
-        <div class="card"><div class="ic">↻</div><h3>Hot-reload themes</h3><p>Four built-ins plus a live-editable <code>custom</code> slot read from <code>~/.config/terminal-delight/theme.toml</code> and reloaded on save, ~300ms, no restart.</p></div>
-        <div class="card"><div class="ic">◉</div><h3>Per-pane appearance</h3><p>Theme and monitor-OSD <em>grade</em> groups inherit the workspace independently — each with a live, non-destructive "follow outer" toggle.</p></div>
-        <div class="card"><div class="ic">⛭</div><h3>Monitor-OSD grading</h3><p>Brightness, contrast, colour, text, background, gamma — <em>plus text size</em> — global or per-pane, applied in HSLA at paint time.</p></div>
-        <div class="card"><div class="ic">◍</div><h3>CRT, on the GPU</h3><p>Scanlines, vignette, glow and a real barrel warp via a vendored gpui renderer patch. Per-theme dials; fully off in light themes.</p></div>
-        <div class="card"><div class="ic">▤</div><h3>A real terminal</h3><p>PTY + full VT emulation (bash, vim, top, tmux), 16/256/truecolor, scrollback, mouse selection, bracketed paste, live SIGWINCH resize.</p></div>
-        <div class="card"><div class="ic">▣</div><h3>MCP agent control</h3><p>A <b>read-only</b> MCP server: an orchestrator watches a wall of agent panes and is <em>pushed</em> the moment one calls a tool or finishes. stdio, never TCP — and it can't write a PTY. <a href="#mcp">The use case ↓</a></p></div>
-      </div>
+      <div class="eyebrow">Every feature, in detail</div>
+      <h2>The full surface — 85+ features</h2>
+      <p class="prose" style="color:var(--text-dim);max-width:740px;margin-top:6px">The pillars above are the tour. The complete, evidence-backed catalog — every feature with its source file and ship status — lives in <a href="https://github.com/parker-brown-family/terminal-delight/tree/main/docs/features"><code>docs/features/</code></a>. A quick index is below.</p>
 
       <details style="margin-top:24px;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:16px 20px">
         <summary style="cursor:pointer;font-family:var(--mono);font-weight:700;color:var(--accent);letter-spacing:.02em">✦ …and about a million more — click for the full feature list</summary>

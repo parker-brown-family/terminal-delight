@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Terminal Delight — Brand Sheet</title>
+<style>
+  :root{
+    --void:#030708; --green:#67F454; --green-deep:#14DC4E; --cyan:#29E3ED;
+    --amber:#E5AA0D; --violet:#815BAD; --grey:#B5BEAC;
+    --mono:"Monaspace Argon","Cascadia Code","JetBrains Mono",ui-monospace,"SF Mono",Menlo,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--void);color:var(--grey);font-family:var(--mono);
+       line-height:1.5;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:1040px;margin:0 auto;padding:48px 28px 96px}
+  header{text-align:center;margin-bottom:8px}
+  header img{max-width:560px;width:100%;height:auto;
+    filter:drop-shadow(0 0 40px rgba(103,244,84,.10)) drop-shadow(0 0 60px rgba(41,227,237,.08))}
+  .tag{letter-spacing:.35em;text-transform:uppercase;color:var(--violet);
+       font-size:13px;margin:6px 0 40px;text-align:center}
+  h2{font-size:13px;letter-spacing:.22em;text-transform:uppercase;color:var(--green);
+     border-bottom:1px solid rgba(181,190,172,.14);padding-bottom:8px;margin:48px 0 20px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:14px}
+  .sw{border:1px solid rgba(181,190,172,.12);border-radius:10px;overflow:hidden;background:#0a0f10}
+  .chip{height:78px}
+  .meta{padding:10px 12px;font-size:12px}
+  .meta .nm{color:var(--grey);font-weight:600}
+  .meta .hx{color:#8a958c;text-transform:uppercase;font-size:11px}
+  .gradient{height:64px;border-radius:10px;margin:6px 0 4px;
+    background:linear-gradient(90deg,var(--green) 0%,var(--cyan) 100%)}
+  .gradient.full{background:linear-gradient(90deg,var(--green) 0%,var(--cyan) 50%,var(--violet) 100%)}
+  .code{color:#8a958c;font-size:12px}
+  .type .word{font-size:54px;line-height:1.1;
+    background:linear-gradient(90deg,var(--green),var(--cyan));-webkit-background-clip:text;
+    background-clip:text;color:transparent}
+  .type .small{color:var(--grey)}
+  .specimen{display:flex;flex-wrap:wrap;gap:10px;margin-top:10px}
+  .specimen span{padding:4px 10px;border:1px solid rgba(181,190,172,.14);border-radius:6px;font-size:13px}
+  .row{display:grid;grid-template-columns:1fr 1fr;gap:24px}
+  @media(max-width:640px){.row{grid-template-columns:1fr}}
+  .note{font-size:12px;color:#8a958c}
+  footer{margin-top:64px;text-align:center;color:#5c645c;font-size:11px}
+  .rule{display:flex;align-items:center;justify-content:center;gap:12px;color:var(--violet)}
+  .rule .ln{height:1px;width:64px;background:linear-gradient(90deg,transparent,var(--green))}
+  .rule .ln.r{background:linear-gradient(90deg,var(--cyan),transparent)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <img src="assets/terminal-delight-logo-full.png" alt="terminal delight logo">
+    <div class="rule"><span class="ln"></span>&rsaquo; <span class="tag" style="margin:0">Agentic Forward</span> &lsaquo;<span class="ln r"></span></div>
+  </header>
+
+  <h2>Palette</h2>
+  <div class="grid">
+    <div class="sw"><div class="chip" style="background:#030708;border-bottom:1px solid #1a1f20"></div><div class="meta"><div class="nm">Void</div><div class="hx">#030708</div></div></div>
+    <div class="sw"><div class="chip" style="background:#67F454"></div><div class="meta"><div class="nm">Signal Green</div><div class="hx">#67F454</div></div></div>
+    <div class="sw"><div class="chip" style="background:#14DC4E"></div><div class="meta"><div class="nm">Phosphor Green</div><div class="hx">#14DC4E</div></div></div>
+    <div class="sw"><div class="chip" style="background:#29E3ED"></div><div class="meta"><div class="nm">Cyan</div><div class="hx">#29E3ED</div></div></div>
+    <div class="sw"><div class="chip" style="background:#E5AA0D"></div><div class="meta"><div class="nm">Amber</div><div class="hx">#E5AA0D</div></div></div>
+    <div class="sw"><div class="chip" style="background:#815BAD"></div><div class="meta"><div class="nm">Violet</div><div class="hx">#815BAD</div></div></div>
+    <div class="sw"><div class="chip" style="background:#B5BEAC"></div><div class="meta"><div class="nm">Phosphor Grey</div><div class="hx">#B5BEAC</div></div></div>
+    <div class="sw"><div class="chip" style="background:#1C4E2C"></div><div class="meta"><div class="nm">Glass / green</div><div class="hx">#1C4E2C</div></div></div>
+  </div>
+
+  <h2>Extended / UI palette</h2>
+  <p class="note">Calmer surfaces + a neutral ramp for in-product UI — reserve the vivid set above for logo &amp; hero.</p>
+  <div class="grid">
+    <div class="sw"><div class="chip" style="background:#020C16;border-bottom:1px solid #15202a"></div><div class="meta"><div class="nm">Deep Navy</div><div class="hx">#020C16</div></div></div>
+    <div class="sw"><div class="chip" style="background:#0C1823"></div><div class="meta"><div class="nm">Surface</div><div class="hx">#0C1823</div></div></div>
+    <div class="sw"><div class="chip" style="background:#14262C"></div><div class="meta"><div class="nm">Surface raised</div><div class="hx">#14262C</div></div></div>
+    <div class="sw"><div class="chip" style="background:#282E32"></div><div class="meta"><div class="nm">Panel line</div><div class="hx">#282E32</div></div></div>
+    <div class="sw"><div class="chip" style="background:#5A6061"></div><div class="meta"><div class="nm">Neutral 600</div><div class="hx">#5A6061</div></div></div>
+    <div class="sw"><div class="chip" style="background:#999DA0"></div><div class="meta"><div class="nm">Neutral 400</div><div class="hx">#999DA0</div></div></div>
+    <div class="sw"><div class="chip" style="background:#DFE2E3"></div><div class="meta"><div class="nm">Neutral 100</div><div class="hx">#DFE2E3</div></div></div>
+    <div class="sw"><div class="chip" style="background:#44B064"></div><div class="meta"><div class="nm">Green (muted)</div><div class="hx">#44B064</div></div></div>
+    <div class="sw"><div class="chip" style="background:#45A4AE"></div><div class="meta"><div class="nm">Teal (muted)</div><div class="hx">#45A4AE</div></div></div>
+    <div class="sw"><div class="chip" style="background:#C89944"></div><div class="meta"><div class="nm">Amber (muted)</div><div class="hx">#C89944</div></div></div>
+    <div class="sw"><div class="chip" style="background:#916D86"></div><div class="meta"><div class="nm">Violet (muted)</div><div class="hx">#916D86</div></div></div>
+  </div>
+
+  <h2>Signature gradient</h2>
+  <div class="gradient"></div>
+  <div class="code">linear-gradient(90deg, #67F454 0%, #29E3ED 100%)</div>
+  <div class="gradient full"></div>
+  <div class="code">full spectrum — #67F454 → #29E3ED → #815BAD</div>
+
+  <h2>Typography</h2>
+  <div class="row">
+    <div class="type">
+      <div class="word">terminal delight</div>
+      <div class="note">Wordmark — rounded lowercase mono, green→cyan. Never title-case.</div>
+    </div>
+    <div>
+      <div class="tag" style="text-align:left;margin:6px 0">Agentic Forward</div>
+      <div class="note">Tagline — uppercase mono, 0.35em tracking, violet.</div>
+      <div class="specimen">
+        <span style="color:var(--green)">live</span>
+        <span style="color:var(--cyan)">idle</span>
+        <span style="color:var(--amber)">needs you</span>
+        <span style="color:var(--violet)">agentic</span>
+        <span style="color:var(--grey)">0123456789 · {}[]()&lt;&gt;/\</span>
+      </div>
+      <div class="note" style="margin-top:8px">Stack: Monaspace Argon → Cascadia Code → JetBrains Mono.</div>
+    </div>
+  </div>
+
+  <h2>The mark = the product</h2>
+  <p class="note">The icon is the agent wall behind CRT glass — four quadrants
+  (green · amber · cyan · violet). Keep the quadrant colours and order consistent
+  anywhere the wall is depicted. Dark-first, always on Void or true black; the
+  glow is built in — don't add extra shadow. Clearspace ≥ one bezel; icon min 32px,
+  full lockup min 240px wide.</p>
+
+  <h2>Logo variants</h2>
+  <div class="row">
+    <div class="sw" style="padding:18px;display:flex;align-items:center;justify-content:center"><img src="assets/terminal-delight-icon.png" alt="icon" style="width:160px;height:160px;border-radius:18px"></div>
+    <div class="sw" style="padding:18px;display:flex;align-items:center;justify-content:center"><img src="assets/terminal-delight-wordmark.png" alt="wordmark" style="max-width:100%;height:auto"></div>
+  </div>
+  <p class="note">Icon — 640² square, source for the favicon/app-icon set (16/32/180/256/512 + .ico). Wordmark — 1080×150. Both cut from the master and pixel-verified.</p>
+
+  <h2>Reference poster</h2>
+  <p class="note">The full brand-pack poster — logo suite, iconography, components, and mockups. This sheet is its machine-readable distillation.</p>
+  <a href="assets/terminal-delight-brand-pack-reference.png"><img src="assets/terminal-delight-brand-pack-reference.png" alt="brand pack reference poster" style="width:100%;border:1px solid rgba(181,190,172,.12);border-radius:10px"></a>
+
+  <footer>Terminal Delight · brand sheet · palette sampled from the master logo · see BRAND.md</footer>
+</div>
+</body>
+</html>
