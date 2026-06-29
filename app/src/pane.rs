@@ -2684,24 +2684,62 @@ impl TerminalView {
         if ev.modifiers.control {
             return; // workspace handles ctrl+wheel = text-size scrub
         }
-        let mut dy = match ev.delta {
+        let dy = match ev.delta {
             gpui::ScrollDelta::Lines(l) => l.y * 3.0,
             gpui::ScrollDelta::Pixels(p) => f32::from(p.y) / self.cell_h,
         };
-        // In inverted (anchor-to-top) mode "older is DOWN", so a scroll-DOWN
-        // gesture should reveal OLDER lines. Flip the sign so the wheel feels
-        // natural; the default path is untouched.
-        if self.paint_inverted {
-            dy = -dy;
-        }
         self.scroll_accum += dy;
         let lines = self.scroll_accum.trunc() as i32;
-        if lines != 0 {
-            self.scroll_accum -= lines as f32;
-            self.session
-                .term
-                .lock()
-                .scroll_display(Scroll::Delta(lines));
+        if lines == 0 {
+            return;
+        }
+        self.scroll_accum -= lines as f32;
+        let up = lines > 0; // positive = scroll UP (toward older / above)
+        let count = (lines.unsigned_abs() as usize).clamp(1, 8);
+
+        let mode = *self.session.term.lock().mode();
+        // 1) The app has mouse reporting on (tmux, some TUIs) → send wheel button
+        //    events so it handles the scroll itself.
+        // 2) The app is on the ALTERNATE SCREEN with alternate-scroll (the default
+        //    for Claude Code, less, man, vim) → translate the wheel to arrow keys,
+        //    because the alt screen has NO scrollback for us to move. THIS is the
+        //    fix: without it the wheel does nothing inside a full-screen app.
+        // 3) Otherwise (a normal-screen shell) → scroll OUR scrollback as before;
+        //    inverted anchor-top panes flip "older is down".
+        if mode.intersects(TermMode::MOUSE_MODE) {
+            let (vrow, vcol, _) = self.viewport_cell(self.last_mouse);
+            let grow = self.paint_row_to_grid_row(vrow);
+            let button: u8 = if up { 64 } else { 65 };
+            let sgr = mode.contains(TermMode::SGR_MOUSE);
+            let mut out = Vec::new();
+            for _ in 0..count {
+                if sgr {
+                    out.extend_from_slice(
+                        format!("\u{1b}[<{};{};{}M", button, vcol + 1, grow + 1).as_bytes(),
+                    );
+                } else {
+                    let enc = |v: usize| (32 + (v + 1).min(223)) as u8;
+                    out.extend_from_slice(&[0x1b, b'[', b'M', 32 + button, enc(vcol), enc(grow)]);
+                }
+            }
+            self.session.notifier.notify(out);
+        } else if mode.contains(TermMode::ALT_SCREEN) && mode.contains(TermMode::ALTERNATE_SCROLL) {
+            let app_cursor = mode.contains(TermMode::APP_CURSOR);
+            let seq: &[u8] = match (up, app_cursor) {
+                (true, false) => b"\x1b[A",
+                (false, false) => b"\x1b[B",
+                (true, true) => b"\x1bOA",
+                (false, true) => b"\x1bOB",
+            };
+            let mut out = Vec::with_capacity(seq.len() * count);
+            for _ in 0..count {
+                out.extend_from_slice(seq);
+            }
+            self.session.notifier.notify(out);
+        } else {
+            // In inverted (anchor-to-top) mode "older is DOWN", so flip the sign.
+            let d = if self.paint_inverted { -lines } else { lines };
+            self.session.term.lock().scroll_display(Scroll::Delta(d));
             cx.notify();
         }
     }
