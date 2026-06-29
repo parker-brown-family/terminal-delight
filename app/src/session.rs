@@ -16,6 +16,7 @@ use std::fs::File;
 use std::io::{self, Write};
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
+use std::time::{Duration, SystemTime};
 
 /// What a pane needs at spawn time to pick its work back up.
 #[derive(Clone, Default, Debug)]
@@ -116,12 +117,18 @@ fn agent_resume(
         // Both sources (a cmdline arg, a transcript filename stem) end up typed
         // into a shell, so reject anything that isn't a plain id before use.
         let id = claude_session_from_fds(pid, cwd, home)
-            // The session the live process has its transcript OPEN on is the
-            // ground truth: it binds the id to THIS pane's process, so two panes
-            // in the same cwd never collide the way the mtime scan below can.
-            .or_else(|| arg_after(cmdline, &["--resume", "-r"]).map(str::to_string))
-            // Last resort when the fd isn't open (agent idle between writes):
-            // newest transcript for this cwd — ambiguous if several share a cwd.
+            // The transcript the live process holds OPEN was the ground truth —
+            // but Claude Code >= 2.1.195 opens-appends-closes and never keeps it
+            // open, so this is usually None now and the matches below carry it.
+            .or_else(|| arg_after(cmdline, &["--resume", "-r", "--session-id"]).map(str::to_string))
+            // A FRESH `claude` has no id on its cmdline: bind by the transcript
+            // BORN at this process's start (a new session's <id>.jsonl is created
+            // when the process starts). This restores the per-pane binding the
+            // open-fd scan gave us, so two fresh panes in one cwd never collapse
+            // onto the same newest file (issue #157).
+            .or_else(|| cwd.and_then(|d| claude_session_by_start(pid, d, home)))
+            // Last resort: newest transcript for this cwd — ambiguous if several
+            // share a cwd (the collision the start-time match above prevents).
             .or_else(|| cwd.and_then(|d| claude_session_for(d, home)))
             .filter(|id| safe_resume_id(id));
         Some(match id {
@@ -196,6 +203,78 @@ fn claude_slug(cwd: &str) -> String {
 fn claude_session_for(cwd: &str, home: &Path) -> Option<String> {
     let dir = home.join(".claude/projects").join(claude_slug(cwd));
     newest_jsonl(&dir).and_then(|p| p.file_stem().map(|s| s.to_string_lossy().into_owned()))
+}
+
+/// Bind a FRESH `claude` pid (no --resume on its cmdline) to its session by
+/// matching the process start time to the transcript file BORN closest to it: a
+/// new session's `<id>.jsonl` is created when the process starts, so each same-cwd
+/// pane maps to its OWN file. This restores the per-pane binding the open-fd scan
+/// gave us before Claude Code >= 2.1.195 stopped holding the transcript open
+/// (issue #157). None if start/birth times are unavailable — the caller then
+/// falls back to the newest-jsonl heuristic, so this is never worse than before.
+fn claude_session_by_start(pid: u32, cwd: &str, home: &Path) -> Option<String> {
+    let start = proc_start_time(pid)?;
+    let dir = home.join(".claude/projects").join(claude_slug(cwd));
+    let mut cands: Vec<(String, SystemTime)> = Vec::new();
+    for entry in std::fs::read_dir(&dir).ok()?.flatten() {
+        let p = entry.path();
+        if p.extension().and_then(|e| e.to_str()) != Some("jsonl") {
+            continue;
+        }
+        let Ok(born) = entry.metadata().and_then(|m| m.created()) else {
+            continue;
+        };
+        if let Some(id) = p.file_stem().map(|s| s.to_string_lossy().into_owned()) {
+            cands.push((id, born));
+        }
+    }
+    pick_session_by_birth(start, &cands, Duration::from_secs(120))
+}
+
+/// Pure pick: the session id whose transcript was born closest to `start`, within
+/// `window` (so an unrelated OLD transcript can't match a fresh process). Ties
+/// break on the id for determinism. None if nothing is in-window. Split out so the
+/// binding logic is unit-testable without `/proc` or the filesystem.
+fn pick_session_by_birth(
+    start: SystemTime,
+    cands: &[(String, SystemTime)],
+    window: Duration,
+) -> Option<String> {
+    cands
+        .iter()
+        .filter(|(id, _)| safe_resume_id(id))
+        .filter_map(|(id, born)| {
+            // absolute |born - start|, regardless of which is later
+            let d = born.duration_since(start).unwrap_or_else(|e| e.duration());
+            (d <= window).then_some((d, id.clone()))
+        })
+        .min_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)))
+        .map(|(_, id)| id)
+}
+
+/// Wall-clock start time of process `pid`, from `/proc/<pid>/stat` field 22
+/// (clock ticks since boot) + `/proc/stat` `btime`. None if either is unreadable.
+fn proc_start_time(pid: u32) -> Option<SystemTime> {
+    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    // comm (field 2) is wrapped in parens and may itself contain ')', so the
+    // numeric fields begin after the LAST ')'. starttime is field 22 → index 19.
+    let rest = stat.rsplit_once(')')?.1;
+    let ticks: u64 = rest.split_whitespace().nth(19)?.parse().ok()?;
+    let hz = unsafe { libc::sysconf(libc::_SC_CLK_TCK) };
+    if hz <= 0 {
+        return None;
+    }
+    let btime = boot_time()?;
+    Some(SystemTime::UNIX_EPOCH + Duration::from_secs(btime + ticks / hz as u64))
+}
+
+/// Seconds-since-epoch the machine booted, from `/proc/stat` `btime`.
+fn boot_time() -> Option<u64> {
+    std::fs::read_to_string("/proc/stat")
+        .ok()?
+        .lines()
+        .find_map(|l| l.strip_prefix("btime "))
+        .and_then(|v| v.trim().parse().ok())
 }
 
 /// Most recent Codex rollout whose header mentions `cwd`:
@@ -353,6 +432,35 @@ mod tests {
             claude_slug("/home/user/Code/terminal-delight"),
             "-home-user-Code-terminal-delight"
         );
+    }
+
+    #[test]
+    fn birth_match_binds_each_pane_to_its_own_session_not_the_newest() {
+        // #157: the collision the open-fd scan used to prevent. Two FRESH same-cwd
+        // panes start at different times; each session's transcript is born at its
+        // own pane's start. The newest file must NOT win for the older pane.
+        let secs = |s: u64| SystemTime::UNIX_EPOCH + Duration::from_secs(s);
+        let win = Duration::from_secs(120);
+        let cands = vec![
+            ("aaaaaaaa".to_string(), secs(1_000_004)), // pane A: born 4s after start
+            ("bbbbbbbb".to_string(), secs(1_003_400)), // pane B: born ~57min later
+            ("01dsessn".to_string(), secs(900_000)),   // an ancient transcript
+        ];
+        // Pane A (start 1_000_000) → its OWN session, not the newest (bbbb).
+        assert_eq!(
+            pick_session_by_birth(secs(1_000_000), &cands, win).as_deref(),
+            Some("aaaaaaaa")
+        );
+        // Pane B (start ~1_003_398) → bbbb.
+        assert_eq!(
+            pick_session_by_birth(secs(1_003_398), &cands, win).as_deref(),
+            Some("bbbbbbbb")
+        );
+        // A process whose start matches nothing in-window → None (caller falls
+        // back to the newest-jsonl heuristic — never worse than before).
+        assert_eq!(pick_session_by_birth(secs(2_000_000), &cands, win), None);
+        // The ancient transcript is out of window for a fresh-ish start.
+        assert_eq!(pick_session_by_birth(secs(950_000), &cands, win), None);
     }
 
     #[test]
