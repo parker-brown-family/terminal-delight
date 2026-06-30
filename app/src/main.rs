@@ -10520,34 +10520,6 @@ impl Render for Workspace {
                                 })
                                 // RULES TEXT: the recent message feed
                                 .child(rules)
-                                // THEME ICON: the card's colour-set swatch, docked
-                                // vertically-centered on the middle-right frame edge
-                                // (mirrors the glyph in the theme tray).
-                                .child(
-                                    div()
-                                        .absolute()
-                                        .top_0()
-                                        .bottom_0()
-                                        .right_0()
-                                        .flex()
-                                        .items_center()
-                                        .child(
-                                            div()
-                                                .flex_none()
-                                                .flex()
-                                                .items_center()
-                                                .justify_center()
-                                                .w(px(20. * cs))
-                                                .h(px(20. * cs))
-                                                .rounded_md()
-                                                .border_1()
-                                                .border_color(theme_tint.alpha(0.5))
-                                                .bg(theme_tint.alpha(0.12))
-                                                .text_size(px(11. * cs))
-                                                .text_color(theme_tint)
-                                                .child(theme_glyph),
-                                        ),
-                                )
                                 // CORNER STATS: the destiny/power numbers
                                 .child(
                                     div()
