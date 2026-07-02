@@ -2694,10 +2694,28 @@ impl TerminalView {
             return;
         }
         self.scroll_accum -= lines as f32;
-        let up = lines > 0; // positive = scroll UP (toward older / above)
+        // Inverted (anchor-top) panes read "older is DOWN". Compute the gesture's
+        // intent ONCE — "reveal older?" — so EVERY scroll leg honours the inversion,
+        // not just the local-scrollback leg (Leg 3). This is the Claude alt-screen
+        // fix: Leg 2 (arrow keys) previously sent the un-flipped arrow, so a physical
+        // scroll-DOWN scrolled toward NEWER. See docs/spec/anchor-top-read.md §5.
+        // Leg 3 keeps its own `-lines` flip below (it uses the exact line count).
+        let up = (lines > 0) ^ self.paint_inverted; // true = reveal OLDER (app "up")
         let count = (lines.unsigned_abs() as usize).clamp(1, 8);
 
         let mode = *self.session.term.lock().mode();
+        // Diagnostic for the anchor-top read (see docs/spec/anchor-top-read.md §7).
+        if std::env::var("TD_ANCHORDEBUG").is_ok() {
+            eprintln!(
+                "[anchor] scroll pane={:?} paint_inverted={} reveal_older={} mouse_mode={} alt_screen={} alt_scroll={} (spec §5)",
+                self.mode,
+                self.paint_inverted,
+                up,
+                mode.intersects(TermMode::MOUSE_MODE),
+                mode.contains(TermMode::ALT_SCREEN),
+                mode.contains(TermMode::ALTERNATE_SCROLL),
+            );
+        }
         // 1) The app has mouse reporting on (tmux, some TUIs) → send wheel button
         //    events so it handles the scroll itself.
         // 2) The app is on the ALTERNATE SCREEN with alternate-scroll (the default
@@ -3525,6 +3543,11 @@ pub fn anchor_top() -> bool {
 /// conversational agents, including Codex's alternate-screen TUI, but corrupts
 /// non-agent full-screen TUIs (vim/htop/less) whose box drawing assumes a fixed
 /// top-to-bottom layout.
+///
+/// TARGET BEHAVIOUR SPEC: `docs/spec/anchor-top-read.md`. Read it before changing
+/// the inverted read or the wheel handling — the behaviour must hold for shell,
+/// Codex, AND Claude, and a fix for one client must not regress another (PR #142
+/// was closed for regressing Codex). `TD_ANCHORDEBUG=1` dumps the per-pane state.
 fn should_invert(anchor_top: bool, crawl: bool, alt_screen: bool, agent_mode: bool) -> bool {
     anchor_top && !crawl && (!alt_screen || agent_mode)
 }
@@ -3738,6 +3761,16 @@ fn invert_logical_read(
         perm.push(perm.len().min(n - 1)); // safety; normally never hit
     }
     perm.truncate(n);
+    if std::env::var("TD_ANCHORDEBUG").is_ok() {
+        // Group boundaries reveal §3a over-splitting (one message → many blocks).
+        let sizes: Vec<usize> = groups.iter().map(|g| g.len()).collect();
+        eprintln!(
+            "[anchor] invert_logical_read block_mode={} groups={} sizes={:?}",
+            block_mode,
+            groups.len(),
+            sizes
+        );
+    }
     let new_lines: Vec<(String, Vec<TextRun>)> = perm.iter().map(|&gi| lines[gi].clone()).collect();
     (new_lines, perm)
 }
@@ -4242,6 +4275,18 @@ impl Render for TerminalView {
             .contains(TermMode::ALT_SCREEN);
         let agent_mode = self.mode.is_agent();
         let inverted = should_invert(anchor_top(), th.crawl, alt_screen_active, agent_mode);
+        // Diagnostic for the anchor-top read (see docs/spec/anchor-top-read.md §7).
+        if std::env::var("TD_ANCHORDEBUG").is_ok() {
+            eprintln!(
+                "[anchor] render pane={:?} agent={} alt_screen={} anchor_top={} crawl={} inverted={}",
+                self.mode,
+                agent_mode,
+                alt_screen_active,
+                anchor_top(),
+                th.crawl,
+                inverted
+            );
+        }
         let mut lines = self.styled_lines(&th, inverted);
         // Crawl mode reads as a Star-Wars crawl: the prompt belongs at the near
         // (bottom) edge with output stacking UP into the distance. The grid
