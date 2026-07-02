@@ -67,7 +67,12 @@ yanked = "warn"
 # fix; "workspace" scoping silences exactly those without ignoring real security
 # advisories (vulnerabilities stay deny-by-default, and CI also runs `cargo audit`).
 unmaintained = "workspace"
-ignore = []
+# Transitive `quick-xml` (0.30.0 + 0.39.4) DoS advisories, published 2026-06-29.
+# They are pinned deep in the vendored Zed/gpui dependency graph — there is no
+# ^0.30/^0.39 path to the fixed >=0.41.0 — and a terminal never parses untrusted
+# XML, so the DoS has no real attack surface here. Revisit when the upstream graph
+# moves to quick-xml >=0.41. (SECURITY POLICY — flagged for review.)
+ignore = ["RUSTSEC-2026-0194", "RUSTSEC-2026-0195"]
 
 [sources]
 unknown-registry = "deny"

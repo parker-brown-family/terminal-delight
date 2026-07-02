@@ -87,7 +87,10 @@ jobs:
       - uses: taiki-e/install-action@cargo-audit
       - uses: taiki-e/install-action@cargo-deny
       - name: Audit advisories
-        run: cargo audit
+        # quick-xml transitive DoS (RUSTSEC-2026-0194/0195) is pinned in the vendored
+        # gpui graph and unreachable to untrusted XML — see app/deny.toml. Revisit
+        # when upstream moves to quick-xml >=0.41.
+        run: cargo audit --ignore RUSTSEC-2026-0194 --ignore RUSTSEC-2026-0195
       - name: Check licenses and sources
         run: cargo deny check
 

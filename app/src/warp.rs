@@ -136,10 +136,16 @@ mod tests {
     /// A crawl triad with crawl disabled (identity: off, no taper, flat depth).
     const CRAWL_OFF: [f32; 3] = [0.0, 1.0, 1.0];
 
-    // The statics are process-global; this is the only test that touches them,
-    // so it owns the sequence start-to-finish and restores the default at the end.
+    // `RECTS`/`SUPPRESSED` are process-global and MORE THAN ONE test drives them
+    // (suppression + crawl). Serialize those tests through this lock so `cargo test`'s
+    // parallel threads can't clobber each other's tube count — the flaky CI failure
+    // was a concurrent test's tubes making `rect_count()` read 4 where a test wanted 2.
+    // Poison-tolerant so one failing test can't cascade into the others.
+    static WARP_SERIAL: Mutex<()> = Mutex::new(());
+
     #[test]
     fn suppression_stops_tubes_from_registering() {
+        let _serial = WARP_SERIAL.lock().unwrap_or_else(|e| e.into_inner());
         let r = [0.0, 0.0, 100.0, 100.0];
         begin_frame();
         set_suppressed(false);
@@ -209,6 +215,7 @@ mod tests {
     // so a crawling pane and a plain pane coexist without leaking into each other.
     #[test]
     fn crawl_triad_is_per_pane_and_passes_through() {
+        let _serial = WARP_SERIAL.lock().unwrap_or_else(|e| e.into_inner());
         let r = [0.0, 0.0, 100.0, 100.0];
         begin_frame();
         set_suppressed(false);
