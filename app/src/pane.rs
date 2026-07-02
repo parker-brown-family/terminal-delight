@@ -3744,6 +3744,26 @@ fn invert_logical_read(
             }
             groups.push((start..end).collect());
         }
+        // Fallback: if the client's human-prompt caret wasn't recognised, turn
+        // detection yields a SINGLE group → reversing is a no-op → the pane reads
+        // BOTTOM-anchored instead of inverted (the regression). Split on blank-line
+        // blocks so anchor-top still inverts (prompt on top); the finer turn-grouping
+        // resumes once the caret is recognised (`is_human_input_line`). Spec §3a/§6.
+        if groups.len() < 2 {
+            groups.clear();
+            let mut i = 0;
+            while i <= last {
+                if is_blank[i] {
+                    i += 1;
+                    continue;
+                }
+                let start = i;
+                while i <= last && !is_blank[i] {
+                    i += 1;
+                }
+                groups.push((start..i).collect());
+            }
+        }
     } else {
         let mut cur: Vec<usize> = Vec::new();
         for i in 0..=last {
