@@ -3718,6 +3718,14 @@ fn invert_logical_read(
     // Build logical groups over the content rows 0..=last.
     let mut groups: Vec<Vec<usize>> = Vec::new();
     if block_mode {
+        // Group by conversational TURN, not paragraph (spec §3a). A turn opens at a
+        // human-input line (`is_human_input_line`) and runs until the NEXT human-input
+        // line — the human prompt plus the agent's full multi-step reply, keeping the
+        // blank lines *within* a message in natural order. Reversing TURN order then
+        // puts the newest turn on top while each message still reads top→bottom. The
+        // old "split on every blank line" reversed a message's own paragraphs/steps
+        // (the "out of order" bug on Claude, whose replies blank-separate their steps).
+        // Rows before the first human turn form a leading group.
         let mut i = 0;
         while i <= last {
             if is_blank[i] {
@@ -3725,10 +3733,16 @@ fn invert_logical_read(
                 continue;
             }
             let start = i;
-            while i <= last && !is_blank[i] {
+            i += 1;
+            while i <= last && !is_human_input_line(&lines[i].0) {
                 i += 1;
             }
-            groups.push((start..i).collect());
+            // Trailing blanks become inter-turn separators / bottom padding.
+            let mut end = i;
+            while end > start && is_blank[end - 1] {
+                end -= 1;
+            }
+            groups.push((start..end).collect());
         }
     } else {
         let mut cur: Vec<usize> = Vec::new();
@@ -3745,7 +3759,19 @@ fn invert_logical_read(
     // Reverse group ORDER (newest on top), rows within a group natural. Blank rows
     // become padding: one separator between reversed blocks (block mode breathing
     // room), the remainder at the bottom so the input/prompt hugs the top.
-    let mut blanks: Vec<usize> = (0..n).filter(|&i| is_blank[i]).collect();
+    // Blanks INSIDE a turn group are kept in place (a message's own paragraph
+    // breaks); only the ungrouped blanks are free to become inter-turn separators
+    // and bottom padding.
+    let grouped: Vec<bool> = {
+        let mut g = vec![false; n];
+        for grp in &groups {
+            for &r in grp {
+                g[r] = true;
+            }
+        }
+        g
+    };
+    let mut blanks: Vec<usize> = (0..n).filter(|&i| is_blank[i] && !grouped[i]).collect();
     let mut perm: Vec<usize> = Vec::with_capacity(n);
     let g = groups.len();
     for (bi, grp) in groups.iter().rev().enumerate() {
@@ -6007,6 +6033,40 @@ mod tests {
         assert_eq!(&t[4..6], &["agent: first line", "agent: second line"]);
         // hit-test perm: painted rows 0-2 map to grid rows 3-5 (the input box).
         assert_eq!(&perm[0..3], &[3usize, 4, 5]);
+    }
+
+    #[test]
+    fn invert_logical_read_block_mode_keeps_a_multistep_turn_in_order() {
+        // §3a regression: an agent TURN whose reply blank-separates its steps
+        // (Claude's shape) must NOT have its steps reversed. Group by the human-
+        // prompt turn boundary, not by every blank line, so the reply reads
+        // top→bottom while whole TURNS reverse (newest on top).
+        let row = |s: &str| (s.to_string(), Vec::<TextRun>::new());
+        let texts =
+            |l: &[(String, Vec<TextRun>)]| l.iter().map(|(t, _)| t.clone()).collect::<Vec<_>>();
+        let lines = vec![
+            row("> old question"),      // 0  turn 1: human
+            row("\u{25cf} old answer"), // 1  turn 1: reply
+            row(""),                    // 2
+            row("> new question"),      // 3  turn 2: human
+            row("\u{25cf} step one"),   // 4  turn 2: reply step 1
+            row(""),                    // 5  internal blank — must NOT reorder steps
+            row("\u{25cf} step two"),   // 6  turn 2: reply step 2
+            row(""),                    // 7  internal blank
+            row("\u{25cf} step three"), // 8  turn 2: reply step 3
+        ];
+        let (out, _perm) = invert_logical_read(lines, &[], true);
+        let t = texts(&out);
+        // Newest turn on top, its steps IN ORDER (one, two, three).
+        assert_eq!(t[0], "> new question");
+        assert_eq!(t[1], "\u{25cf} step one");
+        assert_eq!(t[3], "\u{25cf} step two"); // t[2] is the internal blank
+        assert_eq!(t[5], "\u{25cf} step three"); // t[4] is the internal blank
+                                                 // Older turn sits BELOW the newest one, still top→bottom.
+        let old_q = t.iter().position(|s| s == "> old question").unwrap();
+        let old_a = t.iter().position(|s| s == "\u{25cf} old answer").unwrap();
+        assert!(old_q < old_a, "older turn reads top→bottom");
+        assert!(old_q > 5, "older turn sits below the newest turn");
     }
 
     #[test]
