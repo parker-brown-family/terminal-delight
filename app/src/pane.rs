@@ -1762,7 +1762,26 @@ impl TerminalView {
             let alive = this
                 .update(cx, |view: &mut TerminalView, cx| {
                     if let Some(master) = view.session.master.as_ref() {
-                        let mode = foreground_mode(master, view.session.shell_pid);
+                        let detected = foreground_mode(master, view.session.shell_pid);
+                        // Sticky agent detection (spec §4): an agent runs child
+                        // processes (bash/node/rg) as the terminal's foreground group
+                        // while working, momentarily reclassifying the pane as Shell —
+                        // which FLICKERS the anchor-top inversion frame to frame (the
+                        // "sometimes / middle-screen prompt" bug). Keep the agent mode
+                        // through that, but only while the ALTERNATE SCREEN is active
+                        // (the agent's live TUI); when the agent exits and the plain
+                        // shell returns on the normal screen, we correctly demote.
+                        let on_alt = view
+                            .session
+                            .term
+                            .lock()
+                            .mode()
+                            .contains(TermMode::ALT_SCREEN);
+                        let mode = if view.mode.is_agent() && !detected.is_agent() && on_alt {
+                            view.mode.clone()
+                        } else {
+                            detected
+                        };
                         if mode != view.mode {
                             view.mode = mode;
                             cx.notify();
@@ -4334,6 +4353,24 @@ impl Render for TerminalView {
             );
         }
         let mut lines = self.styled_lines(&th, inverted);
+        if std::env::var("TD_ANCHORDEBUG").is_ok() {
+            // The last few non-blank grid rows + whether each is detected as the
+            // human prompt line — reveals a caret we don't recognise or a leading
+            // box-border char that defeats detection (spec §3a/§4).
+            for (t, _) in lines
+                .iter()
+                .rev()
+                .filter(|(t, _)| !t.trim().is_empty())
+                .take(3)
+            {
+                let head: String = t.chars().take(12).collect();
+                eprintln!(
+                    "[anchor]   row human_input={} head={:?}",
+                    is_human_input_line(t),
+                    head
+                );
+            }
+        }
         // Crawl mode reads as a Star-Wars crawl: the prompt belongs at the near
         // (bottom) edge with output stacking UP into the distance. The grid
         // paints top-anchored, so after a clear/Ctrl+L the prompt would land at
