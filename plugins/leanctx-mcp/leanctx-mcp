@@ -22,7 +22,16 @@ import sys
 
 PROTOCOL = "2024-11-05"
 NAME = "leanctx-savings"
-VERSION = "0.1.0"
+VERSION = "0.2.0"
+
+# Price basis for the dollar figure. lean-ctx's own `avoided_usd` values every
+# saved token at a ~$2.50/M "fallback-blended" rate baked into its binary. We run
+# Claude Opus 4.x, and the saved tokens are context we did NOT have to send —
+# i.e. INPUT tokens — so we re-value them at Opus's input price. Opus 4.5–4.8 all
+# bill input at $5.00/M (Opus 4.1 and older were $15/M). Override the env var if
+# your fleet's model mix differs. Still notional (full-input, pre-cache) — the
+# panel note keeps the "not your provider bill" caveat.
+OPUS_INPUT_USD_PER_M = float(os.environ.get("TD_SAVINGS_USD_PER_M", "5.0"))
 
 # tools whose output lean-ctx compresses → they carry the token savings. Used to
 # apportion the (exact) global saved-tokens total across agents as an estimate.
@@ -104,7 +113,9 @@ def build_savings(args):
     summ = g.get("summary", {})
     saved = int(summ.get("tokens_saved", 0))
     pct = float(summ.get("gain_rate_pct", 0.0))
-    usd = float(summ.get("avoided_usd", 0.0))
+    # Re-value at Opus input pricing instead of lean-ctx's $2.50/M blended rate
+    # (see OPUS_INPUT_USD_PER_M). Saved tokens are context/input we never sent.
+    usd = saved * OPUS_INPUT_USD_PER_M / 1_000_000.0
     score = int((summ.get("score") or {}).get("total", 0))
     heat = g.get("heatmap", []) or []
     top_files = [{"path": h.get("path", ""),
@@ -121,14 +132,17 @@ def build_savings(args):
         "tokens_saved": saved,
         "gain_pct": round(pct, 1),
         "usd": round(usd, 2),
+        "usd_per_m": OPUS_INPUT_USD_PER_M,
         "score": score,
         "level": _level(score),
         "agent_count": len(agents),
         "agents": agents[:40],
         "top_files": top_files,
         "note": ("context saved by lean-ctx (compression on lean-ctx-touched "
-                 "traffic, not your full provider bill) · per-agent ≈ "
-                 "estimated until lean-ctx stamps agent_id into the savings ledger"),
+                 "traffic), valued at Opus 4.x input pricing ($%.0f/M) — notional, "
+                 "not your full provider bill · per-agent ≈ estimated until "
+                 "lean-ctx stamps agent_id into the savings ledger"
+                 % OPUS_INPUT_USD_PER_M),
     }
 
 

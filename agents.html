@@ -604,7 +604,7 @@ function buildSavings(){
       saved:Math.round(a.sess*9 + 22000 + (a._id*8123)%980000) };
   });
   const total=82e6 + agents.reduce((s,a)=>s+a.sess,0)*55;
-  const usd=Math.round(total/400000);
+  const usd=Math.round(total/200000); // saved context valued at Opus 4.x input ($5/M)
   const files=[['app/src/main.rs',11.8e6,98],['agents.html',5.2e6,97],['app/src/pane.rs',3.3e6,92],['docs/features/01-agentic-mcp.md',1.2e6,88],['app/src/theme.rs',1.0e6,86]];
   svpanel.innerHTML =
       `<div class="sv-h"><div class="sv-logo"><span class="lb">&lt;/&gt;</span> Lean<span class="lc">CTX</span> <span class="sub2">token savings</span></div>`
@@ -617,7 +617,7 @@ function buildSavings(){
     + rows.map(r=>`<div class="sv-row"><span class="id">${r.id}</span><span class="kk">${r.kind}</span><span class="ca">${r.calls} calls</span><span class="s2">≈ ${svm(r.saved)}</span></div>`).join('')
     + `<div class="sv-secn">top files by compression:</div>`
     + files.map(f=>`<div class="sv-file"><span class="fn">${f[0]}</span><span class="fm">${svm(f[1])}</span><span class="fp">${f[2]}%</span></div>`).join('')
-    + `<div class="sv-foot">context saved by <a href="https://leanctx.com/" target="_blank" rel="noopener">lean-ctx</a> (compression on lean-ctx-touched traffic, not your full provider bill) · per-agent = estimated until lean-ctx stamps <code>agent_id</code> into the savings ledger.<br>esc or click outside to close · <a href="https://leanctx.com/" target="_blank" rel="noopener">leanctx.com →</a></div>`;
+    + `<div class="sv-foot">context saved by <a href="https://leanctx.com/" target="_blank" rel="noopener">lean-ctx</a> (compression on lean-ctx-touched traffic), valued at Opus 4.x input pricing ($5/M) — notional, not your full provider bill · per-agent = estimated until lean-ctx stamps <code>agent_id</code> into the savings ledger.<br>esc or click outside to close · <a href="https://leanctx.com/" target="_blank" rel="noopener">leanctx.com →</a></div>`;
 }
 function openSavings(){ buildSavings(); svmodal.classList.add('open'); }
 function closeSavings(){ svmodal.classList.remove('open'); }
