@@ -4788,6 +4788,41 @@ impl Workspace {
         }
     }
 
+    /// Extend the armed FOCUS reader selection: move the head to the source cell
+    /// under `pos`, anchor fixed. No-op unless a FOCUS drag is armed. Shared by
+    /// the workspace-root `on_mouse_move` AND the FOCUS scrim — the scrim
+    /// `.occlude()`s the root, so mid-drag moves reach only the scrim; without a
+    /// handler there the head never advanced and the selection stayed a single
+    /// cell that copied nothing (#87).
+    fn focus_drag_extend(&mut self, pos: Point<Pixels>, cx: &mut Context<Self>) {
+        if !self.focus_sel_drag {
+            return;
+        }
+        if let (Some(cell), Some((anchor, head))) = (self.focus_cell_at(pos), self.focus_sel) {
+            if head != cell {
+                self.focus_sel = Some((anchor, cell));
+                cx.notify();
+            }
+        }
+    }
+
+    /// Finish an armed FOCUS reader drag: a real drag (anchor != head) copies the
+    /// span, a plain click (anchor == head) clears it without copying. Returns
+    /// `true` when a drag was armed (the caller can stop there). Shared by the
+    /// root `on_mouse_up` and the occluding FOCUS scrim (#87). Idempotent: the
+    /// first caller takes the latch, a second sees it cleared and returns `false`.
+    fn focus_drag_release(&mut self, cx: &mut Context<Self>) -> bool {
+        if !std::mem::take(&mut self.focus_sel_drag) {
+            return false;
+        }
+        match self.focus_sel {
+            Some((a, b)) if a != b => self.copy_focus_selection(cx),
+            _ => self.focus_sel = None,
+        }
+        cx.notify();
+        true
+    }
+
     /// Set the FOCUS text-size multiplier from a 0..1 track fraction. Live only;
     /// the zoom is per-open and intentionally never persisted.
     fn set_focus_zoom(&mut self, frac: f32, cx: &mut Context<Self>) {
@@ -5782,16 +5817,10 @@ impl Workspace {
             }
         }
         // Extend the FOCUS reader selection as the cursor drags — the head moves to
-        // the source cell under it, the anchor stays put.
-        if self.focus_sel_drag && ev.pressed_button == Some(MouseButton::Left) {
-            if let (Some(cell), Some((anchor, head))) =
-                (self.focus_cell_at(ev.position), self.focus_sel)
-            {
-                if head != cell {
-                    self.focus_sel = Some((anchor, cell));
-                    cx.notify();
-                }
-            }
+        // the source cell under it, the anchor stays put. Also wired onto the FOCUS
+        // scrim, which occludes this root handler while the modal is open (#87).
+        if ev.pressed_button == Some(MouseButton::Left) {
+            self.focus_drag_extend(ev.position, cx);
         }
         if let Some(target) = self.wheel_drag {
             if ev.pressed_button == Some(MouseButton::Left) {
@@ -5872,13 +5901,9 @@ impl Workspace {
             return;
         }
         // FOCUS selection: a real drag copies the selected text; a plain click
-        // (anchor == head) just clears the selection without copying.
-        if std::mem::take(&mut self.focus_sel_drag) {
-            match self.focus_sel {
-                Some((a, b)) if a != b => self.copy_focus_selection(cx),
-                _ => self.focus_sel = None,
-            }
-            cx.notify();
+        // (anchor == head) just clears the selection without copying. Also wired
+        // onto the occluding FOCUS scrim (#87); the latch makes it fire once.
+        if self.focus_drag_release(cx) {
             return;
         }
         // a group drag: drop the whole group into its resolved slot, or — if it
@@ -12767,6 +12792,23 @@ impl Render for Workspace {
                             cx.notify();
                         }
                     }))
+                    // Drag-select lives HERE, not only on the root: this scrim
+                    // `.occlude()`s the window, so mid-drag moves and the release
+                    // never reach the root's handlers while FOCUS is open (#87).
+                    // A press inside the panel arms `focus_sel_drag` (and stops
+                    // propagation, so the scrim's close-on-press below never sees
+                    // it); these extend the head and copy on release.
+                    .on_mouse_move(cx.listener(|ws, ev: &MouseMoveEvent, _w, cx| {
+                        if ev.pressed_button == Some(MouseButton::Left) {
+                            ws.focus_drag_extend(ev.position, cx);
+                        }
+                    }))
+                    .on_mouse_up(
+                        MouseButton::Left,
+                        cx.listener(|ws, _: &MouseUpEvent, _w, cx| {
+                            ws.focus_drag_release(cx);
+                        }),
+                    )
                     .child(panel),
             )
         } else {
