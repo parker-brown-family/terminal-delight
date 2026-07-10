@@ -14,7 +14,8 @@
 //! All GPU quads/text, non-occluding (no mouse handlers) — input passes
 //! straight through to the shell.
 //!
-//! Gated to the GAMBA look (theme `gamba` / the RETRO colour set); `TD_GAMBA=1`
+//! Gated to the GAMBA DESIGN texture (theme `gamba`) only — NOT any colour set;
+//! `TD_GAMBA=1`
 //! forces it on any theme, `TD_GAMBA_DEMO=1` rerolls faster + rigs the first
 //! roll to a jackpot for demos/screenshots.
 
@@ -343,9 +344,12 @@ fn score(cells: &[usize; 9]) -> (u16, u32) {
     (winners, value)
 }
 
-/// Should this pane show the GAMBA reels?
-pub fn look_active(th: &Theme, dynamic_is_retro: bool) -> bool {
-    th.name == "gamba" || dynamic_is_retro || std::env::var("TD_GAMBA").is_ok()
+/// Should this pane show the GAMBA reels? The behaviour is the DESIGN texture
+/// only (`gamba`) — never a colour set. The RETRO/🎰 colour set is purely a
+/// palette and no longer triggers the reels (it used to, which fired the slot
+/// machine whenever you picked that swatch even under a non-gamba design).
+pub fn look_active(th: &Theme) -> bool {
+    th.name == "gamba" || std::env::var("TD_GAMBA").is_ok()
 }
 
 // ---- rendering --------------------------------------------------------------

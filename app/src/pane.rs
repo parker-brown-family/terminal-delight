@@ -1403,7 +1403,7 @@ pub struct TerminalView {
     /// Last-known OS focus, for edge-detected focus reporting (CSI I / CSI O).
     was_focused: bool,
     /// 🎰 GAMBA slot-machine reels — rolled while an agent in this pane is
-    /// "thinking", on the gamba theme / retro colour set. Pure satire.
+    /// "thinking", on the gamba DESIGN texture only (not any colour set). Satire.
     gamba: crate::gamba::Reels,
     /// Throttle for the (cheap) grid scan that detects the agent spinner.
     last_think_scan: Instant,
@@ -5420,14 +5420,9 @@ impl Render for TerminalView {
         });
 
         let jiggle = self.fx.jiggle_px;
-        // 🎰 GAMBA reels — shown only on the gamba look while the agent thinks.
-        let gamba_look = {
-            let is_retro = matches!(
-                self.appearance.effective(&theme::outer_choice(cx)).dynamic,
-                theme::Dynamic::Retro
-            );
-            crate::gamba::look_active(&th, is_retro)
-        };
+        // 🎰 GAMBA reels — shown only on the gamba DESIGN texture while the agent
+        // thinks. The colour set (incl. RETRO/🎰) never triggers the reels.
+        let gamba_look = crate::gamba::look_active(&th);
         let gamba_overlay = gamba_look
             .then(|| crate::gamba::overlay(&self.gamba, &th))
             .flatten();
