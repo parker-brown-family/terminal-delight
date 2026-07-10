@@ -957,6 +957,18 @@ pub enum Dynamic {
     /// SNOWFLAKE: a cold charcoal-blue field with crisp snow-white text and a
     /// pure-white title — the brightest, iciest monochrome.
     Snowflake,
+    /// OCEAN: a deep teal-cyan monitor — dark aqua field, bright cyan phosphor
+    /// text, pale sea-foam title. The cool cyan end the pack was missing.
+    Ocean,
+    /// EMBER: a molten orange-red monitor — hot-coal field, ember-glow text, a
+    /// pale ash-cream title. Warmer and fiercer than Amber's gold.
+    Ember,
+    /// TOXIC: a radioactive acid-green monitor — chartreuse phosphor on a hazmat
+    /// field, pale-lime title. Distinct from Greenworks' clean terminal green.
+    Toxic,
+    /// SAKURA: a cherry-blossom monitor — soft blossom-pink field, petal-pink
+    /// text, pale-blush title. Gentler than Cherry's crimson.
+    Sakura,
     /// User-defined palette: explicit primary/secondary/tertiary/quaternary.
     /// Boxed so the rare custom palette doesn't bloat every `ThemeChoice` clone.
     Custom(Box<CustomPalette>),
@@ -965,7 +977,7 @@ pub enum Dynamic {
 impl Dynamic {
     /// The named colour sets shown in the tray, in display order (Custom is
     /// appended separately as the cog).
-    pub const NAMED: [Dynamic; 12] = [
+    pub const NAMED: [Dynamic; 16] = [
         Dynamic::Greenworks,
         Dynamic::Bolt,
         Dynamic::Amber,
@@ -979,6 +991,11 @@ impl Dynamic {
         Dynamic::Army,
         Dynamic::Midnight,
         Dynamic::Snowflake,
+        // ── elements pack ──
+        Dynamic::Ocean,
+        Dynamic::Ember,
+        Dynamic::Toxic,
+        Dynamic::Sakura,
     ];
 
     /// Glyph shown in the tray's vertical box for this colour set.
@@ -997,6 +1014,10 @@ impl Dynamic {
             Dynamic::Army => "🪖",
             Dynamic::Midnight => "🌙",
             Dynamic::Snowflake => "❄",
+            Dynamic::Ocean => "🌊",
+            Dynamic::Ember => "🔥",
+            Dynamic::Toxic => "☢",
+            Dynamic::Sakura => "🌸",
             Dynamic::Custom(_) => "⚙",
         }
     }
@@ -1017,6 +1038,10 @@ impl Dynamic {
             Dynamic::Army => "army",
             Dynamic::Midnight => "midnight",
             Dynamic::Snowflake => "snowflake",
+            Dynamic::Ocean => "ocean",
+            Dynamic::Ember => "ember",
+            Dynamic::Toxic => "toxic",
+            Dynamic::Sakura => "sakura",
             Dynamic::Custom(_) => "custom",
         }
     }
@@ -1109,6 +1134,34 @@ impl Dynamic {
                 seed: "#7cc4ff",
                 text: Some("#e8f4ff"),
                 complement: Some("#ffffff"),
+                mode: ColorMode::Monochrome,
+            },
+            // ocean: deep teal-cyan field, bright cyan text, pale sea-foam title
+            Dynamic::Ocean => SetSig {
+                seed: "#0fb5c9",
+                text: Some("#7fe9f5"),
+                complement: Some("#dffaff"),
+                mode: ColorMode::Monochrome,
+            },
+            // ember: molten orange-red field, ember-glow text, ash-cream title
+            Dynamic::Ember => SetSig {
+                seed: "#ff5722",
+                text: Some("#ffab8a"),
+                complement: Some("#ffe3d4"),
+                mode: ColorMode::Monochrome,
+            },
+            // toxic: acid green-yellow field, chartreuse text, pale-lime title
+            Dynamic::Toxic => SetSig {
+                seed: "#aaff00",
+                text: Some("#d4ff6b"),
+                complement: Some("#f0ffcf"),
+                mode: ColorMode::Monochrome,
+            },
+            // sakura: blossom-pink field, petal-pink text, pale-blush title
+            Dynamic::Sakura => SetSig {
+                seed: "#ff8fb3",
+                text: Some("#ffc9db"),
+                complement: Some("#ffe8f0"),
                 mode: ColorMode::Monochrome,
             },
             _ => return None,
@@ -1222,7 +1275,11 @@ pub fn roles(anchor: Hsla, d: &Dynamic) -> Roles {
         | Dynamic::Wood
         | Dynamic::Army
         | Dynamic::Midnight
-        | Dynamic::Snowflake => Spec {
+        | Dynamic::Snowflake
+        | Dynamic::Ocean
+        | Dynamic::Ember
+        | Dynamic::Toxic
+        | Dynamic::Sakura => Spec {
             sec_deg: 0.,
             ter_deg: 0.,
             mono: true,
@@ -1689,8 +1746,8 @@ mod tests {
         );
         assert_eq!(
             entries.len(),
-            13,
-            "twelve named dynamics plus the custom cog"
+            17,
+            "sixteen named dynamics plus the custom cog"
         );
     }
 
