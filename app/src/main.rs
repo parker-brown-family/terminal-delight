@@ -9009,12 +9009,29 @@ impl Render for Workspace {
                     ),
                 );
             }
-            // INVERT: an on/off colour axis that photo-negates the whole resolved
-            // palette (rides the theme group like the colour set). ◐ = the flip.
-            let invert_row = {
+            // INVERT lives ABOVE the colour picker (it flips whatever set you pick).
+            // The pill states its mode outright — ○ default / ◐ inverted — so the
+            // toggle reads as on/off at a glance rather than a bare icon.
+            let invert_bar = {
                 let cur_c = cur.clone();
-                div().flex().flex_row().gap_2().child(
-                    color_mode_btn(&th, "◐", "invert", cur.invert).on_mouse_down(
+                let on = cur.invert;
+                let (glyph, cap) = if on {
+                    ("◐", "inverted")
+                } else {
+                    ("○", "default")
+                };
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_size(px(9.))
+                            .text_color(th.text.alpha(0.55))
+                            .child("INVERT"),
+                    )
+                    .child(color_mode_btn(&th, glyph, cap, on).on_mouse_down(
                         MouseButton::Left,
                         cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
                             cx.stop_propagation();
@@ -9026,8 +9043,7 @@ impl Render for Workspace {
                                 cx,
                             );
                         }),
-                    ),
-                )
+                    ))
             };
             let label = |s: &str| {
                 div()
@@ -9143,9 +9159,7 @@ impl Render for Workspace {
                 .child(label(t.t_program))
                 .child(color_row)
                 .child(label(t.t_syntax))
-                .child(syntax_row)
-                .child(label("INVERT"))
-                .child(invert_row);
+                .child(syntax_row);
             // The anchor toggle is GLOBAL (not per-pane), so it shows only in the
             // OUTER design panel. A short ANCHOR label + the ⚓ TOP/BOTTOM ▲▼ pill.
             if !is_pane {
@@ -9210,9 +9224,17 @@ impl Render for Workspace {
                     MouseButton::Left,
                     cx.listener(|_, _: &MouseDownEvent, _w, cx| cx.stop_propagation()),
                 )
-                // Left: the vertical dynamics glyph column(s). Right: seed wheel +
-                // text axes + follow-outer (built above as `controls`).
-                .child(dyn_cols)
+                // Left: the INVERT mode bar stacked ABOVE the vertical dynamics
+                // glyph column(s). Right: seed wheel + text axes + follow-outer
+                // (built above as `controls`).
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_2()
+                        .child(invert_bar)
+                        .child(dyn_cols),
+                )
                 .child(controls);
             // full-screen scrim: click anywhere outside closes
             div()

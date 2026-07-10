@@ -980,21 +980,12 @@ pub enum Dynamic {
     /// TOXIC: a radioactive acid-green monitor — chartreuse phosphor on a hazmat
     /// field, pale-lime title. Distinct from Greenworks' clean terminal green.
     Toxic,
-    /// SAKURA: a cherry-blossom monitor — soft blossom-pink field, petal-pink
-    /// text, pale-blush title. Gentler than Cherry's crimson.
-    Sakura,
     /// CYBERPUNK: a Night City monitor — neon-magenta anchor with electric-cyan
     /// accents on the dark field. Neon · futuristic · electric.
     Cyberpunk,
     /// RETRO SUNSET: a vaporwave sundown — hot-orange anchor with a violet sky and
     /// teal grid in the accents. Warm 80s nostalgia over the dark field.
     RetroSunset,
-    /// RETRO SURF: an 80s beach sunset — orange-red anchor with cream sand and a
-    /// teal wave in the accents. Sun-stripe warmth.
-    RetroSurf,
-    /// COFFEE: a warm, cosy café monitor — roasted-bean brown anchor, latte-cream
-    /// text, foam title. Warm · cozy · readable.
-    Coffee,
     /// GALAXY: a deep-space monitor — violet anchor with nebula-pink and starlit
     /// blue accents. Spacey · vast · imaginative, over the dark field.
     Galaxy,
@@ -1009,32 +1000,29 @@ pub enum Dynamic {
 impl Dynamic {
     /// The named colour sets shown in the tray, in display order (Custom is
     /// appended separately as the cog).
-    pub const NAMED: [Dynamic; 22] = [
-        Dynamic::Greenworks,
-        Dynamic::Bolt,
-        Dynamic::Amber,
-        Dynamic::Pineapple,
-        Dynamic::Retro,
-        // ── themes pack ──
-        Dynamic::Bat,
-        Dynamic::Cherry,
-        Dynamic::CottonClowndy,
-        Dynamic::Wood,
-        Dynamic::Army,
-        Dynamic::Midnight,
-        Dynamic::Snowflake,
-        // ── elements pack ──
-        Dynamic::Ocean,
-        Dynamic::Ember,
-        Dynamic::Toxic,
-        Dynamic::Sakura,
-        // ── vibes pack ──
-        Dynamic::Cyberpunk,
-        Dynamic::RetroSunset,
-        Dynamic::RetroSurf,
-        Dynamic::Coffee,
-        Dynamic::Galaxy,
-        Dynamic::Badger,
+    /// Display order is a ROYGBIV sweep by signature-seed hue (warm reds → golds →
+    /// greens → cyans → blues → violets → magentas), with the greyscale Badger
+    /// trailing since it has no hue. Keep new sets in hue order.
+    pub const NAMED: [Dynamic; 19] = [
+        Dynamic::Ember,         // orange-red
+        Dynamic::Wood,          // brown
+        Dynamic::RetroSunset,   // orange
+        Dynamic::Retro,         // orange-gold
+        Dynamic::Amber,         // gold
+        Dynamic::Pineapple,     // yellow-gold
+        Dynamic::Army,          // olive
+        Dynamic::Toxic,         // chartreuse
+        Dynamic::Greenworks,    // green
+        Dynamic::Ocean,         // cyan
+        Dynamic::Snowflake,     // sky blue
+        Dynamic::Midnight,      // blue
+        Dynamic::Bolt,          // violet
+        Dynamic::Galaxy,        // violet
+        Dynamic::Bat,           // purple
+        Dynamic::Cyberpunk,     // magenta
+        Dynamic::CottonClowndy, // pink
+        Dynamic::Cherry,        // red-pink
+        Dynamic::Badger,        // greyscale (no hue → trails)
     ];
 
     /// Glyph shown in the tray's vertical box for this colour set.
@@ -1056,11 +1044,8 @@ impl Dynamic {
             Dynamic::Ocean => "🌊",
             Dynamic::Ember => "🔥",
             Dynamic::Toxic => "☢",
-            Dynamic::Sakura => "🌸",
             Dynamic::Cyberpunk => "🌆",
             Dynamic::RetroSunset => "🌅",
-            Dynamic::RetroSurf => "🏄",
-            Dynamic::Coffee => "☕",
             Dynamic::Galaxy => "🌌",
             Dynamic::Badger => "🦡",
             Dynamic::Custom(_) => "⚙",
@@ -1086,11 +1071,8 @@ impl Dynamic {
             Dynamic::Ocean => "ocean",
             Dynamic::Ember => "ember",
             Dynamic::Toxic => "toxic",
-            Dynamic::Sakura => "sakura",
             Dynamic::Cyberpunk => "cyberpunk",
             Dynamic::RetroSunset => "retro-sunset",
-            Dynamic::RetroSurf => "retro-surf",
-            Dynamic::Coffee => "coffee",
             Dynamic::Galaxy => "galaxy",
             Dynamic::Badger => "badger",
             Dynamic::Custom(_) => "custom",
@@ -1180,10 +1162,10 @@ impl Dynamic {
                 complement: Some("#e6ecff"),
                 mode: ColorMode::Monochrome,
             },
-            // snowflake: cold charcoal-blue field, crisp snow-white text, white title
+            // snowflake: cold sky-blue anchor, PURE-WHITE text + title
             Dynamic::Snowflake => SetSig {
                 seed: "#7cc4ff",
-                text: Some("#e8f4ff"),
+                text: Some("#ffffff"),
                 complement: Some("#ffffff"),
                 mode: ColorMode::Monochrome,
             },
@@ -1208,13 +1190,6 @@ impl Dynamic {
                 complement: Some("#f0ffcf"),
                 mode: ColorMode::Monochrome,
             },
-            // sakura: blossom-pink field, petal-pink text, pale-blush title
-            Dynamic::Sakura => SetSig {
-                seed: "#ff8fb3",
-                text: Some("#ffc9db"),
-                complement: Some("#ffe8f0"),
-                mode: ColorMode::Monochrome,
-            },
             // cyberpunk: neon-magenta anchor, cyan title, bright-magenta text (card
             // primary #ff00e6 / secondary #00f0ff on a #0d0d14 dark field).
             Dynamic::Cyberpunk => SetSig {
@@ -1230,21 +1205,6 @@ impl Dynamic {
                 complement: Some("#8a5cff"),
                 mode: ColorMode::OnTheme,
             },
-            // retro surf: orange-red anchor, cream-sand text, teal-wave title
-            Dynamic::RetroSurf => SetSig {
-                seed: "#ee4e2e",
-                text: Some("#f2e3c2"),
-                complement: Some("#3fa3b0"),
-                mode: ColorMode::OnTheme,
-            },
-            // coffee: roasted-bean anchor, latte-cream text, foam title (card
-            // #6f4e37 / #d7c4a3 / #3a3226 — seed lifted so the swatch reads).
-            Dynamic::Coffee => SetSig {
-                seed: "#a9754a",
-                text: Some("#d7c4a3"),
-                complement: Some("#efe3cf"),
-                mode: ColorMode::Monochrome,
-            },
             // galaxy: violet anchor, periwinkle text, nebula-pink title
             Dynamic::Galaxy => SetSig {
                 seed: "#7b3ff2",
@@ -1252,10 +1212,11 @@ impl Dynamic {
                 complement: Some("#ff6ad5"),
                 mode: ColorMode::OnTheme,
             },
-            // badger: silvery greyscale anchor, near-white text, pure-white title
+            // badger: NEUTRAL greyscale — equal-RGB seed + text so no blue creeps
+            // in; a pure black-white-grey monitor.
             Dynamic::Badger => SetSig {
-                seed: "#c2c7cc",
-                text: Some("#eef1f4"),
+                seed: "#c8c8c8",
+                text: Some("#f2f2f2"),
                 complement: Some("#ffffff"),
                 mode: ColorMode::Monochrome,
             },
@@ -1374,8 +1335,6 @@ pub fn roles(anchor: Hsla, d: &Dynamic) -> Roles {
         | Dynamic::Ocean
         | Dynamic::Ember
         | Dynamic::Toxic
-        | Dynamic::Sakura
-        | Dynamic::Coffee
         | Dynamic::Badger => Spec {
             sec_deg: 0.,
             ter_deg: 0.,
@@ -1405,16 +1364,6 @@ pub fn roles(anchor: Hsla, d: &Dynamic) -> Roles {
             text_s: 0.55,
             prim_l: 0.62,
             prim_s_floor: 0.72,
-        },
-        // retro surf: orange-red anchor → teal wave, gold sand.
-        Dynamic::RetroSurf => Spec {
-            sec_deg: 177.,
-            ter_deg: 34.,
-            mono: false,
-            text_l: 0.85,
-            text_s: 0.48,
-            prim_l: 0.60,
-            prim_s_floor: 0.66,
         },
         // galaxy: violet anchor → nebula pink, starlit blue.
         Dynamic::Galaxy => Spec {
@@ -1640,11 +1589,21 @@ pub fn resolve(cx: &App, choice: &ThemeChoice) -> Arc<Theme> {
     if let Some(c) = comp_over {
         th.complement = c;
     }
-    // Layer 3b — the human (your-input) colour: an explicit wheel override wins;
-    // otherwise keep the base theme's value (a file `human` or the bright
-    // complement parse() derives), so the file/default is honoured.
+    // Layer 3b — the human (your-input) colour. An explicit wheel override wins.
+    // Otherwise, when a colour SET supplies a seed, derive the your-input colour
+    // from THAT seed so it SHIFTS per theme — previously it was always the base
+    // accent's complement, which landed on pink for nearly every set. A lively
+    // near-complement of the seed, kept bright + saturated enough to pop against
+    // the agent's text. With no seed (Plain), keep the theme's own value.
     if let Some(h) = human_over {
         th.human = h;
+    } else if let Some(anchor) = seed {
+        th.human = Hsla {
+            h: (anchor.h + 0.5).rem_euclid(1.0),
+            s: (anchor.s.max(0.35) * 0.9).clamp(0.45, 0.85),
+            l: 0.76,
+            a: 1.0,
+        };
     }
     th.color_mode = mode;
     th.syntax = choice.syntax;
@@ -1925,8 +1884,8 @@ mod tests {
         );
         assert_eq!(
             entries.len(),
-            23,
-            "twenty-two named dynamics plus the custom cog"
+            20,
+            "nineteen named dynamics plus the custom cog"
         );
     }
 
