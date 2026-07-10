@@ -9051,6 +9051,25 @@ impl Render for Workspace {
                     .text_color(th.text.alpha(0.55))
                     .child(s.to_string())
             };
+            // Thin separators (~85% of the run, faint): a vertical hairline centred
+            // between columns, a horizontal one between stacked groups. Both centre
+            // an 85%-length bar in a full-stretch flex box so they float, not butt.
+            let vsep = || {
+                div().flex().flex_col().flex_none().justify_center().child(
+                    div()
+                        .w(px(1.))
+                        .h(gpui::relative(0.85))
+                        .bg(th.faint.alpha(0.35)),
+                )
+            };
+            let hsep = || {
+                div().flex().flex_row().flex_none().justify_center().child(
+                    div()
+                        .h(px(1.))
+                        .w(gpui::relative(0.85))
+                        .bg(th.faint.alpha(0.22)),
+                )
+            };
             // ---- dynamics glyph column: the theme tray is a vertical box of
             // dynamics (glyph only — no caption, no hover). The seed wheel below
             // stays the colour knob; the dynamic decides how that seed becomes the
@@ -9067,9 +9086,12 @@ impl Render for Workspace {
                 theme::Dynamic::Custom(Box::default()),
                 matches!(cur.dynamic, theme::Dynamic::Custom(_)),
             ));
-            const PER_COL: usize = 6; // wrap past this many into a new column
+            const PER_COL: usize = 10; // fill a column vertically before wrapping
             let mut dyn_cols = div().flex().flex_row().gap_2();
-            for chunk in dyn_entries.chunks(PER_COL) {
+            for (ci, chunk) in dyn_entries.chunks(PER_COL).enumerate() {
+                if ci > 0 {
+                    dyn_cols = dyn_cols.child(vsep());
+                }
                 let mut col = div().flex().flex_col().gap_2();
                 for (d, active) in chunk {
                     let active = *active;
@@ -9149,15 +9171,19 @@ impl Render for Workspace {
                         .text_color(th.text.alpha(0.45))
                         .child(if is_pane { t.scope_pane } else { t.scope_outer }),
                 )
+                .child(hsep())
                 .child(label(t.t_theme))
                 .child(theme_row)
+                .child(hsep())
                 .child(label(t.t_wheel))
                 .child(div().flex().justify_center().py_1().child(wheel))
                 .child(div().flex().justify_center().child(lbar))
                 .child(div().flex().justify_center().pt_1().child(pick_row))
                 .child(seed_row)
+                .child(hsep())
                 .child(label(t.t_program))
                 .child(color_row)
+                .child(hsep())
                 .child(label(t.t_syntax))
                 .child(syntax_row);
             // The anchor toggle is GLOBAL (not per-pane), so it shows only in the
@@ -9189,7 +9215,7 @@ impl Render for Workspace {
             // the cursor, opening down-left like the global menu); clamp it fully
             // on-screen. The global/outer menu (menu_at == None) keeps its fixed
             // top-right anchor under the titlebar control.
-            const PANEL_W: f32 = 344.; // wider: glyph column + controls side by side
+            const PANEL_W: f32 = 300.; // match the DISPLAY (⛭) tray width
             const PANEL_H_EST: f32 = 458.; // generous, incl. colour wheel + pick row + follow-outer
             let vp_h = f32::from(window.viewport_size().height);
             let mut panel = div().id("theme-panel").absolute().w(px(PANEL_W));
@@ -9225,8 +9251,8 @@ impl Render for Workspace {
                     cx.listener(|_, _: &MouseDownEvent, _w, cx| cx.stop_propagation()),
                 )
                 // Left: the INVERT mode bar stacked ABOVE the vertical dynamics
-                // glyph column(s). Right: seed wheel + text axes + follow-outer
-                // (built above as `controls`).
+                // glyph column(s). A thin rule, then the right column: seed wheel +
+                // text axes + follow-outer (built above as `controls`).
                 .child(
                     div()
                         .flex()
@@ -9235,6 +9261,7 @@ impl Render for Workspace {
                         .child(invert_bar)
                         .child(dyn_cols),
                 )
+                .child(vsep())
                 .child(controls);
             // full-screen scrim: click anywhere outside closes
             div()
