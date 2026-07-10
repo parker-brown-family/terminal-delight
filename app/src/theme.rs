@@ -578,6 +578,12 @@ pub struct ThemeChoice {
     /// wheel's human (`👤`) target. `None` = derive it from the bright complement.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub human: Option<String>,
+    /// INVERT dimension: photo-negative the whole resolved palette (1 − each RGB
+    /// channel). An orthogonal on/off axis on top of the colour set — flips any
+    /// theme into its striking complement while keeping contrast. Part of the
+    /// theme group; `false` by default for back-compat.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub invert: bool,
 }
 
 impl Default for ThemeChoice {
@@ -593,6 +599,7 @@ impl Default for ThemeChoice {
             text: None,
             complement: None,
             human: None,
+            invert: false,
         }
     }
 }
@@ -632,6 +639,7 @@ pub fn house_outer() -> ThemeChoice {
         text: None,
         complement: None,
         human: None,
+        invert: false,
     }
 }
 
@@ -659,6 +667,7 @@ pub fn house_terminal() -> ThemeChoice {
         text: None,
         complement: None,
         human: None,
+        invert: false,
     }
 }
 
@@ -685,6 +694,8 @@ pub struct ThemeGroup {
     pub complement: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub human: Option<String>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub invert: bool,
 }
 
 impl Default for ThemeGroup {
@@ -699,6 +710,7 @@ impl Default for ThemeGroup {
             text: None,
             complement: None,
             human: None,
+            invert: false,
         }
     }
 }
@@ -716,6 +728,7 @@ impl ThemeGroup {
             text: c.text.clone(),
             complement: c.complement.clone(),
             human: c.human.clone(),
+            invert: c.invert,
         }
     }
 }
@@ -786,6 +799,7 @@ impl PaneTheme {
             text: g.text,
             complement: g.complement,
             human: g.human,
+            invert: g.invert,
         }
     }
 
@@ -969,6 +983,24 @@ pub enum Dynamic {
     /// SAKURA: a cherry-blossom monitor — soft blossom-pink field, petal-pink
     /// text, pale-blush title. Gentler than Cherry's crimson.
     Sakura,
+    /// CYBERPUNK: a Night City monitor — neon-magenta anchor with electric-cyan
+    /// accents on the dark field. Neon · futuristic · electric.
+    Cyberpunk,
+    /// RETRO SUNSET: a vaporwave sundown — hot-orange anchor with a violet sky and
+    /// teal grid in the accents. Warm 80s nostalgia over the dark field.
+    RetroSunset,
+    /// RETRO SURF: an 80s beach sunset — orange-red anchor with cream sand and a
+    /// teal wave in the accents. Sun-stripe warmth.
+    RetroSurf,
+    /// COFFEE: a warm, cosy café monitor — roasted-bean brown anchor, latte-cream
+    /// text, foam title. Warm · cozy · readable.
+    Coffee,
+    /// GALAXY: a deep-space monitor — violet anchor with nebula-pink and starlit
+    /// blue accents. Spacey · vast · imaginative, over the dark field.
+    Galaxy,
+    /// BADGER: a crisp black-and-white monitor — silvery phosphor, near-white
+    /// text, pure-white title. A greyscale stripe of a set.
+    Badger,
     /// User-defined palette: explicit primary/secondary/tertiary/quaternary.
     /// Boxed so the rare custom palette doesn't bloat every `ThemeChoice` clone.
     Custom(Box<CustomPalette>),
@@ -977,7 +1009,7 @@ pub enum Dynamic {
 impl Dynamic {
     /// The named colour sets shown in the tray, in display order (Custom is
     /// appended separately as the cog).
-    pub const NAMED: [Dynamic; 16] = [
+    pub const NAMED: [Dynamic; 22] = [
         Dynamic::Greenworks,
         Dynamic::Bolt,
         Dynamic::Amber,
@@ -996,6 +1028,13 @@ impl Dynamic {
         Dynamic::Ember,
         Dynamic::Toxic,
         Dynamic::Sakura,
+        // ── vibes pack ──
+        Dynamic::Cyberpunk,
+        Dynamic::RetroSunset,
+        Dynamic::RetroSurf,
+        Dynamic::Coffee,
+        Dynamic::Galaxy,
+        Dynamic::Badger,
     ];
 
     /// Glyph shown in the tray's vertical box for this colour set.
@@ -1018,6 +1057,12 @@ impl Dynamic {
             Dynamic::Ember => "🔥",
             Dynamic::Toxic => "☢",
             Dynamic::Sakura => "🌸",
+            Dynamic::Cyberpunk => "🌆",
+            Dynamic::RetroSunset => "🌅",
+            Dynamic::RetroSurf => "🏄",
+            Dynamic::Coffee => "☕",
+            Dynamic::Galaxy => "🌌",
+            Dynamic::Badger => "🦡",
             Dynamic::Custom(_) => "⚙",
         }
     }
@@ -1042,6 +1087,12 @@ impl Dynamic {
             Dynamic::Ember => "ember",
             Dynamic::Toxic => "toxic",
             Dynamic::Sakura => "sakura",
+            Dynamic::Cyberpunk => "cyberpunk",
+            Dynamic::RetroSunset => "retro-sunset",
+            Dynamic::RetroSurf => "retro-surf",
+            Dynamic::Coffee => "coffee",
+            Dynamic::Galaxy => "galaxy",
+            Dynamic::Badger => "badger",
             Dynamic::Custom(_) => "custom",
         }
     }
@@ -1164,6 +1215,50 @@ impl Dynamic {
                 complement: Some("#ffe8f0"),
                 mode: ColorMode::Monochrome,
             },
+            // cyberpunk: neon-magenta anchor, cyan title, bright-magenta text (card
+            // primary #ff00e6 / secondary #00f0ff on a #0d0d14 dark field).
+            Dynamic::Cyberpunk => SetSig {
+                seed: "#ff00e6",
+                text: Some("#ff77ef"),
+                complement: Some("#00f0ff"),
+                mode: ColorMode::OnTheme,
+            },
+            // retro sunset: hot-orange anchor, warm-sand text, violet-sky title
+            Dynamic::RetroSunset => SetSig {
+                seed: "#ff7a1a",
+                text: Some("#ffd6a0"),
+                complement: Some("#8a5cff"),
+                mode: ColorMode::OnTheme,
+            },
+            // retro surf: orange-red anchor, cream-sand text, teal-wave title
+            Dynamic::RetroSurf => SetSig {
+                seed: "#ee4e2e",
+                text: Some("#f2e3c2"),
+                complement: Some("#3fa3b0"),
+                mode: ColorMode::OnTheme,
+            },
+            // coffee: roasted-bean anchor, latte-cream text, foam title (card
+            // #6f4e37 / #d7c4a3 / #3a3226 — seed lifted so the swatch reads).
+            Dynamic::Coffee => SetSig {
+                seed: "#a9754a",
+                text: Some("#d7c4a3"),
+                complement: Some("#efe3cf"),
+                mode: ColorMode::Monochrome,
+            },
+            // galaxy: violet anchor, periwinkle text, nebula-pink title
+            Dynamic::Galaxy => SetSig {
+                seed: "#7b3ff2",
+                text: Some("#cbb8ff"),
+                complement: Some("#ff6ad5"),
+                mode: ColorMode::OnTheme,
+            },
+            // badger: silvery greyscale anchor, near-white text, pure-white title
+            Dynamic::Badger => SetSig {
+                seed: "#c2c7cc",
+                text: Some("#eef1f4"),
+                complement: Some("#ffffff"),
+                mode: ColorMode::Monochrome,
+            },
             _ => return None,
         })
     }
@@ -1279,7 +1374,9 @@ pub fn roles(anchor: Hsla, d: &Dynamic) -> Roles {
         | Dynamic::Ocean
         | Dynamic::Ember
         | Dynamic::Toxic
-        | Dynamic::Sakura => Spec {
+        | Dynamic::Sakura
+        | Dynamic::Coffee
+        | Dynamic::Badger => Spec {
             sec_deg: 0.,
             ter_deg: 0.,
             mono: true,
@@ -1287,6 +1384,47 @@ pub fn roles(anchor: Hsla, d: &Dynamic) -> Roles {
             text_s: 0.12,
             prim_l: 0.72,
             prim_s_floor: 0.30,
+        },
+        // cyberpunk: magenta anchor → electric-cyan secondary (far spin), blue
+        // tertiary. Maximum-saturation neon accents on the dark field.
+        Dynamic::Cyberpunk => Spec {
+            sec_deg: -129.,
+            ter_deg: -100.,
+            mono: false,
+            text_l: 0.80,
+            text_s: 0.75,
+            prim_l: 0.62,
+            prim_s_floor: 0.85,
+        },
+        // retro sunset: hot-orange anchor → violet sky, teal grid.
+        Dynamic::RetroSunset => Spec {
+            sec_deg: 150.,
+            ter_deg: -70.,
+            mono: false,
+            text_l: 0.84,
+            text_s: 0.55,
+            prim_l: 0.62,
+            prim_s_floor: 0.72,
+        },
+        // retro surf: orange-red anchor → teal wave, gold sand.
+        Dynamic::RetroSurf => Spec {
+            sec_deg: 177.,
+            ter_deg: 34.,
+            mono: false,
+            text_l: 0.85,
+            text_s: 0.48,
+            prim_l: 0.60,
+            prim_s_floor: 0.66,
+        },
+        // galaxy: violet anchor → nebula pink, starlit blue.
+        Dynamic::Galaxy => Spec {
+            sec_deg: 62.,
+            ter_deg: -43.,
+            mono: false,
+            text_l: 0.86,
+            text_s: 0.50,
+            prim_l: 0.64,
+            prim_s_floor: 0.72,
         },
         // cotton clowndy: a pastel confetti spread off the candy-pink anchor —
         // secondary fans to sky-blue, tertiary to violet; light + lively.
@@ -1470,6 +1608,7 @@ pub fn resolve(cx: &App, choice: &ThemeChoice) -> Arc<Theme> {
     // `is_neutral` (they're not paint grades), so guard them explicitly here:
     // a curved or rolling pane must take the full path so `th.warp`/tracking get set.
     if identity_colour
+        && !choice.invert
         && mode.is_default()
         && !choice.syntax
         && choice.grade.is_neutral()
@@ -1528,7 +1667,47 @@ pub fn resolve(cx: &App, choice: &ThemeChoice) -> Arc<Theme> {
         .grade
         .crawl_depth
         .clamp(CRAWL_DEPTH_MIN, CRAWL_DEPTH_MAX);
+    // Layer 4 — the INVERT dimension: the LAST colour op, photo-negating the whole
+    // resolved palette. Applied after every other recolour so it flips whatever
+    // the theme + set + overrides produced. Grade (a paint-time display axis) then
+    // rides on top of the inverted colours, so brightness/tint still behave.
+    if choice.invert {
+        invert_theme_colours(&mut th);
+    }
     Arc::new(th)
+}
+
+/// Photo-negative of a colour: invert each RGB channel (`1 − x`), alpha kept. A
+/// dark theme flips into its bright complement; contrast is preserved because
+/// both ends of every fg/bg pair move together. HSL-space inversion would drift
+/// hue and crush lightness, so we negate in RGB where "invert the colours" means
+/// exactly what it says.
+fn invert_hsla(c: Hsla) -> Hsla {
+    let rgba = gpui::Rgba::from(c);
+    gpui::Rgba {
+        r: 1.0 - rgba.r,
+        g: 1.0 - rgba.g,
+        b: 1.0 - rgba.b,
+        a: rgba.a,
+    }
+    .into()
+}
+
+/// Photo-negate every colour role of a resolved theme in place (bg/surface/text/
+/// accent/complement/human/faint/cursor + all 16 ANSI). Effects (grade, warp,
+/// scanlines, …) are untouched — INVERT is a colour axis, not a display one.
+fn invert_theme_colours(th: &mut Theme) {
+    th.bg = invert_hsla(th.bg);
+    th.surface = invert_hsla(th.surface);
+    th.text = invert_hsla(th.text);
+    th.accent = invert_hsla(th.accent);
+    th.complement = invert_hsla(th.complement);
+    th.human = invert_hsla(th.human);
+    th.faint = invert_hsla(th.faint);
+    th.cursor = invert_hsla(th.cursor);
+    for c in th.ansi.iter_mut() {
+        *c = invert_hsla(*c);
+    }
 }
 
 /// Set the outer (workspace) theme and repaint everything.
@@ -1746,9 +1925,38 @@ mod tests {
         );
         assert_eq!(
             entries.len(),
-            17,
-            "sixteen named dynamics plus the custom cog"
+            23,
+            "twenty-two named dynamics plus the custom cog"
         );
+    }
+
+    #[test]
+    fn invert_hsla_is_an_rgb_photo_negative() {
+        let near = |got: Hsla, want_hex: &str| {
+            let w = gpui::Rgba::from(hex(want_hex).unwrap());
+            let g = gpui::Rgba::from(got);
+            (g.r - w.r).abs() < 0.02 && (g.g - w.g).abs() < 0.02 && (g.b - w.b).abs() < 0.02
+        };
+        assert!(near(invert_hsla(hex("#000000").unwrap()), "#ffffff"));
+        assert!(near(invert_hsla(hex("#ffffff").unwrap()), "#000000"));
+        assert!(near(invert_hsla(hex("#ff0000").unwrap()), "#00ffff"));
+        // arbitrary colour: 0x12→0xed, 0x34→0xcb, 0x56→0xa9
+        assert!(near(invert_hsla(hex("#123456").unwrap()), "#edcba9"));
+    }
+
+    #[test]
+    fn invert_theme_colours_flips_bg_and_is_an_involution() {
+        let mut th = parse(DEFAULT_THEME_TOML).unwrap();
+        let orig_bg = gpui::Rgba::from(th.bg);
+        let was_dark = th.bg.l < 0.5;
+        invert_theme_colours(&mut th);
+        assert_ne!(was_dark, th.bg.l < 0.5, "bg lightness crosses the midpoint");
+        // negating twice returns the original palette (1 − (1 − x) == x)
+        invert_theme_colours(&mut th);
+        let back = gpui::Rgba::from(th.bg);
+        assert!((back.r - orig_bg.r).abs() < 0.02);
+        assert!((back.g - orig_bg.g).abs() < 0.02);
+        assert!((back.b - orig_bg.b).abs() < 0.02);
     }
 
     #[test]

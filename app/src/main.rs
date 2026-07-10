@@ -9009,6 +9009,26 @@ impl Render for Workspace {
                     ),
                 );
             }
+            // INVERT: an on/off colour axis that photo-negates the whole resolved
+            // palette (rides the theme group like the colour set). ◐ = the flip.
+            let invert_row = {
+                let cur_c = cur.clone();
+                div().flex().flex_row().gap_2().child(
+                    color_mode_btn(&th, "◐", "invert", cur.invert).on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                            cx.stop_propagation();
+                            ws.set_menu_choice(
+                                ThemeChoice {
+                                    invert: !cur_c.invert,
+                                    ..cur_c.clone()
+                                },
+                                cx,
+                            );
+                        }),
+                    ),
+                )
+            };
             let label = |s: &str| {
                 div()
                     .text_size(px(9.))
@@ -9123,7 +9143,9 @@ impl Render for Workspace {
                 .child(label(t.t_program))
                 .child(color_row)
                 .child(label(t.t_syntax))
-                .child(syntax_row);
+                .child(syntax_row)
+                .child(label("INVERT"))
+                .child(invert_row);
             // The anchor toggle is GLOBAL (not per-pane), so it shows only in the
             // OUTER design panel. A short ANCHOR label + the ⚓ TOP/BOTTOM ▲▼ pill.
             if !is_pane {
