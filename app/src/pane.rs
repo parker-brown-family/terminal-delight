@@ -370,13 +370,34 @@ fn link_at(line: &str, col: usize) -> Option<Link> {
     None
 }
 
-/// Stitch a click on a soft-wrapped row back into its full logical line. A
-/// terminal wraps a long URL/path mid-token with no space and marks the last
-/// cell of each wrapped row with `WRAPLINE`; `wraps[r]` carries that flag. We
-/// walk up while the row above wraps into us and down while we keep wrapping,
-/// concatenate those rows, and return the stitched line together with the
-/// absolute column of the original click within it — so `link_at` sees the whole
-/// token instead of a truncated fragment. Pure: testable without a live grid.
+/// Does grid row `r` flow into `r+1` as one logical token? Two signals: the
+/// terminal's own soft-wrap (`wraps[r]`, the `WRAPLINE` flag), OR a *width-wrap*
+/// — an app (Claude Code, and our own Links tables) that hard-wraps a long
+/// URL/path to the pane width emits real rows with NO `WRAPLINE`, but the token
+/// runs edge-to-edge: row `r` has no trailing space (its last cell is filled)
+/// and row `r+1` begins with a non-space char. Links/paths carry no interior
+/// spaces, so an edge-filled boundary is exactly a mid-token break. A row that
+/// wrapped at a word boundary keeps its trailing space, so prose never trips this.
+fn row_flows_into_next(rows: &[Vec<char>], wraps: &[bool], r: usize) -> bool {
+    if r + 1 >= rows.len() {
+        return false;
+    }
+    if wraps.get(r).copied().unwrap_or(false) {
+        return true;
+    }
+    let filled = rows[r].last().is_some_and(|c| !c.is_whitespace());
+    let continues = rows[r + 1].first().is_some_and(|c| !c.is_whitespace());
+    filled && continues
+}
+
+/// Stitch a click on a wrapped row back into its full logical line. A terminal
+/// wraps a long URL/path mid-token with no space; the break is carried either by
+/// the `WRAPLINE` flag (`wraps[r]`) or, for app-hard-wrapped output, by the token
+/// running edge-to-edge (see `row_flows_into_next`). We walk up while the row
+/// above flows into us and down while we keep flowing, concatenate those rows,
+/// and return the stitched line together with the absolute column of the original
+/// click within it — so `link_at` sees the whole token instead of a truncated
+/// fragment. Pure: testable without a live grid.
 fn stitch_wrapped_line(
     rows: &[Vec<char>],
     wraps: &[bool],
@@ -387,14 +408,14 @@ fn stitch_wrapped_line(
         return (String::new(), vcol);
     }
     let vrow = vrow.min(rows.len() - 1);
-    // first row of the logical line: walk up while the row above wraps into us
+    // first row of the logical line: walk up while the row above flows into us
     let mut top = vrow;
-    while top > 0 && wraps[top - 1] {
+    while top > 0 && row_flows_into_next(rows, wraps, top - 1) {
         top -= 1;
     }
-    // last row: walk down while the current row wraps into the next
+    // last row: walk down while the current row flows into the next
     let mut bot = vrow;
-    while bot + 1 < rows.len() && wraps[bot] {
+    while bot + 1 < rows.len() && row_flows_into_next(rows, wraps, bot) {
         bot += 1;
     }
     let mut line = String::new();
@@ -404,6 +425,127 @@ fn stitch_wrapped_line(
     // click column within the stitched line = chars in the rows above it + vcol
     let offset: usize = rows[top..vrow].iter().map(|r| r.len()).sum();
     (line, offset + vcol)
+}
+
+/// True when a row begins with whitespace — an indented code/list continuation
+/// we must never merge into the row above.
+fn starts_indented(s: &str) -> bool {
+    matches!(s.chars().next(), Some(' ') | Some('\t'))
+}
+
+/// True when a row is *structure*, not flowing text: a code fence, or a rule /
+/// box-drawing separator (≥60% of its ink is `─│┌┐…`, `-`, or `=`). Such rows
+/// bound a paragraph and are never rejoined.
+fn is_structural(s: &str) -> bool {
+    let t = s.trim();
+    let n = t.chars().count();
+    if n < 3 {
+        return false;
+    }
+    if t.starts_with("```") {
+        return true;
+    }
+    let rule = t
+        .chars()
+        .filter(|c| matches!(c, '\u{2500}'..='\u{257F}' | '-' | '=' | '·' | '•'))
+        .count();
+    rule * 5 >= n * 3
+}
+
+/// How a width-wrapped row rejoins the logical line above it.
+enum WrapJoin {
+    /// Mid-token wrap (previous row filled to `cols`) — concatenate, no space.
+    Glue,
+    /// Word-boundary wrap at the pane width — concatenate with one space.
+    Space,
+    /// A genuine line break — keep it.
+    Break,
+}
+
+/// Decide how `raw` attaches to the accumulated logical line `acc` whose last
+/// raw row had char-width `prev_len`. A join happens only when that row was at
+/// least half-full, neither side is indented or structural, and the first word
+/// of `raw` could not have fit after it (the width test). See `reflow_wrapped_copy`.
+fn wrap_join(acc: &str, prev_len: usize, raw: &str, cols: usize) -> WrapJoin {
+    let joinable = prev_len * 2 >= cols
+        && !starts_indented(raw)
+        && !starts_indented(acc)
+        && !is_structural(raw)
+        && !is_structural(acc);
+    if !joinable {
+        return WrapJoin::Break;
+    }
+    if prev_len >= cols {
+        return WrapJoin::Glue;
+    }
+    let first_word = raw
+        .split_whitespace()
+        .next()
+        .map_or(0, |w| w.chars().count());
+    if prev_len + 1 + first_word > cols {
+        WrapJoin::Space
+    } else {
+        WrapJoin::Break
+    }
+}
+
+/// Smart-reflow selected terminal text for the clipboard. TUI agents like Claude
+/// Code wrap their own prose and commands to the pane width and emit *real* line
+/// breaks; those breaks land in the grid as separate rows, so a naïve copy
+/// pastes one paragraph (or one long command) as a stack of short lines. This
+/// rejoins rows that were broken purely *by width* back into one logical line,
+/// while leaving genuine structure alone.
+///
+/// Precision is the width test: a row counts as a wrap only when it reaches
+/// ~`cols` — i.e. the first word of the next row could not have fit after it —
+/// so text wrapped at a *narrower* fixed column (email at 72, source at 100) is
+/// left untouched. A row filled to exactly `cols` is a mid-token wrap and is
+/// glued with no space; a shorter-but-still-full row wrapped at a word boundary
+/// (its trailing space trimmed) is rejoined with a single space. Blank lines
+/// stay as paragraph breaks; indented, code-fenced, and rule/box-drawing rows
+/// are never merged. The native `selection_to_string` already strips genuine
+/// terminal soft-wrap, so those rows arrive pre-joined and pass through here
+/// unchanged. Pure: unit-tested without a live grid.
+fn reflow_wrapped_copy(text: &str, cols: usize) -> String {
+    if cols == 0 {
+        return text.to_string();
+    }
+    let mut out: Vec<String> = Vec::new();
+    // The logical line under construction, paired with the char-width of the
+    // last raw row appended to it — the row the wrap test is applied against.
+    let mut cur: Option<(String, usize)> = None;
+    for raw in text.split('\n') {
+        let row_len = raw.chars().count();
+        if raw.trim().is_empty() {
+            if let Some((line, _)) = cur.take() {
+                out.push(line);
+            }
+            out.push(String::new());
+            continue;
+        }
+        match cur.take() {
+            None => cur = Some((raw.to_string(), row_len)),
+            Some((mut acc, prev_len)) => match wrap_join(&acc, prev_len, raw, cols) {
+                WrapJoin::Glue => {
+                    acc.push_str(raw);
+                    cur = Some((acc, row_len));
+                }
+                WrapJoin::Space => {
+                    acc.push(' ');
+                    acc.push_str(raw);
+                    cur = Some((acc, row_len));
+                }
+                WrapJoin::Break => {
+                    out.push(acc);
+                    cur = Some((raw.to_string(), row_len));
+                }
+            },
+        }
+    }
+    if let Some((line, _)) = cur.take() {
+        out.push(line);
+    }
+    out.join("\n")
 }
 
 /// Turn a path link into an absolute path: expand a leading `~`, and join a
@@ -3067,12 +3209,26 @@ impl TerminalView {
 
     /// Copy the current selection to the system clipboard (no-op if empty). In an
     /// inverted (anchor-to-top) pane the copy follows VISUAL reading order (#149).
-    fn copy_selection(&self, cx: &mut Context<Self>) {
-        let text = if self.paint_inverted {
+    /// The current selection as clipboard-ready text: pick the right extractor
+    /// for the pane's paint mode (inverted read vs. native logical order), then
+    /// smart-reflow so app-hard-wrapped agent output pastes as logical lines
+    /// (see `reflow_wrapped_copy`). Returns `None` for an empty selection. One
+    /// entry point so every copy surface — Ctrl+C, cut, select-to-PRIMARY —
+    /// yields identical text.
+    fn selection_clipboard_text(&self) -> Option<String> {
+        let raw = if self.paint_inverted {
             self.visual_selection_to_string()
         } else {
             self.session.term.lock().selection_to_string()
-        };
+        }?;
+        if raw.is_empty() {
+            return None;
+        }
+        Some(reflow_wrapped_copy(&raw, self.grid.cols))
+    }
+
+    fn copy_selection(&self, cx: &mut Context<Self>) {
+        let text = self.selection_clipboard_text();
         if let Some(text) = text {
             if !text.is_empty() {
                 cx.write_to_clipboard(ClipboardItem::new_string(text.clone()));
@@ -3093,9 +3249,9 @@ impl TerminalView {
     /// the buffer. Bound to Ctrl+X, and only when something is selected (so a bare
     /// Ctrl+X still reaches the shell as the readline prefix key).
     fn cut_selection(&mut self, cx: &mut Context<Self>) {
-        let text = match self.session.term.lock().selection_to_string() {
-            Some(t) if !t.is_empty() => t,
-            _ => return,
+        let text = match self.selection_clipboard_text() {
+            Some(t) => t,
+            None => return,
         };
         cx.write_to_clipboard(ClipboardItem::new_string(text.clone()));
         cx.write_to_primary(ClipboardItem::new_string(text));
@@ -3361,10 +3517,8 @@ impl TerminalView {
         // Finishing a drag publishes the selection to the X11 PRIMARY selection
         // (classic select-to-copy → middle-click paste). Empty selections (plain
         // clicks) are skipped; no-op on platforms without a primary selection.
-        if let Some(text) = self.session.term.lock().selection_to_string() {
-            if !text.is_empty() {
-                cx.write_to_primary(ClipboardItem::new_string(text));
-            }
+        if let Some(text) = self.selection_clipboard_text() {
+            cx.write_to_primary(ClipboardItem::new_string(text));
         }
     }
 
@@ -5864,6 +6018,109 @@ mod tests {
 
         // empty grid is harmless
         assert_eq!(stitch_wrapped_line(&[], &[], 0, 4), (String::new(), 4));
+    }
+
+    #[test]
+    fn stitch_rejoins_an_app_hard_wrapped_link_without_wrapline() {
+        // Claude Code / our Links tables hard-wrap a long file:// path to the pane
+        // width: real rows, NO WRAPLINE flag, but the token runs edge-to-edge.
+        let cols = 12;
+        let pad = |s: &str| {
+            let mut v: Vec<char> = s.chars().collect();
+            v.resize(cols, ' ');
+            v
+        };
+        let rows = vec![
+            pad("file:///home"), // filled to the edge → flows into next
+            pad("/pbrown/a.js"), // filled to the edge → flows into next
+            pad("onl next"),     // ends with a space before "next"
+        ];
+        let wraps = vec![false, false, false]; // <-- the app hard-wrapped; no flag
+
+        // click the FIRST row → stitched to the whole path, click column preserved
+        let (line, col) = stitch_wrapped_line(&rows, &wraps, 0, 3);
+        assert_eq!(line.trim_end(), "file:///home/pbrown/a.jsonl next");
+        assert_eq!(col, 3);
+        assert_eq!(
+            link_at(&line, col),
+            Some(Link::Url("file:///home/pbrown/a.jsonl".into()))
+        );
+
+        // click a CONTINUATION row (row 1) → walks up to the same full link
+        let (line, col) = stitch_wrapped_line(&rows, &wraps, 1, 2);
+        assert_eq!(col, cols + 2);
+        assert_eq!(
+            link_at(&line, col),
+            Some(Link::Url("file:///home/pbrown/a.jsonl".into()))
+        );
+
+        // a word-boundary wrap (trailing space) does NOT over-stitch: two short
+        // distinct rows stay separate.
+        let prose = vec![pad("hello "), pad("world ")];
+        let (line, _) = stitch_wrapped_line(&prose, &[false, false], 0, 1);
+        assert_eq!(line.trim_end(), "hello");
+    }
+
+    #[test]
+    fn reflow_rejoins_word_wrapped_prose_at_pane_width() {
+        // cols=40. An agent hard-wrapped one sentence across two rows at a word
+        // boundary (the trailing space before the break is trimmed away).
+        let cols = 40;
+        let text = "So the reliable path is to run the\ngather in your terminal.";
+        // row 0 len == 34; first word of row 1 ("gather", 6): 34+1+6=41 > 40 ⇒ wrap
+        assert_eq!(
+            reflow_wrapped_copy(text, cols),
+            "So the reliable path is to run the gather in your terminal."
+        );
+    }
+
+    #[test]
+    fn reflow_glues_mid_token_softwrap_with_no_space() {
+        // A row filled to exactly cols is a mid-token wrap → glue without a space.
+        let cols = 10;
+        let text = "abcdefghij\nklmno world"; // row 0 len == 10 == cols
+        assert_eq!(reflow_wrapped_copy(text, cols), "abcdefghijklmno world");
+    }
+
+    #[test]
+    fn reflow_preserves_blank_lines_and_short_distinct_lines() {
+        let cols = 80;
+        // Two short lines whose next word clearly fits ⇒ NOT joined; blank kept.
+        let text = "line one\nline two\n\nfile1.txt\nfile2.txt";
+        assert_eq!(reflow_wrapped_copy(text, cols), text);
+    }
+
+    #[test]
+    fn reflow_leaves_narrow_wrapped_text_untouched() {
+        // Prose wrapped at a fixed 72 cols inside a wide 200-col pane: the next
+        // word always fits, so no row trips the width test.
+        let cols = 200;
+        let text = "A paragraph wrapped by an email client at seventy-two\ncolumns stays exactly as many lines.";
+        assert_eq!(reflow_wrapped_copy(text, cols), text);
+    }
+
+    #[test]
+    fn reflow_does_not_merge_indented_or_rule_rows() {
+        let cols = 30;
+        // row 0 is full-width prose, but row 1 is indented (code) ⇒ break kept.
+        let indented = "this line runs right up to edge\n    let x = code_block();";
+        assert_eq!(reflow_wrapped_copy(indented, cols), indented);
+        // a box-drawing rule between two full rows is never absorbed.
+        let ruled = "a full width heading line here\n──────────────────────────────\nbody paragraph text follows on";
+        assert_eq!(reflow_wrapped_copy(ruled, cols), ruled);
+    }
+
+    #[test]
+    fn reflow_rebuilds_a_wrapped_shell_command() {
+        // The command block from the report: wrapped at a word boundary rejoins
+        // into a single runnable line.
+        let cols = 30;
+        let text = "gcloud compute instances\ndescribe internal-tools now";
+        // row 0 len 24; next word "describe"(8): 24+1+8=33 > 30 ⇒ join w/ space
+        assert_eq!(
+            reflow_wrapped_copy(text, cols),
+            "gcloud compute instances describe internal-tools now"
+        );
     }
 
     #[test]
