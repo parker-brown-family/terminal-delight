@@ -1,0 +1,108 @@
+diff --git a/crates/sum_tree/Cargo.toml b/crates/sum_tree/Cargo.toml
+index 8392baa..52aab17 100644
+--- a/crates/sum_tree/Cargo.toml
++++ b/crates/sum_tree/Cargo.toml
+@@ -17,7 +17,6 @@ doctest = false
+ heapless.workspace = true
+ rayon.workspace = true
+ log.workspace = true
+-ztracing.workspace = true
+ tracing.workspace = true
+ proptest = { workspace = true, optional = true }
+ 
+@@ -25,7 +24,6 @@ proptest = { workspace = true, optional = true }
+ ctor.workspace = true
+ rand.workspace = true
+ proptest.workspace = true
+-zlog.workspace = true
+ 
+ 
+ [package.metadata.cargo-machete]
+diff --git a/crates/sum_tree/src/cursor.rs b/crates/sum_tree/src/cursor.rs
+index ec2ded5..6eb7bb0 100644
+--- a/crates/sum_tree/src/cursor.rs
++++ b/crates/sum_tree/src/cursor.rs
+@@ -1,7 +1,6 @@
+ use super::*;
+ use heapless::Vec as ArrayVec;
+ use std::{cmp::Ordering, mem, sync::Arc};
+-use ztracing::instrument;
+ 
+ #[derive(Clone)]
+ struct StackEntry<'a, T: Item, D> {
+@@ -212,7 +211,6 @@ where
+     }
+ 
+     #[track_caller]
+-    #[instrument(skip_all)]
+     pub fn prev(&mut self) {
+         self.search_backward(|_| true)
+     }
+@@ -404,7 +402,6 @@ where
+ {
+     /// Returns whether we found the item you were seeking for.
+     #[track_caller]
+-    #[instrument(skip_all)]
+     pub fn seek<Target>(&mut self, pos: &Target, bias: Bias) -> bool
+     where
+         Target: SeekTarget<'a, T::Summary, D>,
+@@ -419,7 +416,6 @@ where
+     ///
+     /// If we did not seek before, use seek instead in that case.
+     #[track_caller]
+-    #[instrument(skip_all)]
+     pub fn seek_forward<Target>(&mut self, pos: &Target, bias: Bias) -> bool
+     where
+         Target: SeekTarget<'a, T::Summary, D>,
+@@ -461,7 +457,6 @@ where
+ 
+     /// Returns whether we found the item you were seeking for.
+     #[track_caller]
+-    #[instrument(skip_all)]
+     fn seek_internal(
+         &mut self,
+         target: &dyn SeekTarget<'a, T::Summary, D>,
+diff --git a/crates/sum_tree/src/sum_tree.rs b/crates/sum_tree/src/sum_tree.rs
+index 352db3c..6f76ccc 100644
+--- a/crates/sum_tree/src/sum_tree.rs
++++ b/crates/sum_tree/src/sum_tree.rs
+@@ -10,7 +10,6 @@ use std::marker::PhantomData;
+ use std::mem;
+ use std::{cmp::Ordering, fmt, iter::FromIterator, sync::Arc};
+ pub use tree_map::{MapSeekTarget, TreeMap, TreeSet};
+-use ztracing::instrument;
+ 
+ #[cfg(test)]
+ pub const TREE_BASE: usize = 2;
+@@ -396,7 +395,6 @@ impl<T: Item> SumTree<T> {
+     /// A more efficient version of `Cursor::new()` + `Cursor::seek()` + `Cursor::item()`.
+     ///
+     /// Only returns the item that exactly has the target match.
+-    #[instrument(skip_all)]
+     pub fn find_exact<'a, 'slf, D, Target>(
+         &'slf self,
+         cx: <T::Summary as Summary>::Context<'a>,
+@@ -422,7 +420,6 @@ impl<T: Item> SumTree<T> {
+     }
+ 
+     /// A more efficient version of `Cursor::new()` + `Cursor::seek()` + `Cursor::item()`
+-    #[instrument(skip_all)]
+     pub fn find<'a, 'slf, D, Target>(
+         &'slf self,
+         cx: <T::Summary as Summary>::Context<'a>,
+@@ -507,7 +504,6 @@ impl<T: Item> SumTree<T> {
+     }
+ 
+     /// A more efficient version of `Cursor::new()` + `Cursor::seek()` + `Cursor::item()`
+-    #[instrument(skip_all)]
+     pub fn find_with_prev<'a, 'slf, D, Target>(
+         &'slf self,
+         cx: <T::Summary as Summary>::Context<'a>,
+@@ -1398,7 +1394,6 @@ mod tests {
+ 
+     #[ctor::ctor(unsafe)]
+     fn init_logger() {
+-        zlog::init_test();
+     }
+ 
+     #[test]

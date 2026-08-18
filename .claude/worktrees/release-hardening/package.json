@@ -1,0 +1,13 @@
+{
+  "name": "terminal-delight",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A Tilix-shaped web workspace: tabs, splits, drag-to-break-out — wearing a themeable phosphor-green CRT look. Zero-build, ES modules.",
+  "type": "module",
+  "scripts": {
+    "dev": "python3 -m http.server 4322",
+    "dev:vite": "vite --port 4322"
+  },
+  "keywords": ["terminal", "tiling", "tilix", "theme", "crt", "base16"],
+  "license": "MIT"
+}

@@ -1,0 +1,458 @@
+diff --git a/crates/gpui_wgpu/src/crt_pass.wgsl b/crates/gpui_wgpu/src/crt_pass.wgsl
+new file mode 100644
+index 0000000..ae12dd1
+--- /dev/null
++++ b/crates/gpui_wgpu/src/crt_pass.wgsl
+@@ -0,0 +1,82 @@
++// terminal-delight CRT post-pass v2: PER-RECT barrel distortion.
++// The app registers up to 8 "tube" rectangles (terminal content areas, in
++// physical px). Pixels inside a rect warp in rect-local space; everything
++// else (bezel, buttons, chrome) passes through untouched, so hit-testing
++// stays exact. Curvature is PER RECT — each tube carries its own k1/k2 (in
++// glare.yz), so a pane on a bent theme bows even when the window theme is
++// flat, and a flat pane stays flat next to a bent neighbour. rects + glare
++// come from gpui_wgpu::set_crt_rects_tubes; k.z carries the rect count.
++
++struct CrtParams {
++    k: vec4<f32>,                  // global k1, k2 (gate only), rect_count, _pad
++    rects: array<vec4<f32>, 8>,    // x, y, w, h (physical px)
++    glare: array<vec4<f32>, 8>,    // strength, k1, k2, _pad (per-rect curvature)
++}
++
++@group(0) @binding(0) var<uniform> crt: CrtParams;
++@group(0) @binding(1) var screen_tex: texture_2d<f32>;
++@group(0) @binding(2) var screen_samp: sampler;
++
++struct CrtVsOut {
++    @builtin(position) pos: vec4<f32>,
++    @location(0) uv: vec2<f32>,
++}
++
++@vertex
++fn vs_crt(@builtin(vertex_index) vi: u32) -> CrtVsOut {
++    var out: CrtVsOut;
++    let xy = vec2<f32>(f32((vi << 1u) & 2u), f32(vi & 2u));
++    out.pos = vec4<f32>(xy * 2.0 - 1.0, 0.0, 1.0);
++    out.uv = vec2<f32>(xy.x, 1.0 - xy.y);
++    return out;
++}
++
++@fragment
++fn fs_crt(in: CrtVsOut) -> @location(0) vec4<f32> {
++    let dims = vec2<f32>(textureDimensions(screen_tex));
++    let p = in.uv * dims;
++    let n = u32(crt.k.z);
++    for (var i = 0u; i < n; i = i + 1u) {
++        let r = crt.rects[i];
++        if (p.x >= r.x && p.x < r.x + r.z && p.y >= r.y && p.y < r.y + r.w) {
++            // per-rect curvature: glare.y = k1, glare.z = k2. Each tube is
++            // authoritative for its own bend — a flat pane stays flat even when
++            // a bent neighbour has turned the pass on, and vice versa.
++            let k1 = crt.glare[i].y;
++            let k2 = crt.glare[i].z;
++            // a genuinely flat tube (a no-bend pane) passes straight through,
++            // so it looks identical with or without the pass — no vignette, no
++            // glare, exact hit-testing.
++            if (abs(k1) < 0.0005 && abs(k2) < 0.0005) {
++                return textureSampleLevel(screen_tex, screen_samp, in.uv, 0.0);
++            }
++            let local = (p - r.xy) / r.zw;
++            let c = local - vec2<f32>(0.5, 0.5);
++            let r2 = dot(c, c);
++            let f = 1.0 + k1 * r2 + k2 * r2 * r2;
++            let l2 = vec2<f32>(0.5, 0.5) + c * f;
++            let edge_distance = min(min(l2.x, 1.0 - l2.x), min(l2.y, 1.0 - l2.y));
++            let edge_width = max(max(fwidth(l2.x), fwidth(l2.y)) * 1.5, 1.0 / min(r.z, r.w));
++            let inb = smoothstep(-edge_width, edge_width, edge_distance);
++            let g = (r.xy + clamp(l2, vec2<f32>(0.0), vec2<f32>(1.0)) * r.zw) / dims;
++            let col = textureSampleLevel(screen_tex, screen_samp, g, 0.0);
++            let falloff = mix(0.86, 1.0, smoothstep(0.5, 0.12, r2));
++            let edge_blend = smoothstep(0.0, edge_width * 2.5, edge_distance);
++            let glare_strength = crt.glare[i].x;
++            let glare_offset = (local - vec2<f32>(0.18, 0.10)) / vec2<f32>(0.34, 0.18);
++            let glare_hotspot = exp(-dot(glare_offset, glare_offset) * 2.2);
++            let glare_band = (1.0 - smoothstep(0.0, 0.10, abs(local.y + local.x * 0.22 - 0.17)))
++                * (1.0 - smoothstep(0.0, 0.72, local.x))
++                * (1.0 - smoothstep(0.0, 0.42, local.y));
++            let glare_amount = clamp((glare_hotspot * 0.58 + glare_band * 0.34) * glare_strength, 0.0, 1.0);
++            let glare_color = vec3<f32>(0.72, 1.0, 0.78);
++            // sub-terminal phosphor runs +35% hotter than the raw sample so the
++            // warped tube doesn't read dim against flat chrome / flat panes.
++            let tube = mix(vec3<f32>(0.0), col.rgb * falloff * 1.35, edge_blend)
++                + glare_color * glare_amount;
++            return vec4<f32>(tube * inb, 1.0);
++        }
++    }
++    let col = textureSampleLevel(screen_tex, screen_samp, in.uv, 0.0);
++    return vec4<f32>(col.rgb, col.a);
++}
+diff --git a/crates/gpui_wgpu/src/gpui_wgpu.rs b/crates/gpui_wgpu/src/gpui_wgpu.rs
+index 452c3c0..58e1c1d 100644
+--- a/crates/gpui_wgpu/src/gpui_wgpu.rs
++++ b/crates/gpui_wgpu/src/gpui_wgpu.rs
+@@ -7,4 +7,8 @@ pub use cosmic_text_system::*;
+ pub use wgpu;
+ pub use wgpu_atlas::*;
+ pub use wgpu_context::*;
++pub use wgpu_renderer::set_crt_warp;
++pub use wgpu_renderer::set_crt_rects;
++pub use wgpu_renderer::set_crt_rects_tubes;
++pub use wgpu_renderer::set_crt_rects_with_glare;
+ pub use wgpu_renderer::{GpuContext, WgpuRenderer, WgpuSurfaceConfig};
+diff --git a/crates/gpui_wgpu/src/wgpu_renderer.rs b/crates/gpui_wgpu/src/wgpu_renderer.rs
+index 08f30dc..ace3728 100644
+--- a/crates/gpui_wgpu/src/wgpu_renderer.rs
++++ b/crates/gpui_wgpu/src/wgpu_renderer.rs
+@@ -94,6 +94,220 @@ struct WgpuPipelines {
+     surfaces: wgpu::RenderPipeline,
+ }
+ 
++// ---- terminal-delight CRT warp (td-crt-pass patch) ----
++static CRT_K1: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
++static CRT_K2: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
++
++/// Set barrel-distortion coefficients for the post pass; (0, 0) disables it.
++pub fn set_crt_warp(k1: f32, k2: f32) {
++    CRT_K1.store(k1.to_bits(), std::sync::atomic::Ordering::Relaxed);
++    CRT_K2.store(k2.to_bits(), std::sync::atomic::Ordering::Relaxed);
++}
++
++fn crt_warp() -> (f32, f32) {
++    (
++        f32::from_bits(CRT_K1.load(std::sync::atomic::Ordering::Relaxed)),
++        f32::from_bits(CRT_K2.load(std::sync::atomic::Ordering::Relaxed)),
++    )
++}
++
++// (rect[x,y,w,h], glare, k1, k2) — curvature is per rect so each tube bends
++// on its own theme regardless of the window-wide dial.
++type CrtRect = ([f32; 4], f32, f32, f32);
++
++static CRT_RECTS: std::sync::Mutex<Vec<CrtRect>> = std::sync::Mutex::new(Vec::new());
++
++/// Replace the set of warped rectangles (physical px). Empty = pass disabled.
++pub fn set_crt_rects(rects: &[[f32; 4]]) {
++    let mut guard = CRT_RECTS.lock().unwrap();
++    guard.clear();
++    guard.extend(rects.iter().take(8).map(|rect| (*rect, 0.0, 0.0, 0.0)));
++}
++
++/// Replace the set of warped rectangles with a per-rect top-left glass glare.
++pub fn set_crt_rects_with_glare(rects: &[([f32; 4], f32)]) {
++    let mut guard = CRT_RECTS.lock().unwrap();
++    guard.clear();
++    guard.extend(
++        rects
++            .iter()
++            .take(8)
++            .map(|(rect, glare)| (*rect, glare.clamp(0.0, 1.0), 0.0, 0.0)),
++    );
++}
++
++/// Replace the set of warped rectangles with a per-rect glare AND per-rect
++/// barrel curvature (k1, k2). This is what the per-pane warp registry uses:
++/// each tube carries the curvature of its own theme.
++pub fn set_crt_rects_tubes(rects: &[([f32; 4], f32, f32, f32)]) {
++    let mut guard = CRT_RECTS.lock().unwrap();
++    guard.clear();
++    guard.extend(
++        rects
++            .iter()
++            .take(8)
++            .map(|(rect, glare, k1, k2)| (*rect, glare.clamp(0.0, 1.0), *k1, *k2)),
++    );
++}
++
++/// Returns (rects, packed glare+curvature [glare, k1, k2, _], count, max|k|).
++/// The max curvature magnitude lets the caller turn the pass on when any tube
++/// bends, even if the global dial is flat.
++fn crt_rects() -> ([[f32; 4]; 8], [[f32; 4]; 8], u32, f32) {
++    let guard = CRT_RECTS.lock().unwrap();
++    let mut rects = [[0.0f32; 4]; 8];
++    let mut glare = [[0.0f32; 4]; 8];
++    let mut max_k = 0.0f32;
++    for (i, (r, g, k1, k2)) in guard.iter().take(8).enumerate() {
++        rects[i] = *r;
++        glare[i] = [*g, *k1, *k2, 0.0];
++        max_k = max_k.max(k1.abs()).max(k2.abs());
++    }
++    (rects, glare, guard.len().min(8) as u32, max_k)
++}
++
++/// Lazily-built resources for the CRT post pass.
++struct CrtPass {
++    pipeline: wgpu::RenderPipeline,
++    layout: wgpu::BindGroupLayout,
++    sampler: wgpu::Sampler,
++    params_buffer: wgpu::Buffer,
++    texture: Option<wgpu::Texture>,
++}
++
++impl CrtPass {
++    fn new(device: &wgpu::Device, surface_format: wgpu::TextureFormat) -> Self {
++        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
++            label: Some("crt_pass_shader"),
++            source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(include_str!(
++                "crt_pass.wgsl"
++            ))),
++        });
++        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
++            label: Some("crt_pass_layout"),
++            entries: &[
++                wgpu::BindGroupLayoutEntry {
++                    binding: 0,
++                    visibility: wgpu::ShaderStages::FRAGMENT,
++                    ty: wgpu::BindingType::Buffer {
++                        ty: wgpu::BufferBindingType::Uniform,
++                        has_dynamic_offset: false,
++                        min_binding_size: None,
++                    },
++                    count: None,
++                },
++                wgpu::BindGroupLayoutEntry {
++                    binding: 1,
++                    visibility: wgpu::ShaderStages::FRAGMENT,
++                    ty: wgpu::BindingType::Texture {
++                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
++                        view_dimension: wgpu::TextureViewDimension::D2,
++                        multisampled: false,
++                    },
++                    count: None,
++                },
++                wgpu::BindGroupLayoutEntry {
++                    binding: 2,
++                    visibility: wgpu::ShaderStages::FRAGMENT,
++                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
++                    count: None,
++                },
++            ],
++        });
++        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
++            label: Some("crt_pass_pipeline_layout"),
++            bind_group_layouts: &[Some(&layout)],
++            immediate_size: 0,
++        });
++        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
++            label: Some("crt_pass_pipeline"),
++            layout: Some(&pipeline_layout),
++            vertex: wgpu::VertexState {
++                module: &module,
++                entry_point: Some("vs_crt"),
++                buffers: &[],
++                compilation_options: wgpu::PipelineCompilationOptions::default(),
++            },
++            fragment: Some(wgpu::FragmentState {
++                module: &module,
++                entry_point: Some("fs_crt"),
++                targets: &[Some(wgpu::ColorTargetState {
++                    format: surface_format,
++                    blend: None,
++                    write_mask: wgpu::ColorWrites::ALL,
++                })],
++                compilation_options: wgpu::PipelineCompilationOptions::default(),
++            }),
++            primitive: wgpu::PrimitiveState {
++                topology: wgpu::PrimitiveTopology::TriangleList,
++                strip_index_format: None,
++                front_face: wgpu::FrontFace::Ccw,
++                cull_mode: None,
++                polygon_mode: wgpu::PolygonMode::Fill,
++                unclipped_depth: false,
++                conservative: false,
++            },
++            depth_stencil: None,
++            multisample: wgpu::MultisampleState::default(),
++            multiview_mask: None,
++            cache: None,
++        });
++        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
++            label: Some("crt_pass_sampler"),
++            address_mode_u: wgpu::AddressMode::ClampToEdge,
++            address_mode_v: wgpu::AddressMode::ClampToEdge,
++            mag_filter: wgpu::FilterMode::Linear,
++            min_filter: wgpu::FilterMode::Linear,
++            ..Default::default()
++        });
++        let params_buffer = device.create_buffer(&wgpu::BufferDescriptor {
++            label: Some("crt_pass_params"),
++            size: 16 + 8 * 16 + 8 * 16,
++            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
++            mapped_at_creation: false,
++        });
++        Self {
++            pipeline,
++            layout,
++            sampler,
++            params_buffer,
++            texture: None,
++        }
++    }
++
++    /// Surface-sized offscreen target the scene renders into when warp is on.
++    fn ensure_texture(
++        &mut self,
++        device: &wgpu::Device,
++        format: wgpu::TextureFormat,
++        width: u32,
++        height: u32,
++    ) {
++        let needs = match &self.texture {
++            Some(t) => t.width() != width.max(1) || t.height() != height.max(1),
++            None => true,
++        };
++        if needs {
++            self.texture = Some(device.create_texture(&wgpu::TextureDescriptor {
++                label: Some("crt_pass_scene"),
++                size: wgpu::Extent3d {
++                    width: width.max(1),
++                    height: height.max(1),
++                    depth_or_array_layers: 1,
++                },
++                mip_level_count: 1,
++                sample_count: 1,
++                dimension: wgpu::TextureDimension::D2,
++                format,
++                usage: wgpu::TextureUsages::RENDER_ATTACHMENT
++                    | wgpu::TextureUsages::TEXTURE_BINDING,
++                view_formats: &[],
++            }));
++        }
++    }
++}
++// ---- end td-crt-pass patch ----
++
+ struct WgpuBindGroupLayouts {
+     globals: wgpu::BindGroupLayout,
+     instances: wgpu::BindGroupLayout,
+@@ -158,6 +372,7 @@ pub struct WgpuRenderer {
+     device_lost: std::sync::Arc<std::sync::atomic::AtomicBool>,
+     surface_configured: bool,
+     needs_redraw: bool,
++    crt: Option<CrtPass>,
+ }
+ 
+ impl WgpuRenderer {
+@@ -488,6 +703,7 @@ impl WgpuRenderer {
+             device_lost: context.device_lost_flag(),
+             surface_configured: true,
+             needs_redraw: false,
++            crt: None,
+         })
+     }
+ 
+@@ -1151,6 +1367,30 @@ impl WgpuRenderer {
+             .texture
+             .create_view(&wgpu::TextureViewDescriptor::default());
+ 
++        // td-crt-pass: when warp is on, the scene renders offscreen and a
++        // final barrel-distortion pass writes the swapchain.
++        let (crt_k1, crt_k2) = crt_warp();
++        let (crt_rect_arr, crt_glare_arr, crt_rect_count, crt_max_rect_k) = crt_rects();
++        let crt_active = crt_rect_count > 0
++            && (crt_k1.abs() > 0.0005 || crt_k2.abs() > 0.0005 || crt_max_rect_k > 0.0005);
++        let crt_scene_view: Option<wgpu::TextureView> = if crt_active {
++            if self.crt.is_none() {
++                let pass = CrtPass::new(&self.resources().device, self.surface_config.format);
++                self.crt = Some(pass);
++            }
++            let (w, h) = (self.surface_config.width, self.surface_config.height);
++            let format = self.surface_config.format;
++            let device = self.resources().device.clone();
++            let crt = self.crt.as_mut().unwrap();
++            crt.ensure_texture(&device, format, w, h);
++            crt.texture
++                .as_ref()
++                .map(|t| t.create_view(&wgpu::TextureViewDescriptor::default()))
++        } else {
++            None
++        };
++        let scene_target: &wgpu::TextureView = crt_scene_view.as_ref().unwrap_or(&frame_view);
++
+         let gamma_params = GammaParams {
+             gamma_ratios: self.rendering_params.gamma_ratios,
+             grayscale_enhanced_contrast: self.rendering_params.grayscale_enhanced_contrast,
+@@ -1213,7 +1453,7 @@ impl WgpuRenderer {
+                 let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                     label: Some("main_pass"),
+                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+-                        view: &frame_view,
++                        view: scene_target,
+                         resolve_target: None,
+                         ops: wgpu::Operations {
+                             load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+@@ -1252,7 +1492,7 @@ impl WgpuRenderer {
+                             pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                                 label: Some("main_pass_continued"),
+                                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+-                                    view: &frame_view,
++                                    view: scene_target,
+                                     resolve_target: None,
+                                     ops: wgpu::Operations {
+                                         load: wgpu::LoadOp::Load,
+@@ -1327,6 +1567,66 @@ impl WgpuRenderer {
+                 continue;
+             }
+ 
++            // td-crt-pass: warp the offscreen scene onto the swapchain
++            if let (true, Some(scene_view)) = (crt_active, crt_scene_view.as_ref()) {
++                if let Some(crt) = self.crt.as_ref() {
++                    let resources = self.resources();
++                    let mut params = [0.0f32; 4 + 32 + 32];
++                    params[0] = crt_k1;
++                    params[1] = crt_k2;
++                    params[2] = crt_rect_count as f32;
++                    for (i, r) in crt_rect_arr.iter().enumerate() {
++                        params[4 + i * 4..4 + i * 4 + 4].copy_from_slice(r);
++                    }
++                    for (i, g) in crt_glare_arr.iter().enumerate() {
++                        params[4 + 32 + i * 4..4 + 32 + i * 4 + 4].copy_from_slice(g);
++                    }
++                    resources.queue.write_buffer(
++                        &crt.params_buffer,
++                        0,
++                        bytemuck::bytes_of(&params),
++                    );
++                    let bind_group =
++                        resources
++                            .device
++                            .create_bind_group(&wgpu::BindGroupDescriptor {
++                                label: Some("crt_pass_bind_group"),
++                                layout: &crt.layout,
++                                entries: &[
++                                    wgpu::BindGroupEntry {
++                                        binding: 0,
++                                        resource: crt.params_buffer.as_entire_binding(),
++                                    },
++                                    wgpu::BindGroupEntry {
++                                        binding: 1,
++                                        resource: wgpu::BindingResource::TextureView(scene_view),
++                                    },
++                                    wgpu::BindGroupEntry {
++                                        binding: 2,
++                                        resource: wgpu::BindingResource::Sampler(&crt.sampler),
++                                    },
++                                ],
++                            });
++                    let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
++                        label: Some("crt_pass"),
++                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
++                            view: &frame_view,
++                            resolve_target: None,
++                            ops: wgpu::Operations {
++                                load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
++                                store: wgpu::StoreOp::Store,
++                            },
++                            depth_slice: None,
++                        })],
++                        depth_stencil_attachment: None,
++                        ..Default::default()
++                    });
++                    pass.set_pipeline(&crt.pipeline);
++                    pass.set_bind_group(0, &bind_group, &[]);
++                    pass.draw(0..3, 0..1);
++                }
++            }
++
+             self.resources()
+                 .queue
+                 .submit(std::iter::once(encoder.finish()));

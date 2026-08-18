@@ -1,0 +1,41 @@
+# terminal-delight theme — field-command (military field-kit)
+# Palette trued-up to IMT project-management: charcoal blue-grey base
+# (#0e1214/#172024), olive-drab accents only — flat and matte.
+name = "field-command"
+icon = "▾▾"
+
+[colors]
+bg      = "#0e1214"
+surface = "#172024"
+text    = "#e8f0f2"
+accent  = "#8fa85f"
+faint   = "#2b3a40"
+cursor  = "#a8bd76"
+ansi = [
+  "#171a12", "#d96c5f", "#8fa85f", "#d9b35f",
+  "#6f8fae", "#a87a9b", "#7fb0a0", "#e7ecd9",
+  "#3a4226", "#eda092", "#b6cf86", "#f0d390",
+  "#9cb8d6", "#cfa6c4", "#aad4c6", "#f6f8ef",
+]
+
+# TEXTURE: flat, matte, solid/robust — a rugged field kit. Minimal shine (low
+# glow/bloom, no raised bezel), a grounding vignette, a touch of grain for the
+# "rough polish" feel, and rock-steady (no jiggle). Screen warp is a global
+# toggle now, independent of this texture.
+[effects]
+scanline_opacity = 0.020
+scanline_step    = 3.0
+vignette         = 0.30
+glow             = 0.10
+bloom            = 0.06
+tracking         = 0.10
+tracking_period  = 40.0
+tracking_sweep   = 8.0
+flicker          = 0.10
+jiggle           = 0.0
+bezel            = 0.0
+
+[font]
+family      = "JetBrains Mono"
+size        = 14.0
+cell_height = 20.0

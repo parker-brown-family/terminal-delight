@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.appimage-build/
+.DS_Store
+*.log
+.vite/
+app/target/
+# machine-local cargo config (shared target dir); see docs/patches/ for the gpui setup
+app/.cargo/config.toml
