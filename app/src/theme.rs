@@ -4,6 +4,13 @@
 //! Resolution: $TD_THEME path → ~/.config/terminal-delight/theme.toml
 //! (seeded with the hacker theme on first run) → embedded default.
 //! A background task polls mtime (~300ms) and swaps the global on change.
+//!
+//! Palette and identity are separable. $TD_PALETTE names a second, colours-only
+//! file that is laid over the resolved theme: the palette owns `[colors]`, the
+//! theme keeps its `[effects]` and `[font]`. That is what lets an external theme
+//! system (an Omarchy theme switch, say) retint the running terminal without
+//! deciding how much CRT you get. Both files are polled; either one changing
+//! repaints.
 
 use std::{
     fs,
@@ -81,6 +88,17 @@ struct ThemeFile {
     effects: FileEffects,
     #[serde(default)]
     font: FileFont,
+}
+
+/// A colours-only view of a theme file, for the `$TD_PALETTE` overlay. The
+/// `[colors]` table is exactly [`ThemeFile`]'s, so one file can serve as both;
+/// `[effects]` and `[font]` are ignored here rather than rejected, which is the
+/// point — a palette that carries them still cannot restate the look.
+#[derive(Deserialize)]
+struct PaletteFile {
+    name: Option<String>,
+    icon: Option<String>,
+    colors: FileColors,
 }
 
 #[derive(Clone, Debug)]
@@ -1210,9 +1228,24 @@ fn hex(value: &str) -> Option<Hsla> {
     u32::from_str_radix(v, 16).ok().map(|c| rgb(c).into())
 }
 
-pub(crate) fn parse(source: &str) -> Result<Theme, String> {
-    let file: ThemeFile = toml::from_str(source).map_err(|e| e.to_string())?;
-    let c = &file.colors;
+/// Every colour a [`Theme`] carries, after defaulting and derivation. Shared by
+/// [`parse`] and [`overlay_palette`] so a palette file resolves by exactly the
+/// same rules a full theme file does — including the derived cursor, complement
+/// and human colours, which follow the accent and so must be recomputed whenever
+/// the accent is repainted.
+struct ResolvedColors {
+    bg: Hsla,
+    surface: Hsla,
+    text: Hsla,
+    accent: Hsla,
+    complement: Hsla,
+    human: Hsla,
+    faint: Hsla,
+    cursor: Hsla,
+    ansi: [Hsla; 16],
+}
+
+fn resolve_colors(c: &FileColors) -> Result<ResolvedColors, String> {
     let need = |s: &String, what: &str| hex(s).ok_or(format!("bad color for {what}: {s}"));
     if c.ansi.len() != 16 {
         return Err(format!(
@@ -1225,11 +1258,7 @@ pub(crate) fn parse(source: &str) -> Result<Theme, String> {
         ansi[i] = need(s, &format!("ansi[{i}]"))?;
     }
     let accent = need(&c.accent, "accent")?;
-    let name = file.name.unwrap_or_else(|| "unnamed".into());
-    let default_screen_glare = if name == "hacker" { 0.42 } else { 0.0 };
-    Ok(Theme {
-        name,
-        icon: file.icon.unwrap_or_else(|| "◈".into()),
+    Ok(ResolvedColors {
         bg: need(&c.bg, "bg")?,
         surface: need(&c.surface, "surface")?,
         text: need(&c.text, "text")?,
@@ -1251,6 +1280,57 @@ pub(crate) fn parse(source: &str) -> Result<Theme, String> {
         faint: need(&c.faint, "faint")?,
         cursor: c.cursor.as_ref().and_then(|s| hex(s)).unwrap_or(accent),
         ansi,
+    })
+}
+
+/// Repaint `base` from a palette file, keeping everything that is not colour.
+///
+/// The palette owns the `[colors]` table, and the label (`name`/`icon`) when it
+/// carries one. `[effects]` and `[font]` are whatever `base` said — that is the
+/// separation the overlay exists for. Without it a generated colours-only file
+/// resets scanlines, bloom, curvature and flicker to their defaults every time
+/// it is rewritten, because [`FileEffects`] is `#[serde(default)]` with every
+/// field optional; the terminal's whole visual identity would be a casualty of
+/// changing colour.
+pub(crate) fn overlay_palette(base: &Theme, source: &str) -> Result<Theme, String> {
+    let file: PaletteFile = toml::from_str(source).map_err(|e| e.to_string())?;
+    let c = resolve_colors(&file.colors)?;
+    let mut theme = base.clone();
+    if let Some(name) = file.name {
+        theme.name = name;
+    }
+    if let Some(icon) = file.icon {
+        theme.icon = icon;
+    }
+    theme.bg = c.bg;
+    theme.surface = c.surface;
+    theme.text = c.text;
+    theme.accent = c.accent;
+    theme.complement = c.complement;
+    theme.human = c.human;
+    theme.faint = c.faint;
+    theme.cursor = c.cursor;
+    theme.ansi = c.ansi;
+    Ok(theme)
+}
+
+pub(crate) fn parse(source: &str) -> Result<Theme, String> {
+    let file: ThemeFile = toml::from_str(source).map_err(|e| e.to_string())?;
+    let c = resolve_colors(&file.colors)?;
+    let name = file.name.unwrap_or_else(|| "unnamed".into());
+    let default_screen_glare = if name == "hacker" { 0.42 } else { 0.0 };
+    Ok(Theme {
+        name,
+        icon: file.icon.unwrap_or_else(|| "◈".into()),
+        bg: c.bg,
+        surface: c.surface,
+        text: c.text,
+        accent: c.accent,
+        complement: c.complement,
+        human: c.human,
+        faint: c.faint,
+        cursor: c.cursor,
+        ansi: c.ansi,
         color_mode: ColorMode::default(),
         syntax: false,
         grade: Grade::default(),
@@ -1862,6 +1942,141 @@ mod tests {
         assert_eq!(c.color, ColorMode::Monochrome);
         assert!(!c.syntax);
     }
+
+    /// A palette as an external theme system would generate one: colours only in
+    /// substance, but carrying the `[effects]` and `[font]` tables that a
+    /// full-theme template produces — which is exactly the file that used to
+    /// flatten the CRT.
+    const OMARCHY_PALETTE: &str = r##"
+name = "tokyo-night"
+
+[colors]
+bg      = "#1a1b26"
+surface = "#24283b"
+text    = "#c0caf5"
+accent  = "#7aa2f7"
+faint   = "#414868"
+ansi = [
+  "#15161e", "#f7768e", "#9ece6a", "#e0af68",
+  "#7aa2f7", "#bb9af7", "#7dcfff", "#a9b1d6",
+  "#414868", "#ff7a93", "#b9f27c", "#ff9e64",
+  "#7da6ff", "#bb9af7", "#0db9d7", "#c0caf5",
+]
+
+[effects]
+scanline_opacity = 0.0
+bloom            = 0.0
+flicker          = 0.0
+
+[font]
+size = 9.0
+"##;
+
+    #[test]
+    fn palette_overlay_repaints_colour_and_leaves_the_look_alone() {
+        // The whole point of the overlay. A colours-only file rewritten on every
+        // theme switch must not decide how much CRT you get.
+        let base = parse(DEFAULT_THEME_TOML).expect("parses");
+        let out = overlay_palette(&base, OMARCHY_PALETTE).expect("palette applies");
+
+        assert_eq!(out.bg, hex("#1a1b26").unwrap(), "palette owns the colours");
+        assert_eq!(out.accent, hex("#7aa2f7").unwrap());
+        assert_eq!(out.ansi[1], hex("#f7768e").unwrap());
+
+        assert_eq!(out.scanline_opacity, base.scanline_opacity);
+        assert_eq!(out.bloom, base.bloom);
+        assert_eq!(out.flicker, base.flicker);
+        assert_eq!(out.vignette, base.vignette);
+        assert_eq!(out.glow, base.glow);
+        assert_eq!(out.jiggle, base.jiggle);
+        assert_eq!(out.screen_glare, base.screen_glare);
+        assert_eq!(out.font_size, base.font_size, "the theme owns typography");
+        assert_eq!(out.cell_h, base.cell_h);
+        assert_eq!(out.font_family, base.font_family);
+    }
+
+    #[test]
+    fn palette_overlay_rederives_the_colours_that_follow_the_accent() {
+        // cursor, complement and human are derived from the accent when the file
+        // leaves them out. Repainting the accent without recomputing them would
+        // strand the old theme's cursor on the new palette.
+        let base = parse(DEFAULT_THEME_TOML).expect("parses");
+        assert_eq!(
+            base.cursor,
+            hex("#4ade80").unwrap(),
+            "hacker pins its cursor"
+        );
+
+        let out = overlay_palette(&base, OMARCHY_PALETTE).expect("palette applies");
+        let accent = hex("#7aa2f7").unwrap();
+        assert_eq!(
+            out.cursor, accent,
+            "no cursor in the palette → the new accent"
+        );
+        let comp_h = (accent.h + 0.5).rem_euclid(1.0);
+        assert!((out.complement.h - comp_h).abs() < 1e-4);
+        assert!((out.human.h - comp_h).abs() < 1e-4);
+    }
+
+    #[test]
+    fn palette_overlay_takes_the_label_only_when_the_palette_gives_one() {
+        let base = parse(DEFAULT_THEME_TOML).expect("parses");
+        let out = overlay_palette(&base, OMARCHY_PALETTE).expect("palette applies");
+        assert_eq!(out.name, "tokyo-night", "the palette names itself");
+        assert_eq!(
+            out.icon, base.icon,
+            "but it shipped no glyph, so the theme keeps its own"
+        );
+
+        let unnamed = OMARCHY_PALETTE.replacen("name = \"tokyo-night\"\n", "", 1);
+        let out = overlay_palette(&base, &unnamed).expect("palette applies");
+        assert_eq!(out.name, base.name);
+    }
+
+    #[test]
+    fn a_broken_palette_is_an_error_rather_than_a_half_painted_theme() {
+        // load_custom turns this into a message the reload loop prints while
+        // keeping the theme already on screen.
+        let base = parse(DEFAULT_THEME_TOML).expect("parses");
+        assert!(overlay_palette(&base, "[colors]\nbg = \"#000000\"\n").is_err());
+        assert!(overlay_palette(&base, "not toml at all {{{").is_err());
+
+        let short_ansi = OMARCHY_PALETTE.replacen("\"#c0caf5\",\n]", "]", 1);
+        let err = overlay_palette(&base, &short_ansi).expect_err("15 ansi entries is not 16");
+        assert!(err.contains("16"), "the error names the constraint: {err}");
+    }
+
+    #[test]
+    fn load_custom_lays_the_palette_over_the_theme_and_survives_its_absence() {
+        let dir = std::env::temp_dir().join(format!("td-palette-{}", std::process::id()));
+        fs::create_dir_all(&dir).expect("temp dir");
+        let theme = dir.join("theme.toml");
+        let palette = dir.join("palette.toml");
+        fs::write(&theme, DEFAULT_THEME_TOML).expect("write theme");
+
+        // No palette named: the theme stands on its own, exactly as before.
+        let out = load_custom(&theme, None).expect("theme alone loads");
+        assert_eq!(out.bg, hex("#03100a").unwrap());
+
+        // Named but not yet written — the external system may not have run. Not
+        // an error; the theme's own colours are the right answer until it does.
+        let out = load_custom(&theme, Some(&palette)).expect("a missing palette is not fatal");
+        assert_eq!(out.bg, hex("#03100a").unwrap());
+
+        // Once it lands, the colour moves and the CRT does not.
+        fs::write(&palette, OMARCHY_PALETTE).expect("write palette");
+        let out = load_custom(&theme, Some(&palette)).expect("palette applies");
+        assert_eq!(out.bg, hex("#1a1b26").unwrap());
+        assert_eq!(out.bloom, 0.9);
+
+        // A broken palette says which file is at fault, so the reload loop can
+        // print it and keep what is already on screen.
+        fs::write(&palette, "[colors]\nbg = \"#000000\"\n").expect("write junk");
+        let err = load_custom(&theme, Some(&palette)).expect_err("a broken palette is an error");
+        assert!(err.contains("palette"), "the message names the file: {err}");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
 }
 
 /// Absolute path of the hot-reloaded "custom" theme file for THIS machine —
@@ -1888,13 +2103,46 @@ pub fn open_in_default_app(path: &std::path::Path) {
     let _ = path; // other platforms: no-op (see doc note)
 }
 
+/// Absolute path of the optional colour overlay — `$TD_PALETTE`, or `None` when
+/// it is unset or empty. Unlike [`theme_path`] there is no default location and
+/// no first-run seed: the file belongs to whatever external system writes it, so
+/// its absence just means the theme's own colours stand.
+pub fn palette_path() -> Option<PathBuf> {
+    std::env::var("TD_PALETTE")
+        .ok()
+        .filter(|p| !p.is_empty())
+        .map(PathBuf::from)
+}
+
 fn mtime(path: &PathBuf) -> Option<SystemTime> {
     fs::metadata(path).and_then(|m| m.modified()).ok()
+}
+
+/// Read the theme file and, when a palette is named, lay it over the result.
+/// The `Err` carries a reason the hot-reload loop can print while keeping the
+/// theme it already has, so a half-written file never flashes on screen.
+///
+/// A palette that is named but missing is not an error: the external system that
+/// owns it may simply not have run yet, and the theme's own colours are the right
+/// answer until it does.
+fn load_custom(path: &PathBuf, palette: Option<&PathBuf>) -> Result<Theme, String> {
+    let source = fs::read_to_string(path).map_err(|e| format!("theme {}: {e}", path.display()))?;
+    let base = parse(&source)?;
+    match palette {
+        None => Ok(base),
+        Some(pp) => match fs::read_to_string(pp) {
+            Err(_) => Ok(base),
+            Ok(src) => {
+                overlay_palette(&base, &src).map_err(|e| format!("palette {}: {e}", pp.display()))
+            }
+        },
+    }
 }
 
 /// Load the theme, seed the user config on first run, start the hot-reload watcher.
 pub fn init(cx: &mut App) {
     let path = theme_path();
+    let palette = palette_path();
     // first-run seed so "edit your theme" has a file to edit
     if std::env::var("TD_THEME").is_err() && !path.exists() {
         if let Some(dir) = path.parent() {
@@ -1902,10 +2150,8 @@ pub fn init(cx: &mut App) {
         }
         let _ = fs::write(&path, DEFAULT_THEME_TOML);
     }
-    let initial = fs::read_to_string(&path)
-        .ok()
-        .and_then(|s| parse(&s).ok())
-        .unwrap_or_else(|| parse(DEFAULT_THEME_TOML).expect("embedded theme parses"));
+    let initial = load_custom(&path, palette.as_ref())
+        .unwrap_or_else(|_| parse(DEFAULT_THEME_TOML).expect("embedded theme parses"));
     let custom = Arc::new(initial);
     let builtins = BUILTIN_THEMES
         .iter()
@@ -1925,33 +2171,35 @@ pub fn init(cx: &mut App) {
     apply_warp(WARP_DEFAULT);
     cx.set_global(ActiveTheme(custom));
 
-    let mut last = mtime(&path);
+    // Either file moving repaints: the theme file is the user's own edit loop,
+    // the palette is the external system's. Re-statting the paths rather than
+    // watching inodes is deliberate — it survives the staging-directory rename
+    // that a theme switch performs.
+    let mut last = (mtime(&path), palette.as_ref().and_then(mtime));
     cx.spawn(async move |cx| loop {
         cx.background_executor()
             .timer(Duration::from_millis(300))
             .await;
-        let now = mtime(&path);
+        let now = (mtime(&path), palette.as_ref().and_then(mtime));
         if now != last {
             last = now;
-            if let Ok(source) = fs::read_to_string(&path) {
-                match parse(&source) {
-                    Ok(theme) => {
-                        // Warp is a global toggle now, independent of the theme —
-                        // a hot-reload only restates colours/effects.
-                        cx.update(|cx| {
-                            // the user file is the "custom" registry slot; any
-                            // scope pointing at it re-resolves on repaint
-                            cx.global_mut::<ThemeRegistry>().custom = Arc::new(theme);
-                            let outer = outer_choice(cx);
-                            if outer.id == "custom" {
-                                let th = resolve(cx, &outer);
-                                cx.set_global(ActiveTheme(th));
-                            }
-                            cx.refresh_windows();
-                        });
-                    }
-                    Err(err) => eprintln!("theme reload error (keeping current): {err}"),
+            match load_custom(&path, palette.as_ref()) {
+                Ok(theme) => {
+                    // Warp is a global toggle now, independent of the theme —
+                    // a hot-reload only restates colours/effects.
+                    cx.update(|cx| {
+                        // the user file is the "custom" registry slot; any
+                        // scope pointing at it re-resolves on repaint
+                        cx.global_mut::<ThemeRegistry>().custom = Arc::new(theme);
+                        let outer = outer_choice(cx);
+                        if outer.id == "custom" {
+                            let th = resolve(cx, &outer);
+                            cx.set_global(ActiveTheme(th));
+                        }
+                        cx.refresh_windows();
+                    });
                 }
+                Err(err) => eprintln!("theme reload error (keeping current): {err}"),
             }
         }
     })
