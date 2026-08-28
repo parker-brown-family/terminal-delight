@@ -337,7 +337,10 @@ mod tests {
     fn one_window_per_key_and_the_lock_dies_with_it() {
         let config = tmp("claim");
         let first = claim_in(&config, "2");
-        assert!(first.owned && first.lock.is_some(), "first window owns ws 2");
+        assert!(
+            first.owned && first.lock.is_some(),
+            "first window owns ws 2"
+        );
         // a second window on the same workspace is a scratch window
         assert!(!claim_in(&config, "2").owned, "ws 2 is taken");
         // ...but a different workspace is free

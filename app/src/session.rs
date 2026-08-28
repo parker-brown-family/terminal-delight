@@ -756,7 +756,10 @@ mod tests {
         );
         // the agent started afterwards → that id is a *previous* session in the
         // same directory, so the pane restores with --continue instead
-        assert_eq!(history_session_for("/work/x", &home, Some(entry + 10)), None);
+        assert_eq!(
+            history_session_for("/work/x", &home, Some(entry + 10)),
+            None
+        );
 
         // the transcript scan answers to the same rule
         let proj = home.join(".claude/projects").join(claude_slug("/work/y"));
