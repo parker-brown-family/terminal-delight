@@ -14,6 +14,7 @@
 mod bell;
 mod crt;
 mod csd;
+mod ctl;
 mod demo;
 mod gamba;
 mod hud;
@@ -44,7 +45,8 @@ use gpui::{
 use gpui_platform::application;
 use pane::{
     CloseFocusRead, ClosePane, DragPaneStart, OpenAgentPanel, OpenDisplayMenu, OpenFind,
-    OpenFocusRead, OpenHelp, OpenLogoPicker, OpenThemeMenu, PaneRenamed, RequestCloseTab,
+    OpenFocusRead, OpenHelp, OpenLogoPicker, OpenThemeMenu, PaintApplied, PaneRenamed,
+    RequestCloseTab,
     TerminalView,
 };
 use serde::{Deserialize, Serialize};
@@ -1958,6 +1960,11 @@ fn make_pane_restored(
         ws.save(cx);
     })
     .detach();
+    // a paint-overlay pick recoloured this pane — persist it like a rename
+    cx.subscribe(&pane, |ws, _pane, _ev: &PaintApplied, cx| {
+        ws.save(cx);
+    })
+    .detach();
     window.focus(&pane.focus_handle(cx), cx);
     pane
 }
@@ -2268,6 +2275,12 @@ impl Workspace {
             }
             mcp_transport::start(cx);
         }
+        // The paint/control socket is NOT opt-in the way the MCP surface is:
+        // the bar's palette widget can only ring terminals that listen, and a
+        // terminal without a socket is invisible to the desktop. Every window
+        // mode gets one — scratch included, a quick window is still paintable.
+        // Process-wide singleton behind the same atomic-guard pattern.
+        ctl::start(cx);
         ws
     }
 
@@ -14404,6 +14417,15 @@ fn main() {
     // sized to the PTY and block — no window, no shell. Must run before any gpui.
     if std::env::args().nth(1).as_deref() == Some("--td-emit-demo") {
         demo::emit_and_block();
+    }
+
+    // `ctl`: the command-line client for a RUNNING instance's control socket
+    // (paint mode, ping). A plain subprocess exit — no window, no gpui — so the
+    // Omarchy bar widget / a keybind can shell out to the same binary that is
+    // already on PATH. Must run before any gpui or env mutation.
+    let argv: Vec<String> = std::env::args().collect();
+    if argv.get(1).map(String::as_str) == Some("ctl") {
+        std::process::exit(ctl::run_cli(&argv[2..]));
     }
 
     // Give every shell we spawn a real terminal type. gpui launches us from the
