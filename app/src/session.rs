@@ -7,7 +7,11 @@
 //!      resumes that exact conversation (`claude --resume <id>`, `codex
 //!      resume <id>`), synthesized from the cmdline when the id is visible
 //!      there, otherwise recovered from the agent's own session store on disk
-//!      (~/.claude/projects/<cwd-slug>/*.jsonl, ~/.codex/sessions/**.jsonl).
+//!      (~/.claude/history.jsonl, ~/.claude/projects/<cwd-slug>/*.jsonl,
+//!      ~/.codex/sessions/**.jsonl). Anything recovered from disk by mtime or
+//!      history must be newer than the agent process, or it is some earlier
+//!      conversation in the same directory and we fall back to `--continue`
+//!      rather than reopen it.
 //!
 //! Restore = spawn the shell in `cwd`, then type `resume` into the PTY.
 //! Everything here is std+libc only — no gpui — so it stays testable.
@@ -127,9 +131,12 @@ fn agent_resume(
             // open-fd scan gave us, so two fresh panes in one cwd never collapse
             // onto the same newest file (issue #157).
             .or_else(|| cwd.and_then(|d| claude_session_by_start(pid, d, home)))
+            // ~/.claude/history.jsonl NAMES the newest conversation for a cwd
+            // outright, where the file scans can only infer one from timestamps.
+            .or_else(|| cwd.and_then(|d| history_session_for(d, home, proc_start_unix(pid))))
             // Last resort: newest transcript for this cwd — ambiguous if several
             // share a cwd (the collision the start-time match above prevents).
-            .or_else(|| cwd.and_then(|d| claude_session_for(d, home)))
+            .or_else(|| cwd.and_then(|d| claude_session_for(d, home, proc_start_unix(pid))))
             .filter(|id| safe_resume_id(id));
         Some(match id {
             Some(id) => format!("claude --resume {id}"),
@@ -200,9 +207,96 @@ fn claude_slug(cwd: &str) -> String {
 
 /// Most recent Claude Code session id for `cwd`: newest *.jsonl in
 /// ~/.claude/projects/<slug>/ — the file stem IS the session uuid.
-fn claude_session_for(cwd: &str, home: &Path) -> Option<String> {
+///
+/// Refuses to answer with a transcript older than the agent process itself
+/// (`not_before`, unix seconds). An id last written *before* this agent started
+/// belongs to some earlier conversation in that directory — a previous pane's,
+/// or yesterday's — and typing it into the restored shell would silently reopen
+/// the wrong history. Declining leaves `claude --continue`, which asks Claude
+/// Code the same question at restore time, when it can actually answer it.
+fn claude_session_for(cwd: &str, home: &Path, not_before: Option<u64>) -> Option<String> {
     let dir = home.join(".claude/projects").join(claude_slug(cwd));
-    newest_jsonl(&dir).and_then(|p| p.file_stem().map(|s| s.to_string_lossy().into_owned()))
+    let newest = newest_jsonl(&dir)?;
+    written_since(&newest, not_before)
+        .then(|| newest.file_stem().map(|s| s.to_string_lossy().into_owned()))
+        .flatten()
+}
+
+/// `~/.claude/history.jsonl` records every prompt as
+/// `{"display":…,"timestamp":<ms>,"project":"<cwd>","sessionId":"<uuid>"}`.
+/// The newest line for this directory *names* the conversation the agent is in,
+/// where the transcript scans can only infer it from file times. Answers to the
+/// same `not_before` staleness rule as [`claude_session_for`].
+fn history_session_for(cwd: &str, home: &Path, not_before: Option<u64>) -> Option<String> {
+    let body = std::fs::read_to_string(home.join(".claude/history.jsonl")).ok()?;
+    for line in body.lines().rev() {
+        if json_tail_string(line, "project").as_deref() != Some(cwd) {
+            continue;
+        }
+        // Lines are appended in time order, so the first match walking backwards
+        // is the newest for this directory; if that one predates the agent,
+        // nothing further back can help either.
+        if let Some(floor) = not_before {
+            match json_tail_number(line, "timestamp") {
+                Some(ms) if ms / 1000 >= floor => {}
+                _ => return None,
+            }
+        }
+        return json_tail_string(line, "sessionId").filter(|id| looks_like_uuid(id));
+    }
+    None
+}
+
+/// Has `path` been touched since `floor` (unix seconds)? A transcript only names
+/// the *live* conversation if the agent has written to it since it started.
+fn written_since(path: &Path, floor: Option<u64>) -> bool {
+    let Some(floor) = floor else { return true };
+    std::fs::metadata(path)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
+        .is_some_and(|d| d.as_secs() >= floor)
+}
+
+/// [`proc_start_time`] as plain unix seconds — the staleness floor the disk
+/// lookups compare against. `None` (unreadable /proc, or the pid 0 the tests
+/// pass) means we could not tell, and every source is trusted as it was before.
+fn proc_start_unix(pid: u32) -> Option<u64> {
+    proc_start_time(pid)?
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .ok()
+        .map(|d| d.as_secs())
+}
+
+/// Read `"<key>": <value>` from the *end* of a JSON line.
+///
+/// The scan runs right-to-left on purpose: the first field on a history line is
+/// the prompt the user typed, which can contain anything at all — including text
+/// shaped like `"project":"/somewhere/else"`. Claude Code's own fields come
+/// last, so only the rightmost match can be trusted.
+fn json_tail<'a>(line: &'a str, key: &str) -> Option<&'a str> {
+    let at = line.rfind(&format!("\"{key}\""))? + key.len() + 2;
+    Some(line.get(at..)?.trim_start().strip_prefix(':')?.trim_start())
+}
+
+fn json_tail_string(line: &str, key: &str) -> Option<String> {
+    let rest = json_tail(line, key)?.strip_prefix('"')?;
+    let mut value = String::new();
+    let mut chars = rest.chars();
+    while let Some(c) = chars.next() {
+        match c {
+            '"' => return Some(value),
+            '\\' => value.push(chars.next()?),
+            _ => value.push(c),
+        }
+    }
+    None
+}
+
+fn json_tail_number(line: &str, key: &str) -> Option<u64> {
+    let rest = json_tail(line, key)?;
+    let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
+    digits.parse().ok()
 }
 
 /// Bind a FRESH `claude` pid (no --resume on its cmdline) to its session by
@@ -565,10 +659,123 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_millis(20));
         std::fs::write(proj.join("bbbb-new.jsonl"), "{}").unwrap();
         assert_eq!(
-            claude_session_for("/work/x", &tmp).as_deref(),
+            claude_session_for("/work/x", &tmp, None).as_deref(),
             Some("bbbb-new")
         );
         std::fs::remove_dir_all(&tmp).unwrap();
+    }
+
+    fn tmp_home(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("td-sess-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join(".claude")).unwrap();
+        dir
+    }
+
+    fn history_line(ts_ms: u64, project: &str, id: &str) -> String {
+        format!(
+            "{{\"display\":\"hi\",\"pastedContents\":{{}},\"timestamp\":{ts_ms},\"project\":\"{project}\",\"sessionId\":\"{id}\"}}"
+        )
+    }
+
+    const ID_A: &str = "48be90b8-5777-44b6-bb6f-1c6069205c0d";
+    const ID_B: &str = "142fecf9-897f-4157-9f99-f36903f9faf0";
+
+    #[test]
+    fn history_names_the_conversation_for_a_directory() {
+        let home = tmp_home("hist");
+        let other = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+        std::fs::write(
+            home.join(".claude/history.jsonl"),
+            [
+                history_line(1_700_000_100_000, "/work/x", ID_A),
+                history_line(1_700_000_200_000, "/work/other", other),
+                history_line(1_700_000_300_000, "/work/x", ID_B),
+            ]
+            .join("\n"),
+        )
+        .unwrap();
+
+        // the newest line for this directory wins; other projects are invisible
+        assert_eq!(
+            history_session_for("/work/x", &home, None).as_deref(),
+            Some(ID_B)
+        );
+        assert_eq!(
+            history_session_for("/work/other", &home, None).as_deref(),
+            Some(other)
+        );
+        assert_eq!(history_session_for("/work/absent", &home, None), None);
+
+        // an explicit mapping beats a transcript file, which can only guess by
+        // mtime (pid 0 here: no fd scan and no birth match, so the fresh-claude
+        // path falls through to history vs newest-mtime)
+        let proj = home.join(".claude/projects").join(claude_slug("/work/x"));
+        std::fs::create_dir_all(&proj).unwrap();
+        std::fs::write(proj.join("cccccccc-stale.jsonl"), "{}").unwrap();
+        let want = format!("claude --resume {ID_B}");
+        assert_eq!(
+            agent_resume("claude", "claude", Some("/work/x"), &home, 0).as_deref(),
+            Some(want.as_str())
+        );
+        std::fs::remove_dir_all(&home).unwrap();
+    }
+
+    #[test]
+    fn a_typed_prompt_cannot_forge_the_history_fields() {
+        let home = tmp_home("forge");
+        // the prompt is the first field on the line and is entirely user-typed:
+        // someone can paste a whole fake record into it
+        let forged = format!(
+            "{{\"display\":\"look: \\\"project\\\":\\\"/work/x\\\",\\\"sessionId\\\":\\\"deadbeef\\\"\",\"timestamp\":1700000300000,\"project\":\"/work/other\",\"sessionId\":\"{ID_B}\"}}"
+        );
+        std::fs::write(home.join(".claude/history.jsonl"), forged).unwrap();
+        // reading right-to-left, only the real trailing fields are ever seen
+        assert_eq!(history_session_for("/work/x", &home, None), None);
+        assert_eq!(
+            history_session_for("/work/other", &home, None).as_deref(),
+            Some(ID_B)
+        );
+        std::fs::remove_dir_all(&home).unwrap();
+    }
+
+    #[test]
+    fn an_id_older_than_the_agent_belongs_to_another_conversation() {
+        let home = tmp_home("stale");
+        let entry = 1_700_000_300u64;
+        std::fs::write(
+            home.join(".claude/history.jsonl"),
+            history_line(entry * 1000, "/work/x", ID_B),
+        )
+        .unwrap();
+
+        // the agent was running when that prompt was typed → its conversation
+        assert_eq!(
+            history_session_for("/work/x", &home, Some(entry - 10)).as_deref(),
+            Some(ID_B)
+        );
+        // the agent started afterwards → that id is a *previous* session in the
+        // same directory, so the pane restores with --continue instead
+        assert_eq!(history_session_for("/work/x", &home, Some(entry + 10)), None);
+
+        // the transcript scan answers to the same rule
+        let proj = home.join(".claude/projects").join(claude_slug("/work/y"));
+        std::fs::create_dir_all(&proj).unwrap();
+        std::fs::write(proj.join("bbbb-new.jsonl"), "{}").unwrap();
+        let now = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        assert_eq!(
+            claude_session_for("/work/y", &home, Some(now - 60)).as_deref(),
+            Some("bbbb-new")
+        );
+        assert_eq!(claude_session_for("/work/y", &home, Some(now + 60)), None);
+
+        // our own start time is readable and plausible — the floor is real
+        let started = proc_start_unix(std::process::id()).expect("our own start time");
+        assert!(started <= now, "started {started} is not after now {now}");
+        std::fs::remove_dir_all(&home).unwrap();
     }
 
     #[test]
