@@ -2283,7 +2283,7 @@ impl TerminalView {
     /// the workspace to badge the owning tab; cleared by the in-terminal ack click
     /// (see [`snooze_bell`]).
     pub fn has_bell(&self) -> bool {
-        self.bell
+        crate::bell::ENABLED && self.bell
     }
 
     fn handle_term_event(&mut self, event: TermEvent, cx: &mut Context<Self>) -> bool {
@@ -4601,11 +4601,13 @@ impl Render for TerminalView {
         let show_human = pane_w >= 470.; // 1st to hide: 👤 ▲▼ message-nav
         let show_eq = pane_w >= 410.; //    2nd: EQ / display
         let show_theme = pane_w >= 360.; //  3rd: 🎨 theme
-        let show_bell = pane_w >= 310.; //   4th: 🔔 notifications
+        // Deprecated (crate::bell::ENABLED == false): the 🔔 never shows and never
+        // tucks into ⋯. The width rule is kept for when it comes back.
+        let show_bell = crate::bell::ENABLED && pane_w >= 310.; // 4th: 🔔 notifications
         let show_focus = pane_w >= 264.; //  5th & last: 👓 FOCUS
                                          // ⋯ shows only once something is actually tucked (👤-nav is agent-only).
         let overflow = !show_focus
-            || !show_bell
+            || (crate::bell::ENABLED && !show_bell)
             || !show_theme
             || !show_eq
             || (!show_human && self.mode.is_agent());
@@ -4705,7 +4707,7 @@ impl Render for TerminalView {
                     }),
                 ));
             }
-            if !show_bell {
+            if crate::bell::ENABLED && !show_bell {
                 menu = menu.child(item("🔔", "Notifications").on_mouse_down(
                     MouseButton::Left,
                     cx.listener(move |v, _ev: &MouseDownEvent, _w, cx| {

@@ -1,3 +1,7 @@
+//! DEPRECATED — the agent-finished bell is unplugged (see `ENABLED`). The module
+//! is retained, compiled and unit-tested, so re-enabling is a one-line change;
+//! nothing reaches the UI or spawns audio while `ENABLED` is false.
+//!
 //! Per-pane "agent finished" bell: pick a sound, trim a clip with two scrubbers,
 //! optionally loop, and play it through `ffplay` (no in-process audio deps — keeps
 //! the binary lean and works wherever ffmpeg is installed). Stopping is a hard kill,
@@ -5,6 +9,12 @@
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 
+/// Master kill switch for the whole notification bell: the header 🔔, its config
+/// tray, the ⋯ overflow entry, the tab badge, sound seeding and every ffplay
+/// spawn. Flip to `true` to restore the feature exactly as it was.
+pub const ENABLED: bool = false;
+
+#[allow(dead_code)]
 const AUDIO_EXTS: &[&str] = &["mp3", "ogg", "oga", "wav", "flac", "m4a", "opus", "aac"];
 
 /// One pane's bell settings. `file = None` falls back to the default alert.
@@ -27,7 +37,7 @@ impl Default for BellConfig {
             end: 0.0,
             looping: false,
             volume: 0.7,
-            enabled: true,
+            enabled: ENABLED,
         }
     }
 }
@@ -67,6 +77,9 @@ pub fn list_sounds() -> Vec<PathBuf> {
 /// if it's empty — so the defaults are present without a manual install step.
 /// Best-effort: tries `assets/sounds` next to the binary and `$TD_SOUNDS`.
 pub fn ensure_seeded() {
+    if !ENABLED {
+        return; // deprecated: never litter ~/.config/terminal-delight/sounds
+    }
     let dir = sounds_dir();
     let _ = std::fs::create_dir_all(&dir);
     if !list_sounds().is_empty() {
@@ -172,6 +185,9 @@ pub struct BellPlayer {
 impl BellPlayer {
     pub fn play(&mut self, cfg: &BellConfig) {
         self.stop();
+        if !ENABLED {
+            return; // deprecated: no audio is ever spawned
+        }
         let Some(file) = cfg.file.clone().or_else(default_alert) else {
             return;
         };
