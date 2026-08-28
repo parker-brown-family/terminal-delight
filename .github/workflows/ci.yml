@@ -14,7 +14,7 @@ jobs:
       run:
         working-directory: app
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install Linux build dependencies
         run: |
@@ -60,7 +60,7 @@ jobs:
     name: Browser prototype checks
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -80,7 +80,7 @@ jobs:
       run:
         working-directory: app
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - name: Prepare patched gpui (crt-pass + focus-blur + text-crawl + tube-cap-32 + gpl-sever)
         run: ../scripts/prepare-gpui.sh
@@ -108,7 +108,7 @@ jobs:
     permissions:
       contents: write   # needed to attach the AppImage to the release on tags
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install Linux build dependencies
         run: |
