@@ -2632,6 +2632,13 @@ impl TerminalView {
         }
     }
 
+    // INVARIANT: this handler must never call `cx.stop_propagation()`. Every
+    // workspace chord — ctrl+arrows (pane nav), ctrl+alt+r/d (split),
+    // ctrl+pgup/pgdn (tabs) — reaches the Workspace only by bubbling out of
+    // here while a pane holds focus. Stopping propagation would kill all of
+    // them at once with no compile error and nothing else failing, so a chord
+    // this handler declines is returned by falling through, never swallowed.
+    // Guarded by `pane_on_key_never_stops_propagation`.
     fn on_key(&mut self, ev: &KeyDownEvent, _window: &mut Window, cx: &mut Context<Self>) {
         let ks = &ev.keystroke;
         // F1 opens the help modal (handled by the workspace), never the PTY.
@@ -6923,6 +6930,24 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn pane_on_key_never_stops_propagation() {
+        // The bubbling invariant above has no compile-time or runtime signal —
+        // break it and every workspace chord silently dies while all other
+        // tests stay green. The source is the only place it is observable.
+        let src = include_str!("pane.rs");
+        let at = src
+            .find("fn on_key(&mut self, ev: &KeyDownEvent")
+            .expect("TerminalView::on_key");
+        let body = &src[at..];
+        let end = body.find("\n    }\n").expect("end of on_key");
+        assert!(
+            !body[..end].contains("stop_propagation"),
+            "TerminalView::on_key must let events bubble to the Workspace — \
+             see the INVARIANT comment above it"
+        );
     }
 
     #[test]
