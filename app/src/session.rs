@@ -7,7 +7,10 @@
 //!      resumes that exact conversation (`claude --resume <id>`, `codex
 //!      resume <id>`), synthesized from the cmdline when the id is visible
 //!      there, otherwise recovered from the agent's own session store on disk
-//!      (~/.claude/projects/<cwd-slug>/*.jsonl, ~/.codex/sessions/**.jsonl).
+//!      (~/.claude/history.jsonl, ~/.claude/projects/<cwd-slug>/*.jsonl,
+//!      ~/.codex/sessions/**.jsonl). Anything recovered from disk must be newer
+//!      than the agent process, or it is some earlier conversation in the same
+//!      directory and we fall back to `--continue` rather than reopen it.
 //!
 //! Restore = spawn the shell in `cwd`, then type `resume` into the PTY.
 //! Everything here is std+libc only — no gpui — so it stays testable.
@@ -39,7 +42,13 @@ pub fn capture(master: Option<&File>, shell_pid: u32) -> PaneRuntime {
     let resume = if fg != shell_pid {
         let comm = proc_read(fg, "comm");
         let cmdline = proc_cmdline(fg);
-        agent_resume(&comm, &cmdline, cwd.as_deref(), Path::new(&home()))
+        agent_resume(
+            &comm,
+            &cmdline,
+            cwd.as_deref(),
+            Path::new(&home()),
+            proc_started_at(fg),
+        )
     } else {
         None
     };
@@ -100,14 +109,25 @@ fn home() -> String {
 
 /// Synthesize the resume command for an agent foreground process, or None if
 /// the process isn't an agent we know how to resume.
-fn agent_resume(comm: &str, cmdline: &str, cwd: Option<&str>, home: &Path) -> Option<String> {
+///
+/// `started_at` is when the agent process itself started (unix seconds), and it
+/// is what keeps a directory's *previous* conversation from being mistaken for
+/// this one — see [`claude_session_for`]. `None` means we could not tell, and
+/// every source is trusted as it was before.
+fn agent_resume(
+    comm: &str,
+    cmdline: &str,
+    cwd: Option<&str>,
+    home: &Path,
+    started_at: Option<u64>,
+) -> Option<String> {
     let c = comm.trim();
     if c == "claude" || cmdline.contains("/claude") || cmdline.starts_with("claude ") {
-        // Both sources (a cmdline arg, a transcript filename stem) end up typed
-        // into a shell, so reject anything that isn't a plain id before use.
+        // Both sources (a cmdline arg, a session id recovered from disk) end up
+        // typed into a shell, so reject anything that isn't a plain id first.
         let id = arg_after(cmdline, &["--resume", "-r"])
             .map(str::to_string)
-            .or_else(|| cwd.and_then(|d| claude_session_for(d, home)))
+            .or_else(|| cwd.and_then(|d| claude_session_for(d, home, started_at)))
             .filter(|id| safe_resume_id(id));
         Some(match id {
             Some(id) => format!("claude --resume {id}"),
@@ -164,11 +184,123 @@ fn claude_slug(cwd: &str) -> String {
         .collect()
 }
 
-/// Most recent Claude Code session id for `cwd`: newest *.jsonl in
-/// ~/.claude/projects/<slug>/ — the file stem IS the session uuid.
-fn claude_session_for(cwd: &str, home: &Path) -> Option<String> {
+/// The Claude Code session running in `cwd`, if one can be named with
+/// confidence — an explicit prompt-history mapping first, the transcript
+/// directory second.
+///
+/// Both refuse to answer with anything older than the agent process itself
+/// (`not_before`, unix seconds). An id written *before* this agent started
+/// belongs to some earlier conversation in that directory — a previous pane's,
+/// or yesterday's — and typing it into the restored shell would silently reopen
+/// the wrong history. Declining leaves `claude --continue`, which asks Claude
+/// Code the same question at restore time, when it can actually answer it.
+fn claude_session_for(cwd: &str, home: &Path, not_before: Option<u64>) -> Option<String> {
+    history_session_for(cwd, home, not_before)
+        .or_else(|| transcript_session_for(cwd, home, not_before))
+}
+
+/// `~/.claude/history.jsonl` records every prompt as
+/// `{"display":…,"timestamp":<ms>,"project":"<cwd>","sessionId":"<uuid>"}`.
+/// The newest line for this directory *names* the conversation the agent is in,
+/// where the transcript scan below can only infer it from mtimes.
+fn history_session_for(cwd: &str, home: &Path, not_before: Option<u64>) -> Option<String> {
+    let body = std::fs::read_to_string(home.join(".claude/history.jsonl")).ok()?;
+    for line in body.lines().rev() {
+        if json_tail_string(line, "project").as_deref() != Some(cwd) {
+            continue;
+        }
+        // Lines are appended in time order, so the first match walking backwards
+        // is the newest for this directory; if that one predates the agent,
+        // nothing further back can help either.
+        if let Some(floor) = not_before {
+            match json_tail_number(line, "timestamp") {
+                Some(ms) if ms / 1000 >= floor => {}
+                _ => return None,
+            }
+        }
+        return json_tail_string(line, "sessionId").filter(|id| looks_like_uuid(id));
+    }
+    None
+}
+
+/// Newest `*.jsonl` in `~/.claude/projects/<slug>/` — the file stem IS the
+/// session uuid. Older Claude Code builds keep live transcripts here.
+fn transcript_session_for(cwd: &str, home: &Path, not_before: Option<u64>) -> Option<String> {
     let dir = home.join(".claude/projects").join(claude_slug(cwd));
-    newest_jsonl(&dir).and_then(|p| p.file_stem().map(|s| s.to_string_lossy().into_owned()))
+    let newest = newest_jsonl(&dir)?;
+    written_since(&newest, not_before)
+        .then(|| newest.file_stem().map(|s| s.to_string_lossy().into_owned()))
+        .flatten()
+}
+
+/// Has `path` been touched since `floor` (unix seconds)? A transcript only names
+/// the *live* conversation if the agent has written to it since it started.
+fn written_since(path: &Path, floor: Option<u64>) -> bool {
+    let Some(floor) = floor else { return true };
+    std::fs::metadata(path)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .is_some_and(|d| d.as_secs() >= floor)
+}
+
+/// Read `"<key>": <value>` from the *end* of a JSON line.
+///
+/// The scan runs right-to-left on purpose: the first field on a history line is
+/// the prompt the user typed, which can contain anything at all — including text
+/// shaped like `"project":"/somewhere/else"`. Claude Code's own fields come
+/// last, so only the rightmost match can be trusted.
+fn json_tail<'a>(line: &'a str, key: &str) -> Option<&'a str> {
+    let at = line.rfind(&format!("\"{key}\""))? + key.len() + 2;
+    Some(line.get(at..)?.trim_start().strip_prefix(':')?.trim_start())
+}
+
+fn json_tail_string(line: &str, key: &str) -> Option<String> {
+    let rest = json_tail(line, key)?.strip_prefix('"')?;
+    let mut value = String::new();
+    let mut chars = rest.chars();
+    while let Some(c) = chars.next() {
+        match c {
+            '"' => return Some(value),
+            '\\' => value.push(chars.next()?),
+            _ => value.push(c),
+        }
+    }
+    None
+}
+
+fn json_tail_number(line: &str, key: &str) -> Option<u64> {
+    let rest = json_tail(line, key)?;
+    let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
+    digits.parse().ok()
+}
+
+/// When a process started, in unix seconds: `/proc/<pid>/stat` field 22 counts
+/// clock ticks since boot, and `/proc/stat`'s `btime` says when boot was.
+fn proc_started_at(pid: u32) -> Option<u64> {
+    let ticks = stat_start_ticks(&proc_read(pid, "stat"))?;
+    let hz = unsafe { libc::sysconf(libc::_SC_CLK_TCK) };
+    (hz > 0).then(|| boot_time().map(|b| b + ticks / hz as u64))?
+}
+
+/// Field 22 of `/proc/<pid>/stat`. Field 2 is the executable name in
+/// parentheses and may itself contain spaces and parens, so the split has to
+/// start after the *last* `)` — everything from there is field 3 onwards.
+fn stat_start_ticks(stat: &str) -> Option<u64> {
+    stat.rsplit_once(')')?
+        .1
+        .split_whitespace()
+        .nth(19)?
+        .parse()
+        .ok()
+}
+
+fn boot_time() -> Option<u64> {
+    std::fs::read_to_string("/proc/stat")
+        .ok()?
+        .lines()
+        .find_map(|l| l.strip_prefix("btime "))
+        .and_then(|v| v.trim().parse().ok())
 }
 
 /// Most recent Codex rollout whose header mentions `cwd`:
@@ -239,6 +371,12 @@ fn collect_jsonl(dir: &Path, out: &mut Vec<PathBuf>, depth: u8) {
 mod tests {
     use super::*;
 
+    /// The disk lookups get their own tests below; these cases are about the
+    /// cmdline, so they name no process start time.
+    fn resume(comm: &str, cmdline: &str, cwd: Option<&str>, home: &Path) -> Option<String> {
+        agent_resume(comm, cmdline, cwd, home, None)
+    }
+
     #[test]
     fn slug_matches_claude_code_layout() {
         assert_eq!(
@@ -253,14 +391,14 @@ mod tests {
         // a cmdline arg carrying shell metacharacters must NOT be typed into the
         // shell — fall back to the safe cwd-scoped resume instead.
         assert_eq!(
-            agent_resume("claude", "claude --resume a;rm~-rf~/", Some("/tmp"), home).as_deref(),
+            resume("claude", "claude --resume a;rm~-rf~/", Some("/tmp"), home).as_deref(),
             Some("claude --continue"),
             "unsafe id rejected, falls back to --continue"
         );
         // a plain uuid still rides through untouched
         let id = "48be90b8-5777-44b6-bb6f-1c6069205c0d";
         assert_eq!(
-            agent_resume(
+            resume(
                 "claude",
                 &format!("claude --resume {id}"),
                 Some("/tmp"),
@@ -281,7 +419,7 @@ mod tests {
         // `--resume` with a flag (not an id) after it must not capture the flag.
         let home = Path::new("/nonexistent");
         assert_eq!(
-            agent_resume("claude", "claude --resume --verbose", Some("/tmp"), home).as_deref(),
+            resume("claude", "claude --resume --verbose", Some("/tmp"), home).as_deref(),
             Some("claude --continue")
         );
     }
@@ -290,7 +428,7 @@ mod tests {
     fn resume_id_lifted_from_cmdline() {
         let home = Path::new("/nonexistent");
         assert_eq!(
-            agent_resume(
+            resume(
                 "claude",
                 "claude --resume 48be90b8-5777-44b6-bb6f-1c6069205c0d",
                 Some("/tmp"),
@@ -300,12 +438,12 @@ mod tests {
             Some("claude --resume 48be90b8-5777-44b6-bb6f-1c6069205c0d")
         );
         assert_eq!(
-            agent_resume("claude", "claude -r abc123", Some("/tmp"), home).as_deref(),
+            resume("claude", "claude -r abc123", Some("/tmp"), home).as_deref(),
             Some("claude --resume abc123")
         );
         // bare `claude`, no transcripts on disk → cwd-scoped continue
         assert_eq!(
-            agent_resume("claude", "claude", Some("/tmp"), home).as_deref(),
+            resume("claude", "claude", Some("/tmp"), home).as_deref(),
             Some("claude --continue")
         );
     }
@@ -315,11 +453,11 @@ mod tests {
         let home = Path::new("/nonexistent");
         let id = "0196f9a1-2222-7333-8444-555566667777";
         assert_eq!(
-            agent_resume("codex", &format!("codex resume {id}"), None, home),
+            resume("codex", &format!("codex resume {id}"), None, home),
             Some(format!("codex resume {id}"))
         );
         assert_eq!(
-            agent_resume("codex", "codex", Some("/tmp"), home).as_deref(),
+            resume("codex", "codex", Some("/tmp"), home).as_deref(),
             Some("codex resume --last")
         );
     }
@@ -327,8 +465,8 @@ mod tests {
     #[test]
     fn non_agents_get_no_resume() {
         let home = Path::new("/nonexistent");
-        assert_eq!(agent_resume("vim", "vim src/main.rs", None, home), None);
-        assert_eq!(agent_resume("bash", "bash", None, home), None);
+        assert_eq!(resume("vim", "vim src/main.rs", None, home), None);
+        assert_eq!(resume("bash", "bash", None, home), None);
     }
 
     #[test]
@@ -340,10 +478,147 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_millis(20));
         std::fs::write(proj.join("bbbb-new.jsonl"), "{}").unwrap();
         assert_eq!(
-            claude_session_for("/work/x", &tmp).as_deref(),
+            claude_session_for("/work/x", &tmp, None).as_deref(),
             Some("bbbb-new")
         );
         std::fs::remove_dir_all(&tmp).unwrap();
+    }
+
+    fn tmp_home(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("td-sess-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join(".claude")).unwrap();
+        dir
+    }
+
+    fn history_line(ts_ms: u64, project: &str, id: &str) -> String {
+        format!(
+            "{{\"display\":\"hi\",\"pastedContents\":{{}},\"timestamp\":{ts_ms},\"project\":\"{project}\",\"sessionId\":\"{id}\"}}"
+        )
+    }
+
+    const ID_A: &str = "48be90b8-5777-44b6-bb6f-1c6069205c0d";
+    const ID_B: &str = "142fecf9-897f-4157-9f99-f36903f9faf0";
+
+    #[test]
+    fn history_names_the_conversation_for_a_directory() {
+        let home = tmp_home("hist");
+        let other = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+        std::fs::write(
+            home.join(".claude/history.jsonl"),
+            [
+                history_line(1_700_000_100_000, "/work/x", ID_A),
+                history_line(1_700_000_200_000, "/work/other", other),
+                history_line(1_700_000_300_000, "/work/x", ID_B),
+            ]
+            .join("\n"),
+        )
+        .unwrap();
+
+        // the newest line for this directory wins; other projects are invisible
+        assert_eq!(
+            claude_session_for("/work/x", &home, None).as_deref(),
+            Some(ID_B)
+        );
+        assert_eq!(
+            claude_session_for("/work/other", &home, None).as_deref(),
+            Some(other)
+        );
+        assert_eq!(claude_session_for("/work/absent", &home, None), None);
+
+        // an explicit mapping beats a transcript file, which can only guess by mtime
+        let proj = home.join(".claude/projects").join(claude_slug("/work/x"));
+        std::fs::create_dir_all(&proj).unwrap();
+        std::fs::write(proj.join("cccccccc-stale.jsonl"), "{}").unwrap();
+        let want = format!("claude --resume {ID_B}");
+        assert_eq!(
+            resume("claude", "claude", Some("/work/x"), &home).as_deref(),
+            Some(want.as_str())
+        );
+        std::fs::remove_dir_all(&home).unwrap();
+    }
+
+    #[test]
+    fn a_typed_prompt_cannot_forge_the_history_fields() {
+        let home = tmp_home("forge");
+        // the prompt is the first field on the line and is entirely user-typed:
+        // someone can paste a whole fake record into it
+        let forged = format!(
+            "{{\"display\":\"look: \\\"project\\\":\\\"/work/x\\\",\\\"sessionId\\\":\\\"deadbeef\\\"\",\"timestamp\":1700000300000,\"project\":\"/work/other\",\"sessionId\":\"{ID_B}\"}}"
+        );
+        std::fs::write(home.join(".claude/history.jsonl"), forged).unwrap();
+        // reading right-to-left, only the real trailing fields are ever seen
+        assert_eq!(claude_session_for("/work/x", &home, None), None);
+        assert_eq!(
+            claude_session_for("/work/other", &home, None).as_deref(),
+            Some(ID_B)
+        );
+        std::fs::remove_dir_all(&home).unwrap();
+    }
+
+    #[test]
+    fn an_id_older_than_the_agent_belongs_to_another_conversation() {
+        let home = tmp_home("stale");
+        let entry = 1_700_000_300u64;
+        std::fs::write(
+            home.join(".claude/history.jsonl"),
+            history_line(entry * 1000, "/work/x", ID_B),
+        )
+        .unwrap();
+
+        // the agent was running when that prompt was typed → its conversation
+        assert_eq!(
+            claude_session_for("/work/x", &home, Some(entry - 10)).as_deref(),
+            Some(ID_B)
+        );
+        // the agent started afterwards → that id is a *previous* session in the
+        // same directory, so the pane restores with --continue instead
+        assert_eq!(claude_session_for("/work/x", &home, Some(entry + 10)), None);
+        assert_eq!(
+            agent_resume("claude", "claude", Some("/work/x"), &home, Some(entry + 10)).as_deref(),
+            Some("claude --continue")
+        );
+        // an id on the cmdline is authoritative whatever the clocks say
+        let explicit = format!("claude --resume {ID_A}");
+        assert_eq!(
+            agent_resume("claude", &explicit, Some("/work/x"), &home, Some(entry + 10)).as_deref(),
+            Some(explicit.as_str())
+        );
+
+        // the transcript scan answers to the same rule
+        let proj = home.join(".claude/projects").join(claude_slug("/work/y"));
+        std::fs::create_dir_all(&proj).unwrap();
+        std::fs::write(proj.join("bbbb-new.jsonl"), "{}").unwrap();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        assert_eq!(
+            claude_session_for("/work/y", &home, Some(now - 60)).as_deref(),
+            Some("bbbb-new")
+        );
+        assert_eq!(claude_session_for("/work/y", &home, Some(now + 60)), None);
+        std::fs::remove_dir_all(&home).unwrap();
+    }
+
+    #[test]
+    fn start_time_survives_a_process_name_with_spaces_and_parens() {
+        // field 2 of /proc/<pid>/stat is the executable name in parentheses and
+        // may contain both; field 22 is counted from after the LAST ')'
+        let tail: Vec<String> = (3..=22).map(|n| n.to_string()).collect();
+        let stat = format!("42 (weird (name) here) {}", tail.join(" "));
+        assert_eq!(stat_start_ticks(&stat), Some(22));
+        assert_eq!(stat_start_ticks("nonsense"), None);
+        assert_eq!(stat_start_ticks("42 (sh) S 1 2 3"), None);
+
+        // and against the real kernel: our own start time is in the past
+        let started = proc_started_at(std::process::id()).expect("our own start time");
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        assert!(started <= now, "started {started} is not after now {now}");
+        assert!(now - started < 60 * 60 * 24, "start time is plausible");
     }
 
     #[test]

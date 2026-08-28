@@ -7,10 +7,14 @@
 //! messages in a claude/codex pane) · ctrl+scroll or the bezel scrubber: text
 //! size.
 //!
+//! One restorable session per compositor workspace: see [`instance`] for how a
+//! window claims one, and [`session`] for what a pane carries into it.
+//!
 //! TODO(os-chrome): client-side window decorations (WindowDecorations::Client).
 
 mod bell;
 mod crt;
+mod instance;
 mod pane;
 mod session;
 mod term;
@@ -416,6 +420,45 @@ impl<'de> Deserialize<'de> for SavedNode {
     }
 }
 
+impl SavedNode {
+    /// Visit every leaf's captured resume command, in layout order.
+    fn for_each_resume(&mut self, f: &mut impl FnMut(&mut Option<String>)) {
+        match self {
+            SavedNode::Leaf { resume, .. } => f(resume),
+            SavedNode::Split { a, b, .. } => {
+                a.for_each_resume(f);
+                b.for_each_resume(f);
+            }
+        }
+    }
+}
+
+/// Two panes sharing a working directory can capture the *same* resume command:
+/// `claude --continue` is cwd-scoped by definition, and an id recovered from
+/// disk is only ever the newest session in that directory. Restoring both would
+/// drop two agents into one conversation, each overwriting the other's turns —
+/// so the first pane keeps the resume and the rest come back as a fresh agent in
+/// the same place, which is what a second pane there was always going to be.
+fn dedupe_resumes(tabs: &mut [SavedTab]) {
+    let mut claimed = std::collections::HashSet::new();
+    for tab in tabs.iter_mut() {
+        tab.node.for_each_resume(&mut |resume| {
+            if let Some(cmd) = resume.clone() {
+                if !claimed.insert(cmd.clone()) {
+                    *resume = bare_agent(&cmd);
+                }
+            }
+        });
+    }
+}
+
+/// A resume command with the session part stripped — `claude --continue` becomes
+/// `claude`. Restoring a duplicate should still open the agent, just in a
+/// conversation of its own.
+fn bare_agent(cmd: &str) -> Option<String> {
+    cmd.split_whitespace().next().map(str::to_string)
+}
+
 fn default_ratio() -> f32 {
     0.5
 }
@@ -507,13 +550,8 @@ struct SavedTab {
     node: SavedNode,
 }
 
-fn state_path() -> PathBuf {
-    let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
-    PathBuf::from(home).join(".config/terminal-delight/state.toml")
-}
-
 fn load_state() -> StateFile {
-    fs::read_to_string(state_path())
+    fs::read_to_string(instance::state_path())
         .ok()
         .and_then(|s| toml::from_str(&s).ok())
         .unwrap_or_default()
@@ -675,9 +713,10 @@ struct Workspace {
     pane_bounds: Arc<Mutex<std::collections::HashMap<EntityId, Bounds<Pixels>>>>,
     /// Live per-tab button rects (index → box) for "drop onto a main tab".
     tab_bounds: Arc<Mutex<std::collections::HashMap<usize, Bounds<Pixels>>>>,
-    /// A scratch window (opened while another instance is already running, or a
+    /// A scratch window (opened on a workspace that already has one, or a
     /// torn-off pane): one fresh terminal, never restores or persists session
-    /// state — so it can't clobber the primary window's saved layout.
+    /// state — so it can't clobber the layout of the window that owns the
+    /// workspace.
     scratch: bool,
 }
 
@@ -776,15 +815,16 @@ fn build_node(saved: &SavedNode, window: &mut Window, cx: &mut Context<Workspace
 }
 
 impl Workspace {
-    /// The primary window: restore the saved layout (or open a single fresh tab)
-    /// and persist changes back to disk.
+    /// The window that owns this workspace's session: restore its saved layout
+    /// (or open a single fresh tab) and persist changes back to disk.
     fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         Self::build(false, None, window, cx)
     }
 
     /// A scratch window: one fresh terminal (optionally seeded with a cwd/agent
     /// session for a torn-off pane), no restore, no persistence. Opened when the
-    /// hotkey fires while a primary is already running, or on a drag-out pop-out.
+    /// hotkey fires on a workspace that already has a window, or on a drag-out
+    /// pop-out.
     fn new_scratch(
         seed: Option<session::PaneRestore>,
         window: &mut Window,
@@ -922,10 +962,19 @@ impl Workspace {
     }
 
     fn save(&self, cx: &App) {
-        // a scratch / torn-off window must never overwrite the primary's layout
+        // a scratch / torn-off window must never overwrite a workspace's layout
         if self.scratch {
             return;
         }
+        let mut tabs: Vec<SavedTab> = self
+            .tabs
+            .iter()
+            .map(|t| SavedTab {
+                name: t.name.clone(),
+                node: t.root.to_saved(cx),
+            })
+            .collect();
+        dedupe_resumes(&mut tabs);
         let state = StateFile {
             active: self.active,
             win: self.last_win,
@@ -935,17 +984,10 @@ impl Workspace {
             theme: Some(theme::outer_choice(cx)),
             warp: theme::screen_warp(cx),
             track: theme::tracking_dial(cx),
-            tabs: self
-                .tabs
-                .iter()
-                .map(|t| SavedTab {
-                    name: t.name.clone(),
-                    node: t.root.to_saved(cx),
-                })
-                .collect(),
+            tabs,
         };
         if let Ok(body) = toml::to_string(&state) {
-            let _ = session::write_atomic(&state_path(), &body);
+            let _ = session::write_atomic(&instance::state_path(), &body);
         }
     }
 
@@ -4053,31 +4095,24 @@ mod tests {
     }
 
     #[test]
-    fn comm_truncates_to_the_kernel_15_char_limit() {
-        // "terminal-delight" is 16 chars; /proc/<pid>/comm shows only 15
-        assert_eq!(truncated_comm("terminal-delight"), "terminal-deligh");
-        assert_eq!(truncated_comm("short"), "short");
-    }
-
-    #[test]
-    fn scratch_decision_covers_force_seed_and_peer() {
-        // lone launch, nothing running → primary restore, no seed
-        let (scratch, seed) = scratch_decision(false, false, None, None);
+    fn scratch_decision_covers_force_seed_and_ownership() {
+        // took the workspace's session → restore it, no seed
+        let (scratch, seed) = scratch_decision(false, true, None, None);
         assert!(!scratch);
         assert!(seed.is_none());
 
-        // a sibling is already running → scratch, still no seed
-        let (scratch, seed) = scratch_decision(false, true, None, None);
+        // a window is already living on this workspace → scratch, still no seed
+        let (scratch, seed) = scratch_decision(false, false, None, None);
         assert!(scratch);
         assert!(seed.is_none());
 
-        // forced scratch with no peer (TD_SCRATCH=1)
-        assert!(scratch_decision(true, false, None, None).0);
+        // forced scratch even holding the session (TD_SCRATCH=1)
+        assert!(scratch_decision(true, true, None, None).0);
 
         // a torn-off pane seeds cwd/resume and is always scratch
         let (scratch, seed) = scratch_decision(
             false,
-            false,
+            true,
             Some("/tmp/work".into()),
             Some("claude --resume x".into()),
         );
@@ -4085,6 +4120,79 @@ mod tests {
         let seed = seed.expect("seeded");
         assert_eq!(seed.cwd.as_deref(), Some("/tmp/work"));
         assert_eq!(seed.resume.as_deref(), Some("claude --resume x"));
+    }
+
+    #[test]
+    fn the_title_says_which_session_a_window_holds() {
+        assert_eq!(window_title(false, "2"), "terminal-delight — 2");
+        // one session, no compositor: the plain name it always had
+        assert_eq!(
+            window_title(false, instance::DEFAULT_KEY),
+            "terminal-delight"
+        );
+        // a throwaway window says so, whatever workspace it is sitting on
+        assert_eq!(window_title(true, "2"), "terminal-delight — scratch");
+    }
+
+    #[test]
+    fn only_the_first_pane_in_a_directory_keeps_a_shared_resume() {
+        let leaf = |resume: Option<&str>| SavedNode::Leaf {
+            appearance: PaneTheme::default(),
+            cwd: Some("/home/me".into()),
+            resume: resume.map(str::to_string),
+            name: None,
+        };
+        let resumes = |tabs: &mut [SavedTab]| {
+            let mut out = vec![];
+            for tab in tabs.iter_mut() {
+                tab.node.for_each_resume(&mut |r| out.push(r.clone()));
+            }
+            out
+        };
+        let mut tabs = vec![
+            SavedTab {
+                name: None,
+                node: SavedNode::Split {
+                    dir: SplitDir::Row,
+                    ratio: 0.5,
+                    // three panes in one directory all captured `--continue`
+                    a: Box::new(leaf(Some("claude --continue"))),
+                    b: Box::new(leaf(Some("claude --continue"))),
+                },
+            },
+            SavedTab {
+                name: None,
+                node: leaf(Some("claude --continue")),
+            },
+            // a distinct conversation, and a second agent, are both untouched
+            SavedTab {
+                name: None,
+                node: leaf(Some("claude --resume 48be90b8-5777-44b6-bb6f-1c6069205c0d")),
+            },
+            SavedTab {
+                name: None,
+                node: leaf(Some("codex resume --last")),
+            },
+            SavedTab {
+                name: None,
+                node: leaf(None),
+            },
+        ];
+        dedupe_resumes(&mut tabs);
+        assert_eq!(
+            resumes(&mut tabs),
+            vec![
+                Some("claude --continue".to_string()),
+                // the duplicates still open an agent, just their own
+                Some("claude".to_string()),
+                Some("claude".to_string()),
+                Some("claude --resume 48be90b8-5777-44b6-bb6f-1c6069205c0d".to_string()),
+                Some("codex resume --last".to_string()),
+                None,
+            ]
+        );
+        assert_eq!(bare_agent("codex resume --last").as_deref(), Some("codex"));
+        assert_eq!(bare_agent("").as_deref(), None);
     }
 
     #[test]
@@ -4594,17 +4702,15 @@ fn outside_bounds(x: f32, y: f32, w: f32, h: f32) -> bool {
     x < 0.0 || y < 0.0 || x > w || y > h
 }
 
-/// `/proc/<pid>/comm` truncates the process name to 15 visible chars; mirror that
-/// so the running-instance check compares like with like.
-fn truncated_comm(name: &str) -> String {
-    name.chars().take(15).collect()
-}
-
 /// Resolve scratch-mode + an optional seed from the inputs. Factored out (pure)
-/// so the env/proc plumbing in `main` stays testable.
+/// so the env/lock plumbing in `main` stays testable.
+///
+/// `owns_session` is this window's claim on the workspace's saved layout (see
+/// [`instance`]): holding it means restore-and-persist; failing to take it means
+/// another window already lives on this workspace, so we are the quick one.
 fn scratch_decision(
     force: bool,
-    peer_running: bool,
+    owns_session: bool,
     cwd: Option<String>,
     resume: Option<String>,
 ) -> (bool, Option<session::PaneRestore>) {
@@ -4614,42 +4720,27 @@ fn scratch_decision(
     } else {
         None
     };
-    (force || seeded || peer_running, seed)
+    (force || seeded || !owns_session, seed)
 }
 
-/// Is another terminal-delight process already alive? Cheap, permissionless
-/// `/proc` comm scan — no lockfile to leak. Drives the conditional boot: a second
-/// launch (e.g. the Ctrl+Alt+T hotkey) opens a quick scratch window instead of
-/// re-restoring the whole saved session.
-fn another_instance_running() -> bool {
-    let me = std::process::id();
-    let want = std::env::current_exe()
-        .ok()
-        .and_then(|p| p.file_name().map(|s| s.to_string_lossy().into_owned()))
-        .map(|n| truncated_comm(&n));
-    let Some(want) = want else { return false };
-    let Ok(entries) = std::fs::read_dir("/proc") else {
-        return false;
-    };
-    for e in entries.flatten() {
-        let Some(pid) = e.file_name().to_str().and_then(|s| s.parse::<u32>().ok()) else {
-            continue;
-        };
-        if pid == me {
-            continue;
-        }
-        if let Ok(comm) = std::fs::read_to_string(e.path().join("comm")) {
-            if comm.trim() == want {
-                return true;
-            }
-        }
+/// What the window manager calls this window. The session key is in there so a
+/// screenful of terminals is legible: which one owns workspace 2, and which one
+/// is the throwaway that will not be coming back.
+fn window_title(scratch: bool, key: &str) -> String {
+    if scratch {
+        "terminal-delight — scratch".into()
+    } else if key == instance::DEFAULT_KEY {
+        "terminal-delight".into()
+    } else {
+        format!("terminal-delight — {key}")
     }
-    false
 }
 
 /// Launch a fresh, detached terminal-delight seeded with a torn-off pane's cwd
-/// and agent session. The child sees a peer (us) running, so it boots as a
-/// scratch window automatically; the seed env tells it what to reopen.
+/// and agent session. `TD_SCRATCH` keeps the child out of the workspace's
+/// session — it takes no lock and saves nothing, so tearing a pane out of a
+/// workspace can never cost that workspace its layout; the seed env tells it
+/// what to reopen.
 fn spawn_seeded_window(rt: &session::PaneRuntime) {
     let Ok(exe) = std::env::current_exe() else {
         return;
@@ -4674,16 +4765,38 @@ fn spawn_seeded_window(rt: &session::PaneRuntime) {
 }
 
 fn main() {
-    // Decide boot mode before the window opens: forced scratch (TD_SCRATCH),
-    // a seeded tear-off (TD_SEED_*), or "a sibling is already running" all open
-    // a small single-terminal window; a lone launch restores the full session.
+    // Decide boot mode before the window opens: a forced scratch (TD_SCRATCH), a
+    // seeded tear-off (TD_SEED_*), or a workspace that already has a window all
+    // open a small single-terminal window. Otherwise this window takes ownership
+    // of its workspace's session and restores it.
     let force = std::env::var_os("TD_SCRATCH").is_some();
     let seed_cwd = std::env::var("TD_SEED_CWD").ok().filter(|s| !s.is_empty());
     let seed_resume = std::env::var("TD_SEED_RESUME")
         .ok()
         .filter(|s| !s.is_empty());
-    let (scratch, seed) =
-        scratch_decision(force, another_instance_running(), seed_cwd, seed_resume);
+    // A window that is already scratch by request must not claim anything: a
+    // torn-off pane would otherwise take the lock on a workspace that has no
+    // window yet, and lock out the real one that opens there later.
+    let key = instance::resolve_key();
+    let claim = if force || seed_cwd.is_some() || seed_resume.is_some() {
+        instance::Claim {
+            owned: false,
+            lock: None,
+        }
+    } else {
+        instance::claim(&key)
+    };
+    let owns_session = claim.owned;
+    // Bind the key either way: a scratch window still reads the workspace's
+    // theme so it looks like the rest of the session — it just never writes.
+    instance::bind(key.clone(), claim.lock);
+    if owns_session {
+        // one-time upgrade from the single-session era, into whichever workspace
+        // opens first after the update
+        instance::adopt_legacy(&instance::legacy_state_path(), &instance::state_path());
+    }
+    let (scratch, seed) = scratch_decision(force, owns_session, seed_cwd, seed_resume);
+    let title = window_title(scratch, &key);
 
     application().run(move |cx: &mut App| {
         theme::init(cx);
@@ -4716,7 +4829,7 @@ fn main() {
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 titlebar: Some(TitlebarOptions {
-                    title: Some("terminal-delight".into()),
+                    title: Some(title.clone().into()),
                     ..Default::default()
                 }),
                 // WM_CLASS / Wayland app_id — must match terminal-delight.desktop
