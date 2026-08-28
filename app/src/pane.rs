@@ -1521,6 +1521,10 @@ pub struct TerminalView {
     /// Scroll-settle debounce: (display_offset, when last seen). Prevents spurious
     /// agent-done notifications when Alt+up/down navigation scrolls away from the prompt.
     last_scroll_offset: Option<(i32, Instant)>,
+    /// A prompt seek (Alt+↑/↓ in an alt-screen agent pane) is walking the AGENT's
+    /// own scrollback right now. Guards against a second press stacking another
+    /// walk on top of the first and doubling every synthetic wheel step.
+    seeking: bool,
     /// Per-pane memo for `resolved_theme`, keyed on (effective choice, mode,
     /// inherit_theme, theme generation). resolve() deep-clones, recolours and
     /// grade-transforms the palette, and render() calls it every frame; this
@@ -2085,6 +2089,7 @@ impl TerminalView {
             was_focused: false,
             pending_grid: None,
             last_scroll_offset: None,
+            seeking: false,
             theme_cache: RefCell::new(None),
             gamba: crate::gamba::Reels::new(seed),
             last_think_scan: Instant::now()
@@ -2612,8 +2617,13 @@ impl TerminalView {
     fn on_key(&mut self, ev: &KeyDownEvent, _window: &mut Window, cx: &mut Context<Self>) {
         let ks = &ev.keystroke;
         // F1 opens the help modal (handled by the workspace), never the PTY.
+        // STOP the event here: the workspace root also binds F1 (its no-pane-
+        // focused fallback), and a bubbled F1 toggled `help_open` a SECOND time
+        // in the same frame — the modal opened and closed instantly, so F1 read
+        // as dead everywhere except the outer bar's `?` button.
         if ks.key.as_str() == "f1" {
             cx.emit(OpenHelp);
+            cx.stop_propagation();
             return;
         }
         // Escape closes the right-click menu before anything else.
@@ -3076,6 +3086,14 @@ impl TerminalView {
         // toward OLDER — the opposite of the default bottom-anchored read. The
         // overshoot snap-to-live still lands on the newest (rendered at top).
         let next = next ^ self.paint_inverted;
+        // A full-screen agent TUI (Claude Code 2.x paints on the ALTERNATE
+        // screen) keeps its own scrollback and leaves the terminal none: our
+        // grid history is empty, so there are no `❯` lines to walk and this
+        // used to be a silent no-op. Drive the AGENT's scrollback instead.
+        if self.session.term.lock().mode().contains(TermMode::ALT_SCREEN) {
+            self.seek_agent_prompt(next, cx);
+            return;
+        }
         let idx = self.human_line_indices();
         if idx.is_empty() {
             return;
@@ -3100,6 +3118,116 @@ impl TerminalView {
         }
         drop(term);
         cx.notify();
+    }
+
+    /// `Alt+↑/↓` (and the ▲/▼ header buttons) in an agent pane whose TUI owns the
+    /// whole screen. On the alternate screen there is no terminal-side history to
+    /// move a viewport through, so we ask the AGENT to scroll and watch what it
+    /// repaints, stepping until one of the human's own prompt lines (`❯`/`>`)
+    /// reaches the top row. The input is a synthetic WHEEL notch, never an arrow
+    /// key: Claude Code binds ↑/↓ to prompt-history recall, so arrows would
+    /// rewrite the composer instead of scrolling. If the app never asked for
+    /// mouse reports we fall back to PageUp/PageDown, which it maps to a
+    /// half-screen scroll — a coarser landing, but still nothing typed.
+    fn seek_agent_prompt(&mut self, next: bool, cx: &mut Context<Self>) {
+        if self.seeking {
+            return;
+        }
+        let mode = *self.session.term.lock().mode();
+        let up = !next; // "previous message" = scroll toward OLDER output
+        let (step, coarse) = if mode.intersects(TermMode::MOUSE_MODE) {
+            (
+                wheel_step_bytes(up, mode.contains(TermMode::SGR_MOUSE)),
+                false,
+            )
+        } else if up {
+            (b"\x1b[5~".to_vec(), true)
+        } else {
+            (b"\x1b[6~".to_vec(), true)
+        };
+        // A line-at-a-time walk needs a long leash (one agent turn can be hundreds
+        // of rows); half-screen jumps need very few. Either way the walk is
+        // bounded, and a screen that stops changing means we reached the end of
+        // the agent's own scrollback.
+        let max_steps = if coarse { 24 } else { 400 };
+        self.seeking = true;
+        cx.spawn(async move |this, cx| {
+            let mut stalls = 0;
+            for _ in 0..max_steps {
+                let before = match this.update(cx, |view: &mut TerminalView, _cx| {
+                    view.session.notifier.notify(step.clone());
+                    view.screen_signature()
+                }) {
+                    Ok(sig) => sig,
+                    Err(_) => return, // pane closed mid-walk
+                };
+                // Wait for the agent to actually repaint before reading the top
+                // row — a busy turn must not let us race ahead of its redraw.
+                let mut painted = false;
+                for _ in 0..14 {
+                    cx.background_executor()
+                        .timer(Duration::from_millis(6))
+                        .await;
+                    match this.update(cx, |view: &mut TerminalView, _cx| view.screen_signature()) {
+                        Ok(sig) if sig != before => {
+                            painted = true;
+                            break;
+                        }
+                        Ok(_) => {}
+                        Err(_) => return,
+                    }
+                }
+                if !painted {
+                    stalls += 1;
+                    if stalls >= 3 {
+                        break; // top (or bottom) of the agent's scrollback
+                    }
+                    continue;
+                }
+                stalls = 0;
+                match this.update(cx, |view: &mut TerminalView, _cx| view.top_is_human(coarse)) {
+                    Ok(true) => break,
+                    Ok(false) => {}
+                    Err(_) => return,
+                }
+            }
+            let _ = this.update(cx, |view: &mut TerminalView, cx| {
+                view.seeking = false;
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// A fingerprint of the visible screen — cheap enough to poll during a seek,
+    /// and all we need to tell "the agent repainted" from "nothing moved".
+    fn screen_signature(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        for row in self.live_rows() {
+            row.hash(&mut h);
+        }
+        h.finish()
+    }
+
+    /// Has one of the human's own prompt lines arrived at the top of the screen?
+    /// The line walk tests the first two rows (a one-line step lands the prompt
+    /// exactly at the top); the coarse PageUp fallback accepts a hit anywhere in
+    /// the upper half, since a half-screen jump cannot place it precisely. Empty
+    /// carets (the live composer, which every agent paints) never count.
+    fn top_is_human(&self, coarse: bool) -> bool {
+        let rows = self.live_rows();
+        let depth = if coarse { (rows.len() / 2).max(1) } else { 2 };
+        rows.iter().take(depth).any(|r| {
+            is_human_input_line(r)
+                && !r
+                    .trim_start()
+                    .trim_start_matches(|c| {
+                        matches!(c, '\u{276f}' | '>' | '\u{258c}' | '\u{00b7}' | ' ')
+                    })
+                    .trim()
+                    .is_empty()
+        })
     }
 
     /// Map a logical grid `point` to a `(painted_row, col)` visual position under
@@ -4298,6 +4426,21 @@ pub fn highlight_runs(
         }
     }
     out
+}
+
+/// One synthetic wheel notch, encoded the way the running app asked for its
+/// mouse reports: SGR when it negotiated 1006, otherwise the legacy X10 form.
+/// Row and column are reported as 1,1 — the app scrolls its own view, so where
+/// the pointer happens to sit is irrelevant. Used by the agent prompt seek (see
+/// [`TerminalView::seek_agent_prompt`]), which scrolls a full-screen TUI that
+/// keeps its scrollback to itself.
+fn wheel_step_bytes(up: bool, sgr: bool) -> Vec<u8> {
+    let button: u8 = if up { 64 } else { 65 };
+    if sgr {
+        format!("\u{1b}[<{button};1;1M").into_bytes()
+    } else {
+        vec![0x1b, b'[', b'M', 32 + button, 33, 33]
+    }
 }
 
 /// gpui Keystroke → PTY bytes.
@@ -6572,6 +6715,34 @@ mod tests {
         assert!(!is_human_input_line("cat file > out.txt")); // '>' mid-line
         assert!(!is_human_input_line(""));
         assert!(!is_human_input_line("    "));
+    }
+
+    /// The prompt seek drives a full-screen agent by synthesising wheel notches,
+    /// so the bytes must be exactly what a real wheel would have produced — and
+    /// they must never be cursor keys, which agents read as history recall.
+    #[test]
+    fn a_synthetic_wheel_notch_is_a_mouse_report_not_a_cursor_key() {
+        // SGR (1006): button 64 = wheel up, 65 = wheel down, at cell 1,1.
+        assert_eq!(wheel_step_bytes(true, true), b"\x1b[<64;1;1M".to_vec());
+        assert_eq!(wheel_step_bytes(false, true), b"\x1b[<65;1;1M".to_vec());
+        // legacy X10: ESC [ M <32+button> <col+32> <row+32>
+        assert_eq!(
+            wheel_step_bytes(true, false),
+            vec![0x1b, b'[', b'M', 96, 33, 33]
+        );
+        assert_eq!(
+            wheel_step_bytes(false, false),
+            vec![0x1b, b'[', b'M', 97, 33, 33]
+        );
+        for bytes in [
+            wheel_step_bytes(true, true),
+            wheel_step_bytes(false, true),
+            wheel_step_bytes(true, false),
+            wheel_step_bytes(false, false),
+        ] {
+            assert_ne!(bytes, b"\x1b[A".to_vec());
+            assert_ne!(bytes, b"\x1b[B".to_vec());
+        }
     }
 
     #[test]
