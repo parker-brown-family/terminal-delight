@@ -5584,6 +5584,14 @@ impl Workspace {
                 .iter()
                 .position(|p| p.focus_handle(cx).is_focused(window))
                 .unwrap_or(0);
+            // Alt+R opens the FOCUS reader on the focused pane — it replaces the
+            // 👓 header glyph, which is retired (see SHOW_FOCUS_GLYPH in pane.rs).
+            if ks.key.as_str() == "r" {
+                if let Some(p) = leaves.get(cur).map(|p| (*p).clone()) {
+                    self.open_focus_read(p, window, cx);
+                }
+                return;
+            }
             // In an agent (claude/codex) pane, Alt+↑/↓ navigate between YOUR
             // messages in the chat instead of moving pane focus — same as the
             // ▲/▼ header buttons. Alt+←/→ still move focus everywhere.
@@ -11822,12 +11830,10 @@ impl Render for Workspace {
                     s.s_agents,
                     vec![
                         row("Alt + ↑ / ↓", s.jump_msg),
-                        row(&format!("▲ ▼ {}", s.k_pane_header), s.nav_msg),
-                        row(&format!("👓 {}", s.k_pane_header), s.focus),
+                        row("Alt+R", s.focus),
                         row(s.k_focus_inherit_key, s.focus_inherit),
                         row(s.k_wheel_key, s.pan_focus),
                         row(s.k_input_colour, s.input_colour),
-                        row(s.k_bell_finish, s.bell),
                         row(&format!("🤖 {}", s.k_mother_bar), s.mcp),
                         row("Ctrl+Shift+A", s.mcp),
                     ],

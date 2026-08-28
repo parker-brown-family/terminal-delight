@@ -153,11 +153,18 @@ pub struct Strings {
     pub text_size: &'static str,
     pub warp: &'static str,
     pub jump_msg: &'static str,
+    // Retained but unused: the surfaces these labelled are retired —
+    // the ▲▼ / 👓 pane-header glyphs (see SHOW_HUMAN_NAV_GLYPH and
+    // SHOW_FOCUS_GLYPH in pane.rs) and the agent-finished bell (see
+    // bell::ENABLED). Kept so restoring any of them is a one-line flip
+    // rather than a re-translation across nine languages.
+    #[allow(dead_code)]
     pub nav_msg: &'static str,
     pub focus: &'static str,
     pub focus_inherit: &'static str,
     pub pan_focus: &'static str,
     pub input_colour: &'static str,
+    #[allow(dead_code)]
     pub bell: &'static str,
     pub mcp: &'static str,
     pub new_window: &'static str,
@@ -216,10 +223,12 @@ pub struct Strings {
     pub k_display_tray: &'static str,
     pub k_text_size_key: &'static str,
     pub k_warp_dial: &'static str,
+    #[allow(dead_code)]
     pub k_pane_header: &'static str,
     pub k_focus_inherit_key: &'static str,
     pub k_wheel_key: &'static str,
     pub k_input_colour: &'static str,
+    #[allow(dead_code)]
     pub k_bell_finish: &'static str,
     pub k_mother_bar: &'static str,
     pub kf_tiling: &'static str,

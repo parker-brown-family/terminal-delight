@@ -1696,6 +1696,16 @@ pub(crate) fn fuzzy_match(hay: &str, needle: &str) -> Option<(i64, Vec<usize>)> 
     }
 }
 
+/// Header glyphs retired in favour of hotkeys, so a narrow pane spends its
+/// width on the terminal instead of on controls. The pane header now keeps only
+/// 🎨 (theme) and 📊 (display).
+///
+/// The BEHAVIOUR is untouched in both cases — only the glyph goes. Alt+↑/↓ still
+/// walks your own messages in an agent pane, and Alt+R still opens the FOCUS
+/// reader. Flip either back to `true` to restore its glyph and its ⋯ entry.
+const SHOW_HUMAN_NAV_GLYPH: bool = false;
+const SHOW_FOCUS_GLYPH: bool = false;
+
 /// The 👓 (reading-glasses) icon on this sub-tab's header was clicked — the
 /// workspace opens a FOCUS modal: an 80%-of-window mirror of this pane's live
 /// screen, with the rest of the window dimmed back. No anchor: the modal is
@@ -4313,8 +4323,11 @@ fn keystroke_bytes(ks: &Keystroke) -> Option<Vec<u8>> {
         });
     }
     if m.alt {
-        // alt+arrows switch panes; ctrl+alt chords split — both owned by Workspace
-        if matches!(ks.key.as_str(), "left" | "right" | "up" | "down") || m.control {
+        // alt+arrows switch panes; alt+r opens the FOCUS reader (the 👓 header
+        // glyph it replaces is gone); ctrl+alt chords split — all owned by the
+        // Workspace. Taking alt+r costs readline's revert-line, which is a fair
+        // trade for the only way in now that the glyph is retired.
+        if matches!(ks.key.as_str(), "left" | "right" | "up" | "down" | "r") || m.control {
             return None;
         }
         // other alt+<char>: ESC prefix for readline (alt+b, alt+f, alt+.)
@@ -4598,19 +4611,19 @@ impl Render for TerminalView {
             .unwrap()
             .map(|b| f32::from(b.size.width))
             .unwrap_or(f32::MAX);
-        let show_human = pane_w >= 470.; // 1st to hide: 👤 ▲▼ message-nav
+        let show_human = SHOW_HUMAN_NAV_GLYPH && pane_w >= 470.; // 1st: 👤 ▲▼ nav
         let show_eq = pane_w >= 410.; //    2nd: EQ / display
         let show_theme = pane_w >= 360.; //  3rd: 🎨 theme
-        // Deprecated (crate::bell::ENABLED == false): the 🔔 never shows and never
-        // tucks into ⋯. The width rule is kept for when it comes back.
+                                         // Deprecated (crate::bell::ENABLED == false): the 🔔 never shows and never
+                                         // tucks into ⋯. The width rule is kept for when it comes back.
         let show_bell = crate::bell::ENABLED && pane_w >= 310.; // 4th: 🔔 notifications
-        let show_focus = pane_w >= 264.; //  5th & last: 👓 FOCUS
-                                         // ⋯ shows only once something is actually tucked (👤-nav is agent-only).
-        let overflow = !show_focus
+        let show_focus = SHOW_FOCUS_GLYPH && pane_w >= 264.; // 5th & last: 👓 FOCUS
+                                                             // ⋯ shows only once something is actually tucked (👤-nav is agent-only).
+        let overflow = (SHOW_FOCUS_GLYPH && !show_focus)
             || (crate::bell::ENABLED && !show_bell)
             || !show_theme
             || !show_eq
-            || (!show_human && self.mode.is_agent());
+            || (SHOW_HUMAN_NAV_GLYPH && !show_human && self.mode.is_agent());
 
         // The ⋯ overflow menu lists exactly the controls hidden at this width, in
         // the same order they collapse. Mirrors the right-click menu's look.
@@ -4651,7 +4664,7 @@ impl Render for TerminalView {
                 .shadow_md();
             // 👤 ▲▼ message-nav keeps its live steppers inline so you can step
             // repeatedly; this row does not dismiss the menu.
-            if !show_human && self.mode.is_agent() {
+            if SHOW_HUMAN_NAV_GLYPH && !show_human && self.mode.is_agent() {
                 let step = |glyph: &'static str, next: bool, cx: &mut Context<Self>| {
                     div()
                         .px(px(7.))
@@ -4719,7 +4732,7 @@ impl Render for TerminalView {
                     }),
                 ));
             }
-            if !show_focus {
+            if SHOW_FOCUS_GLYPH && !show_focus {
                 menu = menu.child(item("👓", "Focus — read this pane").on_mouse_down(
                     MouseButton::Left,
                     cx.listener(move |v, _ev: &MouseDownEvent, _w, cx| {
@@ -6918,6 +6931,22 @@ mod tests {
         // workspace-owned chords must NOT reach the shell
         assert_eq!(bytes("alt-left"), None);
         assert_eq!(bytes("ctrl-pageup"), None);
+        // alt+<char> needs a key_char to encode, and Keystroke::parse doesn't
+        // synthesise one — gpui fills it at runtime. Supply it, or an assertion
+        // here passes for the wrong reason.
+        let alt_char = |c: &str| {
+            let mut k = Keystroke::parse(&format!("alt-{c}")).unwrap();
+            k.key_char = Some(c.to_string());
+            keystroke_bytes(&k)
+        };
+        // alt+r opens the FOCUS reader now that the 👓 glyph is retired, so the
+        // Workspace owns it — it must NOT reach the shell as readline's
+        // revert-line, even with a key_char present.
+        assert_eq!(alt_char("r"), None);
+        // ...while every OTHER alt+<char> still goes through ESC-prefixed, so
+        // alt+b / alt+f keep their readline meaning.
+        assert_eq!(alt_char("b"), Some(vec![0x1b, b'b']));
+        assert_eq!(alt_char("f"), Some(vec![0x1b, b'f']));
     }
 
     #[test]
