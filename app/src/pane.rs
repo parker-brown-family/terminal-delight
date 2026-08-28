@@ -2632,13 +2632,18 @@ impl TerminalView {
         }
     }
 
-    // INVARIANT: this handler must never call `cx.stop_propagation()`. Every
-    // workspace chord — ctrl+arrows (pane nav), ctrl+alt+r/d (split),
+    // INVARIANT: a key this handler DECLINES must bubble to the Workspace.
+    // Every workspace chord — ctrl+arrows (pane nav), ctrl+alt+r/d (split),
     // ctrl+pgup/pgdn (tabs) — reaches the Workspace only by bubbling out of
-    // here while a pane holds focus. Stopping propagation would kill all of
-    // them at once with no compile error and nothing else failing, so a chord
-    // this handler declines is returned by falling through, never swallowed.
-    // Guarded by `pane_on_key_never_stops_propagation`.
+    // here while a pane holds focus, so swallowing the fall-through kills all
+    // of them at once with no compile error and nothing else failing.
+    //
+    // Consuming a key is different from swallowing one: `cx.stop_propagation()`
+    // is correct where this handler OWNS the key and returns immediately (F1
+    // does exactly that — the workspace root also binds it, and a bubbled F1
+    // toggled the modal twice in one frame). The rule is therefore not "never
+    // stop propagation" but "never stop it without returning".
+    // Guarded by `pane_on_key_only_stops_propagation_when_it_consumes_the_key`.
     fn on_key(&mut self, ev: &KeyDownEvent, _window: &mut Window, cx: &mut Context<Self>) {
         let ks = &ev.keystroke;
         // F1 opens the help modal (handled by the workspace), never the PTY.
@@ -6933,21 +6938,32 @@ mod tests {
     }
 
     #[test]
-    fn pane_on_key_never_stops_propagation() {
+    fn pane_on_key_only_stops_propagation_when_it_consumes_the_key() {
         // The bubbling invariant above has no compile-time or runtime signal —
         // break it and every workspace chord silently dies while all other
         // tests stay green. The source is the only place it is observable.
+        //
+        // Stopping propagation is legitimate where the handler owns the key and
+        // returns on the spot; it is a bug on the fall-through path, where a
+        // chord this handler declined would never reach the Workspace. So the
+        // assertion is not "no stop_propagation" — that would reject the
+        // correct F1 fix — but "every stop_propagation returns".
         let src = include_str!("pane.rs");
         let at = src
             .find("fn on_key(&mut self, ev: &KeyDownEvent")
             .expect("TerminalView::on_key");
         let body = &src[at..];
         let end = body.find("\n    }\n").expect("end of on_key");
-        assert!(
-            !body[..end].contains("stop_propagation"),
-            "TerminalView::on_key must let events bubble to the Workspace — \
-             see the INVARIANT comment above it"
-        );
+        let body = &body[..end];
+        for (i, _) in body.match_indices("stop_propagation") {
+            let tail = &body[i..(i + 120).min(body.len())];
+            assert!(
+                tail.contains("return"),
+                "stop_propagation in TerminalView::on_key must belong to a \
+                 branch that returns, or the chords the handler declines never \
+                 reach the Workspace — see the INVARIANT comment above on_key"
+            );
+        }
     }
 
     #[test]
