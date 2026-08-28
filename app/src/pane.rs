@@ -2619,6 +2619,41 @@ impl TerminalView {
         .detach();
     }
 
+    /// Type `bytes` at the PTY: drop any selection, snap the view back to the
+    /// prompt, and mark the pane as having pending input.
+    fn send(&mut self, bytes: Vec<u8>, cx: &mut Context<Self>) {
+        {
+            let mut term = self.session.term.lock();
+            term.selection = None;
+            term.scroll_display(Scroll::Bottom);
+        }
+        // a real keystroke ends any keyboard selection in progress
+        self.kbd_sel = None;
+        self.pending_input = Some(Instant::now());
+        self.session.notifier.notify(bytes);
+        cx.notify();
+    }
+
+    /// Take back a cursor-key chord the workspace decided not to use — a
+    /// ctrl+←/→ with no split that way is just readline's word-jump again.
+    pub(crate) fn feed_key(&mut self, ks: &Keystroke, cx: &mut Context<Self>) {
+        if let Some(bytes) = cursor_key_bytes(ks) {
+            self.send(bytes, cx);
+        }
+    }
+
+    // INVARIANT: a key this handler DECLINES must bubble to the Workspace.
+    // Every workspace chord — ctrl+arrows (pane nav), ctrl+alt+r/d (split),
+    // ctrl+pgup/pgdn (tabs) — reaches the Workspace only by bubbling out of
+    // here while a pane holds focus, so swallowing the fall-through kills all
+    // of them at once with no compile error and nothing else failing.
+    //
+    // Consuming a key is different from swallowing one: `cx.stop_propagation()`
+    // is correct where this handler OWNS the key and returns immediately (F1
+    // does exactly that — the workspace root also binds it, and a bubbled F1
+    // toggled the modal twice in one frame). The rule is therefore not "never
+    // stop propagation" but "never stop it without returning".
+    // Guarded by `pane_on_key_only_stops_propagation_when_it_consumes_the_key`.
     fn on_key(&mut self, ev: &KeyDownEvent, _window: &mut Window, cx: &mut Context<Self>) {
         let ks = &ev.keystroke;
         // F1 opens the help modal (handled by the workspace), never the PTY.
@@ -2755,16 +2790,7 @@ impl TerminalView {
             return;
         }
         if let Some(bytes) = keystroke_bytes(ks) {
-            {
-                let mut term = self.session.term.lock();
-                term.selection = None;
-                term.scroll_display(Scroll::Bottom);
-            }
-            // a real keystroke ends any keyboard selection in progress
-            self.kbd_sel = None;
-            self.pending_input = Some(Instant::now());
-            self.session.notifier.notify(bytes);
-            cx.notify();
+            self.send(bytes, cx);
         }
     }
 
@@ -4310,6 +4336,29 @@ pub fn highlight_runs(
     out
 }
 
+/// Cursor & nav keys carry modifiers in xterm's CSI 1;<mod> form, so ctrl+→/←
+/// skip by word, shift+→/← extend selection, and so on. Split out of
+/// `keystroke_bytes` so the workspace can re-encode a chord it declined.
+pub(crate) fn cursor_key_bytes(ks: &Keystroke) -> Option<Vec<u8>> {
+    let fin = match ks.key.as_str() {
+        "up" => b'A',
+        "down" => b'B',
+        "right" => b'C',
+        "left" => b'D',
+        "home" => b'H',
+        "end" => b'F',
+        _ => return None,
+    };
+    let m = &ks.modifiers;
+    // xterm modifier code: 1 + shift(1) + alt(2) + ctrl(4)
+    let code = 1 + u8::from(m.shift) + u8::from(m.alt) * 2 + u8::from(m.control) * 4;
+    Some(if code == 1 {
+        vec![0x1b, b'[', fin]
+    } else {
+        format!("\x1b[1;{code}{}", fin as char).into_bytes()
+    })
+}
+
 /// gpui Keystroke → PTY bytes.
 fn keystroke_bytes(ks: &Keystroke) -> Option<Vec<u8>> {
     let m = &ks.modifiers;
@@ -4345,25 +4394,15 @@ fn keystroke_bytes(ks: &Keystroke) -> Option<Vec<u8>> {
     if m.control && matches!(ks.key.as_str(), "pageup" | "pagedown") {
         return None; // workspace: tab switching
     }
-    // Cursor & nav keys carry modifiers in xterm's CSI 1;<mod> form, so
-    // ctrl+→/← skip by word, shift+→/← extend selection, etc. (alt+arrows are
-    // workspace pane-focus chords and already returned None above.)
-    if let Some(fin) = match ks.key.as_str() {
-        "up" => Some(b'A'),
-        "down" => Some(b'B'),
-        "right" => Some(b'C'),
-        "left" => Some(b'D'),
-        "home" => Some(b'H'),
-        "end" => Some(b'F'),
-        _ => None,
-    } {
-        // xterm modifier code: 1 + shift(1) + alt(2) + ctrl(4)
-        let code = 1 + u8::from(m.shift) + u8::from(m.alt) * 2 + u8::from(m.control) * 4;
-        return Some(if code == 1 {
-            vec![0x1b, b'[', fin]
-        } else {
-            format!("\x1b[1;{code}{}", fin as char).into_bytes()
-        });
+    // ctrl+arrows are the workspace's directional pane chords. The workspace
+    // only keeps one when a split actually sits that way — otherwise it hands
+    // the keystroke straight back (`feed_key`), so ctrl+←/→ keeps its readline
+    // word-jump in a lone pane or at the edge of a layout.
+    if m.control && !m.shift && matches!(ks.key.as_str(), "left" | "right" | "up" | "down") {
+        return None;
+    }
+    if let Some(bytes) = cursor_key_bytes(ks) {
+        return Some(bytes);
     }
     let seq: &[u8] = match ks.key.as_str() {
         "enter" => b"\r",
@@ -6914,6 +6953,35 @@ mod tests {
     }
 
     #[test]
+    fn pane_on_key_only_stops_propagation_when_it_consumes_the_key() {
+        // The bubbling invariant above has no compile-time or runtime signal —
+        // break it and every workspace chord silently dies while all other
+        // tests stay green. The source is the only place it is observable.
+        //
+        // Stopping propagation is legitimate where the handler owns the key and
+        // returns on the spot; it is a bug on the fall-through path, where a
+        // chord this handler declined would never reach the Workspace. So the
+        // assertion is not "no stop_propagation" — that would reject the
+        // correct F1 fix — but "every stop_propagation returns".
+        let src = include_str!("pane.rs");
+        let at = src
+            .find("fn on_key(&mut self, ev: &KeyDownEvent")
+            .expect("TerminalView::on_key");
+        let body = &src[at..];
+        let end = body.find("\n    }\n").expect("end of on_key");
+        let body = &body[..end];
+        for (i, _) in body.match_indices("stop_propagation") {
+            let tail = &body[i..(i + 120).min(body.len())];
+            assert!(
+                tail.contains("return"),
+                "stop_propagation in TerminalView::on_key must belong to a \
+                 branch that returns, or the chords the handler declines never \
+                 reach the Workspace — see the INVARIANT comment above on_key"
+            );
+        }
+    }
+
+    #[test]
     fn keystroke_bytes_encodes_the_pty_protocol() {
         let bytes = |s: &str| keystroke_bytes(&Keystroke::parse(s).unwrap());
         assert_eq!(bytes("ctrl-c"), Some(vec![3]));
@@ -6923,9 +6991,6 @@ mod tests {
         assert_eq!(bytes("alt-enter"), Some(b"\n".to_vec()));
         assert_eq!(bytes("up"), Some(b"\x1b[A".to_vec()));
         assert_eq!(bytes("escape"), Some(vec![0x1b]));
-        // ctrl+arrows skip by word (xterm CSI 1;5 form)
-        assert_eq!(bytes("ctrl-right"), Some(b"\x1b[1;5C".to_vec()));
-        assert_eq!(bytes("ctrl-left"), Some(b"\x1b[1;5D".to_vec()));
         // shift+arrows extend selection (CSI 1;2 form)
         assert_eq!(bytes("shift-right"), Some(b"\x1b[1;2C".to_vec()));
         // workspace-owned chords must NOT reach the shell
@@ -6947,6 +7012,15 @@ mod tests {
         // alt+b / alt+f keep their readline meaning.
         assert_eq!(alt_char("b"), Some(vec![0x1b, b'b']));
         assert_eq!(alt_char("f"), Some(vec![0x1b, b'f']));
+        // ctrl+arrows are pane chords first: the workspace takes them here and
+        // hands them back through `cursor_key_bytes` when nothing lies that way
+        assert_eq!(bytes("ctrl-right"), None);
+        assert_eq!(bytes("ctrl-left"), None);
+        let word_jump = |s: &str| cursor_key_bytes(&Keystroke::parse(s).unwrap());
+        assert_eq!(word_jump("ctrl-right"), Some(b"\x1b[1;5C".to_vec()));
+        assert_eq!(word_jump("ctrl-left"), Some(b"\x1b[1;5D".to_vec()));
+        // ctrl+shift+arrows are nobody's chord — straight through (CSI 1;6)
+        assert_eq!(bytes("ctrl-shift-right"), Some(b"\x1b[1;6C".to_vec()));
     }
 
     #[test]
