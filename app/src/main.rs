@@ -3,7 +3,7 @@
 //! Splits divide ONLY the focused terminal's space (true tiling tree); every
 //! other pane keeps its exact place. ctrl+shift+t / [+]: new tab ·
 //! ctrl+pgup/pgdn: switch · right-click tab: rename · ctrl+arrows: pane focus
-//! by direction · alt+arrows: cycle pane focus
+//! by direction · alt+arrows: cycle pane focus · alt+v / alt+h: split ↔ / ↕
 //! drag a tab to reorder · ctrl+click a tab: set its binder-divider colour
 //! 👓 on a sub-tab header: FOCUS — mirror that pane big, rest dimmed, esc closes
 //! (alt+↑/↓ jumps between your messages in a claude/codex pane) ·
@@ -5643,6 +5643,20 @@ impl Workspace {
             return;
         }
         if m.alt && !m.control {
+            // Alt+V / Alt+H split the focused pane, Tilix-style: V puts the new
+            // pane beside it (a vertical divider, SplitDir::Row — same as
+            // ctrl+alt+r), H puts it below (SplitDir::Col — same as ctrl+alt+d).
+            match ks.key.as_str() {
+                "v" => {
+                    self.split(SplitDir::Row, window, cx);
+                    return;
+                }
+                "h" => {
+                    self.split(SplitDir::Col, window, cx);
+                    return;
+                }
+                _ => {}
+            }
             let Some(tab) = self.tabs.get(self.active) else {
                 return;
             };
@@ -11848,7 +11862,7 @@ impl Render for Workspace {
                         row("Ctrl+Shift+T", s.new_tab),
                         row("Ctrl+PgUp / PgDn", s.switch_tabs),
                         row("Ctrl+Shift+PgUp / PgDn", s.move_tab),
-                        row("Ctrl+Alt+R / D", s.split),
+                        row("Alt+V / H · Ctrl+Alt+R / D", s.split),
                         row(s.k_ctrl_arrows, s.move_focus_dir),
                         row(s.k_alt_arrows, s.move_focus),
                         row(s.k_drag_subtab, s.drag_subtab),
