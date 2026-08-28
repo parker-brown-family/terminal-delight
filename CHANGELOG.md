@@ -7,7 +7,13 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ## [Unreleased]
 
-_Nothing yet._
+### Added
+
+- **Directional pane focus.** `ctrl+←/→/↑/↓` moves the highlight to the split
+  that actually sits that way, picked from the live pane rects rather than the
+  tree's ordering. With no split in that direction — a lone pane, or the edge of
+  the layout — the keystroke falls through to the terminal, so `ctrl+←/→` keeps
+  its readline word-jump. `alt+arrows` still cycle through panes in order.
 
 ## [0.1.0] — 2026-06-14
 

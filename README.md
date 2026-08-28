@@ -20,7 +20,7 @@ does the VT emulation; your real shell runs on a real PTY.
 |---|---|
 | Real shells (PTY + full VT emulation) — bash, vim, top, tmux verified | ✅ |
 | Tiling-tree splits + tabs, per-pane grids, focus borders | ✅ |
-| `ctrl+alt+r` / `ctrl+alt+d` split · `alt+←/→` switch panes · sub-tab drag-to-split · window pop-out | ✅ |
+| `ctrl+alt+r` / `ctrl+alt+d` split · `ctrl+arrows` focus by direction · `alt+←/→` cycle panes · sub-tab drag-to-split · window pop-out | ✅ |
 | Pane closes when its shell exits; last one quits the app | ✅ |
 | Layout + per-pane appearance restore on launch | ✅ |
 | Live resize → SIGWINCH (verified against `tput`) | ✅ |

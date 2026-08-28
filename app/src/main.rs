@@ -2,9 +2,10 @@
 //!
 //! Splits divide ONLY the focused terminal's space (true tiling tree); every
 //! other pane keeps its exact place. ctrl+shift+t / [+]: new tab ·
-//! ctrl+pgup/pgdn: switch · right-click tab: rename · alt+arrows: pane focus
-//! (alt+↑/↓ jumps between your messages in a claude/codex pane) ·
-//! ctrl+scroll or the bezel scrubber: text size.
+//! ctrl+pgup/pgdn: switch · right-click tab: rename · ctrl+arrows: pane focus
+//! by direction · alt+arrows: cycle pane focus (alt+↑/↓ jumps between your
+//! messages in a claude/codex pane) · ctrl+scroll or the bezel scrubber: text
+//! size.
 //!
 //! TODO(os-chrome): client-side window decorations (WindowDecorations::Client).
 
@@ -1087,6 +1088,57 @@ impl Workspace {
         }
     }
 
+    /// The terminal that currently owns the keyboard in the active tab.
+    fn focused_pane(&self, window: &Window, cx: &App) -> Option<Entity<TerminalView>> {
+        let tab = self.tabs.get(self.active)?;
+        let mut leaves = vec![];
+        tab.root.leaves(&mut leaves);
+        leaves
+            .iter()
+            .find(|p| p.focus_handle(cx).is_focused(window))
+            .map(|p| (*p).clone())
+    }
+
+    /// Move the highlight to the split that sits `dir` of the focused one,
+    /// using the live pane rects — so it lands where you actually pointed, not
+    /// wherever the tree happens to order things. A pane sharing an edge span
+    /// with the current one wins over one merely off in that direction, and the
+    /// nearest of those wins; ties break on how far off-centre it sits.
+    /// Returns false when nothing lies that way.
+    fn focus_dir(&self, dir: &str, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        let Some(tab) = self.tabs.get(self.active) else {
+            return false;
+        };
+        let mut leaves = vec![];
+        tab.root.leaves(&mut leaves);
+        if leaves.len() < 2 {
+            return false;
+        }
+        let Some(from_id) = leaves
+            .iter()
+            .find(|p| p.focus_handle(cx).is_focused(window))
+            .map(|p| p.entity_id())
+        else {
+            return false;
+        };
+        let rects = self.pane_bounds.lock().unwrap().clone();
+        let Some(from) = rects.get(&from_id).map(rect_of) else {
+            return false;
+        };
+        let others: Vec<(usize, Rect)> = leaves
+            .iter()
+            .enumerate()
+            .filter(|(_, p)| p.entity_id() != from_id)
+            .filter_map(|(i, p)| rects.get(&p.entity_id()).map(|r| (i, rect_of(r))))
+            .collect();
+        let Some(i) = neighbour_in_dir(from, &others, dir) else {
+            return false;
+        };
+        window.focus(&leaves[i].focus_handle(cx), cx);
+        cx.notify();
+        true
+    }
+
     /// Set the *outer* (Mother) text size — the bezel scrubber and ctrl+scroll.
     /// Panes that follow outer (the default) pick this up live; a pane that has
     /// detached its grade keeps its own size.
@@ -1179,6 +1231,22 @@ impl Workspace {
                 "r" => self.split(SplitDir::Row, window, cx),
                 "d" => self.split(SplitDir::Col, window, cx),
                 _ => {}
+            }
+            return;
+        }
+        // ctrl+arrows walk the splits by direction: the highlight moves the way
+        // you pressed. With nothing that way — a lone pane, or the edge of the
+        // layout — the keystroke goes back to the terminal, so ctrl+←/→ still
+        // skips by word everywhere it isn't a pane chord.
+        if m.control
+            && !m.alt
+            && !m.shift
+            && matches!(ks.key.as_str(), "left" | "right" | "up" | "down")
+        {
+            if !self.focus_dir(ks.key.as_str(), window, cx) {
+                if let Some(p) = self.focused_pane(window, cx) {
+                    p.update(cx, |view, cx| view.feed_key(ks, cx));
+                }
             }
             return;
         }
@@ -3703,7 +3771,8 @@ impl Render for Workspace {
                         row("Ctrl+Shift+T", "New tab"),
                         row("Ctrl+PgUp / PgDn", "Switch tabs"),
                         row("Ctrl+Alt+R / D", "Split ↔ / ↕"),
-                        row("Alt + arrows", "Move focus between panes"),
+                        row("Ctrl + arrows", "Move focus by direction"),
+                        row("Alt + arrows", "Cycle focus through panes"),
                         row("drag a sub-tab", "Move / split · drag out = new window"),
                     ],
                 ))
@@ -4405,6 +4474,109 @@ id = "hacker"
             "missing ratio -> 0.5"
         );
     }
+
+    // A 1000x600 window split into a left column and a right column that is
+    // itself split top/bottom:
+    //   0 | 1
+    //     | 2
+    const LEFT: Rect = (0., 0., 500., 600.);
+    const TOP_RIGHT: Rect = (500., 0., 1000., 300.);
+    const BOT_RIGHT: Rect = (500., 300., 1000., 600.);
+
+    fn others(skip: usize) -> Vec<(usize, Rect)> {
+        [LEFT, TOP_RIGHT, BOT_RIGHT]
+            .into_iter()
+            .enumerate()
+            .filter(|(i, _)| *i != skip)
+            .collect()
+    }
+
+    #[test]
+    fn ctrl_arrow_moves_to_the_pane_that_is_actually_that_way() {
+        // from the tall left pane, → prefers the nearer-centred right pane
+        assert_eq!(neighbour_in_dir(LEFT, &others(0), "right"), Some(1));
+        // and there is nothing further left
+        assert_eq!(neighbour_in_dir(LEFT, &others(0), "left"), None);
+        // the right column stacks, so ↑/↓ walk it
+        assert_eq!(neighbour_in_dir(BOT_RIGHT, &others(2), "up"), Some(1));
+        assert_eq!(neighbour_in_dir(TOP_RIGHT, &others(1), "down"), Some(2));
+        // ← from either right pane lands on the left column
+        assert_eq!(neighbour_in_dir(TOP_RIGHT, &others(1), "left"), Some(0));
+        assert_eq!(neighbour_in_dir(BOT_RIGHT, &others(2), "left"), Some(0));
+        // the left column is one tall pane: ↑/↓ have nowhere to go
+        assert_eq!(neighbour_in_dir(LEFT, &others(0), "up"), None);
+        assert_eq!(neighbour_in_dir(LEFT, &others(0), "down"), None);
+    }
+
+    #[test]
+    fn a_pane_off_diagonally_is_not_a_neighbour() {
+        // 0 sits left and nearer, but shares none of `from`'s vertical span, so
+        // only 1 is what you'd call "the pane to the left"
+        let from: Rect = (400., 0., 800., 200.);
+        let diagonal = (0usize, (100., 400., 300., 600.));
+        let beside = (1usize, (0., 0., 300., 200.));
+        assert_eq!(neighbour_in_dir(from, &[diagonal, beside], "left"), Some(1));
+        // with only the diagonal one, ← has nowhere to go and falls through
+        assert_eq!(neighbour_in_dir(from, &[diagonal], "left"), None);
+    }
+
+    #[test]
+    fn the_nearest_of_several_neighbours_wins() {
+        let from: Rect = (0., 0., 200., 600.);
+        let cands = [
+            (0usize, (600., 0., 800., 600.)),
+            (1usize, (200., 0., 400., 600.)),
+        ];
+        assert_eq!(neighbour_in_dir(from, &cands, "right"), Some(1));
+    }
+}
+
+/// A pane's screen rect as plain numbers: `(x0, y0, x1, y1)`.
+type Rect = (f32, f32, f32, f32);
+
+fn rect_of(b: &Bounds<Pixels>) -> Rect {
+    let (x0, y0) = (f32::from(b.origin.x), f32::from(b.origin.y));
+    (
+        x0,
+        y0,
+        x0 + f32::from(b.size.width),
+        y0 + f32::from(b.size.height),
+    )
+}
+
+/// Which of `others` sits `dir` of `from`, by geometry rather than by the
+/// tree's ordering. A neighbour has to share an edge span with `from` — a pane
+/// off diagonally is not "the one to the left", so the highlight never jumps
+/// there. Among real neighbours the nearest wins, then the one least off-centre
+/// along the shared edge. `others` carries each candidate's index in the
+/// caller's list and must not include `from` itself; the returned index is one
+/// of those. `None` = nothing lies that way.
+fn neighbour_in_dir(from: Rect, others: &[(usize, Rect)], dir: &str) -> Option<usize> {
+    let (fx0, fy0, fx1, fy1) = from;
+    let (fcx, fcy) = ((fx0 + fx1) / 2., (fy0 + fy1) / 2.);
+    let mut best: Option<(f32, f32, usize)> = None;
+    for &(i, (x0, y0, x1, y1)) in others {
+        let (ccx, ccy) = ((x0 + x1) / 2., (y0 + y1) / 2.);
+        // `gap` = how far that way the candidate sits (negative = the wrong
+        // way); `overlap` = how much of an edge the two rects share on the
+        // other axis; `cross` = how far off-centre it is along that edge.
+        let (gap, overlap, cross) = match dir {
+            "left" => (fcx - ccx, fy1.min(y1) - fy0.max(y0), (ccy - fcy).abs()),
+            "right" => (ccx - fcx, fy1.min(y1) - fy0.max(y0), (ccy - fcy).abs()),
+            "up" => (fcy - ccy, fx1.min(x1) - fx0.max(x0), (ccx - fcx).abs()),
+            _ => (ccy - fcy, fx1.min(x1) - fx0.max(x0), (ccx - fcx).abs()),
+        };
+        // a sub-pixel gap is the same pane column/row, and no shared edge span
+        // means it is off diagonally — neither is a neighbour
+        if gap <= 1. || overlap <= 0. {
+            continue;
+        }
+        let key = (gap, cross, i);
+        if best.is_none_or(|b| key < b) {
+            best = Some(key);
+        }
+    }
+    best.map(|(_, _, i)| i)
 }
 
 /// Which pane a tab should focus when you switch to it: the one you were last in

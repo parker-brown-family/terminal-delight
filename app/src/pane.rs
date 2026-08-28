@@ -1147,6 +1147,27 @@ impl TerminalView {
         .detach();
     }
 
+    /// Type `bytes` at the PTY: drop any selection, snap the view back to the
+    /// prompt, and mark the pane as having pending input.
+    fn send(&mut self, bytes: Vec<u8>, cx: &mut Context<Self>) {
+        {
+            let mut term = self.session.term.lock();
+            term.selection = None;
+            term.scroll_display(Scroll::Bottom);
+        }
+        self.pending_input = Some(Instant::now());
+        self.session.notifier.notify(bytes);
+        cx.notify();
+    }
+
+    /// Take back a cursor-key chord the workspace decided not to use — a
+    /// ctrl+←/→ with no split that way is just readline's word-jump again.
+    pub(crate) fn feed_key(&mut self, ks: &Keystroke, cx: &mut Context<Self>) {
+        if let Some(bytes) = cursor_key_bytes(ks) {
+            self.send(bytes, cx);
+        }
+    }
+
     fn on_key(&mut self, ev: &KeyDownEvent, _window: &mut Window, cx: &mut Context<Self>) {
         let ks = &ev.keystroke;
         // Escape closes the right-click menu before anything else.
@@ -1204,14 +1225,7 @@ impl TerminalView {
             }
         }
         if let Some(bytes) = keystroke_bytes(ks) {
-            {
-                let mut term = self.session.term.lock();
-                term.selection = None;
-                term.scroll_display(Scroll::Bottom);
-            }
-            self.pending_input = Some(Instant::now());
-            self.session.notifier.notify(bytes);
-            cx.notify();
+            self.send(bytes, cx);
         }
     }
 
@@ -1593,6 +1607,28 @@ fn grid_font(th: &Theme, weight: FontWeight) -> Font {
     f
 }
 
+/// Cursor & nav keys carry modifiers in xterm's CSI 1;<mod> form, so ctrl+→/←
+/// skip by word, shift+→/← extend selection, and so on.
+pub(crate) fn cursor_key_bytes(ks: &Keystroke) -> Option<Vec<u8>> {
+    let fin = match ks.key.as_str() {
+        "up" => b'A',
+        "down" => b'B',
+        "right" => b'C',
+        "left" => b'D',
+        "home" => b'H',
+        "end" => b'F',
+        _ => return None,
+    };
+    let m = &ks.modifiers;
+    // xterm modifier code: 1 + shift(1) + alt(2) + ctrl(4)
+    let code = 1 + u8::from(m.shift) + u8::from(m.alt) * 2 + u8::from(m.control) * 4;
+    Some(if code == 1 {
+        vec![0x1b, b'[', fin]
+    } else {
+        format!("\x1b[1;{code}{}", fin as char).into_bytes()
+    })
+}
+
 /// gpui Keystroke → PTY bytes.
 fn keystroke_bytes(ks: &Keystroke) -> Option<Vec<u8>> {
     let m = &ks.modifiers;
@@ -1625,25 +1661,15 @@ fn keystroke_bytes(ks: &Keystroke) -> Option<Vec<u8>> {
     if m.control && matches!(ks.key.as_str(), "pageup" | "pagedown") {
         return None; // workspace: tab switching
     }
-    // Cursor & nav keys carry modifiers in xterm's CSI 1;<mod> form, so
-    // ctrl+→/← skip by word, shift+→/← extend selection, etc. (alt+arrows are
-    // workspace pane-focus chords and already returned None above.)
-    if let Some(fin) = match ks.key.as_str() {
-        "up" => Some(b'A'),
-        "down" => Some(b'B'),
-        "right" => Some(b'C'),
-        "left" => Some(b'D'),
-        "home" => Some(b'H'),
-        "end" => Some(b'F'),
-        _ => None,
-    } {
-        // xterm modifier code: 1 + shift(1) + alt(2) + ctrl(4)
-        let code = 1 + u8::from(m.shift) + u8::from(m.alt) * 2 + u8::from(m.control) * 4;
-        return Some(if code == 1 {
-            vec![0x1b, b'[', fin]
-        } else {
-            format!("\x1b[1;{code}{}", fin as char).into_bytes()
-        });
+    // ctrl+arrows are the workspace's directional pane chords. The workspace
+    // only keeps one when a split actually sits that way — otherwise it hands
+    // the keystroke straight back (`feed_key`), so ctrl+←/→ keeps its readline
+    // word-jump in a lone pane or at the edge of a layout.
+    if m.control && !m.shift && matches!(ks.key.as_str(), "left" | "right" | "up" | "down") {
+        return None;
+    }
+    if let Some(bytes) = cursor_key_bytes(ks) {
+        return Some(bytes);
     }
     let seq: &[u8] = match ks.key.as_str() {
         "enter" => b"\r",
@@ -2750,14 +2776,20 @@ mod tests {
         assert_eq!(bytes("alt-enter"), Some(b"\n".to_vec()));
         assert_eq!(bytes("up"), Some(b"\x1b[A".to_vec()));
         assert_eq!(bytes("escape"), Some(vec![0x1b]));
-        // ctrl+arrows skip by word (xterm CSI 1;5 form)
-        assert_eq!(bytes("ctrl-right"), Some(b"\x1b[1;5C".to_vec()));
-        assert_eq!(bytes("ctrl-left"), Some(b"\x1b[1;5D".to_vec()));
         // shift+arrows extend selection (CSI 1;2 form)
         assert_eq!(bytes("shift-right"), Some(b"\x1b[1;2C".to_vec()));
         // workspace-owned chords must NOT reach the shell
         assert_eq!(bytes("alt-left"), None);
         assert_eq!(bytes("ctrl-pageup"), None);
+        // ctrl+arrows are pane chords first: the workspace takes them here and
+        // hands them back through `cursor_key_bytes` when nothing lies that way
+        assert_eq!(bytes("ctrl-right"), None);
+        assert_eq!(bytes("ctrl-left"), None);
+        let word_jump = |s: &str| cursor_key_bytes(&Keystroke::parse(s).unwrap());
+        assert_eq!(word_jump("ctrl-right"), Some(b"\x1b[1;5C".to_vec()));
+        assert_eq!(word_jump("ctrl-left"), Some(b"\x1b[1;5D".to_vec()));
+        // ctrl+shift+arrows are nobody's chord — straight through (CSI 1;6)
+        assert_eq!(bytes("ctrl-shift-right"), Some(b"\x1b[1;6C".to_vec()));
     }
 
     #[test]
