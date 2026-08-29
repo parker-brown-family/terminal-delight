@@ -46,8 +46,7 @@ use gpui_platform::application;
 use pane::{
     CloseFocusRead, ClosePane, DragPaneStart, OpenAgentPanel, OpenDisplayMenu, OpenFind,
     OpenFocusRead, OpenHelp, OpenLogoPicker, OpenThemeMenu, PaintApplied, PaneRenamed,
-    RequestCloseTab,
-    TerminalView,
+    RequestCloseTab, TerminalView,
 };
 use serde::{Deserialize, Serialize};
 use theme::{PaneTheme, ThemeChoice};

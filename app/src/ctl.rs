@@ -481,9 +481,18 @@ mod tests {
     #[test]
     fn the_grammar_is_exactly_six_verbs_long() {
         assert!(matches!(parse_line("ping"), Ok(Cmd::Ping)));
-        assert!(matches!(parse_line("paint on"), Ok(Cmd::Paint(Req::Set(true)))));
-        assert!(matches!(parse_line("paint off"), Ok(Cmd::Paint(Req::Set(false)))));
-        assert!(matches!(parse_line("paint toggle"), Ok(Cmd::Paint(Req::Toggle))));
+        assert!(matches!(
+            parse_line("paint on"),
+            Ok(Cmd::Paint(Req::Set(true)))
+        ));
+        assert!(matches!(
+            parse_line("paint off"),
+            Ok(Cmd::Paint(Req::Set(false)))
+        ));
+        assert!(matches!(
+            parse_line("paint toggle"),
+            Ok(Cmd::Paint(Req::Toggle))
+        ));
         assert!(matches!(parse_line("paint status"), Ok(Cmd::PaintStatus)));
         assert!(matches!(
             parse_line(r#"adopt {"cwd":"/tmp"}"#),

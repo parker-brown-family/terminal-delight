@@ -4751,14 +4751,19 @@ impl Render for TerminalView {
                 let lit = !following && eff.dynamic.same_kind(d);
                 let pick = d.clone();
                 grid = grid.child(
-                    tile(d.glyph().to_string(), d.label().to_uppercase(), d.swatch(), lit)
-                        .on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(move |v, _, _, cx| {
-                                v.paint_pick(Some(pick.clone()), cx);
-                                cx.stop_propagation();
-                            }),
-                        ),
+                    tile(
+                        d.glyph().to_string(),
+                        d.label().to_uppercase(),
+                        d.swatch(),
+                        lit,
+                    )
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |v, _, _, cx| {
+                            v.paint_pick(Some(pick.clone()), cx);
+                            cx.stop_propagation();
+                        }),
+                    ),
                 );
             }
             div()
@@ -4778,7 +4783,12 @@ impl Render for TerminalView {
                         .items_center()
                         .gap(px(8.))
                         .font_family(ff)
-                        .child(div().text_size(px(11.)).text_color(txt).child("PAINT THIS PANE"))
+                        .child(
+                            div()
+                                .text_size(px(11.))
+                                .text_color(txt)
+                                .child("PAINT THIS PANE"),
+                        )
                         .child(grid)
                         .child(
                             div()
