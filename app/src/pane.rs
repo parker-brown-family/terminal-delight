@@ -1649,6 +1649,12 @@ pub struct OpenFind {
 }
 impl gpui::EventEmitter<OpenFind> for TerminalView {}
 
+/// A paint-overlay tile was clicked on this pane — the recolour is already
+/// applied to `appearance`; the workspace just persists the layout so the new
+/// coat survives a restart (same contract as [`PaneRenamed`]).
+pub struct PaintApplied;
+impl gpui::EventEmitter<PaintApplied> for TerminalView {}
+
 /// One matched line inside a pane's grid: its absolute grid line index, the line
 /// text (built from column 0 so a char index is also its column), and the fuzzy
 /// score + matched char positions — for the snippet highlight and the jump-time
@@ -2659,6 +2665,30 @@ impl TerminalView {
         }
     }
 
+    /// Apply a paint-overlay pick to THIS pane. `None` re-attaches the pane to
+    /// the outer/desktop look (the live inherit link); `Some(set)` pins the
+    /// pane's theme group with that colour set and clears the wheel overrides
+    /// (seed/T/C/human) so the set's own signature palette paints cleanly.
+    /// Identity — texture, CRT effects, grade, warp — is deliberately left
+    /// alone: paint is colour, not look.
+    fn paint_pick(&mut self, pick: Option<theme::Dynamic>, cx: &mut Context<Self>) {
+        match pick {
+            None => self.appearance.inherit_theme = true,
+            Some(d) => {
+                let outer = theme::outer_choice(cx);
+                let mut g = theme::ThemeGroup::of(&self.appearance.effective(&outer));
+                g.dynamic = d;
+                g.seed = None;
+                g.text = None;
+                g.complement = None;
+                g.human = None;
+                self.appearance.set_theme(g);
+            }
+        }
+        cx.emit(PaintApplied);
+        cx.notify();
+    }
+
     // INVARIANT: a key this handler DECLINES must bubble to the Workspace.
     // Every workspace chord — ctrl+arrows (pane nav), ctrl+alt+r/d (split),
     // ctrl+pgup/pgdn (tabs) — reaches the Workspace only by bubbling out of
@@ -2681,6 +2711,14 @@ impl TerminalView {
         if ks.key.as_str() == "f1" {
             cx.emit(OpenHelp);
             cx.stop_propagation();
+            return;
+        }
+        // Escape leaves PAINT mode (the ctl-raised palette overlay) ahead of
+        // every pane-local overlay: it is the topmost surface across ALL panes
+        // at once, and the ESC byte must never reach the PTY underneath it.
+        if theme::paint_mode(cx) && ks.key.as_str() == "escape" {
+            theme::set_paint_mode(cx, false);
+            cx.notify();
             return;
         }
         // Escape closes the right-click menu before anything else.
@@ -4667,6 +4705,116 @@ impl Render for TerminalView {
                 ));
             deferred(anchored().position(pos).snap_to_window().child(menu))
         });
+        // PAINT mode — the wall-wide palette overlay (raised by `terminal-delight
+        // ctl paint …`, e.g. the Omarchy bar's palette widget). EVERY pane draws
+        // its own glyph grid at once, so a wall of terminals recolours like
+        // dipping a brush: click a set on this pane, move to the next, Esc when
+        // the wall reads right. The tiles are the theme tray's own colour-set
+        // vocabulary (Dynamic::NAMED + signatures), so a paint pick produces
+        // exactly what the tray would have — just one click per pane instead of
+        // four, and everywhere at the same time.
+        let paint_el = theme::paint_mode(cx).then(|| {
+            let outer = theme::outer_choice(cx);
+            let eff = self.appearance.effective(&outer);
+            let following = self.appearance.inherit_theme;
+            let (acc, surf, txt, faint) = (th.accent, th.surface, th.text, th.faint);
+            let ff = th.font_family.clone();
+            let tile = move |glyph: String, label: String, swatch: Option<Hsla>, lit: bool| {
+                div()
+                    .w(px(54.))
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .gap(px(2.))
+                    .py(px(5.))
+                    .rounded(px(8.))
+                    .border_1()
+                    .border_color(if lit { acc } else { acc.alpha(0.28) })
+                    .bg(surf.alpha(0.92))
+                    .cursor_pointer()
+                    .hover(move |s| s.bg(acc.alpha(0.20)))
+                    .child(div().text_size(px(17.)).child(glyph))
+                    .child(
+                        div()
+                            .text_size(px(8.))
+                            .text_color(if lit { txt } else { faint })
+                            .child(label),
+                    )
+                    .child(
+                        div()
+                            .h(px(3.))
+                            .w(px(32.))
+                            .rounded(px(2.))
+                            .bg(swatch.unwrap_or(acc.alpha(0.0))),
+                    )
+            };
+            let mut grid = div()
+                .flex()
+                .flex_row()
+                .flex_wrap()
+                .justify_center()
+                .gap(px(6.))
+                .max_w(px(430.));
+            grid = grid.child(
+                tile("⟲".into(), "DESKTOP".into(), None, following).on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|v, _, _, cx| {
+                        v.paint_pick(None, cx);
+                        cx.stop_propagation();
+                    }),
+                ),
+            );
+            for d in theme::Dynamic::NAMED.iter() {
+                let lit = !following && eff.dynamic.same_kind(d);
+                let pick = d.clone();
+                grid = grid.child(
+                    tile(
+                        d.glyph().to_string(),
+                        d.label().to_uppercase(),
+                        d.swatch(),
+                        lit,
+                    )
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |v, _, _, cx| {
+                            v.paint_pick(Some(pick.clone()), cx);
+                            cx.stop_propagation();
+                        }),
+                    ),
+                );
+            }
+            div()
+                .absolute()
+                .top_0()
+                .left_0()
+                .size_full()
+                .occlude()
+                .bg(gpui::hsla(0., 0., 0., 0.52))
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .items_center()
+                        .gap(px(8.))
+                        .font_family(ff)
+                        .child(
+                            div()
+                                .text_size(px(11.))
+                                .text_color(txt)
+                                .child("PAINT THIS PANE"),
+                        )
+                        .child(grid)
+                        .child(
+                            div()
+                                .text_size(px(9.))
+                                .text_color(faint)
+                                .child("esc · done"),
+                        ),
+                )
+        });
         // Menu-bar size rides the grade group: a pane uses its own scale when its
         // grade is detached, else the live outer (Mother) scale. This scrubber
         // sizes the HEADER (height + glyphs/icons), never the terminal grid.
@@ -5954,6 +6102,9 @@ impl Render for TerminalView {
             .children(ctx_menu_el)
             .children(overflow_el)
             .children(bell_tray)
+            // the paint overlay is the topmost surface — painted last, above
+            // every menu and tray, matching its Esc-first place in on_key
+            .children(paint_el)
     }
 }
 

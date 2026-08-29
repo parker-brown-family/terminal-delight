@@ -1760,6 +1760,29 @@ fn bump_theme_gen(cx: &mut App) {
     cx.set_global(ThemeGen(n));
 }
 
+/// PAINT mode — the palette overlay raised over EVERY pane at once by the
+/// control socket (`terminal-delight ctl paint …`, wired to the Omarchy bar's
+/// palette widget) and dismissed by Esc or a second toggle. App-global rather
+/// than per-pane state on purpose: one process owns one window, the ctl
+/// surface addresses processes, and "the wall is being painted" is a statement
+/// about the window, not any single pane.
+#[derive(Default)]
+pub struct PaintMode(pub bool);
+impl Global for PaintMode {}
+
+/// Is the paint overlay up?
+pub fn paint_mode(cx: &App) -> bool {
+    cx.try_global::<PaintMode>().map(|p| p.0).unwrap_or(false)
+}
+
+/// Raise/dismiss the paint overlay; repaints every window on a real change.
+pub fn set_paint_mode(cx: &mut App, on: bool) {
+    if paint_mode(cx) != on {
+        cx.set_global(PaintMode(on));
+        cx.refresh_windows();
+    }
+}
+
 /// Map the three normalised tracking dials to concrete `Theme` fields:
 /// intensity 0..1, speed (high = faster roll = shorter period, 60→6), size →
 /// sweep 1..30.
