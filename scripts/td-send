@@ -1,0 +1,152 @@
+#!/usr/bin/env bash
+# td-send — migrate an Omarchy terminal tile into Terminal Delight.
+#
+# Probes the focused tile (or --address <hex>), works out what it is running,
+# and — when the migration is FAITHFUL — re-opens it as a TD pane and closes
+# the origin:
+#   idle shell          → TD pane at the same cwd (adopt first, close after)
+#   claude/codex agent  → close origin, wait, TD pane running the resume line
+#   tmux attach / new -A→ close origin, wait, TD pane re-running the attach
+# Anything else in the foreground (vim, htop, …) is refused with a
+# notification and NOTHING is closed. If no TD window exists anywhere, a fresh
+# seeded TD window is spawned to receive the session. If TD refuses after the
+# origin closed, the session is re-opened in a fallback terminal — td-send
+# never strands a session.
+#
+# Usage: td-send [--dry-run] [--address <0xhex>]
+# Env:   TD_BIN=path-to-terminal-delight (default: from PATH)
+set -euo pipefail
+
+TD="${TD_BIN:-terminal-delight}"
+
+notify() {
+  command -v omarchy-notification-send >/dev/null 2>&1 &&
+    omarchy-notification-send "$1" || true
+}
+bail() { # message, exit-code
+  notify "td-send: $1"
+  echo "td-send: $1" >&2
+  exit "${2:-1}"
+}
+
+DRY=0 ADDR=""
+while (($#)); do
+  case "$1" in
+  --dry-run) DRY=1; shift ;;
+  --address) ADDR="${2:?--address needs a value}"; shift 2 ;;
+  -h | --help) sed -n '2,18p' "$0"; exit 0 ;;
+  *) echo "td-send: unknown arg $1" >&2; exit 1 ;;
+  esac
+done
+
+command -v jq >/dev/null 2>&1 || bail "jq is required" 1
+command -v "$TD" >/dev/null 2>&1 || bail "terminal-delight not on PATH (set TD_BIN)" 1
+
+# ---- 1. the tile ------------------------------------------------------------
+if [[ -n $ADDR ]]; then
+  win=$(hyprctl clients -j 2>/dev/null | jq -c --arg a "$ADDR" '.[] | select(.address==$a)' || true)
+  [[ -n $win ]] || bail "no window at $ADDR" 2
+else
+  win=$(hyprctl activewindow -j 2>/dev/null || true)
+fi
+class=$(jq -r '.class // empty' <<<"$win" 2>/dev/null || true)
+term_pid=$(jq -r '.pid // empty' <<<"$win" 2>/dev/null || true)
+addr=$(jq -r '.address // empty' <<<"$win" 2>/dev/null || true)
+[[ -n $class && -n $term_pid && -n $addr ]] || bail "no focused window to send" 2
+
+# ---- 2. terminal guard ------------------------------------------------------
+case "$class" in
+terminal-delight) bail "that tile IS Terminal Delight" 3 ;;
+foot | footclient | Alacritty | kitty | com.mitchellh.ghostty | org.omarchy.*) ;;
+*) bail "not a terminal tile ($class)" 3 ;;
+esac
+
+# ---- 3. the shell inside: exactly one child, else we can't map window→shell -
+mapfile -t kids < <(pgrep -P "$term_pid" 2>/dev/null || true)
+case "${#kids[@]}" in
+0) shell_pid=$term_pid ;; # -e style: the payload IS the terminal's process
+1) shell_pid=${kids[0]} ;;
+*) bail "can't map this window to one shell (${#kids[@]} children — shared-process terminal?)" 3 ;;
+esac
+
+# ---- 4. forensics -----------------------------------------------------------
+probe=$("$TD" probe "$shell_pid" 2>/dev/null) || bail "probe failed on pid $shell_pid" 2
+kind=$(jq -r '.kind' <<<"$probe")
+cwd=$(jq -r '.cwd // empty' <<<"$probe")
+resume=$(jq -r '.resume // empty' <<<"$probe")
+cmdline=$(jq -r '.cmdline // empty' <<<"$probe")
+comm=$(jq -r '.comm // empty' <<<"$probe")
+
+run=""
+case "$kind" in
+idle) run="" ;;
+agent) run="$resume" ;;
+tmux) run="$cmdline" ;;
+*) bail "tile is running ${comm:-something} — td-send migrates idle shells, agents, and tmux attaches" 4 ;;
+esac
+[[ -n $cwd ]] || bail "could not read the tile's working directory" 2
+
+# ---- 5. preflight: which TD takes it? this workspace first, anywhere second -
+target_pid=$(
+  { "$TD" ctl ping --workspace active 2>/dev/null || "$TD" ctl ping --all 2>/dev/null || true; } |
+    awk -F'\t' '$2=="pong"{print $1; exit}'
+)
+
+if ((DRY)); then
+  jq -n --arg kind "$kind" --arg cwd "$cwd" --arg run "$run" \
+    --arg target "${target_pid:-seed-new-window}" --arg class "$class" --arg addr "$addr" \
+    '{plan:"td-send", tile:{class:$class,address:$addr}, kind:$kind, cwd:$cwd, run:$run, td_target:$target}'
+  exit 0
+fi
+
+td_window_count() {
+  hyprctl clients -j 2>/dev/null |
+    jq -r '[.[] | select(.class == "terminal-delight")] | length' 2>/dev/null || echo 0
+}
+
+seed_window() { # birth a fresh scratch TD window carrying the session
+  local before
+  before=$(td_window_count)
+  TD_SEED_CWD="$cwd" TD_SEED_RESUME="$run" setsid "$TD" >/dev/null 2>&1 &
+  # trust it only once a new TD window actually materialized
+  for _ in $(seq 60); do
+    sleep 0.05
+    (($(td_window_count) > before)) && return 0
+  done
+  return 1
+}
+
+adopt() { # place the session: an existing TD window, else seed a fresh one.
+  # The socket attempt can fail against a TD built before the adopt verb
+  # (mixed-version desktops mid-upgrade) — seeding covers that too.
+  if [[ -n $target_pid ]]; then
+    if [[ -n $run ]]; then
+      "$TD" ctl adopt --pid "$target_pid" --cwd "$cwd" --run "$run" >/dev/null 2>&1 && return 0
+    else
+      "$TD" ctl adopt --pid "$target_pid" --cwd "$cwd" >/dev/null 2>&1 && return 0
+    fi
+  fi
+  seed_window
+}
+
+case "$kind" in
+idle)
+  # nothing running: adopt first, close only once TD said ok — zero-risk order
+  adopt || bail "Terminal Delight refused the tile" 2
+  hyprctl dispatch closewindow "address:$addr" >/dev/null
+  notify "⇄ sent to Terminal Delight"
+  ;;
+agent | tmux)
+  # a live session: close FIRST so the resume/attach never runs twice, then
+  # adopt. If adopt fails after the close, reopen in a fallback terminal —
+  # the one invariant is that the session always lands somewhere visible.
+  hyprctl dispatch closewindow "address:$addr" >/dev/null
+  for _ in $(seq 40); do [[ -e /proc/$shell_pid ]] || break; sleep 0.05; done
+  [[ ! -e /proc/$shell_pid ]] || bail "origin would not close — nothing migrated" 2
+  if ! adopt; then
+    setsid uwsm-app -- xdg-terminal-exec --dir="$cwd" -e bash -lc "$run" >/dev/null 2>&1 &
+    bail "TD adopt failed — session reopened in a fallback terminal" 2
+  fi
+  notify "⇄ $kind sent to Terminal Delight"
+  ;;
+esac

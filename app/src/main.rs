@@ -1679,6 +1679,10 @@ struct Workspace {
     dead_menu: bool,
     /// Manifest filter: show every dead agent, or just one project. Transient.
     dead_filter: Option<String>,
+    /// Tiles handed over by the desktop (`ctl adopt …`, i.e. td-send) awaiting
+    /// a window context: queued by the window-less ctl ticker, drained by
+    /// render() via defer_in.
+    pending_adopts: Vec<ctl::AdoptReq>,
     /// The 🧩 plugins panel overlay is open (MCP plugin host — see [`plugins`]).
     plugins_menu: bool,
     /// Last plugin action result line (e.g. "wrote …/<id>.cdx"), shown as a
@@ -2083,6 +2087,7 @@ impl Workspace {
             mcp_menu: false,
             dead_menu: false,
             dead_filter: None,
+            pending_adopts: Vec::new(),
             plugins_menu: false,
             harvest_status: None,
             savings_menu: false,
@@ -2696,18 +2701,45 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.dead_menu = false;
+        self.adopt_pane(cwd, Some(resume), window, cx);
+    }
+
+    /// The landing half of `ctl adopt` — and the body resurrection shares:
+    /// open a fresh tab at `cwd`, optionally running `run` in it. A tile sent
+    /// over from the desktop (td-send / SUPER+ALT+T) arrives here as cwd plus
+    /// its derived resume/attach line; a plain shell hand-off is just a cwd.
+    fn adopt_pane(
+        &mut self,
+        cwd: Option<String>,
+        run: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let restore = session::PaneRestore {
             cwd,
-            resume: Some(resume),
+            resume: run,
             logo: None,
         };
         let pane = make_pane_restored(restore, window, cx);
         self.tabs.push(Tab::new(Node::Leaf(pane), None));
         self.active = self.tabs.len() - 1;
-        self.dead_menu = false;
         self.save(cx);
         cx.notify();
         cx.defer_in(window, |ws, window, cx| ws.focus_active(window, cx));
+    }
+
+    /// Park a desktop adoption until a frame gives us a Window (the ctl ticker
+    /// is window-less). render() drains the queue via defer_in.
+    pub(crate) fn queue_adopt(&mut self, a: ctl::AdoptReq, cx: &mut Context<Self>) {
+        self.pending_adopts.push(a);
+        cx.notify();
+    }
+
+    fn drain_pending_adopts(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        for a in std::mem::take(&mut self.pending_adopts) {
+            self.adopt_pane(a.cwd, a.run, window, cx);
+        }
     }
 
     /// Harvest one agent session (live pane or 🪦 tombstone) into a portable
@@ -8159,6 +8191,11 @@ fn td_anchor_top_forced() -> bool {
 impl Render for Workspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.reap(window, cx);
+        if !self.pending_adopts.is_empty() {
+            // Adoptions queued by the window-less ctl ticker land here, where a
+            // Window exists; defer so the tab build never runs mid-render.
+            cx.defer_in(window, |ws, window, cx| ws.drain_pending_adopts(window, cx));
+        }
         // Publish the active UI language so panes can localise their own chrome.
         lang::set_current(self.lang);
         // Publish the global anchor-to-top setting so every pane's render (which
@@ -14411,6 +14448,33 @@ fn spawn_seeded_window(rt: &session::PaneRuntime) {
     let _ = cmd.spawn();
 }
 
+/// `terminal-delight probe <pid>` — the td-send forensics verb (see main()).
+fn probe_cli(args: &[String]) -> i32 {
+    let Some(pid) = args.first().and_then(|s| s.parse::<u32>().ok()) else {
+        eprintln!("usage: terminal-delight probe <shell-pid>");
+        return 1;
+    };
+    match session::probe_external(pid, &session::home_dir()) {
+        Ok(p) => {
+            let out = serde_json::json!({
+                "shell_pid": p.shell_pid,
+                "fg_pid": p.fg_pid,
+                "kind": p.kind.as_str(),
+                "comm": p.comm,
+                "cwd": p.cwd,
+                "cmdline": p.cmdline,
+                "resume": p.resume,
+            });
+            println!("{out}");
+            0
+        }
+        Err(e) => {
+            eprintln!("terminal-delight probe: {e}");
+            2
+        }
+    }
+}
+
 fn main() {
     // `--td-emit-demo`: this process was spawned as a demo pane's program (see
     // `term::spawn_in` under TD_DEMO). Print a screenful of agentic lorem-ipsum
@@ -14426,6 +14490,15 @@ fn main() {
     let argv: Vec<String> = std::env::args().collect();
     if argv.get(1).map(String::as_str) == Some("ctl") {
         std::process::exit(ctl::run_cli(&argv[2..]));
+    }
+
+    // `probe`: read-only forensics on someone ELSE's terminal — given a tile's
+    // shell (or direct-child) pid, report the foreground process, its cwd, and
+    // the resume line TD would use for it. td-send runs this before deciding
+    // whether an Omarchy tile migrates faithfully. Plain JSON on stdout, no
+    // window, no gpui.
+    if argv.get(1).map(String::as_str) == Some("probe") {
+        std::process::exit(probe_cli(&argv[2..]));
     }
 
     // Give every shell we spawn a real terminal type. gpui launches us from the

@@ -1,0 +1,173 @@
+#!/usr/bin/env python3
+"""td-send-mcp — the td-send verbs as a TD plugin.
+
+A tiny MCP server (newline-delimited JSON-RPC 2.0 over stdio, same transport
+as TD's host in `app/src/plugins.rs`) wrapping `td-send`, the tile-migration
+script. Two tools:
+
+  pull_workspace — migrate every eligible terminal tile on the active Hyprland
+                   workspace into Terminal Delight (the ⇄ panel button).
+  send_window    — migrate one tile by Hyprland address (for agents that list
+                   clients and choose; the hotkey path never needs this).
+
+All policy (what counts as a terminal, what migrates faithfully, never strand
+a session) lives in `td-send` itself — this server only enumerates and calls,
+so the hotkey, the panel button, and an agent all get identical behavior.
+"""
+import json
+import os
+import shutil
+import subprocess
+import sys
+
+PROTOCOL = "2024-11-05"
+NAME = "td-send"
+VERSION = "0.1.0"
+
+# terminal classes td-send accepts (mirrors its guard; used only to pre-filter
+# the workspace sweep so refusals don't spam notifications)
+ELIGIBLE = ("foot", "footclient", "Alacritty", "kitty", "com.mitchellh.ghostty")
+ELIGIBLE_PREFIX = ("org.omarchy.",)
+
+
+def _td_send_bin():
+    p = shutil.which("td-send")
+    if p:
+        return p
+    local = os.path.expanduser("~/.local/bin/td-send")
+    return local if os.path.isfile(local) else None
+
+
+def _hypr(cmd):
+    """hyprctl -j … as parsed JSON, or None."""
+    try:
+        out = subprocess.run(["hyprctl", "-j"] + cmd, capture_output=True,
+                             text=True, timeout=5)
+        return json.loads(out.stdout or "null")
+    except Exception:
+        return None
+
+
+def _eligible(client, active_ws):
+    cls = client.get("class", "")
+    if client.get("workspace", {}).get("id") != active_ws:
+        return False
+    if cls == "terminal-delight" or not cls:
+        return False
+    return cls in ELIGIBLE or cls.startswith(ELIGIBLE_PREFIX)
+
+
+def _send_one(binp, address):
+    """Run td-send for one tile; (address, rc, last-line-of-output)."""
+    try:
+        r = subprocess.run([binp, "--address", address], capture_output=True,
+                           text=True, timeout=30)
+        note = (r.stderr.strip() or r.stdout.strip()).splitlines()
+        return {"address": address, "ok": r.returncode == 0,
+                "note": note[-1] if note else ""}
+    except Exception as e:
+        return {"address": address, "ok": False, "note": str(e)}
+
+
+def pull_workspace(_args):
+    binp = _td_send_bin()
+    if not binp:
+        return {"ok": False, "error": "td-send not installed (run scripts/install-send-hotkey.sh)"}
+    ws = _hypr(["activeworkspace"]) or {}
+    clients = _hypr(["clients"]) or []
+    active = ws.get("id")
+    tiles = [c for c in clients if _eligible(c, active)]
+    results = [_send_one(binp, c["address"]) for c in tiles if c.get("address")]
+    sent = sum(1 for r in results if r["ok"])
+    return {"ok": True, "workspace": active, "eligible": len(tiles),
+            "sent": sent, "results": results}
+
+
+def send_window(args):
+    binp = _td_send_bin()
+    if not binp:
+        return {"ok": False, "error": "td-send not installed (run scripts/install-send-hotkey.sh)"}
+    addr = (args or {}).get("address", "")
+    if not addr:
+        return {"ok": False, "error": "address required (hyprctl clients -j .address)"}
+    return _send_one(binp, addr)
+
+
+def _send(obj):
+    sys.stdout.write(json.dumps(obj) + "\n")
+    sys.stdout.flush()
+
+
+def _result(rid, result):
+    _send({"jsonrpc": "2.0", "id": rid, "result": result})
+
+
+def _error(rid, code, msg):
+    _send({"jsonrpc": "2.0", "id": rid, "error": {"code": code, "message": msg}})
+
+
+TOOLS = [
+    {
+        "name": "pull_workspace",
+        "description": "Migrate every eligible terminal tile on the active Hyprland "
+                       "workspace into Terminal Delight (idle shells, agents, tmux "
+                       "attaches; anything else is refused per tile).",
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "send_window",
+        "description": "Migrate one Omarchy tile into Terminal Delight by Hyprland "
+                       "window address.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"address": {"type": "string"}},
+            "required": ["address"],
+        },
+    },
+]
+
+HANDLERS = {"pull_workspace": pull_workspace, "send_window": send_window}
+
+
+def main():
+    for line in sys.stdin:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            req = json.loads(line)
+        except Exception:
+            continue
+        method = req.get("method")
+        rid = req.get("id")
+        if method == "initialize":
+            _result(rid, {
+                "protocolVersion": PROTOCOL,
+                "capabilities": {"tools": {}},
+                "serverInfo": {"name": NAME, "version": VERSION},
+            })
+        elif method == "notifications/initialized":
+            pass  # no response to a notification
+        elif method == "tools/list":
+            _result(rid, {"tools": TOOLS})
+        elif method == "tools/call":
+            params = req.get("params") or {}
+            handler = HANDLERS.get(params.get("name"))
+            if not handler:
+                _error(rid, -32601, "unknown tool: %s" % params.get("name"))
+                continue
+            try:
+                payload = handler(params.get("arguments") or {})
+                _result(rid, {"content": [{"type": "text",
+                                           "text": json.dumps(payload)}]})
+            except Exception as e:  # never crash the host
+                _error(rid, -32000, "%s failed: %s" % (params.get("name"), e))
+        elif rid is not None:
+            _error(rid, -32601, "unknown method: %s" % method)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (BrokenPipeError, KeyboardInterrupt):
+        pass

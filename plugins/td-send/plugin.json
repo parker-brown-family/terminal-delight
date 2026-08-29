@@ -1,0 +1,10 @@
+{
+  "name": "td-send",
+  "version": "0.1.0",
+  "description": "Pull Omarchy terminal tiles into Terminal Delight — the ⇄ desk-consolidation verbs behind SUPER+ALT+T, exposed to agents.",
+  "command": "td-send-mcp",
+  "scope": "global",
+  "actions": [
+    { "tool": "pull_workspace", "label": "⇄ pull tiles", "surfaces": ["global"] }
+  ]
+}
