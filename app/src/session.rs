@@ -682,7 +682,10 @@ fn stat_field_after_comm(stat: &str, idx: usize) -> Option<i64> {
 
 /// Shells whose bare prompt makes a tile "idle" (faithfully reopenable).
 fn is_shell_comm(comm: &str) -> bool {
-    matches!(comm, "bash" | "zsh" | "fish" | "sh" | "dash" | "nu" | "nushell")
+    matches!(
+        comm,
+        "bash" | "zsh" | "fish" | "sh" | "dash" | "nu" | "nushell"
+    )
 }
 
 /// A tmux invocation that re-runs faithfully: an attach (any spelling) or a
@@ -696,8 +699,7 @@ fn tmux_attach_shaped(cmdline: &str) -> bool {
     let attach = words
         .iter()
         .any(|w| matches!(*w, "attach" | "attach-session" | "a" | "at"));
-    let new_a =
-        (words.contains(&"new-session") || words.contains(&"new")) && words.contains(&"-A");
+    let new_a = (words.contains(&"new-session") || words.contains(&"new")) && words.contains(&"-A");
     attach || new_a
 }
 
@@ -799,7 +801,10 @@ mod probe_tests {
             ProbeKind::Tmux
         );
         // vim in the foreground must never be "faithful"
-        assert_eq!(classify(false, "vim", "vim notes.md", None), ProbeKind::Other);
+        assert_eq!(
+            classify(false, "vim", "vim notes.md", None),
+            ProbeKind::Other
+        );
         // a shell that is NOT the foreground group (stopped-job weirdness) stays Other
         assert_eq!(classify(false, "bash", "bash", None), ProbeKind::Other);
     }

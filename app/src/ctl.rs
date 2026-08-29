@@ -525,7 +525,13 @@ mod tests {
     fn cli_adopt_builds_the_json_line_and_scopes_like_paint() {
         let s = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
         let (line, scope) = parse_cli(&s(&[
-            "adopt", "--cwd", "/tmp/x", "--run", "claude --resume abc-1", "--pid", "7",
+            "adopt",
+            "--cwd",
+            "/tmp/x",
+            "--run",
+            "claude --resume abc-1",
+            "--pid",
+            "7",
         ]))
         .unwrap();
         assert_eq!(scope, Scope::Pid(7));
