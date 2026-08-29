@@ -12,7 +12,11 @@
 # Path is fixed to ~/.local/state (not $XDG_STATE_HOME) because TD resolves
 # the ledger from its own home lookup — the two must never diverge.
 # Installed to ~/.local/bin by scripts/install-recovery-hook.sh.
+# Requires: jq (the installer checks; if jq vanishes later, exit quietly — a
+# hook must never break an agent session over a missing ledger).
 set -euo pipefail
+
+command -v jq >/dev/null 2>&1 || exit 0
 
 dir="$HOME/.local/state/terminal-delight/agent-ledger"
 payload="$(cat)"
