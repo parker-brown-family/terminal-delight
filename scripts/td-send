@@ -129,20 +129,38 @@ adopt() { # place the session: an existing TD window, else seed a fresh one.
   seed_window
 }
 
+window_present() {
+  hyprctl clients -j 2>/dev/null |
+    jq -e --arg a "$1" '.[] | select(.address == $a)' >/dev/null 2>&1
+}
+
+close_origin() { # Hyprland ≥0.56 dispatches Lua; older speaks strings — try
+  # both and trust only the observed effect, never the exit code (both forms
+  # can fail softly).
+  hyprctl dispatch "hl.dsp.window.close({ window = \"address:$addr\" })" >/dev/null 2>&1 || true
+  for _ in 1 2 3 4 5; do window_present "$addr" || return 0; sleep 0.1; done
+  hyprctl dispatch closewindow "address:$addr" >/dev/null 2>&1 || true
+  for _ in 1 2 3 4 5; do window_present "$addr" || return 0; sleep 0.1; done
+  return 1
+}
+
 case "$kind" in
 idle)
   # nothing running: adopt first, close only once TD said ok — zero-risk order
   adopt || bail "Terminal Delight refused the tile" 2
-  hyprctl dispatch closewindow "address:$addr" >/dev/null
-  notify "⇄ sent to Terminal Delight"
+  if close_origin; then
+    notify "⇄ sent to Terminal Delight"
+  else
+    notify "⇄ sent to Terminal Delight — but the origin tile refused to close"
+  fi
   ;;
 agent | tmux)
   # a live session: close FIRST so the resume/attach never runs twice, then
   # adopt. If adopt fails after the close, reopen in a fallback terminal —
   # the one invariant is that the session always lands somewhere visible.
-  hyprctl dispatch closewindow "address:$addr" >/dev/null
+  close_origin || bail "origin would not close — nothing migrated" 2
   for _ in $(seq 40); do [[ -e /proc/$shell_pid ]] || break; sleep 0.05; done
-  [[ ! -e /proc/$shell_pid ]] || bail "origin would not close — nothing migrated" 2
+  [[ ! -e /proc/$shell_pid ]] || bail "origin closed but its shell lingers — nothing migrated" 2
   if ! adopt; then
     setsid uwsm-app -- xdg-terminal-exec --dir="$cwd" -e bash -lc "$run" >/dev/null 2>&1 &
     bail "TD adopt failed — session reopened in a fallback terminal" 2
