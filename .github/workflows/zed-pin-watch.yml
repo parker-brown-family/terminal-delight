@@ -1,0 +1,66 @@
+# zed-pin-watch — weekly drift report for the gpui pin (policy: docs/patches/PINLOG.md, issue #179).
+#
+# Reads zed_rev from app/Cargo.toml, asks the GitHub API how far Zed has moved
+# since (latest release vs the pinned commit's date), and writes a step
+# summary. Past the threshold it opens — or updates — ONE tracking issue, so
+# drift is a visible ticket instead of a surprise. Never fails the build: this
+# is a smoke detector, not a gate.
+name: zed-pin-watch
+
+on:
+  schedule:
+    - cron: "17 9 * * 1" # Mondays 09:17 UTC
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  drift:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      THRESHOLD_WEEKS: 16
+      ISSUE_TITLE: "zed pin drift: scheduled bump is due"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Measure drift
+        id: drift
+        run: |
+          set -euo pipefail
+          pin=$(grep -oP 'zed_rev = "\K[0-9a-f]+' app/Cargo.toml)
+          pin_date=$(gh api "repos/zed-industries/zed/commits/$pin" --jq '.commit.committer.date')
+          latest_tag=$(gh api repos/zed-industries/zed/releases/latest --jq '.tag_name')
+          latest_date=$(gh api repos/zed-industries/zed/releases/latest --jq '.published_at')
+          weeks=$(( ( $(date -d "$latest_date" +%s) - $(date -d "$pin_date" +%s) ) / 604800 ))
+          {
+            echo "pin=$pin"
+            echo "pin_date=$pin_date"
+            echo "latest_tag=$latest_tag"
+            echo "weeks=$weeks"
+          } >>"$GITHUB_OUTPUT"
+          {
+            echo "## zed pin drift"
+            echo ""
+            echo "| Pin | Pinned | Zed latest | Drift |"
+            echo "|---|---|---|---|"
+            echo "| \`${pin:0:9}\` | $pin_date | $latest_tag ($latest_date) | **$weeks weeks** |"
+            echo ""
+            echo "Threshold: $THRESHOLD_WEEKS weeks · policy: docs/patches/PINLOG.md"
+          } >>"$GITHUB_STEP_SUMMARY"
+
+      - name: Raise (or refresh) the drift issue
+        if: ${{ fromJSON(steps.drift.outputs.weeks) >= fromJSON(env.THRESHOLD_WEEKS) }}
+        run: |
+          set -euo pipefail
+          body="The gpui pin \`${{ steps.drift.outputs.pin }}\` (pinned ${{ steps.drift.outputs.pin_date }}) is **${{ steps.drift.outputs.weeks }} weeks** behind Zed ${{ steps.drift.outputs.latest_tag }} — past the ${THRESHOLD_WEEKS}-week threshold.
+
+          Run the bump ritual in docs/patches/PINLOG.md (worktree → rebase the five patches → \`cargo test\` + \`scripts/release-smoke.sh\` → PR), and record the entry. Tracking policy: #179."
+          existing=$(gh issue list --state open --search "in:title \"$ISSUE_TITLE\"" --json number --jq '.[0].number // empty')
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body "$body"
+          else
+            gh issue create --title "$ISSUE_TITLE" --label follow-up --body "$body"
+          fi

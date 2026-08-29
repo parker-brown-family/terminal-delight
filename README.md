@@ -23,9 +23,10 @@ does the VT emulation; your real shell runs on a real PTY.
 |---|---|
 | Real shells (PTY + full VT emulation) — bash, vim, top, tmux verified | ✅ |
 | Tiling-tree splits + tabs, per-pane grids, focus borders | ✅ |
-| `ctrl+alt+r` / `ctrl+alt+d` split · `alt+←/→` switch panes · sub-tab drag-to-split · window pop-out | ✅ |
+| `alt+v` / `alt+h` (or `ctrl+alt+r` / `ctrl+alt+d`) split · `alt+←/→` switch panes · sub-tab drag-to-split · window pop-out | ✅ |
 | Pane closes when its shell exits; last one quits the app | ✅ |
 | Layout + per-pane appearance restore on launch | ✅ |
+| Per-directory default logos — pick once, inherited by subdirs, persistent (`dir-logos.toml`) | ✅ |
 | Live resize → SIGWINCH (verified against `tput`) | ✅ |
 | Full ANSI color (16 themed + 256 + truecolor), bold/underline/inverse/dim | ✅ |
 | Scrollback (wheel), mouse selection (click/word/line), `ctrl+shift+c/v`, bracketed paste | ✅ |
@@ -64,11 +65,13 @@ cd app && cargo run
 
 gpui is consumed from a pinned Zed checkout
 (`abbe85a3321bf6cb7f5b241e623d9c2e16c29187`, post-wgpu-Linux-renderer) carrying
-two small patches (`docs/patches/`): `0001-td-crt-pass` (the per-pane CRT barrel
-warp) and `0002-sever-gpl-crates` (removes the GPL crates the Zed graph would
-otherwise link — see [License](#license)). `scripts/prepare-gpui.sh` sets the
-checkout up as a sibling `zed-upstream/` directory and applies both; CI does the
-same. The crates.io gpui release still ships the older blade renderer with known
+a five-patch stack (`docs/patches/`, ~1,080 lines): `0001-td-crt-pass` (the
+per-pane CRT barrel warp), `0002-focus-blur`, `0003-text-crawl`, and
+`0004-warp-tube-cap-32` (focus/effect hooks), plus `0002-sever-gpl-crates`
+(removes the GPL crates the Zed graph would otherwise link — see
+[License](#license)). `scripts/prepare-gpui.sh` sets the checkout up as a
+sibling `zed-upstream/` directory and applies all five; CI does the same. The
+crates.io gpui release still ships the older blade renderer with known
 NVIDIA/X11 issues.
 
 Build the AppImage yourself, or run the full pre-release smoke:

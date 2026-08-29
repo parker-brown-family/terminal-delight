@@ -3,11 +3,14 @@
 //! Splits divide ONLY the focused terminal's space (true tiling tree); every
 //! other pane keeps its exact place. ctrl+shift+t / [+]: new tab ·
 //! ctrl+pgup/pgdn: switch · right-click tab: rename · ctrl+arrows: pane focus
-//! by direction · alt+arrows: cycle pane focus
+//! by direction · alt+arrows: cycle pane focus · alt+v / alt+h: split ↔ / ↕
 //! drag a tab to reorder · ctrl+click a tab: set its binder-divider colour
 //! 👓 on a sub-tab header: FOCUS — mirror that pane big, rest dimmed, esc closes
 //! (alt+↑/↓ jumps between your messages in a claude/codex pane) ·
 //! ctrl+scroll or the bezel scrubber: menu-bar size.
+//!
+//! One restorable session per compositor workspace: see [`instance`] for how a
+//! window claims one, and [`session`] for what a pane carries into it.
 //!
 //! TODO(os-chrome): client-side window decorations (WindowDecorations::Client).
 
@@ -16,8 +19,10 @@ mod crt;
 mod csd;
 mod ctl;
 mod demo;
+mod dirlogo;
 mod gamba;
 mod hud;
+mod instance;
 mod lang;
 mod mcp;
 mod mcp_tail;
@@ -473,6 +478,45 @@ impl<'de> Deserialize<'de> for SavedNode {
         }
         d.deserialize_any(V)
     }
+}
+
+impl SavedNode {
+    /// Visit every leaf's captured resume command, in layout order.
+    fn for_each_resume(&mut self, f: &mut impl FnMut(&mut Option<String>)) {
+        match self {
+            SavedNode::Leaf { resume, .. } => f(resume),
+            SavedNode::Split { a, b, .. } => {
+                a.for_each_resume(f);
+                b.for_each_resume(f);
+            }
+        }
+    }
+}
+
+/// Two panes sharing a working directory can capture the *same* resume command:
+/// `claude --continue` is cwd-scoped by definition, and an id recovered from
+/// disk is only ever the newest session in that directory. Restoring both would
+/// drop two agents into one conversation, each overwriting the other's turns —
+/// so the first pane keeps the resume and the rest come back as a fresh agent in
+/// the same place, which is what a second pane there was always going to be.
+fn dedupe_resumes(tabs: &mut [SavedTab]) {
+    let mut claimed = std::collections::HashSet::new();
+    for tab in tabs.iter_mut() {
+        tab.node.for_each_resume(&mut |resume| {
+            if let Some(cmd) = resume.clone() {
+                if !claimed.insert(cmd.clone()) {
+                    *resume = bare_agent(&cmd);
+                }
+            }
+        });
+    }
+}
+
+/// A resume command with the session part stripped — `claude --continue` becomes
+/// `claude`. Restoring a duplicate should still open the agent, just in a
+/// conversation of its own.
+fn bare_agent(cmd: &str) -> Option<String> {
+    cmd.split_whitespace().next().map(str::to_string)
 }
 
 fn default_ratio() -> f32 {
@@ -997,13 +1041,8 @@ struct SavedGroup {
     collapsed: bool,
 }
 
-fn state_path() -> PathBuf {
-    let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
-    PathBuf::from(home).join(".config/terminal-delight/state.toml")
-}
-
 fn load_state() -> StateFile {
-    fs::read_to_string(state_path())
+    fs::read_to_string(instance::state_path())
         .ok()
         .and_then(|s| toml::from_str(&s).ok())
         .unwrap_or_default()
@@ -1036,16 +1075,20 @@ fn is_catastrophic_shrink(
     (old_leaves >= 4 && new_leaves * 2 < old_leaves) || (old_tabs >= 3 && new_tabs * 2 < old_tabs)
 }
 
-/// Keep the newest ~10 timestamped snapshots of `state.toml` under a `backups/`
-/// sibling dir, copying the CURRENT good file in before it is overwritten. Makes
-/// any bad save recoverable with a single `cp` — defense in depth behind the
-/// richness guard.
+/// Keep the newest ~10 timestamped snapshots of the session's state file under a
+/// per-key `backups/<key>/` sibling dir, copying the CURRENT good file in before
+/// it is overwritten. Makes any bad save recoverable with a single `cp` —
+/// defense in depth behind the richness guard. Per key, so busy workspaces
+/// cannot prune each other's history.
 fn rotate_state_backup(path: &std::path::Path) {
     let Some(dir) = path.parent() else { return };
     if !path.exists() {
         return;
     }
-    let backups = dir.join("backups");
+    let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
+        return;
+    };
+    let backups = dir.join("backups").join(stem);
     if fs::create_dir_all(&backups).is_err() {
         return;
     }
@@ -1077,20 +1120,20 @@ fn rotate_state_backup(path: &std::path::Path) {
 
 /// The single primary-state write chokepoint. Applies the richness-regression
 /// guard (refusing an unintended catastrophic shrink, preserving the on-disk
-/// session and snapshotting it as `state.toml.last-good`) and rotates a backup
+/// session and snapshotting it as `<key>.toml.last-good`) and rotates a backup
 /// before every accepted write. `new_leaves`/`new_tabs` describe the tree being
 /// written; `allow_shrink` is true only for an explicit user close.
 fn persist_primary_state(body: &str, new_leaves: usize, new_tabs: usize, allow_shrink: bool) {
-    let path = state_path();
+    let path = instance::state_path();
     let disk = load_state();
     let old_leaves: usize = disk.tabs.iter().map(|t| count_saved_leaves(&t.node)).sum();
     let old_tabs = disk.tabs.len();
     if is_catastrophic_shrink(old_leaves, old_tabs, new_leaves, new_tabs, allow_shrink) {
         // Keep the rich on-disk session; stash a copy as last-good for recovery.
-        let _ = fs::copy(&path, path.with_file_name("state.toml.last-good"));
+        let _ = fs::copy(&path, path.with_extension("toml.last-good"));
         eprintln!(
             "terminal-delight: REFUSED a session shrink ({old_leaves}->{new_leaves} panes, \
-             {old_tabs}->{new_tabs} tabs) — kept on-disk session + wrote state.toml.last-good"
+             {old_tabs}->{new_tabs} tabs) — kept on-disk session + wrote a .last-good copy"
         );
         return;
     }
@@ -1322,6 +1365,10 @@ struct LangPicker {
 struct LogoPicker {
     /// Which pane gets the chosen logo.
     target: gpui::EntityId,
+    /// The target pane's live cwd AT OPEN — the directory a pick maps the
+    /// chosen logo to (and whose subtree inherits it; see [`dirlogo`]). `None`
+    /// (dead shell) makes a pick fall back to an explicit pane-only logo.
+    cwd: Option<String>,
     /// Searches ONLY the file basename. Fuzzy gating: it does not initiate
     /// until the 3rd char UNLESS `loc` is already set (see `filter_logo_two_field`).
     name: EditBuffer,
@@ -1414,40 +1461,60 @@ fn demo_logo_for(seed: &str) -> Option<String> {
     )
 }
 
-/// Walk a bounded set of roots for image files (`png/jpg/jpeg/svg`), skipping
-/// hidden + heavy dirs, capped so the picker stays snappy. Returns candidates
-/// pre-formatted as `(path, basename, ~/relative dir)`, sorted by basename.
+/// `~`-abbreviate an absolute path for display (picker hints + candidate dirs).
+fn tilde(path: &str) -> String {
+    let home = std::env::var("HOME").unwrap_or_default();
+    if !home.is_empty() {
+        if let Some(rest) = path.strip_prefix(&home) {
+            // component boundary: /home/px must not read as ~x for /home/p
+            if rest.is_empty() || rest.starts_with('/') {
+                return format!("~{rest}");
+            }
+        }
+    }
+    path.to_string()
+}
+
+/// Walk a bounded set of roots for image files (`png/jpg/jpeg/svg/webp`),
+/// skipping hidden + heavy dirs, capped so the picker stays snappy. Returns
+/// candidates pre-formatted as `(path, basename, ~/relative dir)`.
 fn scan_logo_candidates() -> Vec<LogoCandidate> {
     let home = std::env::var("HOME").unwrap_or_default();
     scan_logo_candidates_in(std::path::Path::new(&home))
 }
 
-/// Testable core: walk `home`'s picture dirs first (full depth), then a SHALLOW
-/// home root, returning image candidates newest-first.
+/// Testable core: walk `home`'s picture dirs first, then the whole home root
+/// (both full depth, bounded by CAP + skip list), newest-first.
 fn scan_logo_candidates_in(home_path: &std::path::Path) -> Vec<LogoCandidate> {
-    const CAP: usize = 4000;
-    const MAX_DEPTH: usize = 6;
+    const CAP: usize = 20000;
+    const MAX_DEPTH: usize = 8;
     let home = home_path.to_string_lossy().into_owned();
     let is_img = |name: &str| {
         let n = name.to_ascii_lowercase();
-        n.ends_with(".png") || n.ends_with(".jpg") || n.ends_with(".jpeg") || n.ends_with(".svg")
+        n.ends_with(".png")
+            || n.ends_with(".jpg")
+            || n.ends_with(".jpeg")
+            || n.ends_with(".svg")
+            || n.ends_with(".webp")
     };
     let skip_dir = |name: &str| {
         name.starts_with('.')
             || matches!(
                 name,
-                "node_modules" | "target" | "vendor" | ".git" | "__pycache__"
+                "node_modules" | "target" | "vendor" | ".git" | "__pycache__" | "dist"
             )
     };
     let mut out: Vec<LogoCandidate> = Vec::new();
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
     // Iterative bounded walk (depth-limited, no symlink following). The picture
-    // dirs are walked FULL depth and popped FIRST (LIFO → push last); the home
-    // root is walked only SHALLOW so a deep $HOME can't flood the cap before the
-    // picture dirs are reached (that hid ~/Pictures/Screenshots/<your shot>).
+    // dirs are pushed LAST so they pop FIRST (LIFO): a just-taken screenshot
+    // lands inside the cap no matter what. The home root then walks FULL depth
+    // too — project logo assets live deep (~/ORG/Software/<proj>/assets/x.png)
+    // and the old shallow home walk (2 levels) never surfaced them. The cap
+    // (20k) plus the heavy-dir skip list bounds the walk, not a stunted depth.
     let mut stack: Vec<(PathBuf, usize)> = Vec::new();
     if home_path.is_dir() {
-        stack.push((home_path.to_path_buf(), MAX_DEPTH.saturating_sub(1)));
+        stack.push((home_path.to_path_buf(), 0));
     }
     for d in ["Images", "Documents", "Desktop", "Downloads", "Pictures"] {
         let r = home_path.join(d);
@@ -1651,6 +1718,10 @@ struct Workspace {
     /// The per-pane header-logo image picker (header `＋ logo` / logo click), if
     /// open. Owns the keyboard while up, like `lang_picker`.
     logo_picker: Option<LogoPicker>,
+    /// The per-directory default-logo map (dir → image), mirrored from
+    /// `dir-logos.toml` by `refresh_dir_logos` — render-side cache only, the
+    /// file is the truth (see [`dirlogo`]).
+    dir_logos: std::collections::HashMap<String, String>,
     renaming: Option<(usize, EditBuffer)>,
     /// Tab index awaiting a "close all its panes?" confirmation, if any.
     confirm_close: Option<usize>,
@@ -1836,9 +1907,10 @@ struct Workspace {
     /// panes (which can't reach `&Workspace`) read the live value. One toggle in
     /// the OUTER design panel.
     anchor_top: bool,
-    /// A scratch window (opened while another instance is already running, or a
+    /// A scratch window (opened on a workspace that already has one, or a
     /// torn-off pane): one fresh terminal, never restores or persists session
-    /// state — so it can't clobber the primary window's saved layout.
+    /// state — so it can't clobber the layout of the window that owns the
+    /// workspace.
     scratch: bool,
     /// Frameless drag latch: a mousedown on the mother bar arms it; the first
     /// mouse-move while armed hands off to the compositor's window-move (so a
@@ -2015,8 +2087,8 @@ fn build_node(saved: &SavedNode, window: &mut Window, cx: &mut Context<Workspace
 }
 
 impl Workspace {
-    /// The primary window: restore the saved layout (or open a single fresh tab)
-    /// and persist changes back to disk.
+    /// The window that owns this workspace's session: restore its saved layout
+    /// (or open a single fresh tab) and persist changes back to disk.
     fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         Self::build(false, false, None, window, cx)
     }
@@ -2030,7 +2102,8 @@ impl Workspace {
 
     /// A scratch window: one fresh terminal (optionally seeded with a cwd/agent
     /// session for a torn-off pane), no restore, no persistence. Opened when the
-    /// hotkey fires while a primary is already running, or on a drag-out pop-out.
+    /// hotkey fires on a workspace that already has a window, or on a drag-out
+    /// pop-out.
     fn new_scratch(
         seed: Option<session::PaneRestore>,
         window: &mut Window,
@@ -2074,6 +2147,7 @@ impl Workspace {
             find: None,
             lang_picker: None,
             logo_picker: None,
+            dir_logos: dirlogo::load(),
             renaming: None,
             confirm_close: None,
             help_open: false,
@@ -2239,6 +2313,20 @@ impl Workspace {
             }
         })
         .detach();
+        // dir-logo sweep: a `cd` changes which per-directory default applies,
+        // and no structural event fires for it — poll the cheap /proc cwd
+        // every 2s. Scratch windows sweep too (they wear logos like any other;
+        // they just never persist layout).
+        cx.spawn(async move |this, cx| loop {
+            cx.background_executor().timer(Duration::from_secs(2)).await;
+            if this
+                .update(cx, |ws: &mut Workspace, cx| ws.refresh_dir_logos(cx))
+                .is_err()
+            {
+                break;
+            }
+        })
+        .detach();
         // session checkpoint: live state (pane cwds, agent sessions, window
         // bounds) changes without structural events, so re-snapshot every 30s —
         // a crash loses at most that much recency, never the layout. (Clean quit
@@ -2344,7 +2432,7 @@ impl Workspace {
     }
 
     fn save(&self, cx: &App) {
-        // a scratch / torn-off window must never overwrite the primary's layout
+        // a scratch / torn-off window must never overwrite a workspace's layout
         if self.scratch {
             return;
         }
@@ -2353,7 +2441,9 @@ impl Workspace {
         self.degraded.set(false);
         // EXPLICIT user shrink? (set by close_tab / close_pane). Consume it.
         let allow_shrink = self.permit_shrink.replace(false);
-        if let Ok(body) = toml::to_string(&self.build_state(cx)) {
+        let mut state = self.build_state(cx);
+        dedupe_resumes(&mut state.tabs);
+        if let Ok(body) = toml::to_string(&state) {
             persist_primary_state(&body, self.pane_count(), self.tabs.len(), allow_shrink);
         }
     }
@@ -3555,6 +3645,90 @@ impl Workspace {
         cx.notify();
     }
 
+    /// The pane entity with this id, if it's still in any tab's tree.
+    fn pane_by_id(&self, id: gpui::EntityId) -> Option<Entity<TerminalView>> {
+        for tab in &self.tabs {
+            let mut leaves = vec![];
+            tab.root.leaves(&mut leaves);
+            if let Some(p) = leaves.into_iter().find(|p| p.entity_id() == id) {
+                return Some(p.clone());
+            }
+        }
+        None
+    }
+
+    /// Reload the per-directory map and re-resolve every pane's inherited logo
+    /// from its live cwd. Cheap (one tiny file read, one readlink per pane) and
+    /// quiet — panes only notify when their resolved logo actually changed.
+    /// Runs on the 2s sweep (a `cd` fires no structural event we could hook)
+    /// and immediately after every picker write.
+    fn refresh_dir_logos(&mut self, cx: &mut Context<Self>) {
+        self.dir_logos = dirlogo::load();
+        for tab in &self.tabs {
+            let mut leaves = vec![];
+            tab.root.leaves(&mut leaves);
+            for leaf in leaves {
+                let resolved = leaf
+                    .read(cx)
+                    .current_cwd()
+                    .and_then(|c| dirlogo::resolve(&self.dir_logos, &c));
+                if leaf.read(cx).dir_logo != resolved {
+                    leaf.update(cx, |v, cx| {
+                        v.dir_logo = resolved;
+                        cx.notify();
+                    });
+                }
+            }
+        }
+    }
+
+    /// Apply a picker choice. OPINIONATED: the pick IS the directory default —
+    /// written to `dir-logos.toml` for the pane's cwd, inherited by its
+    /// subdirs, persistent across sessions. The pane's explicit logo is
+    /// cleared so the just-written default shows through and keeps following
+    /// future changes. Only with no readable cwd (shell died) does it fall
+    /// back to the old explicit pane-only set.
+    fn apply_logo_pick(
+        &mut self,
+        target: gpui::EntityId,
+        path: String,
+        cwd: Option<String>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(dir) = cwd else {
+            self.set_pane_logo(target, Some(path), cx);
+            return;
+        };
+        dirlogo::set(&dir, &path);
+        if let Some(p) = self.pane_by_id(target) {
+            p.update(cx, |v, cx| {
+                v.logo = None;
+                cx.notify();
+            });
+        }
+        self.logo_picker = None;
+        self.refresh_dir_logos(cx);
+        self.save(cx);
+        cx.notify();
+    }
+
+    /// The picker's ✕ row: remove the logo the target currently wears — its
+    /// explicit per-pane logo AND the per-directory rule governing its cwd, so
+    /// the subtree falls back to the next mapped ancestor (or to none).
+    fn remove_logo_pick(&mut self, target: gpui::EntityId, cx: &mut Context<Self>) {
+        let ruling = self
+            .logo_picker
+            .as_ref()
+            .and_then(|lp| lp.cwd.as_deref())
+            .and_then(|c| dirlogo::resolve_entry(&self.dir_logos, c))
+            .map(|(d, _)| d.to_string());
+        if let Some(dir) = ruling {
+            dirlogo::clear(&dir);
+        }
+        self.set_pane_logo(target, None, cx);
+        self.refresh_dir_logos(cx);
+    }
+
     /// Open the header-logo image picker scoped to `target`. Scans the candidate
     /// image files up front (bounded) and grabs the keyboard so typing filters.
     fn open_logo_picker(
@@ -3565,8 +3739,12 @@ impl Workspace {
     ) {
         let candidates = scan_logo_candidates();
         let order = (0..candidates.len()).collect();
+        let cwd = self
+            .pane_by_id(target)
+            .and_then(|p| p.read(cx).current_cwd());
         self.logo_picker = Some(LogoPicker {
             target,
+            cwd,
             name: EditBuffer::seeded(""),
             loc: EditBuffer::seeded(""),
             field: LogoField::Name,
@@ -4420,20 +4598,19 @@ impl Workspace {
         let top = (wh * 0.22).clamp(8., (wh - panel_h - 8.).max(8.));
         let sel = lp.selected.min(order.len().saturating_sub(1));
         let target = lp.target;
-        // Does the target already carry a logo? (Lets us offer a "remove" row.)
-        let has_logo = {
-            let mut found = false;
-            'scan: for tab in &self.tabs {
-                let mut leaves = vec![];
-                tab.root.leaves(&mut leaves);
-                for p in &leaves {
-                    if p.entity_id() == target && p.read(cx).logo.is_some() {
-                        found = true;
-                        break 'scan;
-                    }
-                }
-            }
-            found
+        // Does the target wear a logo (explicit or dir-inherited)? And which
+        // mapped dir currently rules its cwd — the entry the ✕ row would clear.
+        let (has_logo, ruling_dir) = {
+            let worn = self.pane_by_id(target).is_some_and(|p| {
+                let v = p.read(cx);
+                v.logo.is_some() || v.dir_logo.is_some()
+            });
+            let ruling = lp
+                .cwd
+                .as_deref()
+                .and_then(|c| dirlogo::resolve_entry(&self.dir_logos, c))
+                .map(|(d, _)| d.to_string());
+            (worn || ruling.is_some(), ruling)
         };
 
         // One labelled input row. `active` highlights the field the keyboard is
@@ -4579,6 +4756,20 @@ impl Workspace {
                     } else {
                         "Tab switches NAME / IN".to_string()
                     }),
+            )
+            .child(
+                // The OPINIONATED contract, said out loud: a pick writes the
+                // DIRECTORY default — persistent, inherited by subdirs.
+                div()
+                    .text_size(px(8.5))
+                    .text_color(th.complement.alpha(0.8))
+                    .child(match lp.cwd.as_deref() {
+                        Some(d) => format!(
+                            "\u{21b5} sets the default logo for {} + subdirs (persists)",
+                            tilde(d)
+                        ),
+                        None => "\u{21b5} sets this pane's logo".to_string(),
+                    }),
             );
 
         let mut list = div().flex().flex_col().gap_0p5().px_1();
@@ -4596,12 +4787,15 @@ impl Workspace {
                     .cursor_pointer()
                     .text_color(th.text.alpha(0.7))
                     .child(div().w(px(16.)).flex_none().child("\u{2715}"))
-                    .child(div().flex_1().min_w(px(0.)).child("Remove logo"))
+                    .child(div().flex_1().min_w(px(0.)).child(match &ruling_dir {
+                        Some(d) => format!("Remove logo — clears the default for {}", tilde(d)),
+                        None => "Remove logo".to_string(),
+                    }))
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
                             cx.stop_propagation();
-                            ws.set_pane_logo(target, None, cx);
+                            ws.remove_logo_pick(target, cx);
                             ws.focus_active(window, cx);
                         }),
                     ),
@@ -4664,7 +4858,8 @@ impl Workspace {
                     MouseButton::Left,
                     cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
                         cx.stop_propagation();
-                        ws.set_pane_logo(target, Some(path.clone()), cx);
+                        let cwd = ws.logo_picker.as_ref().and_then(|lp| lp.cwd.clone());
+                        ws.apply_logo_pick(target, path.clone(), cwd, cx);
                         ws.focus_active(window, cx);
                     }),
                 );
@@ -4678,7 +4873,7 @@ impl Workspace {
                     .text_size(px(10.))
                     .text_color(th.text.alpha(0.4))
                     .child(if total == 0 {
-                        "No image files found (png/jpg/jpeg/svg)".to_string()
+                        "No image files found (png/jpg/jpeg/svg/webp)".to_string()
                     } else if gated {
                         "type 3+ chars, or set IN to search".to_string()
                     } else {
@@ -5479,8 +5674,8 @@ impl Workspace {
                         .and_then(|&i| lp.candidates.get(i))
                         .map(|c| c.path.clone());
                     if let Some(path) = pick {
-                        // set_pane_logo closes the picker; hand the keyboard back.
-                        self.set_pane_logo(lp.target, Some(path), cx);
+                        // apply_logo_pick closes the picker; hand the keyboard back.
+                        self.apply_logo_pick(lp.target, path, lp.cwd.clone(), cx);
                         self.focus_active(window, cx);
                     } else {
                         self.logo_picker = Some(lp);
@@ -5687,6 +5882,20 @@ impl Workspace {
             return;
         }
         if m.alt && !m.control {
+            // Alt+V / Alt+H split the focused pane, Tilix-style: V puts the new
+            // pane beside it (a vertical divider, SplitDir::Row — same as
+            // ctrl+alt+r), H puts it below (SplitDir::Col — same as ctrl+alt+d).
+            match ks.key.as_str() {
+                "v" => {
+                    self.split(SplitDir::Row, window, cx);
+                    return;
+                }
+                "h" => {
+                    self.split(SplitDir::Col, window, cx);
+                    return;
+                }
+                _ => {}
+            }
             let Some(tab) = self.tabs.get(self.active) else {
                 return;
             };
@@ -10224,10 +10433,11 @@ impl Render for Workspace {
                     let logo_path = p
                         .logo
                         .clone()
+                        .or_else(|| p.dir_logo.clone())
                         .or_else(|| demo_logo_for(&format!("{title}/{id:?}")));
                     // DEFAULT CARD ART (no uploaded logo): a generated crest built
                     // from the identity hierarchy GROUP > TITLE > AGENT/SHELL > STATE.
-                    // An uploaded logo (p.logo) always overrides this.
+                    // A logo (explicit, or inherited from the pane's dir) overrides it.
                     let monogram: String = {
                         let m: String = title
                             .split(|c: char| !c.is_alphanumeric())
@@ -11897,7 +12107,7 @@ impl Render for Workspace {
                         row("Ctrl+Shift+T", s.new_tab),
                         row("Ctrl+PgUp / PgDn", s.switch_tabs),
                         row("Ctrl+Shift+PgUp / PgDn", s.move_tab),
-                        row("Ctrl+Alt+R / D", s.split),
+                        row("Alt+V / H · Ctrl+Alt+R / D", s.split),
                         row(s.k_ctrl_arrows, s.move_focus_dir),
                         row(s.k_alt_arrows, s.move_focus),
                         row(s.k_drag_subtab, s.drag_subtab),
@@ -13183,6 +13393,29 @@ mod tests {
     }
 
     #[test]
+    fn logo_scan_reaches_deep_project_assets() {
+        use std::io::Write;
+        let tmp = std::env::temp_dir().join(format!("td-logo-deep-{}", std::process::id()));
+        // The shape that used to be invisible: a brand asset 4 dirs under $HOME
+        // and OUTSIDE the picture dirs — the old walk stopped 2 levels down the
+        // home root. Also exercises webp (valid logo material, MCP already
+        // accepts it).
+        let assets = tmp.join("ORG/Software/project/assets");
+        std::fs::create_dir_all(&assets).unwrap();
+        std::fs::File::create(assets.join("brand-logo.webp"))
+            .unwrap()
+            .write_all(b"x")
+            .unwrap();
+        let found = scan_logo_candidates_in(&tmp);
+        let ok = found.iter().any(|c| c.base == "brand-logo.webp");
+        std::fs::remove_dir_all(&tmp).ok();
+        assert!(
+            ok,
+            "a project logo asset deep under $HOME must be reachable"
+        );
+    }
+
+    #[test]
     fn logo_sort_puts_newest_first() {
         let mut v = vec![
             LogoCandidate {
@@ -13503,24 +13736,24 @@ mod tests {
     }
 
     #[test]
-    fn scratch_decision_covers_force_seed_and_master() {
-        // lone launch, no live master → primary restore, no seed
-        let (scratch, seed) = scratch_decision(false, false, None, None);
+    fn scratch_decision_covers_force_seed_and_ownership() {
+        // took the workspace's session → restore it, no seed
+        let (scratch, seed) = scratch_decision(false, true, None, None);
         assert!(!scratch);
         assert!(seed.is_none());
 
-        // a live master already holds the session → scratch, still no seed
-        let (scratch, seed) = scratch_decision(false, true, None, None);
+        // a window is already living on this workspace → scratch, still no seed
+        let (scratch, seed) = scratch_decision(false, false, None, None);
         assert!(scratch);
         assert!(seed.is_none());
 
-        // forced scratch with no master (TD_SCRATCH=1)
-        assert!(scratch_decision(true, false, None, None).0);
+        // forced scratch even holding the session (TD_SCRATCH=1)
+        assert!(scratch_decision(true, true, None, None).0);
 
         // a torn-off pane seeds cwd/resume and is always scratch
         let (scratch, seed) = scratch_decision(
             false,
-            false,
+            true,
             Some("/tmp/work".into()),
             Some("claude --resume x".into()),
         );
@@ -13531,29 +13764,71 @@ mod tests {
     }
 
     #[test]
-    fn master_lock_is_exclusive_and_releases() {
-        // Unique path per run so the test is parallel-safe and env-free.
-        let path = std::env::temp_dir().join(format!(
-            "td-master-lock-test-{}-{}.lock",
-            std::process::id(),
-            line!(),
-        ));
-        let _ = std::fs::remove_file(&path);
+    fn the_title_says_which_session_a_window_holds() {
+        assert_eq!(window_title(false, "2"), "terminal-delight — 2");
+        // one session, no compositor: the plain name it always had
+        assert_eq!(
+            window_title(false, instance::DEFAULT_KEY),
+            "terminal-delight"
+        );
+        // a throwaway window says so, whatever workspace it is sitting on
+        assert_eq!(window_title(true, "2"), "terminal-delight — scratch");
+    }
 
-        // First taker wins and holds the fd.
-        let held = try_lock_at(&path)
-            .expect("open ok")
-            .expect("first acquires");
-        // While held, a second non-blocking attempt is refused.
-        assert!(try_lock_at(&path).is_err(), "second taker must be refused");
-
-        // Releasing (dropping the fd) frees the lock for the next taker.
-        drop(held);
-        let again = try_lock_at(&path)
-            .expect("open ok")
-            .expect("re-acquires after release");
-        drop(again);
-        let _ = std::fs::remove_file(&path);
+    #[test]
+    fn only_the_first_pane_in_a_directory_keeps_a_shared_resume() {
+        let leaf = |resume: Option<&str>| SavedNode::Leaf {
+            appearance: PaneTheme::default(),
+            cwd: Some("/home/me".into()),
+            resume: resume.map(str::to_string),
+            name: None,
+            logo: None,
+        };
+        let resumes = |tabs: &mut [SavedTab]| {
+            let mut out = vec![];
+            for tab in tabs.iter_mut() {
+                tab.node.for_each_resume(&mut |r| out.push(r.clone()));
+            }
+            out
+        };
+        let tab = |node: SavedNode| SavedTab {
+            name: None,
+            color: None,
+            text_color: None,
+            group: None,
+            node,
+        };
+        let mut tabs = vec![
+            tab(SavedNode::Split {
+                dir: SplitDir::Row,
+                ratio: 0.5,
+                // three panes in one directory all captured `--continue`
+                a: Box::new(leaf(Some("claude --continue"))),
+                b: Box::new(leaf(Some("claude --continue"))),
+            }),
+            tab(leaf(Some("claude --continue"))),
+            // a distinct conversation, and a second agent, are both untouched
+            tab(leaf(Some(
+                "claude --resume 48be90b8-5777-44b6-bb6f-1c6069205c0d",
+            ))),
+            tab(leaf(Some("codex resume --last"))),
+            tab(leaf(None)),
+        ];
+        dedupe_resumes(&mut tabs);
+        assert_eq!(
+            resumes(&mut tabs),
+            vec![
+                Some("claude --continue".to_string()),
+                // the duplicates still open an agent, just their own
+                Some("claude".to_string()),
+                Some("claude".to_string()),
+                Some("claude --resume 48be90b8-5777-44b6-bb6f-1c6069205c0d".to_string()),
+                Some("codex resume --last".to_string()),
+                None,
+            ]
+        );
+        assert_eq!(bare_agent("codex resume --last").as_deref(), Some("codex"));
+        assert_eq!(bare_agent("").as_deref(), None);
     }
 
     #[test]
@@ -14310,12 +14585,14 @@ fn reorder_indices(from: usize, to: usize, len: usize, active: usize) -> (usize,
 }
 
 /// Resolve scratch-mode + an optional seed from the inputs. Factored out (pure)
-/// so the env/lock plumbing in `main` stays testable. `master_taken` is true when
-/// a live MASTER already holds the session lock (see [`acquire_master_lock`]), so
-/// this launch must open a non-persisting scratch window instead of restoring.
+/// so the env/lock plumbing in `main` stays testable.
+///
+/// `owns_session` is this window's claim on the workspace's saved layout (see
+/// [`instance`]): holding it means restore-and-persist; failing to take it means
+/// another window already lives on this workspace, so we are the quick one.
 fn scratch_decision(
     force: bool,
-    master_taken: bool,
+    owns_session: bool,
     cwd: Option<String>,
     resume: Option<String>,
 ) -> (bool, Option<session::PaneRestore>) {
@@ -14329,101 +14606,26 @@ fn scratch_decision(
     } else {
         None
     };
-    (force || seeded || master_taken, seed)
+    (force || seeded || !owns_session, seed)
 }
 
-/// The MASTER-window lock. Exactly one live terminal-delight process holds this
-/// advisory file lock at a time; that process is THE master and the sole owner of
-/// the saved session (`state.toml`) — it restores the full layout on boot and is
-/// the only window that writes changes back. Every OTHER concurrently-running
-/// window — the Ctrl+Alt+T quick window, a torn-off pane, or a fresh launch that
-/// races a still-shutting-down master — fails to take this lock and boots as a
-/// non-persisting *scratch* window, so it can never clobber the master's layout.
-///
-/// Held for the process lifetime (the kernel drops it on exit, covering crashes /
-/// SIGKILL) and released EARLY at quit-start via [`release_master_lock`] wired
-/// into `on_app_quit`. That early release is the whole point: a close → immediate
-/// reopen re-acquires cleanly and RESTORES, instead of the old `/proc` comm-scan
-/// mistaking the dying master for a live peer and degrading the reopen to a lone
-/// scratch terminal.
-static MASTER_LOCK: std::sync::Mutex<Option<std::os::fd::OwnedFd>> = std::sync::Mutex::new(None);
-
-/// Per-user path for the master lock. `$XDG_RUNTIME_DIR` (tmpfs, cleared on
-/// logout) is ideal; fall back to the temp dir if it is unset.
-fn master_lock_path() -> PathBuf {
-    std::env::var_os("XDG_RUNTIME_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(std::env::temp_dir)
-        .join("terminal-delight-master.lock")
-}
-
-/// Try to become THE master by taking the advisory lock without blocking.
-/// Returns true if we got it (this process is now master and must restore +
-/// persist the session); false if a live master already holds it (this launch
-/// should open a scratch window). On a lock-file open error we fail OPEN —
-/// returning true — so a permissions glitch can never trap the user in a
-/// single scratch terminal with no way back to their session.
-fn acquire_master_lock() -> bool {
-    match try_lock_at(&master_lock_path()) {
-        // Got it (or the lock file was unopenable → fail OPEN as master).
-        Ok(Some(fd)) => {
-            *MASTER_LOCK.lock().unwrap() = Some(fd);
-            true
-        }
-        Ok(None) => true,
-        // A live master holds the lock → we are a scratch window.
-        Err(()) => false,
-    }
-}
-
-/// The path-free core of [`acquire_master_lock`], split out so it is unit-testable
-/// without touching process env or the `MASTER_LOCK` static. `Ok(Some(fd))` = we
-/// took the lock (hold the fd to keep it); `Err(())` = a live holder has it;
-/// `Ok(None)` = the lock file could not be opened (caller treats this as master,
-/// failing open so a glitch never traps the user in scratch mode).
-fn try_lock_at(path: &std::path::Path) -> Result<Option<std::os::fd::OwnedFd>, ()> {
-    use std::io::Write;
-    use std::os::fd::AsRawFd;
-    let file = match std::fs::OpenOptions::new()
-        .create(true)
-        .read(true)
-        .write(true)
-        .truncate(false)
-        .open(path)
-    {
-        Ok(f) => f,
-        Err(_) => return Ok(None),
-    };
-    // SAFETY: a valid fd; LOCK_NB guarantees flock never blocks.
-    let rc = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
-    if rc != 0 {
-        // EWOULDBLOCK → a live master already holds the lock.
-        return Err(());
-    }
-    // Stamp our pid (purely informational for `cat`-ing the lock file).
-    let _ = file.set_len(0);
-    let mut f = &file;
-    let _ = f.write_all(format!("{}\n", std::process::id()).as_bytes());
-    Ok(Some(std::os::fd::OwnedFd::from(file)))
-}
-
-/// Release the master lock immediately. Called at quit-start (before the slow
-/// PTY/GPU teardown that makes a closing instance linger for seconds), so a
-/// close → reopen re-elects a master and restores instead of seeing a dying
-/// peer. Idempotent.
-fn release_master_lock() {
-    use std::os::fd::AsRawFd;
-    if let Some(fd) = MASTER_LOCK.lock().unwrap().take() {
-        // SAFETY: a valid, still-open fd we own.
-        unsafe { libc::flock(fd.as_raw_fd(), libc::LOCK_UN) };
-        // fd dropped here → file closed.
+/// What the window manager calls this window. The session key is in there so a
+/// screenful of terminals is legible: which one owns workspace 2, and which one
+/// is the throwaway that will not be coming back.
+fn window_title(scratch: bool, key: &str) -> String {
+    if scratch {
+        "terminal-delight — scratch".into()
+    } else if key == instance::DEFAULT_KEY {
+        "terminal-delight".into()
+    } else {
+        format!("terminal-delight — {key}")
     }
 }
 
 /// Launch a fresh, detached terminal-delight seeded with a torn-off pane's cwd
 /// and agent session. It is launched with TD_SCRATCH=1 so it boots as a scratch
-/// window (never contends for the master lock); the seed env tells it what to
-/// reopen.
+/// window (never contends for a workspace's session lock); the seed env tells it
+/// what to reopen.
 fn spawn_seeded_window(rt: &session::PaneRuntime) {
     let Ok(exe) = std::env::current_exe() else {
         return;
@@ -14513,13 +14715,15 @@ fn main() {
     // Decide boot mode before the window opens. An EXPLICITLY-scratch launch —
     // forced scratch (TD_SCRATCH, the Ctrl+Alt+T quick window), a seeded tear-off
     // (TD_SEED_*), or a demo (TD_DEMO_STATE) — opens a small single-terminal
-    // window and never contends to own the session. ANY other launch tries to
-    // take the MASTER lock: winning means "restore the full session and own
-    // `state.toml`"; losing means a live master already has the window open, so
-    // this becomes a scratch window too. The lock (held by exactly one live
-    // process, released early at quit-start) replaces the old `/proc` comm-scan,
-    // which counted a still-shutting-down master as a live peer and dropped a
-    // plain close→reopen to a single scratch terminal.
+    // window and never contends to own a session: a torn-off pane would otherwise
+    // take the lock on a workspace that has no window yet, and lock out the real
+    // one that opens there later. ANY other launch claims the session key of the
+    // workspace it is opening on (see [`instance`]): winning means "restore that
+    // workspace's session and own `sessions/<key>.toml`"; losing means a live
+    // window already holds this workspace, so this becomes a scratch window too.
+    // The flock (held by exactly one live process per key, released early at
+    // quit-start) is the old machine-global MASTER lock scoped down to one
+    // workspace, so every workspace keeps a restorable window of its own.
     let force = std::env::var_os("TD_SCRATCH").is_some();
     let seed_cwd = std::env::var("TD_SEED_CWD").ok().filter(|s| !s.is_empty());
     let seed_resume = std::env::var("TD_SEED_RESUME")
@@ -14529,25 +14733,46 @@ fn main() {
     // layout from TD_DEMO_STATE and fills every pane with the frozen emitter.
     let demo = std::env::var_os("TD_DEMO_STATE").is_some();
     let explicit_scratch = force || seed_cwd.is_some() || seed_resume.is_some() || demo;
-    // Only a would-be master takes the lock; explicit-scratch launches leave it
-    // untouched so they never steal it from (or wait on) the real master.
-    let master_taken = if explicit_scratch {
-        false
+    let key = instance::resolve_key();
+    let claim = if explicit_scratch {
+        instance::Claim {
+            owned: false,
+            lock: None,
+        }
     } else {
-        !acquire_master_lock()
+        instance::claim(&key)
     };
-    let (scratch, seed) = scratch_decision(force, master_taken, seed_cwd, seed_resume);
+    let owns_session = claim.owned;
+    // Bind the key either way: a scratch window still reads the workspace's
+    // theme so it looks like the rest of the session — it just never writes.
+    instance::bind(key.clone(), claim.lock);
+    if owns_session && !instance::legacy_master_live() {
+        // one-time upgrade from the single-session era, into whichever workspace
+        // opens first after the update — deferred while a pre-upgrade window
+        // still holds the old master lock, because that window is live in
+        // `state.toml`'s agents and rewrites the file on save (see
+        // [`instance::legacy_master_live`]).
+        instance::adopt_legacy(&instance::legacy_state_path(), &instance::state_path());
+    }
+    let (scratch, seed) = scratch_decision(force, owns_session, seed_cwd, seed_resume);
+    // A demo window keeps the plain name: it is a faithful twin for screen
+    // sharing, not a workspace's scratch terminal.
+    let title = if demo {
+        "terminal-delight".to_string()
+    } else {
+        window_title(scratch, &key)
+    };
 
     application().run(move |cx: &mut App| {
         theme::init(cx);
         bell::ensure_seeded(); // populate the sounds dir from bundled defaults if empty
-                               // Release the MASTER lock at the very start of shutdown — `on_app_quit`
+                               // Release the workspace claim at the very start of shutdown — `on_app_quit`
                                // handlers run BEFORE windows/PTYs tear down (App::shutdown), so this
                                // frees the lock seconds ahead of actual process exit. That is what lets
-                               // a close → immediate reopen re-elect a master and restore, instead of
-                               // the reopen racing the closing process's PTY teardown linger.
+                               // a close → immediate reopen re-claim the workspace and restore, instead
+                               // of the reopen racing the closing process's PTY teardown linger.
         cx.on_app_quit(|_cx| {
-            release_master_lock();
+            instance::release();
             async move {}
         })
         .detach();
@@ -14588,7 +14813,7 @@ fn main() {
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 titlebar: Some(TitlebarOptions {
-                    title: Some("terminal-delight".into()),
+                    title: Some(title.clone().into()),
                     ..Default::default()
                 }),
                 // WM_CLASS / Wayland app_id — must match terminal-delight.desktop

@@ -143,7 +143,7 @@ fn read_head(p: &Path, max: usize) -> String {
 /// First plain-string value of `"key":"..."` in `s` (minimal escape handling).
 /// Returns None when the key is absent or its value isn't a JSON string (e.g.
 /// `"content":[…]`), so an object/array value never gets mis-parsed.
-fn json_str(s: &str, key: &str) -> Option<String> {
+pub(crate) fn json_str(s: &str, key: &str) -> Option<String> {
     let pat = format!("\"{key}\":\"");
     let start = s.find(&pat)? + pat.len();
     let mut out = String::new();
