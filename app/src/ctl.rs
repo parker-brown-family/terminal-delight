@@ -173,6 +173,10 @@ pub fn start(cx: &mut Context<Workspace>) {
         eprintln!("terminal-delight: ctl dir unavailable ({dir:?}): {e}");
         return;
     }
+    // `adopt` spawns commands, so the socket must stay same-user even on the
+    // /tmp fallback (no $XDG_RUNTIME_DIR) under a loose umask: pin the dir to
+    // 0700 every start — create_dir_all leaves an existing dir's mode alone.
+    let _ = std::fs::set_permissions(&dir, std::os::unix::fs::PermissionsExt::from_mode(0o700));
     let path = socket_path(std::process::id());
     // A stale file under our own pid means a previous process with a recycled
     // pid died uncleanly; the bind would fail on it, so sweep first.
