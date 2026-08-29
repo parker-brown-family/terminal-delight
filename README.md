@@ -88,6 +88,32 @@ app picks it up in ~300ms. Four themes ship in [`app/themes/`](app/themes/):
 
 ![The four built-in themes side by side](assets/showcase-themes.png)
 
+## Omarchy / Hyprland integration — send a tile to Terminal Delight
+
+`scripts/install-send-hotkey.sh` installs `td-send` and binds **SUPER+ALT+T**:
+focus any terminal tile (foot, Alacritty, kitty, Ghostty, `org.omarchy.*`) and
+the session migrates into a Terminal Delight pane — idle shells re-open at
+their cwd, `claude`/`codex` agents resume by session id, tmux attaches
+re-attach. Anything else in the foreground (vim, htop…) is refused and nothing
+is closed. With no adoptable TD window running, a fresh one is seeded to
+receive the session. `td-send --dry-run` prints the plan without touching
+anything, and `--uninstall` on the installer reverts the binding.
+
+Runtime dependencies (checked by the scripts, which fail with a message):
+
+- **Hyprland** (`hyprctl`) — window addressing and close dispatches; both the
+  ≥0.56 Lua dispatcher and the legacy string form are spoken
+- **jq** — JSON plumbing in `td-send` and the hook/installer scripts
+- `omarchy-notification-send` — optional; notifications are skipped without it
+- the hotkey installer writes Omarchy's `o.bind(…)` helper into
+  `~/.config/hypr/bindings.lua`; on plain (non-Omarchy) Hyprland, bind it
+  yourself: `bind = SUPER ALT, T, exec, td-send`
+- `plugins/td-send` (the `td-send-mcp` MCP server that exposes
+  `pull_workspace` / `send_window` to agents) needs `python3`, stdlib only
+
+The Rust side (the `ctl adopt` verb and `terminal-delight probe`) adds no new
+crate dependencies.
+
 ## Architecture
 
 ```

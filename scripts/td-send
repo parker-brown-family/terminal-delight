@@ -40,6 +40,7 @@ while (($#)); do
 done
 
 command -v jq >/dev/null 2>&1 || bail "jq is required" 1
+command -v hyprctl >/dev/null 2>&1 || bail "hyprctl is required (td-send is Hyprland-only)" 1
 command -v "$TD" >/dev/null 2>&1 || bail "terminal-delight not on PATH (set TD_BIN)" 1
 
 # ---- 1. the tile ------------------------------------------------------------
