@@ -64,11 +64,13 @@ cd app && cargo run
 
 gpui is consumed from a pinned Zed checkout
 (`abbe85a3321bf6cb7f5b241e623d9c2e16c29187`, post-wgpu-Linux-renderer) carrying
-two small patches (`docs/patches/`): `0001-td-crt-pass` (the per-pane CRT barrel
-warp) and `0002-sever-gpl-crates` (removes the GPL crates the Zed graph would
-otherwise link — see [License](#license)). `scripts/prepare-gpui.sh` sets the
-checkout up as a sibling `zed-upstream/` directory and applies both; CI does the
-same. The crates.io gpui release still ships the older blade renderer with known
+a five-patch stack (`docs/patches/`, ~1,080 lines): `0001-td-crt-pass` (the
+per-pane CRT barrel warp), `0002-focus-blur`, `0003-text-crawl`, and
+`0004-warp-tube-cap-32` (focus/effect hooks), plus `0002-sever-gpl-crates`
+(removes the GPL crates the Zed graph would otherwise link — see
+[License](#license)). `scripts/prepare-gpui.sh` sets the checkout up as a
+sibling `zed-upstream/` directory and applies all five; CI does the same. The
+crates.io gpui release still ships the older blade renderer with known
 NVIDIA/X11 issues.
 
 Build the AppImage yourself, or run the full pre-release smoke:
