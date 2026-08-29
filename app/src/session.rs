@@ -115,6 +115,55 @@ fn home() -> String {
 
 // ---- agent identity ----
 
+/// The push-style agent-session ledger. `td-agent-ledger` (a Claude Code
+/// SessionStart/SessionEnd hook, wired by scripts/install-recovery-hook.sh)
+/// records each live agent process's CURRENT session id at
+/// `<home>/.local/state/terminal-delight/agent-ledger/<pid>.json` on every id
+/// mint — launch, `/clear`, in-pane `/resume`, compaction — and removes it at
+/// SessionEnd. Reading it beats forensics because rotation can never go
+/// stale; the forensic chain below stays as the fallback for agents running
+/// without the hook.
+fn ledger_dir(home: &Path) -> PathBuf {
+    home.join(".local/state/terminal-delight/agent-ledger")
+}
+
+/// The ledger's session id for a live agent pid — present, parseable, and
+/// shell-safe, or nothing. A forged/corrupt entry must fall through to
+/// forensics, never into a command line.
+fn ledger_session_for(pid: u32, home: &Path) -> Option<String> {
+    let body = std::fs::read_to_string(ledger_dir(home).join(format!("{pid}.json"))).ok()?;
+    crate::recover::json_str(&body, "session_id").filter(|id| safe_resume_id(id))
+}
+
+/// CLI flags worth re-asserting on a resume line. `claude --resume` restores
+/// the conversation but NOT flag-specified modes (documented behavior), so a
+/// pane launched `claude --permission-mode plan` must resurrect with the same
+/// flag or come back in the wrong mode. Allowlisted and sanitized — the
+/// result is typed into a fresh shell.
+fn carried_flags(cmdline: &str) -> String {
+    fn safe_val(v: &str) -> bool {
+        !v.is_empty()
+            && v.len() <= 64
+            && v.chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '.' | '_'))
+    }
+    let mut out = String::new();
+    let mut words = cmdline.split_whitespace().peekable();
+    while let Some(w) = words.next() {
+        match w {
+            "--permission-mode" | "--model" => {
+                if let Some(v) = words.peek().copied().filter(|v| safe_val(v)) {
+                    out.push_str(&format!(" {w} {v}"));
+                    words.next();
+                }
+            }
+            "--dangerously-skip-permissions" => out.push_str(" --dangerously-skip-permissions"),
+            _ => {}
+        }
+    }
+    out
+}
+
 /// Synthesize the resume command for an agent foreground process, or None if
 /// the process isn't an agent we know how to resume.
 fn agent_resume(
@@ -128,7 +177,10 @@ fn agent_resume(
     if c == "claude" || cmdline.contains("/claude") || cmdline.starts_with("claude ") {
         // Both sources (a cmdline arg, a transcript filename stem) end up typed
         // into a shell, so reject anything that isn't a plain id before use.
-        let id = claude_session_from_fds(pid, cwd, home)
+        let id = ledger_session_for(pid, home)
+            // The push-style ledger names the CURRENT id even across a
+            // /clear-rotation — when present it beats every forensic source.
+            .or_else(|| claude_session_from_fds(pid, cwd, home))
             // The transcript the live process holds OPEN was the ground truth —
             // but Claude Code >= 2.1.195 opens-appends-closes and never keeps it
             // open, so this is usually None now and the matches below carry it.
@@ -146,10 +198,13 @@ fn agent_resume(
             // share a cwd (the collision the start-time match above prevents).
             .or_else(|| cwd.and_then(|d| claude_session_for(d, home, proc_start_unix(pid))))
             .filter(|id| safe_resume_id(id));
+        // `--resume` restores the conversation but not flag-specified modes —
+        // re-assert the allowlisted flags the live process was launched with.
+        let flags = carried_flags(cmdline);
         Some(match id {
-            Some(id) => format!("claude --resume {id}"),
+            Some(id) => format!("claude --resume {id}{flags}"),
             // --continue picks the most recent conversation for this cwd
-            None => "claude --continue".to_string(),
+            None => format!("claude --continue{flags}"),
         })
     } else if c == "codex" || cmdline.contains("/codex") || cmdline.starts_with("codex ") {
         let id = codex_session_from_fds(pid, home)
@@ -847,5 +902,83 @@ mod tests {
         let mode = std::fs::metadata(&tmp).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o600, "state file must be 0600, got {mode:o}");
         std::fs::remove_file(&tmp).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod ledger_tests {
+    use super::*;
+
+    fn tmp_home(tag: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("td-ledger-{}-{tag}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    fn write_ledger(home: &Path, pid: u32, sid: &str) {
+        let dir = ledger_dir(home);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join(format!("{pid}.json")),
+            format!(r#"{{"session_id":"{sid}","pid":{pid},"ts":1}}"#),
+        )
+        .unwrap();
+    }
+
+    const ID: &str = "11111111-2222-3333-4444-555555555555";
+
+    #[test]
+    fn ledger_id_wins_over_every_forensic_source() {
+        let home = tmp_home("wins");
+        write_ledger(&home, 4242, ID);
+        let r = agent_resume("claude", "claude", Some("/tmp/proj"), &home, 4242).unwrap();
+        assert_eq!(r, format!("claude --resume {ID}"));
+    }
+
+    #[test]
+    fn a_forged_ledger_id_never_reaches_a_shell() {
+        let home = tmp_home("forged");
+        write_ledger(&home, 4242, "$(rm -rf ~)");
+        let r = agent_resume("claude", "claude", None, &home, 4242).unwrap();
+        // the forged id is rejected and the chain falls through to --continue
+        assert_eq!(r, "claude --continue");
+    }
+
+    #[test]
+    fn a_missing_ledger_leaves_forensics_unchanged() {
+        let home = tmp_home("gone");
+        let r = agent_resume("claude", "claude", None, &home, 4242).unwrap();
+        assert_eq!(r, "claude --continue");
+    }
+
+    #[test]
+    fn recorded_cli_flags_ride_the_resume() {
+        let home = tmp_home("flags");
+        write_ledger(&home, 7, ID);
+        let r = agent_resume(
+            "claude",
+            "claude --permission-mode plan --dangerously-skip-permissions",
+            None,
+            &home,
+            7,
+        )
+        .unwrap();
+        assert_eq!(
+            r,
+            format!("claude --resume {ID} --permission-mode plan --dangerously-skip-permissions")
+        );
+    }
+
+    #[test]
+    fn hostile_flag_values_are_dropped_sane_ones_carried() {
+        assert_eq!(
+            carried_flags("claude --model claude-opus-4.5"),
+            " --model claude-opus-4.5"
+        );
+        assert_eq!(carried_flags("claude --permission-mode $(evil)"), "");
+        assert_eq!(carried_flags("claude --permission-mode"), "");
+        assert_eq!(carried_flags("claude --resume abc"), "");
+        assert_eq!(carried_flags("codex"), "");
     }
 }

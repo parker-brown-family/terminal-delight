@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# td-agent-ledger — Claude Code SessionStart/SessionEnd hook keeping Terminal
+# Delight's push-style agent-session ledger.
+#
+# SessionStart fires on every session-id mint — launch, /clear, in-pane
+# /resume, compaction — so the ledger always names the CURRENT id for a live
+# agent process, where forensic capture can go stale between a rotation and
+# the next snapshot. SessionEnd removes the entry. TD's capture
+# (app/src/session.rs) prefers the ledger and falls back to forensics.
+#
+# Keyed by the agent's pid: hooks run as claude's child, so $PPID is claude.
+# Path is fixed to ~/.local/state (not $XDG_STATE_HOME) because TD resolves
+# the ledger from its own home lookup — the two must never diverge.
+# Installed to ~/.local/bin by scripts/install-recovery-hook.sh.
+# Requires: jq (the installer checks; if jq vanishes later, exit quietly — a
+# hook must never break an agent session over a missing ledger).
+set -euo pipefail
+
+command -v jq >/dev/null 2>&1 || exit 0
+
+dir="$HOME/.local/state/terminal-delight/agent-ledger"
+payload="$(cat)"
+event=$(jq -r '.hook_event_name // empty' <<<"$payload" 2>/dev/null || true)
+sid=$(jq -r '.session_id // empty' <<<"$payload" 2>/dev/null || true)
+pid=$PPID
+
+case "$event" in
+SessionStart)
+  [[ -n $sid ]] || exit 0
+  mkdir -p "$dir"
+  chmod 700 "$dir"
+  # sweep entries whose process is gone (a crash never fires SessionEnd)
+  for f in "$dir"/*.json; do
+    [[ -e $f ]] || break
+    p=$(basename "$f" .json)
+    [[ -e /proc/$p ]] || rm -f "$f"
+  done
+  printf '{"session_id":"%s","pid":%s,"ts":%s}\n' "$sid" "$pid" "$(date +%s)" >"$dir/$pid.json.tmp"
+  mv -f "$dir/$pid.json.tmp" "$dir/$pid.json"
+  ;;
+SessionEnd)
+  rm -f "$dir/$pid.json"
+  ;;
+esac
+exit 0
