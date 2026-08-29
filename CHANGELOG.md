@@ -9,6 +9,16 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ### Added
 
+- **Per-directory default logos — persistent and inherited.** Picking a pane
+  logo now writes a directory default to
+  `~/.config/terminal-delight/dir-logos.toml`: every pane whose cwd is at or
+  under that directory wears the logo, across sessions, live as you `cd`
+  (2s sweep). Mapping a child dir overrides its parent for that subtree; the
+  picker says which directory a pick will bind ("↵ sets the default logo for
+  ~/proj + subdirs") and its ✕ row clears the rule that currently applies. An
+  explicit per-pane logo (MCP `set_pane_config`, or one saved by an older
+  session) still shadows the map for that pane.
+
 - **Alt+V / Alt+H split chords.** One-hand alternatives to `ctrl+alt+r` /
   `ctrl+alt+d`: `alt+v` opens the new pane beside the focused one (vertical
   divider), `alt+h` below it — Tilix-style naming. Listed in the `?`/F1 help
@@ -28,6 +38,14 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
   Web tributes: a `start-crawl.html` kiosk and an `info.html` section.
   - _Known limitation:_ click hit-testing in a crawling pane stays barrel-only,
     so text selection is approximate — crawl is a display/nostalgia mode.
+
+### Fixed
+
+- **Logo picker missed most of the filesystem.** The candidate scan walked the
+  home root only 2 levels deep, so project brand assets
+  (`~/ORG/Software/<proj>/assets/logo.png`) never appeared — only the picture
+  dirs did. The walk is now full-depth (bounded by a 20k cap + heavy-dir skip
+  list; picture dirs still scan first), and `.webp` counts as an image.
 
 ## [0.2.0] — 2026-06-15
 

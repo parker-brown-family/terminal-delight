@@ -18,6 +18,7 @@ mod bell;
 mod crt;
 mod csd;
 mod demo;
+mod dirlogo;
 mod gamba;
 mod hud;
 mod instance;
@@ -1363,6 +1364,10 @@ struct LangPicker {
 struct LogoPicker {
     /// Which pane gets the chosen logo.
     target: gpui::EntityId,
+    /// The target pane's live cwd AT OPEN — the directory a pick maps the
+    /// chosen logo to (and whose subtree inherits it; see [`dirlogo`]). `None`
+    /// (dead shell) makes a pick fall back to an explicit pane-only logo.
+    cwd: Option<String>,
     /// Searches ONLY the file basename. Fuzzy gating: it does not initiate
     /// until the 3rd char UNLESS `loc` is already set (see `filter_logo_two_field`).
     name: EditBuffer,
@@ -1455,40 +1460,60 @@ fn demo_logo_for(seed: &str) -> Option<String> {
     )
 }
 
-/// Walk a bounded set of roots for image files (`png/jpg/jpeg/svg`), skipping
-/// hidden + heavy dirs, capped so the picker stays snappy. Returns candidates
-/// pre-formatted as `(path, basename, ~/relative dir)`, sorted by basename.
+/// `~`-abbreviate an absolute path for display (picker hints + candidate dirs).
+fn tilde(path: &str) -> String {
+    let home = std::env::var("HOME").unwrap_or_default();
+    if !home.is_empty() {
+        if let Some(rest) = path.strip_prefix(&home) {
+            // component boundary: /home/px must not read as ~x for /home/p
+            if rest.is_empty() || rest.starts_with('/') {
+                return format!("~{rest}");
+            }
+        }
+    }
+    path.to_string()
+}
+
+/// Walk a bounded set of roots for image files (`png/jpg/jpeg/svg/webp`),
+/// skipping hidden + heavy dirs, capped so the picker stays snappy. Returns
+/// candidates pre-formatted as `(path, basename, ~/relative dir)`.
 fn scan_logo_candidates() -> Vec<LogoCandidate> {
     let home = std::env::var("HOME").unwrap_or_default();
     scan_logo_candidates_in(std::path::Path::new(&home))
 }
 
-/// Testable core: walk `home`'s picture dirs first (full depth), then a SHALLOW
-/// home root, returning image candidates newest-first.
+/// Testable core: walk `home`'s picture dirs first, then the whole home root
+/// (both full depth, bounded by CAP + skip list), newest-first.
 fn scan_logo_candidates_in(home_path: &std::path::Path) -> Vec<LogoCandidate> {
-    const CAP: usize = 4000;
-    const MAX_DEPTH: usize = 6;
+    const CAP: usize = 20000;
+    const MAX_DEPTH: usize = 8;
     let home = home_path.to_string_lossy().into_owned();
     let is_img = |name: &str| {
         let n = name.to_ascii_lowercase();
-        n.ends_with(".png") || n.ends_with(".jpg") || n.ends_with(".jpeg") || n.ends_with(".svg")
+        n.ends_with(".png")
+            || n.ends_with(".jpg")
+            || n.ends_with(".jpeg")
+            || n.ends_with(".svg")
+            || n.ends_with(".webp")
     };
     let skip_dir = |name: &str| {
         name.starts_with('.')
             || matches!(
                 name,
-                "node_modules" | "target" | "vendor" | ".git" | "__pycache__"
+                "node_modules" | "target" | "vendor" | ".git" | "__pycache__" | "dist"
             )
     };
     let mut out: Vec<LogoCandidate> = Vec::new();
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
     // Iterative bounded walk (depth-limited, no symlink following). The picture
-    // dirs are walked FULL depth and popped FIRST (LIFO → push last); the home
-    // root is walked only SHALLOW so a deep $HOME can't flood the cap before the
-    // picture dirs are reached (that hid ~/Pictures/Screenshots/<your shot>).
+    // dirs are pushed LAST so they pop FIRST (LIFO): a just-taken screenshot
+    // lands inside the cap no matter what. The home root then walks FULL depth
+    // too — project logo assets live deep (~/ORG/Software/<proj>/assets/x.png)
+    // and the old shallow home walk (2 levels) never surfaced them. The cap
+    // (20k) plus the heavy-dir skip list bounds the walk, not a stunted depth.
     let mut stack: Vec<(PathBuf, usize)> = Vec::new();
     if home_path.is_dir() {
-        stack.push((home_path.to_path_buf(), MAX_DEPTH.saturating_sub(1)));
+        stack.push((home_path.to_path_buf(), 0));
     }
     for d in ["Images", "Documents", "Desktop", "Downloads", "Pictures"] {
         let r = home_path.join(d);
@@ -1692,6 +1717,10 @@ struct Workspace {
     /// The per-pane header-logo image picker (header `＋ logo` / logo click), if
     /// open. Owns the keyboard while up, like `lang_picker`.
     logo_picker: Option<LogoPicker>,
+    /// The per-directory default-logo map (dir → image), mirrored from
+    /// `dir-logos.toml` by `refresh_dir_logos` — render-side cache only, the
+    /// file is the truth (see [`dirlogo`]).
+    dir_logos: std::collections::HashMap<String, String>,
     renaming: Option<(usize, EditBuffer)>,
     /// Tab index awaiting a "close all its panes?" confirmation, if any.
     confirm_close: Option<usize>,
@@ -2108,6 +2137,7 @@ impl Workspace {
             find: None,
             lang_picker: None,
             logo_picker: None,
+            dir_logos: dirlogo::load(),
             renaming: None,
             confirm_close: None,
             help_open: false,
@@ -2266,6 +2296,20 @@ impl Workspace {
                         cx.notify();
                     }
                 })
+                .is_err()
+            {
+                break;
+            }
+        })
+        .detach();
+        // dir-logo sweep: a `cd` changes which per-directory default applies,
+        // and no structural event fires for it — poll the cheap /proc cwd
+        // every 2s. Scratch windows sweep too (they wear logos like any other;
+        // they just never persist layout).
+        cx.spawn(async move |this, cx| loop {
+            cx.background_executor().timer(Duration::from_secs(2)).await;
+            if this
+                .update(cx, |ws: &mut Workspace, cx| ws.refresh_dir_logos(cx))
                 .is_err()
             {
                 break;
@@ -3557,6 +3601,90 @@ impl Workspace {
         cx.notify();
     }
 
+    /// The pane entity with this id, if it's still in any tab's tree.
+    fn pane_by_id(&self, id: gpui::EntityId) -> Option<Entity<TerminalView>> {
+        for tab in &self.tabs {
+            let mut leaves = vec![];
+            tab.root.leaves(&mut leaves);
+            if let Some(p) = leaves.into_iter().find(|p| p.entity_id() == id) {
+                return Some(p.clone());
+            }
+        }
+        None
+    }
+
+    /// Reload the per-directory map and re-resolve every pane's inherited logo
+    /// from its live cwd. Cheap (one tiny file read, one readlink per pane) and
+    /// quiet — panes only notify when their resolved logo actually changed.
+    /// Runs on the 2s sweep (a `cd` fires no structural event we could hook)
+    /// and immediately after every picker write.
+    fn refresh_dir_logos(&mut self, cx: &mut Context<Self>) {
+        self.dir_logos = dirlogo::load();
+        for tab in &self.tabs {
+            let mut leaves = vec![];
+            tab.root.leaves(&mut leaves);
+            for leaf in leaves {
+                let resolved = leaf
+                    .read(cx)
+                    .current_cwd()
+                    .and_then(|c| dirlogo::resolve(&self.dir_logos, &c));
+                if leaf.read(cx).dir_logo != resolved {
+                    leaf.update(cx, |v, cx| {
+                        v.dir_logo = resolved;
+                        cx.notify();
+                    });
+                }
+            }
+        }
+    }
+
+    /// Apply a picker choice. OPINIONATED: the pick IS the directory default —
+    /// written to `dir-logos.toml` for the pane's cwd, inherited by its
+    /// subdirs, persistent across sessions. The pane's explicit logo is
+    /// cleared so the just-written default shows through and keeps following
+    /// future changes. Only with no readable cwd (shell died) does it fall
+    /// back to the old explicit pane-only set.
+    fn apply_logo_pick(
+        &mut self,
+        target: gpui::EntityId,
+        path: String,
+        cwd: Option<String>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(dir) = cwd else {
+            self.set_pane_logo(target, Some(path), cx);
+            return;
+        };
+        dirlogo::set(&dir, &path);
+        if let Some(p) = self.pane_by_id(target) {
+            p.update(cx, |v, cx| {
+                v.logo = None;
+                cx.notify();
+            });
+        }
+        self.logo_picker = None;
+        self.refresh_dir_logos(cx);
+        self.save(cx);
+        cx.notify();
+    }
+
+    /// The picker's ✕ row: remove the logo the target currently wears — its
+    /// explicit per-pane logo AND the per-directory rule governing its cwd, so
+    /// the subtree falls back to the next mapped ancestor (or to none).
+    fn remove_logo_pick(&mut self, target: gpui::EntityId, cx: &mut Context<Self>) {
+        let ruling = self
+            .logo_picker
+            .as_ref()
+            .and_then(|lp| lp.cwd.as_deref())
+            .and_then(|c| dirlogo::resolve_entry(&self.dir_logos, c))
+            .map(|(d, _)| d.to_string());
+        if let Some(dir) = ruling {
+            dirlogo::clear(&dir);
+        }
+        self.set_pane_logo(target, None, cx);
+        self.refresh_dir_logos(cx);
+    }
+
     /// Open the header-logo image picker scoped to `target`. Scans the candidate
     /// image files up front (bounded) and grabs the keyboard so typing filters.
     fn open_logo_picker(
@@ -3567,8 +3695,12 @@ impl Workspace {
     ) {
         let candidates = scan_logo_candidates();
         let order = (0..candidates.len()).collect();
+        let cwd = self
+            .pane_by_id(target)
+            .and_then(|p| p.read(cx).current_cwd());
         self.logo_picker = Some(LogoPicker {
             target,
+            cwd,
             name: EditBuffer::seeded(""),
             loc: EditBuffer::seeded(""),
             field: LogoField::Name,
@@ -4422,20 +4554,19 @@ impl Workspace {
         let top = (wh * 0.22).clamp(8., (wh - panel_h - 8.).max(8.));
         let sel = lp.selected.min(order.len().saturating_sub(1));
         let target = lp.target;
-        // Does the target already carry a logo? (Lets us offer a "remove" row.)
-        let has_logo = {
-            let mut found = false;
-            'scan: for tab in &self.tabs {
-                let mut leaves = vec![];
-                tab.root.leaves(&mut leaves);
-                for p in &leaves {
-                    if p.entity_id() == target && p.read(cx).logo.is_some() {
-                        found = true;
-                        break 'scan;
-                    }
-                }
-            }
-            found
+        // Does the target wear a logo (explicit or dir-inherited)? And which
+        // mapped dir currently rules its cwd — the entry the ✕ row would clear.
+        let (has_logo, ruling_dir) = {
+            let worn = self.pane_by_id(target).is_some_and(|p| {
+                let v = p.read(cx);
+                v.logo.is_some() || v.dir_logo.is_some()
+            });
+            let ruling = lp
+                .cwd
+                .as_deref()
+                .and_then(|c| dirlogo::resolve_entry(&self.dir_logos, c))
+                .map(|(d, _)| d.to_string());
+            (worn || ruling.is_some(), ruling)
         };
 
         // One labelled input row. `active` highlights the field the keyboard is
@@ -4581,6 +4712,20 @@ impl Workspace {
                     } else {
                         "Tab switches NAME / IN".to_string()
                     }),
+            )
+            .child(
+                // The OPINIONATED contract, said out loud: a pick writes the
+                // DIRECTORY default — persistent, inherited by subdirs.
+                div()
+                    .text_size(px(8.5))
+                    .text_color(th.complement.alpha(0.8))
+                    .child(match lp.cwd.as_deref() {
+                        Some(d) => format!(
+                            "\u{21b5} sets the default logo for {} + subdirs (persists)",
+                            tilde(d)
+                        ),
+                        None => "\u{21b5} sets this pane's logo".to_string(),
+                    }),
             );
 
         let mut list = div().flex().flex_col().gap_0p5().px_1();
@@ -4598,12 +4743,15 @@ impl Workspace {
                     .cursor_pointer()
                     .text_color(th.text.alpha(0.7))
                     .child(div().w(px(16.)).flex_none().child("\u{2715}"))
-                    .child(div().flex_1().min_w(px(0.)).child("Remove logo"))
+                    .child(div().flex_1().min_w(px(0.)).child(match &ruling_dir {
+                        Some(d) => format!("Remove logo — clears the default for {}", tilde(d)),
+                        None => "Remove logo".to_string(),
+                    }))
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
                             cx.stop_propagation();
-                            ws.set_pane_logo(target, None, cx);
+                            ws.remove_logo_pick(target, cx);
                             ws.focus_active(window, cx);
                         }),
                     ),
@@ -4666,7 +4814,8 @@ impl Workspace {
                     MouseButton::Left,
                     cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
                         cx.stop_propagation();
-                        ws.set_pane_logo(target, Some(path.clone()), cx);
+                        let cwd = ws.logo_picker.as_ref().and_then(|lp| lp.cwd.clone());
+                        ws.apply_logo_pick(target, path.clone(), cwd, cx);
                         ws.focus_active(window, cx);
                     }),
                 );
@@ -4680,7 +4829,7 @@ impl Workspace {
                     .text_size(px(10.))
                     .text_color(th.text.alpha(0.4))
                     .child(if total == 0 {
-                        "No image files found (png/jpg/jpeg/svg)".to_string()
+                        "No image files found (png/jpg/jpeg/svg/webp)".to_string()
                     } else if gated {
                         "type 3+ chars, or set IN to search".to_string()
                     } else {
@@ -5481,8 +5630,8 @@ impl Workspace {
                         .and_then(|&i| lp.candidates.get(i))
                         .map(|c| c.path.clone());
                     if let Some(path) = pick {
-                        // set_pane_logo closes the picker; hand the keyboard back.
-                        self.set_pane_logo(lp.target, Some(path), cx);
+                        // apply_logo_pick closes the picker; hand the keyboard back.
+                        self.apply_logo_pick(lp.target, path, lp.cwd.clone(), cx);
                         self.focus_active(window, cx);
                     } else {
                         self.logo_picker = Some(lp);
@@ -10235,10 +10384,11 @@ impl Render for Workspace {
                     let logo_path = p
                         .logo
                         .clone()
+                        .or_else(|| p.dir_logo.clone())
                         .or_else(|| demo_logo_for(&format!("{title}/{id:?}")));
                     // DEFAULT CARD ART (no uploaded logo): a generated crest built
                     // from the identity hierarchy GROUP > TITLE > AGENT/SHELL > STATE.
-                    // An uploaded logo (p.logo) always overrides this.
+                    // A logo (explicit, or inherited from the pane's dir) overrides it.
                     let monogram: String = {
                         let m: String = title
                             .split(|c: char| !c.is_alphanumeric())
@@ -13191,6 +13341,29 @@ mod tests {
         let ok = found.iter().any(|c| c.base == "fresh-shot.png");
         std::fs::remove_dir_all(&tmp).ok();
         assert!(ok, "a shot under ~/Pictures/Screenshots must be reachable");
+    }
+
+    #[test]
+    fn logo_scan_reaches_deep_project_assets() {
+        use std::io::Write;
+        let tmp = std::env::temp_dir().join(format!("td-logo-deep-{}", std::process::id()));
+        // The shape that used to be invisible: a brand asset 4 dirs under $HOME
+        // and OUTSIDE the picture dirs — the old walk stopped 2 levels down the
+        // home root. Also exercises webp (valid logo material, MCP already
+        // accepts it).
+        let assets = tmp.join("ORG/Software/project/assets");
+        std::fs::create_dir_all(&assets).unwrap();
+        std::fs::File::create(assets.join("brand-logo.webp"))
+            .unwrap()
+            .write_all(b"x")
+            .unwrap();
+        let found = scan_logo_candidates_in(&tmp);
+        let ok = found.iter().any(|c| c.base == "brand-logo.webp");
+        std::fs::remove_dir_all(&tmp).ok();
+        assert!(
+            ok,
+            "a project logo asset deep under $HOME must be reachable"
+        );
     }
 
     #[test]

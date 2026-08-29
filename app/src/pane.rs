@@ -1470,10 +1470,15 @@ pub struct TerminalView {
     /// A user-set name (right-click the header to rename). Wins over `title`
     /// and survives OSC title updates; persisted per leaf in the state file.
     pub name: Option<String>,
-    /// Filesystem path to a user-chosen header logo image (png/jpg/jpeg/svg). Shown
-    /// to the left of the program label; click the logo (or the `＋ logo`
+    /// Filesystem path to an EXPLICIT per-pane header logo image (MCP
+    /// `set_pane_config`, or one saved by an older session). Shown to the left
+    /// of the program label; click the logo (or the `＋ logo`
     /// placeholder when unset) to pick one. Persisted per leaf in the state file.
     pub logo: Option<String>,
+    /// The logo INHERITED from the pane's cwd via the per-directory map
+    /// (`dirlogo`), resolved by the workspace's sweep — display state, never
+    /// persisted (the map itself is the durable record). Shadowed by `logo`.
+    pub dir_logo: Option<String>,
     /// Active inline-rename buffer; `Some` steals the keyboard from the PTY.
     renaming: Option<String>,
     pub exited: bool,
@@ -1867,6 +1872,12 @@ impl TerminalView {
         crate::session::capture(self.session.master.as_ref(), self.session.shell_pid)
     }
 
+    /// The pane's live cwd, cheaply (no agent-session scan) — polled by the
+    /// workspace's dir-logo sweep and read at picker-open / pick time.
+    pub fn current_cwd(&self) -> Option<String> {
+        crate::session::capture_cwd(self.session.master.as_ref(), self.session.shell_pid)
+    }
+
     /// This pane's shell pid — the kernel handle behind its identity. Ephemeral
     /// (recycles across a resume); the durable key is the agent session. Read by
     /// the read-only MCP snapshot.
@@ -2068,6 +2079,7 @@ impl TerminalView {
             title: "shell".into(),
             name: None,
             logo,
+            dir_logo: None,
             renaming: None,
             exited: false,
             grid,
@@ -4985,7 +4997,7 @@ impl Render for TerminalView {
                         cx.emit(OpenLogoPicker);
                     }),
                 );
-            if let Some(path) = self.logo.clone() {
+            if let Some(path) = self.logo.clone().or_else(|| self.dir_logo.clone()) {
                 base.w(px(logo_box))
                     .overflow_hidden()
                     .rounded(px(4. * scale))
