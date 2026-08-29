@@ -12,3 +12,7 @@ app/.cargo/config.toml
 
 # Local-only demo logo/art assets (never committed — populate the demo wall)
 demo-assets/
+
+# Python bytecode from plugin test runs (plugins/*/ are scripts, never compiled artifacts)
+__pycache__/
+*.pyc
