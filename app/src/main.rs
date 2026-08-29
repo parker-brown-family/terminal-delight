@@ -14465,9 +14465,12 @@ fn main() {
     // Bind the key either way: a scratch window still reads the workspace's
     // theme so it looks like the rest of the session — it just never writes.
     instance::bind(key.clone(), claim.lock);
-    if owns_session {
+    if owns_session && !instance::legacy_master_live() {
         // one-time upgrade from the single-session era, into whichever workspace
-        // opens first after the update
+        // opens first after the update — deferred while a pre-upgrade window
+        // still holds the old master lock, because that window is live in
+        // `state.toml`'s agents and rewrites the file on save (see
+        // [`instance::legacy_master_live`]).
         instance::adopt_legacy(&instance::legacy_state_path(), &instance::state_path());
     }
     let (scratch, seed) = scratch_decision(force, owns_session, seed_cwd, seed_resume);

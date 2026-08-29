@@ -231,6 +231,37 @@ pub fn adopt_legacy(legacy: &Path, dest: &Path) -> bool {
     std::fs::rename(legacy, dest).is_ok()
 }
 
+/// Where every single-session build parked its machine-global master lock.
+/// Probed — never kept — during the legacy upgrade: a held lock means a
+/// pre-upgrade window is LIVE, still treating `state.toml` as its working
+/// state and still holding the agents recorded in it.
+fn legacy_master_lock_path() -> PathBuf {
+    std::env::var_os("XDG_RUNTIME_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir)
+        .join("terminal-delight-master.lock")
+}
+
+/// True while a pre-upgrade (single-session) window is still running. Adopting
+/// `state.toml` under a live master would resurrect every agent that window is
+/// still running — one conversation, two processes burning tokens — and the
+/// master rewrites the file on its next save anyway, re-arming the same trap
+/// for the next launch. So the upgrade simply waits: once the old window
+/// exits, its final save lands in `state.toml` and the next launch adopts it.
+pub fn legacy_master_live() -> bool {
+    legacy_master_live_at(&legacy_master_lock_path())
+}
+
+fn legacy_master_live_at(path: &Path) -> bool {
+    let Ok(file) = OpenOptions::new().write(true).open(path) else {
+        return false; // no lock file → no pre-upgrade window ever ran here
+    };
+    // Non-blocking probe. Success takes the lock for the lifetime of this fd —
+    // dropping `file` at return releases it untouched, so the probe can never
+    // steal a workspace from anyone.
+    unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) != 0 }
+}
+
 // ---- Hyprland IPC ----
 
 /// Ask the compositor which workspace is active. Hyprland answers on a unix
@@ -368,6 +399,32 @@ mod tests {
         std::fs::write(&legacy, "active = 9").unwrap();
         assert!(!adopt_legacy(&legacy, &first));
         assert_eq!(std::fs::read_to_string(&first).unwrap(), "active = 0");
+        std::fs::remove_dir_all(&config).unwrap();
+    }
+
+    #[test]
+    fn a_live_pre_upgrade_master_defers_the_legacy_adoption() {
+        let config = tmp("legacy-live");
+        let lock = config.join("master.lock");
+        // no lock file at all: no pre-upgrade window ever ran → adopt freely
+        assert!(!legacy_master_live_at(&lock));
+        // a pre-upgrade window holds the old master lock → it is LIVE
+        let held = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(&lock)
+            .unwrap();
+        assert_eq!(
+            unsafe { libc::flock(held.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) },
+            0
+        );
+        assert!(legacy_master_live_at(&lock), "held lock reads as live");
+        // the probe must not have stolen the lock from the live window
+        assert!(legacy_master_live_at(&lock), "probe is non-destructive");
+        // the old window exits (fd closes, kernel releases) → adoption may run
+        drop(held);
+        assert!(!legacy_master_live_at(&lock), "released lock reads as gone");
         std::fs::remove_dir_all(&config).unwrap();
     }
 
