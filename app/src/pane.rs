@@ -4522,10 +4522,15 @@ fn keystroke_bytes(ks: &Keystroke) -> Option<Vec<u8>> {
     }
     if m.alt {
         // alt+arrows switch panes; alt+r opens the FOCUS reader (the 👓 header
-        // glyph it replaces is gone); ctrl+alt chords split — all owned by the
-        // Workspace. Taking alt+r costs readline's revert-line, which is a fair
-        // trade for the only way in now that the glyph is retired.
-        if matches!(ks.key.as_str(), "left" | "right" | "up" | "down" | "r") || m.control {
+        // glyph it replaces is gone); alt+v / alt+h and the ctrl+alt chords
+        // split — all owned by the Workspace. Taking alt+r costs readline's
+        // revert-line, alt+v its page-scroll and alt+h its mark-paragraph —
+        // fair trades for one-hand pane chords.
+        if matches!(
+            ks.key.as_str(),
+            "left" | "right" | "up" | "down" | "r" | "v" | "h"
+        ) || m.control
+        {
             return None;
         }
         // other alt+<char>: ESC prefix for readline (alt+b, alt+f, alt+.)
@@ -7185,6 +7190,9 @@ mod tests {
         // Workspace owns it — it must NOT reach the shell as readline's
         // revert-line, even with a key_char present.
         assert_eq!(alt_char("r"), None);
+        // alt+v / alt+h are the Workspace's split chords — never PTY bytes.
+        assert_eq!(alt_char("v"), None);
+        assert_eq!(alt_char("h"), None);
         // ...while every OTHER alt+<char> still goes through ESC-prefixed, so
         // alt+b / alt+f keep their readline meaning.
         assert_eq!(alt_char("b"), Some(vec![0x1b, b'b']));

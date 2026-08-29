@@ -9,6 +9,12 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ### Added
 
+- **Alt+V / Alt+H split chords.** One-hand alternatives to `ctrl+alt+r` /
+  `ctrl+alt+d`: `alt+v` opens the new pane beside the focused one (vertical
+  divider), `alt+h` below it — Tilix-style naming. Listed in the `?`/F1 help
+  panel. Costs readline's `alt+v` (page-scroll) and `alt+h` (mark-paragraph)
+  in the shell, matching how `alt+r` was already claimed for the FOCUS reader.
+
 - **Text-crawl mode** — a per-pane toggle that renders the whole terminal as a
   Star-Wars-style opening crawl: every line in the bundled News-Gothic crawl face
   (News Cycle, SIL OFL), centred and receding into the distance. The perspective
