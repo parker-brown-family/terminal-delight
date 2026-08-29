@@ -26,6 +26,7 @@ does the VT emulation; your real shell runs on a real PTY.
 | `alt+v` / `alt+h` (or `ctrl+alt+r` / `ctrl+alt+d`) split · `alt+←/→` switch panes · sub-tab drag-to-split · window pop-out | ✅ |
 | Pane closes when its shell exits; last one quits the app | ✅ |
 | Layout + per-pane appearance restore on launch | ✅ |
+| Per-directory default logos — pick once, inherited by subdirs, persistent (`dir-logos.toml`) | ✅ |
 | Live resize → SIGWINCH (verified against `tput`) | ✅ |
 | Full ANSI color (16 themed + 256 + truecolor), bold/underline/inverse/dim | ✅ |
 | Scrollback (wheel), mouse selection (click/word/line), `ctrl+shift+c/v`, bracketed paste | ✅ |

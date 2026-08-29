@@ -37,6 +37,14 @@ pub struct PaneRuntime {
     pub resume: Option<String>,
 }
 
+/// Just the pane's live cwd — the cheap slice of `capture` (one tcgetpgrp +
+/// one readlink, no agent-session scan) for callers that POLL, like the
+/// workspace's per-directory-logo sweep.
+pub fn capture_cwd(master: Option<&File>, shell_pid: u32) -> Option<String> {
+    let fg = master.and_then(fg_pgid).unwrap_or(shell_pid);
+    proc_cwd(fg).or_else(|| proc_cwd(shell_pid))
+}
+
 /// Snapshot one live pane from its PTY master + shell pid.
 pub fn capture(master: Option<&File>, shell_pid: u32) -> PaneRuntime {
     let fg = master.and_then(fg_pgid).unwrap_or(shell_pid);
