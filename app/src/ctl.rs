@@ -405,9 +405,18 @@ mod tests {
     #[test]
     fn the_grammar_is_exactly_five_lines_long() {
         assert!(matches!(parse_line("ping"), Ok(Cmd::Ping)));
-        assert!(matches!(parse_line("paint on"), Ok(Cmd::Paint(Req::Set(true)))));
-        assert!(matches!(parse_line("paint off"), Ok(Cmd::Paint(Req::Set(false)))));
-        assert!(matches!(parse_line("paint toggle"), Ok(Cmd::Paint(Req::Toggle))));
+        assert!(matches!(
+            parse_line("paint on"),
+            Ok(Cmd::Paint(Req::Set(true)))
+        ));
+        assert!(matches!(
+            parse_line("paint off"),
+            Ok(Cmd::Paint(Req::Set(false)))
+        ));
+        assert!(matches!(
+            parse_line("paint toggle"),
+            Ok(Cmd::Paint(Req::Toggle))
+        ));
         assert!(matches!(parse_line("paint status"), Ok(Cmd::PaintStatus)));
         assert!(parse_line("paint").is_err());
         assert!(parse_line("paint sideways").is_err());
