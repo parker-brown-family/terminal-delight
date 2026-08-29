@@ -905,6 +905,184 @@ mod tests {
     }
 }
 
+// ---------------------------------------------------------------- probe ----
+// td-send forensics: given the pid of a tile's shell (or the tile's direct
+// child), work out what is actually running in it and whether TD could re-run
+// it faithfully. Read-only /proc work — no ptrace, no PTY fds (we don't own
+// them); tpgid from stat is the kernel telling us the foreground group.
+
+/// What a probed tile is running, by migration class.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ProbeKind {
+    /// An idle shell prompt — faithful: reopen at cwd.
+    Idle,
+    /// A resumable agent (claude/codex) — faithful: re-run the resume line.
+    Agent,
+    /// A tmux client attached (or `new -A`) to a session — faithful: re-attach.
+    Tmux,
+    /// Anything else in the foreground (vim, htop…) — NOT faithful; refuse.
+    Other,
+}
+
+impl ProbeKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ProbeKind::Idle => "idle",
+            ProbeKind::Agent => "agent",
+            ProbeKind::Tmux => "tmux",
+            ProbeKind::Other => "other",
+        }
+    }
+}
+
+pub struct ProbeReport {
+    pub shell_pid: u32,
+    pub fg_pid: u32,
+    pub kind: ProbeKind,
+    pub comm: String,
+    pub cwd: Option<String>,
+    pub cmdline: String,
+    pub resume: Option<String>,
+}
+
+/// The numeric field `idx` positions after the comm in a /proc stat line
+/// (state=1, ppid=2, pgrp=3, session=4, tty_nr=5, tpgid=6). comm may contain
+/// spaces and parens ("tmux: client"), so split after the LAST ')'.
+fn stat_field_after_comm(stat: &str, idx: usize) -> Option<i64> {
+    let rest = &stat[stat.rfind(')')? + 1..];
+    rest.split_whitespace().nth(idx - 1)?.parse().ok()
+}
+
+/// Shells whose bare prompt makes a tile "idle" (faithfully reopenable).
+fn is_shell_comm(comm: &str) -> bool {
+    matches!(
+        comm,
+        "bash" | "zsh" | "fish" | "sh" | "dash" | "nu" | "nushell"
+    )
+}
+
+/// A tmux invocation that re-runs faithfully: an attach (any spelling) or a
+/// `new-session -A`. A bare `tmux` would mint a NEW session — not faithful.
+fn tmux_attach_shaped(cmdline: &str) -> bool {
+    let mut t = cmdline.split_whitespace();
+    if t.next().map(|w| w.rsplit('/').next().unwrap_or(w)) != Some("tmux") {
+        return false;
+    }
+    let words: Vec<&str> = t.collect();
+    let attach = words
+        .iter()
+        .any(|w| matches!(*w, "attach" | "attach-session" | "a" | "at"));
+    let new_a = (words.contains(&"new-session") || words.contains(&"new")) && words.contains(&"-A");
+    attach || new_a
+}
+
+/// Classify a foreground process for migration. Pure — tested without /proc.
+/// The agent check runs first: a derived resume line is the strongest evidence
+/// and holds whether the agent sits in a shell or IS the tile's direct child.
+fn classify(
+    fg_is_probed_group: bool,
+    comm: &str,
+    cmdline: &str,
+    resume: Option<&str>,
+) -> ProbeKind {
+    if resume.is_some() {
+        return ProbeKind::Agent;
+    }
+    if comm.starts_with("tmux") && tmux_attach_shaped(cmdline) {
+        return ProbeKind::Tmux;
+    }
+    if fg_is_probed_group && is_shell_comm(comm) {
+        return ProbeKind::Idle;
+    }
+    ProbeKind::Other
+}
+
+/// Probe someone else's terminal by its shell (or direct-child) pid.
+pub fn probe_external(shell_pid: u32, home: &Path) -> Result<ProbeReport, String> {
+    let stat = proc_read(shell_pid, "stat");
+    if stat.is_empty() {
+        return Err(format!("no such process: {shell_pid}"));
+    }
+    let pgrp = stat_field_after_comm(&stat, 3).ok_or("unreadable stat (pgrp)")?;
+    let tpgid = stat_field_after_comm(&stat, 6).ok_or("unreadable stat (tpgid)")?;
+    if tpgid <= 0 {
+        return Err(format!(
+            "pid {shell_pid} has no controlling terminal (tpgid {tpgid})"
+        ));
+    }
+    let fg_pid = tpgid as u32;
+    let comm = proc_read(fg_pid, "comm").trim().to_string();
+    if comm.is_empty() {
+        return Err(format!("foreground group {fg_pid} vanished mid-probe"));
+    }
+    let cmdline = proc_cmdline(fg_pid);
+    let cwd = proc_cwd(fg_pid).or_else(|| proc_cwd(shell_pid));
+    let resume = agent_resume(&comm, &cmdline, cwd.as_deref(), home, fg_pid);
+    let kind = classify(tpgid == pgrp, &comm, &cmdline, resume.as_deref());
+    Ok(ProbeReport {
+        shell_pid,
+        fg_pid,
+        kind,
+        comm,
+        cwd,
+        cmdline,
+        resume,
+    })
+}
+
+#[cfg(test)]
+mod probe_tests {
+    use super::*;
+
+    #[test]
+    fn stat_fields_survive_hostile_comms() {
+        // pid (comm-with-spaces-and-parens) state ppid pgrp session tty tpgid
+        let stat = "4242 (a) b) (c)) S 100 4300 4242 34823 4400 4194304";
+        assert_eq!(stat_field_after_comm(stat, 2), Some(100)); // ppid
+        assert_eq!(stat_field_after_comm(stat, 3), Some(4300)); // pgrp
+        assert_eq!(stat_field_after_comm(stat, 6), Some(4400)); // tpgid
+        assert_eq!(stat_field_after_comm("garbage no parens", 6), None);
+    }
+
+    #[test]
+    fn tmux_reruns_only_when_attach_shaped() {
+        assert!(tmux_attach_shaped("tmux attach -t rec"));
+        assert!(tmux_attach_shaped("/usr/bin/tmux a"));
+        assert!(tmux_attach_shaped("tmux new-session -A -s main"));
+        assert!(!tmux_attach_shaped("tmux"));
+        assert!(!tmux_attach_shaped("tmux new-session -s fresh"));
+        assert!(!tmux_attach_shaped("vim tmux.conf"));
+    }
+
+    #[test]
+    fn migration_classes_are_conservative() {
+        assert_eq!(classify(true, "bash", "bash", None), ProbeKind::Idle);
+        assert_eq!(classify(true, "zsh", "-zsh", None), ProbeKind::Idle);
+        // an agent wins regardless of grouping — the resume line is the evidence
+        assert_eq!(
+            classify(
+                false,
+                "claude",
+                "claude --resume abc",
+                Some("claude --resume abc")
+            ),
+            ProbeKind::Agent
+        );
+        // tmux client comm is truncated ("tmux: client"): prefix match + shape
+        assert_eq!(
+            classify(false, "tmux: client", "tmux attach -t rec", None),
+            ProbeKind::Tmux
+        );
+        // vim in the foreground must never be "faithful"
+        assert_eq!(
+            classify(false, "vim", "vim notes.md", None),
+            ProbeKind::Other
+        );
+        // a shell that is NOT the foreground group (stopped-job weirdness) stays Other
+        assert_eq!(classify(false, "bash", "bash", None), ProbeKind::Other);
+    }
+}
+
 #[cfg(test)]
 mod ledger_tests {
     use super::*;

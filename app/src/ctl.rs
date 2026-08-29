@@ -35,10 +35,21 @@ use gpui::Context;
 
 use crate::{theme, Workspace};
 
-/// A queued paint request, applied on the UI thread by the ticker.
+/// A tile adoption: open a fresh pane at `cwd`, optionally running `run` in it
+/// (an agent resume line, a tmux attach) — how the desktop hands a terminal
+/// session over to us (td-send / SUPER+ALT+T). Rides the same queue as paint.
+#[derive(Debug, PartialEq)]
+pub(crate) struct AdoptReq {
+    pub cwd: Option<String>,
+    pub run: Option<String>,
+}
+
+/// A queued control request, applied on the UI thread by the ticker.
+#[derive(Debug)]
 pub(crate) enum Req {
     Set(bool),
     Toggle,
+    Adopt(AdoptReq),
 }
 
 /// One parsed request line.
@@ -46,6 +57,7 @@ enum Cmd {
     Ping,
     PaintStatus,
     Paint(Req),
+    Adopt(AdoptReq),
 }
 
 /// The per-user control directory. Runtime state, so `$XDG_RUNTIME_DIR` (a
@@ -63,6 +75,11 @@ pub fn socket_path(pid: u32) -> PathBuf {
 }
 
 fn parse_line(s: &str) -> Result<Cmd, String> {
+    // `adopt` carries a JSON payload (cwd/run both hold spaces); everything
+    // else stays word-shaped.
+    if let Some(rest) = s.strip_prefix("adopt ") {
+        return parse_adopt(rest.trim()).map(Cmd::Adopt);
+    }
     let mut w = s.split_whitespace();
     match (w.next(), w.next(), w.next()) {
         (Some("ping"), None, _) => Ok(Cmd::Ping),
@@ -71,9 +88,36 @@ fn parse_line(s: &str) -> Result<Cmd, String> {
         (Some("paint"), Some("toggle"), None) => Ok(Cmd::Paint(Req::Toggle)),
         (Some("paint"), Some("status"), None) => Ok(Cmd::PaintStatus),
         _ => Err(format!(
-            "unknown command {s:?} — try: ping | paint on|off|toggle|status"
+            "unknown command {s:?} — try: ping | paint on|off|toggle|status | adopt {{\"cwd\":\"/…\",\"run\":\"…\"}}"
         )),
     }
+}
+
+/// The `adopt` payload: one JSON object, `cwd` and/or `run`, cwd absolute when
+/// present. Same-user trust as the rest of the socket — the validation here is
+/// protocol hygiene, not a security boundary.
+fn parse_adopt(json: &str) -> Result<AdoptReq, String> {
+    let v: serde_json::Value =
+        serde_json::from_str(json).map_err(|e| format!("adopt payload is not JSON: {e}"))?;
+    let take = |k: &str| -> Result<Option<String>, String> {
+        match &v[k] {
+            serde_json::Value::Null => Ok(None),
+            serde_json::Value::String(s) if s.is_empty() => Ok(None),
+            serde_json::Value::String(s) => Ok(Some(s.clone())),
+            other => Err(format!("adopt: {k} must be a string, got {other}")),
+        }
+    };
+    let cwd = take("cwd")?;
+    let run = take("run")?;
+    if let Some(c) = &cwd {
+        if !c.starts_with('/') {
+            return Err(format!("adopt: cwd must be absolute, got {c:?}"));
+        }
+    }
+    if cwd.is_none() && run.is_none() {
+        return Err("adopt: needs cwd and/or run".into());
+    }
+    Ok(AdoptReq { cwd, run })
 }
 
 /// Serve one connection: read a line, answer a line. Short timeouts on both
@@ -103,6 +147,13 @@ fn handle_conn(stream: UnixStream, mirror: &AtomicBool, tx: &mpsc::Sender<Req>) 
                 "err ui gone".into()
             }
         }
+        Ok(Cmd::Adopt(a)) => {
+            if tx.send(Req::Adopt(a)).is_ok() {
+                "ok".into()
+            } else {
+                "err ui gone".into()
+            }
+        }
         Err(e) => format!("err {e}"),
     };
     let mut stream = stream;
@@ -122,6 +173,10 @@ pub fn start(cx: &mut Context<Workspace>) {
         eprintln!("terminal-delight: ctl dir unavailable ({dir:?}): {e}");
         return;
     }
+    // `adopt` spawns commands, so the socket must stay same-user even on the
+    // /tmp fallback (no $XDG_RUNTIME_DIR) under a loose umask: pin the dir to
+    // 0700 every start — create_dir_all leaves an existing dir's mode alone.
+    let _ = std::fs::set_permissions(&dir, std::os::unix::fs::PermissionsExt::from_mode(0o700));
     let path = socket_path(std::process::id());
     // A stale file under our own pid means a previous process with a recycled
     // pid died uncleanly; the bind would fail on it, so sweep first.
@@ -158,7 +213,7 @@ pub fn start(cx: &mut Context<Workspace>) {
         while let Ok(c) = rx.try_recv() {
             cmds.push(c);
         }
-        let applied = this.update(cx, |_ws, cx| {
+        let applied = this.update(cx, |ws, cx| {
             for c in cmds {
                 match c {
                     Req::Set(v) => theme::set_paint_mode(cx, v),
@@ -166,6 +221,9 @@ pub fn start(cx: &mut Context<Workspace>) {
                         let v = !theme::paint_mode(cx);
                         theme::set_paint_mode(cx, v);
                     }
+                    // Adoption needs a Window to build the pane; this ticker is
+                    // window-less, so park it — render() drains next frame.
+                    Req::Adopt(a) => ws.queue_adopt(a, cx),
                 }
             }
             mirror.store(theme::paint_mode(cx), Ordering::Relaxed);
@@ -198,6 +256,8 @@ enum Scope {
 fn parse_cli(args: &[String]) -> Result<(String, Scope), String> {
     let mut words: Vec<&str> = Vec::new();
     let mut scope = Scope::ActiveWorkspace;
+    let mut cwd: Option<String> = None;
+    let mut run: Option<String> = None;
     let mut it = args.iter().map(String::as_str).peekable();
     while let Some(a) = it.next() {
         match a {
@@ -214,11 +274,22 @@ fn parse_cli(args: &[String]) -> Result<(String, Scope), String> {
                 let v = it.next().ok_or("--pid needs a value")?;
                 scope = Scope::Pid(v.parse().map_err(|_| format!("bad pid {v:?}"))?);
             }
+            "--cwd" => cwd = Some(it.next().ok_or("--cwd needs a value")?.to_string()),
+            "--run" => run = Some(it.next().ok_or("--run needs a value")?.to_string()),
             w if !w.starts_with('-') => words.push(w),
             other => return Err(format!("unknown flag {other:?}")),
         }
     }
-    let line = words.join(" ");
+    // `adopt` is flag-shaped on the CLI (cwd/run carry spaces) and becomes the
+    // one-line JSON form on the wire; everything else is the words themselves.
+    let line = if words == ["adopt"] {
+        format!("adopt {}", serde_json::json!({ "cwd": cwd, "run": run }))
+    } else {
+        if cwd.is_some() || run.is_some() {
+            return Err("--cwd/--run only apply to adopt".into());
+        }
+        words.join(" ")
+    };
     // Validate against the same grammar the server enforces, so a typo fails
     // HERE with usage rather than fanning out as N "err unknown command"s.
     parse_line(&line)?;
@@ -310,7 +381,8 @@ pub fn run_cli(args: &[String]) -> i32 {
         Err(e) => {
             eprintln!("terminal-delight ctl: {e}");
             eprintln!(
-                "usage: terminal-delight ctl <ping | paint on|off|toggle|status> \
+                "usage: terminal-delight ctl <ping | paint on|off|toggle|status | \
+                 adopt --cwd <dir> [--run <cmd>]> \
                  [--workspace active|<name-or-id> | --all | --pid <N>]"
             );
             return 1;
@@ -351,6 +423,14 @@ pub fn run_cli(args: &[String]) -> i32 {
             }
             pids.into_iter().map(|p| (p, socket_path(p))).collect()
         }
+    };
+
+    // Adoption is a placement, not a broadcast: exactly ONE terminal receives
+    // the session (workspace scope → the lowest-pid window there).
+    let targets: Vec<(u32, PathBuf)> = if line.starts_with("adopt") {
+        targets.into_iter().take(1).collect()
+    } else {
+        targets
     };
 
     if targets.is_empty() {
@@ -403,7 +483,7 @@ mod tests {
     }
 
     #[test]
-    fn the_grammar_is_exactly_five_lines_long() {
+    fn the_grammar_is_exactly_six_verbs_long() {
         assert!(matches!(parse_line("ping"), Ok(Cmd::Ping)));
         assert!(matches!(
             parse_line("paint on"),
@@ -418,10 +498,54 @@ mod tests {
             Ok(Cmd::Paint(Req::Toggle))
         ));
         assert!(matches!(parse_line("paint status"), Ok(Cmd::PaintStatus)));
+        assert!(matches!(
+            parse_line(r#"adopt {"cwd":"/tmp"}"#),
+            Ok(Cmd::Adopt(AdoptReq { .. }))
+        ));
         assert!(parse_line("paint").is_err());
         assert!(parse_line("paint sideways").is_err());
         assert!(parse_line("paint on extra").is_err());
+        assert!(parse_line("adopt").is_err());
+        assert!(parse_line("adopt notjson").is_err());
         assert!(parse_line("").is_err());
+    }
+
+    #[test]
+    fn adopt_payloads_validate_before_they_queue() {
+        let ok = parse_adopt(r#"{"cwd":"/tmp/x","run":"claude --resume abc-123"}"#).unwrap();
+        assert_eq!(ok.cwd.as_deref(), Some("/tmp/x"));
+        assert_eq!(ok.run.as_deref(), Some("claude --resume abc-123"));
+        // run-only (a tmux re-attach with its own cd) is legal
+        assert!(parse_adopt(r#"{"run":"tmux attach -t rec"}"#).is_ok());
+        // empty strings collapse to None — and all-None is refused
+        assert!(parse_adopt(r#"{"cwd":"","run":""}"#).is_err());
+        assert!(parse_adopt(r#"{}"#).is_err());
+        // relative cwd and non-string types are protocol errors
+        assert!(parse_adopt(r#"{"cwd":"rel/path"}"#).is_err());
+        assert!(parse_adopt(r#"{"cwd":42}"#).is_err());
+    }
+
+    #[test]
+    fn cli_adopt_builds_the_json_line_and_scopes_like_paint() {
+        let s = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let (line, scope) = parse_cli(&s(&[
+            "adopt",
+            "--cwd",
+            "/tmp/x",
+            "--run",
+            "claude --resume abc-1",
+            "--pid",
+            "7",
+        ]))
+        .unwrap();
+        assert_eq!(scope, Scope::Pid(7));
+        let Ok(Cmd::Adopt(a)) = parse_line(&line) else {
+            panic!("adopt CLI produced an unparseable line: {line:?}");
+        };
+        assert_eq!(a.cwd.as_deref(), Some("/tmp/x"));
+        assert_eq!(a.run.as_deref(), Some("claude --resume abc-1"));
+        // the adopt flags are meaningless on other verbs
+        assert!(parse_cli(&s(&["paint", "on", "--cwd", "/x"])).is_err());
     }
 
     #[test]
@@ -468,8 +592,8 @@ mod tests {
         let mirror = Arc::new(AtomicBool::new(false));
         let m2 = Arc::clone(&mirror);
         let server = thread::spawn(move || {
-            // exactly four connections, in test order
-            for _ in 0..4 {
+            // exactly five connections, in test order
+            for _ in 0..5 {
                 let (stream, _) = listener.accept().unwrap();
                 handle_conn(stream, &m2, &tx);
             }
@@ -478,6 +602,17 @@ mod tests {
         assert_eq!(send(&sock, "paint status").unwrap(), "off");
         assert_eq!(send(&sock, "paint toggle").unwrap(), "ok");
         assert!(matches!(rx.try_recv(), Ok(Req::Toggle)));
+        assert_eq!(
+            send(&sock, r#"adopt {"cwd":"/tmp","run":"htop"}"#).unwrap(),
+            "ok"
+        );
+        match rx.try_recv() {
+            Ok(Req::Adopt(a)) => {
+                assert_eq!(a.cwd.as_deref(), Some("/tmp"));
+                assert_eq!(a.run.as_deref(), Some("htop"));
+            }
+            other => panic!("expected the adopt on the queue, got {other:?}"),
+        }
         mirror.store(true, Ordering::Relaxed); // the UI ticker's job
         assert_eq!(send(&sock, "paint status").unwrap(), "on");
         server.join().unwrap();
