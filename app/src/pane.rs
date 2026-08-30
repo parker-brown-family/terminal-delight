@@ -2713,13 +2713,53 @@ impl TerminalView {
             cx.stop_propagation();
             return;
         }
-        // Escape leaves PAINT mode (the ctl-raised palette overlay) ahead of
-        // every pane-local overlay: it is the topmost surface across ALL panes
-        // at once, and the ESC byte must never reach the PTY underneath it.
-        if theme::paint_mode(cx) && ks.key.as_str() == "escape" {
-            theme::set_paint_mode(cx, false);
-            cx.notify();
-            return;
+        // PAINT mode owns the keyboard while it is up — it is the topmost
+        // surface across ALL panes at once, so nothing it handles may reach the
+        // PTY underneath (an ESC byte into a running agent kills it; a stray
+        // `w` lands in someone's shell).
+        //
+        // Only the FOCUSED pane runs this handler, which is what makes "the
+        // letter paints the selected terminal" true without any selection state
+        // to keep: the spotlight in the overlay and the focus this handler
+        // rides are the same fact.
+        if theme::paint_mode(cx) {
+            let m = &ks.modifiers;
+            let plain = !m.control && !m.alt && !m.platform;
+            if ks.key.as_str() == "escape" {
+                theme::set_paint_mode(cx, false);
+                cx.notify();
+                return;
+            }
+            // Bare arrows walk the wall. DECLINED on purpose — this branch
+            // returns WITHOUT halting propagation, so they bubble to the
+            // Workspace, which owns the geometry and does the directional
+            // focus move (`focus_dir`). Saying that in prose rather than in
+            // the literal call name also keeps the invariant's own guard test
+            // (`pane_on_key_only_stops_propagation_when_it_consumes_the_key`,
+            // a source scan) from reading this comment as a call site.
+            if plain && matches!(ks.key.as_str(), "left" | "right" | "up" | "down") {
+                return;
+            }
+            // `d` hands the pane back to the desktop; a set's first letter
+            // paints it. Both come out of ONE table (`Dynamic::paint_chord`),
+            // so the tiles, the legend and this handler cannot drift apart.
+            // The letters are unique and never `d`/`s` — guarded in theme.rs by
+            // `named_sets_spell_a_unique_paint_alphabet`.
+            if plain && !m.shift {
+                if let Some(pick) = theme::Dynamic::paint_chord(ks.key.as_str()) {
+                    self.paint_pick(pick, cx);
+                    cx.stop_propagation();
+                    return;
+                }
+            }
+            // Anything else printable is swallowed rather than typed: the
+            // overlay is modal, and a miss should be a no-op, not a keystroke
+            // into whatever is running behind it. Modified chords still pass,
+            // so the window is never a trap.
+            if plain && ks.key.chars().count() == 1 {
+                cx.stop_propagation();
+                return;
+            }
         }
         // Escape closes the right-click menu before anything else.
         if self.ctx_menu.is_some() && ks.key.as_str() == "escape" {
@@ -4708,46 +4748,80 @@ impl Render for TerminalView {
         // PAINT mode — the wall-wide palette overlay (raised by `terminal-delight
         // ctl paint …`, e.g. the Omarchy bar's palette widget). EVERY pane draws
         // its own glyph grid at once, so a wall of terminals recolours like
-        // dipping a brush: click a set on this pane, move to the next, Esc when
-        // the wall reads right. The tiles are the theme tray's own colour-set
-        // vocabulary (Dynamic::NAMED + signatures), so a paint pick produces
-        // exactly what the tray would have — just one click per pane instead of
-        // four, and everywhere at the same time.
+        // dipping a brush: paint this one, arrow to the next, Esc when the wall
+        // reads right. The tiles are the theme tray's own colour-set vocabulary
+        // (Dynamic::NAMED + signatures) — which is also, deliberately, the
+        // desktop's variant set — so a paint pick produces exactly what the tray
+        // would have, and exactly what the bar would have.
+        //
+        // It plays like Omarchy's own picker, mouse optional: the SELECTED pane
+        // is spotlit (everything else keeps the scrim), bare arrows walk the
+        // selection, and a set's FIRST LETTER paints it. That letter is drawn
+        // the way it is pressed — bigger, bolder, underlined — so the keyboard
+        // is legible from the tile itself instead of a legend somewhere else.
         let paint_el = theme::paint_mode(cx).then(|| {
             let outer = theme::outer_choice(cx);
             let eff = self.appearance.effective(&outer);
             let following = self.appearance.inherit_theme;
+            // the spotlight: only the focused pane is lit, and only IT answers
+            // the letters — so the keyboard always has one unambiguous target.
+            let sel = self.focus_handle(cx).is_focused(window);
             let (acc, surf, txt, faint) = (th.accent, th.surface, th.text, th.faint);
             let ff = th.font_family.clone();
-            let tile = move |glyph: String, label: String, swatch: Option<Hsla>, lit: bool| {
-                div()
-                    .w(px(54.))
-                    .flex()
-                    .flex_col()
-                    .items_center()
-                    .gap(px(2.))
-                    .py(px(5.))
-                    .rounded(px(8.))
-                    .border_1()
-                    .border_color(if lit { acc } else { acc.alpha(0.28) })
-                    .bg(surf.alpha(0.92))
-                    .cursor_pointer()
-                    .hover(move |s| s.bg(acc.alpha(0.20)))
-                    .child(div().text_size(px(17.)).child(glyph))
-                    .child(
-                        div()
-                            .text_size(px(8.))
-                            .text_color(if lit { txt } else { faint })
-                            .child(label),
-                    )
-                    .child(
-                        div()
-                            .h(px(3.))
-                            .w(px(32.))
-                            .rounded(px(2.))
-                            .bg(swatch.unwrap_or(acc.alpha(0.0))),
-                    )
-            };
+            let tile =
+                move |glyph: String, key: char, rest: String, swatch: Option<Hsla>, lit: bool| {
+                    div()
+                        .w(px(62.))
+                        .flex()
+                        .flex_col()
+                        .items_center()
+                        .gap(px(3.))
+                        .py(px(6.))
+                        .rounded(px(8.))
+                        .border_1()
+                        .border_color(if lit { acc } else { acc.alpha(0.28) })
+                        .bg(if lit {
+                            acc.alpha(0.16)
+                        } else {
+                            surf.alpha(0.92)
+                        })
+                        .cursor_pointer()
+                        .hover(move |s| s.bg(acc.alpha(0.20)))
+                        .child(div().text_size(px(17.)).child(glyph))
+                        .child(
+                            // The name, with its chord worn loud. Two children on a
+                            // shared baseline rather than one styled string: the
+                            // initial needs its OWN size, weight and underline, and
+                            // gpui styles per element, not per run.
+                            div()
+                                .flex()
+                                .flex_row()
+                                .items_baseline()
+                                .child(
+                                    div()
+                                        .text_size(px(13.))
+                                        .font_weight(gpui::FontWeight::EXTRA_BOLD)
+                                        .text_color(if lit { txt } else { txt.alpha(0.85) })
+                                        .underline()
+                                        .text_decoration_2()
+                                        .text_decoration_color(acc)
+                                        .child(key.to_string()),
+                                )
+                                .child(
+                                    div()
+                                        .text_size(px(8.))
+                                        .text_color(if lit { txt.alpha(0.9) } else { faint })
+                                        .child(rest),
+                                ),
+                        )
+                        .child(
+                            div()
+                                .h(px(3.))
+                                .w(px(36.))
+                                .rounded(px(2.))
+                                .bg(swatch.unwrap_or(acc.alpha(0.0))),
+                        )
+                };
             let mut grid = div()
                 .flex()
                 .flex_row()
@@ -4756,7 +4830,7 @@ impl Render for TerminalView {
                 .gap(px(6.))
                 .max_w(px(430.));
             grid = grid.child(
-                tile("⟲".into(), "DESKTOP".into(), None, following).on_mouse_down(
+                tile("⟲".into(), 'D', "ESKTOP".into(), None, following).on_mouse_down(
                     MouseButton::Left,
                     cx.listener(|v, _, _, cx| {
                         v.paint_pick(None, cx);
@@ -4770,7 +4844,8 @@ impl Render for TerminalView {
                 grid = grid.child(
                     tile(
                         d.glyph().to_string(),
-                        d.label().to_uppercase(),
+                        d.paint_letter(),
+                        d.label()[1..].to_uppercase(),
                         d.swatch(),
                         lit,
                     )
@@ -4789,29 +4864,48 @@ impl Render for TerminalView {
                 .left_0()
                 .size_full()
                 .occlude()
-                .bg(gpui::hsla(0., 0., 0., 0.52))
+                // the spotlight, and the whole reason arrows are worth pressing:
+                // the pane the letters will hit sits under a THIN scrim, every
+                // other pane under a heavy one. Which terminal you are painting
+                // is answered from across the room, without reading a word.
+                .bg(gpui::hsla(0., 0., 0., if sel { 0.42 } else { 0.78 }))
                 .flex()
                 .items_center()
                 .justify_center()
+                .when(sel, |d| {
+                    // …and the selected pane is FRAMED, inset so the band reads
+                    // as "this window" rather than as another card border.
+                    d.border(px(3.)).border_color(txt.alpha(0.9))
+                })
                 .child(
                     div()
                         .flex()
                         .flex_col()
                         .items_center()
                         .gap(px(8.))
+                        // unselected cards fade back: same layout, quieter ink,
+                        // so the wall still shows what every pane is wearing.
+                        .opacity(if sel { 1.0 } else { 0.34 })
                         .font_family(ff)
                         .child(
                             div()
                                 .text_size(px(11.))
+                                .font_weight(if sel {
+                                    gpui::FontWeight::EXTRA_BOLD
+                                } else {
+                                    gpui::FontWeight::NORMAL
+                                })
                                 .text_color(txt)
                                 .child("PAINT THIS PANE"),
                         )
                         .child(grid)
                         .child(
+                            // The legend is the contract: everything named here
+                            // works, and nothing that works is unnamed.
                             div()
                                 .text_size(px(9.))
                                 .text_color(faint)
-                                .child("esc · done"),
+                                .child("↔ select · letter paints · d desktop · esc done"),
                         ),
                 )
         });

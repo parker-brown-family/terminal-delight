@@ -16,7 +16,8 @@ one terminal can be hacker-green while the next is tactical-cyan — no global f
 |---|---|---|---|
 | **Hot-reload** | Edit `~/.config/terminal-delight/theme.toml`, ~300 ms mtime poll swaps it live | theme watcher | `TD_THEME` path |
 | **Built-in pack** | hacker (phosphor) · tactical-overdrive (cyan) · field-command (olive) · quiet-command (light, effects off) · gamba (satire) | `BUILTIN_THEMES` | picker |
-| **Colour-set presets** | bat · cherry · clowndy · wood · army · midnight · snowflake — 7 tray presets w/ per-set swatch glyph | dynamic palette + `swatch()` | tray |
+| **Colour-set presets** | army · badger · cherry · ember · glacier · nuclear · pineapple · retro · tide · violet · wood — the 11 sets the Omarchy variant pack ships, w/ per-set swatch glyph | dynamic palette + `swatch()` | tray |
+| **Paint overlay (keyboard-first)** | `ctl paint on` raises a palette over every pane at once; the focused pane is spotlit, bare **arrows** walk the wall, a set's **first letter** paints it, `d` returns it to the desktop, `esc` folds | `Dynamic::paint_chord` | `terminal-delight ctl paint` / the Omarchy 🎨 bar widget |
 | **Seed colour wheel** | Pick an accent on a canvas HSV wheel → harmonic palette auto-generated; 3-marker | wheel + `hsla_to_hex` | breakout picker |
 | **Colour modes** | Default (real ANSI) · Monochrome (phosphor ramp) · OnTheme (harmonic around seed) | `ColorMode` enum | cycle |
 | **Syntax overlay** | 4 schemes (code/agentic/logs/markdown) on a 6-role palette; orthogonal to colour mode | `SyntaxScheme` | SYNTAX tray |

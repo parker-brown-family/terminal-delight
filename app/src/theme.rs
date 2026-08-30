@@ -1016,31 +1016,37 @@ pub enum Dynamic {
 }
 
 impl Dynamic {
-    /// The named colour sets shown in the tray, in display order (Custom is
-    /// appended separately as the cog).
-    /// Display order is a ROYGBIV sweep by signature-seed hue (warm reds → golds →
-    /// greens → cyans → blues → violets → magentas), with the greyscale Badger
-    /// trailing since it has no hue. Keep new sets in hue order.
-    pub const NAMED: [Dynamic; 19] = [
-        Dynamic::Ember,         // orange-red
-        Dynamic::Wood,          // brown
-        Dynamic::RetroSunset,   // orange
-        Dynamic::Retro,         // orange-gold
-        Dynamic::Amber,         // gold
-        Dynamic::Pineapple,     // yellow-gold
-        Dynamic::Army,          // olive
-        Dynamic::Toxic,         // chartreuse
-        Dynamic::Greenworks,    // green
-        Dynamic::Ocean,         // cyan
-        Dynamic::Snowflake,     // sky blue
-        Dynamic::Midnight,      // blue
-        Dynamic::Bolt,          // violet
-        Dynamic::Galaxy,        // violet
-        Dynamic::Bat,           // purple
-        Dynamic::Cyberpunk,     // magenta
-        Dynamic::CottonClowndy, // pink
-        Dynamic::Cherry,        // red-pink
-        Dynamic::Badger,        // greyscale (no hue → trails)
+    /// The named colour sets shown in the tray and the paint overlay — ONE
+    /// vocabulary, shared with the desktop.
+    ///
+    /// These are exactly the variants the Omarchy theme set ships
+    /// (`omarchy-terminal-delight-theme/variants.toml` → the
+    /// `terminal-delight-<key>` themes in `~/.config/omarchy/themes`), so a
+    /// terminal painted from the bar and a pane painted from inside TD are
+    /// speaking the same language. The desktop is the registry; this array
+    /// follows it.
+    ///
+    /// Order is ALPHABETICAL, not by hue, because the first letter of each
+    /// label is its keyboard chord in the paint overlay — reading order and
+    /// key order have to agree or the letters are a memory test. Every label
+    /// therefore starts with a DISTINCT letter, and none of them may be `d`
+    /// (desktop), `s`/`S` (saturate) or `R` (reset), which the overlay owns.
+    /// Guarded by `named_sets_spell_a_unique_paint_alphabet`.
+    ///
+    /// Colour sets outside this list still exist and still load from saved
+    /// state — they are simply not offered any more. Re-adding one is a line.
+    pub const NAMED: [Dynamic; 11] = [
+        Dynamic::Army,      // a · olive
+        Dynamic::Badger,    // b · greyscale
+        Dynamic::Cherry,    // c · red-pink
+        Dynamic::Ember,     // e · orange-red
+        Dynamic::Snowflake, // g · glacier — sky blue
+        Dynamic::Toxic,     // n · nuclear — chartreuse
+        Dynamic::Pineapple, // p · yellow-gold
+        Dynamic::Cyberpunk, // r · retro — magenta
+        Dynamic::Ocean,     // t · tide — cyan
+        Dynamic::Bat,       // v · violet — purple
+        Dynamic::Wood,      // w · brown
     ];
 
     /// Glyph shown in the tray's vertical box for this colour set.
@@ -1070,7 +1076,14 @@ impl Dynamic {
         }
     }
 
-    /// Human name (tests, accessibility) — the tray itself shows only the glyph.
+    /// Human name — the tray shows only the glyph, but the paint overlay wears
+    /// this in full and its FIRST LETTER is the key that paints the set.
+    ///
+    /// For everything in [`Dynamic::NAMED`] the name is the desktop's name for
+    /// the same colours (`terminal-delight-<label>` in Omarchy's theme dir), so
+    /// the two pickers never disagree about what a set is called. Display only:
+    /// saved state serialises the VARIANT (`#[serde(rename_all = "kebab-case")]`
+    /// on the enum), so renaming here cannot orphan anyone's theme.
     pub fn label(&self) -> &'static str {
         match self {
             Dynamic::Plain => "plain",
@@ -1078,23 +1091,61 @@ impl Dynamic {
             Dynamic::Bolt => "bolt",
             Dynamic::Amber => "amber",
             Dynamic::Pineapple => "pineapple",
-            Dynamic::Retro => "retro",
-            Dynamic::Bat => "bat",
+            // `gamba`, not `retro`: the desktop's `retro` variant is TD's
+            // Cyberpunk set (variants.toml says so), and two sets may not
+            // answer to one name. This one has always been the colour half
+            // of the GAMBA theme.
+            Dynamic::Retro => "gamba",
+            Dynamic::Bat => "violet",
             Dynamic::Cherry => "cherry",
             Dynamic::CottonClowndy => "cotton-clowndy",
             Dynamic::Wood => "wood",
             Dynamic::Army => "army",
             Dynamic::Midnight => "midnight",
-            Dynamic::Snowflake => "snowflake",
-            Dynamic::Ocean => "ocean",
+            Dynamic::Snowflake => "glacier",
+            Dynamic::Ocean => "tide",
             Dynamic::Ember => "ember",
-            Dynamic::Toxic => "toxic",
-            Dynamic::Cyberpunk => "cyberpunk",
+            Dynamic::Toxic => "nuclear",
+            Dynamic::Cyberpunk => "retro",
             Dynamic::RetroSunset => "retro-sunset",
             Dynamic::Galaxy => "galaxy",
             Dynamic::Badger => "badger",
             Dynamic::Custom(_) => "custom",
         }
+    }
+
+    /// The keyboard chord that paints this set — its label's first letter,
+    /// upper-cased. Unique across [`Dynamic::NAMED`] by construction, which is
+    /// what lets the overlay be driven letter-by-letter with no mouse.
+    pub fn paint_letter(&self) -> char {
+        self.label()
+            .chars()
+            .next()
+            .map(|c| c.to_ascii_uppercase())
+            .unwrap_or('?')
+    }
+
+    /// Resolve a paint-overlay keystroke to what it paints.
+    ///
+    /// `Some(None)` hands the pane back to the desktop (`d`), `Some(Some(set))`
+    /// paints that set, `None` means the key is not a paint chord at all. One
+    /// function so the overlay's legend, the key handler and the tests are all
+    /// reading the same table — the alternative is a `match` in the handler
+    /// that drifts from the tiles it claims to describe.
+    pub fn paint_chord(key: &str) -> Option<Option<Dynamic>> {
+        let mut ch = key.chars();
+        let (c, rest) = (ch.next()?, ch.next());
+        if rest.is_some() {
+            return None; // "escape", "left", … are not chords
+        }
+        if c.eq_ignore_ascii_case(&'d') {
+            return Some(None);
+        }
+        Dynamic::NAMED
+            .iter()
+            .find(|d| d.paint_letter().eq_ignore_ascii_case(&c))
+            .cloned()
+            .map(Some)
     }
 
     /// The signature palette this colour set seeds, if it's a named one. The
@@ -1987,8 +2038,86 @@ mod tests {
         );
         assert_eq!(
             entries.len(),
-            20,
-            "nineteen named dynamics plus the custom cog"
+            12,
+            "the eleven Omarchy variants plus the custom cog"
+        );
+    }
+
+    #[test]
+    fn named_sets_spell_a_unique_paint_alphabet() {
+        // The paint overlay is driven by first letters, so the alphabet has to
+        // hold: one set per letter, and never a letter the overlay itself owns.
+        // Case matters — the sets paint on LOWERCASE, so only the overlay's own
+        // lowercase chords are off-limits: `d` (desktop) and `s` (saturate).
+        // `S` (saturate all) and `R` (reset all) are shifted, so `retro` may
+        // keep its `r`. A collision would make a keystroke silently paint the
+        // wrong set — no compile error, no panic, just the wrong colour on the
+        // wrong terminal. (`surfwood` is exactly how this bit us: it shipped,
+        // it started with `s`, and it ate the saturate chord.)
+        const RESERVED: [char; 2] = ['d', 's'];
+        let mut seen = std::collections::HashMap::new();
+        for d in Dynamic::NAMED.iter() {
+            let k = d.paint_letter();
+            assert!(
+                !RESERVED.contains(&k.to_ascii_lowercase()),
+                "{} claims {k}, which the overlay reserves",
+                d.label()
+            );
+            if let Some(prev) = seen.insert(k, d.label()) {
+                panic!("{k} is claimed by both {prev} and {}", d.label());
+            }
+        }
+        assert_eq!(seen.len(), Dynamic::NAMED.len());
+    }
+
+    #[test]
+    fn paint_chord_resolves_the_overlay_keyboard() {
+        // Every tile the overlay draws must be reachable by the letter it wears
+        // — that is the entire promise of "letter paints".
+        for d in Dynamic::NAMED.iter() {
+            let key = d.paint_letter().to_ascii_lowercase().to_string();
+            let got = Dynamic::paint_chord(&key)
+                .unwrap_or_else(|| panic!("{key} paints nothing"))
+                .unwrap_or_else(|| panic!("{key} resolved to DESKTOP, not {}", d.label()));
+            assert!(got.same_kind(d), "{key} painted {}", got.label());
+        }
+        // `d` is the ⟲ DESKTOP tile, not a colour set.
+        assert!(matches!(Dynamic::paint_chord("d"), Some(None)));
+        // Named keys are not chords: the overlay must never read the arrow that
+        // moves the selection as a letter that paints it.
+        for k in ["escape", "left", "right", "up", "down", "enter", ""] {
+            assert!(Dynamic::paint_chord(k).is_none(), "{k:?} is not a chord");
+        }
+        // A letter no set claims is simply a miss.
+        assert!(Dynamic::paint_chord("z").is_none());
+        // Case-insensitive: shift+letter paints the same set, so a capitals-on
+        // keyboard is not a broken one.
+        assert!(matches!(Dynamic::paint_chord("W"), Some(Some(_))));
+    }
+
+    #[test]
+    fn named_sets_are_the_variants_the_desktop_ships() {
+        // ONE vocabulary: this list is `variants.toml` in
+        // omarchy-terminal-delight-theme, which installs
+        // ~/.config/omarchy/themes/terminal-delight-<key>. If the desktop set
+        // changes, this test is the place that says so out loud.
+        let names: Vec<&str> = Dynamic::NAMED.iter().map(|d| d.label()).collect();
+        assert_eq!(
+            names,
+            vec![
+                "army",
+                "badger",
+                "cherry",
+                "ember",
+                "glacier",
+                "nuclear",
+                "pineapple",
+                "retro",
+                "tide",
+                "violet",
+                "wood",
+            ],
+            "NAMED must match the desktop variant set, in alphabetical (= key) order"
         );
     }
 

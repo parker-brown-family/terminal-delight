@@ -5600,6 +5600,24 @@ impl Workspace {
             cx.notify();
             return;
         }
+        // PAINT mode: BARE arrows walk the wall, the way Omarchy's own picker
+        // walks its grid — no chord to learn while a full-screen overlay is up
+        // and the terminal underneath is unreachable anyway. This sits ahead of
+        // every other branch because the overlay is the topmost surface; the
+        // focused pane declines arrows (pane.rs) precisely so they land here.
+        //
+        // With nothing that way — a lone pane, or the edge of the layout — the
+        // press is simply eaten. It must NOT fall through to the terminal: the
+        // pane is behind a modal, and ctrl+arrows keeps its word-jump job.
+        if theme::paint_mode(cx)
+            && !m.control
+            && !m.alt
+            && !m.shift
+            && matches!(ks.key.as_str(), "left" | "right" | "up" | "down")
+        {
+            self.focus_dir(ks.key.as_str(), window, cx);
+            return;
+        }
         // Esc closes whatever popup (modal or menu) is open — one consistent path
         // for the whole app. A capture-phase handler (see render) catches it even
         // while a terminal holds focus; this is the same dismissal for the

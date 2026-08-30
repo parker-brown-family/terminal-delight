@@ -9,6 +9,19 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ### Added
 
+- **The paint overlay plays from the keyboard, and the colour sets are the
+  desktop's.** `terminal-delight ctl paint on` (the Omarchy 🎨 bar widget, or
+  any script) still raises the palette over every pane at once — but now it is
+  mouse-optional and reads like Omarchy's own picker:
+  - the **focused pane is spotlit** — a thin scrim and a bright frame on it, a
+    heavy scrim on everything else, so which terminal you are painting is
+    answered from across the room;
+  - **bare arrows** walk the wall in the direction you press (`ctrl` keeps its
+    word-jump; the overlay is modal, so the plain keys are free);
+  - a set's **first letter paints it**, drawn the way it is pressed — bigger,
+    bolder, underlined in the accent — so the chord is legible from the tile
+    instead of a legend elsewhere. `d` hands the pane back to the desktop,
+    `esc` folds. A miss is a no-op, never a keystroke into the agent behind it.
 - **Per-directory default logos — persistent and inherited.** Picking a pane
   logo now writes a directory default to
   `~/.config/terminal-delight/dir-logos.toml`: every pane whose cwd is at or
@@ -38,6 +51,21 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
   Web tributes: a `start-crawl.html` kiosk and an `info.html` section.
   - _Known limitation:_ click hit-testing in a crawling pane stays barrel-only,
     so text selection is approximate — crawl is a display/nostalgia mode.
+
+### Changed
+
+- **One palette vocabulary, shared with the desktop.** The colour-set tray and
+  the paint overlay now offer the **11 variants the Omarchy theme pack ships**
+  (`army badger cherry ember glacier nuclear pineapple retro tide violet wood`)
+  instead of 19 TD-only names, listed alphabetically so the paint letters run in
+  reading order and every one is unique. Five sets took the desktop's name for
+  the same colours — `snowflake`→**glacier**, `toxic`→**nuclear**, `ocean`→
+  **tide**, `bat`→**violet**, `cyberpunk`→**retro** — and the old `retro` set
+  (the slot-machine palette) is now **gamba**, after the theme it has always
+  coloured. Renames are display-only: saved themes serialise the variant, not
+  the label, so nothing you already picked moves. Sets no longer listed
+  (`greenworks bolt amber gamba cotton-clowndy midnight retro-sunset galaxy`)
+  still load from saved state — they are simply not offered.
 
 ### Fixed
 
