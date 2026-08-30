@@ -584,6 +584,14 @@ pub struct ThemeChoice {
     /// the theme group; `Plain` (single-hue tint) by default for back-compat.
     #[serde(default, skip_serializing_if = "Dynamic::is_plain")]
     pub dynamic: Dynamic,
+    /// A DESKTOP PALETTE borrowed wholesale — the id of one of Omarchy's on-board
+    /// colour schemes (`tokyo-night`, `gruvbox`, …). Where `dynamic` re-derives
+    /// colours from a seed and keeps the theme's screen, this replaces the whole
+    /// `[colors]` table and keeps only the theme's TEXTURE, so a pane can look
+    /// exactly like every other window on the desktop. `None` = no palette, the
+    /// long-standing behaviour. See [`crate::palette`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub palette: Option<String>,
     /// Explicit body-text colour override ("#rrggbb"), set by the wheel's `T`
     /// target. `None` = let the theme/dynamic decide the text colour.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -614,6 +622,7 @@ impl Default for ThemeChoice {
             syntax_scheme: SyntaxScheme::Code,
             grade: Grade::default(),
             dynamic: Dynamic::default(),
+            palette: None,
             text: None,
             complement: None,
             human: None,
@@ -654,6 +663,7 @@ pub fn house_outer() -> ThemeChoice {
             crawl_depth: CRAWL_DEPTH_DEFAULT,
         },
         dynamic: Dynamic::Plain,
+        palette: None, // the shipped cabinet is our own look, not a borrowed one
         text: None,
         complement: None,
         human: None,
@@ -682,6 +692,7 @@ pub fn house_terminal() -> ThemeChoice {
             ..Grade::neutral()
         },
         dynamic: Dynamic::Wood,
+        palette: None,
         text: None,
         complement: None,
         human: None,
@@ -707,6 +718,8 @@ pub struct ThemeGroup {
     #[serde(default, skip_serializing_if = "Dynamic::is_plain")]
     pub dynamic: Dynamic,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub palette: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub complement: Option<String>,
@@ -725,6 +738,7 @@ impl Default for ThemeGroup {
             syntax: true,
             syntax_scheme: SyntaxScheme::Code,
             dynamic: Dynamic::default(),
+            palette: None,
             text: None,
             complement: None,
             human: None,
@@ -743,6 +757,7 @@ impl ThemeGroup {
             syntax: c.syntax,
             syntax_scheme: c.syntax_scheme,
             dynamic: c.dynamic.clone(),
+            palette: c.palette.clone(),
             text: c.text.clone(),
             complement: c.complement.clone(),
             human: c.human.clone(),
@@ -814,6 +829,7 @@ impl PaneTheme {
             syntax_scheme: g.syntax_scheme,
             grade,
             dynamic: g.dynamic,
+            palette: g.palette,
             text: g.text,
             complement: g.complement,
             human: g.human,
@@ -1587,6 +1603,25 @@ pub fn resolve(cx: &App, choice: &ThemeChoice) -> Arc<Theme> {
             .map(|(_, t)| t.clone())
             .unwrap_or_else(|| reg.custom.clone())
     };
+    // Layer 0 — the DESKTOP PALETTE. Before the theme's own seed behaviour gets a
+    // say, a borrowed Omarchy colour scheme repaints the whole `[colors]` table
+    // and nothing else, exactly as the `$TD_PALETTE` overlay does. It sits FIRST
+    // because it is a new base, not a modifier: everything below (seed, colour
+    // set, T/C overrides, invert) then works off the borrowed colours, so a
+    // painted pane is still tweakable rather than frozen.
+    //
+    // A palette id that no longer resolves — the theme was uninstalled since the
+    // state file was written — leaves the theme's own colours standing. Losing
+    // the borrowed look is the right failure; losing the pane is not.
+    let base = match choice
+        .palette
+        .as_deref()
+        .and_then(|id| crate::palette::find(cx, id))
+        .and_then(|p| overlay_palette(&base, &p.toml).ok())
+    {
+        Some(painted) => Arc::new(painted),
+        None => base,
+    };
     // The colour set's signature supplies default seed/text/title/mode; the
     // wheel's seed/T/C overrides win over it.
     let sig = choice.dynamic.signature();
@@ -1830,6 +1865,56 @@ pub fn paint_mode(cx: &App) -> bool {
 pub fn set_paint_mode(cx: &mut App, on: bool) {
     if paint_mode(cx) != on {
         cx.set_global(PaintMode(on));
+        cx.refresh_windows();
+    }
+}
+
+/// Which SHELF the paint overlay is showing: 0 = Terminal Delight's own colour
+/// sets, 1 = the desktop's palettes ([`crate::palette`]). App-global for the same
+/// reason [`PaintMode`] is — you flip the shelf once and every pane's overlay
+/// turns with you, so a wall can be painted from one vocabulary in one pass.
+#[derive(Default)]
+pub struct PaintShelf(pub u8);
+impl Global for PaintShelf {}
+
+/// Shelf names, in cycle order. Index 1 is skipped when no palettes were found.
+pub const PAINT_SHELVES: [&str; 2] = ["COLOUR SETS", "DESKTOP PALETTES"];
+
+/// The shelf the paint overlay is on, clamped to what this desktop can show.
+pub fn paint_shelf(cx: &App) -> u8 {
+    let n = shelf_count(cx);
+    cx.try_global::<PaintShelf>()
+        .map(|s| s.0)
+        .unwrap_or(0)
+        .min(n - 1)
+}
+
+/// How many shelves are worth cycling through. The palette shelf disappears
+/// rather than showing an empty grid when Omarchy isn't installed — an empty
+/// shelf you can still land on reads as a bug.
+pub fn shelf_count(cx: &App) -> u8 {
+    if crate::palette::all(cx).is_empty() {
+        1
+    } else {
+        PAINT_SHELVES.len() as u8
+    }
+}
+
+/// Step the paint shelf by `delta`, wrapping. A no-op when there is only one.
+pub fn cycle_paint_shelf(cx: &mut App, delta: i8) {
+    let n = i16::from(shelf_count(cx));
+    if n < 2 {
+        return;
+    }
+    let next = (i16::from(paint_shelf(cx)) + i16::from(delta)).rem_euclid(n) as u8;
+    set_paint_shelf(cx, next);
+}
+
+/// Show shelf `n` (a click on its pill); out-of-range asks are ignored rather
+/// than clamped, so a stale click can't silently land on the wrong shelf.
+pub fn set_paint_shelf(cx: &mut App, n: u8) {
+    if n < shelf_count(cx) && n != paint_shelf(cx) {
+        cx.set_global(PaintShelf(n));
         cx.refresh_windows();
     }
 }
@@ -2696,6 +2781,67 @@ mod tests {
         assert!(
             matches!(back.dynamic, Dynamic::Custom(p) if p.primary.as_deref() == Some("#abcdef")),
             "custom palette survives the wire"
+        );
+    }
+
+    #[test]
+    fn a_borrowed_desktop_palette_round_trips_and_is_absent_by_default() {
+        // No palette is the overwhelming case and the pre-existing behaviour, so
+        // it must not appear on the wire — every old state file stays byte-valid.
+        let none = toml::to_string(&ThemeChoice::default()).unwrap();
+        assert!(!none.contains("palette"), "no palette → no key");
+        let painted = ThemeChoice {
+            palette: Some("tokyo-night".into()),
+            ..Default::default()
+        };
+        let back: ThemeChoice = toml::from_str(&toml::to_string(&painted).unwrap()).unwrap();
+        assert_eq!(back.palette.as_deref(), Some("tokyo-night"));
+        // and it survives the lift into a theme GROUP and back out, which is the
+        // path a per-pane paint pick actually travels.
+        let pane = PaneTheme {
+            theme: Some(ThemeGroup::of(&painted)),
+            inherit_theme: false,
+            ..Default::default()
+        };
+        assert_eq!(
+            pane.effective(&ThemeChoice::default()).palette.as_deref(),
+            Some("tokyo-night"),
+            "a painted pane keeps its palette through group lift + resolve"
+        );
+    }
+
+    #[test]
+    fn a_desktop_palette_repaints_colour_and_leaves_the_texture_alone() {
+        // The property the palette layer exists for, asserted on the seam it
+        // shares with `$TD_PALETTE`: colours move, the look does not.
+        let base = parse(DEFAULT_THEME_TOML).expect("base parses");
+        let p = crate::palette::from_source(
+            "probe",
+            "mode = \"dark\"\nbackground = \"#101010\"\nforeground = \"#dddddd\"\n\
+             accent = \"#ff0088\"\nmuted = \"#555555\"\nbright_foreground = \"#ffffff\"\n",
+        )
+        .expect("probe palette builds");
+        let out = overlay_palette(&base, &p.toml).expect("palette applies");
+        assert_eq!(
+            out.bg,
+            hex("#101010").unwrap(),
+            "the palette owns the screen"
+        );
+        assert_eq!(out.accent, hex("#ff0088").unwrap());
+        assert_eq!(
+            out.cursor,
+            hex("#ffffff").unwrap(),
+            "cursor = bright_foreground"
+        );
+        assert_eq!(
+            (out.scanline_opacity, out.bloom, out.warp, out.font_family),
+            (
+                base.scanline_opacity,
+                base.bloom,
+                base.warp,
+                base.font_family.clone()
+            ),
+            "TEXTURE is untouched — that separation is the whole point"
         );
     }
 

@@ -9,6 +9,30 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ### Added
 
+- **Paint with the desktop's own palettes.** The paint overlay now carries TWO
+  shelves, turned with `z` (`shift+z` back) or by clicking a pill: the existing
+  COLOUR SETS, and DESKTOP PALETTES — every Omarchy theme installed on the
+  machine (`/usr/share/omarchy/themes`, `~/.config/omarchy/themes`, user themes
+  shadowing stock ones by name; 23 on a stock box).
+  - A palette replaces the pane's whole colour table and leaves its **texture**
+    — scanlines, bloom, curvature, font — untouched, so a pane can match every
+    other window on the desktop without giving up the look. It rides the same
+    seam `$TD_PALETTE` already used, so there is one set of rules for both.
+  - The ANSI mapping is **copied from Omarchy's own terminal template**, not
+    invented: normal black is `background`, bright black is `muted`, cursor is
+    `bright_foreground`. A pane painted `tokyo-night` therefore renders colour
+    for colour like alacritty, foot and ghostty do under the same theme.
+  - Each tile previews the scheme as a **miniature screen** in its own
+    background carrying three of its own hues — a name alone cannot tell gruvbox
+    from everforest. Light schemes wear a ☀ and sort last.
+  - The keyboard survives the second shelf: the desktop's names collide
+    (`catppuccin` beside `catppuccin-latte`, three `r`s), so a **letter cycles**
+    through the palettes sharing it, painting each on the way past. `d` still
+    means desktop, `esc` still folds. `z` may be a verb because nothing on
+    either shelf is spelled with one — guarded by a test.
+  - The pick persists per pane like any other paint pick; a palette that is
+    later uninstalled falls back to the theme's own colours rather than failing.
+
 - **The paint overlay plays from the keyboard, and the colour sets are the
   desktop's.** `terminal-delight ctl paint on` (the Omarchy 🎨 bar widget, or
   any script) still raises the palette over every pane at once — but now it is
@@ -68,6 +92,21 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
   still load from saved state — they are simply not offered.
 
 ### Fixed
+
+- **Tabs no longer scrunch against the header icons.** The tab strip shared the
+  mother bar's top line with the brand and was capped at 55% of its width, so
+  four ordinary tab titles were already enough to fold it into a narrow column
+  jammed beside the 🎨/📊/🤖 icons — unreadable at a glance and worse with every
+  tab added. Tabs now get a ROW OF THEIR OWN beneath the brand, with the whole
+  bar width: the common case doesn't wrap at all, and when it eventually does it
+  grows downward without moving the brand or the controls.
+
+- **Paint tiles with a two-word name folded mid-word.** With the desktop's own
+  palettes on the second shelf the captions got longer (`catppuccin-latte`,
+  `last-horizon`, `matte-black`), and a tile that wrapped where the text ran out
+  read as `CATPPUCCIN-L / ATTE` and left the grid rows at ragged heights. Names
+  now break on the **hyphen** onto a second line, in fixed-height boxes, so every
+  tile is the same size whether its name takes one line or two.
 
 - **Logo picker missed most of the filesystem.** The candidate scan walked the
   home root only 2 levels deep, so project brand assets
