@@ -9,6 +9,20 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ### Added
 
+- **Paint with the desktop's own palettes.** PAINT mode now carries two shelves,
+  cycled with `z` (`shift+z` back) or by clicking the pill: the existing COLOUR
+  SETS, and DESKTOP PALETTES — every Omarchy theme installed on the machine
+  (`/usr/share/omarchy/themes`, `~/.config/omarchy/themes`, user themes shadowing
+  stock ones by name). A palette replaces the pane's whole colour table and
+  leaves its texture — scanlines, bloom, curvature, font — untouched, so a pane
+  can match every other window on the desktop without giving up the look. The
+  ANSI mapping is copied from Omarchy's own terminal template, not invented, so
+  a pane painted `tokyo-night` renders colour for colour like alacritty, foot and
+  ghostty do under the same theme. Each tile previews the scheme as a miniature
+  screen in its own background; light schemes carry a ☀ and sort last. The pick
+  persists per pane like any other paint pick, and a palette that is later
+  uninstalled falls back to the theme's own colours rather than failing.
+
 - **Per-directory default logos — persistent and inherited.** Picking a pane
   logo now writes a directory default to
   `~/.config/terminal-delight/dir-logos.toml`: every pane whose cwd is at or
@@ -40,6 +54,20 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
     so text selection is approximate — crawl is a display/nostalgia mode.
 
 ### Fixed
+
+- **Tabs no longer scrunch against the header icons.** The tab strip shared the
+  mother bar's top line with the brand and was capped at 55% of its width, so
+  four ordinary tab titles were already enough to fold it into a narrow column
+  jammed beside the 🎨/📊/🤖 icons — unreadable at a glance and worse with every
+  tab added. Tabs now get a ROW OF THEIR OWN beneath the brand, with the whole
+  bar width: the common case doesn't wrap at all, and when it eventually does it
+  grows downward without moving the brand or the controls.
+
+- **Paint tiles with long names folded mid-word.** `RETRO-SUNSET` rendered as
+  `RETRO-SUN / SET` and `GREENWORKS` as `GREENWORK / S`, and the ragged captions
+  left the grid rows staggered at different heights. Captions now break on the
+  hyphen (`RETRO / SUNSET`) in fixed-height boxes, so every tile is the same size
+  whether its name takes one line or two.
 
 - **Logo picker missed most of the filesystem.** The candidate scan walked the
   home root only 2 levels deep, so project brand assets

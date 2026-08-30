@@ -19,8 +19,8 @@ use alacritty_terminal::{
 use futures::StreamExt;
 use gpui::{
     anchored, canvas, deferred, div, font, linear_color_stop, linear_gradient, point, prelude::*,
-    px, rgb, App, Bounds, BoxShadow, ClipboardItem, Context, FocusHandle, Focusable, Font,
-    FontStyle, FontWeight, Hsla, KeyDownEvent, Keystroke, MouseButton, MouseDownEvent,
+    px, rgb, AnyElement, App, Bounds, BoxShadow, ClipboardItem, Context, FocusHandle, Focusable,
+    Font, FontStyle, FontWeight, Hsla, KeyDownEvent, Keystroke, MouseButton, MouseDownEvent,
     MouseMoveEvent, MouseUpEvent, Pixels, ScrollWheelEvent, StyledText, TextRun, UnderlineStyle,
     Window,
 };
@@ -2682,9 +2682,34 @@ impl TerminalView {
                 g.text = None;
                 g.complement = None;
                 g.human = None;
+                // A colour set works FROM the theme's own colours, so a palette
+                // still painted over them would silently win. The two shelves are
+                // one choice: picking on either clears the other.
+                g.palette = None;
                 self.appearance.set_theme(g);
             }
         }
+        cx.emit(PaintApplied);
+        cx.notify();
+    }
+
+    /// Paint this pane with a DESKTOP palette — one of Omarchy's on-board colour
+    /// schemes ([`crate::palette`]). The mirror of [`Self::paint_pick`] for the
+    /// other paint shelf, and it clears the same overrides for the same reason:
+    /// one click is meant to be the whole statement, not a layer on a pile.
+    fn paint_palette(&mut self, id: Option<String>, cx: &mut Context<Self>) {
+        let outer = theme::outer_choice(cx);
+        let mut g = theme::ThemeGroup::of(&self.appearance.effective(&outer));
+        g.palette = id;
+        // The seed/set/T/C machinery would re-derive colours ON TOP of the
+        // borrowed ones — which is exactly what "looks like the desktop" must not
+        // do. Stand the palette up clean; the tray can still tweak it afterwards.
+        g.dynamic = theme::Dynamic::Plain;
+        g.seed = None;
+        g.text = None;
+        g.complement = None;
+        g.human = None;
+        self.appearance.set_theme(g);
         cx.emit(PaintApplied);
         cx.notify();
     }
@@ -2718,6 +2743,21 @@ impl TerminalView {
         // at once, and the ESC byte must never reach the PTY underneath it.
         if theme::paint_mode(cx) && ks.key.as_str() == "escape" {
             theme::set_paint_mode(cx, false);
+            cx.notify();
+            return;
+        }
+        // `z` cycles the paint SHELF (colour sets ⇄ desktop palettes), shift+z
+        // back. Same reasoning as Escape above: while the overlay is up it owns
+        // the keyboard, so the letter must not reach the PTY. Modified chords
+        // (ctrl/alt/cmd+z — undo, suspend) are NOT ours and fall through, or
+        // painting would eat the shell's own bindings.
+        if theme::paint_mode(cx)
+            && ks.key.as_str() == "z"
+            && !ks.modifiers.control
+            && !ks.modifiers.alt
+            && !ks.modifiers.platform
+        {
+            theme::cycle_paint_shelf(cx, if ks.modifiers.shift { -1 } else { 1 });
             cx.notify();
             return;
         }
@@ -4707,21 +4747,44 @@ impl Render for TerminalView {
         });
         // PAINT mode — the wall-wide palette overlay (raised by `terminal-delight
         // ctl paint …`, e.g. the Omarchy bar's palette widget). EVERY pane draws
-        // its own glyph grid at once, so a wall of terminals recolours like
-        // dipping a brush: click a set on this pane, move to the next, Esc when
-        // the wall reads right. The tiles are the theme tray's own colour-set
-        // vocabulary (Dynamic::NAMED + signatures), so a paint pick produces
-        // exactly what the tray would have — just one click per pane instead of
-        // four, and everywhere at the same time.
+        // its own grid at once, so a wall of terminals recolours like dipping a
+        // brush: click a tile on this pane, move to the next, Esc when the wall
+        // reads right.
+        //
+        // Two SHELVES of vocabulary, cycled with `z` (or by clicking a pill):
+        //  · COLOUR SETS — the theme tray's own `Dynamic::NAMED` + signatures, so
+        //    a paint pick produces exactly what the tray would have, in one click
+        //    instead of four.
+        //  · DESKTOP PALETTES — Omarchy's on-board colour schemes ([`crate::palette`]),
+        //    which replace the colours outright and leave the theme's texture, so
+        //    a pane can match every other window on the desktop.
+        // The shelf is app-global (see `theme::PaintShelf`): flip it once and the
+        // whole wall's overlays turn together, which is the point of a wall.
         let paint_el = theme::paint_mode(cx).then(|| {
             let outer = theme::outer_choice(cx);
             let eff = self.appearance.effective(&outer);
             let following = self.appearance.inherit_theme;
+            let shelf = theme::paint_shelf(cx);
+            let shelf_count = theme::shelf_count(cx);
+            let palettes = crate::palette::chips(cx);
             let (acc, surf, txt, faint) = (th.accent, th.surface, th.text, th.faint);
             let ff = th.font_family.clone();
-            let tile = move |glyph: String, label: String, swatch: Option<Hsla>, lit: bool| {
+            // ONE tile shape serves both shelves: a face (a set's glyph, or a
+            // palette's own screen in miniature), one or two caption lines, and a
+            // bar of the colour the pick actually paints with.
+            let tile = move |face: AnyElement,
+                             top: String,
+                             bottom: String,
+                             swatch: Option<Hsla>,
+                             lit: bool| {
+                let cap = move |s: String| {
+                    div()
+                        .text_size(px(7.5))
+                        .text_color(if lit { txt } else { faint })
+                        .child(s)
+                };
                 div()
-                    .w(px(54.))
+                    .w(px(64.))
                     .flex()
                     .flex_col()
                     .items_center()
@@ -4733,12 +4796,20 @@ impl Render for TerminalView {
                     .bg(surf.alpha(0.92))
                     .cursor_pointer()
                     .hover(move |s| s.bg(acc.alpha(0.20)))
-                    .child(div().text_size(px(17.)).child(glyph))
+                    // Face and caption both sit in FIXED-height boxes so every
+                    // tile is the same height whether its name takes one line or
+                    // two. Without that the grid rows stagger, which is precisely
+                    // the scrunched look this pass is meant to remove.
+                    .child(div().h(px(21.)).flex().items_center().child(face))
                     .child(
                         div()
-                            .text_size(px(8.))
-                            .text_color(if lit { txt } else { faint })
-                            .child(label),
+                            .h(px(19.))
+                            .flex()
+                            .flex_col()
+                            .items_center()
+                            .justify_center()
+                            .child(cap(top))
+                            .when(!bottom.is_empty(), |d| d.child(cap(bottom))),
                     )
                     .child(
                         div()
@@ -4748,15 +4819,66 @@ impl Render for TerminalView {
                             .bg(swatch.unwrap_or(acc.alpha(0.0))),
                     )
             };
+            // A colour set's face is its glyph; a palette's is a 30×18 mock screen
+            // filled with the scheme's OWN background, carrying three of its own
+            // hues as pips. Omarchy themes ship no emoji, and a name alone can't
+            // tell gruvbox from everforest — the miniature can.
+            let glyph_face = |g: &str| {
+                div()
+                    .text_size(px(17.))
+                    .child(g.to_string())
+                    .into_any_element()
+            };
+            let screen_face = move |bg: Hsla, chips: [Hsla; 3], light: bool| {
+                div()
+                    .relative()
+                    .w(px(30.))
+                    .h(px(18.))
+                    .rounded(px(3.))
+                    .border_1()
+                    .border_color(txt.alpha(0.25))
+                    .bg(bg)
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .gap(px(3.))
+                    .children(chips.map(|c| div().w(px(4.)).h(px(4.)).rounded_full().bg(c)))
+                    // A LIGHT scheme turns the whole pane into a bright screen —
+                    // worth knowing BEFORE the click, not after it.
+                    .when(light, |d| {
+                        d.child(
+                            div()
+                                .absolute()
+                                .top(px(-1.))
+                                .right(px(1.))
+                                .text_size(px(7.))
+                                .text_color(chips[0])
+                                .child("☀"),
+                        )
+                    })
+                    .into_any_element()
+            };
             let mut grid = div()
                 .flex()
                 .flex_row()
                 .flex_wrap()
                 .justify_center()
+                .items_start()
                 .gap(px(6.))
-                .max_w(px(430.));
+                // 6 tiles per row (6 × 70). Wide enough for the longest caption
+                // segment either shelf can produce — GREENWORKS, CATPPUCCIN, both
+                // 10 characters — which is what stops a name folding mid-word.
+                .max_w(px(450.));
+            // ⟲ leads every shelf: "stop deciding, follow the desktop again".
             grid = grid.child(
-                tile("⟲".into(), "DESKTOP".into(), None, following).on_mouse_down(
+                tile(
+                    glyph_face("⟲"),
+                    "DESKTOP".into(),
+                    String::new(),
+                    None,
+                    following,
+                )
+                .on_mouse_down(
                     MouseButton::Left,
                     cx.listener(|v, _, _, cx| {
                         v.paint_pick(None, cx);
@@ -4764,25 +4886,86 @@ impl Render for TerminalView {
                     }),
                 ),
             );
-            for d in theme::Dynamic::NAMED.iter() {
-                let lit = !following && eff.dynamic.same_kind(d);
-                let pick = d.clone();
-                grid = grid.child(
-                    tile(
-                        d.glyph().to_string(),
-                        d.label().to_uppercase(),
-                        d.swatch(),
-                        lit,
-                    )
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(move |v, _, _, cx| {
-                            v.paint_pick(Some(pick.clone()), cx);
-                            cx.stop_propagation();
-                        }),
-                    ),
-                );
+            if shelf == 0 {
+                for d in theme::Dynamic::NAMED.iter() {
+                    // A colour set is only "the one you're on" when no palette has
+                    // since painted over it — otherwise every set would read lit.
+                    let lit = !following && eff.palette.is_none() && eff.dynamic.same_kind(d);
+                    let pick = d.clone();
+                    // Same hyphen split the palettes use: `retro-sunset` reads as
+                    // RETRO / SUNSET rather than folding into RETRO-SUN / SET.
+                    let (l1, l2) = crate::palette::split_label(d.label());
+                    grid = grid.child(
+                        tile(glyph_face(d.glyph()), l1, l2, d.swatch(), lit).on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |v, _, _, cx| {
+                                v.paint_pick(Some(pick.clone()), cx);
+                                cx.stop_propagation();
+                            }),
+                        ),
+                    );
+                }
+            } else {
+                for p in palettes {
+                    let lit = !following && eff.palette.as_deref() == Some(p.id.as_str());
+                    let id = p.id.clone();
+                    grid = grid.child(
+                        tile(
+                            screen_face(p.bg, p.chips, p.light),
+                            p.label.0.clone(),
+                            p.label.1.clone(),
+                            Some(p.chips[0]),
+                            lit,
+                        )
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |v, _, _, cx| {
+                                v.paint_palette(Some(id.clone()), cx);
+                                cx.stop_propagation();
+                            }),
+                        ),
+                    );
+                }
             }
+            // The shelf pills — the discoverable half of `z`. Shown only when
+            // there is somewhere to switch TO (no Omarchy → no second shelf).
+            let pills = (shelf_count > 1).then(|| {
+                let mut row = div().flex().flex_row().gap(px(4.));
+                for (i, name) in theme::PAINT_SHELVES.iter().enumerate() {
+                    let lit = i as u8 == shelf;
+                    row = row.child(
+                        div()
+                            .px(px(9.))
+                            .py(px(2.))
+                            .rounded(px(9.))
+                            .border_1()
+                            .border_color(if lit { acc } else { acc.alpha(0.25) })
+                            .bg(if lit {
+                                acc.alpha(0.18)
+                            } else {
+                                surf.alpha(0.5)
+                            })
+                            .text_size(px(8.))
+                            .text_color(if lit { txt } else { faint })
+                            .cursor_pointer()
+                            .hover(move |s| s.bg(acc.alpha(0.28)))
+                            .child(*name)
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |_v, _, _, cx| {
+                                    theme::set_paint_shelf(cx, i as u8);
+                                    cx.stop_propagation();
+                                }),
+                            ),
+                    );
+                }
+                row
+            });
+            let hint = if shelf_count > 1 {
+                "z · shelf   ·   esc · done"
+            } else {
+                "esc · done"
+            };
             div()
                 .absolute()
                 .top_0()
@@ -4806,13 +4989,9 @@ impl Render for TerminalView {
                                 .text_color(txt)
                                 .child("PAINT THIS PANE"),
                         )
+                        .children(pills)
                         .child(grid)
-                        .child(
-                            div()
-                                .text_size(px(9.))
-                                .text_color(faint)
-                                .child("esc · done"),
-                        ),
+                        .child(div().text_size(px(9.)).text_color(faint).child(hint)),
                 )
         });
         // Menu-bar size rides the grade group: a pane uses its own scale when its
