@@ -27,6 +27,7 @@ mod lang;
 mod mcp;
 mod mcp_tail;
 mod mcp_transport;
+mod palette;
 mod pane;
 mod plugins;
 mod recover;
@@ -5611,6 +5612,24 @@ impl Workspace {
             cx.notify();
             return;
         }
+        // PAINT mode: BARE arrows walk the wall, the way Omarchy's own picker
+        // walks its grid — no chord to learn while a full-screen overlay is up
+        // and the terminal underneath is unreachable anyway. This sits ahead of
+        // every other branch because the overlay is the topmost surface; the
+        // focused pane declines arrows (pane.rs) precisely so they land here.
+        //
+        // With nothing that way — a lone pane, or the edge of the layout — the
+        // press is simply eaten. It must NOT fall through to the terminal: the
+        // pane is behind a modal, and ctrl+arrows keeps its word-jump job.
+        if theme::paint_mode(cx)
+            && !m.control
+            && !m.alt
+            && !m.shift
+            && matches!(ks.key.as_str(), "left" | "right" | "up" | "down")
+        {
+            self.focus_dir(ks.key.as_str(), window, cx);
+            return;
+        }
         // Esc closes whatever popup (modal or menu) is open — one consistent path
         // for the whole app. A capture-phase handler (see render) catches it even
         // while a terminal holds focus; this is the same dismissal for the
@@ -8577,20 +8596,21 @@ impl Render for Workspace {
         // Adjacent tabs sharing a group render under one coloured rail with a
         // handle chip; a collapsed group folds into a counted pill (unless it
         // holds the active tab, which force-expands so you never lose your place).
-        // Tabs never own more than 55% of the bar — past that they WRAP onto a
-        // fresh row, so the split/window controls on the right are always kept.
-        let tabs_max_w = px((f32::from(wb.size.width) * 0.55).max(120.));
+        // The strip gets a ROW OF ITS OWN under the brand (see `bezel_top`), so it
+        // spends the whole bar width rather than the 55% slice it used to fight
+        // the header icons for. Four ordinary tab titles wrapped into a scrunched
+        // column at that cap; at full width they simply lay out, and only a
+        // genuinely full bar wraps — onto a second TAB row, which pushes nothing.
         let mut tab_strip = div()
             .flex()
             .flex_row()
             .flex_wrap()
             .gap(px(4. * scale))
             .items_center()
-            // min_w_0 lets the strip shrink BELOW its content so it wraps to extra
-            // rows (under tab 1) instead of overrunning into the controls; max_w
-            // still caps it at 55% on wide windows.
+            // min_w_0 lets the strip shrink BELOW its content so overflow wraps to
+            // another row instead of overrunning the bar's edge.
             .min_w_0()
-            .max_w(tabs_max_w);
+            .w_full();
         // while a tab is being dragged, an accent bar marks the slot it'd land in
         let dragging_tab = self.tab_drag.as_ref().is_some_and(|d| d.engaged)
             || self.group_drag.as_ref().is_some_and(|d| d.engaged);
@@ -8894,19 +8914,22 @@ impl Render for Workspace {
             });
 
         let bezel_top = div()
-            // min-height (not fixed): wrapped tab rows grow the bar downward.
+            // min-height (not fixed): extra tab rows grow the bar downward.
             .min_h(px(43. * scale))
             .flex_none()
             .flex()
-            .flex_row()
-            // top-align: the tab strip wraps INTERNALLY (overflow tabs stack under
-            // tab 1) and grows DOWNWARD, while the title + controls stay pinned on
-            // the top line — the first tab row never moves.
-            .items_start()
-            .justify_between()
+            // TWO STACKED ROWS — brand + controls above, TABS ON THEIR OWN ROW
+            // below. They used to share one line, with the strip capped at 55% of
+            // the bar and wrapping inside that cap: four ordinary titles were
+            // already enough to fold the tabs into a narrow scrunched column
+            // pressed against the header icons, which is unusable at a glance.
+            // Given a row to itself the strip has the full width, so the common
+            // case doesn't wrap at all — and when it eventually does, it grows
+            // downward without ever moving the brand or the controls.
+            .flex_col()
             .px(px(12. * scale))
             .py(px(7. * scale))
-            .gap(px(12. * scale))
+            .gap(px(3. * scale))
             // the mother bar is the move handle: arm on press, hand off to the
             // compositor on the first drag (a plain click stays a click).
             .on_mouse_down(
@@ -8928,166 +8951,182 @@ impl Render for Workspace {
                 }),
             )
             .child(
-                // LEFT GROUP: title + // SUB-TERMINAL + the tab strip, all INLINE
-                // on the top line. There is NO flex_wrap here, so the strip never
-                // drops below the title as a block; it wraps INTERNALLY (its own
-                // 55% cap) so overflow tabs stack UNDER tab 1. items_start keeps
-                // the title on the top line when the strip grows to several rows.
+                // ROW 1 — the brand on the left, the controls on the right, on one
+                // line, always. Nothing here wraps or reflows any more: the tabs
+                // that used to share this line now have their own row below.
                 div()
-                    .flex_1()
-                    .min_w(px(0.))
-                    // clip instead of paint-over: when the window narrows past the
-                    // brand + tab strip, the fixed-size children must truncate, not
-                    // bleed onto the always-kept right-side controls (issue #86).
-                    .overflow_hidden()
-                    // headroom for the ACTIVE tab, which lifts mt(-4) + reads 20%
-                    // bigger: without it the overflow_hidden clip box (above) would
-                    // shave the raised tab's top against the bar border.
-                    .pt(px(6. * scale))
                     .flex()
                     .flex_row()
-                    .items_start()
-                    .gap(px(8. * scale))
+                    .items_center()
+                    .justify_between()
+                    .gap(px(12. * scale))
                     .child(
-                        // title + // SUB-TERMINAL, vertically centred against the
-                        // first tab row via a fixed height so they don't ride down
-                        // when the tab strip wraps to extra rows.
+                        // LEFT GROUP: the title + // SUB-TERMINAL.
                         div()
-                            .flex_none()
-                            .h(px(22. * scale))
+                            .flex_1()
+                            .min_w(px(0.))
+                            // clip instead of paint-over: when the window narrows past the
+                            // brand, the fixed-size children must truncate, not bleed onto
+                            // the always-kept right-side controls (issue #86).
+                            .overflow_hidden()
                             .flex()
                             .flex_row()
                             .items_center()
                             .gap(px(8. * scale))
                             .child(
-                                // The mother TITLE — the complement colour (wheel's
-                                // `C`; defaults to the accent's / active dynamic's).
+                                // title + // SUB-TERMINAL, on a fixed height so the row
+                                // keeps its size whatever the brand string is.
                                 div()
                                     .flex_none()
-                                    .text_size(px(14. * scale))
-                                    .font_weight(gpui::FontWeight::EXTRA_BOLD)
-                                    .text_color(th.complement)
-                                    .child(format!("▸ {}", s.brand)),
+                                    .h(px(22. * scale))
+                                    .flex()
+                                    .flex_row()
+                                    .items_center()
+                                    .gap(px(8. * scale))
+                                    .child(
+                                        // The mother TITLE — the complement colour (wheel's
+                                        // `C`; defaults to the accent's / active dynamic's).
+                                        div()
+                                            .flex_none()
+                                            .text_size(px(14. * scale))
+                                            .font_weight(gpui::FontWeight::EXTRA_BOLD)
+                                            .text_color(th.complement)
+                                            .child(format!("▸ {}", s.brand)),
+                                    )
+                                    .child(
+                                        // Decoration only — stays a dim foreground tint.
+                                        div()
+                                            .text_size(px(9. * scale))
+                                            .text_color(th.text.alpha(0.4))
+                                            .child(format!("// {}", s.ch_sub_terminal)),
+                                    ),
+                            ),
+                    )
+                    .child(
+                        // never compressed or pushed off — the controls are always kept
+                        div()
+                            .flex_none()
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap(px(12. * scale))
+                            .child(
+                                // outer theme: a consistent 🎨 (trigger for the breakout)
+                                Self::hicon_s(&th, self.theme_menu.is_some(), scale)
+                                    .text_size(px(pane::HICON * scale))
+                                    .line_height(px(pane::HICON * scale))
+                                    .child("🎨")
+                                    .on_mouse_down(
+                                        MouseButton::Left,
+                                        cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                                            cx.stop_propagation();
+                                            ws.theme_menu = Some(MenuScope::Outer);
+                                            ws.menu_at = None;
+                                            cx.notify();
+                                        }),
+                                    ),
                             )
                             .child(
-                                // Decoration only — stays a dim foreground tint.
-                                div()
-                                    .text_size(px(9. * scale))
-                                    .text_color(th.text.alpha(0.4))
-                                    .child(format!("// {}", s.ch_sub_terminal)),
-                            ),
-                    )
-                    .child(tab_strip),
+                                // outer display: a consistent EQ-waveform (monitor-OSD).
+                                // The whole mother bar scales with the menu-bar slider.
+                                Self::hicon_s(&th, self.osd_menu.is_some(), scale)
+                                    .flex()
+                                    .items_center()
+                                    .child(pane::eq_icon(th.accent, scale))
+                                    .on_mouse_down(
+                                        MouseButton::Left,
+                                        cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                                            cx.stop_propagation();
+                                            ws.osd_menu = Some(MenuScope::Outer);
+                                            ws.osd_at = None;
+                                            cx.notify();
+                                        }),
+                                    ),
+                            )
+                            .child(
+                                // MCP: a drawn robot — opens the read-only agent-watch
+                                // control surface. Lights up when the panel is open OR
+                                // the server policy is currently enabled.
+                                Self::hicon_s(&th, self.mcp_menu || self.mcp.enabled, scale)
+                                    .flex()
+                                    .items_center()
+                                    .child(pane::robot_icon(th.accent, scale))
+                                    .on_mouse_down(
+                                        MouseButton::Left,
+                                        cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                                            cx.stop_propagation();
+                                            ws.mcp_menu = true;
+                                            cx.notify();
+                                        }),
+                                    ),
+                            )
+                            .child(
+                                // 👻 recover: the dead-agent manifest — resurrect a
+                                // closed agent (Claude/Codex) from its saved session.
+                                Self::hicon_s(&th, self.dead_menu, scale)
+                                    .text_size(px(pane::HICON * scale))
+                                    .line_height(px(pane::HICON * scale))
+                                    .child("\u{1faa6}")
+                                    .on_mouse_down(
+                                        MouseButton::Left,
+                                        cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                                            cx.stop_propagation();
+                                            ws.dead_filter = None;
+                                            ws.dead_menu = true;
+                                            cx.notify();
+                                        }),
+                                    ),
+                            )
+                            .child(
+                                // 🧩 plugins: the MCP plugin host — reach for plugins
+                                // (context-delight harvest, …) that act on the agents.
+                                Self::hicon_s(&th, self.plugins_menu, scale)
+                                    .text_size(px(pane::HICON * scale))
+                                    .line_height(px(pane::HICON * scale))
+                                    .child("\u{1f9e9}")
+                                    .on_mouse_down(
+                                        MouseButton::Left,
+                                        cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                                            cx.stop_propagation();
+                                            ws.plugins_menu = true;
+                                            cx.notify();
+                                        }),
+                                    ),
+                            )
+                            .child(
+                                // help: keys + commands reference, themed by the outer
+                                Self::hicon_s(&th, self.help_open, scale)
+                                    .text_size(px(pane::HICON * scale))
+                                    .line_height(px(pane::HICON * scale))
+                                    .child("❔")
+                                    .on_mouse_down(
+                                        MouseButton::Left,
+                                        cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                                            cx.stop_propagation();
+                                            ws.help_open = true;
+                                            cx.notify();
+                                        }),
+                                    ),
+                            )
+                            .child(scrubber)
+                            .child(cluster)
+                            .child(win_controls),
+                    ),
             )
             .child(
-                // never compressed or pushed off — the controls are always kept
+                // ROW 2 — THE TABS, on their own row and nothing else's. Full
+                // width, so the ordinary handful of tabs lays out flat instead of
+                // wrapping; overflow_hidden keeps a wrapping strip inside the bar,
+                // and the top padding is headroom for the ACTIVE tab, which lifts
+                // mt(-4) and reads 20% bigger than its neighbours.
                 div()
-                    .flex_none()
+                    .w_full()
+                    .min_w(px(0.))
+                    .overflow_hidden()
+                    .pt(px(4. * scale))
                     .flex()
                     .flex_row()
-                    .items_center()
-                    .gap(px(12. * scale))
-                    .child(
-                        // outer theme: a consistent 🎨 (trigger for the breakout)
-                        Self::hicon_s(&th, self.theme_menu.is_some(), scale)
-                            .text_size(px(pane::HICON * scale))
-                            .line_height(px(pane::HICON * scale))
-                            .child("🎨")
-                            .on_mouse_down(
-                                MouseButton::Left,
-                                cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                                    cx.stop_propagation();
-                                    ws.theme_menu = Some(MenuScope::Outer);
-                                    ws.menu_at = None;
-                                    cx.notify();
-                                }),
-                            ),
-                    )
-                    .child(
-                        // outer display: a consistent EQ-waveform (monitor-OSD).
-                        // The whole mother bar scales with the menu-bar slider.
-                        Self::hicon_s(&th, self.osd_menu.is_some(), scale)
-                            .flex()
-                            .items_center()
-                            .child(pane::eq_icon(th.accent, scale))
-                            .on_mouse_down(
-                                MouseButton::Left,
-                                cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                                    cx.stop_propagation();
-                                    ws.osd_menu = Some(MenuScope::Outer);
-                                    ws.osd_at = None;
-                                    cx.notify();
-                                }),
-                            ),
-                    )
-                    .child(
-                        // MCP: a drawn robot — opens the read-only agent-watch
-                        // control surface. Lights up when the panel is open OR
-                        // the server policy is currently enabled.
-                        Self::hicon_s(&th, self.mcp_menu || self.mcp.enabled, scale)
-                            .flex()
-                            .items_center()
-                            .child(pane::robot_icon(th.accent, scale))
-                            .on_mouse_down(
-                                MouseButton::Left,
-                                cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                                    cx.stop_propagation();
-                                    ws.mcp_menu = true;
-                                    cx.notify();
-                                }),
-                            ),
-                    )
-                    .child(
-                        // 👻 recover: the dead-agent manifest — resurrect a
-                        // closed agent (Claude/Codex) from its saved session.
-                        Self::hicon_s(&th, self.dead_menu, scale)
-                            .text_size(px(pane::HICON * scale))
-                            .line_height(px(pane::HICON * scale))
-                            .child("\u{1faa6}")
-                            .on_mouse_down(
-                                MouseButton::Left,
-                                cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                                    cx.stop_propagation();
-                                    ws.dead_filter = None;
-                                    ws.dead_menu = true;
-                                    cx.notify();
-                                }),
-                            ),
-                    )
-                    .child(
-                        // 🧩 plugins: the MCP plugin host — reach for plugins
-                        // (context-delight harvest, …) that act on the agents.
-                        Self::hicon_s(&th, self.plugins_menu, scale)
-                            .text_size(px(pane::HICON * scale))
-                            .line_height(px(pane::HICON * scale))
-                            .child("\u{1f9e9}")
-                            .on_mouse_down(
-                                MouseButton::Left,
-                                cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                                    cx.stop_propagation();
-                                    ws.plugins_menu = true;
-                                    cx.notify();
-                                }),
-                            ),
-                    )
-                    .child(
-                        // help: keys + commands reference, themed by the outer
-                        Self::hicon_s(&th, self.help_open, scale)
-                            .text_size(px(pane::HICON * scale))
-                            .line_height(px(pane::HICON * scale))
-                            .child("❔")
-                            .on_mouse_down(
-                                MouseButton::Left,
-                                cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                                    cx.stop_propagation();
-                                    ws.help_open = true;
-                                    cx.notify();
-                                }),
-                            ),
-                    )
-                    .child(scrubber)
-                    .child(cluster)
-                    .child(win_controls),
+                    .child(tab_strip),
             );
 
         let bezel_bottom = div()
@@ -14785,6 +14824,9 @@ fn main() {
 
     application().run(move |cx: &mut App| {
         theme::init(cx);
+        // The desktop's own colour schemes, scanned once. Must follow theme::init
+        // (a state restore resolves panes against both) and precede any window.
+        palette::init(cx);
         bell::ensure_seeded(); // populate the sounds dir from bundled defaults if empty
                                // Release the workspace claim at the very start of shutdown — `on_app_quit`
                                // handlers run BEFORE windows/PTYs tear down (App::shutdown), so this

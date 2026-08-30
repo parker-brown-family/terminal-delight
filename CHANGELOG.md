@@ -9,6 +9,43 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ### Added
 
+- **Paint with the desktop's own palettes.** The paint overlay now carries TWO
+  shelves, turned with `z` (`shift+z` back) or by clicking a pill: the existing
+  COLOUR SETS, and DESKTOP PALETTES — every Omarchy theme installed on the
+  machine (`/usr/share/omarchy/themes`, `~/.config/omarchy/themes`, user themes
+  shadowing stock ones by name; 23 on a stock box).
+  - A palette replaces the pane's whole colour table and leaves its **texture**
+    — scanlines, bloom, curvature, font — untouched, so a pane can match every
+    other window on the desktop without giving up the look. It rides the same
+    seam `$TD_PALETTE` already used, so there is one set of rules for both.
+  - The ANSI mapping is **copied from Omarchy's own terminal template**, not
+    invented: normal black is `background`, bright black is `muted`, cursor is
+    `bright_foreground`. A pane painted `tokyo-night` therefore renders colour
+    for colour like alacritty, foot and ghostty do under the same theme.
+  - Each tile previews the scheme as a **miniature screen** in its own
+    background carrying three of its own hues — a name alone cannot tell gruvbox
+    from everforest. Light schemes wear a ☀ and sort last.
+  - The keyboard survives the second shelf: the desktop's names collide
+    (`catppuccin` beside `catppuccin-latte`, three `r`s), so a **letter cycles**
+    through the palettes sharing it, painting each on the way past. `d` still
+    means desktop, `esc` still folds. `z` may be a verb because nothing on
+    either shelf is spelled with one — guarded by a test.
+  - The pick persists per pane like any other paint pick; a palette that is
+    later uninstalled falls back to the theme's own colours rather than failing.
+
+- **The paint overlay plays from the keyboard, and the colour sets are the
+  desktop's.** `terminal-delight ctl paint on` (the Omarchy 🎨 bar widget, or
+  any script) still raises the palette over every pane at once — but now it is
+  mouse-optional and reads like Omarchy's own picker:
+  - the **focused pane is spotlit** — a thin scrim and a bright frame on it, a
+    heavy scrim on everything else, so which terminal you are painting is
+    answered from across the room;
+  - **bare arrows** walk the wall in the direction you press (`ctrl` keeps its
+    word-jump; the overlay is modal, so the plain keys are free);
+  - a set's **first letter paints it**, drawn the way it is pressed — bigger,
+    bolder, underlined in the accent — so the chord is legible from the tile
+    instead of a legend elsewhere. `d` hands the pane back to the desktop,
+    `esc` folds. A miss is a no-op, never a keystroke into the agent behind it.
 - **Per-directory default logos — persistent and inherited.** Picking a pane
   logo now writes a directory default to
   `~/.config/terminal-delight/dir-logos.toml`: every pane whose cwd is at or
@@ -39,7 +76,37 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
   - _Known limitation:_ click hit-testing in a crawling pane stays barrel-only,
     so text selection is approximate — crawl is a display/nostalgia mode.
 
+### Changed
+
+- **One palette vocabulary, shared with the desktop.** The colour-set tray and
+  the paint overlay now offer the **11 variants the Omarchy theme pack ships**
+  (`army badger cherry ember glacier nuclear pineapple retro tide violet wood`)
+  instead of 19 TD-only names, listed alphabetically so the paint letters run in
+  reading order and every one is unique. Five sets took the desktop's name for
+  the same colours — `snowflake`→**glacier**, `toxic`→**nuclear**, `ocean`→
+  **tide**, `bat`→**violet**, `cyberpunk`→**retro** — and the old `retro` set
+  (the slot-machine palette) is now **gamba**, after the theme it has always
+  coloured. Renames are display-only: saved themes serialise the variant, not
+  the label, so nothing you already picked moves. Sets no longer listed
+  (`greenworks bolt amber gamba cotton-clowndy midnight retro-sunset galaxy`)
+  still load from saved state — they are simply not offered.
+
 ### Fixed
+
+- **Tabs no longer scrunch against the header icons.** The tab strip shared the
+  mother bar's top line with the brand and was capped at 55% of its width, so
+  four ordinary tab titles were already enough to fold it into a narrow column
+  jammed beside the 🎨/📊/🤖 icons — unreadable at a glance and worse with every
+  tab added. Tabs now get a ROW OF THEIR OWN beneath the brand, with the whole
+  bar width: the common case doesn't wrap at all, and when it eventually does it
+  grows downward without moving the brand or the controls.
+
+- **Paint tiles with a two-word name folded mid-word.** With the desktop's own
+  palettes on the second shelf the captions got longer (`catppuccin-latte`,
+  `last-horizon`, `matte-black`), and a tile that wrapped where the text ran out
+  read as `CATPPUCCIN-L / ATTE` and left the grid rows at ragged heights. Names
+  now break on the **hyphen** onto a second line, in fixed-height boxes, so every
+  tile is the same size whether its name takes one line or two.
 
 - **Logo picker missed most of the filesystem.** The candidate scan walked the
   home root only 2 levels deep, so project brand assets

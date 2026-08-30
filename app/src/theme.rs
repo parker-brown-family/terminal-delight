@@ -584,6 +584,14 @@ pub struct ThemeChoice {
     /// the theme group; `Plain` (single-hue tint) by default for back-compat.
     #[serde(default, skip_serializing_if = "Dynamic::is_plain")]
     pub dynamic: Dynamic,
+    /// A DESKTOP PALETTE borrowed wholesale — the id of one of Omarchy's on-board
+    /// colour schemes (`tokyo-night`, `gruvbox`, …). Where `dynamic` re-derives
+    /// colours from a seed and keeps the theme's screen, this replaces the whole
+    /// `[colors]` table and keeps only the theme's TEXTURE, so a pane can look
+    /// exactly like every other window on the desktop. `None` = no palette, the
+    /// long-standing behaviour. See [`crate::palette`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub palette: Option<String>,
     /// Explicit body-text colour override ("#rrggbb"), set by the wheel's `T`
     /// target. `None` = let the theme/dynamic decide the text colour.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -614,6 +622,7 @@ impl Default for ThemeChoice {
             syntax_scheme: SyntaxScheme::Code,
             grade: Grade::default(),
             dynamic: Dynamic::default(),
+            palette: None,
             text: None,
             complement: None,
             human: None,
@@ -654,6 +663,7 @@ pub fn house_outer() -> ThemeChoice {
             crawl_depth: CRAWL_DEPTH_DEFAULT,
         },
         dynamic: Dynamic::Plain,
+        palette: None, // the shipped cabinet is our own look, not a borrowed one
         text: None,
         complement: None,
         human: None,
@@ -682,6 +692,7 @@ pub fn house_terminal() -> ThemeChoice {
             ..Grade::neutral()
         },
         dynamic: Dynamic::Wood,
+        palette: None,
         text: None,
         complement: None,
         human: None,
@@ -707,6 +718,8 @@ pub struct ThemeGroup {
     #[serde(default, skip_serializing_if = "Dynamic::is_plain")]
     pub dynamic: Dynamic,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub palette: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub complement: Option<String>,
@@ -725,6 +738,7 @@ impl Default for ThemeGroup {
             syntax: true,
             syntax_scheme: SyntaxScheme::Code,
             dynamic: Dynamic::default(),
+            palette: None,
             text: None,
             complement: None,
             human: None,
@@ -743,6 +757,7 @@ impl ThemeGroup {
             syntax: c.syntax,
             syntax_scheme: c.syntax_scheme,
             dynamic: c.dynamic.clone(),
+            palette: c.palette.clone(),
             text: c.text.clone(),
             complement: c.complement.clone(),
             human: c.human.clone(),
@@ -814,6 +829,7 @@ impl PaneTheme {
             syntax_scheme: g.syntax_scheme,
             grade,
             dynamic: g.dynamic,
+            palette: g.palette,
             text: g.text,
             complement: g.complement,
             human: g.human,
@@ -1016,31 +1032,37 @@ pub enum Dynamic {
 }
 
 impl Dynamic {
-    /// The named colour sets shown in the tray, in display order (Custom is
-    /// appended separately as the cog).
-    /// Display order is a ROYGBIV sweep by signature-seed hue (warm reds → golds →
-    /// greens → cyans → blues → violets → magentas), with the greyscale Badger
-    /// trailing since it has no hue. Keep new sets in hue order.
-    pub const NAMED: [Dynamic; 19] = [
-        Dynamic::Ember,         // orange-red
-        Dynamic::Wood,          // brown
-        Dynamic::RetroSunset,   // orange
-        Dynamic::Retro,         // orange-gold
-        Dynamic::Amber,         // gold
-        Dynamic::Pineapple,     // yellow-gold
-        Dynamic::Army,          // olive
-        Dynamic::Toxic,         // chartreuse
-        Dynamic::Greenworks,    // green
-        Dynamic::Ocean,         // cyan
-        Dynamic::Snowflake,     // sky blue
-        Dynamic::Midnight,      // blue
-        Dynamic::Bolt,          // violet
-        Dynamic::Galaxy,        // violet
-        Dynamic::Bat,           // purple
-        Dynamic::Cyberpunk,     // magenta
-        Dynamic::CottonClowndy, // pink
-        Dynamic::Cherry,        // red-pink
-        Dynamic::Badger,        // greyscale (no hue → trails)
+    /// The named colour sets shown in the tray and the paint overlay — ONE
+    /// vocabulary, shared with the desktop.
+    ///
+    /// These are exactly the variants the Omarchy theme set ships
+    /// (`omarchy-terminal-delight-theme/variants.toml` → the
+    /// `terminal-delight-<key>` themes in `~/.config/omarchy/themes`), so a
+    /// terminal painted from the bar and a pane painted from inside TD are
+    /// speaking the same language. The desktop is the registry; this array
+    /// follows it.
+    ///
+    /// Order is ALPHABETICAL, not by hue, because the first letter of each
+    /// label is its keyboard chord in the paint overlay — reading order and
+    /// key order have to agree or the letters are a memory test. Every label
+    /// therefore starts with a DISTINCT letter, and none of them may be `d`
+    /// (desktop), `s`/`S` (saturate) or `R` (reset), which the overlay owns.
+    /// Guarded by `named_sets_spell_a_unique_paint_alphabet`.
+    ///
+    /// Colour sets outside this list still exist and still load from saved
+    /// state — they are simply not offered any more. Re-adding one is a line.
+    pub const NAMED: [Dynamic; 11] = [
+        Dynamic::Army,      // a · olive
+        Dynamic::Badger,    // b · greyscale
+        Dynamic::Cherry,    // c · red-pink
+        Dynamic::Ember,     // e · orange-red
+        Dynamic::Snowflake, // g · glacier — sky blue
+        Dynamic::Toxic,     // n · nuclear — chartreuse
+        Dynamic::Pineapple, // p · yellow-gold
+        Dynamic::Cyberpunk, // r · retro — magenta
+        Dynamic::Ocean,     // t · tide — cyan
+        Dynamic::Bat,       // v · violet — purple
+        Dynamic::Wood,      // w · brown
     ];
 
     /// Glyph shown in the tray's vertical box for this colour set.
@@ -1070,7 +1092,14 @@ impl Dynamic {
         }
     }
 
-    /// Human name (tests, accessibility) — the tray itself shows only the glyph.
+    /// Human name — the tray shows only the glyph, but the paint overlay wears
+    /// this in full and its FIRST LETTER is the key that paints the set.
+    ///
+    /// For everything in [`Dynamic::NAMED`] the name is the desktop's name for
+    /// the same colours (`terminal-delight-<label>` in Omarchy's theme dir), so
+    /// the two pickers never disagree about what a set is called. Display only:
+    /// saved state serialises the VARIANT (`#[serde(rename_all = "kebab-case")]`
+    /// on the enum), so renaming here cannot orphan anyone's theme.
     pub fn label(&self) -> &'static str {
         match self {
             Dynamic::Plain => "plain",
@@ -1078,23 +1107,61 @@ impl Dynamic {
             Dynamic::Bolt => "bolt",
             Dynamic::Amber => "amber",
             Dynamic::Pineapple => "pineapple",
-            Dynamic::Retro => "retro",
-            Dynamic::Bat => "bat",
+            // `gamba`, not `retro`: the desktop's `retro` variant is TD's
+            // Cyberpunk set (variants.toml says so), and two sets may not
+            // answer to one name. This one has always been the colour half
+            // of the GAMBA theme.
+            Dynamic::Retro => "gamba",
+            Dynamic::Bat => "violet",
             Dynamic::Cherry => "cherry",
             Dynamic::CottonClowndy => "cotton-clowndy",
             Dynamic::Wood => "wood",
             Dynamic::Army => "army",
             Dynamic::Midnight => "midnight",
-            Dynamic::Snowflake => "snowflake",
-            Dynamic::Ocean => "ocean",
+            Dynamic::Snowflake => "glacier",
+            Dynamic::Ocean => "tide",
             Dynamic::Ember => "ember",
-            Dynamic::Toxic => "toxic",
-            Dynamic::Cyberpunk => "cyberpunk",
+            Dynamic::Toxic => "nuclear",
+            Dynamic::Cyberpunk => "retro",
             Dynamic::RetroSunset => "retro-sunset",
             Dynamic::Galaxy => "galaxy",
             Dynamic::Badger => "badger",
             Dynamic::Custom(_) => "custom",
         }
+    }
+
+    /// The keyboard chord that paints this set — its label's first letter,
+    /// upper-cased. Unique across [`Dynamic::NAMED`] by construction, which is
+    /// what lets the overlay be driven letter-by-letter with no mouse.
+    pub fn paint_letter(&self) -> char {
+        self.label()
+            .chars()
+            .next()
+            .map(|c| c.to_ascii_uppercase())
+            .unwrap_or('?')
+    }
+
+    /// Resolve a paint-overlay keystroke to what it paints.
+    ///
+    /// `Some(None)` hands the pane back to the desktop (`d`), `Some(Some(set))`
+    /// paints that set, `None` means the key is not a paint chord at all. One
+    /// function so the overlay's legend, the key handler and the tests are all
+    /// reading the same table — the alternative is a `match` in the handler
+    /// that drifts from the tiles it claims to describe.
+    pub fn paint_chord(key: &str) -> Option<Option<Dynamic>> {
+        let mut ch = key.chars();
+        let (c, rest) = (ch.next()?, ch.next());
+        if rest.is_some() {
+            return None; // "escape", "left", … are not chords
+        }
+        if c.eq_ignore_ascii_case(&'d') {
+            return Some(None);
+        }
+        Dynamic::NAMED
+            .iter()
+            .find(|d| d.paint_letter().eq_ignore_ascii_case(&c))
+            .cloned()
+            .map(Some)
     }
 
     /// The signature palette this colour set seeds, if it's a named one. The
@@ -1536,6 +1603,25 @@ pub fn resolve(cx: &App, choice: &ThemeChoice) -> Arc<Theme> {
             .map(|(_, t)| t.clone())
             .unwrap_or_else(|| reg.custom.clone())
     };
+    // Layer 0 — the DESKTOP PALETTE. Before the theme's own seed behaviour gets a
+    // say, a borrowed Omarchy colour scheme repaints the whole `[colors]` table
+    // and nothing else, exactly as the `$TD_PALETTE` overlay does. It sits FIRST
+    // because it is a new base, not a modifier: everything below (seed, colour
+    // set, T/C overrides, invert) then works off the borrowed colours, so a
+    // painted pane is still tweakable rather than frozen.
+    //
+    // A palette id that no longer resolves — the theme was uninstalled since the
+    // state file was written — leaves the theme's own colours standing. Losing
+    // the borrowed look is the right failure; losing the pane is not.
+    let base = match choice
+        .palette
+        .as_deref()
+        .and_then(|id| crate::palette::find(cx, id))
+        .and_then(|p| overlay_palette(&base, &p.toml).ok())
+    {
+        Some(painted) => Arc::new(painted),
+        None => base,
+    };
     // The colour set's signature supplies default seed/text/title/mode; the
     // wheel's seed/T/C overrides win over it.
     let sig = choice.dynamic.signature();
@@ -1783,6 +1869,56 @@ pub fn set_paint_mode(cx: &mut App, on: bool) {
     }
 }
 
+/// Which SHELF the paint overlay is showing: 0 = Terminal Delight's own colour
+/// sets, 1 = the desktop's palettes ([`crate::palette`]). App-global for the same
+/// reason [`PaintMode`] is — you flip the shelf once and every pane's overlay
+/// turns with you, so a wall can be painted from one vocabulary in one pass.
+#[derive(Default)]
+pub struct PaintShelf(pub u8);
+impl Global for PaintShelf {}
+
+/// Shelf names, in cycle order. Index 1 is skipped when no palettes were found.
+pub const PAINT_SHELVES: [&str; 2] = ["COLOUR SETS", "DESKTOP PALETTES"];
+
+/// The shelf the paint overlay is on, clamped to what this desktop can show.
+pub fn paint_shelf(cx: &App) -> u8 {
+    let n = shelf_count(cx);
+    cx.try_global::<PaintShelf>()
+        .map(|s| s.0)
+        .unwrap_or(0)
+        .min(n - 1)
+}
+
+/// How many shelves are worth cycling through. The palette shelf disappears
+/// rather than showing an empty grid when Omarchy isn't installed — an empty
+/// shelf you can still land on reads as a bug.
+pub fn shelf_count(cx: &App) -> u8 {
+    if crate::palette::all(cx).is_empty() {
+        1
+    } else {
+        PAINT_SHELVES.len() as u8
+    }
+}
+
+/// Step the paint shelf by `delta`, wrapping. A no-op when there is only one.
+pub fn cycle_paint_shelf(cx: &mut App, delta: i8) {
+    let n = i16::from(shelf_count(cx));
+    if n < 2 {
+        return;
+    }
+    let next = (i16::from(paint_shelf(cx)) + i16::from(delta)).rem_euclid(n) as u8;
+    set_paint_shelf(cx, next);
+}
+
+/// Show shelf `n` (a click on its pill); out-of-range asks are ignored rather
+/// than clamped, so a stale click can't silently land on the wrong shelf.
+pub fn set_paint_shelf(cx: &mut App, n: u8) {
+    if n < shelf_count(cx) && n != paint_shelf(cx) {
+        cx.set_global(PaintShelf(n));
+        cx.refresh_windows();
+    }
+}
+
 /// Map the three normalised tracking dials to concrete `Theme` fields:
 /// intensity 0..1, speed (high = faster roll = shorter period, 60→6), size →
 /// sweep 1..30.
@@ -1987,8 +2123,86 @@ mod tests {
         );
         assert_eq!(
             entries.len(),
-            20,
-            "nineteen named dynamics plus the custom cog"
+            12,
+            "the eleven Omarchy variants plus the custom cog"
+        );
+    }
+
+    #[test]
+    fn named_sets_spell_a_unique_paint_alphabet() {
+        // The paint overlay is driven by first letters, so the alphabet has to
+        // hold: one set per letter, and never a letter the overlay itself owns.
+        // Case matters — the sets paint on LOWERCASE, so only the overlay's own
+        // lowercase chords are off-limits: `d` (desktop) and `s` (saturate).
+        // `S` (saturate all) and `R` (reset all) are shifted, so `retro` may
+        // keep its `r`. A collision would make a keystroke silently paint the
+        // wrong set — no compile error, no panic, just the wrong colour on the
+        // wrong terminal. (`surfwood` is exactly how this bit us: it shipped,
+        // it started with `s`, and it ate the saturate chord.)
+        const RESERVED: [char; 2] = ['d', 's'];
+        let mut seen = std::collections::HashMap::new();
+        for d in Dynamic::NAMED.iter() {
+            let k = d.paint_letter();
+            assert!(
+                !RESERVED.contains(&k.to_ascii_lowercase()),
+                "{} claims {k}, which the overlay reserves",
+                d.label()
+            );
+            if let Some(prev) = seen.insert(k, d.label()) {
+                panic!("{k} is claimed by both {prev} and {}", d.label());
+            }
+        }
+        assert_eq!(seen.len(), Dynamic::NAMED.len());
+    }
+
+    #[test]
+    fn paint_chord_resolves_the_overlay_keyboard() {
+        // Every tile the overlay draws must be reachable by the letter it wears
+        // — that is the entire promise of "letter paints".
+        for d in Dynamic::NAMED.iter() {
+            let key = d.paint_letter().to_ascii_lowercase().to_string();
+            let got = Dynamic::paint_chord(&key)
+                .unwrap_or_else(|| panic!("{key} paints nothing"))
+                .unwrap_or_else(|| panic!("{key} resolved to DESKTOP, not {}", d.label()));
+            assert!(got.same_kind(d), "{key} painted {}", got.label());
+        }
+        // `d` is the ⟲ DESKTOP tile, not a colour set.
+        assert!(matches!(Dynamic::paint_chord("d"), Some(None)));
+        // Named keys are not chords: the overlay must never read the arrow that
+        // moves the selection as a letter that paints it.
+        for k in ["escape", "left", "right", "up", "down", "enter", ""] {
+            assert!(Dynamic::paint_chord(k).is_none(), "{k:?} is not a chord");
+        }
+        // A letter no set claims is simply a miss.
+        assert!(Dynamic::paint_chord("z").is_none());
+        // Case-insensitive: shift+letter paints the same set, so a capitals-on
+        // keyboard is not a broken one.
+        assert!(matches!(Dynamic::paint_chord("W"), Some(Some(_))));
+    }
+
+    #[test]
+    fn named_sets_are_the_variants_the_desktop_ships() {
+        // ONE vocabulary: this list is `variants.toml` in
+        // omarchy-terminal-delight-theme, which installs
+        // ~/.config/omarchy/themes/terminal-delight-<key>. If the desktop set
+        // changes, this test is the place that says so out loud.
+        let names: Vec<&str> = Dynamic::NAMED.iter().map(|d| d.label()).collect();
+        assert_eq!(
+            names,
+            vec![
+                "army",
+                "badger",
+                "cherry",
+                "ember",
+                "glacier",
+                "nuclear",
+                "pineapple",
+                "retro",
+                "tide",
+                "violet",
+                "wood",
+            ],
+            "NAMED must match the desktop variant set, in alphabetical (= key) order"
         );
     }
 
@@ -2567,6 +2781,67 @@ mod tests {
         assert!(
             matches!(back.dynamic, Dynamic::Custom(p) if p.primary.as_deref() == Some("#abcdef")),
             "custom palette survives the wire"
+        );
+    }
+
+    #[test]
+    fn a_borrowed_desktop_palette_round_trips_and_is_absent_by_default() {
+        // No palette is the overwhelming case and the pre-existing behaviour, so
+        // it must not appear on the wire — every old state file stays byte-valid.
+        let none = toml::to_string(&ThemeChoice::default()).unwrap();
+        assert!(!none.contains("palette"), "no palette → no key");
+        let painted = ThemeChoice {
+            palette: Some("tokyo-night".into()),
+            ..Default::default()
+        };
+        let back: ThemeChoice = toml::from_str(&toml::to_string(&painted).unwrap()).unwrap();
+        assert_eq!(back.palette.as_deref(), Some("tokyo-night"));
+        // and it survives the lift into a theme GROUP and back out, which is the
+        // path a per-pane paint pick actually travels.
+        let pane = PaneTheme {
+            theme: Some(ThemeGroup::of(&painted)),
+            inherit_theme: false,
+            ..Default::default()
+        };
+        assert_eq!(
+            pane.effective(&ThemeChoice::default()).palette.as_deref(),
+            Some("tokyo-night"),
+            "a painted pane keeps its palette through group lift + resolve"
+        );
+    }
+
+    #[test]
+    fn a_desktop_palette_repaints_colour_and_leaves_the_texture_alone() {
+        // The property the palette layer exists for, asserted on the seam it
+        // shares with `$TD_PALETTE`: colours move, the look does not.
+        let base = parse(DEFAULT_THEME_TOML).expect("base parses");
+        let p = crate::palette::from_source(
+            "probe",
+            "mode = \"dark\"\nbackground = \"#101010\"\nforeground = \"#dddddd\"\n\
+             accent = \"#ff0088\"\nmuted = \"#555555\"\nbright_foreground = \"#ffffff\"\n",
+        )
+        .expect("probe palette builds");
+        let out = overlay_palette(&base, &p.toml).expect("palette applies");
+        assert_eq!(
+            out.bg,
+            hex("#101010").unwrap(),
+            "the palette owns the screen"
+        );
+        assert_eq!(out.accent, hex("#ff0088").unwrap());
+        assert_eq!(
+            out.cursor,
+            hex("#ffffff").unwrap(),
+            "cursor = bright_foreground"
+        );
+        assert_eq!(
+            (out.scanline_opacity, out.bloom, out.warp, out.font_family),
+            (
+                base.scanline_opacity,
+                base.bloom,
+                base.warp,
+                base.font_family.clone()
+            ),
+            "TEXTURE is untouched — that separation is the whole point"
         );
     }
 
