@@ -40,7 +40,7 @@ use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
 /// The key used off Hyprland, and by anything that cannot name a workspace —
 /// one session, exactly like every version before this one.
@@ -57,6 +57,11 @@ const MAX_SESSIONS: usize = 1024;
 /// The socket is local and answers in microseconds; this exists purely so a
 /// wedged compositor cannot hang the window open.
 const IPC_TIMEOUT: Duration = Duration::from_millis(250);
+
+/// How long [`current_workspace`] trusts its last answer. Long enough that a
+/// burst of saves costs one round trip, short enough that dragging a window to
+/// another workspace is recorded almost immediately.
+const WORKSPACE_TTL: Duration = Duration::from_secs(2);
 
 // ---- process-wide binding ----
 
@@ -154,23 +159,63 @@ pub fn sanitize_key(raw: &str) -> String {
     }
 }
 
-/// The workspace this window is opening on, sanitized into the form a session
-/// records as its `last_workspace` hint. `None` off Hyprland.
+/// The workspace this window is on, in the form a session records as its
+/// `last_workspace` hint. `None` off Hyprland.
+///
+/// Cached, because this is read on every save and every save is a user action:
+/// closing a tab, toggling a setting, dragging a split. Uncached, each one paid
+/// a compositor round trip on the UI thread, with [`IPC_TIMEOUT`] as the tail. A
+/// tie-break hint does not need to be fresher than a few seconds — and a window
+/// dragged between workspaces is still recorded correctly, just a beat later.
 pub fn current_workspace() -> Option<String> {
-    hypr_active_workspace().map(|w| sanitize_key(&w))
-}
-
-/// The key a *scratch* window borrows to read the local theme. A scratch window
-/// never writes, so this only has to name something plausible: the workspace, or
-/// [`DEFAULT_KEY`]. `$TD_SESSION` still wins, so a seeded scratch window matches
-/// the session it was seeded from.
-pub fn resolve_key() -> String {
-    if let Ok(explicit) = std::env::var("TD_SESSION") {
-        if !explicit.trim().is_empty() {
-            return sanitize_key(&explicit);
+    static CACHE: OnceLock<Mutex<Option<Cached>>> = OnceLock::new();
+    let ask = || hypr_active_workspace().map(|w| sanitize_key(&w));
+    let cell = CACHE.get_or_init(|| Mutex::new(None));
+    // A poisoned cache is not worth a panic over a tie-break hint: just ask.
+    let Ok(mut slot) = cell.lock() else {
+        return ask();
+    };
+    if let Some(hit) = slot.as_ref() {
+        if hit.at.elapsed() < WORKSPACE_TTL {
+            return hit.value.clone();
         }
     }
-    current_workspace().unwrap_or_else(|| DEFAULT_KEY.to_string())
+    let value = ask();
+    *slot = Some(Cached {
+        value: value.clone(),
+        at: Instant::now(),
+    });
+    value
+}
+
+/// The last answer the compositor gave, and when it gave it.
+struct Cached {
+    value: Option<String>,
+    at: Instant,
+}
+
+/// `$TD_SESSION`, if it names anything. The escape hatch that reaches any session
+/// from any workspace — precedence #1 everywhere it appears.
+fn explicit_session() -> Option<String> {
+    std::env::var("TD_SESSION")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .map(|s| sanitize_key(&s))
+}
+
+/// The key a *scratch* window borrows to read a theme from. It never writes, so
+/// this only has to name a session whose look is the right one to inherit: the
+/// session it was torn off from, which is the most recently saved one — held or
+/// not. Ranking (rather than the old workspace number) is what keeps a tear-off
+/// looking like its parent now that ids are not workspaces.
+pub fn resolve_key() -> String {
+    theme_key_in(&config_dir(), current_workspace().as_deref())
+}
+
+fn theme_key_in(config: &Path, here: Option<&str>) -> String {
+    explicit_session()
+        .or_else(|| rank(scan_sessions(config), here).into_iter().next())
+        .unwrap_or_else(|| DEFAULT_KEY.to_string())
 }
 
 // ---- session resolution ----
@@ -193,22 +238,28 @@ struct Candidate {
 ///     saved on `here` when several are free.
 ///  3. a fresh id, when every saved session is live (or there are none).
 pub fn resolve_session() -> (String, Claim) {
-    resolve_session_in(&config_dir(), current_workspace().as_deref())
+    resolve_session_in(
+        &config_dir(),
+        explicit_session().as_deref(),
+        current_workspace().as_deref(),
+    )
 }
 
-fn resolve_session_in(config: &Path, here: Option<&str>) -> (String, Claim) {
-    if let Ok(explicit) = std::env::var("TD_SESSION") {
-        if !explicit.trim().is_empty() {
-            let id = sanitize_key(&explicit);
-            let claim = claim_in(config, &id);
-            return (id, claim);
-        }
+/// `explicit` and `here` are passed in rather than read from the environment, so
+/// every branch of the precedence order is reachable from a test.
+fn resolve_session_in(
+    config: &Path,
+    explicit: Option<&str>,
+    here: Option<&str>,
+) -> (String, Claim) {
+    if let Some(id) = explicit {
+        let claim = claim_in(config, id);
+        return (id.to_string(), claim);
     }
     adopt_or_fresh(config, here)
 }
 
-/// Steps 2 and 3 of [`resolve_session`], split out so the tests can drive them
-/// without touching the process environment.
+/// Steps 2 and 3 of [`resolve_session`].
 fn adopt_or_fresh(config: &Path, here: Option<&str>) -> (String, Claim) {
     for id in rank(scan_sessions(config), here) {
         let claim = claim_in(config, &id);
@@ -731,6 +782,66 @@ mod tests {
         assert!(scan_sessions(&config).is_empty());
         let (id, _) = adopt_or_fresh(&config, None);
         assert_eq!(id, "1");
+    }
+
+    #[test]
+    fn an_explicit_session_name_beats_everything_on_disk() {
+        let config = tmp("explicit");
+        session(&config, "1", Some("1"), 300);
+        session(&config, "2", Some("1"), 10);
+        // $TD_SESSION is the escape hatch: it must reach the session you named,
+        // not the one adoption would have picked...
+        let (id, claim) = resolve_session_in(&config, Some("1"), Some("1"));
+        assert_eq!(id, "1");
+        assert!(claim.owned);
+        // ...including one that does not exist yet, so a name can be minted.
+        let (id, claim) = resolve_session_in(&config, Some("client-work"), None);
+        assert_eq!(id, "client-work");
+        assert!(claim.owned);
+        // and with nothing named, the same call adopts as usual
+        assert_eq!(resolve_session_in(&config, None, Some("1")).0, "2");
+    }
+
+    #[test]
+    fn a_scratch_window_borrows_the_look_of_the_session_it_came_from() {
+        let config = tmp("theme");
+        session(&config, "1", Some("1"), 300);
+        session(&config, "4", Some("9"), 10);
+        // A tear-off inherits from the newest session even though it is LIVE —
+        // that is its parent. Ranking, not the workspace number, is what finds
+        // it now that ids and workspaces have nothing to do with each other.
+        let held = adopt_or_fresh(&config, None);
+        assert_eq!(held.0, "4");
+        assert_eq!(theme_key_in(&config, Some("9")), "4");
+        // standing on workspace 1, the session last saved there wins the tie
+        assert_eq!(theme_key_in(&config, Some("1")), "1");
+        drop(held);
+    }
+
+    #[test]
+    fn a_scratch_window_with_no_sessions_falls_back_to_the_default_look() {
+        let config = tmp("theme-empty");
+        assert_eq!(theme_key_in(&config, Some("7")), DEFAULT_KEY);
+    }
+
+    #[test]
+    fn sessions_saved_in_the_same_instant_still_have_a_total_order() {
+        // Equal mtimes must not leave the order down to readdir(), or which
+        // session you get would vary run to run.
+        let same = SystemTime::now();
+        let at = |id: &str| Candidate {
+            id: id.into(),
+            saved: same,
+            workspace: None,
+        };
+        assert_eq!(
+            rank(vec![at("7"), at("1"), at("3")], None),
+            vec!["1", "3", "7"]
+        );
+        assert_eq!(
+            rank(vec![at("3"), at("7"), at("1")], None),
+            vec!["1", "3", "7"]
+        );
     }
 
     #[test]
