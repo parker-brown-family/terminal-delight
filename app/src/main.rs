@@ -970,6 +970,11 @@ struct StateFile {
     /// English; keycaps and symbols are never translated.
     #[serde(default)]
     lang: lang::Lang,
+    /// The workspace this session was last saved on. Purely a tie-break for
+    /// which session a cold launch adopts (see [`instance::resolve_session`]);
+    /// absent on pre-feature files, and on every non-Hyprland desktop.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    last_workspace: Option<String>,
 }
 
 fn default_warp() -> f32 {
@@ -1007,6 +1012,7 @@ impl Default for StateFile {
             focus_inherit: false,
             anchor_top: false,
             lang: lang::Lang::default(),
+            last_workspace: None,
         }
     }
 }
@@ -2428,6 +2434,11 @@ impl Workspace {
             focus_inherit: self.focus_inherit_theme,
             anchor_top: self.anchor_top,
             lang: self.lang,
+            // Where this session is right now, recorded every save so a cold
+            // launch can prefer the session that was last open *here*. A hint
+            // for ranking only — never an identity, so a dragged or renamed
+            // workspace costs nothing.
+            last_workspace: instance::current_workspace(),
         }
     }
 
@@ -14075,6 +14086,7 @@ id = "hacker"
     #[test]
     fn state_with_pane_theme_round_trips() {
         let state = StateFile {
+            last_workspace: None,
             active: 0,
             win: Some((12.0, 34.0, 1280.0, 720.0)),
             scale: Some(1.0),
@@ -14122,6 +14134,7 @@ id = "hacker"
     #[test]
     fn leaf_work_state_round_trips() {
         let state = StateFile {
+            last_workspace: None,
             active: 0,
             win: None,
             scale: None,
@@ -14171,6 +14184,7 @@ id = "hacker"
             logo: None,
         };
         let state = StateFile {
+            last_workspace: None,
             active: 0,
             win: None,
             scale: None,
@@ -14499,6 +14513,7 @@ node = "Leaf"
             b: Box::new(leaf()),
         };
         let state = StateFile {
+            last_workspace: None,
             active: 0,
             win: None,
             scale: None,
@@ -14717,13 +14732,13 @@ fn main() {
     // (TD_SEED_*), or a demo (TD_DEMO_STATE) — opens a small single-terminal
     // window and never contends to own a session: a torn-off pane would otherwise
     // take the lock on a workspace that has no window yet, and lock out the real
-    // one that opens there later. ANY other launch claims the session key of the
-    // workspace it is opening on (see [`instance`]): winning means "restore that
-    // workspace's session and own `sessions/<key>.toml`"; losing means a live
-    // window already holds this workspace, so this becomes a scratch window too.
-    // The flock (held by exactly one live process per key, released early at
-    // quit-start) is the old machine-global MASTER lock scoped down to one
-    // workspace, so every workspace keeps a restorable window of its own.
+    // one that opens there later. ANY other launch adopts a session instead (see
+    // [`instance::resolve_session`]): the most-recently-saved one nobody is
+    // holding, which is what reopening a terminal has always meant. Every saved
+    // session already live → a fresh id, so the machine grows exactly as many
+    // restorable windows as you actually keep open. The flock (held by exactly
+    // one live process per id, released early at quit-start) is the old
+    // machine-global MASTER lock, scoped down to one session.
     let force = std::env::var_os("TD_SCRATCH").is_some();
     let seed_cwd = std::env::var("TD_SEED_CWD").ok().filter(|s| !s.is_empty());
     let seed_resume = std::env::var("TD_SEED_RESUME")
@@ -14733,14 +14748,19 @@ fn main() {
     // layout from TD_DEMO_STATE and fills every pane with the frozen emitter.
     let demo = std::env::var_os("TD_DEMO_STATE").is_some();
     let explicit_scratch = force || seed_cwd.is_some() || seed_resume.is_some() || demo;
-    let key = instance::resolve_key();
-    let claim = if explicit_scratch {
-        instance::Claim {
-            owned: false,
-            lock: None,
-        }
+    // A scratch window never writes, so it only borrows a key to read the local
+    // theme. A real one ADOPTS: the most-recently-saved session nobody holds,
+    // preferring the one last saved on this workspace.
+    let (key, claim) = if explicit_scratch {
+        (
+            instance::resolve_key(),
+            instance::Claim {
+                owned: false,
+                lock: None,
+            },
+        )
     } else {
-        instance::claim(&key)
+        instance::resolve_session()
     };
     let owns_session = claim.owned;
     // Bind the key either way: a scratch window still reads the workspace's
