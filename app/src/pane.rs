@@ -4789,10 +4789,13 @@ impl Render for TerminalView {
                         .hover(move |s| s.bg(acc.alpha(0.20)))
                         .child(div().text_size(px(17.)).child(glyph))
                         .child(
-                            // The name, with its chord worn loud. Two children on a
-                            // shared baseline rather than one styled string: the
-                            // initial needs its OWN size, weight and underline, and
-                            // gpui styles per element, not per run.
+                            // The name, with its chord worn loud — bigger,
+                            // heavier, underlined, and inked in the SET'S OWN
+                            // colour, so the key you press also previews the
+                            // colour it applies. Two children on a shared
+                            // baseline rather than one styled string: the
+                            // initial needs its own size, weight and underline,
+                            // and gpui styles per element, not per run.
                             div()
                                 .flex()
                                 .flex_row()
@@ -4800,11 +4803,11 @@ impl Render for TerminalView {
                                 .child(
                                     div()
                                         .text_size(px(13.))
-                                        .font_weight(gpui::FontWeight::EXTRA_BOLD)
-                                        .text_color(if lit { txt } else { txt.alpha(0.85) })
+                                        .font_weight(gpui::FontWeight::BLACK)
+                                        .text_color(swatch.unwrap_or(acc))
                                         .underline()
                                         .text_decoration_2()
-                                        .text_decoration_color(acc)
+                                        .text_decoration_color(swatch.unwrap_or(acc))
                                         .child(key.to_string()),
                                 )
                                 .child(
