@@ -8,19 +8,28 @@
 //! window but the first was disposable, silently holding agents that no restart
 //! could bring back.
 //!
-//! Identity is now a **session key**: the Hyprland workspace the window was born
-//! on (`2`, `7`, `special-magic`), or `default` anywhere else. Each key owns
-//! `sessions/<key>.toml`, and ownership is a kernel-held `flock` on
-//! `sessions/<key>.lock` — the first window on a workspace takes the lock and
-//! restores that workspace's layout; a second window on the *same* workspace
-//! finds it busy and opens as a scratch window. That is the old second-launch
-//! behaviour, now scoped to one workspace instead of the whole machine. The lock
-//! lives on the open file description, so the kernel drops it however the process
-//! dies — a SIGKILL can never leave a workspace looking occupied.
+//! Identity is a **session id**: a stable handle TD owns (`1`, `2`, `work`),
+//! never a property of the desktop. Each id owns `sessions/<id>.toml`, and
+//! ownership is a kernel-held `flock` on `sessions/<id>.lock` — one live window
+//! per session, every other window a scratch terminal. The lock lives on the
+//! open file description, so the kernel drops it however the process dies; a
+//! SIGKILL can never leave a session looking occupied.
 //!
-//! The key is resolved once, at launch, and never re-resolved: a window dragged
-//! to another workspace keeps the session it was born with. Re-keying on the move
-//! would race two windows onto one state file to no real end.
+//! The first cut of this keyed sessions to *the Hyprland workspace the window was
+//! born on*, which read well and failed badly: the key recorded birth while the
+//! user reasons about location. Open on workspace 2, drag the window to 1, close
+//! it there, reopen from there — and you got a stranger, because the session you
+//! wanted was filed under a number you had left behind an hour ago. Workspaces
+//! are switched, moved between, and renamed for reasons that have nothing to do
+//! with sessions; ambient, user-mutable state makes a poor primary key.
+//!
+//! So launch *adopts* rather than invents: [`resolve_session`] takes the
+//! most-recently-saved session nobody is holding, which is what "reopen my
+//! terminal" has always meant. The workspace survives only as a **ranking hint**
+//! — a session records where it was last saved, and a cold launch prefers the one
+//! last seen here. Ambient data is fine for breaking ties and poison for naming
+//! things, so a move or a rename now costs you a slightly different session
+//! instead of all of them.
 //!
 //! std + libc only — no gpui — so all of it stays unit-testable.
 
@@ -31,14 +40,18 @@ use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 /// The key used off Hyprland, and by anything that cannot name a workspace —
 /// one session, exactly like every version before this one.
 pub const DEFAULT_KEY: &str = "default";
 
-/// A workspace name is only ever this many characters of filename.
+/// A session id is only ever this many characters of filename.
 const KEY_MAX: usize = 64;
+
+/// How far [`fresh_session`] will count before giving up and opening a scratch
+/// window. Far past any real desktop; it exists so the search always terminates.
+const MAX_SESSIONS: usize = 1024;
 
 /// How long to wait on the compositor before falling back to [`DEFAULT_KEY`].
 /// The socket is local and answers in microseconds; this exists purely so a
@@ -141,22 +154,157 @@ pub fn sanitize_key(raw: &str) -> String {
     }
 }
 
-/// This window's session key, in precedence order:
-///  1. `$TD_SESSION` — an explicit name; also the escape hatch for keeping
-///     several restorable sessions without Hyprland.
-///  2. the Hyprland workspace this window is about to open on. New windows land
-///     on the active workspace, so asking before the window exists is both
-///     possible and right.
-///  3. [`DEFAULT_KEY`].
+/// The workspace this window is opening on, sanitized into the form a session
+/// records as its `last_workspace` hint. `None` off Hyprland.
+pub fn current_workspace() -> Option<String> {
+    hypr_active_workspace().map(|w| sanitize_key(&w))
+}
+
+/// The key a *scratch* window borrows to read the local theme. A scratch window
+/// never writes, so this only has to name something plausible: the workspace, or
+/// [`DEFAULT_KEY`]. `$TD_SESSION` still wins, so a seeded scratch window matches
+/// the session it was seeded from.
 pub fn resolve_key() -> String {
     if let Ok(explicit) = std::env::var("TD_SESSION") {
         if !explicit.trim().is_empty() {
             return sanitize_key(&explicit);
         }
     }
-    hypr_active_workspace()
-        .map(|w| sanitize_key(&w))
-        .unwrap_or_else(|| DEFAULT_KEY.to_string())
+    current_workspace().unwrap_or_else(|| DEFAULT_KEY.to_string())
+}
+
+// ---- session resolution ----
+
+/// A saved session nobody has claimed yet — what a cold launch ranks, then tries
+/// to take.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Candidate {
+    id: String,
+    /// The state file's mtime: how "most recent" is decided.
+    saved: SystemTime,
+    /// Where this session was last saved, if it recorded it. A hint, never an id.
+    workspace: Option<String>,
+}
+
+/// Which session this window opens, and the claim that makes it ours:
+///  1. `$TD_SESSION` — an explicit name, and the escape hatch for reaching any
+///     session from anywhere. Honoured even if it names nothing yet.
+///  2. the most-recently-saved session nobody is holding, preferring one last
+///     saved on `here` when several are free.
+///  3. a fresh id, when every saved session is live (or there are none).
+pub fn resolve_session() -> (String, Claim) {
+    resolve_session_in(&config_dir(), current_workspace().as_deref())
+}
+
+fn resolve_session_in(config: &Path, here: Option<&str>) -> (String, Claim) {
+    if let Ok(explicit) = std::env::var("TD_SESSION") {
+        if !explicit.trim().is_empty() {
+            let id = sanitize_key(&explicit);
+            let claim = claim_in(config, &id);
+            return (id, claim);
+        }
+    }
+    adopt_or_fresh(config, here)
+}
+
+/// Steps 2 and 3 of [`resolve_session`], split out so the tests can drive them
+/// without touching the process environment.
+fn adopt_or_fresh(config: &Path, here: Option<&str>) -> (String, Claim) {
+    for id in rank(scan_sessions(config), here) {
+        let claim = claim_in(config, &id);
+        if claim.owned {
+            return (id, claim);
+        }
+    }
+    fresh_session(config)
+}
+
+/// Every saved session on disk. Only `<id>.toml` counts: the sibling `.tmp`,
+/// `.last-good` and hand-made rescue copies are not sessions and must never be
+/// adopted as one.
+fn scan_sessions(config: &Path) -> Vec<Candidate> {
+    let Ok(entries) = std::fs::read_dir(sessions_dir_in(config)) else {
+        return vec![];
+    };
+    entries
+        .flatten()
+        .filter_map(|e| {
+            let path = e.path();
+            if path.extension()? != "toml" {
+                return None;
+            }
+            let id = path.file_stem()?.to_str()?.to_string();
+            let saved = e.metadata().ok()?.modified().ok()?;
+            let workspace = std::fs::read_to_string(&path)
+                .ok()
+                .and_then(|body| toml_top_level_string(&body, "last_workspace"));
+            Some(Candidate {
+                id,
+                saved,
+                workspace,
+            })
+        })
+        .collect()
+}
+
+/// Newest first, but a session last saved on this workspace outranks a newer one
+/// from elsewhere. Ties break on the id so the order is total and the tests
+/// cannot flake on two files sharing a timestamp.
+fn rank(mut cands: Vec<Candidate>, here: Option<&str>) -> Vec<String> {
+    cands.sort_by(|a, b| {
+        let mine = |c: &Candidate| here.is_some() && c.workspace.as_deref() == here;
+        mine(b)
+            .cmp(&mine(a))
+            .then_with(|| b.saved.cmp(&a.saved))
+            .then_with(|| a.id.cmp(&b.id))
+    });
+    cands.into_iter().map(|c| c.id).collect()
+}
+
+/// The lowest unused ordinal, claimed. Bounded because a machine with a thousand
+/// live sessions is a bug report, not a workflow — and an unbounded search here
+/// would hang the window open.
+fn fresh_session(config: &Path) -> (String, Claim) {
+    for n in 1..=MAX_SESSIONS {
+        let id = n.to_string();
+        if state_file_in(config, &id).exists() {
+            continue;
+        }
+        let claim = claim_in(config, &id);
+        if claim.owned {
+            return (id, claim);
+        }
+    }
+    // Every ordinal is spoken for: open as a scratch window rather than fight.
+    (
+        DEFAULT_KEY.to_string(),
+        Claim {
+            owned: false,
+            lock: None,
+        },
+    )
+}
+
+/// Pull `key = "value"` out of the top-level table of a TOML file, stopping at
+/// the first `[table]` header so a pane's own `last_workspace` could never be
+/// mistaken for the session's. Hand-rolled for the same reason [`json_string`]
+/// is: one string of one file does not earn a parser in the boot path.
+fn toml_top_level_string(src: &str, key: &str) -> Option<String> {
+    for line in src.lines() {
+        let line = line.trim();
+        if line.starts_with('[') {
+            return None;
+        }
+        let Some(rest) = line.strip_prefix(key) else {
+            continue;
+        };
+        let Some(rest) = rest.trim_start().strip_prefix('=') else {
+            continue;
+        };
+        let rest = rest.trim_start().strip_prefix('"')?;
+        return rest.find('"').map(|end| rest[..end].to_string());
+    }
+    None
 }
 
 // ---- ownership ----
@@ -210,11 +358,6 @@ pub fn claim_in(config: &Path, key: &str) -> Claim {
         owned: true,
         lock: Some(file),
     }
-}
-
-/// Claim the current user's config directory.
-pub fn claim(key: &str) -> Claim {
-    claim_in(&config_dir(), key)
 }
 
 /// One-time upgrade from the single-session era: the old `state.toml` becomes
@@ -461,5 +604,158 @@ mod tests {
         // no runtime dir: the legacy path is still worth a try
         assert_eq!(socket_candidates("sig123", None).len(), 1);
         assert_eq!(socket_candidates("sig123", Some("")).len(), 1);
+    }
+
+    // ---- session resolution ----
+
+    /// Write `sessions/<id>.toml` with an mtime `age` seconds in the past, so a
+    /// test can state "this one is older" instead of sleeping to earn it.
+    fn session(config: &Path, id: &str, workspace: Option<&str>, age: u64) {
+        let dir = config.join("sessions");
+        std::fs::create_dir_all(&dir).unwrap();
+        let body = match workspace {
+            Some(w) => format!("active = 0\nlast_workspace = \"{w}\"\n\n[theme]\nid = \"x\"\n"),
+            None => "active = 0\n\n[theme]\nid = \"x\"\n".to_string(),
+        };
+        let path = dir.join(format!("{id}.toml"));
+        std::fs::write(&path, body).unwrap();
+        let when = SystemTime::now() - Duration::from_secs(age);
+        std::fs::File::open(&path)
+            .unwrap()
+            .set_modified(when)
+            .unwrap();
+    }
+
+    fn cand(id: &str, age: u64, workspace: Option<&str>) -> Candidate {
+        Candidate {
+            id: id.into(),
+            saved: SystemTime::now() - Duration::from_secs(age),
+            workspace: workspace.map(Into::into),
+        }
+    }
+
+    #[test]
+    fn the_most_recently_saved_session_is_adopted_first() {
+        let order = rank(
+            vec![
+                cand("1", 300, None),
+                cand("2", 5, None),
+                cand("7", 60, None),
+            ],
+            None,
+        );
+        assert_eq!(order, vec!["2", "7", "1"]);
+    }
+
+    #[test]
+    fn the_workspace_is_only_a_tie_break() {
+        // "1" is much older, but it is the session that was last open HERE
+        let order = rank(
+            vec![cand("1", 300, Some("3")), cand("2", 5, Some("9"))],
+            Some("3"),
+        );
+        assert_eq!(order, vec!["1", "2"]);
+        // ...and standing somewhere else, recency alone decides
+        assert_eq!(
+            rank(
+                vec![cand("1", 300, Some("3")), cand("2", 5, Some("9"))],
+                Some("4")
+            ),
+            vec!["2", "1"]
+        );
+        // off Hyprland there is no hint at all
+        assert_eq!(
+            rank(vec![cand("1", 300, Some("3")), cand("2", 5, None)], None),
+            vec!["2", "1"]
+        );
+    }
+
+    #[test]
+    fn a_cold_launch_reopens_the_session_you_last_used() {
+        // The regression this whole change exists for. The real work opened on
+        // workspace 2, was dragged to workspace 1, and was closed there — so it
+        // is filed under the id `2` while its last save records workspace `1`.
+        // An older, staler session happens to be called `1`.
+        let config = tmp("adopt");
+        session(&config, "1", Some("1"), 300);
+        session(&config, "2", Some("1"), 10);
+        // Reopening from workspace 1 must hand back the work, not the session
+        // whose *name* matches where you happen to be standing.
+        let (id, claim) = adopt_or_fresh(&config, Some("1"));
+        assert_eq!(id, "2", "the newest free session, not the one named `1`");
+        assert!(claim.owned);
+    }
+
+    #[test]
+    fn a_live_session_is_skipped_for_the_next_one_down() {
+        let config = tmp("skip");
+        session(&config, "1", None, 300);
+        session(&config, "2", None, 10);
+        let held = adopt_or_fresh(&config, None); // takes "2" and keeps the flock
+        assert_eq!(held.0, "2");
+        let (id, claim) = adopt_or_fresh(&config, None);
+        assert_eq!(id, "1", "the newest is busy, so take the next-newest");
+        assert!(claim.owned);
+        drop(held);
+    }
+
+    #[test]
+    fn every_session_live_means_a_fresh_one_not_a_scratch_window() {
+        let config = tmp("fresh");
+        session(&config, "1", None, 10);
+        let held = adopt_or_fresh(&config, None);
+        assert_eq!(held.0, "1");
+        let (id, claim) = adopt_or_fresh(&config, None);
+        assert_eq!(id, "2", "the lowest unused ordinal");
+        assert!(claim.owned);
+        drop(held);
+    }
+
+    #[test]
+    fn an_empty_install_starts_at_one() {
+        let config = tmp("empty");
+        let (id, claim) = adopt_or_fresh(&config, Some("7"));
+        assert_eq!(id, "1", "the workspace never names the session");
+        assert!(claim.owned);
+    }
+
+    #[test]
+    fn only_real_session_files_are_ever_adopted() {
+        let config = tmp("siblings");
+        let dir = config.join("sessions");
+        std::fs::create_dir_all(&dir).unwrap();
+        // the debris that lives alongside a session: none of it is one
+        for name in ["2.toml.last-good", "2.toml.tmp", "2.toml.rescue-2026-08-29"] {
+            std::fs::write(dir.join(name), "active = 0\n").unwrap();
+        }
+        assert!(scan_sessions(&config).is_empty());
+        let (id, _) = adopt_or_fresh(&config, None);
+        assert_eq!(id, "1");
+    }
+
+    #[test]
+    fn the_workspace_hint_is_read_off_the_top_level_table_only() {
+        assert_eq!(
+            toml_top_level_string("active = 0\nlast_workspace = \"2\"\n", "last_workspace")
+                .as_deref(),
+            Some("2")
+        );
+        // a pane's own key, under a table header, is not the session's
+        assert_eq!(
+            toml_top_level_string(
+                "active = 0\n[tabs.node.Leaf]\nlast_workspace = \"9\"\n",
+                "last_workspace"
+            ),
+            None
+        );
+        assert_eq!(
+            toml_top_level_string("active = 0\n", "last_workspace"),
+            None
+        );
+        // a near-miss key must not answer for the real one
+        assert_eq!(
+            toml_top_level_string("last_workspace_id = \"4\"\n", "last_workspace"),
+            None
+        );
     }
 }
