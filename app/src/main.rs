@@ -27,6 +27,7 @@ mod lang;
 mod mcp;
 mod mcp_tail;
 mod mcp_transport;
+mod palette;
 mod pane;
 mod plugins;
 mod recover;
@@ -14803,6 +14804,9 @@ fn main() {
 
     application().run(move |cx: &mut App| {
         theme::init(cx);
+        // The desktop's own colour schemes, scanned once. Must follow theme::init
+        // (a state restore resolves panes against both) and precede any window.
+        palette::init(cx);
         bell::ensure_seeded(); // populate the sounds dir from bundled defaults if empty
                                // Release the workspace claim at the very start of shutdown — `on_app_quit`
                                // handlers run BEFORE windows/PTYs tear down (App::shutdown), so this
