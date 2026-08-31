@@ -1398,6 +1398,9 @@ struct LogoPicker {
     order: Vec<usize>,
     /// All scanned candidates: `(absolute path, basename, ~/relative dir)`.
     candidates: Vec<LogoCandidate>,
+    /// True while the tier-3 wide sweep is still in flight. Drives the … on the
+    /// count chip, so a short early list never reads as "that's all there is".
+    scanning: bool,
 }
 
 /// Which logo-picker input field the keyboard is editing. Tab toggles.
@@ -1412,6 +1415,30 @@ impl LogoPicker {
     fn recompute(&mut self) {
         self.order = filter_logo_two_field(&self.candidates, &self.name.text(), &self.loc.text());
     }
+
+    /// Fold a later tier's results in WITHOUT disturbing what the user is doing.
+    /// `candidates` grows and re-sorts, so every index shifts — which is why the
+    /// highlighted row is re-found by PATH rather than carried as an index. Skip
+    /// that and a sweep landing mid-keystroke yanks the selection out from under
+    /// the user.
+    fn merge(&mut self, incoming: Vec<LogoCandidate>) {
+        let sel_path = self
+            .order
+            .get(self.selected)
+            .and_then(|&i| self.candidates.get(i))
+            .map(|c| c.path.clone());
+        self.candidates.extend(incoming);
+        logo_dedupe_by_best_tier(&mut self.candidates);
+        logo_sort_by_rank(&mut self.candidates);
+        self.recompute();
+        self.selected = sel_path
+            .and_then(|p| {
+                self.order
+                    .iter()
+                    .position(|&i| self.candidates[i].path == p)
+            })
+            .unwrap_or(0);
+    }
 }
 
 #[derive(Clone)]
@@ -1420,6 +1447,8 @@ struct LogoCandidate {
     base: String,
     dir: String,
     mtime: u64,
+    /// Which sweep found it — the PRIMARY sort key (see [`logo_sort_by_rank`]).
+    tier: LogoTier,
 }
 
 /// DEMO ONLY: deterministically assign a stock "logo" to a card from the
@@ -1490,20 +1519,31 @@ fn tilde(path: &str) -> String {
     path.to_string()
 }
 
-/// Walk a bounded set of roots for image files (`png/jpg/jpeg/svg/webp`),
-/// skipping hidden + heavy dirs, capped so the picker stays snappy. Returns
-/// candidates pre-formatted as `(path, basename, ~/relative dir)`.
-fn scan_logo_candidates() -> Vec<LogoCandidate> {
-    let home = std::env::var("HOME").unwrap_or_default();
-    scan_logo_candidates_in(std::path::Path::new(&home))
+/// Which scan tier surfaced a candidate. The order IS the ranking: a logo that
+/// belongs to the pane's own project outranks a stray recent screenshot, which
+/// outranks something dredged out of the far corners of $HOME. Without this a
+/// project's own `logo.png` sorts on mtime alone and lands thousands of rows
+/// under whatever happened to be screenshotted five minutes ago.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
+enum LogoTier {
+    /// Inside the target pane's project (its cwd walked up to a repo root).
+    Project,
+    /// The conventional image drop-folders, shallow — where NEW images land.
+    Recent,
+    /// The wide $HOME sweep: everything else, deep. Runs off the UI thread.
+    Wide,
 }
 
-/// Testable core: walk `home`'s picture dirs first, then the whole home root
-/// (both full depth, bounded by CAP + skip list), newest-first.
-fn scan_logo_candidates_in(home_path: &std::path::Path) -> Vec<LogoCandidate> {
-    const CAP: usize = 20000;
-    const MAX_DEPTH: usize = 8;
-    let home = home_path.to_string_lossy().into_owned();
+/// One bounded, iterative walk (depth-limited, no symlink following) shared by
+/// all three tiers. `roots` are seeded at depth 0 and popped LIFO, so a caller
+/// that wants a root visited FIRST pushes it LAST.
+fn walk_logo_images(
+    roots: Vec<PathBuf>,
+    home: &str,
+    tier: LogoTier,
+    max_depth: usize,
+    cap: usize,
+) -> Vec<LogoCandidate> {
     let is_img = |name: &str| {
         let n = name.to_ascii_lowercase();
         n.ends_with(".png")
@@ -1521,37 +1561,22 @@ fn scan_logo_candidates_in(home_path: &std::path::Path) -> Vec<LogoCandidate> {
     };
     let mut out: Vec<LogoCandidate> = Vec::new();
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
-    // Iterative bounded walk (depth-limited, no symlink following). The picture
-    // dirs are pushed LAST so they pop FIRST (LIFO): a just-taken screenshot
-    // lands inside the cap no matter what. The home root then walks FULL depth
-    // too — project logo assets live deep (~/ORG/Software/<proj>/assets/x.png)
-    // and the old shallow home walk (2 levels) never surfaced them. The cap
-    // (20k) plus the heavy-dir skip list bounds the walk, not a stunted depth.
-    let mut stack: Vec<(PathBuf, usize)> = Vec::new();
-    if home_path.is_dir() {
-        stack.push((home_path.to_path_buf(), 0));
-    }
-    for d in ["Images", "Documents", "Desktop", "Downloads", "Pictures"] {
-        let r = home_path.join(d);
-        if r.is_dir() {
-            stack.push((r, 0));
-        }
-    }
+    let mut stack: Vec<(PathBuf, usize)> = roots.into_iter().map(|r| (r, 0)).collect();
     while let Some((dir, depth)) = stack.pop() {
-        if out.len() >= CAP {
+        if out.len() >= cap {
             break;
         }
         let Ok(rd) = std::fs::read_dir(&dir) else {
             continue;
         };
         for entry in rd.flatten() {
-            if out.len() >= CAP {
+            if out.len() >= cap {
                 break;
             }
             let name = entry.file_name().to_string_lossy().into_owned();
             let Ok(ft) = entry.file_type() else { continue };
             if ft.is_dir() {
-                if depth < MAX_DEPTH && !skip_dir(&name) {
+                if depth < max_depth && !skip_dir(&name) {
                     stack.push((entry.path(), depth + 1));
                 }
             } else if (ft.is_file() || ft.is_symlink()) && is_img(&name) {
@@ -1564,7 +1589,7 @@ fn scan_logo_candidates_in(home_path: &std::path::Path) -> Vec<LogoCandidate> {
                     .parent()
                     .map(|p| {
                         let s = p.to_string_lossy();
-                        if !home.is_empty() && s.starts_with(&home) {
+                        if !home.is_empty() && s.starts_with(home) {
                             format!("~{}", &s[home.len()..])
                         } else {
                             s.into_owned()
@@ -1583,11 +1608,118 @@ fn scan_logo_candidates_in(home_path: &std::path::Path) -> Vec<LogoCandidate> {
                     base: name,
                     dir: dir_disp,
                     mtime,
+                    tier,
                 });
             }
         }
     }
-    logo_sort_by_recency(&mut out);
+    out
+}
+
+/// The nearest project root at or above `cwd`: the first ancestor holding a
+/// `.git` — a DIR for a normal clone, a FILE for a worktree or submodule, so
+/// both count. Bounded by `home`, because a pane sitting in $HOME must never
+/// claim the whole home directory as "its project".
+fn logo_project_root(cwd: &std::path::Path, home: &std::path::Path) -> Option<PathBuf> {
+    if !cwd.starts_with(home) || cwd == home {
+        return None;
+    }
+    let mut cur = Some(cwd);
+    while let Some(d) = cur {
+        if d == home {
+            break;
+        }
+        if d.join(".git").exists() {
+            return Some(d.to_path_buf());
+        }
+        cur = d.parent();
+    }
+    None
+}
+
+/// TIER 1 — the target pane's own project. Tens to a few hundred files, so it
+/// runs inline at open. Falls back to the bare cwd when nothing up the chain
+/// looks like a repo: still far more relevant than the wide sweep, and just as
+/// cheap.
+fn scan_logo_project(cwd: Option<&str>, home_path: &std::path::Path) -> Vec<LogoCandidate> {
+    const MAX_DEPTH: usize = 5;
+    const CAP: usize = 2000;
+    let Some(cwd) = cwd else {
+        return Vec::new();
+    };
+    let home = home_path.to_string_lossy().into_owned();
+    let cwd = std::path::Path::new(cwd);
+    let root = logo_project_root(cwd, home_path).or_else(|| {
+        (cwd.is_dir() && cwd != home_path && cwd.starts_with(home_path)).then(|| cwd.to_path_buf())
+    });
+    match root {
+        Some(r) => walk_logo_images(vec![r], &home, LogoTier::Project, MAX_DEPTH, CAP),
+        None => Vec::new(),
+    }
+}
+
+/// TIER 2 — where NEW images land. Shallow on purpose: recency and depth are
+/// anti-correlated in practice (a screenshot sits 1-2 levels down; a committed
+/// brand asset is old and deep), so a shallow pass over the drop-folders IS the
+/// whole of the "the shot I just took" case, for single-digit milliseconds.
+fn scan_logo_recent(home_path: &std::path::Path) -> Vec<LogoCandidate> {
+    const MAX_DEPTH: usize = 3;
+    const CAP: usize = 4000;
+    let home = home_path.to_string_lossy().into_owned();
+    let roots: Vec<PathBuf> = ["Images", "Documents", "Desktop", "Downloads", "Pictures"]
+        .iter()
+        .map(|d| home_path.join(d))
+        .filter(|r| r.is_dir())
+        .collect();
+    walk_logo_images(roots, &home, LogoTier::Recent, MAX_DEPTH, CAP)
+}
+
+/// TIER 3 — the wide sweep: the whole home root, at depth. This is the
+/// expensive one (measured 37k images / ~0.6s warm on a working $HOME) and it
+/// is why the picker used to hang — it ran synchronously before the modal was
+/// even constructed. It now runs on the background executor and merges in
+/// behind the two cheap tiers, so it only ever ADDS: nothing findable before
+/// became unfindable, it just arrives a beat later instead of holding the
+/// window shut.
+fn scan_logo_wide(home_path: &std::path::Path) -> Vec<LogoCandidate> {
+    const MAX_DEPTH: usize = 8;
+    const CAP: usize = 20000;
+    if !home_path.is_dir() {
+        return Vec::new();
+    }
+    let home = home_path.to_string_lossy().into_owned();
+    walk_logo_images(
+        vec![home_path.to_path_buf()],
+        &home,
+        LogoTier::Wide,
+        MAX_DEPTH,
+        CAP,
+    )
+}
+
+/// Collapse duplicates by path, KEEPING THE BEST (lowest) tier: a file that is
+/// both inside the pane's project and in the wide sweep is a PROJECT hit, not a
+/// stray. Must run before [`logo_sort_by_rank`], which reads `tier`.
+fn logo_dedupe_by_best_tier(v: &mut Vec<LogoCandidate>) {
+    v.sort_by(|a, b| a.path.cmp(&b.path).then(a.tier.cmp(&b.tier)));
+    v.dedup_by(|a, b| a.path == b.path);
+}
+
+/// $HOME as a path, for the scan tiers.
+fn logo_home() -> PathBuf {
+    PathBuf::from(std::env::var("HOME").unwrap_or_default())
+}
+
+/// Testable core: every tier folded and ranked — what the picker settles on
+/// once its background sweep lands. The live picker builds this incrementally
+/// (tiers 1+2 inline, tier 3 async) and so never calls this; it exists to let
+/// the tests assert on the SETTLED result without driving a gpui window.
+#[cfg(test)]
+fn scan_logo_candidates_in(home_path: &std::path::Path) -> Vec<LogoCandidate> {
+    let mut out = scan_logo_recent(home_path);
+    out.extend(scan_logo_wide(home_path));
+    logo_dedupe_by_best_tier(&mut out);
+    logo_sort_by_rank(&mut out);
     out
 }
 
@@ -1641,14 +1773,21 @@ fn group_section(header: gpui::Div, gcol: gpui::Hsla, cards: Vec<gpui::AnyElemen
         )
 }
 
-/// Newest first (a just-taken screenshot surfaces at the top), tie-broken A-Z.
-fn logo_sort_by_recency(out: &mut [LogoCandidate]) {
+/// Rank for display: TIER first (project ▸ recent ▸ wide), then newest-first
+/// INSIDE a tier (a just-taken screenshot tops its own tier), tie-broken A-Z.
+///
+/// Tier leading is the whole point: mtime alone buries a project's own
+/// `logo.png` under every unrelated screenshot taken since it was committed.
+fn logo_sort_by_rank(out: &mut [LogoCandidate]) {
     out.sort_by(|a, b| {
-        b.mtime.cmp(&a.mtime).then_with(|| {
-            a.base
-                .to_ascii_lowercase()
-                .cmp(&b.base.to_ascii_lowercase())
-        })
+        a.tier
+            .cmp(&b.tier)
+            .then(b.mtime.cmp(&a.mtime))
+            .then_with(|| {
+                a.base
+                    .to_ascii_lowercase()
+                    .cmp(&b.base.to_ascii_lowercase())
+            })
     });
 }
 
@@ -1733,6 +1872,11 @@ struct Workspace {
     /// The per-pane header-logo image picker (header `＋ logo` / logo click), if
     /// open. Owns the keyboard while up, like `lang_picker`.
     logo_picker: Option<LogoPicker>,
+    /// Bumped on every picker open. The async tier-3 sweep captures the value
+    /// and drops its result unless it still matches — otherwise a slow sweep
+    /// belonging to a CLOSED (or re-opened, different-pane) picker lands in
+    /// whichever picker happens to be up when it finally finishes.
+    logo_scan_epoch: u64,
     /// The per-directory default-logo map (dir → image), mirrored from
     /// `dir-logos.toml` by `refresh_dir_logos` — render-side cache only, the
     /// file is the truth (see [`dirlogo`]).
@@ -2169,6 +2313,7 @@ impl Workspace {
             find: None,
             lang_picker: None,
             logo_picker: None,
+            logo_scan_epoch: 0,
             dir_logos: dirlogo::load(),
             renaming: None,
             confirm_close: None,
@@ -3765,19 +3910,34 @@ impl Workspace {
         self.refresh_dir_logos(cx);
     }
 
-    /// Open the header-logo image picker scoped to `target`. Scans the candidate
-    /// image files up front (bounded) and grabs the keyboard so typing filters.
+    /// Open the header-logo image picker scoped to `target`.
+    ///
+    /// THREE TIERS, and only the cheap two run on this thread. Tiers 1+2 (the
+    /// pane's OWN project, then the shallow image drop-folders) are small and
+    /// local — single-digit milliseconds — so the modal opens already holding
+    /// the candidates you almost certainly want, correctly ranked, with no
+    /// spinner and no empty first frame. Tier 3 — the deep $HOME sweep that
+    /// used to run RIGHT HERE and hold the window shut for ~0.6s on a working
+    /// home dir — now runs on the background executor and merges in behind
+    /// them.
     fn open_logo_picker(
         &mut self,
         target: gpui::EntityId,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let candidates = scan_logo_candidates();
-        let order = (0..candidates.len()).collect();
         let cwd = self
             .pane_by_id(target)
             .and_then(|p| p.read(cx).current_cwd());
+        let home = logo_home();
+        let mut candidates = scan_logo_project(cwd.as_deref(), &home);
+        candidates.extend(scan_logo_recent(&home));
+        logo_dedupe_by_best_tier(&mut candidates);
+        logo_sort_by_rank(&mut candidates);
+        let order = (0..candidates.len()).collect();
+        // Claim this sweep's identity BEFORE spawning it (see `logo_scan_epoch`).
+        self.logo_scan_epoch = self.logo_scan_epoch.wrapping_add(1);
+        let epoch = self.logo_scan_epoch;
         self.logo_picker = Some(LogoPicker {
             target,
             cwd,
@@ -3787,12 +3947,35 @@ impl Workspace {
             selected: 0,
             order,
             candidates,
+            scanning: true,
         });
         // Take the keyboard off the focused pane (whose `on_key` writes to the
         // PTY) so typing filters the picker instead of leaking into the shell —
         // exactly like `open_find`.
         window.focus(&self.focus_handle, cx);
         cx.notify();
+        // Tier 3, off-thread. It only ever ADDS: everything findable before this
+        // change is still findable, it just arrives a beat later instead of
+        // gating the first frame.
+        cx.spawn(async move |this, cx| {
+            let wide = cx
+                .background_executor()
+                .spawn(async move { scan_logo_wide(&home) })
+                .await;
+            let _ = this.update(cx, |ws: &mut Workspace, cx| {
+                // A close, or a re-open on another pane, supersedes this sweep.
+                if ws.logo_scan_epoch != epoch {
+                    return;
+                }
+                let Some(lp) = ws.logo_picker.as_mut() else {
+                    return;
+                };
+                lp.merge(wide);
+                lp.scanning = false;
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     /// Set (or clear) `target`'s header logo, persist it, and close the picker.
@@ -4734,7 +4917,13 @@ impl Workspace {
                         div()
                             .text_size(px(9.))
                             .text_color(th.text.alpha(0.5))
-                            .child(format!("{}/{}", order.len(), total)),
+                            .child(if lp.scanning {
+                                // The ellipsis says the wide sweep is still
+                                // landing, so this count is a floor, not a total.
+                                format!("{}/{}\u{2026}", order.len(), total)
+                            } else {
+                                format!("{}/{}", order.len(), total)
+                            }),
                     ),
             )
             .child(
@@ -13758,23 +13947,200 @@ mod tests {
                 base: "old.png".into(),
                 dir: "~/Pictures".into(),
                 mtime: 10,
+                tier: LogoTier::Recent,
             },
             LogoCandidate {
                 path: "b".into(),
                 base: "new.png".into(),
                 dir: "~/Pictures/Screenshots".into(),
                 mtime: 99,
+                tier: LogoTier::Recent,
             },
             LogoCandidate {
                 path: "c".into(),
                 base: "mid.png".into(),
                 dir: "~/Downloads".into(),
                 mtime: 50,
+                tier: LogoTier::Recent,
             },
         ];
-        logo_sort_by_recency(&mut v);
+        logo_sort_by_rank(&mut v);
         assert_eq!(v[0].base, "new.png", "newest first");
         assert_eq!(v[2].base, "old.png", "oldest last");
+    }
+
+    #[test]
+    fn logo_tier_outranks_recency() {
+        // An ANCIENT project asset must still beat a screenshot taken a second
+        // ago: tier is the PRIMARY key, mtime only orders inside a tier. This is
+        // the whole reason a project's own logo stopped being buried.
+        let mk = |path: &str, base: &str, mtime: u64, tier: LogoTier| LogoCandidate {
+            path: path.into(),
+            base: base.into(),
+            dir: "~/x".into(),
+            mtime,
+            tier,
+        };
+        let mut v = vec![
+            mk("/s/fresh.png", "fresh.png", u64::MAX, LogoTier::Recent),
+            mk("/p/brand.svg", "brand.svg", 1, LogoTier::Project),
+            mk("/w/stray.png", "stray.png", u64::MAX, LogoTier::Wide),
+        ];
+        logo_sort_by_rank(&mut v);
+        assert_eq!(
+            v[0].base, "brand.svg",
+            "the pane's own project leads, however old"
+        );
+        assert_eq!(v[1].base, "fresh.png", "recent beats the wide sweep");
+        assert_eq!(v[2].base, "stray.png", "the wide sweep sinks to the bottom");
+    }
+
+    #[test]
+    fn logo_dedupe_keeps_the_better_tier() {
+        // The wide sweep re-finds everything the project walk already found, so
+        // the duplicate must collapse to the PROJECT hit — otherwise a project
+        // asset ranks as a stray.
+        let mk = |tier| LogoCandidate {
+            path: "/p/logo.png".into(),
+            base: "logo.png".into(),
+            dir: "~/p".into(),
+            mtime: 5,
+            tier,
+        };
+        let mut v = vec![mk(LogoTier::Wide), mk(LogoTier::Project)];
+        logo_dedupe_by_best_tier(&mut v);
+        assert_eq!(v.len(), 1, "one path, one row");
+        assert_eq!(
+            v[0].tier,
+            LogoTier::Project,
+            "the better tier wins the collapse"
+        );
+    }
+
+    #[test]
+    fn logo_project_root_walks_up_and_stops_at_home() {
+        use std::io::Write;
+        let tmp = std::env::temp_dir().join(format!("td-logo-root-{}", std::process::id()));
+        let deep = tmp.join("Software/proj/app/src");
+        std::fs::create_dir_all(&deep).unwrap();
+        std::fs::create_dir_all(tmp.join("Software/proj/.git")).unwrap();
+        assert_eq!(
+            logo_project_root(&deep, &tmp).as_deref(),
+            Some(tmp.join("Software/proj").as_path()),
+            "a pane deep inside a repo resolves to the repo"
+        );
+        // A worktree/submodule marks its root with a .git FILE, not a directory.
+        let wt = tmp.join("Software/wt/app");
+        std::fs::create_dir_all(&wt).unwrap();
+        std::fs::File::create(tmp.join("Software/wt/.git"))
+            .unwrap()
+            .write_all(b"gitdir: /elsewhere")
+            .unwrap();
+        assert_eq!(
+            logo_project_root(&wt, &tmp).as_deref(),
+            Some(tmp.join("Software/wt").as_path()),
+            "a .git FILE marks a worktree root just as well as a dir"
+        );
+        // Nothing up the chain is a repo → must NOT fall back to claiming $HOME,
+        // which would make tier 1 as expensive as the wide sweep.
+        assert_eq!(
+            logo_project_root(&tmp.join("Software"), &tmp),
+            None,
+            "must not claim $HOME as a project"
+        );
+        assert_eq!(
+            logo_project_root(&tmp, &tmp),
+            None,
+            "$HOME is never its own project"
+        );
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn logo_project_tier_finds_repo_assets_while_recent_stays_shallow() {
+        use std::io::Write;
+        let tmp = std::env::temp_dir().join(format!("td-logo-tiers-{}", std::process::id()));
+        // A brand asset deep in a repo — deep enough that the SHALLOW recent
+        // tier can never reach it. That gap is exactly why tier 1 exists.
+        let assets = tmp.join("Software/proj/app/assets/brand");
+        std::fs::create_dir_all(&assets).unwrap();
+        std::fs::create_dir_all(tmp.join("Software/proj/.git")).unwrap();
+        std::fs::File::create(assets.join("brand.png"))
+            .unwrap()
+            .write_all(b"x")
+            .unwrap();
+        // And a screenshot where screenshots actually land.
+        let shots = tmp.join("Pictures/Screenshots");
+        std::fs::create_dir_all(&shots).unwrap();
+        std::fs::File::create(shots.join("fresh.png"))
+            .unwrap()
+            .write_all(b"x")
+            .unwrap();
+
+        let cwd = tmp.join("Software/proj/app");
+        let proj = scan_logo_project(Some(cwd.to_str().unwrap()), &tmp);
+        let recent = scan_logo_recent(&tmp);
+
+        assert!(
+            proj.iter().any(|c| c.base == "brand.png"),
+            "tier 1 must surface the pane's OWN project asset"
+        );
+        assert!(
+            proj.iter().all(|c| c.tier == LogoTier::Project),
+            "tier 1 tags everything it finds as Project"
+        );
+        assert!(
+            recent.iter().any(|c| c.base == "fresh.png"),
+            "tier 2 must surface a fresh screenshot"
+        );
+        assert!(
+            !recent.iter().any(|c| c.base == "brand.png"),
+            "tier 2 stays shallow — reaching that asset is tier 1/3 work, and \
+             making tier 2 deep enough to find it is what used to cost 0.6s"
+        );
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn logo_merge_keeps_the_highlighted_row() {
+        let mk = |path: &str, base: &str, mtime: u64, tier: LogoTier| LogoCandidate {
+            path: path.into(),
+            base: base.into(),
+            dir: "~/Pictures".into(),
+            mtime,
+            tier,
+        };
+        let mut lp = LogoPicker {
+            target: gpui::EntityId::from(1u64),
+            cwd: None,
+            name: EditBuffer::seeded(""),
+            loc: EditBuffer::seeded(""),
+            field: LogoField::Name,
+            selected: 0,
+            order: Vec::new(),
+            candidates: vec![
+                mk("/r/new.png", "new.png", 99, LogoTier::Recent),
+                mk("/r/old.png", "old.png", 1, LogoTier::Recent),
+            ],
+            scanning: true,
+        };
+        lp.recompute();
+        lp.selected = 1;
+        let want = lp.candidates[lp.order[lp.selected]].path.clone();
+        assert_eq!(want, "/r/old.png");
+
+        // A project hit lands and sorts to the FRONT, shifting every index. The
+        // highlight is carried by PATH, so it must not move to another file.
+        lp.merge(vec![mk("/p/brand.png", "brand.png", 0, LogoTier::Project)]);
+
+        assert_eq!(
+            lp.candidates[lp.order[0]].path, "/p/brand.png",
+            "the project tier leads after the merge"
+        );
+        assert_eq!(
+            lp.candidates[lp.order[lp.selected]].path, want,
+            "the highlighted row must survive an index-shifting merge"
+        );
     }
 
     /// Build a fixed, recency-ordered candidate set for the two-field tests.
@@ -13786,6 +14152,7 @@ mod tests {
             base: base.into(),
             dir: dir.into(),
             mtime: 0,
+            tier: LogoTier::Recent,
         };
         vec![
             mk("td-logo.svg", "~/Pictures/terminal-delight"), // 0 (newest)
@@ -14711,18 +15078,21 @@ node = "Leaf"
                 base: "acme-logo.png".into(),
                 dir: "~/Pictures".into(),
                 mtime: 30,
+                tier: LogoTier::Recent,
             },
             LogoCandidate {
                 path: "/b/banner.jpg".into(),
                 base: "banner.jpg".into(),
                 dir: "~/Downloads".into(),
                 mtime: 20,
+                tier: LogoTier::Recent,
             },
             LogoCandidate {
                 path: "/c/icon.svg".into(),
                 base: "icon.svg".into(),
                 dir: "~/Pictures/brand".into(),
                 mtime: 10,
+                tier: LogoTier::Recent,
             },
         ];
         // empty name + empty loc → every candidate, in order
