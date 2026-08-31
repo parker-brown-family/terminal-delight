@@ -204,6 +204,43 @@ mod correctness {
         term.grid()[Line(row)][Column(col)].c
     }
 
+    /// The FOCUS reader's vertical fill rests on one assumption: that rows which
+    /// have scrolled off the screen are still reachable through the grid at
+    /// NEGATIVE line indices. Everything above the reader — `budget_range`,
+    /// `grid_rows_in`, `PaneSource` — is built on that, and nothing else in the
+    /// suite touches it. If alacritty ever changed how history is addressed, the
+    /// reader would silently fall back to showing one screenful and no test would
+    /// notice, which is precisely the bug the document model was built to end.
+    #[test]
+    fn scrolled_off_rows_stay_readable_at_negative_line_indices() {
+        let (mut term, mut p, _) = harness(20, 5);
+        // 12 numbered lines through a 5-row screen: 7 must scroll into history
+        for i in 0..12 {
+            feed(&mut term, &mut p, format!("line{i}\r\n").as_bytes());
+        }
+
+        let top = term.grid().topmost_line().0;
+        assert!(top < 0, "history must extend above line 0, got {top}");
+        // 12 written lines plus the blank row the last newline opens = 13 rows
+        // through a 5-row screen, so 8 are displaced into history.
+        assert_eq!(top, -8, "history depth");
+        assert_eq!(term.grid().history_size(), 8);
+
+        let row_text = |l: i32| -> String {
+            (0..20)
+                .map(|c| term.grid()[Line(l)][Column(c)].c)
+                .collect::<String>()
+                .trim_end()
+                .to_string()
+        };
+        // the very first line written is still readable at the top of history
+        assert_eq!(row_text(top), "line0", "the first line survives in history");
+        assert_eq!(row_text(-1), "line7", "the row just above the screen");
+        // line 0 remains the top of the VISIBLE screen, not the top of history —
+        // the distinction `budget_range` depends on
+        assert_eq!(row_text(0), "line8");
+    }
+
     /// The flags at a live-screen cell.
     fn flags(term: &Term<Recorder>, row: i32, col: usize) -> Flags {
         term.grid()[Line(row)][Column(col)].flags
