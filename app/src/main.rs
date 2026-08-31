@@ -8639,14 +8639,25 @@ impl Render for Workspace {
         // (read once, cached; checked here so it covers every Workspace path).
         pane::set_anchor_top(self.anchor_top || td_anchor_top_forced());
         let s = self.lang.strings();
+        // A pane's OWN menus (⋯ overflow, right-click, BELL+ tray) are pane-local
+        // state no workspace flag can see, so ask this tab's visible leaves —
+        // they float over the glass and must flatten it like any other overlay.
+        let pane_popup_open = self.tabs.get(self.active).is_some_and(|tab| {
+            let mut leaves = vec![];
+            tab.root.leaves(&mut leaves);
+            leaves.iter().any(|p| p.read(cx).popup_open())
+        });
         warp::begin_frame(); // visible panes re-register their tube rects below
                              // An open overlay (theme breakout / confirm dialog) flattens the glass:
                              // the warp is a pixel post-process, so a panel over a tube would bow out
                              // of reach of its own flat hit box. Suppress so the menu reads true.
         warp::set_suppressed(
-            self.theme_menu.is_some()
+            pane_popup_open
+                || self.theme_menu.is_some()
                 || self.osd_menu.is_some()
                 || self.mcp_menu
+                || self.scale_menu
+                || self.more_menu
                 || self.plugins_menu
                 || self.savings_menu
                 || self.dead_menu

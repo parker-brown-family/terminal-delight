@@ -1906,6 +1906,19 @@ impl TerminalView {
         self.session.shell_pid
     }
 
+    /// Whether this pane is floating a click-target popup of its OWN over the
+    /// glass — the ⋯ header-overflow menu, the right-click context menu, or the
+    /// BELL+ tray. The workspace's overlay flags can't see pane-local state, so
+    /// `Workspace::render` asks each visible leaf this and folds the answer into
+    /// [`crate::warp::set_suppressed`]: a pane popup bows with the barrel warp
+    /// while gpui keeps hit-testing its flat layout box, so the glass must read
+    /// flat while one is up. Any new pane-owned floating MENU belongs in this OR
+    /// — decoration that carries no click target (the 🎰 reels, the bell toast)
+    /// deliberately does not, since bending costs nothing there.
+    pub fn popup_open(&self) -> bool {
+        self.hdr_overflow.is_some() || self.ctx_menu.is_some() || self.bell_menu
+    }
+
     /// Plain spawn (no restore context); kept for `cx.new(TerminalView::new)`.
     #[allow(dead_code)]
     pub fn new(cx: &mut Context<Self>) -> Self {
