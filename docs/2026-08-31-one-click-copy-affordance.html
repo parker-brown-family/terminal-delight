@@ -1,0 +1,925 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>TPS Report</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=VT323&family=Uncial+Antiqua&family=Caveat:wght@400;600;700&display=swap');
+:root,[data-theme="dark"]{--bg:#0f1117;--s1:#1a1d27;--s2:#22263a;--bd:#2e3350;--ac:#5b7fff;--acd:#1e2a5e;--gr:#3dd68c;--yw:#f5c542;--rd:#ff6b6b;--mu:#8891b4;--tx:#dde1f0;--td:#9aa0bd;--rev-bg:#2a1f00;--rev-bd:#f5c542;--rev-glow:rgba(245,197,66,.45);--font-body:"Inter","Segoe UI",system-ui,sans-serif;--font-mono:"JetBrains Mono","Fira Code",monospace}
+[data-theme="hacker"]{--bg:#08140c;--s1:#0f2216;--s2:#0d1a0d;--bd:#1a4a2a;--ac:#00ff9c;--acd:#0a2a15;--gr:#00ff9c;--yw:#adff2f;--rd:#ff4444;--mu:#2a7a4a;--tx:#00ff9c;--td:#00c070;--rev-bg:#0a2a15;--rev-bd:#00ff9c;--rev-glow:rgba(0,255,156,.5);--font-body:"VT323",monospace;--font-mono:"VT323",monospace}
+[data-theme="olde"]{--bg:#f4ead5;--s1:#ede0c4;--s2:#e4d4ae;--bd:#b89a6a;--ac:#8b1a1a;--acd:#f9e8d0;--gr:#4a7a2a;--yw:#c8860a;--rd:#9b1515;--mu:#7a6040;--tx:#2c1a0a;--td:#5a4020;--rev-bg:#faf0d8;--rev-bd:#8b1a1a;--rev-glow:rgba(139,26,26,.25);--font-body:Georgia,"Times New Roman",serif;--font-mono:"Courier New","Courier",monospace}
+[data-theme="chalk"]{--bg:#fdf9f2;--s1:#fff5e8;--s2:#fde8d0;--bd:#e0bfa0;--ac:#c85080;--acd:#fce8f0;--gr:#68b878;--yw:#e8b030;--rd:#d84848;--mu:#9a7090;--tx:#362030;--td:#6e4a58;--rev-bg:#fde8f0;--rev-bd:#c85080;--rev-glow:rgba(200,80,128,.3);--font-body:"Caveat",cursive;--font-mono:"Courier New","Courier",monospace}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--tx);font:16px/1.65 var(--font-body);padding:40px 24px 100px}
+.page{max-width:940px;margin:0 auto;position:relative;overflow-x:hidden}
+.header{border-bottom:1px solid var(--bd);padding-bottom:24px;margin-bottom:32px}
+.header h1{font-size:25px;font-weight:700;color:#fff;letter-spacing:-.3px}
+.branch{display:inline-flex;align-items:center;gap:6px;background:var(--acd);color:var(--ac);font:14px "JetBrains Mono","Fira Code",monospace;padding:3px 10px;border-radius:4px;margin-top:8px}
+.meta{display:flex;gap:12px;margin-top:14px;flex-wrap:wrap}
+.pill{display:inline-flex;align-items:center;gap:6px;background:var(--s2);border:1px solid var(--bd);border-radius:20px;padding:4px 12px;font-size:14px;color:var(--td)}
+.dot{width:7px;height:7px;border-radius:50%}.dg{background:var(--gr)}.dy{background:var(--yw)}.dr{background:var(--rd)}
+.sec{margin-bottom:36px}
+.stitle{font-size:21px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;color:var(--mu);margin-bottom:16px;padding-bottom:8px;border-bottom:1px solid var(--bd)}
+.sgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+.sc{background:var(--s1);border:1px solid var(--bd);border-radius:8px;padding:16px}
+.lbl{font-size:13px;color:var(--mu);text-transform:uppercase;letter-spacing:.8px;margin-bottom:6px}
+table{width:100%;border-collapse:collapse;font-size:15px}
+th{background:var(--s2);color:var(--mu);text-align:left;font-size:13px;font-weight:600;letter-spacing:.6px;text-transform:uppercase;padding:10px 14px;border-bottom:1px solid var(--bd)}
+td{padding:11px 14px;border-bottom:1px solid var(--bd);vertical-align:top;color:var(--tx)}
+tr:last-child td{border-bottom:none}
+.tw{border:1px solid var(--bd);border-radius:8px;overflow:hidden}
+.bdg{display:inline-block;padding:2px 8px;border-radius:4px;font-size:13px;font-weight:600}
+.bm{background:#1a3a5e;color:#7eb8f7}.br{background:#2a3a2a;color:#6fcc88}.bt{background:#2e2a1a;color:#d4a84b}
+.bh{background:#3a1a1a;color:#f78080}.bmd{background:#2e2a12;color:#d4b04b}.bk{background:var(--s2);color:var(--mu)}
+pre{background:var(--s2);border:1px solid var(--bd);border-radius:6px;padding:16px;font-family:"JetBrains Mono","Fira Code",monospace;font-size:14px;line-height:1.6;overflow-x:auto;color:#c9d1f5}
+code{font-family:"JetBrains Mono","Fira Code",monospace;font-size:14px;background:var(--s2);padding:1px 5px;border-radius:3px;color:#a8b8f0}
+.cal{border-left:3px solid;border-radius:0 6px 6px 0;padding:14px 16px;margin-bottom:12px;font-size:15px}
+.cw{border-color:var(--yw);background:#1f1c0e}.ci{border-color:var(--ac);background:#101826}.cn{border-color:var(--mu);background:var(--s1)}
+.cal .ct{font-weight:700;margin-bottom:4px;font-size:14px}
+.cw .ct{color:var(--yw)}.ci .ct{color:var(--ac)}.cn .ct{color:var(--mu)}
+.tbox{border:1px solid var(--bd);border-radius:8px;overflow:hidden;background:var(--s1)}
+.trow{display:flex;align-items:flex-start;gap:12px;padding:12px 16px;border-bottom:1px solid var(--bd)}
+.trow:last-child{border-bottom:none}
+.trow.expandable{flex-direction:column;gap:0}
+.trow-hdr{display:flex;align-items:flex-start;gap:12px;width:100%}
+.texp{background:none;border:none;color:var(--mu);cursor:pointer;font-size:11px;padding:2px 2px;border-radius:3px;transition:transform .2s;flex-shrink:0;margin-top:3px;line-height:1}
+.texp:hover{color:var(--ac)}
+.trow[data-open="true"] .texp{transform:rotate(90deg)}
+.trow-body{display:none;padding:10px 0 2px calc(78px + 12px + 18px);font-size:14px;line-height:1.65;color:var(--td)}
+.trow[data-open="true"] .trow-body{display:block}
+.trow-body .tbfield{margin-bottom:8px}
+.trow-body .tblabel{font-size:12px;color:var(--mu);font-weight:600;letter-spacing:.04em;text-transform:uppercase;margin-bottom:3px}
+.trow-body .tbfiles{font-family:"JetBrains Mono","Fira Code",monospace;font-size:12px;color:var(--ac);line-height:1.8}
+.tid{font-family:"JetBrains Mono","Fira Code",monospace;font-size:13px;color:var(--mu);white-space:nowrap;padding-top:2px;min-width:78px}
+.ttl{font-size:15px;flex:1}
+.olist{list-style:none;counter-reset:s}
+.olist li{counter-increment:s;display:flex;align-items:flex-start;gap:12px;padding:8px 0;color:var(--td);font-size:15px}
+.olist li::before{content:counter(s);min-width:22px;height:22px;border-radius:50%;background:var(--acd);color:var(--ac);font-size:13px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:1px}
+.qbox{background:var(--s1);border:1px solid var(--bd);border-radius:8px;padding:16px;margin-bottom:12px}
+.qnum{font-size:13px;color:var(--ac);font-weight:700;margin-bottom:6px}
+.qtxt{font-size:15px}.qctx{font-size:14px;color:var(--td);margin-top:6px;line-height:1.5}
+.commentable{cursor:pointer;position:relative;transition:outline .1s}
+.commentable:hover{outline:1px solid var(--ac);border-radius:4px}
+.cmtablerow{cursor:pointer}
+.cmtablerow:hover td{background:#1a2040}
+.hint-tip{display:none;position:absolute;bottom:-24px;right:0;font-size:12px;color:var(--ac);background:var(--acd);padding:2px 8px;border-radius:4px;white-space:nowrap;z-index:10;pointer-events:none}
+.commentable:hover .hint-tip,.cmtablerow:hover .hint-tip{display:block}
+dialog#cm{background:var(--s1);border:1px solid var(--bd);border-radius:10px;color:var(--tx);padding:0;max-width:540px;width:90vw;box-shadow:0 20px 60px rgba(0,0,0,.6)}
+dialog#cm::backdrop{background:rgba(0,0,0,.72)}
+.mh{display:flex;align-items:flex-start;justify-content:space-between;padding:20px 24px 14px;border-bottom:1px solid var(--bd)}
+.mh h3{font-size:16px;font-weight:700;color:#fff;flex:1;margin-right:12px;line-height:1.4}
+.mclose{background:none;border:none;color:var(--mu);font-size:23px;cursor:pointer;line-height:1;padding:0}
+.mclose:hover{color:var(--tx)}
+.mclist{padding:16px 24px;max-height:240px;overflow-y:auto}
+.nocom{color:var(--td);font-size:15px;font-style:italic}
+.citem{background:var(--s2);border-radius:6px;padding:12px;margin-bottom:8px}
+.citem:last-child{margin-bottom:0}
+.cmeta{display:flex;justify-content:space-between;align-items:center;font-size:13px;color:var(--mu);margin-bottom:6px}
+.cdel{background:none;border:none;color:var(--mu);cursor:pointer;font-size:15px;line-height:1}
+.cdel:hover{color:var(--rd)}
+.ctext{font-size:15px;white-space:pre-wrap}
+.mctx{padding:10px 24px 12px;font-size:13px;color:var(--td);background:var(--s2);border-bottom:1px solid var(--bd);line-height:1.5;max-height:110px;overflow-y:auto}
+.mctx:empty{display:none}
+.minput{padding:14px 24px 20px;border-top:1px solid var(--bd)}
+#newcomment{width:100%;background:var(--s2);border:1px solid var(--bd);border-radius:6px;color:var(--tx);font:15px "Inter","Segoe UI",sans-serif;padding:10px 12px;resize:vertical;min-height:80px;outline:none}
+#newcomment:focus{border-color:var(--ac)}
+.mbtns{display:flex;gap:8px;margin-top:10px;justify-content:flex-end}
+.btn{padding:7px 18px;border-radius:6px;font-size:15px;font-weight:600;cursor:pointer;border:none}
+.bpri{background:var(--ac);color:#fff}.bpri:hover{opacity:.88}
+.bsec{background:var(--s2);color:var(--td);border:1px solid var(--bd)}.bsec:hover{color:var(--tx)}
+.copybar{position:fixed;bottom:0;left:0;right:0;background:var(--s1);border-top:1px solid var(--bd);padding:12px 32px;display:flex;align-items:center;justify-content:space-between;z-index:100}
+.copybar p{font-size:14px;color:var(--td)}
+#copybtn{background:var(--gr);color:#0f1117;padding:9px 24px;border-radius:6px;font-size:15px;font-weight:700;cursor:pointer;border:none}
+#copybtn:hover{opacity:.9}
+[data-theme="hacker"] .copybar{background:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='220' height='90'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch' seed='9'/><feColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 .35 0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>"),repeating-linear-gradient(0deg,rgba(0,0,0,.18) 0px,rgba(0,0,0,.18) 1px,transparent 1px,transparent 3px),repeating-linear-gradient(90deg,rgba(0,0,0,.12) 0px,rgba(0,0,0,.12) 1px,transparent 1px,transparent 3px),linear-gradient(175deg,#3e3c2a 0%,#2c2b1d 45%,#1c1b12 100%);border-top:4px solid #0a0a06;box-shadow:inset 0 1px 0 rgba(255,200,80,.07),0 -8px 28px rgba(0,0,0,.98);padding:10px 36px;z-index:9999;animation:none!important;filter:none!important}
+[data-theme="hacker"] .copybar p{font-family:"Share Tech Mono","Courier New",monospace!important;font-size:11px!important;font-weight:700!important;color:#00ff9c!important;text-shadow:0 0 6px rgba(0,255,156,.6),0 0 14px rgba(0,255,156,.25)!important;letter-spacing:.16em;text-transform:uppercase;background:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='280' height='64'><defs><linearGradient id='d' x1='0' y1='0' x2='280' y2='64' gradientUnits='userSpaceOnUse'><stop offset='0' stop-color='white' stop-opacity='0.15'/><stop offset='1' stop-color='white' stop-opacity='0.5'/></linearGradient><mask id='m'><rect width='100%25' height='100%25' fill='url(%23d)'/></mask><filter id='g'><feTurbulence type='fractalNoise' baseFrequency='0.035' numOctaves='4' seed='12' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1.5 -.2'/></filter></defs><rect width='100%25' height='100%25' filter='url(%23g)' mask='url(%23m)'/></svg>"),url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='140' height='32'><filter id='g'><feTurbulence type='fractalNoise' baseFrequency='0.15' numOctaves='2' seed='7' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 .5 0'/></filter><rect width='100%25' height='100%25' filter='url(%23g)'/></svg>"),linear-gradient(135deg,#b89018 0%,#8a6c14 40%,#6a520e 65%,#44360a 100%);background-blend-mode:multiply,multiply,normal;background-size:100% 100%,50% 50%,100% 100%;padding:8px 18px 7px;border:2px solid #1e1600;box-shadow:inset 0 1px 0 rgba(240,200,60,.15),inset 0 -2px 0 rgba(0,0,0,.7),inset 2px 0 0 rgba(0,0,0,.4),inset -1px 0 0 rgba(0,0,0,.3),0 2px 6px rgba(0,0,0,.75);transform:rotate(-.5deg);max-width:62%;filter:saturate(.7) contrast(1.08)}
+[data-theme="hacker"] #copybtn{position:relative;width:64px;height:64px;border-radius:50%;padding:0;border:2px solid #1e1600;font-size:0!important;cursor:pointer;filter:saturate(.7) contrast(1.08)!important;text-shadow:none!important;transform:none!important;background:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='120' height='120'><defs><linearGradient id='d' x1='0' y1='0' x2='120' y2='120' gradientUnits='userSpaceOnUse'><stop offset='0' stop-color='white' stop-opacity='0.12'/><stop offset='1' stop-color='white' stop-opacity='0.35'/></linearGradient><mask id='m'><rect width='100%25' height='100%25' fill='url(%23d)'/></mask><filter id='g'><feTurbulence type='fractalNoise' baseFrequency='0.04' numOctaves='4' seed='17' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1.1 -.15'/></filter></defs><rect width='100%25' height='100%25' filter='url(%23g)' mask='url(%23m)'/></svg>"),url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='60' height='60'><filter id='g'><feTurbulence type='fractalNoise' baseFrequency='0.15' numOctaves='2' seed='7' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 .30 0'/></filter><rect width='100%25' height='100%25' filter='url(%23g)'/></svg>"),linear-gradient(135deg,#b89018 0%,#8a6c14 40%,#6a520e 65%,#44360a 100%);background-blend-mode:multiply,multiply,normal;background-size:100% 100%,40% 40%,100% 100%;box-shadow:0 0 0 4px #0d0d0a,0 0 0 7px #0e1a0e,0 0 0 9px #0b0a06,0 0 22px rgba(0,255,156,.35),0 0 44px rgba(0,200,100,.15),inset 0 -3px 6px rgba(0,0,0,.88)}
+[data-theme="hacker"] #copybtn::before{content:"COPY";position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-family:"Share Tech Mono","Courier New",monospace;font-size:12px;font-weight:900;color:#00ff9c;letter-spacing:.12em;text-shadow:0 0 6px rgba(0,255,156,.9),0 0 16px rgba(0,255,156,.5)}
+[data-theme="hacker"] #copybtn:hover{animation:none!important;box-shadow:0 0 0 4px #0d0d0a,0 0 0 7px #0e1a0e,0 0 0 9px #0b0a06,0 0 30px rgba(0,255,156,.6),0 0 60px rgba(0,200,100,.35),inset 0 -3px 6px rgba(0,0,0,.75)!important;filter:saturate(.7) contrast(1.08)!important;transform:scale(1.06)!important}
+[data-theme="hacker"] dialog#cm{background:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='540' height='500'><filter id='g'><feTurbulence type='fractalNoise' baseFrequency='0.02' numOctaves='3' seed='23' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.7 -.08'/></filter><rect width='100%25' height='100%25' filter='url(%23g)'/></svg>"),linear-gradient(160deg,#0d180d 0%,#081008 50%,#040b04 100%);background-blend-mode:multiply,normal;border:1px solid rgba(0,255,156,.25);box-shadow:0 0 0 1px #0b1a0b,0 0 40px rgba(0,255,156,.1),0 20px 60px rgba(0,0,0,.95)}
+[data-theme="hacker"] .mh{border-bottom:1px solid rgba(0,255,156,.2)}
+[data-theme="hacker"] .mh h3{font-family:"Share Tech Mono","Courier New",monospace;color:#00ff9c;text-shadow:0 0 8px rgba(0,255,156,.5),0 0 20px rgba(0,255,156,.2);letter-spacing:.06em}
+[data-theme="hacker"] .mclose{color:rgba(0,255,156,.4)}
+[data-theme="hacker"] .mclose:hover{color:#00ff9c;text-shadow:0 0 8px rgba(0,255,156,.6)}
+[data-theme="hacker"] .mctx{background:rgba(0,255,156,.04);border-bottom:1px solid rgba(0,255,156,.15);color:rgba(0,255,156,.65);font-family:"Share Tech Mono","Courier New",monospace;font-size:12px}
+[data-theme="hacker"] .nocom{color:#00ff9c;font-family:"Share Tech Mono","Courier New",monospace;font-size:13px}
+[data-theme="hacker"] .citem{background:rgba(0,255,156,.05);border:1px solid rgba(0,255,156,.14)}
+[data-theme="hacker"] .ctext{color:rgba(0,255,156,.82);font-family:"Share Tech Mono","Courier New",monospace;font-size:13px}
+[data-theme="hacker"] .cmeta{color:rgba(0,255,156,.38)}
+[data-theme="hacker"] #newcomment{background:rgba(0,0,0,.5);border:1px solid rgba(0,255,156,.22);color:rgba(0,255,156,.88);font-family:"Share Tech Mono","Courier New",monospace}
+[data-theme="hacker"] #newcomment:focus{border-color:rgba(0,255,156,.55);box-shadow:0 0 0 2px rgba(0,255,156,.12)}
+[data-theme="hacker"] #newcomment::placeholder{color:rgba(0,255,156,.28)}
+[data-theme="hacker"] .mbtns{gap:20px}
+[data-theme="hacker"] .btn.bsec{position:relative;width:52px;height:52px;border-radius:50%;padding:0;border:2px solid #181816;font-size:0!important;cursor:pointer;background:radial-gradient(circle at 40% 35%,#383836 0%,#222220 40%,#161614 70%,#0a0a08 100%);box-shadow:0 0 0 3px #0d0d0a,0 0 0 5px #1a1a18,0 0 0 7px #0b0a06,inset 0 -2px 5px rgba(0,0,0,.9)}
+[data-theme="hacker"] .btn.bsec::before{content:"DONE";position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-family:"Share Tech Mono","Courier New",monospace;font-size:9px;font-weight:900;color:#484846;letter-spacing:.1em}
+[data-theme="hacker"] .btn.bsec:hover{transform:scale(1.05);box-shadow:0 0 0 3px #0d0d0a,0 0 0 5px #1a1a18,0 0 0 7px #0b0a06,inset 0 -2px 5px rgba(0,0,0,.8)}
+[data-theme="hacker"] .btn.bpri{position:relative;width:52px;height:52px;border-radius:50%;padding:0;border:2px solid #1e1600;font-size:0!important;cursor:pointer;filter:saturate(.7) contrast(1.08)!important;background:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='104' height='104'><defs><linearGradient id='d' x1='0' y1='0' x2='104' y2='104' gradientUnits='userSpaceOnUse'><stop offset='0' stop-color='white' stop-opacity='0.12'/><stop offset='1' stop-color='white' stop-opacity='0.35'/></linearGradient><mask id='m'><rect width='100%25' height='100%25' fill='url(%23d)'/></mask><filter id='g'><feTurbulence type='fractalNoise' baseFrequency='0.04' numOctaves='4' seed='19' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1.1 -.15'/></filter></defs><rect width='100%25' height='100%25' filter='url(%23g)' mask='url(%23m)'/></svg>"),url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='52' height='52'><filter id='g'><feTurbulence type='fractalNoise' baseFrequency='0.15' numOctaves='2' seed='7' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 .30 0'/></filter><rect width='100%25' height='100%25' filter='url(%23g)'/></svg>"),linear-gradient(135deg,#b89018 0%,#8a6c14 40%,#6a520e 65%,#44360a 100%);background-blend-mode:multiply,multiply,normal;background-size:100% 100%,40% 40%,100% 100%;box-shadow:0 0 0 3px #0d0d0a,0 0 0 5px #0e1a0e,0 0 0 7px #0b0a06,0 0 16px rgba(0,255,156,.3),inset 0 -2px 5px rgba(0,0,0,.88)}
+[data-theme="hacker"] .btn.bpri::before{content:"ADD";position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-family:"Share Tech Mono","Courier New",monospace;font-size:9px;font-weight:900;color:#00ff9c;letter-spacing:.1em;text-shadow:0 0 6px rgba(0,255,156,.9),0 0 16px rgba(0,255,156,.5)}
+[data-theme="hacker"] .btn.bpri:hover{animation:none!important;box-shadow:0 0 0 3px #0d0d0a,0 0 0 5px #0e1a0e,0 0 0 7px #0b0a06,0 0 24px rgba(0,255,156,.55),inset 0 -2px 5px rgba(0,0,0,.75)!important;filter:saturate(.7) contrast(1.08)!important;transform:scale(1.06)!important}
+@media(max-width:640px){.sgrid{grid-template-columns:1fr 1fr}}
+.commentable.has-comment{outline:2px solid var(--rev-bd)!important;background:var(--rev-bg)!important;border-radius:6px;box-shadow:0 0 12px var(--rev-glow),inset 0 0 18px rgba(0,0,0,.12)}
+.cmtablerow.has-comment td{background:var(--rev-bg)!important;box-shadow:inset 3px 0 0 var(--rev-bd)}
+.cbadge{position:absolute;top:6px;right:8px;border-radius:10px;font-size:12px;font-weight:700;padding:1px 7px;min-width:20px;text-align:center;pointer-events:none;z-index:5}
+.has-comment > .cbadge,.has-comment .cbadge{background:var(--rev-bd);color:var(--bg);box-shadow:0 0 6px var(--rev-glow)}
+.cmtablerow .cbadge{position:static;display:inline-block;margin-left:6px;vertical-align:middle;background:var(--rev-bd);color:var(--bg)}
+.theme-toggle{position:absolute;top:32px;right:24px;display:flex;flex-direction:column;align-items:flex-end;gap:5px;z-index:200}
+.theme-btn-row{display:flex;gap:6px;align-items:center}
+.tthm{background:var(--s2);border:1px solid var(--bd);color:var(--tx);border-radius:6px;font-size:21px;width:38px;height:38px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background .15s,border-color .15s;line-height:1}
+.size-control{display:flex;align-items:center;gap:5px;background:var(--s2);border:1px solid var(--bd);border-radius:8px;padding:5px 9px}
+.sc-icon{font-size:16px;line-height:1;user-select:none;opacity:.85}
+.sc-a{color:var(--mu);font-weight:700;line-height:1;user-select:none}
+.sc-small{font-size:10px}
+.sc-big{font-size:18px}
+#size-slider{-webkit-appearance:none;appearance:none;width:72px;height:4px;border-radius:2px;background:var(--bd);outline:none;cursor:pointer;vertical-align:middle}
+#size-slider::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:13px;height:13px;border-radius:50%;background:var(--ac);cursor:pointer;border:none}
+#size-slider::-moz-range-thumb{width:13px;height:13px;border-radius:50%;background:var(--ac);cursor:pointer;border:none}
+[data-theme="hacker"] .size-control{border-color:rgba(0,255,156,.3);box-shadow:0 0 6px rgba(0,255,156,.15)}
+[data-theme="hacker"] #size-slider::-webkit-slider-thumb{box-shadow:0 0 6px rgba(0,255,156,.7)}
+[data-theme="hacker"] #size-slider::-moz-range-thumb{box-shadow:0 0 6px rgba(0,255,156,.7)}
+[data-theme="chalk"] .sc-icon{font-size:19px}
+.tthm:hover{background:var(--bd);border-color:var(--ac)}
+.tthm.active{background:var(--acd);border-color:var(--ac);box-shadow:0 0 8px var(--rev-glow)}
+[data-theme="olde"] .tthm{background:#6b2d2d;border-color:#4a1a1a;color:#f4ead5}
+[data-theme="olde"] .tthm:hover{background:#8b3a3a;border-color:#8b1a1a}
+[data-theme="olde"] .tthm.active{background:#8b1a1a;border-color:#5a0a0a;box-shadow:0 0 8px rgba(139,26,26,.5)}
+[data-theme="hacker"] body{font-size:18px;letter-spacing:.04em;text-shadow:0 0 5px rgba(0,255,156,.32)}
+[data-theme="hacker"] .header h1{font-size:30px;letter-spacing:.08em;text-shadow:0 0 5px rgba(0,255,156,.42)}
+[data-theme="hacker"] .stitle{letter-spacing:.25em;text-shadow:0 0 4px rgba(0,255,156,.24)}
+[data-theme="hacker"] pre,[data-theme="hacker"] code{color:var(--ac);border-color:var(--bd);text-shadow:0 0 4px rgba(0,255,156,.28)}
+[data-theme="hacker"] .trow,.hacker .sc,[data-theme="hacker"] .qbox{box-shadow:0 0 4px rgba(0,255,156,.15),inset 0 0 8px rgba(0,255,156,.04)}
+[data-theme="hacker"] body{padding-top:60px!important;padding-bottom:200px!important}
+[data-theme="hacker"] .page{border-radius:26px;overflow:hidden;transform-origin:top center;transform:perspective(280px) scale(1.032,1.055)}
+[data-theme="hacker"] .bm{background:#0a2a15;color:#00ff9c}[data-theme="hacker"] .bh{background:#2a0a0a;color:#ff6666}
+[data-theme="hacker"] .br{background:#0a2a15;color:#adff2f}[data-theme="hacker"] .bt,[data-theme="hacker"] .bmd{background:#0a1a0a;color:#adff2f}
+[data-theme="hacker"] .bk{background:#0d1a0d;color:#2a7a4a}
+#crt-scanlines,#crt-vignette,#crt-tracking{display:none;position:fixed;inset:0;pointer-events:none}
+[data-theme="hacker"] #crt-scanlines{display:block;z-index:997;background:repeating-linear-gradient(to bottom,rgba(0,0,0,.18) 0px,rgba(0,0,0,.18) 1px,rgba(0,255,156,.045) 1px,rgba(0,255,156,.045) 2px,transparent 2px,transparent 4px)}
+[data-theme="hacker"] #crt-vignette{display:block;z-index:996;background:radial-gradient(ellipse at center,transparent 28%,rgba(0,0,0,.5) 68%,rgba(0,0,0,.92) 100%)}
+[data-theme="hacker"] #crt-tracking{display:block;z-index:998;overflow:hidden}
+[data-theme="hacker"] #crt-tracking::before{content:"";position:absolute;left:0;width:100%;height:160px;background:linear-gradient(to bottom,transparent 0%,rgba(0,0,0,.14) 18%,rgba(0,255,156,.07) 44%,rgba(0,0,0,.22) 50%,rgba(0,255,156,.055) 56%,transparent 100%),repeating-linear-gradient(to bottom,rgba(0,0,0,.18) 0px,rgba(0,0,0,.18) 1px,rgba(0,255,156,.04) 1px,rgba(0,255,156,.04) 2px,transparent 2px,transparent 4px);animation:tracking 7s linear infinite}
+@keyframes tracking{from{transform:translateY(-220px)}to{transform:translateY(105vh)}}
+@media (prefers-reduced-motion:reduce){[data-theme="hacker"] #crt-tracking::before{animation:none;transform:translateY(18vh)}}
+[data-theme="olde"] .header h1{color:var(--ac);font-family:'Uncial Antiqua',Georgia,serif!important}
+[data-theme="olde"] .stitle,[data-theme="olde"] h2,[data-theme="olde"] h3{font-family:'Uncial Antiqua',Georgia,serif!important;color:var(--ac)}
+[data-theme="olde"] .mh h3{color:var(--ac)}
+[data-theme="olde"] .cw{background:#fef5d8;border-color:#c8860a}[data-theme="olde"] .ci{background:#f0e8d8;border-color:#7a5a2a}
+[data-theme="olde"] .cw .ct{color:#8a5a00}[data-theme="olde"] .ci .ct{color:#5a3a10}[data-theme="olde"] .cn .ct{color:#5a4020}
+[data-theme="olde"] .bm{background:#d0e4f8;color:#1a3a6e}[data-theme="olde"] .bh{background:#fce0e0;color:#7a1010}
+[data-theme="olde"] .br{background:#d8f0d8;color:#2a5a2a}[data-theme="olde"] .bt{background:#fef0d0;color:#7a4a00}
+[data-theme="olde"] .bmd{background:#fef8d0;color:#6a4800}[data-theme="olde"] .bk{background:#e8dcc8;color:#5a4020}
+[data-theme="olde"] pre{color:var(--tx);background:#e8dcc8;border-color:var(--bd)}
+[data-theme="olde"] code{color:#6b2d2d;background:#ede0c4;border-radius:3px}
+[data-theme="olde"] .cmtablerow:hover td{background:#f0e8d0}
+[data-theme="olde"] dialog#cm{background:var(--s1);border-color:var(--bd)}
+[data-theme="olde"] #copybtn{background:var(--ac);color:#fff}
+/* ── expandable sections ── */
+.xhdr{cursor:pointer;user-select:none;display:flex!important;align-items:center;gap:8px;padding:10px 0;margin-bottom:14px}
+.xhdr:hover{color:var(--ac)}
+.xtrig{display:inline-block;flex-shrink:0;font-size:14px;color:var(--ac);opacity:.75;transition:transform .25s ease}
+.xsec[data-open="false"] .xtrig{transform:rotate(-90deg)}
+.xbody{overflow:hidden;transition:max-height .35s ease,opacity .25s ease;max-height:4000px;opacity:1}
+.xsec[data-open="false"] .xbody{max-height:0;opacity:0;pointer-events:none}
+/* ── chalk flower theme ── */
+[data-theme="chalk"] body{font-size:21px;background:radial-gradient(ellipse at 25% 0%,#fff9e0 0%,#fdf6f0 45%,#faf2ee 100%)}
+[data-theme="chalk"] .header h1{font-family:'Caveat',cursive!important;font-size:41px;font-weight:700;color:var(--ac);text-shadow:1px 2px 4px rgba(200,80,128,.15)}
+[data-theme="chalk"] .stitle{font-family:'Caveat',cursive!important;font-size:26px;font-weight:700;text-transform:none;letter-spacing:.02em;color:var(--ac);border-bottom:3px solid var(--ac);padding-bottom:6px}
+[data-theme="chalk"] .lbl{font-family:'Caveat',cursive;font-size:16px;letter-spacing:.03em}
+[data-theme="chalk"] .sc,[data-theme="chalk"] .cal,[data-theme="chalk"] .qbox{background:rgba(255,255,255,.14);box-shadow:none;filter:url(#chalk-rough)}
+[data-theme="chalk"] .sc{border-color:#e5bfa8}
+[data-theme="chalk"] .qbox{border-color:#d8b6d4}
+[data-theme="chalk"] .cal{border-width:0 0 0 3px}
+[data-theme="chalk"] .cw{--hl-base:#f6db67;background:rgba(255,255,255,.12);border-color:#e8c048}
+[data-theme="chalk"] .cw .ct{--hl-base:#f6db67;color:#a87800}
+[data-theme="chalk"] .ci{--hl-base:#ffc0cf;background:rgba(255,255,255,.12);border-color:#9070d0}
+[data-theme="chalk"] .ci .ct{--hl-base:#ffc0cf;color:#5840a0}
+[data-theme="chalk"] .cn{--hl-base:#aee5b9;background:rgba(255,255,255,.12);border-color:#58b870}
+[data-theme="chalk"] .cn .ct{--hl-base:#aee5b9;color:#2a7040}
+[data-theme="chalk"] :where(.bdg,mark,.hl,.pill,.branch,.tthm,.size-control,#copybtn,.btn,.lbl,.cal .ct,.qnum){--hl-base:#f6d85f;--hl:var(--hl-base);--hl-rot:-1.4deg;--hl-skew:-12deg;--hl-dx:0em;--hl-dy:.02em;--hl-fx:url(#chalk-hl-1);position:relative;z-index:0;background:transparent;border-radius:0;color:#3d2b32;box-decoration-break:clone;-webkit-box-decoration-break:clone}
+[data-theme="chalk"] :where(.bdg,mark,.hl,.pill,.branch,.tthm,.size-control,#copybtn,.btn,.lbl,.cal .ct,.qnum)::before{content:"";position:absolute;z-index:-1;left:-.22em;right:-.24em;top:8%;bottom:7%;background:linear-gradient(96deg,transparent 0%,color-mix(in srgb,var(--hl) 92%,transparent) 4%,color-mix(in srgb,var(--hl) 80%,transparent) 50%,color-mix(in srgb,var(--hl) 90%,transparent) 95%,transparent 100%);filter:var(--hl-fx);transform:translate(var(--hl-dx),var(--hl-dy)) rotate(var(--hl-rot)) skewX(var(--hl-skew));transform-origin:52% 54%;pointer-events:none}
+[data-theme="chalk"] :where(.pill,.branch,.tthm,.size-control,#copybtn,.btn){border-color:color-mix(in srgb,var(--hl-base) 52%,#ba8f86);box-shadow:none;overflow:visible}
+[data-theme="chalk"] :where(.lbl,.qnum){display:inline-block}
+[data-theme="chalk"] .cal .ct{display:block;width:max-content;max-width:100%}
+[data-theme="chalk"] .branch{--hl-base:#ffc0cf}
+[data-theme="chalk"] .meta .pill:nth-child(1){--hl-base:#aee5b9;color:#365a40}
+[data-theme="chalk"] .meta .pill:nth-child(2){--hl-base:#f6db67;color:#6d5200}
+[data-theme="chalk"] .meta .pill:nth-child(3){--hl-base:#ffadb4;color:#803041}
+[data-theme="chalk"] .sgrid .sc:nth-child(3n+1) .lbl{--hl-base:#ffc0cf}
+[data-theme="chalk"] .sgrid .sc:nth-child(3n+2) .lbl{--hl-base:#f6db67}
+[data-theme="chalk"] .sgrid .sc:nth-child(3n) .lbl{--hl-base:#bfcfff}
+[data-theme="chalk"] .qbox:nth-of-type(odd) .qnum{--hl-base:#bfcfff}
+[data-theme="chalk"] .qbox:nth-of-type(even) .qnum{--hl-base:#aee5b9}
+[data-theme="chalk"] .bm{--hl-base:#a8c6ff;color:#294a92}[data-theme="chalk"] .bh{--hl-base:#ffadb4;color:#8a1d28}
+[data-theme="chalk"] .br{--hl-base:#aee5b9;color:#256238}[data-theme="chalk"] .bt{--hl-base:#f6db67;color:#6d5200}
+[data-theme="chalk"] .bmd{--hl-base:#ffc979;color:#7c5300}[data-theme="chalk"] .bk{--hl-base:#e8cfc8;color:#6b4646}
+[data-theme="chalk"] :where(.bdg,mark,.hl,.pill,.branch,.tthm,.size-control,#copybtn,.btn,.lbl,.cal .ct,.qnum):nth-of-type(4n+1){--hl:color-mix(in srgb,var(--hl-base) 88%,#fff6a8)}
+[data-theme="chalk"] :where(.bdg,mark,.hl,.pill,.branch,.tthm,.size-control,#copybtn,.btn,.lbl,.cal .ct,.qnum):nth-of-type(4n+2){--hl:color-mix(in srgb,var(--hl-base) 90%,#ffd1dc)}
+[data-theme="chalk"] :where(.bdg,mark,.hl,.pill,.branch,.tthm,.size-control,#copybtn,.btn,.lbl,.cal .ct,.qnum):nth-of-type(4n+3){--hl:color-mix(in srgb,var(--hl-base) 86%,#d6ffd7)}
+[data-theme="chalk"] :where(.bdg,mark,.hl,.pill,.branch,.tthm,.size-control,#copybtn,.btn,.lbl,.cal .ct,.qnum):nth-of-type(4n){--hl:color-mix(in srgb,var(--hl-base) 88%,#d7ddff)}
+[data-theme="chalk"] :where(.bdg,mark,.hl,.pill,.branch,.tthm,.size-control,#copybtn,.btn,.lbl,.cal .ct,.qnum):nth-of-type(3n+1){--hl-rot:-.8deg;--hl-skew:-10deg;--hl-dx:-.03em;--hl-dy:.01em}
+[data-theme="chalk"] :where(.bdg,mark,.hl,.pill,.branch,.tthm,.size-control,#copybtn,.btn,.lbl,.cal .ct,.qnum):nth-of-type(3n+2){--hl-rot:-2.1deg;--hl-skew:-15deg;--hl-dx:.04em;--hl-dy:.04em}
+[data-theme="chalk"] :where(.bdg,mark,.hl,.pill,.branch,.tthm,.size-control,#copybtn,.btn,.lbl,.cal .ct,.qnum):nth-of-type(3n){--hl-rot:-1.5deg;--hl-skew:-13deg;--hl-dx:.01em;--hl-dy:-.01em}
+[data-theme="chalk"] :where(.bdg,mark,.hl,.pill,.branch,.tthm,.size-control,#copybtn,.btn,.lbl,.cal .ct,.qnum):nth-of-type(5n+1){--hl-fx:url(#chalk-hl-2)}
+[data-theme="chalk"] :where(.bdg,mark,.hl,.pill,.branch,.tthm,.size-control,#copybtn,.btn,.lbl,.cal .ct,.qnum):nth-of-type(5n+3){--hl-fx:url(#chalk-hl-3)}
+[data-theme="chalk"] pre{background:#f0e8d8;border-color:#d4b890;color:#3a2030}
+[data-theme="chalk"] code{background:#f0e8d8;color:#a03060}
+[data-theme="chalk"] .tthm{--hl-base:#e8cfc8;color:#6a3848}
+[data-theme="chalk"] .tthm:hover{background:transparent;border-color:var(--ac)}
+[data-theme="chalk"] .tthm.active{--hl-base:#ffc0cf;background:transparent;border-color:var(--ac);box-shadow:none}
+[data-theme="chalk"] .cmtablerow:hover td{background:#fde8f0}
+[data-theme="chalk"] dialog#cm{background:var(--s1);border-color:var(--bd)}
+[data-theme="chalk"] .mh h3{color:var(--ac)}
+[data-theme="chalk"] .copybar{background:#fdf4ec;border-top-color:var(--bd)}
+[data-theme="chalk"] #copybtn{--hl-base:#ff8db8;background:transparent;color:#7c1f48;border:none;font-family:'Caveat',cursive;font-size:22px;font-weight:700;padding:9px 26px}
+[data-theme="chalk"] #copybtn:hover{opacity:.9;transform:scale(1.04)}
+[data-theme="chalk"] .btn.bpri{--hl-base:#ff8db8;color:#7c1f48}
+[data-theme="chalk"] .btn.bsec{--hl-base:#d7ddff;color:#5840a0}
+[data-theme="chalk"] .branch{font-family:'Caveat',cursive;font-size:17px}
+[data-theme="chalk"] .xtrig{color:var(--ac)}
+#copy-toast{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%) scale(.88);opacity:0;pointer-events:none;z-index:10000;transition:opacity .18s,transform .18s;border-radius:8px;padding:20px 36px;font-size:18px;font-weight:700;text-align:center;white-space:nowrap;cursor:pointer}
+#copy-toast.ct-show{opacity:1;transform:translate(-50%,-50%) scale(1);pointer-events:auto}
+:root #copy-toast,[data-theme="dark"] #copy-toast{background:var(--s1);border:2px solid var(--ac);color:var(--tx);box-shadow:0 8px 32px rgba(0,0,0,.55),0 0 18px var(--rev-glow)}
+[data-theme="hacker"] #copy-toast{font-family:"Share Tech Mono","Courier New",monospace;font-size:16px;letter-spacing:.15em;color:#00ff9c;text-shadow:0 0 8px rgba(0,255,156,.65),0 0 20px rgba(0,255,156,.3);background:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='360' height='80'><defs><linearGradient id='d' x1='0' y1='0' x2='360' y2='80' gradientUnits='userSpaceOnUse'><stop offset='0' stop-color='white' stop-opacity='0.12'/><stop offset='1' stop-color='white' stop-opacity='0.52'/></linearGradient><mask id='m'><rect width='100%25' height='100%25' fill='url(%23d)'/></mask><filter id='g'><feTurbulence type='fractalNoise' baseFrequency='0.03' numOctaves='4' seed='17' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1.5 -.2'/></filter></defs><rect width='100%25' height='100%25' filter='url(%23g)' mask='url(%23m)'/></svg>"),url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='120' height='40'><filter id='g'><feTurbulence type='fractalNoise' baseFrequency='0.15' numOctaves='2' seed='7' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 .45 0'/></filter><rect width='100%25' height='100%25' filter='url(%23g)'/></svg>"),linear-gradient(135deg,#b89018 0%,#8a6c14 40%,#6a520e 65%,#44360a 100%);background-blend-mode:multiply,multiply,normal;background-size:100% 100%,40% 40%,100% 100%;border:2px solid #1e1600;box-shadow:inset 0 1px 0 rgba(240,200,60,.15),0 6px 28px rgba(0,0,0,.9),0 0 30px rgba(0,255,156,.12);animation:none!important}
+[data-theme="olde"] #copy-toast{font-family:'Uncial Antiqua',Georgia,serif;color:#2c1a0a;background:radial-gradient(ellipse 120% 55% at 50% 0%,#7a4a18 0%,transparent 50%),radial-gradient(ellipse 120% 55% at 50% 100%,#7a4a18 0%,transparent 50%),linear-gradient(180deg,#e8d4a8 0%,#f4e8c8 35%,#f4ead5 50%,#f0e4c0 75%,#e0cc98 100%);border:3px double #8b4513;border-radius:4px;box-shadow:0 6px 24px rgba(0,0,0,.4),inset 0 2px 8px rgba(100,60,20,.2),inset 0 -2px 8px rgba(100,60,20,.2);text-shadow:1px 1px 2px rgba(100,60,0,.25)}
+[data-theme="chalk"] #copy-toast{font-family:'Caveat',cursive;font-size:26px;font-weight:700;color:#5840a0;background:#ede8ff;border:2px solid #9070d0;border-radius:6px;filter:url(#chalk-rough);box-shadow:2px 3px 12px rgba(144,112,208,.3)}
+</style>
+</head>
+<body>
+<div id="crt-scanlines"></div>
+<div id="crt-vignette"></div>
+<div id="crt-tracking"></div>
+<svg xmlns="http://www.w3.org/2000/svg" width="0" height="0" style="position:absolute;overflow:hidden" aria-hidden="true">
+  <defs>
+    <filter id="chalk-rough" x="-5%" y="-5%" width="110%" height="110%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.04" numOctaves="3" seed="5" result="noise"/>
+      <feDisplacementMap in="SourceGraphic" in2="noise" scale="1" xChannelSelector="R" yChannelSelector="G"/>
+    </filter>
+    <filter id="chalk-hl-1" x="-8%" y="-35%" width="116%" height="170%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.008 0.022" numOctaves="2" seed="11" result="noise"/>
+      <feDisplacementMap in="SourceGraphic" in2="noise" scale="5" xChannelSelector="R" yChannelSelector="G"/>
+    </filter>
+    <filter id="chalk-hl-2" x="-8%" y="-35%" width="116%" height="170%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.008 0.022" numOctaves="2" seed="29" result="noise"/>
+      <feDisplacementMap in="SourceGraphic" in2="noise" scale="4.5" xChannelSelector="R" yChannelSelector="G"/>
+    </filter>
+    <filter id="chalk-hl-3" x="-8%" y="-35%" width="116%" height="170%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.008 0.022" numOctaves="2" seed="47" result="noise"/>
+      <feDisplacementMap in="SourceGraphic" in2="noise" scale="5.5" xChannelSelector="R" yChannelSelector="G"/>
+    </filter>
+  </defs>
+</svg>
+<div id="copy-toast" onclick="hideCopyToast()" role="status" aria-live="assertive"></div>
+<div class="page">
+
+<div class="theme-toggle" id="theme-toggle">
+  <div class="theme-btn-row">
+    <button class="tthm active" id="btn-dark"   onclick="setTheme('dark')"   title="Dark">&#x1F319;</button>
+    <button class="tthm"        id="btn-hacker" onclick="setTheme('hacker')" title="Hacker" style="font-family:monospace;font-size:15px;font-weight:700;letter-spacing:-1px">/&gt;</button>
+    <button class="tthm"        id="btn-olde"   onclick="setTheme('olde')"   title="Olde Tyme">&#x1F4DC;</button>
+    <button class="tthm"        id="btn-chalk"  onclick="setTheme('chalk')"  title="Chalk Flower">&#x1F338;</button>
+  </div>
+  <div class="size-control">
+    <span class="sc-icon" title="Text size">&#x1F453;</span>
+    <span class="sc-a sc-small">A</span>
+    <input type="range" id="size-slider" min="0.75" max="1.75" step="0.05" value="1" title="Text size">
+    <span class="sc-a sc-big">A</span>
+  </div>
+</div>
+
+<div id="zoom-wrap">
+<div class="header" style="position:relative">
+  <h1>TPS Report &#x2014; One-Click Copy</h1>
+  <div class="branch">&#x2387; feat/copy-affordance</div>
+  <div class="meta">
+    <div class="pill"><span class="dot dg"></span>Planned</div>
+    <div class="pill"><span class="dot dy"></span>2026-08-31</div>
+    <div class="pill"><span class="dot dr"></span>Parker</div>
+  </div>
+</div>
+
+<div class="sec xsec" data-open="false">
+  <div class="stitle xhdr" onclick="toggleXSec(this)"><span class="xtrig">&#x25BC;</span> ELI5 &#x2014; tl;dr</div>
+  <div class="xbody">
+  <div class="cal ci commentable" data-id="eli5" data-title="ELI5">
+    <span class="hint-tip">&#x1F4AC; comment</span>
+    <div class="ct">&#x1F4A1; Plain English</div>
+    When an agent prints a long command, the terminal wraps it across several rows. Selecting and copying that gives you a command broken at the seam, which then fails when pasted. This adds a bordered box with a copy button around the line under your cursor, and copying gives you the <em>whole</em> command as one unbroken line. Done looks like: hover a wrapped command, click &#x2398;, paste, and it runs first try.
+  </div>
+  </div>
+</div>
+
+<div class="sec xsec" data-open="false">
+  <div class="stitle xhdr" onclick="toggleXSec(this)"><span class="xtrig">&#x25BC;</span> The failure, with evidence</div>
+  <div class="xbody">
+  <div class="cal cw commentable" data-id="evidence" data-title="Evidence">
+    <span class="hint-tip">&#x1F4AC; comment</span>
+    <div class="ct">&#x26A0;&#xFE0F; Four consecutive failures, 2026-08-31</div>
+    This is not a hunch. In one session, four attempts to move a command from an agent pane into a shell failed, and none of them failed for the same reason twice:
+  </div>
+
+  <div class="tbox">
+    <table>
+      <tr><th>#</th><th>What was attempted</th><th>What happened</th></tr>
+      <tr><td>1</td><td>Select + paste a <code>jq --slurpfile</code> one-liner</td><td>Paste broke between <code>automode-env.json</code> and <code>'.autoMode.environment&#x2026;'</code> &#x2014; the wrap seam landed mid-argument. Command never ran.</td></tr>
+      <tr><td>2</td><td>Agent staged the same command as a shell script to dodge wrapping</td><td>Worked, but cost an extra file on disk purely to make a paste survivable.</td></tr>
+      <tr><td>3</td><td>Operator pasted an <em>illustrative</em> command containing a literal <code>&#x2026;</code></td><td><code>Could not open /tmp/&#x2026;/automode-env.json: No such file or directory</code></td></tr>
+      <tr><td>4</td><td>Same paste, retried</td><td>Identical failure. The elided example read as authoritative because nothing marked it as non-runnable.</td></tr>
+    </table>
+  </div>
+
+  <div class="cal cn commentable" data-id="evidence-read" data-title="Reading the evidence">
+    <span class="hint-tip">&#x1F4AC; comment</span>
+    <div class="ct">&#x1F50E; What the evidence actually says</div>
+    Every one of these was a <strong>single logical line</strong> that the terminal wrapped. Not one was a multi-line code block. That matters enormously for scope: the fix is line reconstruction, not block detection. Failure #3 adds a second, independent requirement &#x2014; a copy affordance must refuse text that was never meant to run.
+  </div>
+  </div>
+</div>
+
+<div class="sec xsec" data-open="false">
+  <div class="stitle xhdr" onclick="toggleXSec(this)"><span class="xtrig">&#x25BC;</span> Why the obvious approach dies</div>
+  <div class="xbody">
+  <div class="cal cw commentable" data-id="no-fences" data-title="No fences survive">
+    <span class="hint-tip">&#x1F4AC; comment</span>
+    <div class="ct">&#x1F6AB; Backtick fences are not in the grid</div>
+    The web-shaped instinct is &#x201C;find the fenced code block and draw a border round it.&#x201D; Measured against the live pane via the terminal-delight MCP: the only <code>```</code> sequences on screen were ones typed inline inside prose. Claude Code strips fence markers before rendering. A fence detector would fire on <code>cat</code>&#x2018;d markdown and <em>never</em> on the agent output that actually needs copying.
+  </div>
+
+  <div class="cal cn commentable" data-id="no-attrs" data-title="Attributes rejected too">
+    <span class="hint-tip">&#x1F4AC; comment</span>
+    <div class="ct">&#x1F9EA; The runner-up, and why it also loses</div>
+    Next candidate: detect runs of rows sharing a non-default cell background, or carrying multiple syntax-highlight foreground colours. Workable in principle &#x2014; the grid walk in <code>link_under</code> already holds <code>indexed.cell</code> and reads <code>.flags</code>, so reading <code>.bg</code>/<code>.fg</code> is free. Rejected because it needs an empirical probe to learn what Claude Code paints (TD has no raw-stream dump; <code>TD_KEYDEBUG</code>/<code>TD_HITDEBUG</code> are input-side), and it couples TD's behaviour to one vendor's renderer. Any Claude Code restyle silently breaks it.
+  </div>
+
+  <div class="cal cn commentable" data-id="osc133" data-title="OSC-133 is orthogonal">
+    <span class="hint-tip">&#x1F4AC; comment</span>
+    <div class="ct">&#x1F4CD; And OSC-133 does not help here</div>
+    Shell integration is item #6 on the competitive roadmap, ranked high value. It is still the wrong tool for this: OSC-133 marks <em>shell</em> prompt / command / output zones. A command printed inside an agent's rendered output sits in one undifferentiated output zone. Worth building; will not fix this.
+  </div>
+  </div>
+</div>
+
+<div class="sec xsec" data-open="false">
+  <div class="stitle xhdr" onclick="toggleXSec(this)"><span class="xtrig">&#x25BC;</span> The design &#x2014; the detector already exists</div>
+  <div class="xbody">
+  <div class="cal ci commentable" data-id="design-core" data-title="Core design">
+    <span class="hint-tip">&#x1F4AC; comment</span>
+    <div class="ct">&#x2705; Reuse <code>reflow_wrapped_copy</code> as the region detector</div>
+    <code>reflow_wrapped_copy</code> (<code>app/src/pane.rs:509</code>) already merges rows broken purely by width back into one logical line. Its own doc comment names the case: <em>&#x201C;TUI agents like Claude Code wrap their own prose and commands to the pane width and emit real line breaks.&#x201D;</em> It refuses to merge indented, fenced and rule rows, applies a width test so text wrapped at a narrower column is left alone, and it is pure and unit-tested.
+    <br><br>
+    <strong>The rows it merges into one output line are the copyable region.</strong> The boundary detector is already written, already trusted for drag-select copy, and already shipping. It is simply unreachable without a mouse drag.
+  </div>
+
+  <div class="cal cn commentable" data-id="design-change" data-title="The change">
+    <span class="hint-tip">&#x1F4AC; comment</span>
+    <div class="ct">&#x1F527; What actually has to change</div>
+    The function returns joined text and discards which rows each line came from. Add a variant that also reports spans. <code>WrapJoin::Break</code> already marks every boundary, so spans fall out of the existing <code>out.push()</code> sites &#x2014; no new logic, just bookkeeping.
+  </div>
+
+<pre>// app/src/pane.rs &#x2014; beside its existing pure neighbours
+
+/// One reconstructed logical line and the inclusive grid-row span it
+/// was assembled from. The span is what the hover border is drawn around.
+struct LogicalLine {
+    text: String,
+    rows: std::ops::RangeInclusive&lt;usize&gt;,
+}
+
+fn reflow_wrapped_copy_spans(rows: &amp;[String], cols: usize) -&gt; Vec&lt;LogicalLine&gt;;
+
+// The existing signature stays, as a thin wrapper, so every current
+// caller keeps byte-identical behaviour:
+fn reflow_wrapped_copy(text: &amp;str, cols: usize) -&gt; String {
+    reflow_wrapped_copy_spans(&amp;split_rows(text), cols)
+        .into_iter().map(|l| l.text).collect::&lt;Vec&lt;_&gt;&gt;().join("\n")
+}</pre>
+
+  <div class="cal cw commentable" data-id="padding-trap" data-title="Padding trap">
+    <span class="hint-tip">&#x1F4AC; comment</span>
+    <div class="ct">&#x1F4A3; The one trap that will silently ruin this</div>
+    <code>link_under</code> builds its grid as <code>vec![vec![' '; cols]; rows]</code> &#x2014; every row space-padded to full width. Feed that straight into the reflow and <code>row_len</code> reads <code>cols</code> for <em>every</em> row, so the width test passes universally and the entire screen glues into one line. <strong>Trim trailing padding per row before reflowing.</strong> A drag-selection arrives pre-trimmed, which is why the existing caller never hit this.
+  </div>
+
+  <div class="cal cn commentable" data-id="pipeline" data-title="Pipeline">
+    <span class="hint-tip">&#x1F4AC; comment</span>
+    <div class="ct">&#x1F501; End-to-end path</div>
+    <code>on_mouse_move</code> (already wired, <code>pane.rs:3834</code>) &#x2192; <code>viewport_cell</code> &#x2192; <code>paint_row_to_grid_row</code> &#x2192; build rows from <code>renderable_content()</code> &#x2192; trim &#x2192; <code>reflow_wrapped_copy_spans</code> &#x2192; find the span containing the hovered row &#x2192; gate on copyability &#x2192; paint. Every step but the reflow variant and the gate already exists in <code>link_under</code>.
+  </div>
+  </div>
+</div>
+
+<div class="sec xsec" data-open="false">
+  <div class="stitle xhdr" onclick="toggleXSec(this)"><span class="xtrig">&#x25BC;</span> UX and edge states</div>
+  <div class="xbody">
+  <div class="cal ci commentable" data-id="arming" data-title="Two-stage arming">
+    <span class="hint-tip">&#x1F4AC; comment</span>
+    <div class="ct">&#x1F5B1;&#xFE0F; Hover tints; dwell arms</div>
+    A naive &#x201C;show the chip on hover&#x201D; flattens the CRT warp every time the pointer crosses a command, because the chip is a click target floating over curved glass and must suppress the warp to hit-test honestly. That would strobe the whole screen during ordinary mousing.
+    <br><br>
+    So: <strong>hover</strong> paints a flat tint on the span only &#x2014; no click target, no suppression, warp stays alive. <strong>Dwell (~250&#x202F;ms)</strong> arms the affordance: border plus <code>&#x2398;</code> chip appear, warp flattens exactly as it does for any menu. Moving off disarms.
+  </div>
+
+  <div class="cal cw commentable" data-id="warp-reg" data-title="Warp registration">
+    <span class="hint-tip">&#x1F4AC; comment</span>
+    <div class="ct">&#x1F300; Register in <code>Pane::popup_open()</code> or repeat this morning's bug</div>
+    The armed chip must be added to <code>Pane::popup_open()</code> (<code>pane.rs:1909</code>), the predicate <code>Workspace::render</code> folds into <code>warp::set_suppressed</code>. Skipping it reproduces exactly the defect fixed in PR&#x202F;#207: the affordance bows with the barrel warp while gpui hit-tests its flat layout box, so the chip is not where it looks. The hover tint deliberately does <em>not</em> register &#x2014; it has no click target, so it can bend harmlessly.
+  </div>
+
+  <div class="cal cw commentable" data-id="elision" data-title="Elision guard">
+    <span class="hint-tip">&#x1F4AC; comment</span>
+    <div class="ct">&#x1F6D1; Never offer to copy an elided command</div>
+    Failure #3 above is its own requirement. A line containing <code>&#x2026;</code> (U+2026) or a bare <code>&#x2026;</code>-suffixed path is an <em>illustration</em>, not a command. Offering a copy chip on it manufactures confident failure. Such lines get no chip at all &#x2014; not a warning, not a disabled state. Silence is the correct affordance for something that should not be copied.
+  </div>
+
+  <div class="cal cn commentable" data-id="edges" data-title="Edge states">
+    <span class="hint-tip">&#x1F4AC; comment</span>
+    <div class="ct">&#x1F9F5; Remaining edge states</div>
+    <ul>
+      <li><strong>Span partially scrolled off</strong> &#x2014; copy the full logical line from the grid, but draw the border only over visible rows.</li>
+      <li><strong>Active drag-selection</strong> &#x2014; suppress the affordance entirely; selection wins.</li>
+      <li><strong>Alt-screen apps</strong> (vim, htop) &#x2014; disabled. Reflow assumes flowed output, and a TUI's rows are a layout, not a wrapped line.</li>
+      <li><strong>Blank / single-row lines</strong> &#x2014; still offered when they pass the copyability gate; a short unwrapped command is a legitimate copy target.</li>
+      <li><strong>Copy target</strong> &#x2014; write to both the system clipboard and X11 PRIMARY, matching <code>copy_selection</code>, so middle-click paste works too.</li>
+    </ul>
+  </div>
+  </div>
+</div>
+
+<div class="sec xsec" data-open="false">
+  <div class="stitle xhdr" onclick="toggleXSec(this)"><span class="xtrig">&#x25BC;</span> Implementation tickets</div>
+  <div class="xbody">
+
+  <div class="trow expandable commentable" data-id="t-001" data-title="T-001" data-open="false">
+    <span class="hint-tip">&#x1F4AC; comment</span>
+    <div class="trow-hdr">
+      <button class="texp" onclick="toggleTicket(this,event)" title="Expand details">&#x25B6;</button>
+      <div class="tid">T-001</div>
+      <div class="ttl">Right-click &#x201C;Copy line (unwrapped)&#x201D; &#x2014; ship relief first</div>
+      <span class="bdg bh">high</span>
+    </div>
+    <div class="trow-body">
+      <strong>Intent:</strong> The right-click menu at <code>pane.rs:4779</code> already calls <code>link_under</code>, which already stitches. Adding one entry removes the wrap-seam failure today, two clicks instead of one, while the hover work proceeds. It also proves the reconstruction is correct before any pixel is painted.
+      <br><br><strong>Touches:</strong> <code>app/src/pane.rs</code> (context menu), <code>app/src/lang.rs</code> (9 locales).
+      <br><br><strong>Acceptance:</strong>
+<pre>Given a command wrapped across three rows in an agent pane
+When I right-click it and choose "Copy line (unwrapped)"
+Then the clipboard holds the command as one unbroken line
+And pasting it into a shell runs it unmodified</pre>
+      <strong>Gotcha:</strong> every new menu string needs all nine locales in <code>lang.rs</code> or the build fails on the exhaustive <code>Strings</code> struct. Do not reuse the existing selection-copy label; this copies the line under the pointer, not the selection.
+      <br><br><strong>Verification:</strong> paste the failing <code>jq --slurpfile</code> line from the evidence table and confirm it executes.
+    </div>
+  </div>
+
+  <div class="trow expandable commentable" data-id="t-002" data-title="T-002" data-open="false">
+    <span class="hint-tip">&#x1F4AC; comment</span>
+    <div class="trow-hdr">
+      <button class="texp" onclick="toggleTicket(this,event)" title="Expand details">&#x25B6;</button>
+      <div class="tid">T-002</div>
+      <div class="ttl">Span-reporting reflow variant</div>
+      <span class="bdg bh">high</span>
+    </div>
+    <div class="trow-body">
+      <strong>Intent:</strong> Teach the existing reflow to report which grid rows produced each logical line, keeping the current signature as a wrapper so no caller changes behaviour.
+      <br><br><strong>Touches:</strong> <code>app/src/pane.rs</code>, pure layer only (near <code>wrap_join</code>, <code>stitch_wrapped_line</code>).
+      <br><br><strong>Acceptance:</strong>
+<pre>Given rows ["cd ~/.claude &amp;&amp; jq --slurpfile e /tmp/x.json", "'.a = $e[0]' settings.json"]
+When reflow_wrapped_copy_spans runs at the pane width
+Then one LogicalLine is returned spanning rows 0..=1
+And its text is the two rows joined exactly as reflow_wrapped_copy would join them
+And reflow_wrapped_copy returns byte-identical output to before this change</pre>
+      <strong>Gotcha:</strong> the blank-line path pushes an empty string into <code>out</code>; those carry no meaningful span and must not be returned as hoverable regions. Decide explicitly rather than letting an empty range leak.
+      <br><br><strong>Verification:</strong> the existing reflow unit tests must pass unmodified &#x2014; that is the regression net for the wrapper.
+    </div>
+  </div>
+
+  <div class="trow expandable commentable" data-id="t-003" data-title="T-003" data-open="false">
+    <span class="hint-tip">&#x1F4AC; comment</span>
+    <div class="trow-hdr">
+      <button class="texp" onclick="toggleTicket(this,event)" title="Expand details">&#x25B6;</button>
+      <div class="tid">T-003</div>
+      <div class="ttl">Grid &#x2192; trimmed rows &#x2192; spans pipeline</div>
+      <span class="bdg bh">high</span>
+    </div>
+    <div class="trow-body">
+      <strong>Intent:</strong> Extract the grid-reading half of <code>link_under</code> into a shared helper both it and the hover path use, so there is one place that knows how to turn <code>renderable_content()</code> into rows.
+      <br><br><strong>Touches:</strong> <code>app/src/pane.rs</code> (<code>link_under</code> at 2557 and the new helper).
+      <br><br><strong>Acceptance:</strong>
+<pre>Given a pane whose grid rows are space-padded to the full column count
+When the hover pipeline builds its rows
+Then trailing padding is trimmed from each row before reflow
+And a screen of unrelated short lines yields one logical line per row, never one merged blob</pre>
+      <strong>Gotcha:</strong> this is the padding trap from the design section, and it fails <em>silently</em> &#x2014; nothing errors, the whole screen just becomes one region. Write the merge-blob test first.
+      <br><br><strong>Gotcha 2:</strong> honour <code>paint_row_to_grid_row</code>. The anchor-to-top path inverts the row mapping, so a hover in an anchored pane resolves to the wrong span if the raw painted row is used.
+      <br><br><strong>Verification:</strong> hover-resolve the same row via both anchored and un-anchored panes; spans must match.
+    </div>
+  </div>
+
+  <div class="trow expandable commentable" data-id="t-004" data-title="T-004" data-open="false">
+    <span class="hint-tip">&#x1F4AC; comment</span>
+    <div class="trow-hdr">
+      <button class="texp" onclick="toggleTicket(this,event)" title="Expand details">&#x25B6;</button>
+      <div class="tid">T-004</div>
+      <div class="ttl">Copyability gate, including the elision guard</div>
+      <span class="bdg bh">high</span>
+    </div>
+    <div class="trow-body">
+      <strong>Intent:</strong> Decide which logical lines earn an affordance. Over-firing makes every prose line twitch; under-firing makes the feature untrustworthy.
+      <br><br><strong>Touches:</strong> <code>app/src/pane.rs</code>, pure and unit-tested alongside <code>link_at</code>, which already makes exactly this class of judgement for URLs and paths.
+      <br><br><strong>Acceptance:</strong>
+<pre>Given a logical line containing the character &#x2026;
+When the copyability gate evaluates it
+Then it is rejected and no chip is offered
+
+Given a line beginning with ! or $ or a known command verb, or carrying a - / -- flag
+When the gate evaluates it
+Then it is accepted as copyable
+
+Given an ordinary English sentence ending in a full stop
+When the gate evaluates it
+Then it is rejected</pre>
+      <strong>Gotcha:</strong> prose in this very report contains flags and paths inside backticks. The gate sees rendered text with no markup, so &#x201C;contains a flag&#x201D; alone over-fires. Require a command-shaped <em>prefix</em>, not merely a flag anywhere in the line.
+      <br><br><strong>Verification:</strong> a table-driven test over real captured pane lines &#x2014; agent prose, agent commands, shell prompts, <code>git status</code> output, and the four evidence failures.
+    </div>
+  </div>
+
+  <div class="trow expandable commentable" data-id="t-005" data-title="T-005" data-open="false">
+    <span class="hint-tip">&#x1F4AC; comment</span>
+    <div class="trow-hdr">
+      <button class="texp" onclick="toggleTicket(this,event)" title="Expand details">&#x25B6;</button>
+      <div class="tid">T-005</div>
+      <div class="ttl">Hover state and dwell arming</div>
+      <span class="bdg bm">medium</span>
+    </div>
+    <div class="trow-body">
+      <strong>Intent:</strong> Track the hovered span on the pane, and promote it to <em>armed</em> after a dwell so the warp only flattens deliberately.
+      <br><br><strong>Touches:</strong> <code>app/src/pane.rs</code> &#x2014; new pane fields, <code>on_mouse_move</code> at 3834.
+      <br><br><strong>Acceptance:</strong>
+<pre>Given the pointer moves across a copyable line
+When it has rested for the dwell interval
+Then the affordance arms and the glass reads flat
+And when the pointer leaves the span the affordance disarms and the curve returns</pre>
+      <strong>Gotcha:</strong> <code>on_mouse_move</code> fires per frame during motion. Recomputing the whole grid each event will show up in the <code>TD_LATENCY</code> probe &#x2014; cache the span and only recompute when the hovered <em>row</em> changes.
+      <br><br><strong>Dependencies:</strong> T-002, T-003, T-004.
+    </div>
+  </div>
+
+  <div class="trow expandable commentable" data-id="t-006" data-title="T-006" data-open="false">
+    <span class="hint-tip">&#x1F4AC; comment</span>
+    <div class="trow-hdr">
+      <button class="texp" onclick="toggleTicket(this,event)" title="Expand details">&#x25B6;</button>
+      <div class="tid">T-006</div>
+      <div class="ttl">The bordered overlay and &#x2398; chip</div>
+      <span class="bdg bm">medium</span>
+    </div>
+    <div class="trow-body">
+      <strong>Intent:</strong> Paint the visible affordance &#x2014; a themed border around the span's visible rows with a copy chip at its right edge.
+      <br><br><strong>Touches:</strong> <code>app/src/pane.rs</code> overlay stack (beside <code>overflow_el</code> / <code>ctx_menu_el</code> / <code>bell_tray</code>), <code>app/src/theme.rs</code> for the border colour.
+      <br><br><strong>Acceptance:</strong>
+<pre>Given an armed copyable span
+When the pane renders
+Then a border is drawn around its visible rows with a &#x2398; chip at the right edge
+And the chip is registered in Pane::popup_open so the glass reads flat while it is up
+And the border uses the pane's own resolved theme, not the window default</pre>
+      <strong>Gotcha:</strong> this is the PR&#x202F;#207 bug waiting to happen again. A floating click target that is not in <code>popup_open</code> bows with the warp and mis-hit-tests. Add it in the same commit as the overlay, not as a follow-up.
+      <br><br><strong>Gotcha 2:</strong> the chip must not overlap the pane's scrollbar or the header controls at narrow widths &#x2014; the responsive header already tucks controls into <code>&#x22EF;</code> below ~310&#x202F;px.
+      <br><br><strong>Dependencies:</strong> T-005.
+    </div>
+  </div>
+
+  <div class="trow expandable commentable" data-id="t-007" data-title="T-007" data-open="false">
+    <span class="hint-tip">&#x1F4AC; comment</span>
+    <div class="trow-hdr">
+      <button class="texp" onclick="toggleTicket(this,event)" title="Expand details">&#x25B6;</button>
+      <div class="tid">T-007</div>
+      <div class="ttl">Copy action and confirmation flash</div>
+      <span class="bdg bm">medium</span>
+    </div>
+    <div class="trow-body">
+      <strong>Intent:</strong> Clicking the chip writes the reconstructed line to clipboard and PRIMARY, and says so.
+      <br><br><strong>Touches:</strong> <code>app/src/pane.rs</code> (near <code>copy_selection</code> at 3569).
+      <br><br><strong>Acceptance:</strong>
+<pre>Given an armed span whose logical line spans four grid rows
+When the &#x2398; chip is clicked
+Then the clipboard and X11 PRIMARY both hold the line with no interior line breaks
+And a brief confirmation replaces the chip for roughly 600ms
+And the affordance then disarms and the glass curve returns</pre>
+      <strong>Gotcha:</strong> <code>cx.stop_propagation()</code> on the chip's mouse-down, or the click falls through to the terminal and moves the cursor or starts a selection.
+      <br><br><strong>Dependencies:</strong> T-006.
+    </div>
+  </div>
+
+  <div class="trow expandable commentable" data-id="t-008" data-title="T-008" data-open="false">
+    <span class="hint-tip">&#x1F4AC; comment</span>
+    <div class="trow-hdr">
+      <button class="texp" onclick="toggleTicket(this,event)" title="Expand details">&#x25B6;</button>
+      <div class="tid">T-008</div>
+      <div class="ttl">Off switch and alt-screen suppression</div>
+      <span class="bdg bm">medium</span>
+    </div>
+    <div class="trow-body">
+      <strong>Intent:</strong> A per-pane toggle plus automatic suppression where the affordance is meaningless or hostile.
+      <br><br><strong>Touches:</strong> <code>app/src/pane.rs</code>, the display menu, <code>app/src/theme.rs</code> if it becomes a persisted setting.
+      <br><br><strong>Acceptance:</strong>
+<pre>Given a pane running a full-screen TUI on the alternate screen
+When the pointer moves over it
+Then no copy affordance is offered
+
+Given the toggle is switched off for a pane
+When the pointer moves over a copyable line
+Then nothing is painted and no warp suppression occurs</pre>
+      <strong>Gotcha:</strong> read alt-screen state from <code>TermMode</code> the same way <code>paste_clipboard</code> reads <code>BRACKETED_PASTE</code>, rather than inferring it from content.
+      <br><br><strong>Dependencies:</strong> T-006.
+    </div>
+  </div>
+
+  </div>
+</div>
+
+<div class="sec xsec" data-open="false">
+  <div class="stitle xhdr" onclick="toggleXSec(this)"><span class="xtrig">&#x25BC;</span> Testing and acceptance</div>
+  <div class="xbody">
+  <div class="cal ci commentable" data-id="testing" data-title="Testing">
+    <span class="hint-tip">&#x1F4AC; comment</span>
+    <div class="ct">&#x1F9EA; Where the tests live</div>
+    Nearly all of this is testable without a live grid, because the interesting logic sits in the pure layer that <code>stitch_wrapped_line</code>, <code>wrap_join</code> and <code>link_at</code> already occupy. That is the reason for the design: the span variant, the padding trim and the copyability gate are all pure functions over <code>Vec&lt;String&gt;</code>.
+    <ul>
+      <li><strong>Regression net:</strong> every existing <code>reflow_wrapped_copy</code> test passes unmodified.</li>
+      <li><strong>Merge-blob test:</strong> full-width padded rows must not collapse into one region.</li>
+      <li><strong>Gate table:</strong> real captured lines &#x2014; prose, commands, prompts, <code>git</code> output, and all four evidence failures.</li>
+      <li><strong>The headline test:</strong> the exact <code>jq --slurpfile</code> line that failed four times reconstructs byte-for-byte.</li>
+    </ul>
+  </div>
+
+  <div class="cal cn commentable" data-id="done" data-title="Done">
+    <span class="hint-tip">&#x1F4AC; comment</span>
+    <div class="ct">&#x1F3C1; Done when</div>
+    Hover a wrapped agent command, dwell, click <code>&#x2398;</code>, paste into a shell, and it runs first time &#x2014; with the glass flat while the chip is up and curved the moment it disarms. Plus: <code>cargo test --release</code>, <code>clippy --all-targets</code> and <code>fmt --check</code> all clean.
+  </div>
+  </div>
+</div>
+
+<div class="sec xsec" data-open="false">
+  <div class="stitle xhdr" onclick="toggleXSec(this)"><span class="xtrig">&#x25BC;</span> Deliberately out of scope</div>
+  <div class="xbody">
+  <div class="cal cn commentable" data-id="scope" data-title="Out of scope">
+    <span class="hint-tip">&#x1F4AC; comment</span>
+    <div class="ct">&#x2702;&#xFE0F; Considered and cut</div>
+    <ul>
+      <li><strong>A &#x25B6; run button.</strong> Cut by operator decision. Executing agent-printed text with no confirmation step is not a starting point, however tempting the friction saving. The PTY write path exists (<code>notify()</code> at <code>pane.rs:3658</code>) and can be revisited once copy is trusted.</li>
+      <li><strong>Multi-line block regions.</strong> The reflow emits a genuine block as several lines separated by <code>Break</code>; grouping consecutive spans is a natural v2. Every observed failure was single-line, so v1 stays single-line.</li>
+      <li><strong>Cell-attribute detection.</strong> Needs a probe and couples TD to one vendor's renderer.</li>
+      <li><strong>OSC-133 shell integration.</strong> Genuinely valuable, separately tracked, does not address agent-rendered output.</li>
+      <li><strong>Keyboard hint-select.</strong> Kitty-style labels are faster once learned but less discoverable, and the ask was explicitly for a visible affordance.</li>
+    </ul>
+  </div>
+  </div>
+</div>
+
+<div class="sec xsec" data-open="false">
+  <div class="stitle xhdr" onclick="toggleXSec(this)"><span class="xtrig">&#x25BC;</span> Where this will bite</div>
+  <div class="xbody">
+  <div class="cal cw commentable" data-id="risk" data-title="Risk">
+    <span class="hint-tip">&#x1F4AC; comment</span>
+    <div class="ct">&#x1F525; Risk concentration</div>
+    <ul>
+      <li><code>app/src/pane.rs</code> carries essentially all of it &#x2014; a 7,900-line file where the reflow helpers, the grid walk, the overlay stack and <code>popup_open</code> all live. Every ticket lands here.</li>
+      <li><code>reflow_wrapped_copy</code> is <strong>live in the drag-select copy path today</strong>. Breaking it silently degrades an existing shipped feature, which is why the wrapper must be byte-identical and the old tests must pass untouched.</li>
+      <li><code>Pane::popup_open</code> is one week old and already the fix for a four-menu bug. Adding a floating click target without registering it repeats that defect precisely.</li>
+      <li><code>on_mouse_move</code> is on the hot path; careless work there shows up in <code>TD_LATENCY</code>.</li>
+    </ul>
+  </div>
+
+  <div class="cal cn commentable" data-id="rollback" data-title="Rollback">
+    <span class="hint-tip">&#x1F4AC; comment</span>
+    <div class="ct">&#x21A9;&#xFE0F; Rollback</div>
+    T-001 is independently revertible and touches nothing else. T-002 is additive behind a wrapper. Everything from T-005 onward sits behind the T-008 toggle, so the visual layer can be switched off without reverting code. No persisted state, no migration, no on-disk format.
+  </div>
+
+  <div class="cal cw commentable" data-id="tree-state" data-title="Tree state">
+    <span class="hint-tip">&#x1F4AC; comment</span>
+    <div class="ct">&#x26A0;&#xFE0F; Before starting: the tree is not clean</div>
+    <code>~/Work/terminal-delight</code> currently holds roughly 465 lines of uncommitted logo-picker work in <code>main.rs</code> from another session, and PR&#x202F;#207 is green but unmerged. Start this in an isolated worktree with a sibling <code>zed-upstream</code> symlink (<code>gpui</code> is a path dependency at <code>../../zed-upstream/crates/gpui</code>), or that WIP rides along into the commit.
+  </div>
+  </div>
+</div>
+
+<div class="sec xsec" data-open="false">
+  <div class="stitle xhdr" onclick="toggleXSec(this)"><span class="xtrig">&#x25BC;</span> Decisions &#x2014; questions closed 2026-08-31</div>
+  <div class="xbody">
+
+  <div class="cal ci commentable" data-id="d1" data-title="Decision 1">
+    <span class="hint-tip">&#x1F4AC; comment</span>
+    <div class="ct">&#x2705; D1 &#x2014; Alt is the gesture. Dwell is dead.</div>
+    <strong>Hold Alt</strong> reveals the chip on the copyable line under the pointer; <strong>Alt + left click</strong> copies it. This is strictly better than the dwell proposal and it deletes work rather than adding it:
+    <ul>
+      <li>No dwell timer, no hover-tint stage, no arm/disarm state machine.</li>
+      <li>No per-frame grid recompute during ordinary mousing &#x2014; the pipeline only runs while Alt is down.</li>
+      <li>It cannot fire by accident, so the &#x201C;restless pane&#x201D; risk disappears entirely.</li>
+    </ul>
+    T-005 shrinks from a timer-driven state machine to reading <code>ev.modifiers.alt</code> off the events already arriving.
+  </div>
+
+  <div class="cal ci commentable" data-id="d2" data-title="Decision 2">
+    <span class="hint-tip">&#x1F4AC; comment</span>
+    <div class="ct">&#x2705; D2 &#x2014; Commands only. Strict gate.</div>
+    Less permissive wins. v1 offers a chip on <strong>command-shaped lines only</strong>. JSON is explicitly not a target &#x2014; it carries real line breaks, so the reflow leaves it alone anyway and there is nothing to reconstruct. Prose block copy (an email body, a blog paragraph) is noted as a <em>stretch goal</em>, deliberately not built now: it needs the multi-line region grouping that v1 also defers.
+  </div>
+
+  <div class="cal ci commentable" data-id="d3" data-title="Decision 3">
+    <span class="hint-tip">&#x1F4AC; comment</span>
+    <div class="ct">&#x2705; D3 &#x2014; Warp: flatten while Alt is held. No easing.</div>
+    D1 answers this by itself. Suppression now follows a deliberate, held modifier rather than a pointer drift, which is the same contract every existing overlay already uses &#x2014; so it needs no ease-in and no special casing. Glass flattens on Alt-down, returns on Alt-up. Keep it simple.
+  </div>
+
+  <div class="cal cn commentable" data-id="d-alt-passthrough" data-title="Alt passthrough">
+    <span class="hint-tip">&#x1F4AC; comment</span>
+    <div class="ct">&#x26A0;&#xFE0F; One consequence to handle</div>
+    Alt is already a live mouse modifier: <code>pane.rs:4684</code> encodes it into the SGR mouse report sent to the running app. So Alt+click must be intercepted <em>only</em> when a chip is actually showing (Alt held over a line that passes the gate), and otherwise fall through to the app unchanged. Alt+arrows keep owning directional pane nav from PR&#x202F;#200 &#x2014; untouched, different event path.
+  </div>
+
+  </div>
+</div>
+
+
+</div><!-- /zoom-wrap -->
+</div><!-- /page -->
+
+<div class="copybar">
+  <p>Click any item to leave a comment. Comments persist in your browser and are included in the copy.</p>
+  <button id="copybtn" onclick="bigCopy()">&#x1F4CB; Big Copy</button>
+</div>
+
+<dialog id="cm">
+  <div class="mh">
+    <h3 id="modal-title"></h3>
+    <button class="mclose" onclick="closeModal()">&#x2715;</button>
+  </div>
+  <div id="modal-context" class="mctx"></div>
+  <div class="mclist" id="modal-comments"></div>
+  <div class="minput">
+    <textarea id="newcomment" placeholder="Add a comment&#x2026; (Ctrl+Enter to save)"></textarea>
+    <div class="mbtns">
+      <button class="btn bsec" onclick="closeModal()">Done</button>
+      <button class="btn bpri" onclick="addComment()">Add</button>
+    </div>
+  </div>
+</dialog>
+
+<script>
+const SK = 'td-copy-affordance-v1';
+let C = JSON.parse(localStorage.getItem(SK) || '{}');
+let aid = null;
+function save(){ localStorage.setItem(SK, JSON.stringify(C)); }
+function esc(s){ return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>'); }
+function slug(s){ return String(s||'item').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'').slice(0,54)||'item'; }
+function commentTitle(el){
+  const explicit = el.getAttribute('aria-label') || el.querySelector('.ct,.lbl,.qnum,th,h2,h3,strong')?.textContent;
+  const text = (explicit || el.textContent || el.tagName).replace(/\s+/g,' ').trim();
+  return text.length > 80 ? text.slice(0,77)+'...' : text;
+}
+function initCommentTargets(){
+  const seen = {};
+  document.querySelectorAll('.sec .xbody :is(p,ul,ol,blockquote,pre,table)').forEach(el=>{
+    if(el.matches('.commentable,.cmtablerow') || el.closest('.commentable,.cmtablerow,dialog,.copybar,.theme-toggle')) return;
+    if(el.querySelector('.commentable,.cmtablerow')) return;
+    el.classList.add('commentable','auto-commentable');
+    const sec = el.closest('.sec');
+    const secTitle = sec?.querySelector('.stitle')?.textContent || 'section';
+    const base = 'auto-'+slug(secTitle)+'-'+el.tagName.toLowerCase()+'-'+slug(el.textContent);
+    const n = seen[base] = (seen[base] || 0) + 1;
+    el.dataset.id = n === 1 ? base : base+'-'+n;
+    el.dataset.title = commentTitle(el);
+  });
+}
+function renderBadges(){
+  document.querySelectorAll('.commentable, .cmtablerow').forEach(el=>{
+    const id = el.dataset.id;
+    const n = (C[id]||[]).length;
+    el.classList.toggle('has-comment', n > 0);
+    let b = el.querySelector(':scope > .cbadge');
+    if(n > 0){
+      if(!b){ b=document.createElement('span'); b.className='cbadge'; el.appendChild(b); }
+      b.textContent = '\u2713 '+n;
+    } else if(b) b.remove();
+  });
+}
+function renderModalComments(id){
+  const list = C[id]||[];
+  const el = document.getElementById('modal-comments');
+  if(!list.length){ el.innerHTML='<p class="nocom">No comments yet \u2014 add one below.</p>'; return; }
+  el.innerHTML = list.map((c,i)=>`
+    <div class="citem">
+      <div class="cmeta"><span>${esc(c.ts)}</span><button class="cdel" onclick="delComment(${i})">&#x2715;</button></div>
+      <div class="ctext">${esc(c.text)}</div>
+    </div>`).join('');
+}
+function openModal(id, title){
+  aid=id;
+  document.getElementById('modal-title').textContent=title;
+  const src=document.querySelector('[data-id="'+id+'"]');
+  const ctx=document.getElementById('modal-context');
+  if(src){
+    const cl=src.cloneNode(true);
+    cl.querySelectorAll('.hint-tip,.cbadge,.xtrig,.texp,button,.trow-body').forEach(n=>n.remove());
+    cl.querySelectorAll('[data-id]').forEach(n=>n.remove());
+    ctx.innerHTML=cl.innerHTML.trim();
+  } else ctx.innerHTML='';
+  renderModalComments(id);
+  document.getElementById('newcomment').value='';
+  document.getElementById('cm').showModal();
+  setTimeout(()=>document.getElementById('newcomment').focus(),50);
+}
+function closeModal(){ document.getElementById('cm').close(); aid=null; }
+function addComment(){
+  const ta=document.getElementById('newcomment');
+  const txt=ta.value.trim(); if(!txt) return;
+  if(!C[aid]) C[aid]=[];
+  C[aid].push({text:txt, ts:new Date().toLocaleString()});
+  ta.value=''; save(); renderModalComments(aid); renderBadges();
+}
+function delComment(i){
+  C[aid].splice(i,1); save(); renderModalComments(aid); renderBadges();
+}
+document.getElementById('newcomment').addEventListener('keydown',e=>{
+  if((e.ctrlKey||e.metaKey)&&e.key==='Enter'){ e.preventDefault(); addComment(); }
+  if(e.key==='Escape'){ e.preventDefault(); closeModal(); }
+});
+initCommentTargets();
+document.querySelectorAll('.commentable,.cmtablerow').forEach(el=>{
+  el.addEventListener('click',e=>{
+    if(e.target.closest('.cdel,.mclose,.btn')) return;
+    openModal(el.dataset.id, el.dataset.title||el.dataset.id);
+    e.stopPropagation();
+  });
+});
+function itemText(el){
+  const clone=el.cloneNode(true);
+  clone.querySelectorAll('.hint-tip,.cbadge').forEach(n=>n.remove());
+  return clone.textContent.replace(/\s+/g,' ').trim();
+}
+function toggleXSec(hdr){
+  const sec=hdr.closest('.xsec');
+  const isOpen=sec.dataset.open!=='false';
+  sec.dataset.open=isOpen?'false':'true';
+}
+function toggleTicket(btn,e){
+  e.stopPropagation();
+  const row=btn.closest('.trow');
+  const isOpen=row.dataset.open==='true';
+  row.dataset.open=isOpen?'false':'true';
+}
+function bigCopy(){
+  const lines=[];
+  lines.push('# TPS REPORT');
+  lines.push('Generated: '+new Date().toLocaleString());
+  lines.push('');
+  document.querySelectorAll('.sec').forEach(sec=>{
+    const t=sec.querySelector('.stitle');
+    if(t){const tc=t.cloneNode(true);tc.querySelectorAll('.xtrig').forEach(n=>n.remove());lines.push('\n## '+tc.textContent.trim()+'\n');}
+    sec.querySelectorAll('.commentable,.cmtablerow').forEach(el=>{
+      lines.push(itemText(el));
+      (C[el.dataset.id]||[]).forEach(c=>lines.push('  > ['+c.ts+'] '+c.text));
+      if((C[el.dataset.id]||[]).length) lines.push('');
+    });
+  });
+  navigator.clipboard.writeText(lines.join('\n')).then(()=>{ showCopyToast(); });
+}
+function showCopyToast(){
+  const t=document.getElementById('copy-toast');
+  const theme=document.documentElement.getAttribute('data-theme')||'dark';
+  const labels={hacker:'[ COPY COMPLETE ]',olde:'\u2756 Copied \u2756',chalk:'\u2713 Copied!',dark:'\u2713 Copied to clipboard'};
+  t.textContent=labels[theme]||labels.dark;
+  t.classList.add('ct-show');
+  clearTimeout(window._ctTimer);
+  window._ctTimer=setTimeout(hideCopyToast,5000);
+}
+function hideCopyToast(){
+  document.getElementById('copy-toast').classList.remove('ct-show');
+  clearTimeout(window._ctTimer);
+}
+const SZ_KEY = 'tps-zoom';
+function applyZoom(v){
+  document.getElementById('zoom-wrap').style.zoom = v;
+  document.getElementById('cm').style.zoom = v;
+  document.getElementById('copy-toast').style.zoom = v;
+}
+(function initZoom(){
+  const v = parseFloat(localStorage.getItem(SZ_KEY)||'1');
+  const sl = document.getElementById('size-slider');
+  if(sl){ sl.value = v; applyZoom(v); }
+})();
+document.getElementById('size-slider').addEventListener('input', e=>{
+  const v = parseFloat(e.target.value);
+  applyZoom(v);
+  localStorage.setItem(SZ_KEY, v);
+});
+const TK = 'tps-report-theme';
+function setTheme(t){
+  document.documentElement.setAttribute('data-theme', t);
+  localStorage.setItem(TK, t);
+  document.querySelectorAll('.tthm').forEach(b=>b.classList.remove('active'));
+  const btn = document.getElementById('btn-'+t);
+  if(btn) btn.classList.add('active');
+}
+(function initTheme(){ setTheme(localStorage.getItem(TK)||'hacker'); })();
+renderBadges();
+</script>
+</body></html>

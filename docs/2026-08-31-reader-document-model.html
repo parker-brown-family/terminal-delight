@@ -1,0 +1,780 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>TPS Report</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=VT323&family=Uncial+Antiqua&family=Caveat:wght@400;600;700&display=swap');
+:root,[data-theme="dark"]{--bg:#0f1117;--s1:#1a1d27;--s2:#22263a;--bd:#2e3350;--ac:#5b7fff;--acd:#1e2a5e;--gr:#3dd68c;--yw:#f5c542;--rd:#ff6b6b;--mu:#8891b4;--tx:#dde1f0;--td:#9aa0bd;--rev-bg:#2a1f00;--rev-bd:#f5c542;--rev-glow:rgba(245,197,66,.45);--font-body:"Inter","Segoe UI",system-ui,sans-serif;--font-mono:"JetBrains Mono","Fira Code",monospace}
+[data-theme="hacker"]{--bg:#08140c;--s1:#0f2216;--s2:#0d1a0d;--bd:#1a4a2a;--ac:#00ff9c;--acd:#0a2a15;--gr:#00ff9c;--yw:#adff2f;--rd:#ff4444;--mu:#2a7a4a;--tx:#00ff9c;--td:#00c070;--rev-bg:#0a2a15;--rev-bd:#00ff9c;--rev-glow:rgba(0,255,156,.5);--font-body:"VT323",monospace;--font-mono:"VT323",monospace}
+[data-theme="olde"]{--bg:#f4ead5;--s1:#ede0c4;--s2:#e4d4ae;--bd:#b89a6a;--ac:#8b1a1a;--acd:#f9e8d0;--gr:#4a7a2a;--yw:#c8860a;--rd:#9b1515;--mu:#7a6040;--tx:#2c1a0a;--td:#5a4020;--rev-bg:#faf0d8;--rev-bd:#8b1a1a;--rev-glow:rgba(139,26,26,.25);--font-body:Georgia,"Times New Roman",serif;--font-mono:"Courier New","Courier",monospace}
+[data-theme="chalk"]{--bg:#fdf9f2;--s1:#fff5e8;--s2:#fde8d0;--bd:#e0bfa0;--ac:#c85080;--acd:#fce8f0;--gr:#68b878;--yw:#e8b030;--rd:#d84848;--mu:#9a7090;--tx:#362030;--td:#6e4a58;--rev-bg:#fde8f0;--rev-bd:#c85080;--rev-glow:rgba(200,80,128,.3);--font-body:"Caveat",cursive;--font-mono:"Courier New","Courier",monospace}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--tx);font:16px/1.65 var(--font-body);padding:40px 24px 100px}
+.page{max-width:940px;margin:0 auto;position:relative;overflow-x:hidden}
+.header{border-bottom:1px solid var(--bd);padding-bottom:24px;margin-bottom:32px}
+.header h1{font-size:25px;font-weight:700;color:#fff;letter-spacing:-.3px}
+.branch{display:inline-flex;align-items:center;gap:6px;background:var(--acd);color:var(--ac);font:14px "JetBrains Mono","Fira Code",monospace;padding:3px 10px;border-radius:4px;margin-top:8px}
+.meta{display:flex;gap:12px;margin-top:14px;flex-wrap:wrap}
+.pill{display:inline-flex;align-items:center;gap:6px;background:var(--s2);border:1px solid var(--bd);border-radius:20px;padding:4px 12px;font-size:14px;color:var(--td)}
+.dot{width:7px;height:7px;border-radius:50%}.dg{background:var(--gr)}.dy{background:var(--yw)}.dr{background:var(--rd)}
+.sec{margin-bottom:36px}
+.stitle{font-size:21px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;color:var(--mu);margin-bottom:16px;padding-bottom:8px;border-bottom:1px solid var(--bd)}
+.sgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+.sc{background:var(--s1);border:1px solid var(--bd);border-radius:8px;padding:16px}
+.lbl{font-size:13px;color:var(--mu);text-transform:uppercase;letter-spacing:.8px;margin-bottom:6px}
+table{width:100%;border-collapse:collapse;font-size:15px}
+th{background:var(--s2);color:var(--mu);text-align:left;font-size:13px;font-weight:600;letter-spacing:.6px;text-transform:uppercase;padding:10px 14px;border-bottom:1px solid var(--bd)}
+td{padding:11px 14px;border-bottom:1px solid var(--bd);vertical-align:top;color:var(--tx)}
+tr:last-child td{border-bottom:none}
+.tw{border:1px solid var(--bd);border-radius:8px;overflow:hidden}
+.bdg{display:inline-block;padding:2px 8px;border-radius:4px;font-size:13px;font-weight:600}
+.bm{background:#1a3a5e;color:#7eb8f7}.br{background:#2a3a2a;color:#6fcc88}.bt{background:#2e2a1a;color:#d4a84b}
+.bh{background:#3a1a1a;color:#f78080}.bmd{background:#2e2a12;color:#d4b04b}.bk{background:var(--s2);color:var(--mu)}
+pre{background:var(--s2);border:1px solid var(--bd);border-radius:6px;padding:16px;font-family:"JetBrains Mono","Fira Code",monospace;font-size:14px;line-height:1.6;overflow-x:auto;color:#c9d1f5}
+code{font-family:"JetBrains Mono","Fira Code",monospace;font-size:14px;background:var(--s2);padding:1px 5px;border-radius:3px;color:#a8b8f0}
+.cal{border-left:3px solid;border-radius:0 6px 6px 0;padding:14px 16px;margin-bottom:12px;font-size:15px}
+.cw{border-color:var(--yw);background:#1f1c0e}.ci{border-color:var(--ac);background:#101826}.cn{border-color:var(--mu);background:var(--s1)}
+.cal .ct{font-weight:700;margin-bottom:4px;font-size:14px}
+.cw .ct{color:var(--yw)}.ci .ct{color:var(--ac)}.cn .ct{color:var(--mu)}
+.tbox{border:1px solid var(--bd);border-radius:8px;overflow:hidden;background:var(--s1)}
+.trow{display:flex;align-items:flex-start;gap:12px;padding:12px 16px;border-bottom:1px solid var(--bd)}
+.trow:last-child{border-bottom:none}
+.trow.expandable{flex-direction:column;gap:0}
+.trow-hdr{display:flex;align-items:flex-start;gap:12px;width:100%}
+.texp{background:none;border:none;color:var(--mu);cursor:pointer;font-size:11px;padding:2px 2px;border-radius:3px;transition:transform .2s;flex-shrink:0;margin-top:3px;line-height:1}
+.texp:hover{color:var(--ac)}
+.trow[data-open="true"] .texp{transform:rotate(90deg)}
+.trow-body{display:none;padding:10px 0 2px calc(78px + 12px + 18px);font-size:14px;line-height:1.65;color:var(--td)}
+.trow[data-open="true"] .trow-body{display:block}
+.trow-body .tbfield{margin-bottom:8px}
+.trow-body .tblabel{font-size:12px;color:var(--mu);font-weight:600;letter-spacing:.04em;text-transform:uppercase;margin-bottom:3px}
+.trow-body .tbfiles{font-family:"JetBrains Mono","Fira Code",monospace;font-size:12px;color:var(--ac);line-height:1.8}
+.tid{font-family:"JetBrains Mono","Fira Code",monospace;font-size:13px;color:var(--mu);white-space:nowrap;padding-top:2px;min-width:78px}
+.ttl{font-size:15px;flex:1}
+.olist{list-style:none;counter-reset:s}
+.olist li{counter-increment:s;display:flex;align-items:flex-start;gap:12px;padding:8px 0;color:var(--td);font-size:15px}
+.olist li::before{content:counter(s);min-width:22px;height:22px;border-radius:50%;background:var(--acd);color:var(--ac);font-size:13px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:1px}
+.qbox{background:var(--s1);border:1px solid var(--bd);border-radius:8px;padding:16px;margin-bottom:12px}
+.qnum{font-size:13px;color:var(--ac);font-weight:700;margin-bottom:6px}
+.qtxt{font-size:15px}.qctx{font-size:14px;color:var(--td);margin-top:6px;line-height:1.5}
+.commentable{cursor:pointer;position:relative;transition:outline .1s}
+.commentable:hover{outline:1px solid var(--ac);border-radius:4px}
+.cmtablerow{cursor:pointer}
+.cmtablerow:hover td{background:#1a2040}
+.hint-tip{display:none;position:absolute;bottom:-24px;right:0;font-size:12px;color:var(--ac);background:var(--acd);padding:2px 8px;border-radius:4px;white-space:nowrap;z-index:10;pointer-events:none}
+.commentable:hover .hint-tip,.cmtablerow:hover .hint-tip{display:block}
+dialog#cm{background:var(--s1);border:1px solid var(--bd);border-radius:10px;color:var(--tx);padding:0;max-width:540px;width:90vw;box-shadow:0 20px 60px rgba(0,0,0,.6)}
+dialog#cm::backdrop{background:rgba(0,0,0,.72)}
+.mh{display:flex;align-items:flex-start;justify-content:space-between;padding:20px 24px 14px;border-bottom:1px solid var(--bd)}
+.mh h3{font-size:16px;font-weight:700;color:#fff;flex:1;margin-right:12px;line-height:1.4}
+.mclose{background:none;border:none;color:var(--mu);font-size:23px;cursor:pointer;line-height:1;padding:0}
+.mclose:hover{color:var(--tx)}
+.mclist{padding:16px 24px;max-height:240px;overflow-y:auto}
+.nocom{color:var(--td);font-size:15px;font-style:italic}
+.citem{background:var(--s2);border-radius:6px;padding:12px;margin-bottom:8px}
+.citem:last-child{margin-bottom:0}
+.cmeta{display:flex;justify-content:space-between;align-items:center;font-size:13px;color:var(--mu);margin-bottom:6px}
+.cdel{background:none;border:none;color:var(--mu);cursor:pointer;font-size:15px;line-height:1}
+.cdel:hover{color:var(--rd)}
+.ctext{font-size:15px;white-space:pre-wrap}
+.mctx{padding:10px 24px 12px;font-size:13px;color:var(--td);background:var(--s2);border-bottom:1px solid var(--bd);line-height:1.5;max-height:110px;overflow-y:auto}
+.mctx:empty{display:none}
+.minput{padding:14px 24px 20px;border-top:1px solid var(--bd)}
+#newcomment{width:100%;background:var(--s2);border:1px solid var(--bd);border-radius:6px;color:var(--tx);font:15px "Inter","Segoe UI",sans-serif;padding:10px 12px;resize:vertical;min-height:80px;outline:none}
+#newcomment:focus{border-color:var(--ac)}
+.mbtns{display:flex;gap:8px;margin-top:10px;justify-content:flex-end}
+.btn{padding:7px 18px;border-radius:6px;font-size:15px;font-weight:600;cursor:pointer;border:none}
+.bpri{background:var(--ac);color:#fff}.bpri:hover{opacity:.88}
+.bsec{background:var(--s2);color:var(--td);border:1px solid var(--bd)}.bsec:hover{color:var(--tx)}
+.copybar{position:fixed;bottom:0;left:0;right:0;background:var(--s1);border-top:1px solid var(--bd);padding:12px 32px;display:flex;align-items:center;justify-content:space-between;z-index:100}
+.copybar p{font-size:14px;color:var(--td)}
+#copybtn{background:var(--gr);color:#0f1117;padding:9px 24px;border-radius:6px;font-size:15px;font-weight:700;cursor:pointer;border:none}
+#copybtn:hover{opacity:.9}
+[data-theme="hacker"] .copybar{background:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='220' height='90'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch' seed='9'/><feColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 .35 0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>"),repeating-linear-gradient(0deg,rgba(0,0,0,.18) 0px,rgba(0,0,0,.18) 1px,transparent 1px,transparent 3px),repeating-linear-gradient(90deg,rgba(0,0,0,.12) 0px,rgba(0,0,0,.12) 1px,transparent 1px,transparent 3px),linear-gradient(175deg,#3e3c2a 0%,#2c2b1d 45%,#1c1b12 100%);border-top:4px solid #0a0a06;box-shadow:inset 0 1px 0 rgba(255,200,80,.07),0 -8px 28px rgba(0,0,0,.98);padding:10px 36px;z-index:9999;animation:none!important;filter:none!important}
+[data-theme="hacker"] .copybar p{font-family:"Share Tech Mono","Courier New",monospace!important;font-size:11px!important;font-weight:700!important;color:#00ff9c!important;text-shadow:0 0 6px rgba(0,255,156,.6),0 0 14px rgba(0,255,156,.25)!important;letter-spacing:.16em;text-transform:uppercase;background:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='280' height='64'><defs><linearGradient id='d' x1='0' y1='0' x2='280' y2='64' gradientUnits='userSpaceOnUse'><stop offset='0' stop-color='white' stop-opacity='0.15'/><stop offset='1' stop-color='white' stop-opacity='0.5'/></linearGradient><mask id='m'><rect width='100%25' height='100%25' fill='url(%23d)'/></mask><filter id='g'><feTurbulence type='fractalNoise' baseFrequency='0.035' numOctaves='4' seed='12' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1.5 -.2'/></filter></defs><rect width='100%25' height='100%25' filter='url(%23g)' mask='url(%23m)'/></svg>"),url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='140' height='32'><filter id='g'><feTurbulence type='fractalNoise' baseFrequency='0.15' numOctaves='2' seed='7' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 .5 0'/></filter><rect width='100%25' height='100%25' filter='url(%23g)'/></svg>"),linear-gradient(135deg,#b89018 0%,#8a6c14 40%,#6a520e 65%,#44360a 100%);background-blend-mode:multiply,multiply,normal;background-size:100% 100%,50% 50%,100% 100%;padding:8px 18px 7px;border:2px solid #1e1600;box-shadow:inset 0 1px 0 rgba(240,200,60,.15),inset 0 -2px 0 rgba(0,0,0,.7),inset 2px 0 0 rgba(0,0,0,.4),inset -1px 0 0 rgba(0,0,0,.3),0 2px 6px rgba(0,0,0,.75);transform:rotate(-.5deg);max-width:62%;filter:saturate(.7) contrast(1.08)}
+[data-theme="hacker"] #copybtn{position:relative;width:64px;height:64px;border-radius:50%;padding:0;border:2px solid #1e1600;font-size:0!important;cursor:pointer;filter:saturate(.7) contrast(1.08)!important;text-shadow:none!important;transform:none!important;background:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='120' height='120'><defs><linearGradient id='d' x1='0' y1='0' x2='120' y2='120' gradientUnits='userSpaceOnUse'><stop offset='0' stop-color='white' stop-opacity='0.12'/><stop offset='1' stop-color='white' stop-opacity='0.35'/></linearGradient><mask id='m'><rect width='100%25' height='100%25' fill='url(%23d)'/></mask><filter id='g'><feTurbulence type='fractalNoise' baseFrequency='0.04' numOctaves='4' seed='17' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1.1 -.15'/></filter></defs><rect width='100%25' height='100%25' filter='url(%23g)' mask='url(%23m)'/></svg>"),url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='60' height='60'><filter id='g'><feTurbulence type='fractalNoise' baseFrequency='0.15' numOctaves='2' seed='7' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 .30 0'/></filter><rect width='100%25' height='100%25' filter='url(%23g)'/></svg>"),linear-gradient(135deg,#b89018 0%,#8a6c14 40%,#6a520e 65%,#44360a 100%);background-blend-mode:multiply,multiply,normal;background-size:100% 100%,40% 40%,100% 100%;box-shadow:0 0 0 4px #0d0d0a,0 0 0 7px #0e1a0e,0 0 0 9px #0b0a06,0 0 22px rgba(0,255,156,.35),0 0 44px rgba(0,200,100,.15),inset 0 -3px 6px rgba(0,0,0,.88)}
+[data-theme="hacker"] #copybtn::before{content:"COPY";position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-family:"Share Tech Mono","Courier New",monospace;font-size:12px;font-weight:900;color:#00ff9c;letter-spacing:.12em;text-shadow:0 0 6px rgba(0,255,156,.9),0 0 16px rgba(0,255,156,.5)}
+[data-theme="hacker"] #copybtn:hover{animation:none!important;box-shadow:0 0 0 4px #0d0d0a,0 0 0 7px #0e1a0e,0 0 0 9px #0b0a06,0 0 30px rgba(0,255,156,.6),0 0 60px rgba(0,200,100,.35),inset 0 -3px 6px rgba(0,0,0,.75)!important;filter:saturate(.7) contrast(1.08)!important;transform:scale(1.06)!important}
+[data-theme="hacker"] dialog#cm{background:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='540' height='500'><filter id='g'><feTurbulence type='fractalNoise' baseFrequency='0.02' numOctaves='3' seed='23' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.7 -.08'/></filter><rect width='100%25' height='100%25' filter='url(%23g)'/></svg>"),linear-gradient(160deg,#0d180d 0%,#081008 50%,#040b04 100%);background-blend-mode:multiply,normal;border:1px solid rgba(0,255,156,.25);box-shadow:0 0 0 1px #0b1a0b,0 0 40px rgba(0,255,156,.1),0 20px 60px rgba(0,0,0,.95)}
+[data-theme="hacker"] .mh{border-bottom:1px solid rgba(0,255,156,.2)}
+[data-theme="hacker"] .mh h3{font-family:"Share Tech Mono","Courier New",monospace;color:#00ff9c;text-shadow:0 0 8px rgba(0,255,156,.5),0 0 20px rgba(0,255,156,.2);letter-spacing:.06em}
+[data-theme="hacker"] .mclose{color:rgba(0,255,156,.4)}
+[data-theme="hacker"] .mclose:hover{color:#00ff9c;text-shadow:0 0 8px rgba(0,255,156,.6)}
+[data-theme="hacker"] .mctx{background:rgba(0,255,156,.04);border-bottom:1px solid rgba(0,255,156,.15);color:rgba(0,255,156,.65);font-family:"Share Tech Mono","Courier New",monospace;font-size:12px}
+[data-theme="hacker"] .nocom{color:#00ff9c;font-family:"Share Tech Mono","Courier New",monospace;font-size:13px}
+[data-theme="hacker"] .citem{background:rgba(0,255,156,.05);border:1px solid rgba(0,255,156,.14)}
+[data-theme="hacker"] .ctext{color:rgba(0,255,156,.82);font-family:"Share Tech Mono","Courier New",monospace;font-size:13px}
+[data-theme="hacker"] .cmeta{color:rgba(0,255,156,.38)}
+[data-theme="hacker"] #newcomment{background:rgba(0,0,0,.5);border:1px solid rgba(0,255,156,.22);color:rgba(0,255,156,.88);font-family:"Share Tech Mono","Courier New",monospace}
+[data-theme="hacker"] #newcomment:focus{border-color:rgba(0,255,156,.55);box-shadow:0 0 0 2px rgba(0,255,156,.12)}
+[data-theme="hacker"] #newcomment::placeholder{color:rgba(0,255,156,.28)}
+[data-theme="hacker"] .mbtns{gap:20px}
+[data-theme="hacker"] .btn.bsec{position:relative;width:52px;height:52px;border-radius:50%;padding:0;border:2px solid #181816;font-size:0!important;cursor:pointer;background:radial-gradient(circle at 40% 35%,#383836 0%,#222220 40%,#161614 70%,#0a0a08 100%);box-shadow:0 0 0 3px #0d0d0a,0 0 0 5px #1a1a18,0 0 0 7px #0b0a06,inset 0 -2px 5px rgba(0,0,0,.9)}
+[data-theme="hacker"] .btn.bsec::before{content:"DONE";position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-family:"Share Tech Mono","Courier New",monospace;font-size:9px;font-weight:900;color:#484846;letter-spacing:.1em}
+[data-theme="hacker"] .btn.bsec:hover{transform:scale(1.05);box-shadow:0 0 0 3px #0d0d0a,0 0 0 5px #1a1a18,0 0 0 7px #0b0a06,inset 0 -2px 5px rgba(0,0,0,.8)}
+[data-theme="hacker"] .btn.bpri{position:relative;width:52px;height:52px;border-radius:50%;padding:0;border:2px solid #1e1600;font-size:0!important;cursor:pointer;filter:saturate(.7) contrast(1.08)!important;background:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='104' height='104'><defs><linearGradient id='d' x1='0' y1='0' x2='104' y2='104' gradientUnits='userSpaceOnUse'><stop offset='0' stop-color='white' stop-opacity='0.12'/><stop offset='1' stop-color='white' stop-opacity='0.35'/></linearGradient><mask id='m'><rect width='100%25' height='100%25' fill='url(%23d)'/></mask><filter id='g'><feTurbulence type='fractalNoise' baseFrequency='0.04' numOctaves='4' seed='19' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1.1 -.15'/></filter></defs><rect width='100%25' height='100%25' filter='url(%23g)' mask='url(%23m)'/></svg>"),url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='52' height='52'><filter id='g'><feTurbulence type='fractalNoise' baseFrequency='0.15' numOctaves='2' seed='7' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 .30 0'/></filter><rect width='100%25' height='100%25' filter='url(%23g)'/></svg>"),linear-gradient(135deg,#b89018 0%,#8a6c14 40%,#6a520e 65%,#44360a 100%);background-blend-mode:multiply,multiply,normal;background-size:100% 100%,40% 40%,100% 100%;box-shadow:0 0 0 3px #0d0d0a,0 0 0 5px #0e1a0e,0 0 0 7px #0b0a06,0 0 16px rgba(0,255,156,.3),inset 0 -2px 5px rgba(0,0,0,.88)}
+[data-theme="hacker"] .btn.bpri::before{content:"ADD";position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-family:"Share Tech Mono","Courier New",monospace;font-size:9px;font-weight:900;color:#00ff9c;letter-spacing:.1em;text-shadow:0 0 6px rgba(0,255,156,.9),0 0 16px rgba(0,255,156,.5)}
+[data-theme="hacker"] .btn.bpri:hover{animation:none!important;box-shadow:0 0 0 3px #0d0d0a,0 0 0 5px #0e1a0e,0 0 0 7px #0b0a06,0 0 24px rgba(0,255,156,.55),inset 0 -2px 5px rgba(0,0,0,.75)!important;filter:saturate(.7) contrast(1.08)!important;transform:scale(1.06)!important}
+@media(max-width:640px){.sgrid{grid-template-columns:1fr 1fr}}
+.commentable.has-comment{outline:2px solid var(--rev-bd)!important;background:var(--rev-bg)!important;border-radius:6px;box-shadow:0 0 12px var(--rev-glow),inset 0 0 18px rgba(0,0,0,.12)}
+.cmtablerow.has-comment td{background:var(--rev-bg)!important;box-shadow:inset 3px 0 0 var(--rev-bd)}
+.cbadge{position:absolute;top:6px;right:8px;border-radius:10px;font-size:12px;font-weight:700;padding:1px 7px;min-width:20px;text-align:center;pointer-events:none;z-index:5}
+.has-comment > .cbadge,.has-comment .cbadge{background:var(--rev-bd);color:var(--bg);box-shadow:0 0 6px var(--rev-glow)}
+.cmtablerow .cbadge{position:static;display:inline-block;margin-left:6px;vertical-align:middle;background:var(--rev-bd);color:var(--bg)}
+.theme-toggle{position:absolute;top:32px;right:24px;display:flex;flex-direction:column;align-items:flex-end;gap:5px;z-index:200}
+.theme-btn-row{display:flex;gap:6px;align-items:center}
+.tthm{background:var(--s2);border:1px solid var(--bd);color:var(--tx);border-radius:6px;font-size:21px;width:38px;height:38px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background .15s,border-color .15s;line-height:1}
+.size-control{display:flex;align-items:center;gap:5px;background:var(--s2);border:1px solid var(--bd);border-radius:8px;padding:5px 9px}
+.sc-icon{font-size:16px;line-height:1;user-select:none;opacity:.85}
+.sc-a{color:var(--mu);font-weight:700;line-height:1;user-select:none}
+.sc-small{font-size:10px}
+.sc-big{font-size:18px}
+#size-slider{-webkit-appearance:none;appearance:none;width:72px;height:4px;border-radius:2px;background:var(--bd);outline:none;cursor:pointer;vertical-align:middle}
+#size-slider::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:13px;height:13px;border-radius:50%;background:var(--ac);cursor:pointer;border:none}
+#size-slider::-moz-range-thumb{width:13px;height:13px;border-radius:50%;background:var(--ac);cursor:pointer;border:none}
+[data-theme="hacker"] .size-control{border-color:rgba(0,255,156,.3);box-shadow:0 0 6px rgba(0,255,156,.15)}
+[data-theme="hacker"] #size-slider::-webkit-slider-thumb{box-shadow:0 0 6px rgba(0,255,156,.7)}
+[data-theme="hacker"] #size-slider::-moz-range-thumb{box-shadow:0 0 6px rgba(0,255,156,.7)}
+[data-theme="chalk"] .sc-icon{font-size:19px}
+.tthm:hover{background:var(--bd);border-color:var(--ac)}
+.tthm.active{background:var(--acd);border-color:var(--ac);box-shadow:0 0 8px var(--rev-glow)}
+[data-theme="olde"] .tthm{background:#6b2d2d;border-color:#4a1a1a;color:#f4ead5}
+[data-theme="olde"] .tthm:hover{background:#8b3a3a;border-color:#8b1a1a}
+[data-theme="olde"] .tthm.active{background:#8b1a1a;border-color:#5a0a0a;box-shadow:0 0 8px rgba(139,26,26,.5)}
+[data-theme="hacker"] body{font-size:18px;letter-spacing:.04em;text-shadow:0 0 5px rgba(0,255,156,.32)}
+[data-theme="hacker"] .header h1{font-size:30px;letter-spacing:.08em;text-shadow:0 0 5px rgba(0,255,156,.42)}
+[data-theme="hacker"] .stitle{letter-spacing:.25em;text-shadow:0 0 4px rgba(0,255,156,.24)}
+[data-theme="hacker"] pre,[data-theme="hacker"] code{color:var(--ac);border-color:var(--bd);text-shadow:0 0 4px rgba(0,255,156,.28)}
+[data-theme="hacker"] .trow,.hacker .sc,[data-theme="hacker"] .qbox{box-shadow:0 0 4px rgba(0,255,156,.15),inset 0 0 8px rgba(0,255,156,.04)}
+[data-theme="hacker"] body{padding-top:60px!important;padding-bottom:200px!important}
+[data-theme="hacker"] .page{border-radius:26px;overflow:hidden;transform-origin:top center;transform:perspective(280px) scale(1.032,1.055)}
+[data-theme="hacker"] .bm{background:#0a2a15;color:#00ff9c}[data-theme="hacker"] .bh{background:#2a0a0a;color:#ff6666}
+[data-theme="hacker"] .br{background:#0a2a15;color:#adff2f}[data-theme="hacker"] .bt,[data-theme="hacker"] .bmd{background:#0a1a0a;color:#adff2f}
+[data-theme="hacker"] .bk{background:#0d1a0d;color:#2a7a4a}
+#crt-scanlines,#crt-vignette,#crt-tracking{display:none;position:fixed;inset:0;pointer-events:none}
+[data-theme="hacker"] #crt-scanlines{display:block;z-index:997;background:repeating-linear-gradient(to bottom,rgba(0,0,0,.18) 0px,rgba(0,0,0,.18) 1px,rgba(0,255,156,.045) 1px,rgba(0,255,156,.045) 2px,transparent 2px,transparent 4px)}
+[data-theme="hacker"] #crt-vignette{display:block;z-index:996;background:radial-gradient(ellipse at center,transparent 28%,rgba(0,0,0,.5) 68%,rgba(0,0,0,.92) 100%)}
+[data-theme="hacker"] #crt-tracking{display:block;z-index:998;overflow:hidden}
+[data-theme="hacker"] #crt-tracking::before{content:"";position:absolute;left:0;width:100%;height:160px;background:linear-gradient(to bottom,transparent 0%,rgba(0,0,0,.14) 18%,rgba(0,255,156,.07) 44%,rgba(0,0,0,.22) 50%,rgba(0,255,156,.055) 56%,transparent 100%),repeating-linear-gradient(to bottom,rgba(0,0,0,.18) 0px,rgba(0,0,0,.18) 1px,rgba(0,255,156,.04) 1px,rgba(0,255,156,.04) 2px,transparent 2px,transparent 4px);animation:tracking 7s linear infinite}
+@keyframes tracking{from{transform:translateY(-220px)}to{transform:translateY(105vh)}}
+@media (prefers-reduced-motion:reduce){[data-theme="hacker"] #crt-tracking::before{animation:none;transform:translateY(18vh)}}
+[data-theme="olde"] .header h1{color:var(--ac);font-family:'Uncial Antiqua',Georgia,serif!important}
+[data-theme="olde"] .stitle,[data-theme="olde"] h2,[data-theme="olde"] h3{font-family:'Uncial Antiqua',Georgia,serif!important;color:var(--ac)}
+[data-theme="olde"] .mh h3{color:var(--ac)}
+[data-theme="olde"] .cw{background:#fef5d8;border-color:#c8860a}[data-theme="olde"] .ci{background:#f0e8d8;border-color:#7a5a2a}
+[data-theme="olde"] .cw .ct{color:#8a5a00}[data-theme="olde"] .ci .ct{color:#5a3a10}[data-theme="olde"] .cn .ct{color:#5a4020}
+[data-theme="olde"] .bm{background:#d0e4f8;color:#1a3a6e}[data-theme="olde"] .bh{background:#fce0e0;color:#7a1010}
+[data-theme="olde"] .br{background:#d8f0d8;color:#2a5a2a}[data-theme="olde"] .bt{background:#fef0d0;color:#7a4a00}
+[data-theme="olde"] .bmd{background:#fef8d0;color:#6a4800}[data-theme="olde"] .bk{background:#e8dcc8;color:#5a4020}
+[data-theme="olde"] pre{color:var(--tx);background:#e8dcc8;border-color:var(--bd)}
+[data-theme="olde"] code{color:#6b2d2d;background:#ede0c4;border-radius:3px}
+[data-theme="olde"] .cmtablerow:hover td{background:#f0e8d0}
+[data-theme="olde"] dialog#cm{background:var(--s1);border-color:var(--bd)}
+[data-theme="olde"] #copybtn{background:var(--ac);color:#fff}
+/* ── expandable sections ── */
+.xhdr{cursor:pointer;user-select:none;display:flex!important;align-items:center;gap:8px;padding:10px 0;margin-bottom:14px}
+.xhdr:hover{color:var(--ac)}
+.xtrig{display:inline-block;flex-shrink:0;font-size:14px;color:var(--ac);opacity:.75;transition:transform .25s ease}
+.xsec[data-open="false"] .xtrig{transform:rotate(-90deg)}
+.xbody{overflow:hidden;transition:max-height .35s ease,opacity .25s ease;max-height:4000px;opacity:1}
+.xsec[data-open="false"] .xbody{max-height:0;opacity:0;pointer-events:none}
+/* ── chalk flower theme ── */
+[data-theme="chalk"] body{font-size:21px;background:radial-gradient(ellipse at 25% 0%,#fff9e0 0%,#fdf6f0 45%,#faf2ee 100%)}
+[data-theme="chalk"] .header h1{font-family:'Caveat',cursive!important;font-size:41px;font-weight:700;color:var(--ac);text-shadow:1px 2px 4px rgba(200,80,128,.15)}
+[data-theme="chalk"] .stitle{font-family:'Caveat',cursive!important;font-size:26px;font-weight:700;text-transform:none;letter-spacing:.02em;color:var(--ac);border-bottom:3px solid var(--ac);padding-bottom:6px}
+[data-theme="chalk"] .lbl{font-family:'Caveat',cursive;font-size:16px;letter-spacing:.03em}
+[data-theme="chalk"] .sc,[data-theme="chalk"] .cal,[data-theme="chalk"] .qbox{background:rgba(255,255,255,.14);box-shadow:none;filter:url(#chalk-rough)}
+[data-theme="chalk"] .sc{border-color:#e5bfa8}
+[data-theme="chalk"] .qbox{border-color:#d8b6d4}
+[data-theme="chalk"] .cal{border-width:0 0 0 3px}
+[data-theme="chalk"] .cw{--hl-base:#f6db67;background:rgba(255,255,255,.12);border-color:#e8c048}
+[data-theme="chalk"] .cw .ct{--hl-base:#f6db67;color:#a87800}
+[data-theme="chalk"] .ci{--hl-base:#ffc0cf;background:rgba(255,255,255,.12);border-color:#9070d0}
+[data-theme="chalk"] .ci .ct{--hl-base:#ffc0cf;color:#5840a0}
+[data-theme="chalk"] .cn{--hl-base:#aee5b9;background:rgba(255,255,255,.12);border-color:#58b870}
+[data-theme="chalk"] .cn .ct{--hl-base:#aee5b9;color:#2a7040}
+[data-theme="chalk"] :where(.bdg,mark,.hl,.pill,.branch,.tthm,.size-control,#copybtn,.btn,.lbl,.cal .ct,.qnum){--hl-base:#f6d85f;--hl:var(--hl-base);--hl-rot:-1.4deg;--hl-skew:-12deg;--hl-dx:0em;--hl-dy:.02em;--hl-fx:url(#chalk-hl-1);position:relative;z-index:0;background:transparent;border-radius:0;color:#3d2b32;box-decoration-break:clone;-webkit-box-decoration-break:clone}
+[data-theme="chalk"] :where(.bdg,mark,.hl,.pill,.branch,.tthm,.size-control,#copybtn,.btn,.lbl,.cal .ct,.qnum)::before{content:"";position:absolute;z-index:-1;left:-.22em;right:-.24em;top:8%;bottom:7%;background:linear-gradient(96deg,transparent 0%,color-mix(in srgb,var(--hl) 92%,transparent) 4%,color-mix(in srgb,var(--hl) 80%,transparent) 50%,color-mix(in srgb,var(--hl) 90%,transparent) 95%,transparent 100%);filter:var(--hl-fx);transform:translate(var(--hl-dx),var(--hl-dy)) rotate(var(--hl-rot)) skewX(var(--hl-skew));transform-origin:52% 54%;pointer-events:none}
+[data-theme="chalk"] :where(.pill,.branch,.tthm,.size-control,#copybtn,.btn){border-color:color-mix(in srgb,var(--hl-base) 52%,#ba8f86);box-shadow:none;overflow:visible}
+[data-theme="chalk"] :where(.lbl,.qnum){display:inline-block}
+[data-theme="chalk"] .cal .ct{display:block;width:max-content;max-width:100%}
+[data-theme="chalk"] .branch{--hl-base:#ffc0cf}
+[data-theme="chalk"] .meta .pill:nth-child(1){--hl-base:#aee5b9;color:#365a40}
+[data-theme="chalk"] .meta .pill:nth-child(2){--hl-base:#f6db67;color:#6d5200}
+[data-theme="chalk"] .meta .pill:nth-child(3){--hl-base:#ffadb4;color:#803041}
+[data-theme="chalk"] .sgrid .sc:nth-child(3n+1) .lbl{--hl-base:#ffc0cf}
+[data-theme="chalk"] .sgrid .sc:nth-child(3n+2) .lbl{--hl-base:#f6db67}
+[data-theme="chalk"] .sgrid .sc:nth-child(3n) .lbl{--hl-base:#bfcfff}
+[data-theme="chalk"] .qbox:nth-of-type(odd) .qnum{--hl-base:#bfcfff}
+[data-theme="chalk"] .qbox:nth-of-type(even) .qnum{--hl-base:#aee5b9}
+[data-theme="chalk"] .bm{--hl-base:#a8c6ff;color:#294a92}[data-theme="chalk"] .bh{--hl-base:#ffadb4;color:#8a1d28}
+[data-theme="chalk"] .br{--hl-base:#aee5b9;color:#256238}[data-theme="chalk"] .bt{--hl-base:#f6db67;color:#6d5200}
+[data-theme="chalk"] .bmd{--hl-base:#ffc979;color:#7c5300}[data-theme="chalk"] .bk{--hl-base:#e8cfc8;color:#6b4646}
+[data-theme="chalk"] :where(.bdg,mark,.hl,.pill,.branch,.tthm,.size-control,#copybtn,.btn,.lbl,.cal .ct,.qnum):nth-of-type(4n+1){--hl:color-mix(in srgb,var(--hl-base) 88%,#fff6a8)}
+[data-theme="chalk"] :where(.bdg,mark,.hl,.pill,.branch,.tthm,.size-control,#copybtn,.btn,.lbl,.cal .ct,.qnum):nth-of-type(4n+2){--hl:color-mix(in srgb,var(--hl-base) 90%,#ffd1dc)}
+[data-theme="chalk"] :where(.bdg,mark,.hl,.pill,.branch,.tthm,.size-control,#copybtn,.btn,.lbl,.cal .ct,.qnum):nth-of-type(4n+3){--hl:color-mix(in srgb,var(--hl-base) 86%,#d6ffd7)}
+[data-theme="chalk"] :where(.bdg,mark,.hl,.pill,.branch,.tthm,.size-control,#copybtn,.btn,.lbl,.cal .ct,.qnum):nth-of-type(4n){--hl:color-mix(in srgb,var(--hl-base) 88%,#d7ddff)}
+[data-theme="chalk"] :where(.bdg,mark,.hl,.pill,.branch,.tthm,.size-control,#copybtn,.btn,.lbl,.cal .ct,.qnum):nth-of-type(3n+1){--hl-rot:-.8deg;--hl-skew:-10deg;--hl-dx:-.03em;--hl-dy:.01em}
+[data-theme="chalk"] :where(.bdg,mark,.hl,.pill,.branch,.tthm,.size-control,#copybtn,.btn,.lbl,.cal .ct,.qnum):nth-of-type(3n+2){--hl-rot:-2.1deg;--hl-skew:-15deg;--hl-dx:.04em;--hl-dy:.04em}
+[data-theme="chalk"] :where(.bdg,mark,.hl,.pill,.branch,.tthm,.size-control,#copybtn,.btn,.lbl,.cal .ct,.qnum):nth-of-type(3n){--hl-rot:-1.5deg;--hl-skew:-13deg;--hl-dx:.01em;--hl-dy:-.01em}
+[data-theme="chalk"] :where(.bdg,mark,.hl,.pill,.branch,.tthm,.size-control,#copybtn,.btn,.lbl,.cal .ct,.qnum):nth-of-type(5n+1){--hl-fx:url(#chalk-hl-2)}
+[data-theme="chalk"] :where(.bdg,mark,.hl,.pill,.branch,.tthm,.size-control,#copybtn,.btn,.lbl,.cal .ct,.qnum):nth-of-type(5n+3){--hl-fx:url(#chalk-hl-3)}
+[data-theme="chalk"] pre{background:#f0e8d8;border-color:#d4b890;color:#3a2030}
+[data-theme="chalk"] code{background:#f0e8d8;color:#a03060}
+[data-theme="chalk"] .tthm{--hl-base:#e8cfc8;color:#6a3848}
+[data-theme="chalk"] .tthm:hover{background:transparent;border-color:var(--ac)}
+[data-theme="chalk"] .tthm.active{--hl-base:#ffc0cf;background:transparent;border-color:var(--ac);box-shadow:none}
+[data-theme="chalk"] .cmtablerow:hover td{background:#fde8f0}
+[data-theme="chalk"] dialog#cm{background:var(--s1);border-color:var(--bd)}
+[data-theme="chalk"] .mh h3{color:var(--ac)}
+[data-theme="chalk"] .copybar{background:#fdf4ec;border-top-color:var(--bd)}
+[data-theme="chalk"] #copybtn{--hl-base:#ff8db8;background:transparent;color:#7c1f48;border:none;font-family:'Caveat',cursive;font-size:22px;font-weight:700;padding:9px 26px}
+[data-theme="chalk"] #copybtn:hover{opacity:.9;transform:scale(1.04)}
+[data-theme="chalk"] .btn.bpri{--hl-base:#ff8db8;color:#7c1f48}
+[data-theme="chalk"] .btn.bsec{--hl-base:#d7ddff;color:#5840a0}
+[data-theme="chalk"] .branch{font-family:'Caveat',cursive;font-size:17px}
+[data-theme="chalk"] .xtrig{color:var(--ac)}
+#copy-toast{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%) scale(.88);opacity:0;pointer-events:none;z-index:10000;transition:opacity .18s,transform .18s;border-radius:8px;padding:20px 36px;font-size:18px;font-weight:700;text-align:center;white-space:nowrap;cursor:pointer}
+#copy-toast.ct-show{opacity:1;transform:translate(-50%,-50%) scale(1);pointer-events:auto}
+:root #copy-toast,[data-theme="dark"] #copy-toast{background:var(--s1);border:2px solid var(--ac);color:var(--tx);box-shadow:0 8px 32px rgba(0,0,0,.55),0 0 18px var(--rev-glow)}
+[data-theme="hacker"] #copy-toast{font-family:"Share Tech Mono","Courier New",monospace;font-size:16px;letter-spacing:.15em;color:#00ff9c;text-shadow:0 0 8px rgba(0,255,156,.65),0 0 20px rgba(0,255,156,.3);background:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='360' height='80'><defs><linearGradient id='d' x1='0' y1='0' x2='360' y2='80' gradientUnits='userSpaceOnUse'><stop offset='0' stop-color='white' stop-opacity='0.12'/><stop offset='1' stop-color='white' stop-opacity='0.52'/></linearGradient><mask id='m'><rect width='100%25' height='100%25' fill='url(%23d)'/></mask><filter id='g'><feTurbulence type='fractalNoise' baseFrequency='0.03' numOctaves='4' seed='17' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1.5 -.2'/></filter></defs><rect width='100%25' height='100%25' filter='url(%23g)' mask='url(%23m)'/></svg>"),url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='120' height='40'><filter id='g'><feTurbulence type='fractalNoise' baseFrequency='0.15' numOctaves='2' seed='7' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 .45 0'/></filter><rect width='100%25' height='100%25' filter='url(%23g)'/></svg>"),linear-gradient(135deg,#b89018 0%,#8a6c14 40%,#6a520e 65%,#44360a 100%);background-blend-mode:multiply,multiply,normal;background-size:100% 100%,40% 40%,100% 100%;border:2px solid #1e1600;box-shadow:inset 0 1px 0 rgba(240,200,60,.15),0 6px 28px rgba(0,0,0,.9),0 0 30px rgba(0,255,156,.12);animation:none!important}
+[data-theme="olde"] #copy-toast{font-family:'Uncial Antiqua',Georgia,serif;color:#2c1a0a;background:radial-gradient(ellipse 120% 55% at 50% 0%,#7a4a18 0%,transparent 50%),radial-gradient(ellipse 120% 55% at 50% 100%,#7a4a18 0%,transparent 50%),linear-gradient(180deg,#e8d4a8 0%,#f4e8c8 35%,#f4ead5 50%,#f0e4c0 75%,#e0cc98 100%);border:3px double #8b4513;border-radius:4px;box-shadow:0 6px 24px rgba(0,0,0,.4),inset 0 2px 8px rgba(100,60,20,.2),inset 0 -2px 8px rgba(100,60,20,.2);text-shadow:1px 1px 2px rgba(100,60,0,.25)}
+[data-theme="chalk"] #copy-toast{font-family:'Caveat',cursive;font-size:26px;font-weight:700;color:#5840a0;background:#ede8ff;border:2px solid #9070d0;border-radius:6px;filter:url(#chalk-rough);box-shadow:2px 3px 12px rgba(144,112,208,.3)}
+</style>
+</head>
+<body>
+<div id="crt-scanlines"></div>
+<div id="crt-vignette"></div>
+<div id="crt-tracking"></div>
+<svg xmlns="http://www.w3.org/2000/svg" width="0" height="0" style="position:absolute;overflow:hidden" aria-hidden="true">
+  <defs>
+    <filter id="chalk-rough" x="-5%" y="-5%" width="110%" height="110%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.04" numOctaves="3" seed="5" result="noise"/>
+      <feDisplacementMap in="SourceGraphic" in2="noise" scale="1" xChannelSelector="R" yChannelSelector="G"/>
+    </filter>
+    <filter id="chalk-hl-1" x="-8%" y="-35%" width="116%" height="170%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.008 0.022" numOctaves="2" seed="11" result="noise"/>
+      <feDisplacementMap in="SourceGraphic" in2="noise" scale="5" xChannelSelector="R" yChannelSelector="G"/>
+    </filter>
+    <filter id="chalk-hl-2" x="-8%" y="-35%" width="116%" height="170%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.008 0.022" numOctaves="2" seed="29" result="noise"/>
+      <feDisplacementMap in="SourceGraphic" in2="noise" scale="4.5" xChannelSelector="R" yChannelSelector="G"/>
+    </filter>
+    <filter id="chalk-hl-3" x="-8%" y="-35%" width="116%" height="170%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.008 0.022" numOctaves="2" seed="47" result="noise"/>
+      <feDisplacementMap in="SourceGraphic" in2="noise" scale="5.5" xChannelSelector="R" yChannelSelector="G"/>
+    </filter>
+  </defs>
+</svg>
+<div id="copy-toast" onclick="hideCopyToast()" role="status" aria-live="assertive"></div>
+<div class="page">
+
+<div class="theme-toggle" id="theme-toggle">
+  <div class="theme-btn-row">
+    <button class="tthm active" id="btn-dark"   onclick="setTheme('dark')"   title="Dark">&#x1F319;</button>
+    <button class="tthm"        id="btn-hacker" onclick="setTheme('hacker')" title="Hacker" style="font-family:monospace;font-size:15px;font-weight:700;letter-spacing:-1px">/&gt;</button>
+    <button class="tthm"        id="btn-olde"   onclick="setTheme('olde')"   title="Olde Tyme">&#x1F4DC;</button>
+    <button class="tthm"        id="btn-chalk"  onclick="setTheme('chalk')"  title="Chalk Flower">&#x1F338;</button>
+  </div>
+  <div class="size-control">
+    <span class="sc-icon" title="Text size">&#x1F453;</span>
+    <span class="sc-a sc-small">A</span>
+    <input type="range" id="size-slider" min="0.75" max="1.75" step="0.05" value="1" title="Text size">
+    <span class="sc-a sc-big">A</span>
+  </div>
+</div>
+
+<div id="zoom-wrap">
+<div class="header" style="position:relative">
+  <h1>TPS Report &#x2014; The Reader, Rebuilt</h1>
+  <div class="branch">&#x2387; feat/document-model</div>
+  <div class="meta">
+    <div class="pill"><span class="dot dg"></span>Proposed</div>
+    <div class="pill"><span class="dot dy"></span>2026-08-31</div>
+    <div class="pill"><span class="dot dr"></span>Parker</div>
+  </div>
+</div>
+
+<div class="sec xsec" data-open="false">
+  <div class="stitle xhdr" onclick="toggleXSec(this)"><span class="xtrig">&#x25BC;</span> ELI5 &#x2014; tl;dr</div>
+  <div class="xbody">
+  <div class="cal ci commentable" data-id="eli5" data-title="ELI5">
+    <span class="hint-tip">&#x1F4AC; comment</span>
+    <div class="ct">&#x1F4A1; Plain English</div>
+    The reader is built as a photocopy of the terminal. The terminal has already chopped the text into fixed-width rows, so the reader spends its life guessing which chops were real and which were just the pane being narrow. Every guess is a bug waiting to happen, and content that never reached the screen cannot be shown at all. The fix is to stop photocopying: build the reader on the actual text, and let both the pane and the reader lay that same text out at their own size. Done looks like: shrink the reader's font and the screen fills with more content, in both directions, with no heuristics involved.
+  </div>
+  </div>
+</div>
+
+<div class="sec xsec" data-open="false">
+  <div class="stitle xhdr" onclick="toggleXSec(this)"><span class="xtrig">&#x25BC;</span> Honest status &#x2014; what today actually bought</div>
+  <div class="xbody">
+  <div class="cal cn commentable" data-id="status" data-title="Status">
+    <span class="hint-tip">&#x1F4AC; comment</span>
+    <div class="ct">&#x1F4CB; Three commits, one axis fixed</div>
+    <ul>
+      <li><strong>Width fit</strong> &#x2014; auto-fit scales to width, side padding is 7% of the panel. Landed.</li>
+      <li><strong>Reflow</strong> &#x2014; <code>join_focus_lines</code> heals width-breaks before re-wrapping; the reader's coordinate space became the joined lines, so selection and copy came along for free. Landed.</li>
+      <li><strong>Dedent</strong> &#x2014; the reflow was firing on <em>nothing</em>, because <code>wrap_join</code> vetoes any indented row and an agent indents its whole transcript. Landed.</li>
+    </ul>
+    Horizontal fill now works &#x2014; long reflowed lines and a full-width Links table are visible in the latest capture. <strong>Vertical fill does not work and cannot</strong>, and that is the tell this report is about.
+  </div>
+  </div>
+</div>
+
+<div class="sec xsec" data-open="false">
+  <div class="stitle xhdr" onclick="toggleXSec(this)"><span class="xtrig">&#x25BC;</span> The diagnosis: a lossy round-trip</div>
+  <div class="xbody">
+  <div class="cal cw commentable" data-id="diagnosis" data-title="Diagnosis">
+    <span class="hint-tip">&#x1F4AC; comment</span>
+    <div class="ct">&#x1F50E; The reader renders a rendering</div>
+    Today's pipeline destroys information and then tries to reconstruct it:
+  </div>
+
+<pre>logical content        the agent's markdown / the program's output
+      &#x2193;
+  PANE RENDER          chops to `cols`, pads cells, forgets which breaks
+                       were real          &#x2190;&#x2500;&#x2500; INFORMATION DESTROYED
+      &#x2193;
+   grid cells          styled_lines() &#x2192; Vec&lt;(String, Vec&lt;TextRun&gt;)&gt;
+      &#x2193;
+ READER RECOVERY       trim padding &#x2192; dedent &#x2192; join width-breaks
+                       &#x2192; re-wrap        &#x2190;&#x2500;&#x2500; GUESSWORK
+      &#x2193;
+  reader layout</pre>
+
+  <div class="cal cw commentable" data-id="symptom-map" data-title="Symptom map">
+    <span class="hint-tip">&#x1F4AC; comment</span>
+    <div class="ct">&#x1F4A3; Every bug this session lives in one box</div>
+    <ul>
+      <li><strong>Padding trim</strong> &#x2014; repairing damage the grid itself did. Twice: once in the pane's copy path, once in the reader's.</li>
+      <li><strong><code>wrap_join</code>'s width test</strong> &#x2014; a guess at whether a break was width-induced.</li>
+      <li><strong><code>is_structural</code></strong> &#x2014; a guess at whether a row is a code fence or a rule.</li>
+      <li><strong>Dedent</strong> &#x2014; a guess that a shared margin is not structure. It was needed only because the previous guess mis-fired.</li>
+      <li><strong>Vertical emptiness</strong> &#x2014; not a guess at all: the content was never in the pipeline. <code>styled_lines</code> builds exactly <code>grid.rows</code> from <code>display_iter</code> &#x2014; the visible viewport, no scrollback.</li>
+    </ul>
+    Three of those are heuristics stacked on heuristics. Each new one fixes the last one's misfire. That is the shape of a design problem, not a run of unlucky bugs.
+  </div>
+
+  <div class="cal ci commentable" data-id="principle" data-title="Principle">
+    <span class="hint-tip">&#x1F4AC; comment</span>
+    <div class="ct">&#x2696;&#xFE0F; The principle being violated</div>
+    <strong>Render from the source, not from another rendering.</strong> The reader should not reverse-engineer the pane. The pane and the reader are two <em>views</em> of one document, and neither should be derived from the other. Right now the reader is downstream of the pane's layout decisions, which is why every pane-width quirk becomes a reader bug.
+  </div>
+  </div>
+</div>
+
+<div class="sec xsec" data-open="false">
+  <div class="stitle xhdr" onclick="toggleXSec(this)"><span class="xtrig">&#x25BC;</span> Target architecture</div>
+  <div class="xbody">
+  <div class="cal ci commentable" data-id="arch" data-title="Architecture">
+    <span class="hint-tip">&#x1F4AC; comment</span>
+    <div class="ct">&#x1F3D7;&#xFE0F; Document &#x2192; Source &#x2192; Layout &#x2192; View</div>
+    Three types with one responsibility each, and a seam between every pair.
+  </div>
+
+<pre>trait DocumentSource {            // WHERE the text comes from
+    fn document(&amp;self, want: RowBudget) -&gt; Document;
+}
+
+struct Document {                 // WHAT the text is. No cols. No rows.
+    blocks: Vec&lt;Block&gt;,           // Paragraph | Code | Table | Rule | List
+}
+struct Block {
+    text: String,                 // logical: real breaks only
+    spans: Vec&lt;StyleSpan&gt;,        // styling by byte range
+    origin: Origin,               // provenance, for copy + jump-to-source
+}
+
+fn layout(doc: &amp;Document, w: Width, m: Metrics) -&gt; Layout;
+struct Layout {                   // HOW it sits on this surface
+    rows: Vec&lt;VisualRow&gt;,
+    map:  Vec&lt;DocPos&gt;,            // visual position &#x2192; document offset
+}</pre>
+
+  <div class="cal ci commentable" data-id="sources" data-title="Sources">
+    <span class="hint-tip">&#x1F4AC; comment</span>
+    <div class="ct">&#x1F50C; Two sources, and the second is the prize</div>
+    <ul>
+      <li><strong><code>GridSource</code></strong> (shell panes) &#x2014; reads the terminal grid <em>including scrollback</em>, and uses alacritty's <code>WRAPLINE</code> flag as <strong>ground truth</strong> for soft-wrap rather than guessing. We already read that flag in <code>grid_snapshot</code> for links and then throw it away. Heuristics survive here only for output an application hard-wrapped itself &#x2014; isolated in one module, labelled best-effort, not spread through the reader.</li>
+      <li><strong><code>TranscriptSource</code></strong> (agent panes) &#x2014; <strong>TD already tails agent <code>.jsonl</code> transcripts</strong> (<code>mcp_tail.rs</code>). That file is the actual source document: real paragraphs, real code fences, real tables. For an agent pane there is <em>nothing to guess</em>. No join, no dedent, no width test. The entire class of bug we chased today cannot occur.</li>
+    </ul>
+  </div>
+
+  <div class="cal cn commentable" data-id="consumers" data-title="Consumers">
+    <span class="hint-tip">&#x1F4AC; comment</span>
+    <div class="ct">&#x1F501; What else falls out of the same seam</div>
+    The FOCUS reader is the first consumer, not the only one. A <code>Document</code> is also what the alt+click copy affordance wants, what the read-only MCP surface should serve instead of scraped rows, and what an export or a search would consume. Each is a new consumer of an existing seam rather than another scraper.
+  </div>
+  </div>
+</div>
+
+<div class="sec xsec" data-open="false">
+  <div class="stitle xhdr" onclick="toggleXSec(this)"><span class="xtrig">&#x25BC;</span> What it fixes, symptom by symptom</div>
+  <div class="xbody">
+  <div class="tbox">
+    <table>
+      <tr><th>Today's symptom</th><th>Why it happens now</th><th>Why it stops</th></tr>
+      <tr><td>Smaller text does not fill horizontally</td><td>Rows pre-chopped at <code>snap.cols</code>; recovery by heuristic</td><td>Layout runs on logical text at the reader's width</td></tr>
+      <tr><td>Smaller text does not fill vertically</td><td>Mirror is one viewport; no more content exists</td><td>Document carries scrollback / the whole transcript</td></tr>
+      <tr><td>Reader scroll is nearly pointless</td><td>Only ever one screenful to scroll</td><td>Real backlog to scroll through</td></tr>
+      <tr><td>Copy returns chopped lines</td><td>Selection is in grid coordinates</td><td>Selection maps to document offsets</td></tr>
+      <tr><td>Each fix breaks a neighbour</td><td>Heuristics stacked on heuristics</td><td>One heuristic, in one module, on one source</td></tr>
+    </table>
+  </div>
+  </div>
+</div>
+
+<div class="sec xsec" data-open="false">
+  <div class="stitle xhdr" onclick="toggleXSec(this)"><span class="xtrig">&#x25BC;</span> Migration &#x2014; five shippable phases</div>
+  <div class="xbody">
+  <div class="cal ci commentable" data-id="phases" data-title="Phases">
+    <span class="hint-tip">&#x1F4AC; comment</span>
+    <div class="ct">&#x1F6E4;&#xFE0F; No big-bang rewrite; every phase lands on its own</div>
+  </div>
+
+  <div class="trow expandable commentable" data-id="p0" data-title="Phase 0" data-open="false">
+    <span class="hint-tip">&#x1F4AC; comment</span>
+    <div class="trow-hdr">
+      <button class="texp" onclick="toggleTicket(this,event)" title="Expand details">&#x25B6;</button>
+      <div class="tid">P-0</div>
+      <div class="ttl">Introduce the types, port the current path onto them &#x2014; zero user-visible change</div>
+      <span class="bdg bh">high</span>
+    </div>
+    <div class="trow-body">
+      <strong>Intent:</strong> Land <code>Document</code>, <code>DocumentSource</code>, <code>layout()</code> as new modules, and re-express today's reader as <code>GridSource</code> (viewport only) + <code>layout()</code>. Behaviour identical.
+      <br><br><strong>Acceptance:</strong>
+<pre>Given the current reader on a given pane and zoom
+When the same pane is rendered through Document + layout
+Then the visual rows are identical, character for character
+And the existing reader tests pass unmodified</pre>
+      <strong>Gotcha:</strong> this phase is worthless unless it is provably a no-op. Write the equality harness first; it is the safety net every later phase leans on.
+    </div>
+  </div>
+
+  <div class="trow expandable commentable" data-id="p1" data-title="Phase 1" data-open="false">
+    <span class="hint-tip">&#x1F4AC; comment</span>
+    <div class="trow-hdr">
+      <button class="texp" onclick="toggleTicket(this,event)" title="Expand details">&#x25B6;</button>
+      <div class="tid">P-1</div>
+      <div class="ttl">GridSource reads scrollback &#x2014; the vertical fill</div>
+      <span class="bdg bh">high</span>
+    </div>
+    <div class="trow-body">
+      <strong>Intent:</strong> Read beyond the display region into the grid's history, governed by a <code>RowBudget</code> the reader derives from its own height and zoom. This is the fix for "smaller text leaves the bottom empty".
+      <br><br><strong>Acceptance:</strong>
+<pre>Given a pane with 500 rows of scrollback
+When the reader's text is shrunk until 120 rows would fit
+Then 120 rows of content are laid out, not 47
+And the glass fills top to bottom</pre>
+      <strong>Gotcha:</strong> the budget is a feedback loop &#x2014; more rows can change nothing about metrics, so resolve it in one pass: compute rows-that-fit from the metrics, request that many, lay out. Do not iterate to a fixed point.
+      <br><br><strong>Gotcha 2:</strong> <code>styled_lines</code> also paints the syntax overlay, human-input colouring, selection and cursor, all keyed to <code>display_iter</code>. Those need a line-range-generic form, which is the bulk of the work here.
+    </div>
+  </div>
+
+  <div class="trow expandable commentable" data-id="p2" data-title="Phase 2" data-open="false">
+    <span class="hint-tip">&#x1F4AC; comment</span>
+    <div class="trow-hdr">
+      <button class="texp" onclick="toggleTicket(this,event)" title="Expand details">&#x25B6;</button>
+      <div class="tid">P-2</div>
+      <div class="ttl">TranscriptSource for agent panes &#x2014; delete the guessing</div>
+      <span class="bdg bh">high</span>
+    </div>
+    <div class="trow-body">
+      <strong>Intent:</strong> For a pane running an agent, build the Document from the agent's own <code>.jsonl</code> — which TD already tails — instead of scraping the screen. Real markdown structure, no heuristics.
+      <br><br><strong>Acceptance:</strong>
+<pre>Given an agent pane whose transcript contains a fenced code block and a table
+When the reader opens on it
+Then the code block and table are laid out as blocks, unwrapped and unmangled
+And no join, dedent or width test runs anywhere in that path</pre>
+      <strong>Gotcha:</strong> the transcript and the screen are not the same thing &#x2014; the screen also carries tool-call chrome, spinners and the input line. Decide deliberately what the reader shows; "the conversation, not the chrome" is probably right but it is a product call, not a technical one.
+      <br><br><strong>Gotcha 2:</strong> a long transcript must be virtualised. Do not build a Document for 50k lines to show 60.
+    </div>
+  </div>
+
+  <div class="trow expandable commentable" data-id="p3" data-title="Phase 3" data-open="false">
+    <span class="hint-tip">&#x1F4AC; comment</span>
+    <div class="trow-hdr">
+      <button class="texp" onclick="toggleTicket(this,event)" title="Expand details">&#x25B6;</button>
+      <div class="tid">P-3</div>
+      <div class="ttl">Quarantine the heuristics</div>
+      <span class="bdg bm">medium</span>
+    </div>
+    <div class="trow-body">
+      <strong>Intent:</strong> With P-2 in, the join/dedent/width-test machinery is needed only for shell output an application hard-wrapped. Move it into one module behind one entry point, documented as best-effort, and delete its use everywhere else.
+      <br><br><strong>Acceptance:</strong>
+<pre>Given the agent reader path
+When the code is searched for wrap_join, is_structural or the dedent
+Then none of them appear outside the single hard-wrap-recovery module</pre>
+      <strong>Gotcha:</strong> the pane's own drag-select copy still uses <code>reflow_wrapped_copy</code>, and so does the alt+click affordance. They should move onto the same entry point rather than keeping private copies.
+    </div>
+  </div>
+
+  <div class="trow expandable commentable" data-id="p4" data-title="Phase 4" data-open="false">
+    <span class="hint-tip">&#x1F4AC; comment</span>
+    <div class="trow-hdr">
+      <button class="texp" onclick="toggleTicket(this,event)" title="Expand details">&#x25B6;</button>
+      <div class="tid">P-4</div>
+      <div class="ttl">Point the other consumers at the same seam</div>
+      <span class="bdg bm">medium</span>
+    </div>
+    <div class="trow-body">
+      <strong>Intent:</strong> The alt+click copy affordance and the read-only MCP surface both currently scrape rows. Serve both from <code>Document</code>, so there is exactly one answer to "what text is in this pane".
+      <br><br><strong>Acceptance:</strong>
+<pre>Given a wrapped command in a pane
+When it is copied via alt+click, via reader selection, or read over MCP
+Then all three return the same logical line, byte for byte</pre>
+      <strong>Gotcha:</strong> the MCP surface is a public contract. Changing what it returns is a breaking change for anything consuming it; version it or add alongside.
+    </div>
+  </div>
+  </div>
+</div>
+
+<div class="sec xsec" data-open="false">
+  <div class="stitle xhdr" onclick="toggleXSec(this)"><span class="xtrig">&#x25BC;</span> Where this will bite</div>
+  <div class="xbody">
+  <div class="cal cw commentable" data-id="risk" data-title="Risk">
+    <span class="hint-tip">&#x1F4AC; comment</span>
+    <div class="ct">&#x1F525; Honest risks</div>
+    <ul>
+      <li><strong>Selection is the hard part, not layout.</strong> Every phase has to keep click &#x2192; position &#x2192; copy working. The saving grace found today: <code>focus_selection_text</code> already reads a snapshot inside <code>FocusMap</code> rather than the live grid, so the reader's coordinate space is already private to it. That is the hook the Document slots into.</li>
+      <li><strong><code>pane.rs</code> is ~8,000 lines</strong> and holds the grid read, the styling, the layout and the copy paths together. These modules are as much a decomposition of that file as a new feature.</li>
+      <li><strong>Performance.</strong> Scrollback and transcripts are big; layout must be incremental and virtualised or the reader stutters on open.</li>
+      <li><strong>Two sources can disagree.</strong> A transcript-backed reader shows something subtly different from the screen. That is correct, and it will still surprise people the first time.</li>
+    </ul>
+  </div>
+
+  <div class="cal cn commentable" data-id="cost" data-title="Cost">
+    <span class="hint-tip">&#x1F4AC; comment</span>
+    <div class="ct">&#x1F4B0; What it costs, honestly</div>
+    P-0 and P-1 are where the value is and where most of the risk sits &#x2014; they alone fix the vertical fill and give the reader a real backlog. P-2 is the elegant one and the one that deletes the most code. P-3 and P-4 are cleanup that can wait. This is not a weekend, and it is also not a rewrite: nothing here throws away the warp, the theming, the selection or the mirror plumbing.
+  </div>
+  </div>
+</div>
+
+<div class="sec xsec" data-open="false">
+  <div class="stitle xhdr" onclick="toggleXSec(this)"><span class="xtrig">&#x25BC;</span> Separate bug &#x2014; Ctrl+Alt+T cascade and mass close</div>
+  <div class="xbody">
+  <div class="cal cw commentable" data-id="ctrlaltt" data-title="Ctrl+Alt+T">
+    <span class="hint-tip">&#x1F4AC; comment</span>
+    <div class="ct">&#x1F50E; Prime suspect, not yet reproduced</div>
+    <strong>The cascade:</strong> the Hyprland binding is documented as "first press opens the primary window, every later press opens a fresh scratch window", and TD is explicitly not single-instance. Key repeat on the chord therefore spawns a window per repeat &#x2014; consistent with the tiny 14&#xD7;11 and 15&#xD7;3 tiles in the capture.
+    <br><br>
+    <strong>The mass close:</strong> <code>Workspace::reap</code> ends with <code>cx.quit()</code> when its last tab empties. In gpui <code>cx.quit()</code> ends the <em>process</em>, not the window &#x2014; and one TD process can host several windows. So one scratch window losing its last pane takes down every window in that process, simultaneously. The correct per-window close already exists elsewhere in the file as <code>window.remove_window()</code>.
+    <br><br>
+    <strong>Falsify it first:</strong> spawn two windows from one process, exit the shell in one, and watch whether the other dies. If it survives, this suspect is wrong and the 30-second alignment points instead at the checkpoint/instance interaction &#x2014; <code>save</code> on the 30s timer, or a second process failing <code>claim_in</code> and releasing.
+  </div>
+  </div>
+</div>
+
+<div class="sec xsec" data-open="false">
+  <div class="stitle xhdr" onclick="toggleXSec(this)"><span class="xtrig">&#x25BC;</span> Open questions</div>
+  <div class="xbody">
+
+  <div class="qbox commentable" data-id="q1" data-title="Question 1">
+    <span class="hint-tip">&#x1F4AC; comment</span>
+    <div class="qnum">Q1</div>
+    <div class="qtxt">Is the FOCUS reader a <em>mirror of the screen</em> or a <em>view of the conversation</em>? Everything above assumes the second. If it must stay a faithful mirror &#x2014; spinners, tool chrome, input line and all &#x2014; then P-2 is off the table and we are stuck recovering structure from the grid forever, with the vertical fill from P-1 as the ceiling.</div>
+  </div>
+
+  <div class="qbox commentable" data-id="q2" data-title="Question 2">
+    <span class="hint-tip">&#x1F4AC; comment</span>
+    <div class="qnum">Q2</div>
+    <div class="qtxt">How much backlog should the reader hold &#x2014; a few screens, the pane's whole scrollback, or the entire transcript? This sets whether layout can be eager or has to be virtualised from day one, which is the difference between P-1 being a week and being a fortnight.</div>
+  </div>
+
+  <div class="qbox commentable" data-id="q3" data-title="Question 3">
+    <span class="hint-tip">&#x1F4AC; comment</span>
+    <div class="qnum">Q3</div>
+    <div class="qtxt">Do we stop shipping reader patches while this lands? The three commits from today work and are deployed, but each one added a heuristic that P-2 is designed to delete. Continuing to patch the old path makes the migration harder; freezing it means living with the vertical emptiness until P-1 lands.</div>
+  </div>
+
+  </div>
+</div>
+
+
+</div><!-- /zoom-wrap -->
+</div><!-- /page -->
+
+<div class="copybar">
+  <p>Click any item to leave a comment. Comments persist in your browser and are included in the copy.</p>
+  <button id="copybtn" onclick="bigCopy()">&#x1F4CB; Big Copy</button>
+</div>
+
+<dialog id="cm">
+  <div class="mh">
+    <h3 id="modal-title"></h3>
+    <button class="mclose" onclick="closeModal()">&#x2715;</button>
+  </div>
+  <div id="modal-context" class="mctx"></div>
+  <div class="mclist" id="modal-comments"></div>
+  <div class="minput">
+    <textarea id="newcomment" placeholder="Add a comment&#x2026; (Ctrl+Enter to save)"></textarea>
+    <div class="mbtns">
+      <button class="btn bsec" onclick="closeModal()">Done</button>
+      <button class="btn bpri" onclick="addComment()">Add</button>
+    </div>
+  </div>
+</dialog>
+
+<script>
+const SK = 'td-document-model-v1';
+let C = JSON.parse(localStorage.getItem(SK) || '{}');
+let aid = null;
+function save(){ localStorage.setItem(SK, JSON.stringify(C)); }
+function esc(s){ return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>'); }
+function slug(s){ return String(s||'item').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'').slice(0,54)||'item'; }
+function commentTitle(el){
+  const explicit = el.getAttribute('aria-label') || el.querySelector('.ct,.lbl,.qnum,th,h2,h3,strong')?.textContent;
+  const text = (explicit || el.textContent || el.tagName).replace(/\s+/g,' ').trim();
+  return text.length > 80 ? text.slice(0,77)+'...' : text;
+}
+function initCommentTargets(){
+  const seen = {};
+  document.querySelectorAll('.sec .xbody :is(p,ul,ol,blockquote,pre,table)').forEach(el=>{
+    if(el.matches('.commentable,.cmtablerow') || el.closest('.commentable,.cmtablerow,dialog,.copybar,.theme-toggle')) return;
+    if(el.querySelector('.commentable,.cmtablerow')) return;
+    el.classList.add('commentable','auto-commentable');
+    const sec = el.closest('.sec');
+    const secTitle = sec?.querySelector('.stitle')?.textContent || 'section';
+    const base = 'auto-'+slug(secTitle)+'-'+el.tagName.toLowerCase()+'-'+slug(el.textContent);
+    const n = seen[base] = (seen[base] || 0) + 1;
+    el.dataset.id = n === 1 ? base : base+'-'+n;
+    el.dataset.title = commentTitle(el);
+  });
+}
+function renderBadges(){
+  document.querySelectorAll('.commentable, .cmtablerow').forEach(el=>{
+    const id = el.dataset.id;
+    const n = (C[id]||[]).length;
+    el.classList.toggle('has-comment', n > 0);
+    let b = el.querySelector(':scope > .cbadge');
+    if(n > 0){
+      if(!b){ b=document.createElement('span'); b.className='cbadge'; el.appendChild(b); }
+      b.textContent = '\u2713 '+n;
+    } else if(b) b.remove();
+  });
+}
+function renderModalComments(id){
+  const list = C[id]||[];
+  const el = document.getElementById('modal-comments');
+  if(!list.length){ el.innerHTML='<p class="nocom">No comments yet \u2014 add one below.</p>'; return; }
+  el.innerHTML = list.map((c,i)=>`
+    <div class="citem">
+      <div class="cmeta"><span>${esc(c.ts)}</span><button class="cdel" onclick="delComment(${i})">&#x2715;</button></div>
+      <div class="ctext">${esc(c.text)}</div>
+    </div>`).join('');
+}
+function openModal(id, title){
+  aid=id;
+  document.getElementById('modal-title').textContent=title;
+  const src=document.querySelector('[data-id="'+id+'"]');
+  const ctx=document.getElementById('modal-context');
+  if(src){
+    const cl=src.cloneNode(true);
+    cl.querySelectorAll('.hint-tip,.cbadge,.xtrig,.texp,button,.trow-body').forEach(n=>n.remove());
+    cl.querySelectorAll('[data-id]').forEach(n=>n.remove());
+    ctx.innerHTML=cl.innerHTML.trim();
+  } else ctx.innerHTML='';
+  renderModalComments(id);
+  document.getElementById('newcomment').value='';
+  document.getElementById('cm').showModal();
+  setTimeout(()=>document.getElementById('newcomment').focus(),50);
+}
+function closeModal(){ document.getElementById('cm').close(); aid=null; }
+function addComment(){
+  const ta=document.getElementById('newcomment');
+  const txt=ta.value.trim(); if(!txt) return;
+  if(!C[aid]) C[aid]=[];
+  C[aid].push({text:txt, ts:new Date().toLocaleString()});
+  ta.value=''; save(); renderModalComments(aid); renderBadges();
+}
+function delComment(i){
+  C[aid].splice(i,1); save(); renderModalComments(aid); renderBadges();
+}
+document.getElementById('newcomment').addEventListener('keydown',e=>{
+  if((e.ctrlKey||e.metaKey)&&e.key==='Enter'){ e.preventDefault(); addComment(); }
+  if(e.key==='Escape'){ e.preventDefault(); closeModal(); }
+});
+initCommentTargets();
+document.querySelectorAll('.commentable,.cmtablerow').forEach(el=>{
+  el.addEventListener('click',e=>{
+    if(e.target.closest('.cdel,.mclose,.btn')) return;
+    openModal(el.dataset.id, el.dataset.title||el.dataset.id);
+    e.stopPropagation();
+  });
+});
+function itemText(el){
+  const clone=el.cloneNode(true);
+  clone.querySelectorAll('.hint-tip,.cbadge').forEach(n=>n.remove());
+  return clone.textContent.replace(/\s+/g,' ').trim();
+}
+function toggleXSec(hdr){
+  const sec=hdr.closest('.xsec');
+  const isOpen=sec.dataset.open!=='false';
+  sec.dataset.open=isOpen?'false':'true';
+}
+function toggleTicket(btn,e){
+  e.stopPropagation();
+  const row=btn.closest('.trow');
+  const isOpen=row.dataset.open==='true';
+  row.dataset.open=isOpen?'false':'true';
+}
+function bigCopy(){
+  const lines=[];
+  lines.push('# TPS REPORT');
+  lines.push('Generated: '+new Date().toLocaleString());
+  lines.push('');
+  document.querySelectorAll('.sec').forEach(sec=>{
+    const t=sec.querySelector('.stitle');
+    if(t){const tc=t.cloneNode(true);tc.querySelectorAll('.xtrig').forEach(n=>n.remove());lines.push('\n## '+tc.textContent.trim()+'\n');}
+    sec.querySelectorAll('.commentable,.cmtablerow').forEach(el=>{
+      lines.push(itemText(el));
+      (C[el.dataset.id]||[]).forEach(c=>lines.push('  > ['+c.ts+'] '+c.text));
+      if((C[el.dataset.id]||[]).length) lines.push('');
+    });
+  });
+  navigator.clipboard.writeText(lines.join('\n')).then(()=>{ showCopyToast(); });
+}
+function showCopyToast(){
+  const t=document.getElementById('copy-toast');
+  const theme=document.documentElement.getAttribute('data-theme')||'dark';
+  const labels={hacker:'[ COPY COMPLETE ]',olde:'\u2756 Copied \u2756',chalk:'\u2713 Copied!',dark:'\u2713 Copied to clipboard'};
+  t.textContent=labels[theme]||labels.dark;
+  t.classList.add('ct-show');
+  clearTimeout(window._ctTimer);
+  window._ctTimer=setTimeout(hideCopyToast,5000);
+}
+function hideCopyToast(){
+  document.getElementById('copy-toast').classList.remove('ct-show');
+  clearTimeout(window._ctTimer);
+}
+const SZ_KEY = 'tps-zoom';
+function applyZoom(v){
+  document.getElementById('zoom-wrap').style.zoom = v;
+  document.getElementById('cm').style.zoom = v;
+  document.getElementById('copy-toast').style.zoom = v;
+}
+(function initZoom(){
+  const v = parseFloat(localStorage.getItem(SZ_KEY)||'1');
+  const sl = document.getElementById('size-slider');
+  if(sl){ sl.value = v; applyZoom(v); }
+})();
+document.getElementById('size-slider').addEventListener('input', e=>{
+  const v = parseFloat(e.target.value);
+  applyZoom(v);
+  localStorage.setItem(SZ_KEY, v);
+});
+const TK = 'tps-report-theme';
+function setTheme(t){
+  document.documentElement.setAttribute('data-theme', t);
+  localStorage.setItem(TK, t);
+  document.querySelectorAll('.tthm').forEach(b=>b.classList.remove('active'));
+  const btn = document.getElementById('btn-'+t);
+  if(btn) btn.classList.add('active');
+}
+(function initTheme(){ setTheme(localStorage.getItem(TK)||'hacker'); })();
+renderBadges();
+</script>
+</body></html>

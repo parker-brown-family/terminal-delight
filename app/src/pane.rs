@@ -1787,6 +1787,20 @@ enum PaintKey {
     Pass,
 }
 
+/// The inclusive grid line range a [`RowBudget`] selects: the newest `lines`
+/// rows, clamped to what history actually holds.
+///
+/// `oldest` is `grid.topmost_line()` — zero when nothing has scrolled off yet, and
+/// increasingly negative as history accumulates. `newest` is the last row of the
+/// visible screen. Pure so the arithmetic is testable: the reader's whole vertical
+/// fill rests on this being right, and an off-by-one here shows up as one missing
+/// or one duplicated line at the top of the document, which is invisible until you
+/// go looking for it.
+fn budget_range(oldest: i32, newest: i32, lines: usize) -> (i32, i32) {
+    let want = lines.max(1) as i32;
+    ((newest - want + 1).max(oldest), newest)
+}
+
 /// A pane as a [`DocumentSource`]: the terminal grid, scrollback included, run
 /// through the hard-wrap recovery.
 ///
@@ -1817,12 +1831,10 @@ impl TerminalView {
     pub fn document_with(&self, budget: RowBudget, th: &Theme) -> Document {
         let (first, last) = {
             let term = self.session.term.lock();
-            let grid = term.grid();
             // Line 0 is the top of the screen; history runs negative from there.
-            let oldest = grid.topmost_line().0;
+            let oldest = term.grid().topmost_line().0;
             let newest = (self.grid.rows as i32 - 1).max(0);
-            let want = budget.lines.max(1) as i32;
-            ((newest - want + 1).max(oldest), newest)
+            budget_range(oldest, newest, budget.lines)
         };
         let rows = self.grid_rows_in(first, last, th);
         Document::from_grid_rows(&rows, self.grid.cols)
@@ -7063,10 +7075,40 @@ mod tests {
         assert_eq!(reflow_wrapped_copy(text, cols), text);
     }
 
+    /// The reader's vertical fill rests entirely on this arithmetic: ask for N
+    /// lines, get the newest N, never reach past what history holds. An off-by-one
+    /// here is one missing or one duplicated line at the top of the document —
+    /// invisible unless you go looking, which is why it is pinned.
     #[test]
+    fn budget_range_takes_the_newest_lines_and_clamps_to_history() {
+        // a 47-row screen with 200 rows of history retained
+        let (oldest, newest) = (-200, 46);
+
+        // a budget inside history: exactly `want` rows, ending at the newest
+        let (a, b) = budget_range(oldest, newest, 100);
+        assert_eq!((a, b), (-53, 46));
+        assert_eq!((b - a + 1) as usize, 100, "exactly the budget, inclusive");
+
+        // a budget larger than history clamps to the oldest retained row rather
+        // than indexing past it — reading a line the grid lacks would panic
+        assert_eq!(budget_range(oldest, newest, 10_000), (-200, 46));
+
+        // one screenful asks for exactly the screen, no history
+        assert_eq!(budget_range(oldest, newest, 47), (0, 46));
+
+        // a fresh pane with no history never reaches above line 0
+        assert_eq!(budget_range(0, 46, 500), (0, 46));
+
+        // a zero budget still yields one line, never an inverted range
+        let (a, b) = budget_range(oldest, newest, 0);
+        assert_eq!((a, b), (46, 46));
+        assert!(a <= b, "the range is never inverted");
+    }
+
     /// The headline case: the command that failed to paste four times on
     /// 2026-08-31 because the terminal broke it mid-argument. It must come back
     /// as ONE logical line, reporting the two rows it was assembled from.
+    #[test]
     fn spans_rejoin_the_command_that_kept_failing_to_paste() {
         let cols = 60;
         let rows = [
