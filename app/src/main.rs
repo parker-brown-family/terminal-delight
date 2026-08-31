@@ -14478,6 +14478,38 @@ mod tests {
     }
 
     #[test]
+    fn version_and_help_are_answered_without_opening_a_window() {
+        let (text, code) = flag_reply(Some("--version")).expect("--version is answered");
+        assert_eq!(code, 0);
+        assert!(text.starts_with("terminal-delight "), "{text}");
+        assert_eq!(flag_reply(Some("-V")).map(|r| r.1), Some(0));
+        let (help, code) = flag_reply(Some("--help")).expect("--help is answered");
+        assert_eq!(code, 0);
+        assert!(help.contains("Usage:"), "{help}");
+        assert_eq!(flag_reply(Some("-h")).map(|r| r.1), Some(0));
+    }
+
+    #[test]
+    fn an_unrecognised_flag_is_refused_rather_than_opening_a_window() {
+        // The regression this gate exists for: a typo, or a build script's
+        // version probe, used to fall through into a real window — which then
+        // claimed the next free session key and left a throwaway behind.
+        let (text, code) = flag_reply(Some("--verison")).expect("a typo is refused");
+        assert_eq!(code, 2);
+        assert!(text.contains("unrecognised option `--verison`"), "{text}");
+    }
+
+    #[test]
+    fn subcommands_and_bare_arguments_still_reach_the_window() {
+        // `ctl` / `probe` are dispatched before the gate; a positional is left
+        // alone for a future "open here" argument rather than refused now.
+        assert_eq!(flag_reply(Some("ctl")), None);
+        assert_eq!(flag_reply(Some("probe")), None);
+        assert_eq!(flag_reply(Some("/home/me/src")), None);
+        assert_eq!(flag_reply(None), None);
+    }
+
+    #[test]
     fn only_the_first_pane_in_a_directory_keeps_a_shared_resume() {
         let leaf = |resume: Option<&str>| SavedNode::Leaf {
             appearance: PaneTheme::default(),
@@ -15389,6 +15421,53 @@ fn probe_cli(args: &[String]) -> i32 {
     }
 }
 
+/// What `--help` prints. Deliberately short: TD is a GUI terminal, and its whole
+/// CLI surface is the two verbs the desktop shells out to plus the flags every
+/// binary owes a caller.
+const USAGE: &str = "\
+terminal-delight — a CRT terminal built for agent work
+
+Usage:
+  terminal-delight               open a window, restoring this workspace's saved layout
+  terminal-delight ctl <cmd>     drive a RUNNING instance over its control socket
+  terminal-delight probe <pid>   report a terminal's cwd + resumable agent session, as JSON
+
+Options:
+  -h, --help                     show this
+  -V, --version                  show the version
+
+Environment:
+  TD_SCRATCH=1                   force a throwaway window that never claims a session
+  TD_SEED_CWD=<dir>              start the first pane in that directory
+  TD_SEED_RESUME=<cmd>           type that into the first pane (a `claude --resume ...` line)";
+
+/// The reply a leading flag is owed, as `(text, exit code)` — code 0 prints on
+/// stdout, anything else on stderr. `None` means "not ours": open a window.
+///
+/// This gate exists because the fallthrough was expensive. `terminal-delight
+/// --version` used to sail past every check into `open_window`, so a build
+/// script probing the binary got a whole app window instead of a version — and
+/// with the workspace's session already locked, that window took the NEXT free
+/// session key and left a one-pane throwaway on disk behind it. A verify step
+/// walking a shelf of builds turns that into a cascade of windows.
+///
+/// Only a FIRST argument leading with `-` is judged. `ctl`, `probe` and the
+/// internal `--td-emit-demo` are dispatched above (that last one diverges, so it
+/// never reaches here), and a bare positional is deliberately left alone so a
+/// future "open in this directory" argument does not have to fight the gate.
+fn flag_reply(first: Option<&str>) -> Option<(String, i32)> {
+    match first {
+        Some("--version" | "-V") => {
+            Some((format!("terminal-delight {}", env!("CARGO_PKG_VERSION")), 0))
+        }
+        Some("--help" | "-h") => Some((USAGE.to_string(), 0)),
+        Some(flag) if flag.starts_with('-') => Some((
+            format!("terminal-delight: unrecognised option `{flag}`\n\n{USAGE}"),
+            2,
+        )),
+        _ => None,
+    }
+}
 fn main() {
     // `--td-emit-demo`: this process was spawned as a demo pane's program (see
     // `term::spawn_in` under TD_DEMO). Print a screenful of agentic lorem-ipsum
@@ -15413,6 +15492,18 @@ fn main() {
     // window, no gpui.
     if argv.get(1).map(String::as_str) == Some("probe") {
         std::process::exit(probe_cli(&argv[2..]));
+    }
+
+    // Every other leading `-` is answered here, before gpui: `--version` and
+    // `--help` get a reply, anything else gets a refusal. See [`flag_reply`]
+    // for why letting them fall through was expensive.
+    if let Some((text, code)) = flag_reply(argv.get(1).map(String::as_str)) {
+        if code == 0 {
+            println!("{text}");
+        } else {
+            eprintln!("{text}");
+        }
+        std::process::exit(code);
     }
 
     // Give every shell we spawn a real terminal type. gpui launches us from the
