@@ -651,6 +651,14 @@ fn is_copyable_command(line: &str) -> bool {
     if first.starts_with("./") || first.starts_with('/') || first.starts_with("~/") {
         return !first.ends_with('.') && body.split_whitespace().count() >= 1;
     }
+    // A line-initial URL: the other string you constantly need WHOLE. Link
+    // tables and agent replies wrap them, and half a URL is as dead as half a
+    // command. First-token-only keeps prose ("see https://…") chip-free.
+    let lower = first.to_ascii_lowercase();
+    if lower.starts_with("http://") || lower.starts_with("https://") || lower.starts_with("file://")
+    {
+        return true;
+    }
     // An env assignment prefix (FOO=1 cmd …) reads as a command line.
     if first.contains('=') && !first.contains(' ') && body.split_whitespace().count() >= 2 {
         return true;
@@ -1945,6 +1953,23 @@ impl gpui::EventEmitter<OpenFocusRead> for TerminalView {}
 /// keeps keyboard focus so you can keep typing into it while you read.
 pub struct CloseFocusRead;
 impl gpui::EventEmitter<CloseFocusRead> for TerminalView {}
+
+/// Where a paging key asks the FOCUS reader's view to go. `Top`/`Bottom` are the
+/// ends of the whole document (ctrl+Home / ctrl+End); the pages overlap slightly
+/// so context carries across a press.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReadNav {
+    PageUp,
+    PageDown,
+    Top,
+    Bottom,
+}
+
+/// A paging key pressed while this pane is mirrored in the FOCUS modal — the
+/// workspace moves the READER's view. Routed through the pane for the same
+/// reason as [`CloseFocusRead`]: the mirrored pane keeps keyboard focus.
+pub struct FocusReadNav(pub ReadNav);
+impl gpui::EventEmitter<FocusReadNav> for TerminalView {}
 
 /// A read-only snapshot the workspace paints into the FOCUS modal. It's just the
 /// same styled rows [`styled_lines`] already builds for the live pane, plus the
@@ -3257,6 +3282,16 @@ impl TerminalView {
             cx.emit(CloseFocusRead);
             return;
         }
+        // Same contract for the paging keys: while the modal is up they drive the
+        // READER's view (page through the mirrored convo, jump to its ends), not
+        // the pane's own scrollback — that's the surface you are actually reading.
+        // Every other keystroke still flows to the PTY below.
+        if self.being_read {
+            if let Some(nav) = read_nav_key(ks.key.as_str(), &ks.modifiers) {
+                cx.emit(FocusReadNav(nav));
+                return;
+            }
+        }
         // The inline rename box owns the keyboard while open — keystrokes edit
         // the name instead of reaching the PTY. Mirrors the main-tab rename.
         if let Some(mut buf) = self.renaming.take() {
@@ -3357,6 +3392,36 @@ impl TerminalView {
         if m.shift && !m.alt && matches!(ks.key.as_str(), "left" | "right") {
             self.extend_kbd_selection(ks.key.as_str() == "right", m.control, cx);
             return;
+        }
+        // Paging the pane itself. PageUp/PageDown page the scrollback in AGENT
+        // panes — a Claude/Codex session keeps its whole convo in our history and
+        // never binds the keys itself, while a shell keeps them (Arch's inputrc
+        // binds PageUp to history-search, and `send` would snap the view to the
+        // prompt anyway). ctrl+Home / ctrl+End jump to the ends of the scrollback
+        // in EVERY pane — no shell or readline binding wants those chords. Both
+        // defer to an app that owns its own view (alt screen or mouse reporting:
+        // less, vim, tmux), where our scrollback is not the surface on screen.
+        // In an inverted (anchor-top) pane the keys keep their MEANING — PageUp
+        // steps toward older, ctrl+Home is the oldest row — wherever older is
+        // painted; the wheel's per-gesture flip is about physical direction,
+        // which a named key doesn't have.
+        if let Some(nav) = read_nav_key(ks.key.as_str(), m) {
+            let paging = matches!(nav, ReadNav::PageUp | ReadNav::PageDown);
+            if !paging || self.mode.is_agent() {
+                let tmode = *self.session.term.lock().mode();
+                if !tmode.contains(TermMode::ALT_SCREEN) && !tmode.intersects(TermMode::MOUSE_MODE)
+                {
+                    let scroll = match nav {
+                        ReadNav::PageUp => Scroll::PageUp,
+                        ReadNav::PageDown => Scroll::PageDown,
+                        ReadNav::Top => Scroll::Top,
+                        ReadNav::Bottom => Scroll::Bottom,
+                    };
+                    self.session.term.lock().scroll_display(scroll);
+                    cx.notify();
+                    return;
+                }
+            }
         }
         if let Some(bytes) = keystroke_bytes(ks) {
             self.send(bytes, cx);
@@ -4995,6 +5060,23 @@ fn wheel_step_bytes(up: bool, sgr: bool) -> Vec<u8> {
         format!("\u{1b}[<{button};1;1M").into_bytes()
     } else {
         vec![0x1b, b'[', b'M', 32 + button, 33, 33]
+    }
+}
+
+/// Map a paging keystroke to a [`ReadNav`], or `None` for anything else. Plain
+/// PageUp/PageDown page; ctrl+Home / ctrl+End jump to the ends. Any other
+/// modifier combination is someone else's chord (ctrl+PageUp switches tabs,
+/// plain Home/End belong to the shell), so it must NOT match here.
+fn read_nav_key(key: &str, m: &gpui::Modifiers) -> Option<ReadNav> {
+    if m.alt || m.shift || m.platform || m.function {
+        return None;
+    }
+    match (key, m.control) {
+        ("pageup", false) => Some(ReadNav::PageUp),
+        ("pagedown", false) => Some(ReadNav::PageDown),
+        ("home", true) => Some(ReadNav::Top),
+        ("end", true) => Some(ReadNav::Bottom),
+        _ => None,
     }
 }
 
@@ -7310,6 +7392,69 @@ mod tests {
             assert!(!is_copyable_command(prose), "must stay silent: {prose:?}");
         }
     }
+
+    /// A line-INITIAL URL earns a chip — link tables and agent replies wrap
+    /// them, and half a URL is as dead as half a command. Mid-prose URLs stay
+    /// silent (the strictness rule), and the elision guarantee still wins even
+    /// over a URL shape.
+    #[test]
+    fn the_copy_gate_offers_line_initial_urls() {
+        for url in [
+            "https://github.com/parker-brown-family/terminal-delight/pull/222",
+            "http://localhost:631/printers/",
+            "file:///home/parker/.local/bin/terminal-delight",
+            "HTTPS://EXAMPLE.COM/CASED",
+        ] {
+            assert!(is_copyable_command(url), "should offer a chip: {url:?}");
+        }
+        for no in [
+            "see https://example.com for details",
+            "Target: https://github.com/x",
+            "https://example.com/…/elided/path",
+        ] {
+            assert!(!is_copyable_command(no), "must stay silent: {no:?}");
+        }
+    }
+
+    /// The paging-key map: plain PageUp/PageDown and ctrl+Home/ctrl+End match;
+    /// every other modifier combination belongs to someone else (ctrl+PageUp is
+    /// tab switching, plain Home/End are the shell's, alt/super are chords) and
+    /// must fall through.
+    #[test]
+    fn paging_keys_map_and_modified_ones_fall_through() {
+        let m = |ctrl: bool, alt: bool, shift: bool| gpui::Modifiers {
+            control: ctrl,
+            alt,
+            shift,
+            ..Default::default()
+        };
+        assert_eq!(
+            read_nav_key("pageup", &m(false, false, false)),
+            Some(ReadNav::PageUp)
+        );
+        assert_eq!(
+            read_nav_key("pagedown", &m(false, false, false)),
+            Some(ReadNav::PageDown)
+        );
+        assert_eq!(
+            read_nav_key("home", &m(true, false, false)),
+            Some(ReadNav::Top)
+        );
+        assert_eq!(
+            read_nav_key("end", &m(true, false, false)),
+            Some(ReadNav::Bottom)
+        );
+        // ctrl+PageUp/PageDown = tab switching; plain Home/End = the shell's.
+        assert_eq!(read_nav_key("pageup", &m(true, false, false)), None);
+        assert_eq!(read_nav_key("pagedown", &m(true, false, false)), None);
+        assert_eq!(read_nav_key("home", &m(false, false, false)), None);
+        assert_eq!(read_nav_key("end", &m(false, false, false)), None);
+        // any alt/shift decoration falls through too
+        assert_eq!(read_nav_key("pageup", &m(false, true, false)), None);
+        assert_eq!(read_nav_key("end", &m(true, false, true)), None);
+        assert_eq!(read_nav_key("q", &m(false, false, false)), None);
+    }
+
     #[test]
     fn reflow_leaves_narrow_wrapped_text_untouched() {
         // Prose wrapped at a fixed 72 cols inside a wide 200-col pane: the next

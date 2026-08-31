@@ -51,9 +51,9 @@ use gpui::{
 };
 use gpui_platform::application;
 use pane::{
-    CloseFocusRead, ClosePane, DragPaneStart, OpenAgentPanel, OpenDisplayMenu, OpenFind,
-    OpenFocusRead, OpenHelp, OpenLogoPicker, OpenThemeMenu, PaintApplied, PaneRenamed,
-    RequestCloseTab, TerminalView,
+    CloseFocusRead, ClosePane, DragPaneStart, FocusReadNav, OpenAgentPanel, OpenDisplayMenu,
+    OpenFind, OpenFocusRead, OpenHelp, OpenLogoPicker, OpenThemeMenu, PaintApplied, PaneRenamed,
+    ReadNav, RequestCloseTab, TerminalView,
 };
 use serde::{Deserialize, Serialize};
 use theme::{PaneTheme, ThemeChoice};
@@ -2062,6 +2062,9 @@ struct Workspace {
     /// The mirror's scaled cell height (px), captured each render so a line-delta
     /// wheel event pans the modal by whole rows.
     focus_line_h: f32,
+    /// The reader's inner viewport height (px) this frame, so PageUp/PageDown
+    /// page by what is actually on screen at the current zoom.
+    focus_page_h: f32,
     /// On-screen box of the FOCUS reading area (the clip box below the header),
     /// captured each frame. This is the SAME rect registered as the warp tube, so a
     /// click normalises into it and applies the identical barrel map the shader
@@ -2165,6 +2168,11 @@ fn make_pane_restored(
     // Esc inside the modal (routed up from the mirrored pane) → close it
     cx.subscribe(&pane, |ws, _pane, _ev: &CloseFocusRead, cx| {
         ws.close_focus_read(cx);
+    })
+    .detach();
+    // Paging keys inside the modal (same routing) → move the reader's view.
+    cx.subscribe(&pane, |ws, _pane, ev: &FocusReadNav, cx| {
+        ws.focus_read_nav(ev.0, cx);
     })
     .detach();
     // F1 in any pane toggles the help modal
@@ -2405,6 +2413,7 @@ impl Workspace {
             focus_layout: None,
             focus_overflow: 0.0,
             focus_line_h: 0.0,
+            focus_page_h: 0.0,
             focus_body_bounds: Arc::new(Mutex::new(None)),
             focus_map: Arc::new(Mutex::new(None)),
             focus_sel: None,
@@ -3827,6 +3836,22 @@ impl Workspace {
         *self.focus_map.lock().unwrap() = None;
         // free the (potentially 10k-row) memoised layout with the modal
         self.focus_layout = None;
+        cx.notify();
+    }
+
+    /// A paging key routed up from the mirrored pane: move the reader's view a
+    /// page (slightly under one viewport, so context carries across the press)
+    /// or jump to a document end. ctrl+End re-arms follow-bottom exactly like
+    /// opening does; paging or jumping up releases it, like the wheel.
+    fn focus_read_nav(&mut self, nav: ReadNav, cx: &mut Context<Self>) {
+        if self.focus_read.is_none() {
+            return;
+        }
+        let page = (self.focus_page_h * 0.9).max(self.focus_line_h).max(1.0);
+        let (next, at_bottom) =
+            read_nav_target(self.focus_scroll_y, self.focus_overflow, page, nav);
+        self.focus_scroll_y = next;
+        self.focus_at_bottom = at_bottom;
         cx.notify();
     }
 
@@ -13490,6 +13515,7 @@ impl Render for Workspace {
             let total_h = row_count as f32 * cell_h;
             self.focus_overflow = (total_h - avail_h).max(0.0);
             self.focus_line_h = cell_h;
+            self.focus_page_h = avail_h;
             // Follow-bottom: a MIRROR keeps the prompt in view. While pinned, new
             // output — including your own typing echoing back through the PTY —
             // holds the view at the newest row, exactly like the pane itself.
@@ -14025,6 +14051,28 @@ impl Render for Workspace {
 #[allow(clippy::items_after_test_module)]
 mod tests {
     use super::*;
+
+    /// PageDown from the bottom stays at the bottom (and stays armed); PageUp
+    /// releases follow-bottom; a PageUp past the top clamps to 0; ctrl+End from
+    /// anywhere lands at the true bottom re-armed; ctrl+Home lands at 0
+    /// released. When everything fits (overflow 0) every nav is a no-op that
+    /// leaves follow-bottom ARMED — a short read must keep tracking new output.
+    #[test]
+    fn reader_paging_arithmetic() {
+        use ReadNav::*;
+        let over = 1000.0;
+        let page = 90.0;
+        assert_eq!(read_nav_target(over, over, page, PageDown), (over, true));
+        assert_eq!(read_nav_target(over, over, page, PageUp), (910.0, false));
+        assert_eq!(read_nav_target(50.0, over, page, PageUp), (0.0, false));
+        assert_eq!(read_nav_target(120.0, over, page, Bottom), (over, true));
+        assert_eq!(read_nav_target(over, over, page, Top), (0.0, false));
+        for nav in [PageUp, PageDown, Top, Bottom] {
+            assert_eq!(read_nav_target(0.0, 0.0, page, nav), (0.0, true));
+        }
+        // Landing within half a px of the bottom re-arms, same rule as the wheel.
+        assert!(read_nav_target(over - 0.4, over, 0.0, PageDown).1);
+    }
 
     #[test]
     fn logo_scan_reaches_screenshots() {
@@ -15418,6 +15466,23 @@ node = "Leaf"
 
 /// Which pane a tab should focus when you switch to it: the one you were last in
 /// (if it's still open), else the first. Pure so the precedence is testable.
+/// Where a [`ReadNav`] takes the reader's scroll, as `(scroll_y, at_bottom)`.
+/// Pure so the arithmetic is testable: `cur` is the current pan, `overflow` the
+/// scrollable range (0 = everything fits), `page` the per-press stride.
+/// `Bottom` asks for `f32::MAX` and lets the clamp find the true bottom — the
+/// same trick `open_focus_read` uses — so it also re-arms follow-bottom.
+fn read_nav_target(cur: f32, overflow: f32, page: f32, nav: ReadNav) -> (f32, bool) {
+    let overflow = overflow.max(0.0);
+    let next = match nav {
+        ReadNav::PageUp => cur - page,
+        ReadNav::PageDown => cur + page,
+        ReadNav::Top => 0.0,
+        ReadNav::Bottom => f32::MAX,
+    };
+    let next = next.clamp(0.0, overflow);
+    (next, next >= overflow - 0.5)
+}
+
 fn pick_focus_target<T: PartialEq + Copy>(remembered: Option<T>, leaves: &[T]) -> Option<T> {
     remembered
         .filter(|id| leaves.contains(id))
