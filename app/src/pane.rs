@@ -4393,11 +4393,18 @@ pub fn resolve_family(requested: &str) -> String {
     requested.to_string()
 }
 
-/// Startup diagnostic: if the ship-default family isn't installed, describe the
+/// Startup diagnostic: if the ACTIVE font family isn't installed, describe the
 /// fallback that will be used (so a silent substitution can never hide again).
-/// Returns None when the default is present. Call after `init_font_registry`.
-pub fn font_diagnostic() -> Option<String> {
-    let want = "JetBrains Mono";
+/// Returns None when the wanted family is present. Call after
+/// `init_font_registry`.
+///
+/// `want` is the family the running theme actually asks for — NOT the ship
+/// default. It used to be the hardcoded literal "JetBrains Mono", so a user who
+/// had deliberately configured an installed family still got told, on every
+/// single launch, that a font they never asked for was missing. That is the
+/// first thing the program says to you, and it was crying wolf. Guarded by
+/// `the_font_diagnostic_is_silent_about_a_family_that_resolves`.
+pub fn font_diagnostic(want: &str) -> Option<String> {
     let got = resolve_family(want);
     if got == want {
         return None;
@@ -4405,7 +4412,7 @@ pub fn font_diagnostic() -> Option<String> {
     let n = AVAILABLE_FONTS.get().map(|v| v.len()).unwrap_or(0);
     Some(format!(
         "font '{want}' not installed; falling back to '{got}' ({n} families available). \
-         Install JetBrains Mono for the intended look."
+         Install {want} for the intended look."
     ))
 }
 
@@ -6473,6 +6480,38 @@ mod tests {
             underline: None,
             strikethrough: None,
         }
+    }
+
+    #[test]
+    fn the_font_diagnostic_is_silent_about_a_family_that_resolves() {
+        // #163: the diagnostic used to hardcode the ship default, so configuring
+        // an installed family still produced "JetBrains Mono not installed" on
+        // every launch. It must speak only about the family it was ASKED about.
+        //
+        // AVAILABLE_FONTS is a process-wide OnceLock, so this reads back whatever
+        // is actually registered rather than assuming this test set it — that
+        // keeps the assertions true whatever order the suite runs in.
+        let _ = AVAILABLE_FONTS.set(MONO_FALLBACKS.iter().map(|s| s.to_string()).collect());
+        let installed = AVAILABLE_FONTS.get().expect("registry seeded");
+        let present = installed.first().expect("at least one family").clone();
+
+        assert_eq!(
+            font_diagnostic(&present),
+            None,
+            "a family that resolves must not warn (got a warning for {present})"
+        );
+
+        // A family that is absent must name ITSELF, never the ship default.
+        let msg = font_diagnostic("Nonexistent Family XYZ")
+            .expect("an absent family that falls back must warn");
+        assert!(
+            msg.contains("Nonexistent Family XYZ"),
+            "the warning must name the family actually wanted, got: {msg}"
+        );
+        assert!(
+            msg.contains("Install Nonexistent Family XYZ"),
+            "the ADVICE must name the wanted family, not the ship default: {msg}"
+        );
     }
 
     #[test]

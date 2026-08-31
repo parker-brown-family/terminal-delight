@@ -14902,7 +14902,13 @@ fn main() {
                 // Wayland, fractional scaling): record installed fonts so the grid
                 // can fall back deliberately, and surface the GPU/driver gpui chose.
                 pane::init_font_registry(cx.text_system().all_font_names());
-                if let Some(msg) = pane::font_diagnostic() {
+                // Diagnose the family the ACTIVE theme asks for, not the ship
+                // default — see #163. `theme::init` has already run.
+                let want_font = {
+                    let choice = theme::outer_choice(cx);
+                    theme::resolve(cx, &choice).font_family.clone()
+                };
+                if let Some(msg) = pane::font_diagnostic(&want_font) {
                     eprintln!("terminal-delight: {msg}");
                 }
                 if let Some(g) = window.gpu_specs() {
