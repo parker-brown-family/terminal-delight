@@ -17,8 +17,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 pub fn config_path() -> PathBuf {
-    let home = std::env::var("HOME").unwrap_or_default();
-    PathBuf::from(home).join(".config/terminal-delight/dir-logos.toml")
+    crate::instance::config_dir().join("dir-logos.toml")
 }
 
 /// Load the map. A missing or unparsable file is an EMPTY map, never an error —

@@ -2457,6 +2457,12 @@ impl Workspace {
         if self.scratch {
             return;
         }
+        // Quit-start has already handed this session back (`instance::release`),
+        // so another window may already own it. Writing now would clobber the new
+        // owner's state with our dying copy — see #189.
+        if instance::released() {
+            return;
+        }
         // A real (user-driven) save supersedes any reap staleness: the user has
         // engaged with the current tree, so it becomes the new truth.
         self.degraded.set(false);
