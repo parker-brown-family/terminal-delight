@@ -4917,6 +4917,37 @@ pub fn join_focus_lines(
             (t[..keep].to_string(), slice_runs(r, 0, keep))
         })
         .collect();
+    // Strip the COMMON left indent before judging structure.
+    //
+    // `wrap_join` refuses to merge any row that starts with whitespace, because an
+    // indented row is normally a code block or a list continuation. But a TUI agent
+    // indents its ENTIRE transcript — Claude Code by two spaces — so every mirrored
+    // row trips that guard and nothing ever joins. A margin shared by every row is
+    // not structure; it is a margin. Removing it first restores the guard to what it
+    // is actually for: rows indented *relative to their neighbours*.
+    //
+    // A block with no shared margin dedents by zero and is untouched, so a genuine
+    // code block sitting inside flush-left prose still refuses to merge.
+    let indent = trimmed
+        .iter()
+        .filter(|(t, _)| !t.trim().is_empty())
+        .map(|(t, _)| t.len() - t.trim_start_matches(' ').len())
+        .min()
+        .unwrap_or(0);
+    let trimmed: Vec<(String, Vec<TextRun>)> = if indent == 0 {
+        trimmed
+    } else {
+        trimmed
+            .into_iter()
+            .map(|(t, r)| {
+                let cut = indent.min(t.len());
+                (t[cut..].to_string(), slice_runs(&r, cut, t.len()))
+            })
+            .collect()
+    };
+    // The width test must judge against the width actually available to text once
+    // that margin is gone, or a dedented full row reads as short of the edge.
+    let src_cols = src_cols.saturating_sub(indent).max(1);
     let mut out: Vec<(String, Vec<TextRun>)> = Vec::with_capacity(trimmed.len());
     // The logical line under construction, plus the char-width of the last raw row
     // appended to it — the row `wrap_join`'s width test is applied against.
@@ -7425,6 +7456,42 @@ mod tests {
 
         let blank = [mk("git status"), mk(""), mk("git log")];
         assert_eq!(join_focus_lines(&blank, 80).len(), 3);
+    }
+
+    /// A TUI agent indents its WHOLE transcript, which used to trip `wrap_join`'s
+    /// indented-row guard on every single row — so nothing ever joined and the
+    /// reader could only ever zoom. The shared margin must be stripped before the
+    /// structure test runs.
+    #[test]
+    fn join_focus_lines_dedents_a_uniformly_indented_transcript() {
+        let mk = |s: &str| (s.to_string(), vec![run(s.len())]);
+        // every row carries Claude Code's two-space margin
+        let lines = [
+            mk("  Target: https://github.com/parker-brown-fami"),
+            mk("  ly/terminal-delight/pull/212"),
+        ];
+        let out = join_focus_lines(&lines, 48);
+        assert_eq!(out.len(), 1, "a shared margin must not block the join");
+        assert!(
+            !out[0].0.starts_with(' '),
+            "the common indent is stripped, got {:?}",
+            out[0].0
+        );
+        let run_bytes: usize = out[0].1.iter().map(|r| r.len).sum();
+        assert_eq!(run_bytes, out[0].0.len(), "runs survive the dedent");
+    }
+
+    /// …but a row indented RELATIVE to its neighbours is still structure, and must
+    /// still refuse to merge. Dedent removes the shared margin, not the meaning.
+    #[test]
+    fn join_focus_lines_still_refuses_a_relatively_indented_row() {
+        let mk = |s: &str| (s.to_string(), vec![run(s.len())]);
+        let lines = [
+            mk("  this line runs right up to edge"),
+            mk("      let x = code_block();"),
+        ];
+        // common indent is 2; the second row keeps 4 of its own ⇒ still indented
+        assert_eq!(join_focus_lines(&lines, 32).len(), 2);
     }
 
     /// The padding trap again, in the mirror this time: grid rows arrive padded to
