@@ -45,12 +45,7 @@ impl Default for BellConfig {
 /// `$XDG_CONFIG_HOME/terminal-delight/sounds` (or `~/.config/...`). User drops
 /// their own mp3s here; the seeded defaults live here too.
 pub fn sounds_dir() -> PathBuf {
-    let base = std::env::var_os("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".config")
-        });
-    base.join("terminal-delight").join("sounds")
+    crate::instance::config_dir().join("sounds")
 }
 
 /// Audio files in the sounds dir, sorted. Creates the dir if missing.
