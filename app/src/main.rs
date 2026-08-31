@@ -13223,10 +13223,25 @@ impl Render for Workspace {
             // Every grid row soft-wraps to this, so a flat read can NEVER overflow
             // horizontally — there is no sideways scroll any more.
             let fit_cols = (avail_w / glyph_w).floor().max(1.0) as usize;
+            // Heal the source pane's width-breaks BEFORE re-wrapping, or the slider
+            // only ever zooms: the mirrored rows are already broken at `snap.cols`,
+            // so no amount of extra `fit_cols` can lengthen one. Joined first, a
+            // narrower glyph genuinely fits more text per line.
+            //
+            // The joined lines become the reader's own coordinate space: a
+            // `VisualRow`'s `src_row` is an index into THEM, not into the source
+            // grid. That is why `src_lines` below must be the joined text too —
+            // selection, highlight and copy all read the same space, and a wrapped
+            // command now copies back as the single line it really is.
+            let joined = if crawl {
+                Vec::new()
+            } else {
+                pane::join_focus_lines(&snap.lines, snap.cols)
+            };
             let vrows = if crawl {
                 Vec::new()
             } else {
-                pane::wrap_focus_lines(&snap.lines, fit_cols)
+                pane::wrap_focus_lines(&joined, fit_cols)
             };
             // Exact content height — crawl is one row per grid row, a wrapped read
             // one row per visual (wrapped) row. Counted, never measured.
@@ -13273,7 +13288,13 @@ impl Render for Workspace {
             };
             *self.focus_map.lock().unwrap() = Some(FocusMap {
                 rows: map_rows,
-                src_lines: snap.lines.iter().map(|(t, _)| t.clone()).collect(),
+                // The JOINED lines, matching the space `VisualRow::src_row` indexes
+                // into. Crawl never joins, so it keeps the raw mirrored rows.
+                src_lines: if crawl {
+                    snap.lines.iter().map(|(t, _)| t.clone()).collect()
+                } else {
+                    joined.iter().map(|(t, _)| t.clone()).collect()
+                },
                 line_h: cell_h,
                 glyph_w,
                 pad: content_left,
