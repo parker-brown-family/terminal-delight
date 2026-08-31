@@ -128,7 +128,7 @@ fn action_from_value(v: &Value) -> Option<PluginAction> {
 /// resolvable and the user hasn't already installed their own.
 pub fn discover(home: &Path) -> Vec<PluginManifest> {
     let mut out: Vec<PluginManifest> = Vec::new();
-    let root = home.join(".config/terminal-delight/plugins");
+    let root = crate::instance::config_dir().join("plugins");
     if let Ok(dirs) = std::fs::read_dir(&root) {
         for d in dirs.flatten() {
             let mf = d.path().join("plugin.json");

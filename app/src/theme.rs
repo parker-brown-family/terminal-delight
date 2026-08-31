@@ -3307,8 +3307,7 @@ pub fn theme_path() -> PathBuf {
     if let Ok(p) = std::env::var("TD_THEME") {
         return PathBuf::from(p);
     }
-    let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
-    PathBuf::from(home).join(".config/terminal-delight/theme.toml")
+    crate::instance::config_dir().join("theme.toml")
 }
 
 /// Open a path in the user's default handler (their editor, for a `.toml`).

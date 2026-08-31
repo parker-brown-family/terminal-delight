@@ -949,6 +949,13 @@ struct StateFile {
     /// absent = per-theme.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     track: Option<[f32; 3]>,
+    /// How many terminal panes this session holds. Recorded so adoption can tell
+    /// a substantial session from a throwaway one WITHOUT parsing the whole tree
+    /// on every launch (`instance::scan_sessions` reads it as a top-level int).
+    /// Absent on files written before this existed — treated as substantial, so a
+    /// pre-existing session is never demoted by a field it could not have had.
+    #[serde(default)]
+    panes: usize,
     tabs: Vec<SavedTab>,
     /// Tab groups (browser-style colour bands). Absent on pre-feature files.
     #[serde(default)]
@@ -1002,6 +1009,7 @@ impl Default for StateFile {
     fn default() -> Self {
         Self {
             active: 0,
+            panes: 0,
             win: None,
             scale: None,
             theme: None,
@@ -2409,6 +2417,7 @@ impl Workspace {
     fn build_state(&self, cx: &App) -> StateFile {
         StateFile {
             active: self.active,
+            panes: self.pane_count(),
             win: self.last_win,
             // Kept for backward-compat with readers of the old top-level field;
             // the source of truth is now `theme.grade.scale`.
@@ -2455,6 +2464,12 @@ impl Workspace {
     fn save(&self, cx: &App) {
         // a scratch / torn-off window must never overwrite a workspace's layout
         if self.scratch {
+            return;
+        }
+        // Quit-start has already handed this session back (`instance::release`),
+        // so another window may already own it. Writing now would clobber the new
+        // owner's state with our dying copy — see #189.
+        if instance::released() {
             return;
         }
         // A real (user-driven) save supersedes any reap staleness: the user has
@@ -14395,6 +14410,7 @@ id = "hacker"
     #[test]
     fn state_with_pane_theme_round_trips() {
         let state = StateFile {
+            panes: 0,
             last_workspace: None,
             active: 0,
             win: Some((12.0, 34.0, 1280.0, 720.0)),
@@ -14443,6 +14459,7 @@ id = "hacker"
     #[test]
     fn leaf_work_state_round_trips() {
         let state = StateFile {
+            panes: 0,
             last_workspace: None,
             active: 0,
             win: None,
@@ -14493,6 +14510,7 @@ id = "hacker"
             logo: None,
         };
         let state = StateFile {
+            panes: 0,
             last_workspace: None,
             active: 0,
             win: None,
@@ -14822,6 +14840,7 @@ node = "Leaf"
             b: Box::new(leaf()),
         };
         let state = StateFile {
+            panes: 0,
             last_workspace: None,
             active: 0,
             win: None,
@@ -15172,7 +15191,13 @@ fn main() {
                 // Wayland, fractional scaling): record installed fonts so the grid
                 // can fall back deliberately, and surface the GPU/driver gpui chose.
                 pane::init_font_registry(cx.text_system().all_font_names());
-                if let Some(msg) = pane::font_diagnostic() {
+                // Diagnose the family the ACTIVE theme asks for, not the ship
+                // default — see #163. `theme::init` has already run.
+                let want_font = {
+                    let choice = theme::outer_choice(cx);
+                    theme::resolve(cx, &choice).font_family.clone()
+                };
+                if let Some(msg) = pane::font_diagnostic(&want_font) {
                     eprintln!("terminal-delight: {msg}");
                 }
                 if let Some(g) = window.gpu_specs() {

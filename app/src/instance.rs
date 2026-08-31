@@ -39,6 +39,7 @@ use std::os::fd::AsRawFd;
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime};
 
@@ -76,6 +77,10 @@ struct Bound {
 
 static BOUND: OnceLock<Bound> = OnceLock::new();
 
+/// Set by [`release`] at quit-start; read by the save path. Separate from the
+/// lock so persistence is disarmed even when this process never held one.
+static RELEASED: AtomicBool = AtomicBool::new(false);
+
 /// Bind this process to `key`, holding `lock` open for the rest of the run.
 /// Called once, from `main`, before any state is read or written.
 pub fn bind(key: String, lock: Option<File>) {
@@ -91,11 +96,28 @@ pub fn bind(key: String, lock: Option<File>) {
 /// workspace re-claims the session and restores, instead of finding the dying
 /// window still holding the lock and booting as a scratch terminal.
 pub fn release() {
+    // ORDER MATTERS. Disarm persistence BEFORE dropping the lock, never after:
+    // between the two there is a window in which the session is claimable by a
+    // new window while this dying process still believes it may write. A
+    // periodic save landing in that window overwrites state the new owner has
+    // already adopted — the corpse clobbering its successor.
+    //
+    // Before #195 the victim was always the same workspace, which made it look
+    // like a niche race. Now that any window can adopt any free session, the
+    // victim is whoever adopted next. Guarded by
+    // `release_disarms_persistence_before_it_frees_the_lock`.
+    RELEASED.store(true, Ordering::SeqCst);
     if let Some(b) = BOUND.get() {
         if let Ok(mut lock) = b.lock.lock() {
             let _ = lock.take();
         }
     }
+}
+
+/// True once [`release`] has run. This process has given its session up and must
+/// not write to it again — the save path checks this before persisting.
+pub fn released() -> bool {
+    RELEASED.load(Ordering::SeqCst)
 }
 
 /// The session key this process was bound to (before `bind`, and in tests, the
@@ -106,7 +128,18 @@ pub fn key() -> &'static str {
 
 // ---- paths ----
 
+/// THE config root, for every module. `$XDG_CONFIG_HOME/terminal-delight` when
+/// that is set, else `~/.config/terminal-delight`.
+///
+/// This used to be derived independently in five places — `instance`, `theme`,
+/// `plugins` and `dirlogo` each hardcoded `~/.config`, while `bell` alone
+/// honoured `XDG_CONFIG_HOME`. On a box that sets XDG_CONFIG_HOME the bell
+/// sounds and everything else lived in different directories, and every future
+/// config bug had five sites to be wrong in. One accessor, one answer.
 pub fn config_dir() -> PathBuf {
+    if let Some(x) = std::env::var_os("XDG_CONFIG_HOME").filter(|v| !v.is_empty()) {
+        return PathBuf::from(x).join("terminal-delight");
+    }
     let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
     PathBuf::from(home).join(".config/terminal-delight")
 }
@@ -209,11 +242,24 @@ fn explicit_session() -> Option<String> {
 /// not. Ranking (rather than the old workspace number) is what keeps a tear-off
 /// looking like its parent now that ids are not workspaces.
 pub fn resolve_key() -> String {
-    theme_key_in(&config_dir(), current_workspace().as_deref())
+    theme_key_in(
+        &config_dir(),
+        explicit_session().as_deref(),
+        current_workspace().as_deref(),
+    )
 }
 
-fn theme_key_in(config: &Path, here: Option<&str>) -> String {
-    explicit_session()
+/// `explicit` and `here` are passed in rather than read from the environment —
+/// the same discipline [`resolve_session_in`] follows, and for the same reason.
+/// Reading `$TD_SESSION` in here made the tests non-hermetic in the one place it
+/// matters most: TD exports `TD_SESSION` into every pane it opens, so running
+/// `cargo test` INSIDE Terminal Delight resolved every key to the developer's
+/// live session and two tests failed. They passed in CI, which has no TD_SESSION
+/// — a green pipeline hiding a red desk. Guarded by
+/// `the_theme_key_ignores_the_ambient_td_session_env`.
+fn theme_key_in(config: &Path, explicit: Option<&str>, here: Option<&str>) -> String {
+    explicit
+        .map(str::to_string)
         .or_else(|| rank(scan_sessions(config), here).into_iter().next())
         .unwrap_or_else(|| DEFAULT_KEY.to_string())
 }
@@ -229,6 +275,19 @@ struct Candidate {
     saved: SystemTime,
     /// Where this session was last saved, if it recorded it. A hint, never an id.
     workspace: Option<String>,
+    /// Panes the session holds, if it recorded them. `None` on files written
+    /// before the field existed — counted as substantial, never demoted.
+    panes: Option<usize>,
+}
+
+impl Candidate {
+    /// A session worth preferring over a throwaway one. A single pane is what a
+    /// "open a terminal, run one command, close it" window leaves behind; more
+    /// than that is work someone arranged. Unknown (a pre-field file) counts as
+    /// substantial — a session that predates the field must not be demoted by it.
+    fn substantial(&self) -> bool {
+        self.panes.is_none_or(|p| p > 1)
+    }
 }
 
 /// Which session this window opens, and the claim that makes it ours:
@@ -286,26 +345,42 @@ fn scan_sessions(config: &Path) -> Vec<Candidate> {
             }
             let id = path.file_stem()?.to_str()?.to_string();
             let saved = e.metadata().ok()?.modified().ok()?;
-            let workspace = std::fs::read_to_string(&path)
-                .ok()
-                .and_then(|body| toml_top_level_string(&body, "last_workspace"));
+            let body = std::fs::read_to_string(&path).ok();
+            let workspace = body
+                .as_deref()
+                .and_then(|b| toml_top_level_string(b, "last_workspace"));
+            let panes = body
+                .as_deref()
+                .and_then(|b| toml_top_level_usize(b, "panes"));
             Some(Candidate {
                 id,
                 saved,
                 workspace,
+                panes,
             })
         })
         .collect()
 }
 
-/// Newest first, but a session last saved on this workspace outranks a newer one
-/// from elsewhere. Ties break on the id so the order is total and the tests
-/// cannot flake on two files sharing a timestamp.
+/// Adoption order: this workspace first, then SUBSTANTIAL sessions, then newest.
+/// Ties break on the id so the order is total and the tests cannot flake on two
+/// files sharing a timestamp.
+///
+/// The substantial rule exists because recency alone gets bulldozed. Open a
+/// second window to run one command, close it, and that one-pane session is now
+/// the most recently saved — so the next launch adopts IT and the twelve-tab
+/// session you actually work in becomes reachable only by knowing `$TD_SESSION`
+/// exists. A throwaway must never displace arranged work.
+///
+/// It is deliberately a CLASS test, not "biggest wins": among real sessions
+/// recency still decides, so today's work beats last week's. Ranking purely on
+/// size would make a session you abandoned permanently sticky.
 fn rank(mut cands: Vec<Candidate>, here: Option<&str>) -> Vec<String> {
     cands.sort_by(|a, b| {
         let mine = |c: &Candidate| here.is_some() && c.workspace.as_deref() == here;
         mine(b)
             .cmp(&mine(a))
+            .then_with(|| b.substantial().cmp(&a.substantial()))
             .then_with(|| b.saved.cmp(&a.saved))
             .then_with(|| a.id.cmp(&b.id))
     });
@@ -340,6 +415,25 @@ fn fresh_session(config: &Path) -> (String, Claim) {
 /// the first `[table]` header so a pane's own `last_workspace` could never be
 /// mistaken for the session's. Hand-rolled for the same reason [`json_string`]
 /// is: one string of one file does not earn a parser in the boot path.
+/// A top-level integer, read the same cheap way as [`toml_top_level_string`] —
+/// scan_sessions runs on every launch and must not deserialise whole sessions.
+fn toml_top_level_usize(src: &str, key: &str) -> Option<usize> {
+    for line in src.lines() {
+        let line = line.trim();
+        if line.starts_with('[') {
+            return None;
+        }
+        let Some(rest) = line.strip_prefix(key) else {
+            continue;
+        };
+        let Some(rest) = rest.trim_start().strip_prefix('=') else {
+            continue;
+        };
+        return rest.trim().parse().ok();
+    }
+    None
+}
+
 fn toml_top_level_string(src: &str, key: &str) -> Option<String> {
     for line in src.lines() {
         let line = line.trim();
@@ -375,9 +469,26 @@ pub struct Claim {
 /// persistence is broken for everyone, and a normal window is still better than
 /// a scratch one, so that case claims ownership without a lock to show for it.
 pub fn claim_in(config: &Path, key: &str) -> Claim {
-    let unarbitrated = Claim {
-        owned: true,
-        lock: None,
+    // FAIL CLOSED. This used to return `owned: true, lock: None` when the lock
+    // could not be arbitrated, on the reasoning that a normal window beats a
+    // scratch one. That trade is wrong: an unarbitrated claim is indistinguishable
+    // from a real one, so TWO windows can both believe they own a session and
+    // both resume its agents — two Claude processes on one conversation, both
+    // billing, both writing. A scratch window is an annoyance you can see; a
+    // duplicated agent is a cost you find out about later.
+    //
+    // #195 widened the exposure: adoption walks a list of candidates, so a launch
+    // now makes several claim attempts where it used to make one.
+    let unarbitrated = |why: &str| {
+        eprintln!(
+            "terminal-delight: cannot arbitrate ownership of session '{key}' ({why}); \
+             opening a scratch window rather than risk two windows owning it. \
+             State will not be saved."
+        );
+        Claim {
+            owned: false,
+            lock: None,
+        }
     };
     if DirBuilder::new()
         .recursive(true)
@@ -385,7 +496,7 @@ pub fn claim_in(config: &Path, key: &str) -> Claim {
         .create(sessions_dir_in(config))
         .is_err()
     {
-        return unarbitrated;
+        return unarbitrated("sessions directory is not creatable");
     }
     let Ok(mut file) = OpenOptions::new()
         .write(true)
@@ -394,7 +505,7 @@ pub fn claim_in(config: &Path, key: &str) -> Claim {
         .mode(0o600)
         .open(lock_file_in(config, key))
     else {
-        return unarbitrated;
+        return unarbitrated("lock file is not openable");
     };
     if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
         return Claim {
@@ -678,11 +789,83 @@ mod tests {
     }
 
     fn cand(id: &str, age: u64, workspace: Option<&str>) -> Candidate {
+        cand_of(id, age, workspace, None)
+    }
+
+    fn cand_of(id: &str, age: u64, workspace: Option<&str>, panes: Option<usize>) -> Candidate {
         Candidate {
             id: id.into(),
             saved: SystemTime::now() - Duration::from_secs(age),
             workspace: workspace.map(Into::into),
+            panes,
         }
+    }
+
+    #[test]
+    fn a_throwaway_terminal_cannot_bulldoze_an_arranged_session() {
+        // THE case this rule exists for. You keep a big multi-project session.
+        // You open a second window to run one command and close it — that
+        // one-pane session is now the most recently saved. Recency alone would
+        // adopt it and hide the real one behind $TD_SESSION.
+        let order = rank(
+            vec![
+                cand_of("scratch", 10, None, Some(1)), // newest, trivial
+                cand_of("work", 4000, None, Some(30)), // older, arranged
+            ],
+            None,
+        );
+        assert_eq!(
+            order,
+            vec!["work", "scratch"],
+            "a one-pane session must never displace an arranged one"
+        );
+    }
+
+    #[test]
+    fn among_substantial_sessions_recency_still_decides() {
+        // Deliberately NOT "biggest wins": ranking purely on size would make a
+        // session you abandoned weeks ago permanently sticky.
+        let order = rank(
+            vec![
+                cand_of("huge-but-stale", 400_000, None, Some(40)),
+                cand_of("todays-work", 60, None, Some(6)),
+            ],
+            None,
+        );
+        assert_eq!(
+            order,
+            vec!["todays-work", "huge-but-stale"],
+            "among real sessions the newest still wins"
+        );
+    }
+
+    #[test]
+    fn a_session_predating_the_pane_count_is_never_demoted() {
+        // Files written before `panes` existed report None. Treating that as
+        // trivial would silently push every pre-upgrade session behind a fresh
+        // one-pane window on the first launch after upgrading.
+        let order = rank(
+            vec![
+                cand_of("fresh-trivial", 10, None, Some(1)),
+                cand_of("legacy", 5000, None, None),
+            ],
+            None,
+        );
+        assert_eq!(order, vec!["legacy", "fresh-trivial"]);
+    }
+
+    #[test]
+    fn the_workspace_hint_still_outranks_substance() {
+        // The workspace hint is the FIRST key: a session you were just standing
+        // on stays the one you get back, trivial or not.
+        let order = rank(
+            vec![
+                cand_of("big-elsewhere", 10, Some("9"), Some(30)),
+                cand_of("small-here", 5000, Some("1"), Some(1)),
+            ],
+            Some("1"),
+        );
+        assert_eq!(order, vec!["small-here", "big-elsewhere"]);
     }
 
     #[test]
@@ -812,16 +995,102 @@ mod tests {
         // it now that ids and workspaces have nothing to do with each other.
         let held = adopt_or_fresh(&config, None);
         assert_eq!(held.0, "4");
-        assert_eq!(theme_key_in(&config, Some("9")), "4");
+        assert_eq!(theme_key_in(&config, None, Some("9")), "4");
         // standing on workspace 1, the session last saved there wins the tie
-        assert_eq!(theme_key_in(&config, Some("1")), "1");
+        assert_eq!(theme_key_in(&config, None, Some("1")), "1");
         drop(held);
+    }
+
+    /// `set_var` is process-global and races with any concurrent `getenv`, so the
+    /// handful of tests that must touch the environment take this first.
+    fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+    }
+
+    #[test]
+    fn claim_in_fails_closed_when_ownership_cannot_be_arbitrated() {
+        // A config root whose `sessions` path is a FILE: the directory can never
+        // be created, so ownership cannot be arbitrated. The old behaviour was to
+        // claim anyway (`owned: true, lock: None`), which lets two windows both
+        // believe they own a session and both resume its agents. #188.
+        let config = tmp("failclosed");
+        std::fs::write(config.join("sessions"), b"not a directory").unwrap();
+        let claim = claim_in(&config, "1");
+        assert!(
+            !claim.owned,
+            "an unarbitrated claim must NOT report ownership — two windows \
+             owning one session duplicates its agents"
+        );
+        assert!(claim.lock.is_none());
+    }
+
+    #[test]
+    fn a_normal_claim_still_owns_and_holds_the_lock() {
+        // the fail-closed path must not have cost the happy path its lock
+        let config = tmp("okclaim");
+        let claim = claim_in(&config, "1");
+        assert!(claim.owned);
+        assert!(claim.lock.is_some(), "a real claim carries the flock");
+    }
+
+    #[test]
+    fn release_disarms_persistence_before_it_frees_the_lock() {
+        // #189: the save path checks `released()`. If the flag were set AFTER the
+        // lock were dropped, a periodic save could land in the gap and clobber
+        // state a newly-adopting window had already taken.
+        assert!(!released(), "nothing has released yet in this process");
+        let config = tmp("release");
+        let claim = claim_in(&config, "1");
+        assert!(claim.owned);
+        bind("1".into(), claim.lock);
+        release();
+        assert!(released(), "release() must disarm persistence");
+    }
+
+    #[test]
+    fn the_config_root_follows_xdg_config_home() {
+        // #190: five modules used to derive this independently and only `bell`
+        // honoured XDG_CONFIG_HOME, so on a box that sets it the bell sounds and
+        // everything else lived in different directories.
+        let _guard = env_lock();
+        let base = tmp("xdg");
+        // SAFETY: serialised by `env_lock`; restored before the guard drops.
+        unsafe { std::env::set_var("XDG_CONFIG_HOME", &base) };
+        let got = config_dir();
+        unsafe { std::env::remove_var("XDG_CONFIG_HOME") };
+        assert_eq!(got, base.join("terminal-delight"));
+    }
+
+    #[test]
+    fn the_theme_key_ignores_the_ambient_td_session_env() {
+        // TD exports TD_SESSION into every pane it opens, so `cargo test` run
+        // inside Terminal Delight has one set. `theme_key_in` must resolve from
+        // its ARGUMENTS only — otherwise the developer's live session leaks into
+        // every assertion and the suite goes red on the desk while staying green
+        // in CI (which has no TD_SESSION). This is the regression that cost two
+        // tests; it is cheap to pin and impossible to notice by hand.
+        let _guard = env_lock();
+        let config = tmp("ambient");
+        session(&config, "1", None, 300);
+        session(&config, "4", None, 10);
+        // SAFETY: single-threaded within this test; the point is precisely that
+        // the function under test must not consult this.
+        unsafe { std::env::set_var("TD_SESSION", "not-a-real-session") };
+        let got = theme_key_in(&config, None, None);
+        unsafe { std::env::remove_var("TD_SESSION") };
+        assert_eq!(
+            got, "4",
+            "theme_key_in read $TD_SESSION instead of its explicit argument"
+        );
     }
 
     #[test]
     fn a_scratch_window_with_no_sessions_falls_back_to_the_default_look() {
         let config = tmp("theme-empty");
-        assert_eq!(theme_key_in(&config, Some("7")), DEFAULT_KEY);
+        assert_eq!(theme_key_in(&config, None, Some("7")), DEFAULT_KEY);
     }
 
     #[test]
@@ -833,6 +1102,7 @@ mod tests {
             id: id.into(),
             saved: same,
             workspace: None,
+            panes: None,
         };
         assert_eq!(
             rank(vec![at("7"), at("1"), at("3")], None),
