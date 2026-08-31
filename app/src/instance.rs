@@ -209,11 +209,24 @@ fn explicit_session() -> Option<String> {
 /// not. Ranking (rather than the old workspace number) is what keeps a tear-off
 /// looking like its parent now that ids are not workspaces.
 pub fn resolve_key() -> String {
-    theme_key_in(&config_dir(), current_workspace().as_deref())
+    theme_key_in(
+        &config_dir(),
+        explicit_session().as_deref(),
+        current_workspace().as_deref(),
+    )
 }
 
-fn theme_key_in(config: &Path, here: Option<&str>) -> String {
-    explicit_session()
+/// `explicit` and `here` are passed in rather than read from the environment —
+/// the same discipline [`resolve_session_in`] follows, and for the same reason.
+/// Reading `$TD_SESSION` in here made the tests non-hermetic in the one place it
+/// matters most: TD exports `TD_SESSION` into every pane it opens, so running
+/// `cargo test` INSIDE Terminal Delight resolved every key to the developer's
+/// live session and two tests failed. They passed in CI, which has no TD_SESSION
+/// — a green pipeline hiding a red desk. Guarded by
+/// `the_theme_key_ignores_the_ambient_td_session_env`.
+fn theme_key_in(config: &Path, explicit: Option<&str>, here: Option<&str>) -> String {
+    explicit
+        .map(str::to_string)
         .or_else(|| rank(scan_sessions(config), here).into_iter().next())
         .unwrap_or_else(|| DEFAULT_KEY.to_string())
 }
@@ -812,16 +825,38 @@ mod tests {
         // it now that ids and workspaces have nothing to do with each other.
         let held = adopt_or_fresh(&config, None);
         assert_eq!(held.0, "4");
-        assert_eq!(theme_key_in(&config, Some("9")), "4");
+        assert_eq!(theme_key_in(&config, None, Some("9")), "4");
         // standing on workspace 1, the session last saved there wins the tie
-        assert_eq!(theme_key_in(&config, Some("1")), "1");
+        assert_eq!(theme_key_in(&config, None, Some("1")), "1");
         drop(held);
+    }
+
+    #[test]
+    fn the_theme_key_ignores_the_ambient_td_session_env() {
+        // TD exports TD_SESSION into every pane it opens, so `cargo test` run
+        // inside Terminal Delight has one set. `theme_key_in` must resolve from
+        // its ARGUMENTS only — otherwise the developer's live session leaks into
+        // every assertion and the suite goes red on the desk while staying green
+        // in CI (which has no TD_SESSION). This is the regression that cost two
+        // tests; it is cheap to pin and impossible to notice by hand.
+        let config = tmp("ambient");
+        session(&config, "1", None, 300);
+        session(&config, "4", None, 10);
+        // SAFETY: single-threaded within this test; the point is precisely that
+        // the function under test must not consult this.
+        unsafe { std::env::set_var("TD_SESSION", "not-a-real-session") };
+        let got = theme_key_in(&config, None, None);
+        unsafe { std::env::remove_var("TD_SESSION") };
+        assert_eq!(
+            got, "4",
+            "theme_key_in read $TD_SESSION instead of its explicit argument"
+        );
     }
 
     #[test]
     fn a_scratch_window_with_no_sessions_falls_back_to_the_default_look() {
         let config = tmp("theme-empty");
-        assert_eq!(theme_key_in(&config, Some("7")), DEFAULT_KEY);
+        assert_eq!(theme_key_in(&config, None, Some("7")), DEFAULT_KEY);
     }
 
     #[test]
