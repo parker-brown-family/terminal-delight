@@ -138,8 +138,9 @@ fn ledger_session_for(pid: u32, home: &Path) -> Option<String> {
 /// CLI flags worth re-asserting on a resume line. `claude --resume` restores
 /// the conversation but NOT flag-specified modes (documented behavior), so a
 /// pane launched `claude --permission-mode plan` must resurrect with the same
-/// flag or come back in the wrong mode. Allowlisted and sanitized — the
-/// result is typed into a fresh shell.
+/// flag or come back in the wrong mode — and the same goes for the model it was
+/// pinned to and the effort level it was launched at. Allowlisted and sanitized:
+/// the result is typed into a fresh shell.
 fn carried_flags(cmdline: &str) -> String {
     fn safe_val(v: &str) -> bool {
         !v.is_empty()
@@ -151,7 +152,7 @@ fn carried_flags(cmdline: &str) -> String {
     let mut words = cmdline.split_whitespace().peekable();
     while let Some(w) = words.next() {
         match w {
-            "--permission-mode" | "--model" => {
+            "--permission-mode" | "--model" | "--effort" => {
                 if let Some(v) = words.peek().copied().filter(|v| safe_val(v)) {
                     out.push_str(&format!(" {w} {v}"));
                     words.next();
@@ -1157,6 +1158,10 @@ mod ledger_tests {
         assert_eq!(carried_flags("claude --permission-mode $(evil)"), "");
         assert_eq!(carried_flags("claude --permission-mode"), "");
         assert_eq!(carried_flags("claude --resume abc"), "");
+        // the effort a pane was launched at is a flag, not conversation state,
+        // so a resume that drops it comes back thinking at a different level
+        assert_eq!(carried_flags("claude --effort max"), " --effort max");
+        assert_eq!(carried_flags("claude --effort $(evil)"), "");
         assert_eq!(carried_flags("codex"), "");
     }
 }
