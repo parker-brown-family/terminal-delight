@@ -5205,11 +5205,13 @@ impl Workspace {
     }
 
     /// FOCUS text-size slider range — a multiplier on the auto-fit scale.
-    /// 1.0 (fit) sits inside the range so the thumb has travel both ways. The
+    /// 1.0 (fit) sits near mid-track so the thumb has travel both ways. The
     /// low end reaches well below fit so a dense read can shrink to a compact,
     /// glanceable column (the reader wraps, so smaller never means narrower-only).
+    /// The high end is deliberately modest: past ~1.6× the text is billboard-sized
+    /// and the whole top half of the range was unusable (field-tested at 3.0).
     const FZ_MIN: f32 = 0.35;
-    const FZ_MAX: f32 = 3.0;
+    const FZ_MAX: f32 = 1.6;
 
     /// Map a window-x to a 0..1 fraction along the FOCUS slider track (`None`
     /// until the track has been measured once).
