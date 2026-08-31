@@ -2,8 +2,8 @@
 //!
 //! Splits divide ONLY the focused terminal's space (true tiling tree); every
 //! other pane keeps its exact place. ctrl+shift+t / [+]: new tab ·
-//! ctrl+pgup/pgdn: switch · right-click tab: rename · ctrl+arrows: pane focus
-//! by direction · alt+arrows: cycle pane focus · alt+v / alt+h: split ↔ / ↕
+//! ctrl+pgup/pgdn: switch · right-click tab: rename · alt+arrows: pane focus
+//! by direction · ctrl+arrows: word-jump in the shell · alt+v / alt+h: split ↔ / ↕
 //! drag a tab to reorder · ctrl+click a tab: set its binder-divider colour
 //! 👓 on a sub-tab header: FOCUS — mirror that pane big, rest dimmed, esc closes
 //! (alt+↑/↓ jumps between your messages in a claude/codex pane) ·
@@ -5551,21 +5551,11 @@ impl Workspace {
         false
     }
 
-    /// The terminal that currently owns the keyboard in the active tab.
-    fn focused_pane(&self, window: &Window, cx: &App) -> Option<Entity<TerminalView>> {
-        let tab = self.tabs.get(self.active)?;
-        let mut leaves = vec![];
-        tab.root.leaves(&mut leaves);
-        leaves
-            .iter()
-            .find(|p| p.focus_handle(cx).is_focused(window))
-            .map(|p| (*p).clone())
-    }
-
     /// Move the highlight to the split that sits `dir` of the focused one,
     /// using the live pane rects — so it lands where you actually pointed, not
     /// wherever the tree happens to order things. Returns false when nothing
-    /// lies that way, which is the caller's cue to hand the key back to the PTY.
+    /// lies that way — callers treat that as a no-op (alt+arrows at the edge of a
+    /// layout, or paint mode's bare arrows walking the wall).
     fn focus_dir(&self, dir: &str, window: &mut Window, cx: &mut Context<Self>) -> bool {
         let Some(tab) = self.tabs.get(self.active) else {
             return false;
@@ -5620,7 +5610,7 @@ impl Workspace {
         //
         // With nothing that way — a lone pane, or the edge of the layout — the
         // press is simply eaten. It must NOT fall through to the terminal: the
-        // pane is behind a modal, and ctrl+arrows keeps its word-jump job.
+        // pane is behind a modal and cannot be typed into.
         if theme::paint_mode(cx)
             && !m.control
             && !m.alt
@@ -5895,22 +5885,6 @@ impl Workspace {
             }
             return;
         }
-        // ctrl+arrows walk the splits by direction: the highlight moves the way
-        // you pressed. With nothing that way — a lone pane, or the edge of the
-        // layout — the keystroke goes back to the terminal, so ctrl+←/→ still
-        // skips by word everywhere it isn't a pane chord.
-        if m.control
-            && !m.alt
-            && !m.shift
-            && matches!(ks.key.as_str(), "left" | "right" | "up" | "down")
-        {
-            if !self.focus_dir(ks.key.as_str(), window, cx) {
-                if let Some(p) = self.focused_pane(window, cx) {
-                    p.update(cx, |view, cx| view.feed_key(ks, cx));
-                }
-            }
-            return;
-        }
         if m.alt && !m.control {
             // Alt+V / Alt+H split the focused pane, Tilix-style: V puts the new
             // pane beside it (a vertical divider, SplitDir::Row — same as
@@ -5953,15 +5927,16 @@ impl Workspace {
                     return;
                 }
             }
-            if leaves.len() > 1 {
-                let dir: i32 = match ks.key.as_str() {
-                    "left" | "up" => -1,
-                    "right" | "down" => 1,
-                    _ => return,
-                };
-                let next = (cur as i32 + dir).rem_euclid(leaves.len() as i32) as usize;
-                window.focus(&leaves[next].focus_handle(cx), cx);
-                cx.notify();
+            // Alt+arrows move focus BY DIRECTION: the highlight goes the way you
+            // pressed, resolved against the live pane rects (`focus_dir`) rather
+            // than the order the leaves happen to be walked in. This used to be a
+            // ring cycle over that leaf order, which meant ← could land anywhere.
+            //
+            // Nothing that way is a NO-OP, not a wrap-round: at the edge of a
+            // layout the press is eaten, the same as every tiling WM. Wrapping
+            // would teleport the highlight across the window on a blind press.
+            if matches!(ks.key.as_str(), "left" | "right" | "up" | "down") {
+                self.focus_dir(ks.key.as_str(), window, cx);
             }
         }
     }
@@ -12158,8 +12133,7 @@ impl Render for Workspace {
                         row("Ctrl+PgUp / PgDn", s.switch_tabs),
                         row("Ctrl+Shift+PgUp / PgDn", s.move_tab),
                         row("Alt+V / H · Ctrl+Alt+R / D", s.split),
-                        row(s.k_ctrl_arrows, s.move_focus_dir),
-                        row(s.k_alt_arrows, s.move_focus),
+                        row(s.k_alt_arrows, s.move_focus_dir),
                         row(s.k_drag_subtab, s.drag_subtab),
                         row(s.k_rclick_tab, s.rclick_tab),
                     ],
@@ -12170,6 +12144,7 @@ impl Render for Workspace {
                         row(s.k_rclick, s.rclick),
                         row("Ctrl+Shift+C / V", s.copy_paste),
                         row("Ctrl+X", s.cut),
+                        row(s.k_ctrl_arrows, s.word_jump),
                         row("Ctrl+F", s.find),
                         row("Ctrl+Shift+F", s.find_all),
                         row(s.k_dbl_click, s.select_wl),
@@ -14957,7 +14932,7 @@ const CROSS_TOLERANCE: f32 = 0.15;
 ///
 /// Ranking, in order: the nearest that way wins; among equally near panes the
 /// better-centred one wins; and among panes that are *roughly* equally centred
-/// the top one wins for ctrl+←/→, the left one for ctrl+↑/↓. That last rule is
+/// the top one wins for alt+←/→, the left one for alt+↑/↓. That last rule is
 /// deliberate rather than incidental — ranking on the leading edge states it
 /// outright instead of leaning on the order the leaves happen to be walked in.
 ///
@@ -15026,7 +15001,7 @@ mod nav_tests {
     }
 
     #[test]
-    fn ctrl_arrow_moves_to_the_pane_that_is_actually_that_way() {
+    fn alt_arrow_moves_to_the_pane_that_is_actually_that_way() {
         // from the tall left pane, → has two equally-centred candidates and
         // takes the top one (see the roughly-equal rule below)
         assert_eq!(neighbour_in_dir(LEFT, &others(0), "right"), Some(1));

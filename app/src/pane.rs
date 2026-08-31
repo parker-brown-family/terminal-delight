@@ -2672,14 +2672,6 @@ impl TerminalView {
         cx.notify();
     }
 
-    /// Take back a cursor-key chord the workspace decided not to use — a
-    /// ctrl+←/→ with no split that way is just readline's word-jump again.
-    pub(crate) fn feed_key(&mut self, ks: &Keystroke, cx: &mut Context<Self>) {
-        if let Some(bytes) = cursor_key_bytes(ks) {
-            self.send(bytes, cx);
-        }
-    }
-
     /// Apply a paint-overlay pick to THIS pane. `None` re-attaches the pane to
     /// the outer/desktop look (the live inherit link); `Some(set)` pins the
     /// pane's theme group with that colour set and clears the wheel overrides
@@ -2813,8 +2805,8 @@ impl TerminalView {
     }
 
     // INVARIANT: a key this handler DECLINES must bubble to the Workspace.
-    // Every workspace chord — ctrl+arrows (pane nav), ctrl+alt+r/d (split),
-    // ctrl+pgup/pgdn (tabs) — reaches the Workspace only by bubbling out of
+    // Every workspace chord — alt+arrows (pane nav), alt+v/h and ctrl+alt+r/d
+    // (split), ctrl+pgup/pgdn (tabs) — reaches the Workspace only by bubbling out of
     // here while a pane holds focus, so swallowing the fall-through kills all
     // of them at once with no compile error and nothing else failing.
     //
@@ -4705,7 +4697,7 @@ fn keystroke_bytes(ks: &Keystroke) -> Option<Vec<u8>> {
         });
     }
     if m.alt {
-        // alt+arrows switch panes; alt+r opens the FOCUS reader (the 👓 header
+        // alt+arrows move pane focus by direction; alt+r opens the FOCUS reader (the 👓 header
         // glyph it replaces is gone); alt+v / alt+h and the ctrl+alt chords
         // split — all owned by the Workspace. Taking alt+r costs readline's
         // revert-line, alt+v its page-scroll and alt+h its mark-paragraph —
@@ -4732,13 +4724,10 @@ fn keystroke_bytes(ks: &Keystroke) -> Option<Vec<u8>> {
     if m.control && matches!(ks.key.as_str(), "pageup" | "pagedown") {
         return None; // workspace: tab switching
     }
-    // ctrl+arrows are the workspace's directional pane chords. The workspace
-    // only keeps one when a split actually sits that way — otherwise it hands
-    // the keystroke straight back (`feed_key`), so ctrl+←/→ keeps its readline
-    // word-jump in a lone pane or at the edge of a layout.
-    if m.control && !m.shift && matches!(ks.key.as_str(), "left" | "right" | "up" | "down") {
-        return None;
-    }
+    // ctrl+arrows belong to the SHELL, not the workspace: they fall through to
+    // `cursor_key_bytes` as CSI 1;5 so readline/zsh word-jump works in every
+    // pane, split or not. Pane focus is alt+arrows, which costs the terminal
+    // nothing it had a use for.
     if let Some(bytes) = cursor_key_bytes(ks) {
         return Some(bytes);
     }
@@ -7706,13 +7695,16 @@ mod tests {
         // alt+b / alt+f keep their readline meaning.
         assert_eq!(alt_char("b"), Some(vec![0x1b, b'b']));
         assert_eq!(alt_char("f"), Some(vec![0x1b, b'f']));
-        // ctrl+arrows are pane chords first: the workspace takes them here and
-        // hands them back through `cursor_key_bytes` when nothing lies that way
-        assert_eq!(bytes("ctrl-right"), None);
-        assert_eq!(bytes("ctrl-left"), None);
-        let word_jump = |s: &str| cursor_key_bytes(&Keystroke::parse(s).unwrap());
-        assert_eq!(word_jump("ctrl-right"), Some(b"\x1b[1;5C".to_vec()));
-        assert_eq!(word_jump("ctrl-left"), Some(b"\x1b[1;5D".to_vec()));
+        // ctrl+arrows are the SHELL's word-jump, straight through (CSI 1;5).
+        // The workspace does not contend for them — pane focus is alt+arrows —
+        // so these must be real bytes here, not a None handed back later.
+        assert_eq!(bytes("ctrl-right"), Some(b"\x1b[1;5C".to_vec()));
+        assert_eq!(bytes("ctrl-left"), Some(b"\x1b[1;5D".to_vec()));
+        assert_eq!(bytes("ctrl-up"), Some(b"\x1b[1;5A".to_vec()));
+        assert_eq!(bytes("ctrl-down"), Some(b"\x1b[1;5B".to_vec()));
+        // alt+arrows, by contrast, ARE the workspace's — never PTY bytes
+        assert_eq!(bytes("alt-left"), None);
+        assert_eq!(bytes("alt-right"), None);
         // ctrl+shift+arrows are nobody's chord — straight through (CSI 1;6)
         assert_eq!(bytes("ctrl-shift-right"), Some(b"\x1b[1;6C".to_vec()));
     }
