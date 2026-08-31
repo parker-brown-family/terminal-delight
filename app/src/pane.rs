@@ -256,6 +256,17 @@ fn trim_drag_value(is_end: bool, t: f32, start: f32, end: f32, dur: f32) -> f32 
     }
 }
 
+/// The Alt-held copy affordance: one reconstructed logical line and the PAINTED
+/// rows it occupies. The text is what lands on the clipboard — wrap seams already
+/// healed — and the row span is where the border is drawn, in painted order so it
+/// frames the text where the eye actually sees it.
+#[derive(Debug, Clone, PartialEq)]
+struct CopyHint {
+    text: String,
+    first_paint: usize,
+    last_paint: usize,
+}
+
 /// A shift-clickable target lifted out of the grid: a web/file URL handed
 /// straight to the system opener, or a filesystem path resolved against the
 /// pane's cwd before opening.
@@ -507,45 +518,205 @@ fn wrap_join(acc: &str, prev_len: usize, raw: &str, cols: usize) -> WrapJoin {
 /// terminal soft-wrap, so those rows arrive pre-joined and pass through here
 /// unchanged. Pure: unit-tested without a live grid.
 fn reflow_wrapped_copy(text: &str, cols: usize) -> String {
+    let rows: Vec<&str> = text.split('\n').collect();
+    reflow_wrapped_copy_spans(&rows, cols)
+        .into_iter()
+        .map(|l| l.text)
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// One reconstructed logical line, plus the inclusive range of input rows it was
+/// assembled from. The row span is what makes the reflow usable for anything
+/// other than a drag-selection: it says *which rows on screen* a copyable line
+/// occupies, so a hover affordance can be drawn around exactly those.
+#[derive(Debug, Clone, PartialEq)]
+struct LogicalLine {
+    text: String,
+    /// First input row of this logical line (inclusive).
+    first: usize,
+    /// Last input row of this logical line (inclusive). Equal to `first` for an
+    /// unwrapped line.
+    last: usize,
+}
+
+/// The span-reporting core of [`reflow_wrapped_copy`] — same joining rules, but
+/// it also reports which rows produced each logical line. `reflow_wrapped_copy`
+/// is a thin wrapper over this, so the two can never disagree about where a
+/// logical line begins and ends.
+///
+/// Blank rows are emitted as empty lines (paragraph breaks) with their own
+/// one-row span, exactly as the text path does, so the wrapper's `join("\n")`
+/// reproduces its previous output byte for byte. Callers that want *hoverable*
+/// regions must skip them.
+///
+/// IMPORTANT: rows must arrive with trailing padding trimmed. A terminal grid is
+/// space-padded to the full column count, and `wrap_join`'s width test reads a
+/// padded row as full-width — so feeding raw grid rows in makes every row look
+/// like a wrap and glues the whole screen into one line. Pure: testable without
+/// a live grid.
+fn reflow_wrapped_copy_spans(rows: &[&str], cols: usize) -> Vec<LogicalLine> {
+    let one_per_row = |rows: &[&str]| -> Vec<LogicalLine> {
+        rows.iter()
+            .enumerate()
+            .map(|(i, r)| LogicalLine {
+                text: (*r).to_string(),
+                first: i,
+                last: i,
+            })
+            .collect()
+    };
     if cols == 0 {
-        return text.to_string();
+        return one_per_row(rows);
     }
-    let mut out: Vec<String> = Vec::new();
-    // The logical line under construction, paired with the char-width of the
-    // last raw row appended to it — the row the wrap test is applied against.
-    let mut cur: Option<(String, usize)> = None;
-    for raw in text.split('\n') {
+    let mut out: Vec<LogicalLine> = Vec::new();
+    // The logical line under construction: its text, the char-width of the last
+    // raw row appended (the row the wrap test is applied against), and the span
+    // of input rows it has consumed so far.
+    let mut cur: Option<(String, usize, usize, usize)> = None;
+    for (i, raw) in rows.iter().enumerate() {
+        let raw = *raw;
         let row_len = raw.chars().count();
         if raw.trim().is_empty() {
-            if let Some((line, _)) = cur.take() {
-                out.push(line);
+            if let Some((text, _, first, last)) = cur.take() {
+                out.push(LogicalLine { text, first, last });
             }
-            out.push(String::new());
+            out.push(LogicalLine {
+                text: String::new(),
+                first: i,
+                last: i,
+            });
             continue;
         }
         match cur.take() {
-            None => cur = Some((raw.to_string(), row_len)),
-            Some((mut acc, prev_len)) => match wrap_join(&acc, prev_len, raw, cols) {
+            None => cur = Some((raw.to_string(), row_len, i, i)),
+            Some((mut acc, prev_len, first, last)) => match wrap_join(&acc, prev_len, raw, cols) {
                 WrapJoin::Glue => {
                     acc.push_str(raw);
-                    cur = Some((acc, row_len));
+                    cur = Some((acc, row_len, first, i));
                 }
                 WrapJoin::Space => {
                     acc.push(' ');
                     acc.push_str(raw);
-                    cur = Some((acc, row_len));
+                    cur = Some((acc, row_len, first, i));
                 }
                 WrapJoin::Break => {
-                    out.push(acc);
-                    cur = Some((raw.to_string(), row_len));
+                    out.push(LogicalLine {
+                        text: acc,
+                        first,
+                        last,
+                    });
+                    cur = Some((raw.to_string(), row_len, i, i));
                 }
             },
         }
     }
-    if let Some((line, _)) = cur.take() {
-        out.push(line);
+    if let Some((text, _, first, last)) = cur.take() {
+        out.push(LogicalLine { text, first, last });
     }
-    out.join("\n")
+    out
+}
+
+/// Shell verbs common enough in agent output that seeing one in first position
+/// is strong evidence the line is a command rather than prose. Deliberately a
+/// closed list: the copy affordance is opt-in per line, and a false positive
+/// (a chip over an English sentence) is more corrosive than a false negative.
+const COMMAND_VERBS: &[&str] = &[
+    "awk",
+    "bash",
+    "bun",
+    "bunx",
+    "cargo",
+    "cat",
+    "cd",
+    "chmod",
+    "chown",
+    "cp",
+    "curl",
+    "diff",
+    "docker",
+    "echo",
+    "env",
+    "find",
+    "gh",
+    "git",
+    "grep",
+    "gzip",
+    "head",
+    "hyprctl",
+    "jq",
+    "kubectl",
+    "ln",
+    "ls",
+    "make",
+    "mkdir",
+    "mv",
+    "node",
+    "npm",
+    "npx",
+    "pip",
+    "pip3",
+    "python",
+    "python3",
+    "rg",
+    "rm",
+    "rsync",
+    "scp",
+    "sed",
+    "sh",
+    "ssh",
+    "sudo",
+    "systemctl",
+    "tail",
+    "tar",
+    "tmux",
+    "touch",
+    "wget",
+    "xargs",
+    "zsh",
+];
+
+/// Whether a reconstructed logical line earns a one-click copy affordance.
+///
+/// v1 is deliberately STRICT — commands only. Offering a chip on every logical
+/// line is never *wrong*, but it makes the pane restless, and the whole value of
+/// the affordance is that its presence means "this is a thing you run". JSON and
+/// prose are out of scope: JSON carries real line breaks, so the reflow leaves
+/// it alone and there is nothing to reconstruct.
+///
+/// The elision rule is not a heuristic, it is a hard guarantee. A line carrying
+/// `…` is an *illustration* — an agent showing the shape of a command with the
+/// boring parts cut out. Copying it produces something that looks authoritative
+/// and cannot work. Such lines get no chip at all: not a warning, not a disabled
+/// state. Silence is the correct affordance for text that must not be copied.
+fn is_copyable_command(line: &str) -> bool {
+    let t = line.trim();
+    if t.chars().count() < 4 {
+        return false;
+    }
+    // an elided illustration is never runnable — never offer it
+    if t.contains('…') {
+        return false;
+    }
+    // `! cmd` (the Claude Code run prefix) and `$ cmd` (the docs convention) are
+    // explicit "this is a command" markers, and settle it on their own.
+    let body = match t.strip_prefix('!').or_else(|| t.strip_prefix('$')) {
+        Some(rest) if rest.starts_with(' ') => return rest.trim().chars().count() >= 2,
+        _ => t,
+    };
+    // Otherwise the first token has to look like something you can execute.
+    let Some(first) = body.split_whitespace().next() else {
+        return false;
+    };
+    // A path to an executable: ./script.sh, /usr/bin/thing, ~/bin/td-send
+    if first.starts_with("./") || first.starts_with('/') || first.starts_with("~/") {
+        return !first.ends_with('.') && body.split_whitespace().count() >= 1;
+    }
+    // An env assignment prefix (FOO=1 cmd …) reads as a command line.
+    if first.contains('=') && !first.contains(' ') && body.split_whitespace().count() >= 2 {
+        return true;
+    }
+    COMMAND_VERBS.contains(&first)
 }
 
 /// Turn a path link into an absolute path: expand a leading `~`, and join a
@@ -1549,6 +1720,13 @@ pub struct TerminalView {
     /// Responsive header: when the pane narrows, controls tuck into a ⋯ overflow
     /// menu. `Some(pos)` = that menu is open, anchored at the ⋯ click. None = shut.
     hdr_overflow: Option<gpui::Point<Pixels>>,
+    /// The Alt-held copy affordance for the line under the pointer, or None when
+    /// Alt is up or the line does not read as a command. Recomputed only while
+    /// Alt is down, so ordinary mousing costs nothing.
+    copy_hint: Option<CopyHint>,
+    /// When the last Alt+click copy landed — drives the brief "copied"
+    /// confirmation in the chip. No timer: the next pointer move repaints it.
+    copy_flash: Option<Instant>,
     /// Cached duration (s) of the selected sound, for the scrubber track.
     bell_dur: Option<f32>,
     /// Last-known OS focus, for edge-detected focus reporting (CSI I / CSI O).
@@ -2141,6 +2319,8 @@ impl TerminalView {
             bell_player: crate::bell::BellPlayer::default(),
             bell_menu: false,
             hdr_overflow: None,
+            copy_hint: None,
+            copy_flash: None,
             bell_dur: None,
             was_focused: false,
             pending_grid: None,
@@ -2554,6 +2734,103 @@ impl TerminalView {
     /// The shift-clickable link under a screen point, if any: read the clicked
     /// row out of the visible grid, scan around the column, and resolve a path
     /// against the pane's cwd (only returning paths that actually exist).
+    /// Read the whole visible grid as characters plus per-row soft-wrap flags,
+    /// both in grid-viewport order. One term lock, one `display_iter` pass.
+    ///
+    /// Rows are space-padded to the full column count — that is what
+    /// `stitch_wrapped_line` wants, since it maps a click column into the
+    /// concatenated line. Anything doing width arithmetic (the copy reflow) must
+    /// trim the padding first; see [`grid_logical_lines`].
+    /// Resolve the copy affordance for a pointer position: the logical line under
+    /// it, if that line reads as a command, plus the painted rows it covers.
+    /// `None` whenever nothing should be offered. Callers gate on Alt being held.
+    fn copy_hint_at(&self, pos: gpui::Point<Pixels>) -> Option<CopyHint> {
+        // A drag-selection owns the pointer — never compete with it.
+        if self.selecting || self.has_selection() {
+            return None;
+        }
+        // Alt-screen apps (vim, htop) lay their rows out as a canvas, not as
+        // flowed text, so "rejoin what the width broke" means nothing there.
+        if self
+            .session
+            .term
+            .lock()
+            .mode()
+            .contains(TermMode::ALT_SCREEN)
+        {
+            return None;
+        }
+        let (prow, _, _) = self.viewport_cell(pos);
+        let grow = self.paint_row_to_grid_row(prow);
+        let line = self
+            .grid_logical_lines()
+            .into_iter()
+            .find(|l| l.first <= grow && grow <= l.last)?;
+        if !is_copyable_command(&line.text) {
+            return None;
+        }
+        // Map the GRID span back to painted rows. The paint transform can be an
+        // arbitrary permutation (anchor-to-top reverses in groups), so invert it
+        // by scanning every row rather than assuming the identity mapping.
+        let painted: Vec<usize> = (0..self.grid.rows)
+            .filter(|p| {
+                let g = self.paint_row_to_grid_row(*p);
+                line.first <= g && g <= line.last
+            })
+            .collect();
+        Some(CopyHint {
+            text: line.text,
+            first_paint: *painted.first()?,
+            last_paint: *painted.last()?,
+        })
+    }
+
+    fn grid_snapshot(&self) -> (Vec<Vec<char>>, Vec<bool>) {
+        let term = self.session.term.lock();
+        let content = term.renderable_content();
+        let display_offset = content.display_offset;
+        let cols = self.grid.cols;
+        let rows = self.grid.rows;
+        let mut grid: Vec<Vec<char>> = vec![vec![' '; cols]; rows];
+        let mut wraps: Vec<bool> = vec![false; rows];
+        for indexed in content.display_iter {
+            let r = indexed.point.line.0 + display_offset as i32;
+            if r < 0 || r as usize >= rows {
+                continue;
+            }
+            let r = r as usize;
+            if indexed.cell.flags.contains(Flags::WIDE_CHAR_SPACER) {
+                continue;
+            }
+            if indexed.cell.flags.contains(Flags::WRAPLINE) {
+                wraps[r] = true;
+            }
+            let c = indexed.point.column.0;
+            if c < cols {
+                grid[r][c] = if indexed.cell.c == '\0' {
+                    ' '
+                } else {
+                    indexed.cell.c
+                };
+            }
+        }
+        (grid, wraps)
+    }
+
+    /// The visible grid reconstructed into logical lines, each carrying the grid
+    /// rows it spans. Trailing padding is trimmed per row FIRST — without that
+    /// every row reads as full-width to `wrap_join`'s width test and the whole
+    /// screen glues into a single line.
+    fn grid_logical_lines(&self) -> Vec<LogicalLine> {
+        let (grid, _) = self.grid_snapshot();
+        let rows: Vec<String> = grid
+            .iter()
+            .map(|r| r.iter().collect::<String>().trim_end().to_string())
+            .collect();
+        let borrowed: Vec<&str> = rows.iter().map(String::as_str).collect();
+        reflow_wrapped_copy_spans(&borrowed, self.grid.cols)
+    }
+
     fn link_under(&self, pos: gpui::Point<Pixels>) -> Option<String> {
         let (vrow, vcol, _) = self.viewport_cell(pos);
         // Map the painted/visual row back to the grid viewport row it shows
@@ -2563,37 +2840,8 @@ impl TerminalView {
         // Read the whole visible grid plus per-row soft-wrap flags, then stitch
         // the clicked row to its neighbours so a URL/path wrapped across rows is
         // recognised as one token (see `stitch_wrapped_line`).
-        let (line, col) = {
-            let term = self.session.term.lock();
-            let content = term.renderable_content();
-            let display_offset = content.display_offset;
-            let cols = self.grid.cols;
-            let rows = self.grid.rows;
-            let mut grid: Vec<Vec<char>> = vec![vec![' '; cols]; rows];
-            let mut wraps: Vec<bool> = vec![false; rows];
-            for indexed in content.display_iter {
-                let r = indexed.point.line.0 + display_offset as i32;
-                if r < 0 || r as usize >= rows {
-                    continue;
-                }
-                let r = r as usize;
-                if indexed.cell.flags.contains(Flags::WIDE_CHAR_SPACER) {
-                    continue;
-                }
-                if indexed.cell.flags.contains(Flags::WRAPLINE) {
-                    wraps[r] = true;
-                }
-                let c = indexed.point.column.0;
-                if c < cols {
-                    grid[r][c] = if indexed.cell.c == '\0' {
-                        ' '
-                    } else {
-                        indexed.cell.c
-                    };
-                }
-            }
-            stitch_wrapped_line(&grid, &wraps, vrow, vcol)
-        };
+        let (grid, wraps) = self.grid_snapshot();
+        let (line, col) = stitch_wrapped_line(&grid, &wraps, vrow, vcol);
         match link_at(&line, col)? {
             Link::Url(u) => Some(u),
             Link::Path(p) => {
@@ -3771,6 +4019,23 @@ impl TerminalView {
         // the split buttons (which target the focused pane) follow the pane the
         // user is actually working in — not whichever pane happened to start focused.
         window.focus(&self.focus_handle, cx);
+        // Alt+click on the armed copy chip takes the reconstructed line. Handled
+        // here rather than as a click target on the chip element: the chip is
+        // painted inside the warped tube, so gpui would hit-test it flat and land
+        // beside it, whereas `viewport_cell` (which `copy_hint_at` goes through)
+        // already inverts the warp. Falls through untouched when no chip is armed,
+        // so Alt+click still reaches an app that asked for mouse reporting.
+        if ev.button == MouseButton::Left && ev.modifiers.alt {
+            if let Some(hint) = self.copy_hint_at(ev.position) {
+                cx.write_to_clipboard(ClipboardItem::new_string(hint.text.clone()));
+                cx.write_to_primary(ClipboardItem::new_string(hint.text.clone()));
+                self.copy_flash = Some(Instant::now());
+                self.copy_hint = Some(hint);
+                cx.stop_propagation();
+                cx.notify();
+                return;
+            }
+        }
         // A ringing "agent finished" alert is acknowledged by clicking anywhere
         // in this pane: stop the sound and dismiss the card — no button to chase.
         // The click is consumed (it doesn't also start a selection) so it reads
@@ -3847,6 +4112,21 @@ impl TerminalView {
                 }
             }
             return;
+        }
+        // The Alt-held copy affordance. Gated on the modifier so the grid is only
+        // re-read while Alt is actually down — ordinary mousing costs nothing, and
+        // nothing can arm by accident.
+        let hint = if ev.modifiers.alt {
+            self.copy_hint_at(ev.position)
+        } else {
+            None
+        };
+        if hint != self.copy_hint {
+            if hint.is_none() || self.copy_hint.is_none() {
+                self.copy_flash = None;
+            }
+            self.copy_hint = hint;
+            cx.notify();
         }
         if !self.selecting || ev.pressed_button != Some(MouseButton::Left) {
             return;
@@ -6323,6 +6603,47 @@ impl Render for TerminalView {
             let (k1, k2) = theme::warp_coeffs(th.warp);
             grid_pad(w, h, k1, k2)
         };
+        // The Alt-held copy affordance: a border around the logical line under the
+        // pointer with a ⎘ chip at its right edge. Painted INSIDE the tube, so it
+        // bends with the glass like the text it frames — and deliberately carries
+        // no gpui mouse handler, because gpui would hit-test it flat and miss.
+        // The click is taken in `on_mouse_down`, which resolves through
+        // `viewport_cell` and so already inverts the warp. That is why this needs
+        // no `warp::set_suppressed` entry and never flattens the screen.
+        let copy_el = self.copy_hint.clone().map(|hint| {
+            let rows = (hint.last_paint - hint.first_paint + 1) as f32;
+            let copied = self
+                .copy_flash
+                .is_some_and(|t| t.elapsed() < std::time::Duration::from_millis(1200));
+            let (acc, surf) = (th.accent, th.surface);
+            div()
+                .absolute()
+                .left(px(grid_pad_x - 2.))
+                .top(px(grid_pad_y + hint.first_paint as f32 * self.cell_h - 1.))
+                .right(px(grid_pad_x - 2.))
+                .h(px(rows * self.cell_h + 2.))
+                .border_1()
+                .border_color(acc.alpha(0.75))
+                .rounded(px(4.))
+                .child(
+                    div()
+                        .absolute()
+                        .right(px(2.))
+                        .top(px(-1.))
+                        .px(px(6.))
+                        .bg(surf)
+                        .border_1()
+                        .border_color(acc.alpha(0.75))
+                        .rounded(px(4.))
+                        .text_color(acc)
+                        .text_size(px(11.))
+                        .child(if copied {
+                            "✓ copied"
+                        } else {
+                            "⎘ alt+click"
+                        }),
+                )
+        });
         div()
             .track_focus(&self.focus_handle(cx))
             .on_key_down(cx.listener(Self::on_key))
@@ -6443,7 +6764,8 @@ impl Render for TerminalView {
                                     line.child(StyledText::new(text).with_runs(runs))
                                 }
                             })),
-                    ),
+                    )
+                    .children(copy_el),
             )
             .when(std::env::var("TD_NOGLASS").is_err(), |el| {
                 el.child(crt::glass(&th, &self.fx))
@@ -6846,6 +7168,140 @@ mod tests {
         // Two short lines whose next word clearly fits ⇒ NOT joined; blank kept.
         let text = "line one\nline two\n\nfile1.txt\nfile2.txt";
         assert_eq!(reflow_wrapped_copy(text, cols), text);
+    }
+
+    #[test]
+    /// The headline case: the command that failed to paste four times on
+    /// 2026-08-31 because the terminal broke it mid-argument. It must come back
+    /// as ONE logical line, reporting the two rows it was assembled from.
+    fn spans_rejoin_the_command_that_kept_failing_to_paste() {
+        let cols = 60;
+        let rows = [
+            "cd ~/.claude && jq --slurpfile e /tmp/x/automode-env.json",
+            "'.autoMode.environment = $e[0]' settings.json > s.tmp",
+        ];
+        let out = reflow_wrapped_copy_spans(&rows, cols);
+        assert_eq!(out.len(), 1, "the two rows are one logical line");
+        assert_eq!(out[0].first, 0);
+        assert_eq!(out[0].last, 1, "the span covers both rows it came from");
+        assert!(
+            out[0]
+                .text
+                .contains("automode-env.json '.autoMode.environment"),
+            "the wrap seam is healed, got {:?}",
+            out[0].text
+        );
+        assert!(
+            !out[0].text.contains('\n'),
+            "a copied command must carry no interior line break"
+        );
+    }
+
+    /// A mid-token wrap (the row filled the pane exactly) glues with no space,
+    /// and still reports both rows.
+    #[test]
+    fn spans_report_rows_for_a_mid_token_glue() {
+        let cols = 20;
+        // row 0 is filled to EXACTLY cols — that is what marks a mid-token wrap,
+        // and it is why the join adds no space.
+        let rows = ["curl https://example", ".com/a/very/long/pa"];
+        assert_eq!(rows[0].chars().count(), cols, "row 0 must fill the pane");
+        let out = reflow_wrapped_copy_spans(&rows, cols);
+        assert_eq!(out.len(), 1);
+        assert_eq!((out[0].first, out[0].last), (0, 1));
+        assert_eq!(out[0].text, "curl https://example.com/a/very/long/pa");
+    }
+
+    /// Every distinct short line keeps its own one-row span, and a blank row
+    /// stays a paragraph break rather than being swallowed.
+    #[test]
+    fn spans_keep_distinct_lines_and_blank_rows_apart() {
+        let out = reflow_wrapped_copy_spans(&["git status", "", "git log"], 80);
+        assert_eq!(out.len(), 3);
+        assert_eq!((out[0].first, out[0].last), (0, 0));
+        assert_eq!(out[1].text, "", "the blank row survives as a break");
+        assert_eq!((out[2].first, out[2].last), (2, 2));
+    }
+
+    /// The wrapper must stay byte-identical to the span core, or the drag-select
+    /// copy path silently changes behaviour underneath a shipped feature.
+    #[test]
+    fn the_text_wrapper_agrees_with_the_span_core() {
+        for (text, cols) in [
+            ("one\ntwo\nthree", 80),
+            (
+                "a full width heading line here\nbody paragraph text follows on",
+                30,
+            ),
+            ("", 80),
+            ("anything at all", 0), // the cols==0 short circuit
+        ] {
+            let rows: Vec<&str> = text.split('\n').collect();
+            let joined = reflow_wrapped_copy_spans(&rows, cols)
+                .into_iter()
+                .map(|l| l.text)
+                .collect::<Vec<_>>()
+                .join("\n");
+            assert_eq!(reflow_wrapped_copy(text, cols), joined, "text {text:?}");
+        }
+    }
+
+    /// THE PADDING TRAP. A terminal grid is space-padded to full width, so every
+    /// row reads as "filled to cols" and the width test glues the entire screen
+    /// into one line. This test pins both halves: padded input collapses (which
+    /// is why the trim exists) and trimmed input does not.
+    #[test]
+    fn padded_grid_rows_must_be_trimmed_before_reflow() {
+        let cols = 20;
+        let padded = ["git status         ", "git log            "];
+        let padded: Vec<String> = padded
+            .iter()
+            .map(|r| format!("{r:width$}", width = cols))
+            .collect();
+        let padded_refs: Vec<&str> = padded.iter().map(String::as_str).collect();
+        let glued = reflow_wrapped_copy_spans(&padded_refs, cols);
+        assert_eq!(
+            glued.len(),
+            1,
+            "padded rows collapse into one line — this is the trap"
+        );
+
+        let trimmed: Vec<&str> = padded_refs.iter().map(|r| r.trim_end()).collect();
+        let ok = reflow_wrapped_copy_spans(&trimmed, cols);
+        assert_eq!(ok.len(), 2, "trimmed rows stay two distinct commands");
+        assert_eq!(ok[0].text, "git status");
+        assert_eq!(ok[1].text, "git log");
+    }
+
+    /// The copyability gate is deliberately strict: commands get a chip, prose
+    /// does not, and an elided illustration never does however command-shaped it
+    /// looks. The last case is the one that burned a real operator.
+    #[test]
+    fn the_copy_gate_offers_commands_and_refuses_prose_and_elisions() {
+        for cmd in [
+            "cd ~/.claude && jq --slurpfile e /tmp/x.json",
+            "git status",
+            "! bash /tmp/apply-automode.sh",
+            "$ gh pr merge 207 --merge --admin",
+            "./scripts/td-send --dry-run",
+            "/usr/bin/env bash -c 'echo hi'",
+            "~/bin/gh auth status",
+            "TD_DEMO=1 cargo run --release",
+        ] {
+            assert!(is_copyable_command(cmd), "should offer a chip: {cmd:?}");
+        }
+        for prose in [
+            // the exact elision that got pasted and failed, twice
+            "cd ~/.claude && jq --slurpfile e /tmp/…/automode-env.json",
+            "! bash /tmp/…/apply-automode.sh",
+            "This adds a bordered box with a copy button around the line.",
+            "Target: https://github.com/parker-brown-family/terminal-delight",
+            "abc",
+            "",
+            "!important",
+        ] {
+            assert!(!is_copyable_command(prose), "must stay silent: {prose:?}");
+        }
     }
 
     #[test]
