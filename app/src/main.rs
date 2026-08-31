@@ -1839,13 +1839,18 @@ fn filter_logo_two_field(candidates: &[LogoCandidate], name: &str, loc: &str) ->
 /// can map a screen click back to a source cell (for selection + copy) through the
 /// exact frame the user is looking at. All metrics are logical px, matching the
 /// captured `focus_body_bounds`.
+/// Memoised reader layout: ((document revision, fit_cols), the laid-out rows).
+type FocusLayoutMemo = Option<((u64, usize), Arc<Vec<doc::VisualRow>>)>;
+
 struct FocusMap {
-    /// One entry per on-screen visual row, in paint order: `(src_row, src_col0,
-    /// glyph_cols)`. `src_col0` is where this wrapped row begins in its source row.
-    rows: Vec<(usize, usize, usize)>,
-    /// Source grid-row texts, for assembling the copied selection (one logical line
-    /// per source row, regardless of how many visual rows it wrapped into).
-    src_lines: Vec<String>,
+    /// The full laid-out rows, shared with the render's layout cache — with the
+    /// whole scrollback in the document this can be tens of thousands of rows,
+    /// so it is an `Arc`, never a per-frame copy. `vrows[i].doc_line/doc_col0`
+    /// map a clicked visual row back into `doc`.
+    vrows: Arc<Vec<doc::VisualRow>>,
+    /// The document those rows were laid out from — the selection/copy text
+    /// source, one logical line per entry.
+    doc: Arc<doc::Document>,
     line_h: f32,
     glyph_w: f32,
     /// Left inset of the content inside the clip box.
@@ -2044,6 +2049,13 @@ struct Workspace {
     /// pans this 0..=`focus_overflow` so you can reach the last row. Reset on open.
     focus_scroll_y: f32,
     /// How far (px) the scaled mirror overflows the panel's inner height this
+    /// The reader is pinned to the NEWEST row: new output (your own typing
+    /// included) keeps the bottom in view, like the pane itself. Scrolling up
+    /// releases the pin; returning to the bottom re-arms it. True on open.
+    focus_at_bottom: bool,
+    /// Memoised reader layout, keyed on (document revision, fit_cols) — reused
+    /// across frames until the content, width or zoom actually changes.
+    focus_layout: FocusLayoutMemo,
     /// frame (0 = it fits). Refreshed each render; the scrim's wheel handler reads
     /// it to decide pan-the-modal vs. scroll-the-terminal.
     focus_overflow: f32,
@@ -2389,6 +2401,8 @@ impl Workspace {
             card_scale_drag: false,
             card_scale_bounds: Arc::new(Mutex::new(None)),
             focus_scroll_y: 0.0,
+            focus_at_bottom: true,
+            focus_layout: None,
             focus_overflow: 0.0,
             focus_line_h: 0.0,
             focus_body_bounds: Arc::new(Mutex::new(None)),
@@ -3787,6 +3801,8 @@ impl Workspace {
         // real content height is known; a short read has zero overflow and lands at
         // 0 exactly as before.
         self.focus_scroll_y = f32::MAX;
+        self.focus_at_bottom = true;
+        self.focus_layout = None;
         self.focus_sel = None;
         self.focus_sel_drag = false;
         // Defer the focus: this runs from the 👓 header button's mouse-down
@@ -3809,6 +3825,8 @@ impl Workspace {
         self.focus_sel = None;
         self.focus_sel_drag = false;
         *self.focus_map.lock().unwrap() = None;
+        // free the (potentially 10k-row) memoised layout with the modal
+        self.focus_layout = None;
         cx.notify();
     }
 
@@ -5214,7 +5232,7 @@ impl Workspace {
         let bounds = (*self.focus_body_bounds.lock().unwrap())?;
         let guard = self.focus_map.lock().unwrap();
         let map = guard.as_ref()?;
-        if map.rows.is_empty() {
+        if map.vrows.is_empty() {
             return None;
         }
         let (bx, by) = (f32::from(bounds.origin.x), f32::from(bounds.origin.y));
@@ -5227,11 +5245,11 @@ impl Workspace {
             (u, v)
         };
         let content_y = lv * bh - map.top;
-        let vrow = ((content_y / map.line_h).max(0.0) as usize).min(map.rows.len() - 1);
-        let (src_row, src_col0, cols) = map.rows[vrow];
+        let vrow = ((content_y / map.line_h).max(0.0) as usize).min(map.vrows.len() - 1);
+        let vr = &map.vrows[vrow];
         let content_x = (lu * bw - map.pad).max(0.0);
         let col_in = (content_x / map.glyph_w.max(0.1)).floor() as usize;
-        Some((src_row, src_col0 + col_in.min(cols)))
+        Some((vr.doc_line, vr.doc_col0 + col_in.min(vr.cols)))
     }
 
     /// Assemble the reader's current selection into copyable text — one logical
@@ -5244,7 +5262,12 @@ impl Workspace {
         let map = guard.as_ref()?;
         let mut out = String::new();
         for row in start.0..=end.0 {
-            let line = map.src_lines.get(row).map(|s| s.as_str()).unwrap_or("");
+            let line = map
+                .doc
+                .lines
+                .get(row)
+                .map(|l| l.text.as_str())
+                .unwrap_or("");
             let chars: Vec<char> = line.trim_end_matches(' ').chars().collect();
             let from = if row == start.0 { start.1 } else { 0 }.min(chars.len());
             let to = if row == end.0 { end.1 + 1 } else { chars.len() }.min(chars.len());
@@ -13440,10 +13463,24 @@ impl Render for Workspace {
             // carries logical lines with scrollback and the width-breaks healed,
             // so a narrower glyph fits MORE text per row rather than merely
             // smaller text — and there is content below the fold to fill with.
-            let vrows = if crawl {
-                Vec::new()
+            // Layout is memoised against (document revision, fit_cols). The
+            // revision only moves when the pane rebuilt the document (real PTY
+            // output, a resize, a theme change), so a mouse-move frame reuses the
+            // rows outright. With the whole scrollback in the document this is
+            // the difference between an Arc clone and re-wrapping ~10k logical
+            // lines on every frame the pointer twitches.
+            let vrows: Arc<Vec<doc::VisualRow>> = if crawl {
+                Arc::new(Vec::new())
             } else {
-                doc::layout(&snap.doc, fit_cols)
+                let key = (snap.doc_rev, fit_cols);
+                match &self.focus_layout {
+                    Some((k, rows)) if *k == key => rows.clone(),
+                    _ => {
+                        let rows = Arc::new(doc::layout(&snap.doc, fit_cols));
+                        self.focus_layout = Some((key, rows.clone()));
+                        rows
+                    }
+                }
             };
             // Exact content height — crawl is one row per grid row, a wrapped read
             // one row per visual (wrapped) row. Counted, never measured.
@@ -13451,6 +13488,15 @@ impl Render for Workspace {
             let total_h = row_count as f32 * cell_h;
             self.focus_overflow = (total_h - avail_h).max(0.0);
             self.focus_line_h = cell_h;
+            // Follow-bottom: a MIRROR keeps the prompt in view. While pinned, new
+            // output — including your own typing echoing back through the PTY —
+            // holds the view at the newest row, exactly like the pane itself.
+            // Scrolling up releases the pin; the wheel handler re-arms it when
+            // you land back on the bottom. `f32::MAX` is pulled to the true
+            // bottom by the clamp, which is the only place overflow is known.
+            if self.focus_at_bottom {
+                self.focus_scroll_y = f32::MAX;
+            }
             self.focus_scroll_y = self.focus_scroll_y.clamp(0.0, self.focus_overflow);
             let scroll_y = self.focus_scroll_y;
             // Centre a short read vertically: when the whole thing fits, split the
@@ -13477,27 +13523,22 @@ impl Render for Workspace {
             // one margin's worth off.
             let content_left = pad_x + h_offset;
             let base_size = snap.base_size * ms;
-            // Stash this frame's wrapped layout so a click in the reading area maps
-            // back to a source cell for selection + copy. Crawl gets an empty map
-            // (no selection over the perspective mode).
-            let map_rows: Vec<(usize, usize, usize)> = if crawl {
-                Vec::new()
-            } else {
-                vrows
-                    .iter()
-                    .map(|v| (v.doc_line, v.doc_col0, v.cols))
-                    .collect()
-            };
+            // Stash this frame's layout + document so a click in the reading area
+            // maps back to a document position for selection + copy. Both are Arc
+            // clones of what the render itself uses — never per-frame copies,
+            // which mattered little at one screenful and matters enormously at
+            // ten thousand rows. Crawl gets an empty map (no selection over the
+            // perspective mode; an empty `vrows` makes the hit-test bail).
             *self.focus_map.lock().unwrap() = Some(FocusMap {
-                rows: map_rows,
-                // The DOCUMENT's logical lines — the space `VisualRow::doc_line`
-                // indexes into, so the hit-test, the selection highlight and the
-                // copy all read one coordinate space. Crawl never lays out a
-                // document, so it keeps the raw mirrored rows.
-                src_lines: if crawl {
-                    snap.lines.iter().map(|(t, _)| t.clone()).collect()
+                vrows: if crawl {
+                    Arc::new(Vec::new())
                 } else {
-                    snap.doc.lines.iter().map(|l| l.text.clone()).collect()
+                    vrows.clone()
+                },
+                doc: if crawl {
+                    Arc::new(doc::Document::default())
+                } else {
+                    snap.doc.clone()
                 },
                 line_h: cell_h,
                 glyph_w,
@@ -13513,6 +13554,25 @@ impl Render for Workspace {
                 .focus_sel
                 .map(|(a, b)| if a <= b { (a, b) } else { (b, a) });
             let sel_hl = snap.accent.alpha(0.30);
+            // Virtualise the read: with the whole convo laid out, `vrows` can be
+            // tens of thousands of rows, and a gpui element per row would dwarf
+            // every other cost in the frame. Only the rows intersecting the clip
+            // box become elements; the absolute anchor below adds the skipped
+            // height back, so geometry — and the hit-test map, which stays
+            // global — is unchanged. `+2`: one row of slack at each edge so a
+            // fractional scroll never shows a blank sliver.
+            let win_first = if crawl {
+                0
+            } else {
+                ((scroll_y / cell_h).floor() as usize).min(vrows.len())
+            };
+            let win_end = if crawl {
+                0
+            } else {
+                (win_first + (avail_h / cell_h).ceil() as usize + 2).min(vrows.len())
+            };
+            let window: Vec<doc::VisualRow> = vrows[win_first..win_end].to_vec();
+            let body_top = pad + v_offset - scroll_y + win_first as f32 * cell_h;
             // Crawl self-centres each row across the full inner width; a wrapped
             // flat read fills that width and left-aligns (it has no sideways axis).
             let body = if crawl {
@@ -13544,7 +13604,7 @@ impl Render for Workspace {
                     .text_size(px(base_size))
                     .text_color(snap.text)
                     .font_family(snap.font_family.clone())
-                    .children(vrows.into_iter().map(move |vr| {
+                    .children(window.into_iter().map(move |vr| {
                         let line = div().h(px(cell_h)).whitespace_nowrap();
                         if vr.text.is_empty() {
                             return line;
@@ -13657,7 +13717,7 @@ impl Render for Workspace {
                         .child(
                             div()
                                 .absolute()
-                                .top(px(pad + v_offset - scroll_y))
+                                .top(px(body_top))
                                 .left(px(content_left))
                                 .flex()
                                 .flex_col()
@@ -13772,6 +13832,8 @@ impl Render for Workspace {
                             let next = (ws.focus_scroll_y - dy).clamp(0.0, ws.focus_overflow);
                             if (next - ws.focus_scroll_y).abs() > f32::EPSILON {
                                 ws.focus_scroll_y = next;
+                                // re-arm / release the bottom pin by where the wheel landed
+                                ws.focus_at_bottom = next >= ws.focus_overflow - 0.5;
                                 cx.notify();
                                 return;
                             }
