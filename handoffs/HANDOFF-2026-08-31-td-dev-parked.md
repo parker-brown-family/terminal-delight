@@ -57,4 +57,18 @@ And **#172's premise is stale**: `ThemeGroup` carries a per-pane `palette`, so p
 
 **Hyprland's new Lua config parser.** `hyprctl dispatch setfloating address:0x…` and `hyprctl keyword windowrule …` both fail. The working forms are `hyprctl eval 'hl.dispatch(hl.dsp.window.float())'` and `hl.dispatch(hl.dsp.window.resize({x=…,y=…,relative=false}))`.
 
-**The `window=` selector is ignored** — dispatchers act on the ACTIVE window. Two TD windows on one workspace get grouped, so a dispatch aimed at a probe hits the live session instead. Always guard on `hyprctl -j activewindow` before dispatching, and note `hyprctl eval` always prints `ok` — it has no output channel.
+~~**The `window=` selector is ignored** — dispatchers act on the ACTIVE window.~~
+**Corrected 2026-08-31 by measurement.** The selector works. With two ungrouped
+`foot` windows on an empty workspace and probe-b confirmed active via
+`hyprctl -j activewindow`, `hl.dsp.window.close({ window = "address:<probe-a>" })`
+closed **probe-a** and left probe-b alive on Hyprland 0.56.2. This matches the
+older, right record in `hyprland-lua-dispatch-api`: `float/fullscreen/pseudo/close`
+all take `{ window = "address:0x…" }` and work on background workspaces.
+
+What was actually observed here was **grouping**, not a broken selector: two TD
+windows on one workspace get tabbed together, and addressing one member resolves
+to the group's visible tab — so a dispatch aimed at a probe lands on the live
+session. Guard on `hyprctl -j activewindow` when the target **might be grouped**;
+do not avoid addressing, and do not add guards to code that already addresses
+correctly (`bin/shoot-theme`, `bin/td-tint --crt` in the theme repo both rely on
+it and are fine). Note `hyprctl eval` always prints `ok` — it has no output channel.
