@@ -2543,6 +2543,13 @@ impl Workspace {
         // mode gets one — scratch included, a quick window is still paintable.
         // Process-wide singleton behind the same atomic-guard pattern.
         ctl::start(cx);
+        // The main-thread bridge the ctl socket's `mcp rpc` verb round-trips on.
+        // Unconditional, because a desktop-launched window never runs the TD_MCP
+        // branch above — and that is precisely the window an agent needs to
+        // reach. A no-op when `mcp_transport::start` already brought it up.
+        // Starting it grants nothing on its own: `ws.mcp` is off by default and
+        // still gates every read, with writes behind a second toggle.
+        mcp_transport::start_bridge(cx, None);
         ws
     }
 
@@ -15538,6 +15545,15 @@ fn main() {
     let argv: Vec<String> = std::env::args().collect();
     if argv.get(1).map(String::as_str) == Some("ctl") {
         std::process::exit(ctl::run_cli(&argv[2..]));
+    }
+
+    // `mcp`: the stdio JSON-RPC relay an agent registers as an MCP server. It
+    // forwards each line to a RUNNING window's control socket, which is the only
+    // way in for a terminal the desktop launched — the in-process stdio
+    // transport needs the MCP client to be our parent, and it never is. Like
+    // `ctl`, a plain subprocess: no window, no gpui.
+    if argv.get(1).map(String::as_str) == Some("mcp") {
+        std::process::exit(ctl::run_mcp_cli(&argv[2..]));
     }
 
     // `probe`: read-only forensics on someone ELSE's terminal — given a tile's

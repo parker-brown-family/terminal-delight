@@ -2,8 +2,9 @@
 //!
 //! Every terminal-delight process listens on its own unix socket,
 //! `$XDG_RUNTIME_DIR/terminal-delight/ctl-<pid>.sock`, for one-line commands —
-//! today that is PAINT mode (the per-pane palette overlay) plus `ping` and
-//! `paint status`. The same binary is also the client: `terminal-delight ctl
+//! PAINT mode (the per-pane palette overlay), `ping`, `paint status`, the MCP
+//! policy toggles, and `mcp rpc <json>`, which carries a whole JSON-RPC line to
+//! the MCP protocol handler. The same binary is also the client: `terminal-delight ctl
 //! paint toggle --workspace active` finds the sockets of the windows on the
 //! active Hyprland workspace and pokes each one. That split is what lets an
 //! Omarchy bar widget (or a keybind, or a plain script) raise the overlay
@@ -22,18 +23,25 @@
 //! demos. Instead the server unlinks any stale file before binding its own
 //! pid's path, and the client treats a connection failure as "stale: sweep it
 //! and move on".
+//!
+//! **`mcp rpc` is the exception to "never blocks".** The MCP handler needs a
+//! round-trip onto the gpui main thread, so that one verb is served on its own
+//! thread and the accept loop moves on; everything else still answers inline
+//! from a queue write or an atomic mirror. `terminal-delight mcp` is the
+//! matching client — a stdio JSON-RPC relay an agent registers as an MCP server,
+//! which finds the terminal hosting it by walking its own parent chain.
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::{mpsc, Arc};
 use std::thread;
 use std::time::Duration;
 
 use gpui::Context;
 
-use crate::{theme, Workspace};
+use crate::{mcp, mcp_transport, theme, Workspace};
 
 /// A tile adoption: open a fresh pane at `cwd`, optionally running `run` in it
 /// (an agent resume line, a tmux attach) — how the desktop hands a terminal
@@ -50,6 +58,22 @@ pub(crate) enum Req {
     Set(bool),
     Toggle,
     Adopt(AdoptReq),
+    McpPolicy(McpPolicy),
+}
+
+/// One field of the MCP control-surface policy — the robot panel's toggles,
+/// reachable from the socket. Same escalation, same persistence: the panel and
+/// this path both write `ws.mcp` and `save()`, so a grant made from the CLI is
+/// visible in the panel and survives a restart. Kept as one-field-at-a-time so a
+/// script can grant reads without silently also granting writes.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub(crate) enum McpPolicy {
+    /// The master switch (`mcp.enabled`).
+    Enabled(bool),
+    /// The second, separate opt-in that permits `set_pane_config` (`mcp.writable`).
+    Writes(bool),
+    /// `true` = expose every pane, `false` = agent panes only (the safe default).
+    ExposeAll(bool),
 }
 
 /// One parsed request line.
@@ -58,6 +82,50 @@ enum Cmd {
     PaintStatus,
     Paint(Req),
     Adopt(AdoptReq),
+    /// A whole JSON-RPC line for the MCP handler, verbatim.
+    McpRpc(String),
+    McpStatus,
+    McpPolicy(McpPolicy),
+}
+
+// The `mcp status` mirror, refreshed by the ticker each pass (same pattern as
+// the paint mirror): a policy read never touches the main thread.
+const MCP_ON: u8 = 1 << 0;
+const MCP_WRITES: u8 = 1 << 1;
+const MCP_EXPOSE_ALL: u8 = 1 << 2;
+const MCP_EVENTS: u8 = 1 << 3;
+
+fn mcp_bits(c: &mcp::McpConfig) -> u8 {
+    let mut b = 0;
+    if c.enabled {
+        b |= MCP_ON;
+    }
+    if c.writable {
+        b |= MCP_WRITES;
+    }
+    if c.expose == mcp::Expose::All {
+        b |= MCP_EXPOSE_ALL;
+    }
+    if c.events {
+        b |= MCP_EVENTS;
+    }
+    b
+}
+
+/// Render the mirror as the one status line `mcp status` answers with.
+fn mcp_status_line(bits: u8) -> String {
+    let on = |m: u8| if bits & m != 0 { "on" } else { "off" };
+    format!(
+        "enabled={} writes={} expose={} events={}",
+        on(MCP_ON),
+        on(MCP_WRITES),
+        if bits & MCP_EXPOSE_ALL != 0 {
+            "all"
+        } else {
+            "agents"
+        },
+        on(MCP_EVENTS),
+    )
 }
 
 /// The per-user control directory. Runtime state, so `$XDG_RUNTIME_DIR` (a
@@ -74,22 +142,42 @@ pub fn socket_path(pid: u32) -> PathBuf {
     ctl_dir().join(format!("ctl-{pid}.sock"))
 }
 
+/// Everything the grammar accepts, in one place — the usage string and the
+/// unknown-command error both quote it, so they can't drift from the match.
+const USAGE: &str = "ping | paint on|off|toggle|status | \
+     mcp status|on|off | mcp writes on|off | mcp expose agents|all | \
+     mcp rpc <json> | adopt {\"cwd\":\"/…\",\"run\":\"…\"}";
+
 fn parse_line(s: &str) -> Result<Cmd, String> {
     // `adopt` carries a JSON payload (cwd/run both hold spaces); everything
     // else stays word-shaped.
     if let Some(rest) = s.strip_prefix("adopt ") {
         return parse_adopt(rest.trim()).map(Cmd::Adopt);
     }
-    let mut w = s.split_whitespace();
-    match (w.next(), w.next(), w.next()) {
-        (Some("ping"), None, _) => Ok(Cmd::Ping),
-        (Some("paint"), Some("on"), None) => Ok(Cmd::Paint(Req::Set(true))),
-        (Some("paint"), Some("off"), None) => Ok(Cmd::Paint(Req::Set(false))),
-        (Some("paint"), Some("toggle"), None) => Ok(Cmd::Paint(Req::Toggle)),
-        (Some("paint"), Some("status"), None) => Ok(Cmd::PaintStatus),
-        _ => Err(format!(
-            "unknown command {s:?} — try: ping | paint on|off|toggle|status | adopt {{\"cwd\":\"/…\",\"run\":\"…\"}}"
-        )),
+    // `mcp rpc` carries a whole JSON-RPC line: take the remainder VERBATIM.
+    // Splitting it on whitespace would corrupt every string literal in it.
+    if let Some(rest) = s.strip_prefix("mcp rpc ") {
+        let line = rest.trim();
+        if line.is_empty() {
+            return Err("mcp rpc: empty payload".into());
+        }
+        return Ok(Cmd::McpRpc(line.to_string()));
+    }
+    let w: Vec<&str> = s.split_whitespace().collect();
+    match w.as_slice() {
+        ["ping"] => Ok(Cmd::Ping),
+        ["paint", "on"] => Ok(Cmd::Paint(Req::Set(true))),
+        ["paint", "off"] => Ok(Cmd::Paint(Req::Set(false))),
+        ["paint", "toggle"] => Ok(Cmd::Paint(Req::Toggle)),
+        ["paint", "status"] => Ok(Cmd::PaintStatus),
+        ["mcp", "status"] => Ok(Cmd::McpStatus),
+        ["mcp", "on"] => Ok(Cmd::McpPolicy(McpPolicy::Enabled(true))),
+        ["mcp", "off"] => Ok(Cmd::McpPolicy(McpPolicy::Enabled(false))),
+        ["mcp", "writes", "on"] => Ok(Cmd::McpPolicy(McpPolicy::Writes(true))),
+        ["mcp", "writes", "off"] => Ok(Cmd::McpPolicy(McpPolicy::Writes(false))),
+        ["mcp", "expose", "all"] => Ok(Cmd::McpPolicy(McpPolicy::ExposeAll(true))),
+        ["mcp", "expose", "agents"] => Ok(Cmd::McpPolicy(McpPolicy::ExposeAll(false))),
+        _ => Err(format!("unknown command {s:?} — try: {USAGE}")),
     }
 }
 
@@ -120,9 +208,19 @@ fn parse_adopt(json: &str) -> Result<AdoptReq, String> {
     Ok(AdoptReq { cwd, run })
 }
 
+/// The reply for a `mcp rpc` line that produced no response — a JSON-RPC
+/// notification, or an unparseable line. A distinct sentinel rather than `err`
+/// so the relay client can drop it silently instead of logging a non-problem.
+const MCP_NONE: &str = "mcp-none";
+
 /// Serve one connection: read a line, answer a line. Short timeouts on both
 /// directions so a wedged client can never stall the single accept loop.
-fn handle_conn(stream: UnixStream, mirror: &AtomicBool, tx: &mpsc::Sender<Req>) {
+fn handle_conn(
+    stream: UnixStream,
+    mirror: &AtomicBool,
+    mcp_mirror: &AtomicU8,
+    tx: &mpsc::Sender<Req>,
+) {
     let _ = stream.set_read_timeout(Some(Duration::from_millis(400)));
     let _ = stream.set_write_timeout(Some(Duration::from_millis(400)));
     let Ok(read_half) = stream.try_clone() else {
@@ -133,6 +231,30 @@ fn handle_conn(stream: UnixStream, mirror: &AtomicBool, tx: &mpsc::Sender<Req>) 
         return;
     }
     let reply = match parse_line(line.trim()) {
+        // `mcp rpc` is the one verb that waits on the gpui main thread (up to
+        // the transport's snapshot budget). Serving it inline would stall the
+        // single accept loop for seconds, so hand the connection to its own
+        // thread and get straight back to accepting. That thread re-arms the
+        // write timeout: 400 ms is sized for a mirror read, not a `tools/list`
+        // payload after a five-second wait.
+        Ok(Cmd::McpRpc(payload)) => {
+            let spawned = thread::Builder::new()
+                .name("td-ctl-mcp".into())
+                .spawn(move || {
+                    let reply =
+                        mcp_transport::respond(&payload).unwrap_or_else(|| MCP_NONE.to_string());
+                    let mut stream = stream;
+                    let _ = stream.set_write_timeout(Some(Duration::from_secs(8)));
+                    let _ = writeln!(stream, "{reply}");
+                });
+            if spawned.is_err() {
+                // Thread exhaustion. The caller is owed a line and the worker
+                // now owns the stream, so there is nothing left to answer on;
+                // the client's read timeout turns this into "unreachable".
+                eprintln!("terminal-delight: ctl could not spawn an mcp worker");
+            }
+            return; // the worker owns the connection from here
+        }
         Ok(Cmd::Ping) => "pong".to_string(),
         Ok(Cmd::PaintStatus) => if mirror.load(Ordering::Relaxed) {
             "on"
@@ -140,8 +262,16 @@ fn handle_conn(stream: UnixStream, mirror: &AtomicBool, tx: &mpsc::Sender<Req>) 
             "off"
         }
         .to_string(),
+        Ok(Cmd::McpStatus) => mcp_status_line(mcp_mirror.load(Ordering::Relaxed)),
         Ok(Cmd::Paint(req)) => {
             if tx.send(req).is_ok() {
+                "ok".into()
+            } else {
+                "err ui gone".into()
+            }
+        }
+        Ok(Cmd::McpPolicy(p)) => {
+            if tx.send(Req::McpPolicy(p)).is_ok() {
                 "ok".into()
             } else {
                 "err ui gone".into()
@@ -191,13 +321,15 @@ pub fn start(cx: &mut Context<Workspace>) {
 
     let (tx, rx) = mpsc::channel::<Req>();
     let mirror = Arc::new(AtomicBool::new(false));
+    let mcp_mirror = Arc::new(AtomicU8::new(0));
 
     {
         let mirror = Arc::clone(&mirror);
+        let mcp_mirror = Arc::clone(&mcp_mirror);
         let _ = thread::Builder::new().name("td-ctl".into()).spawn(move || {
             for conn in listener.incoming() {
                 let Ok(stream) = conn else { continue };
-                handle_conn(stream, &mirror, &tx);
+                handle_conn(stream, &mirror, &mcp_mirror, &tx);
             }
         });
     }
@@ -224,9 +356,28 @@ pub fn start(cx: &mut Context<Workspace>) {
                     // Adoption needs a Window to build the pane; this ticker is
                     // window-less, so park it — render() drains next frame.
                     Req::Adopt(a) => ws.queue_adopt(a, cx),
+                    // The same escalation the robot panel performs, and the same
+                    // persistence: a grant made from the CLI shows in the panel
+                    // and survives a restart.
+                    Req::McpPolicy(p) => {
+                        match p {
+                            McpPolicy::Enabled(v) => ws.mcp.enabled = v,
+                            McpPolicy::Writes(v) => ws.mcp.writable = v,
+                            McpPolicy::ExposeAll(v) => {
+                                ws.mcp.expose = if v {
+                                    mcp::Expose::All
+                                } else {
+                                    mcp::Expose::AgentsOnly
+                                }
+                            }
+                        }
+                        ws.save(cx);
+                        cx.notify();
+                    }
                 }
             }
             mirror.store(theme::paint_mode(cx), Ordering::Relaxed);
+            mcp_mirror.store(mcp_bits(&ws.mcp), Ordering::Relaxed);
         });
         if applied.is_err() {
             return; // UI gone — the listener thread dies with the process
@@ -317,15 +468,22 @@ fn discover() -> Vec<(u32, PathBuf)> {
     out
 }
 
-/// One request/response round trip against a socket.
-fn send(path: &Path, line: &str) -> std::io::Result<String> {
+/// One request/response round trip against a socket, with an explicit read
+/// budget: the queue-and-mirror verbs answer within a tick, but `mcp rpc` waits
+/// on the gpui main thread and needs the server's snapshot budget plus slack.
+fn send_within(path: &Path, line: &str, budget: Duration) -> std::io::Result<String> {
     let mut s = UnixStream::connect(path)?;
-    let _ = s.set_read_timeout(Some(Duration::from_millis(800)));
-    let _ = s.set_write_timeout(Some(Duration::from_millis(800)));
+    let _ = s.set_read_timeout(Some(budget));
+    let _ = s.set_write_timeout(Some(budget));
     writeln!(s, "{line}")?;
     let mut reply = String::new();
     BufReader::new(&mut s).read_line(&mut reply)?;
     Ok(reply.trim().to_string())
+}
+
+/// One request/response round trip against a socket.
+fn send(path: &Path, line: &str) -> std::io::Result<String> {
+    send_within(path, line, Duration::from_millis(800))
 }
 
 /// Ask the Hyprland IPC socket a `j/…` question. Direct socket, not `hyprctl`:
@@ -381,8 +539,7 @@ pub fn run_cli(args: &[String]) -> i32 {
         Err(e) => {
             eprintln!("terminal-delight ctl: {e}");
             eprintln!(
-                "usage: terminal-delight ctl <ping | paint on|off|toggle|status | \
-                 adopt --cwd <dir> [--run <cmd>]> \
+                "usage: terminal-delight ctl <{USAGE} | adopt --cwd <dir> [--run <cmd>]> \
                  [--workspace active|<name-or-id> | --all | --pid <N>]"
             );
             return 1;
@@ -471,6 +628,132 @@ pub fn run_cli(args: &[String]) -> i32 {
     }
 }
 
+// ------------------------------------------------------------ mcp relay ----
+
+/// A process's parent, from `/proc/<pid>/stat`. The `comm` field is wrapped in
+/// parens and may itself contain spaces AND parens, so the only safe split is
+/// after the LAST `)`: what follows is `state ppid …`.
+fn ppid_of(pid: u32) -> Option<u32> {
+    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    let after_comm = stat.rsplit_once(')')?.1;
+    after_comm.split_whitespace().nth(1)?.parse().ok()
+}
+
+/// The terminal-delight window hosting THIS process, by walking our own parent
+/// chain until a pid turns out to own a control socket.
+///
+/// That is the whole trick behind the relay: an agent is a great-grandchild of
+/// the terminal it lives in (td → shell → agent → this MCP server), so the
+/// ancestor that owns a socket is, unambiguously, the window it is looking at.
+/// The socket's own existence is the test — no class matching, no name guessing.
+fn owning_td_pid() -> Option<u32> {
+    let mut pid = std::process::id();
+    // Deep enough for td → shell → agent → server with room to spare; bounded so
+    // a malformed /proc chain can never spin.
+    for _ in 0..64 {
+        if pid <= 1 {
+            return None;
+        }
+        if socket_path(pid).exists() {
+            return Some(pid);
+        }
+        pid = ppid_of(pid)?;
+    }
+    None
+}
+
+/// Resolve which terminal the relay talks to: an explicit `--pid`, else the
+/// window hosting us, else — only if it is unambiguous — the single running
+/// terminal. Refusing to guess between several is deliberate: silently driving
+/// the wrong window is worse than an error telling you to name one.
+fn relay_target(args: &[String]) -> Result<u32, String> {
+    match args
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>()
+        .as_slice()
+    {
+        [] => {}
+        ["--pid", v] => return v.parse().map_err(|_| format!("bad pid {v:?}")),
+        ["--pid"] => return Err("--pid needs a value".into()),
+        [other, ..] => return Err(format!("unknown flag {other:?}")),
+    }
+    if let Some(pid) = owning_td_pid() {
+        return Ok(pid);
+    }
+    match discover().as_slice() {
+        [] => Err(format!(
+            "no terminal-delight control sockets in {:?} — is one running, and \
+             new enough to have a control socket?",
+            ctl_dir()
+        )),
+        [(pid, _)] => Ok(*pid),
+        many => Err(format!(
+            "not launched from inside a terminal-delight window, and {} are \
+             running — name one with --pid <N> (pids: {})",
+            many.len(),
+            many.iter()
+                .map(|(p, _)| p.to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        )),
+    }
+}
+
+/// `terminal-delight mcp` — the stdio JSON-RPC relay: an MCP server an agent
+/// registers, which forwards each line to a RUNNING terminal's control socket
+/// and writes the answer back.
+///
+/// This exists because the in-process stdio transport ([`crate::mcp_transport`])
+/// requires the MCP client to own our stdin/stdout, i.e. to be our parent — and
+/// a GUI terminal launched from the desktop never is. The relay inverts that: it
+/// is spawned BY the agent, and reaches back to the window already on screen.
+pub fn run_mcp_cli(args: &[String]) -> i32 {
+    let pid = match relay_target(args) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("terminal-delight mcp: {e}");
+            return 1;
+        }
+    };
+    let path = socket_path(pid);
+
+    // The server's own budget is 5 s; allow slack for the queue and the write so
+    // a busy UI reads as slow, never as a dropped connection.
+    let budget = Duration::from_secs(10);
+    let stdin = std::io::stdin();
+    let mut out = std::io::stdout();
+    let mut line = String::new();
+    loop {
+        line.clear();
+        match stdin.read_line(&mut line) {
+            Ok(0) | Err(_) => return 0, // EOF: the agent closed us. Normal exit.
+            Ok(_) => {}
+        }
+        let req = line.trim();
+        if req.is_empty() {
+            continue;
+        }
+        match send_within(&path, &format!("mcp rpc {req}"), budget) {
+            // A notification: JSON-RPC says answer nothing, so write nothing.
+            Ok(r) if r == MCP_NONE => {}
+            // A protocol-level refusal from ctl (never from the MCP handler,
+            // which answers in JSON-RPC). Log it; emitting it on stdout would
+            // corrupt the framing the client is parsing.
+            Ok(r) if r.starts_with("err ") => eprintln!("terminal-delight mcp: {r}"),
+            Ok(r) => {
+                if writeln!(out, "{r}").is_err() || out.flush().is_err() {
+                    return 0; // client hung up mid-answer
+                }
+            }
+            Err(e) => {
+                eprintln!("terminal-delight mcp: window {pid} unreachable ({e})");
+                return 2;
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -483,7 +766,7 @@ mod tests {
     }
 
     #[test]
-    fn the_grammar_is_exactly_six_verbs_long() {
+    fn the_original_six_verbs_still_parse() {
         assert!(matches!(parse_line("ping"), Ok(Cmd::Ping)));
         assert!(matches!(
             parse_line("paint on"),
@@ -591,11 +874,13 @@ mod tests {
         let (tx, rx) = mpsc::channel::<Req>();
         let mirror = Arc::new(AtomicBool::new(false));
         let m2 = Arc::clone(&mirror);
+        let mcp_mirror = Arc::new(AtomicU8::new(0));
+        let mm2 = Arc::clone(&mcp_mirror);
         let server = thread::spawn(move || {
             // exactly five connections, in test order
             for _ in 0..5 {
                 let (stream, _) = listener.accept().unwrap();
-                handle_conn(stream, &m2, &tx);
+                handle_conn(stream, &m2, &mm2, &tx);
             }
         });
         assert_eq!(send(&sock, "ping").unwrap(), "pong");
@@ -624,14 +909,79 @@ mod tests {
         let listener = UnixListener::bind(&sock).unwrap();
         let (tx, _rx) = mpsc::channel::<Req>();
         let mirror = AtomicBool::new(false);
+        let mcp_mirror = AtomicU8::new(0);
         let server = thread::spawn(move || {
             let (stream, _) = listener.accept().unwrap();
-            handle_conn(stream, &mirror, &tx);
+            handle_conn(stream, &mirror, &mcp_mirror, &tx);
         });
         assert!(send(&sock, "sudo make me a sandwich")
             .unwrap()
             .starts_with("err"));
         server.join().unwrap();
+    }
+
+    #[test]
+    fn mcp_policy_verbs_queue_and_status_reads_the_mirror() {
+        let sock = tmp("mcp").join("ctl-4.sock");
+        let listener = UnixListener::bind(&sock).unwrap();
+        let (tx, rx) = mpsc::channel::<Req>();
+        let mirror = Arc::new(AtomicBool::new(false));
+        // A mirror standing in for a live policy: reads on, writes off.
+        let mcp_mirror = Arc::new(AtomicU8::new(MCP_ON | MCP_EVENTS));
+        let (m2, mm2) = (Arc::clone(&mirror), Arc::clone(&mcp_mirror));
+        let server = thread::spawn(move || {
+            for _ in 0..4 {
+                let (stream, _) = listener.accept().unwrap();
+                handle_conn(stream, &m2, &mm2, &tx);
+            }
+        });
+
+        assert_eq!(
+            send(&sock, "mcp status").unwrap(),
+            "enabled=on writes=off expose=agents events=on"
+        );
+        assert_eq!(send(&sock, "mcp writes on").unwrap(), "ok");
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(Req::McpPolicy(McpPolicy::Writes(true)))
+        ));
+        assert_eq!(send(&sock, "mcp expose all").unwrap(), "ok");
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(Req::McpPolicy(McpPolicy::ExposeAll(true)))
+        ));
+        // Reads and writes are separate grants: enabling one must never be
+        // spelled in a way that quietly enables the other.
+        assert!(send(&sock, "mcp writes").unwrap().starts_with("err"));
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn mcp_rpc_takes_its_payload_verbatim() {
+        // The JSON carries spaces AND nested braces; splitting on whitespace
+        // would corrupt it, so the parser must take the remainder untouched.
+        let json = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"x y"}}"#;
+        match parse_line(&format!("mcp rpc {json}")) {
+            Ok(Cmd::McpRpc(p)) => assert_eq!(p, json),
+            _ => panic!("mcp rpc did not parse as a verbatim payload"),
+        }
+        assert!(parse_line("mcp rpc ").is_err());
+        assert!(parse_line("mcp rpc").is_err());
+    }
+
+    #[test]
+    fn relay_target_refuses_to_guess_between_windows() {
+        assert_eq!(relay_target(&["--pid".into(), "4242".into()]), Ok(4242));
+        assert!(relay_target(&["--pid".into()]).is_err());
+        assert!(relay_target(&["--wat".into()]).is_err());
+    }
+
+    #[test]
+    fn ppid_of_walks_a_comm_containing_spaces_and_parens() {
+        // Our own parent is the real check that the last-paren split is right.
+        let me = std::process::id();
+        assert_eq!(ppid_of(me), Some(unsafe { libc::getppid() } as u32));
+        assert_eq!(ppid_of(u32::MAX), None); // no such process
     }
 
     #[test]
