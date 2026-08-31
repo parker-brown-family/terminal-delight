@@ -229,6 +229,19 @@ struct Candidate {
     saved: SystemTime,
     /// Where this session was last saved, if it recorded it. A hint, never an id.
     workspace: Option<String>,
+    /// Panes the session holds, if it recorded them. `None` on files written
+    /// before the field existed — counted as substantial, never demoted.
+    panes: Option<usize>,
+}
+
+impl Candidate {
+    /// A session worth preferring over a throwaway one. A single pane is what a
+    /// "open a terminal, run one command, close it" window leaves behind; more
+    /// than that is work someone arranged. Unknown (a pre-field file) counts as
+    /// substantial — a session that predates the field must not be demoted by it.
+    fn substantial(&self) -> bool {
+        self.panes.is_none_or(|p| p > 1)
+    }
 }
 
 /// Which session this window opens, and the claim that makes it ours:
@@ -286,26 +299,42 @@ fn scan_sessions(config: &Path) -> Vec<Candidate> {
             }
             let id = path.file_stem()?.to_str()?.to_string();
             let saved = e.metadata().ok()?.modified().ok()?;
-            let workspace = std::fs::read_to_string(&path)
-                .ok()
-                .and_then(|body| toml_top_level_string(&body, "last_workspace"));
+            let body = std::fs::read_to_string(&path).ok();
+            let workspace = body
+                .as_deref()
+                .and_then(|b| toml_top_level_string(b, "last_workspace"));
+            let panes = body
+                .as_deref()
+                .and_then(|b| toml_top_level_usize(b, "panes"));
             Some(Candidate {
                 id,
                 saved,
                 workspace,
+                panes,
             })
         })
         .collect()
 }
 
-/// Newest first, but a session last saved on this workspace outranks a newer one
-/// from elsewhere. Ties break on the id so the order is total and the tests
-/// cannot flake on two files sharing a timestamp.
+/// Adoption order: this workspace first, then SUBSTANTIAL sessions, then newest.
+/// Ties break on the id so the order is total and the tests cannot flake on two
+/// files sharing a timestamp.
+///
+/// The substantial rule exists because recency alone gets bulldozed. Open a
+/// second window to run one command, close it, and that one-pane session is now
+/// the most recently saved — so the next launch adopts IT and the twelve-tab
+/// session you actually work in becomes reachable only by knowing `$TD_SESSION`
+/// exists. A throwaway must never displace arranged work.
+///
+/// It is deliberately a CLASS test, not "biggest wins": among real sessions
+/// recency still decides, so today's work beats last week's. Ranking purely on
+/// size would make a session you abandoned permanently sticky.
 fn rank(mut cands: Vec<Candidate>, here: Option<&str>) -> Vec<String> {
     cands.sort_by(|a, b| {
         let mine = |c: &Candidate| here.is_some() && c.workspace.as_deref() == here;
         mine(b)
             .cmp(&mine(a))
+            .then_with(|| b.substantial().cmp(&a.substantial()))
             .then_with(|| b.saved.cmp(&a.saved))
             .then_with(|| a.id.cmp(&b.id))
     });
@@ -340,6 +369,25 @@ fn fresh_session(config: &Path) -> (String, Claim) {
 /// the first `[table]` header so a pane's own `last_workspace` could never be
 /// mistaken for the session's. Hand-rolled for the same reason [`json_string`]
 /// is: one string of one file does not earn a parser in the boot path.
+/// A top-level integer, read the same cheap way as [`toml_top_level_string`] —
+/// scan_sessions runs on every launch and must not deserialise whole sessions.
+fn toml_top_level_usize(src: &str, key: &str) -> Option<usize> {
+    for line in src.lines() {
+        let line = line.trim();
+        if line.starts_with('[') {
+            return None;
+        }
+        let Some(rest) = line.strip_prefix(key) else {
+            continue;
+        };
+        let Some(rest) = rest.trim_start().strip_prefix('=') else {
+            continue;
+        };
+        return rest.trim().parse().ok();
+    }
+    None
+}
+
 fn toml_top_level_string(src: &str, key: &str) -> Option<String> {
     for line in src.lines() {
         let line = line.trim();
@@ -678,11 +726,83 @@ mod tests {
     }
 
     fn cand(id: &str, age: u64, workspace: Option<&str>) -> Candidate {
+        cand_of(id, age, workspace, None)
+    }
+
+    fn cand_of(id: &str, age: u64, workspace: Option<&str>, panes: Option<usize>) -> Candidate {
         Candidate {
             id: id.into(),
             saved: SystemTime::now() - Duration::from_secs(age),
             workspace: workspace.map(Into::into),
+            panes,
         }
+    }
+
+    #[test]
+    fn a_throwaway_terminal_cannot_bulldoze_an_arranged_session() {
+        // THE case this rule exists for. You keep a big multi-project session.
+        // You open a second window to run one command and close it — that
+        // one-pane session is now the most recently saved. Recency alone would
+        // adopt it and hide the real one behind $TD_SESSION.
+        let order = rank(
+            vec![
+                cand_of("scratch", 10, None, Some(1)), // newest, trivial
+                cand_of("work", 4000, None, Some(30)), // older, arranged
+            ],
+            None,
+        );
+        assert_eq!(
+            order,
+            vec!["work", "scratch"],
+            "a one-pane session must never displace an arranged one"
+        );
+    }
+
+    #[test]
+    fn among_substantial_sessions_recency_still_decides() {
+        // Deliberately NOT "biggest wins": ranking purely on size would make a
+        // session you abandoned weeks ago permanently sticky.
+        let order = rank(
+            vec![
+                cand_of("huge-but-stale", 400_000, None, Some(40)),
+                cand_of("todays-work", 60, None, Some(6)),
+            ],
+            None,
+        );
+        assert_eq!(
+            order,
+            vec!["todays-work", "huge-but-stale"],
+            "among real sessions the newest still wins"
+        );
+    }
+
+    #[test]
+    fn a_session_predating_the_pane_count_is_never_demoted() {
+        // Files written before `panes` existed report None. Treating that as
+        // trivial would silently push every pre-upgrade session behind a fresh
+        // one-pane window on the first launch after upgrading.
+        let order = rank(
+            vec![
+                cand_of("fresh-trivial", 10, None, Some(1)),
+                cand_of("legacy", 5000, None, None),
+            ],
+            None,
+        );
+        assert_eq!(order, vec!["legacy", "fresh-trivial"]);
+    }
+
+    #[test]
+    fn the_workspace_hint_still_outranks_substance() {
+        // The workspace hint is the FIRST key: a session you were just standing
+        // on stays the one you get back, trivial or not.
+        let order = rank(
+            vec![
+                cand_of("big-elsewhere", 10, Some("9"), Some(30)),
+                cand_of("small-here", 5000, Some("1"), Some(1)),
+            ],
+            Some("1"),
+        );
+        assert_eq!(order, vec!["small-here", "big-elsewhere"]);
     }
 
     #[test]
@@ -833,6 +953,7 @@ mod tests {
             id: id.into(),
             saved: same,
             workspace: None,
+            panes: None,
         };
         assert_eq!(
             rank(vec![at("7"), at("1"), at("3")], None),

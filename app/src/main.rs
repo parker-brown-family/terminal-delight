@@ -949,6 +949,13 @@ struct StateFile {
     /// absent = per-theme.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     track: Option<[f32; 3]>,
+    /// How many terminal panes this session holds. Recorded so adoption can tell
+    /// a substantial session from a throwaway one WITHOUT parsing the whole tree
+    /// on every launch (`instance::scan_sessions` reads it as a top-level int).
+    /// Absent on files written before this existed — treated as substantial, so a
+    /// pre-existing session is never demoted by a field it could not have had.
+    #[serde(default)]
+    panes: usize,
     tabs: Vec<SavedTab>,
     /// Tab groups (browser-style colour bands). Absent on pre-feature files.
     #[serde(default)]
@@ -1002,6 +1009,7 @@ impl Default for StateFile {
     fn default() -> Self {
         Self {
             active: 0,
+            panes: 0,
             win: None,
             scale: None,
             theme: None,
@@ -2400,6 +2408,7 @@ impl Workspace {
     fn build_state(&self, cx: &App) -> StateFile {
         StateFile {
             active: self.active,
+            panes: self.pane_count(),
             win: self.last_win,
             // Kept for backward-compat with readers of the old top-level field;
             // the source of truth is now `theme.grade.scale`.
@@ -14125,6 +14134,7 @@ id = "hacker"
     #[test]
     fn state_with_pane_theme_round_trips() {
         let state = StateFile {
+            panes: 0,
             last_workspace: None,
             active: 0,
             win: Some((12.0, 34.0, 1280.0, 720.0)),
@@ -14173,6 +14183,7 @@ id = "hacker"
     #[test]
     fn leaf_work_state_round_trips() {
         let state = StateFile {
+            panes: 0,
             last_workspace: None,
             active: 0,
             win: None,
@@ -14223,6 +14234,7 @@ id = "hacker"
             logo: None,
         };
         let state = StateFile {
+            panes: 0,
             last_workspace: None,
             active: 0,
             win: None,
@@ -14552,6 +14564,7 @@ node = "Leaf"
             b: Box::new(leaf()),
         };
         let state = StateFile {
+            panes: 0,
             last_workspace: None,
             active: 0,
             win: None,
