@@ -20,6 +20,7 @@ mod csd;
 mod ctl;
 mod demo;
 mod dirlogo;
+mod doc;
 mod gamba;
 mod hud;
 mod instance;
@@ -3770,9 +3771,15 @@ impl Workspace {
         self.focus_read = Some(pane.downgrade());
         // Each FOCUS opens at fit-to-modal; the header slider takes it from there.
         self.focus_zoom = 1.0;
-        // A fresh open starts at the top of the mirror (no pan carried over) with
-        // nothing selected.
-        self.focus_scroll_y = 0.0;
+        // A fresh open lands at the NEWEST end, with nothing selected.
+        //
+        // The reader's document now carries scrollback, so "the top" is the oldest
+        // thing the pane remembers — opening there would show history rather than
+        // what just happened. `f32::MAX` is pulled to the bottom by the clamp
+        // against `focus_overflow` on the first layout, which is the only place the
+        // real content height is known; a short read has zero overflow and lands at
+        // 0 exactly as before.
+        self.focus_scroll_y = f32::MAX;
         self.focus_sel = None;
         self.focus_sel_drag = false;
         // Defer the focus: this runs from the 👓 header button's mouse-down
@@ -13422,15 +13429,14 @@ impl Render for Workspace {
             // grid. That is why `src_lines` below must be the joined text too —
             // selection, highlight and copy all read the same space, and a wrapped
             // command now copies back as the single line it really is.
-            let joined = if crawl {
-                Vec::new()
-            } else {
-                pane::join_focus_lines(&snap.lines, snap.cols)
-            };
+            // The reader lays out a Document, never a grid. `snap.doc` already
+            // carries logical lines with scrollback and the width-breaks healed,
+            // so a narrower glyph fits MORE text per row rather than merely
+            // smaller text — and there is content below the fold to fill with.
             let vrows = if crawl {
                 Vec::new()
             } else {
-                pane::wrap_focus_lines(&joined, fit_cols)
+                doc::layout(&snap.doc, fit_cols)
             };
             // Exact content height — crawl is one row per grid row, a wrapped read
             // one row per visual (wrapped) row. Counted, never measured.
@@ -13472,17 +13478,19 @@ impl Render for Workspace {
             } else {
                 vrows
                     .iter()
-                    .map(|v| (v.src_row, v.src_col0, v.cols))
+                    .map(|v| (v.doc_line, v.doc_col0, v.cols))
                     .collect()
             };
             *self.focus_map.lock().unwrap() = Some(FocusMap {
                 rows: map_rows,
-                // The JOINED lines, matching the space `VisualRow::src_row` indexes
-                // into. Crawl never joins, so it keeps the raw mirrored rows.
+                // The DOCUMENT's logical lines — the space `VisualRow::doc_line`
+                // indexes into, so the hit-test, the selection highlight and the
+                // copy all read one coordinate space. Crawl never lays out a
+                // document, so it keeps the raw mirrored rows.
                 src_lines: if crawl {
                     snap.lines.iter().map(|(t, _)| t.clone()).collect()
                 } else {
-                    joined.iter().map(|(t, _)| t.clone()).collect()
+                    snap.doc.lines.iter().map(|l| l.text.clone()).collect()
                 },
                 line_h: cell_h,
                 glyph_w,
@@ -13538,19 +13546,19 @@ impl Render for Workspace {
                         // selection covers it), mapping the source-cell range down to
                         // this visual row's local columns.
                         let runs = match sel {
-                            Some((s, en)) if vr.src_row >= s.0 && vr.src_row <= en.0 => {
-                                let lo = if vr.src_row == s.0 {
-                                    s.1.max(vr.src_col0)
+                            Some((s, en)) if vr.doc_line >= s.0 && vr.doc_line <= en.0 => {
+                                let lo = if vr.doc_line == s.0 {
+                                    s.1.max(vr.doc_col0)
                                 } else {
-                                    vr.src_col0
+                                    vr.doc_col0
                                 };
-                                let hi = if vr.src_row == en.0 {
+                                let hi = if vr.doc_line == en.0 {
                                     en.1 + 1
                                 } else {
-                                    vr.src_col0 + vr.cols
+                                    vr.doc_col0 + vr.cols
                                 };
-                                let lf = lo.saturating_sub(vr.src_col0).min(vr.cols);
-                                let lt = hi.saturating_sub(vr.src_col0).min(vr.cols);
+                                let lf = lo.saturating_sub(vr.doc_col0).min(vr.cols);
+                                let lt = hi.saturating_sub(vr.doc_col0).min(vr.cols);
                                 pane::highlight_runs(&vr.text, &vr.runs, lf, lt, sel_hl)
                             }
                             _ => vr.runs,

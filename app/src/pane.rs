@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use crate::crt;
+use crate::doc::{wrap_join, DocLine, Document, DocumentSource, RowBudget, WrapJoin};
 use crate::term;
 use crate::theme::{self, PaneTheme, Theme};
 use alacritty_terminal::{
@@ -436,68 +437,6 @@ fn stitch_wrapped_line(
     // click column within the stitched line = chars in the rows above it + vcol
     let offset: usize = rows[top..vrow].iter().map(|r| r.len()).sum();
     (line, offset + vcol)
-}
-
-/// True when a row begins with whitespace — an indented code/list continuation
-/// we must never merge into the row above.
-fn starts_indented(s: &str) -> bool {
-    matches!(s.chars().next(), Some(' ') | Some('\t'))
-}
-
-/// True when a row is *structure*, not flowing text: a code fence, or a rule /
-/// box-drawing separator (≥60% of its ink is `─│┌┐…`, `-`, or `=`). Such rows
-/// bound a paragraph and are never rejoined.
-fn is_structural(s: &str) -> bool {
-    let t = s.trim();
-    let n = t.chars().count();
-    if n < 3 {
-        return false;
-    }
-    if t.starts_with("```") {
-        return true;
-    }
-    let rule = t
-        .chars()
-        .filter(|c| matches!(c, '\u{2500}'..='\u{257F}' | '-' | '=' | '·' | '•'))
-        .count();
-    rule * 5 >= n * 3
-}
-
-/// How a width-wrapped row rejoins the logical line above it.
-enum WrapJoin {
-    /// Mid-token wrap (previous row filled to `cols`) — concatenate, no space.
-    Glue,
-    /// Word-boundary wrap at the pane width — concatenate with one space.
-    Space,
-    /// A genuine line break — keep it.
-    Break,
-}
-
-/// Decide how `raw` attaches to the accumulated logical line `acc` whose last
-/// raw row had char-width `prev_len`. A join happens only when that row was at
-/// least half-full, neither side is indented or structural, and the first word
-/// of `raw` could not have fit after it (the width test). See `reflow_wrapped_copy`.
-fn wrap_join(acc: &str, prev_len: usize, raw: &str, cols: usize) -> WrapJoin {
-    let joinable = prev_len * 2 >= cols
-        && !starts_indented(raw)
-        && !starts_indented(acc)
-        && !is_structural(raw)
-        && !is_structural(acc);
-    if !joinable {
-        return WrapJoin::Break;
-    }
-    if prev_len >= cols {
-        return WrapJoin::Glue;
-    }
-    let first_word = raw
-        .split_whitespace()
-        .next()
-        .map_or(0, |w| w.chars().count());
-    if prev_len + 1 + first_word > cols {
-        WrapJoin::Space
-    } else {
-        WrapJoin::Break
-    }
 }
 
 /// Smart-reflow selected terminal text for the clipboard. TUI agents like Claude
@@ -1848,6 +1787,48 @@ enum PaintKey {
     Pass,
 }
 
+/// A pane as a [`DocumentSource`]: the terminal grid, scrollback included, run
+/// through the hard-wrap recovery.
+///
+/// This is the seam the FOCUS reader talks to. It replaced "mirror the pane's
+/// rendered rows and try to undo the rendering", which could only ever show one
+/// screenful — so shrinking the reader's text just zoomed out instead of revealing
+/// more. Here the budget decides how far back to read, so a smaller glyph genuinely
+/// gets more content.
+///
+/// A source is a *bound* thing — a pane plus the theme its cells are coloured
+/// through — which is why this is a struct rather than an impl on the pane itself.
+/// It keeps `doc.rs` free of any dependency on theming.
+pub struct PaneSource<'a> {
+    pub pane: &'a TerminalView,
+    pub theme: &'a Theme,
+}
+
+impl DocumentSource for PaneSource<'_> {
+    fn document(&self, budget: RowBudget) -> Document {
+        self.pane.document_with(budget, self.theme)
+    }
+}
+
+impl TerminalView {
+    /// Build a [`Document`] from this pane's grid, reading back up to
+    /// `budget.lines` rows into scrollback. Clamped to what history actually
+    /// holds, so a fresh pane simply yields fewer lines rather than blank filler.
+    pub fn document_with(&self, budget: RowBudget, th: &Theme) -> Document {
+        let (first, last) = {
+            let term = self.session.term.lock();
+            let grid = term.grid();
+            // Line 0 is the top of the screen; history runs negative from there.
+            let oldest = grid.topmost_line().0;
+            let newest = (self.grid.rows as i32 - 1).max(0);
+            let want = budget.lines.max(1) as i32;
+            ((newest - want + 1).max(oldest), newest)
+        };
+        let rows = self.grid_rows_in(first, last, th);
+        Document::from_grid_rows(&rows, self.grid.cols)
+    }
+}
+
 /// One matched line inside a pane's grid: its absolute grid line index, the line
 /// text (built from column 0 so a char index is also its column), and the fuzzy
 /// score + matched char positions — for the snippet highlight and the jump-time
@@ -1932,6 +1913,10 @@ impl gpui::EventEmitter<CloseFocusRead> for TerminalView {}
 /// metrics needed to scale them up to fill the modal — so the mirror costs one
 /// extra (cheap) grid scan of a single pane, never a second terminal or PTY.
 pub struct MirrorSnapshot {
+    /// The reader's document: logical lines with scrollback, width-breaks healed.
+    /// This is what the FOCUS reader lays out. `lines` below is the raw mirrored
+    /// viewport, still needed by the crawl path (which never wraps or joins).
+    pub doc: Document,
     pub lines: Vec<(String, Vec<TextRun>)>,
     pub bg: Hsla,
     pub text: Hsla,
@@ -2038,7 +2023,20 @@ impl TerminalView {
         // The pane's own resolved CRT curvature + glare, so the FOCUS reader can
         // inherit the look on demand (flat 0/0/0 for a flat pane → no-op).
         let (k1, k2) = crate::theme::warp_coeffs(th.warp);
+        // The reader's document — scrollback included, so shrinking its text can
+        // reveal MORE content instead of merely smaller content. The budget is a
+        // fixed multiple of a screenful rather than a value derived from the
+        // reader's zoom: the zoom depends on the snapshot's metrics, so deriving it
+        // here would be circular. `SCROLLBACK_FACTOR` screenfuls comfortably covers
+        // the smallest glyph the size slider can reach, and clamps the work.
+        const SCROLLBACK_FACTOR: usize = 8;
+        let doc = PaneSource {
+            pane: self,
+            theme: &th,
+        }
+        .document(RowBudget::of(self.grid.rows * SCROLLBACK_FACTOR));
         MirrorSnapshot {
+            doc,
             lines,
             bg: th.bg,
             text: th.text,
@@ -2734,6 +2732,52 @@ impl TerminalView {
     /// The shift-clickable link under a screen point, if any: read the clicked
     /// row out of the visible grid, scan around the column, and resolve a path
     /// against the pane's cwd (only returning paths that actually exist).
+    /// Read grid rows as styled text over an arbitrary line range, INCLUDING
+    /// scrollback. `first`/`last` are alacritty grid line indices, where negative
+    /// lines are history — `grid.topmost_line()` is the oldest row retained.
+    ///
+    /// This is the scrollback counterpart to [`Self::styled_lines`], which can only
+    /// ever see the visible viewport because it walks `display_iter`. Colour comes
+    /// from the cells themselves, so history keeps the ANSI colours the program
+    /// emitted; TD's own overlays (the syntax pass, human-input tinting, selection,
+    /// cursor) are viewport-only and deliberately not reproduced here — they are
+    /// decoration on the live screen, not properties of the text.
+    fn grid_rows_in(&self, first: i32, last: i32, th: &Theme) -> Vec<DocLine> {
+        let term = self.session.term.lock();
+        let grid = term.grid();
+        let cols = self.grid.cols;
+        let mut out = Vec::with_capacity((last - first + 1).max(0) as usize);
+        for l in first..=last {
+            let row = &grid[alacritty_terminal::index::Line(l)];
+            let mut text = String::with_capacity(cols);
+            let mut runs: Vec<TextRun> = Vec::new();
+            for c in 0..cols {
+                let cell = &row[alacritty_terminal::index::Column(c)];
+                if cell.flags.contains(Flags::WIDE_CHAR_SPACER) {
+                    continue;
+                }
+                let ch = if cell.c == '\0' { ' ' } else { cell.c };
+                let color = ansi_to_hsla(cell.fg, th, th.text);
+                let len = ch.len_utf8();
+                text.push(ch);
+                // coalesce identical adjacent styles so a row is a handful of runs
+                match runs.last_mut() {
+                    Some(prev) if prev.color == color => prev.len += len,
+                    _ => runs.push(TextRun {
+                        len,
+                        font: grid_font(th, FontWeight::default()),
+                        color,
+                        background_color: None,
+                        underline: None,
+                        strikethrough: None,
+                    }),
+                }
+            }
+            out.push(DocLine::new(text, runs));
+        }
+        out
+    }
+
     /// Read the whole visible grid as characters plus per-row soft-wrap flags,
     /// both in grid-viewport order. One term lock, one `display_iter` pass.
     ///
@@ -4784,222 +4828,6 @@ pub(crate) fn crawl_centered_runs(
     Some((text[..keep].to_string(), cut))
 }
 
-/// One on-screen row of the wrapped FOCUS reader.
-///
-/// The reader NEVER scrolls sideways: every source grid row is soft-wrapped to
-/// the panel's glyph width at the current zoom, so a long line stacks vertically
-/// instead of running off the edge. Each `VisualRow` carries the styled slice to
-/// paint plus the source coordinates it came from — `src_row` indexes the
-/// mirror's grid rows and `src_col0` is the column in that row where this visual
-/// row's first glyph sits — so a click on a wrapped row maps back to a real cell
-/// for selection + copy.
-pub struct VisualRow {
-    pub text: String,
-    pub runs: Vec<TextRun>,
-    pub src_row: usize,
-    pub src_col0: usize,
-    /// Glyph count painted on this visual row (for hit-clamping a click).
-    pub cols: usize,
-}
-
-/// Slice the styled runs covering bytes `[start, end)` out of `runs`, clamping the
-/// two boundary runs. Mirrors the clamp idiom in [`crawl_centered_runs`].
-fn slice_runs(runs: &[TextRun], start: usize, end: usize) -> Vec<TextRun> {
-    let mut out = Vec::new();
-    let mut acc = 0usize;
-    for r in runs {
-        let (r0, r1) = (acc, acc + r.len);
-        acc = r1;
-        if r1 <= start {
-            continue;
-        }
-        if r0 >= end {
-            break;
-        }
-        let (s, e) = (r0.max(start), r1.min(end));
-        if e > s {
-            let mut nr = r.clone();
-            nr.len = e - s;
-            out.push(nr);
-        }
-    }
-    out
-}
-
-/// Soft-wrap one source grid row to at most `fit_cols` glyph columns, breaking at
-/// the last space inside the window and hard-breaking an over-long token, so the
-/// reader can never overflow horizontally. Trailing blank cells are trimmed; the
-/// break space between wrapped rows is swallowed so a continuation never starts
-/// with a stray space. A blank source row yields one empty visual row so
-/// paragraph spacing survives. Pushes the resulting rows onto `out`.
-fn wrap_source_row(
-    src_row: usize,
-    text: &str,
-    runs: &[TextRun],
-    fit_cols: usize,
-    out: &mut Vec<VisualRow>,
-) {
-    let fit_cols = fit_cols.max(1);
-    let keep = text.trim_end_matches(' ').len();
-    let chars: Vec<(usize, char)> = text[..keep].char_indices().collect();
-    let n = chars.len();
-    if n == 0 {
-        out.push(VisualRow {
-            text: String::new(),
-            runs: Vec::new(),
-            src_row,
-            src_col0: 0,
-            cols: 0,
-        });
-        return;
-    }
-    let mut i = 0usize;
-    while i < n {
-        let mut end = (i + fit_cols).min(n);
-        // Prefer a word boundary: break before the last space inside the window
-        // (keeps words whole). With no space the hard cap stands, so an over-long
-        // token still breaks at exactly `fit_cols` and never spills off the edge.
-        if end < n {
-            if let Some(sp) = (i + 1..=end).rev().find(|&k| chars[k].1 == ' ') {
-                end = sp;
-            }
-        }
-        let byte_start = chars[i].0;
-        let byte_end = if end < n { chars[end].0 } else { keep };
-        out.push(VisualRow {
-            text: text[byte_start..byte_end].to_string(),
-            runs: slice_runs(runs, byte_start, byte_end),
-            src_row,
-            src_col0: i,
-            cols: end - i,
-        });
-        i = end;
-        while i < n && chars[i].1 == ' ' {
-            i += 1; // swallow the break space(s) so the next row's head is a glyph
-        }
-    }
-}
-
-/// Soft-wrap every mirror row to `fit_cols` glyph columns for the FOCUS reader.
-/// The result is the exact set of on-screen rows, in order — so its length × the
-/// line height is the precise content height (no measuring), and `(src_row,
-/// src_col0)` lets a click on any wrapped row resolve to a real source cell.
-/// Rejoin mirrored grid rows into LOGICAL lines before the reader re-wraps them.
-///
-/// This is what makes the reader's size slider mean something. The mirror carries
-/// the source pane's grid rows, already hard-broken at *its* column count — so
-/// however wide the reader gets, no mirrored row is longer than `src_cols` and
-/// re-wrapping can never lengthen a line. Shrinking the text then just zoomed out:
-/// smaller glyphs, same column count, same thin ribbon.
-///
-/// Healing those width-breaks first gives the wrapper real logical lines to work
-/// with, so a narrower glyph genuinely fits MORE text per line. The join policy is
-/// [`wrap_join`] — the same one drag-select copy uses — so indented rows, code
-/// fences, box-drawing rules and blank lines are never merged, and text wrapped at
-/// a narrower fixed column is left alone.
-///
-/// Runs travel with the text: joining concatenates them, and a word-boundary join
-/// extends the preceding run by the one space it inserts, so the space inherits the
-/// style of the text it follows and every byte stays accounted for.
-///
-/// Trailing padding is stripped per row FIRST. A grid row is space-padded to the
-/// full column count, and `wrap_join`'s width test reads a padded row as full — feed
-/// them in raw and every row looks like a wrap, gluing the screen into one line.
-pub fn join_focus_lines(
-    lines: &[(String, Vec<TextRun>)],
-    src_cols: usize,
-) -> Vec<(String, Vec<TextRun>)> {
-    // Trim the grid padding, clamping each row's runs to the glyphs that survive.
-    let trimmed: Vec<(String, Vec<TextRun>)> = lines
-        .iter()
-        .map(|(t, r)| {
-            let keep = t.trim_end_matches(' ').len();
-            (t[..keep].to_string(), slice_runs(r, 0, keep))
-        })
-        .collect();
-    // Strip the COMMON left indent before judging structure.
-    //
-    // `wrap_join` refuses to merge any row that starts with whitespace, because an
-    // indented row is normally a code block or a list continuation. But a TUI agent
-    // indents its ENTIRE transcript — Claude Code by two spaces — so every mirrored
-    // row trips that guard and nothing ever joins. A margin shared by every row is
-    // not structure; it is a margin. Removing it first restores the guard to what it
-    // is actually for: rows indented *relative to their neighbours*.
-    //
-    // A block with no shared margin dedents by zero and is untouched, so a genuine
-    // code block sitting inside flush-left prose still refuses to merge.
-    let indent = trimmed
-        .iter()
-        .filter(|(t, _)| !t.trim().is_empty())
-        .map(|(t, _)| t.len() - t.trim_start_matches(' ').len())
-        .min()
-        .unwrap_or(0);
-    let trimmed: Vec<(String, Vec<TextRun>)> = if indent == 0 {
-        trimmed
-    } else {
-        trimmed
-            .into_iter()
-            .map(|(t, r)| {
-                let cut = indent.min(t.len());
-                (t[cut..].to_string(), slice_runs(&r, cut, t.len()))
-            })
-            .collect()
-    };
-    // The width test must judge against the width actually available to text once
-    // that margin is gone, or a dedented full row reads as short of the edge.
-    let src_cols = src_cols.saturating_sub(indent).max(1);
-    let mut out: Vec<(String, Vec<TextRun>)> = Vec::with_capacity(trimmed.len());
-    // The logical line under construction, plus the char-width of the last raw row
-    // appended to it — the row `wrap_join`'s width test is applied against.
-    let mut cur: Option<((String, Vec<TextRun>), usize)> = None;
-    for (raw, runs) in &trimmed {
-        let row_len = raw.chars().count();
-        if raw.trim().is_empty() {
-            if let Some((line, _)) = cur.take() {
-                out.push(line);
-            }
-            out.push((raw.clone(), runs.clone()));
-            continue;
-        }
-        match cur.take() {
-            None => cur = Some(((raw.clone(), runs.clone()), row_len)),
-            Some(((mut text, mut acc_runs), prev_len)) => {
-                match wrap_join(&text, prev_len, raw, src_cols) {
-                    WrapJoin::Break => {
-                        out.push((text, acc_runs));
-                        cur = Some(((raw.clone(), runs.clone()), row_len));
-                    }
-                    join => {
-                        if matches!(join, WrapJoin::Space) {
-                            text.push(' ');
-                            // the inserted space wears the style it follows
-                            match acc_runs.last_mut() {
-                                Some(last) => last.len += 1,
-                                None => acc_runs.extend(slice_runs(runs, 0, 1)),
-                            }
-                        }
-                        text.push_str(raw);
-                        acc_runs.extend(runs.iter().cloned());
-                        cur = Some(((text, acc_runs), row_len));
-                    }
-                }
-            }
-        }
-    }
-    if let Some((line, _)) = cur.take() {
-        out.push(line);
-    }
-    out
-}
-
-pub fn wrap_focus_lines(lines: &[(String, Vec<TextRun>)], fit_cols: usize) -> Vec<VisualRow> {
-    let mut out = Vec::new();
-    for (r, (text, runs)) in lines.iter().enumerate() {
-        wrap_source_row(r, text, runs, fit_cols, &mut out);
-    }
-    out
-}
-
 /// Paint a selection background over glyph columns `[from, to)` of a wrapped
 /// row's styled runs, splitting the two boundary runs so ONLY the selected glyphs
 /// are tinted (the surrounding text keeps its own styling). `from`/`to` are char
@@ -6947,49 +6775,6 @@ mod tests {
     }
 
     #[test]
-    fn wrap_breaks_at_words_and_trims_trailing_blanks() {
-        // trailing grid blanks are trimmed; a line that fits stays one row
-        let lines = vec![("abcdef     ".to_string(), vec![run(11)])];
-        let rows = wrap_focus_lines(&lines, 10);
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].text, "abcdef");
-        assert_eq!((rows[0].src_row, rows[0].src_col0, rows[0].cols), (0, 0, 6));
-
-        // word-boundary wrap: the break space is swallowed, not carried over
-        let lines = vec![("ab cd ef".to_string(), vec![run(8)])];
-        let rows = wrap_focus_lines(&lines, 4);
-        let got: Vec<(&str, usize)> = rows.iter().map(|r| (r.text.as_str(), r.src_col0)).collect();
-        assert_eq!(got, vec![("ab", 0), ("cd", 3), ("ef", 6)]);
-    }
-
-    #[test]
-    fn wrap_hard_breaks_long_tokens_and_never_overflows() {
-        // a single unbreakable token longer than the width splits at the cap, so a
-        // wrapped row can NEVER be wider than fit_cols (the reader never scrolls right)
-        let fit = 5usize;
-        let lines = vec![("0123456789abc".to_string(), vec![run(13)])];
-        let rows = wrap_focus_lines(&lines, fit);
-        assert_eq!(
-            rows.iter().map(|r| r.text.as_str()).collect::<Vec<_>>(),
-            vec!["01234", "56789", "abc"]
-        );
-        assert!(
-            rows.iter().all(|r| r.cols <= fit),
-            "no row exceeds fit_cols"
-        );
-        // src columns are contiguous so a click on any row maps to the right cell
-        assert_eq!(
-            rows.iter().map(|r| r.src_col0).collect::<Vec<_>>(),
-            vec![0, 5, 10]
-        );
-
-        // a blank source row survives as one empty visual row (paragraph spacing)
-        let rows = wrap_focus_lines(&[("   ".to_string(), vec![run(3)])], 8);
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].cols, 0);
-    }
-
-    #[test]
     fn highlight_tints_only_the_selected_span() {
         // one 5-byte run "hello"; select glyphs [1,3) → three runs, middle tinted
         let bg = Hsla {
@@ -7411,104 +7196,6 @@ mod tests {
             assert!(!is_copyable_command(prose), "must stay silent: {prose:?}");
         }
     }
-
-    /// The reader's size slider only means something if shrinking the glyphs fits
-    /// MORE text per line. That needs the source pane's width-breaks healed first.
-    #[test]
-    fn join_focus_lines_heals_width_breaks_and_accounts_for_every_byte() {
-        let mk = |s: &str| (s.to_string(), vec![run(s.len())]);
-        let lines = [
-            mk("cd ~/.claude && jq --slurpfile e /tmp/x/automode-env.json"),
-            mk("'.autoMode.environment = $e[0]' settings.json > s.tmp"),
-        ];
-        let out = join_focus_lines(&lines, 60);
-        assert_eq!(out.len(), 1, "the width-break is healed");
-        assert!(
-            out[0]
-                .0
-                .contains("automode-env.json '.autoMode.environment"),
-            "got {:?}",
-            out[0].0
-        );
-        // Runs must cover the text exactly — including the space the join inserted.
-        // A short count silently drops styling off the tail of every joined line.
-        let run_bytes: usize = out[0].1.iter().map(|r| r.len).sum();
-        assert_eq!(run_bytes, out[0].0.len(), "runs account for every byte");
-    }
-
-    /// Structure is never merged: an indented code row, a box-drawing rule (the
-    /// borders of every Links table) and a blank line all bound a paragraph.
-    #[test]
-    fn join_focus_lines_leaves_structure_alone() {
-        let mk = |s: &str| (s.to_string(), vec![run(s.len())]);
-        let indented = [
-            mk("this line runs right up to edge"),
-            mk("    let x = code_block();"),
-        ];
-        assert_eq!(join_focus_lines(&indented, 30).len(), 2);
-
-        let ruled = [
-            mk("a full width heading line here"),
-            mk("──────────────────────────────"),
-            mk("body paragraph text follows on"),
-        ];
-        assert_eq!(join_focus_lines(&ruled, 30).len(), 3);
-
-        let blank = [mk("git status"), mk(""), mk("git log")];
-        assert_eq!(join_focus_lines(&blank, 80).len(), 3);
-    }
-
-    /// A TUI agent indents its WHOLE transcript, which used to trip `wrap_join`'s
-    /// indented-row guard on every single row — so nothing ever joined and the
-    /// reader could only ever zoom. The shared margin must be stripped before the
-    /// structure test runs.
-    #[test]
-    fn join_focus_lines_dedents_a_uniformly_indented_transcript() {
-        let mk = |s: &str| (s.to_string(), vec![run(s.len())]);
-        // every row carries Claude Code's two-space margin
-        let lines = [
-            mk("  Target: https://github.com/parker-brown-fami"),
-            mk("  ly/terminal-delight/pull/212"),
-        ];
-        let out = join_focus_lines(&lines, 48);
-        assert_eq!(out.len(), 1, "a shared margin must not block the join");
-        assert!(
-            !out[0].0.starts_with(' '),
-            "the common indent is stripped, got {:?}",
-            out[0].0
-        );
-        let run_bytes: usize = out[0].1.iter().map(|r| r.len).sum();
-        assert_eq!(run_bytes, out[0].0.len(), "runs survive the dedent");
-    }
-
-    /// …but a row indented RELATIVE to its neighbours is still structure, and must
-    /// still refuse to merge. Dedent removes the shared margin, not the meaning.
-    #[test]
-    fn join_focus_lines_still_refuses_a_relatively_indented_row() {
-        let mk = |s: &str| (s.to_string(), vec![run(s.len())]);
-        let lines = [
-            mk("  this line runs right up to edge"),
-            mk("      let x = code_block();"),
-        ];
-        // common indent is 2; the second row keeps 4 of its own ⇒ still indented
-        assert_eq!(join_focus_lines(&lines, 32).len(), 2);
-    }
-
-    /// The padding trap again, in the mirror this time: grid rows arrive padded to
-    /// the full column count, and an untrimmed padded row reads as full-width to
-    /// the join test — which would glue the entire reader into one line.
-    #[test]
-    fn join_focus_lines_trims_grid_padding_first() {
-        let cols = 20;
-        let mk = |s: &str| (format!("{s:cols$}"), vec![run(cols)]);
-        let padded = [mk("git status"), mk("git log")];
-        let out = join_focus_lines(&padded, cols);
-        assert_eq!(out.len(), 2, "padded rows must not glue together");
-        assert_eq!(out[0].0, "git status", "padding is stripped");
-        let run_bytes: usize = out[0].1.iter().map(|r| r.len).sum();
-        assert_eq!(run_bytes, out[0].0.len(), "runs clamp to the trimmed text");
-    }
-
     #[test]
     fn reflow_leaves_narrow_wrapped_text_untouched() {
         // Prose wrapped at a fixed 72 cols inside a wide 200-col pane: the next
