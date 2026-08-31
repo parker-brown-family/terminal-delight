@@ -667,7 +667,12 @@ fn owning_td_pid() -> Option<u32> {
 /// terminal. Refusing to guess between several is deliberate: silently driving
 /// the wrong window is worse than an error telling you to name one.
 fn relay_target(args: &[String]) -> Result<u32, String> {
-    match args.iter().map(String::as_str).collect::<Vec<_>>().as_slice() {
+    match args
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>()
+        .as_slice()
+    {
         [] => {}
         ["--pid", v] => return v.parse().map_err(|_| format!("bad pid {v:?}")),
         ["--pid"] => return Err("--pid needs a value".into()),
