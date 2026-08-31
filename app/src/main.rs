@@ -2,8 +2,8 @@
 //!
 //! Splits divide ONLY the focused terminal's space (true tiling tree); every
 //! other pane keeps its exact place. ctrl+shift+t / [+]: new tab ·
-//! ctrl+pgup/pgdn: switch · right-click tab: rename · ctrl+arrows: pane focus
-//! by direction · alt+arrows: cycle pane focus · alt+v / alt+h: split ↔ / ↕
+//! ctrl+pgup/pgdn: switch · right-click tab: rename · alt+arrows: pane focus
+//! by direction · ctrl+arrows: word-jump in the shell · alt+v / alt+h: split ↔ / ↕
 //! drag a tab to reorder · ctrl+click a tab: set its binder-divider colour
 //! 👓 on a sub-tab header: FOCUS — mirror that pane big, rest dimmed, esc closes
 //! (alt+↑/↓ jumps between your messages in a claude/codex pane) ·
@@ -1760,6 +1760,13 @@ struct Workspace {
     mcp: mcp::McpConfig,
     /// The 🤖 MCP control panel is open. Outer-only (global), so a plain bool.
     mcp_menu: bool,
+    /// The menu-bar SIZE popover, raised by the ▭ button in the mother bar. The
+    /// scrub track used to live inline on that row; on a thin tile it was the
+    /// widest thing there and had nowhere to go, so it moved behind a button.
+    scale_menu: bool,
+    /// The overflow popover behind the header's `…` — on a narrow window the six
+    /// header glyphs collapse to the agent wall plus this, and the rest live here.
+    more_menu: bool,
     /// The 👻 dead-agent recover manifest overlay is open.
     dead_menu: bool,
     /// Manifest filter: show every dead agent, or just one project. Transient.
@@ -2173,6 +2180,8 @@ impl Workspace {
             osd_at: None,
             mcp: saved.mcp.clone().unwrap_or_default(),
             mcp_menu: false,
+            scale_menu: false,
+            more_menu: false,
             dead_menu: false,
             dead_filter: None,
             pending_adopts: Vec::new(),
@@ -5558,6 +5567,14 @@ impl Workspace {
             self.help_open = false;
             return true;
         }
+        if self.scale_menu {
+            self.scale_menu = false;
+            return true;
+        }
+        if self.more_menu {
+            self.more_menu = false;
+            return true;
+        }
         // The base layer: the agent wall itself.
         if self.mcp_menu {
             self.mcp_menu = false;
@@ -5566,21 +5583,11 @@ impl Workspace {
         false
     }
 
-    /// The terminal that currently owns the keyboard in the active tab.
-    fn focused_pane(&self, window: &Window, cx: &App) -> Option<Entity<TerminalView>> {
-        let tab = self.tabs.get(self.active)?;
-        let mut leaves = vec![];
-        tab.root.leaves(&mut leaves);
-        leaves
-            .iter()
-            .find(|p| p.focus_handle(cx).is_focused(window))
-            .map(|p| (*p).clone())
-    }
-
     /// Move the highlight to the split that sits `dir` of the focused one,
     /// using the live pane rects — so it lands where you actually pointed, not
     /// wherever the tree happens to order things. Returns false when nothing
-    /// lies that way, which is the caller's cue to hand the key back to the PTY.
+    /// lies that way — callers treat that as a no-op (alt+arrows at the edge of a
+    /// layout, or paint mode's bare arrows walking the wall).
     fn focus_dir(&self, dir: &str, window: &mut Window, cx: &mut Context<Self>) -> bool {
         let Some(tab) = self.tabs.get(self.active) else {
             return false;
@@ -5635,7 +5642,7 @@ impl Workspace {
         //
         // With nothing that way — a lone pane, or the edge of the layout — the
         // press is simply eaten. It must NOT fall through to the terminal: the
-        // pane is behind a modal, and ctrl+arrows keeps its word-jump job.
+        // pane is behind a modal and cannot be typed into.
         if theme::paint_mode(cx)
             && !m.control
             && !m.alt
@@ -5910,22 +5917,6 @@ impl Workspace {
             }
             return;
         }
-        // ctrl+arrows walk the splits by direction: the highlight moves the way
-        // you pressed. With nothing that way — a lone pane, or the edge of the
-        // layout — the keystroke goes back to the terminal, so ctrl+←/→ still
-        // skips by word everywhere it isn't a pane chord.
-        if m.control
-            && !m.alt
-            && !m.shift
-            && matches!(ks.key.as_str(), "left" | "right" | "up" | "down")
-        {
-            if !self.focus_dir(ks.key.as_str(), window, cx) {
-                if let Some(p) = self.focused_pane(window, cx) {
-                    p.update(cx, |view, cx| view.feed_key(ks, cx));
-                }
-            }
-            return;
-        }
         if m.alt && !m.control {
             // Alt+V / Alt+H split the focused pane, Tilix-style: V puts the new
             // pane beside it (a vertical divider, SplitDir::Row — same as
@@ -5968,15 +5959,16 @@ impl Workspace {
                     return;
                 }
             }
-            if leaves.len() > 1 {
-                let dir: i32 = match ks.key.as_str() {
-                    "left" | "up" => -1,
-                    "right" | "down" => 1,
-                    _ => return,
-                };
-                let next = (cur as i32 + dir).rem_euclid(leaves.len() as i32) as usize;
-                window.focus(&leaves[next].focus_handle(cx), cx);
-                cx.notify();
+            // Alt+arrows move focus BY DIRECTION: the highlight goes the way you
+            // pressed, resolved against the live pane rects (`focus_dir`) rather
+            // than the order the leaves happen to be walked in. This used to be a
+            // ring cycle over that leaf order, which meant ← could land anywhere.
+            //
+            // Nothing that way is a NO-OP, not a wrap-round: at the edge of a
+            // layout the press is eaten, the same as every tiling WM. Wrapping
+            // would teleport the highlight across the window on a blind press.
+            if matches!(ks.key.as_str(), "left" | "right" | "up" | "down") {
+                self.focus_dir(ks.key.as_str(), window, cx);
             }
         }
     }
@@ -8732,13 +8724,16 @@ impl Render for Workspace {
             );
         }
 
-        // ---- menu-bar size scrubber: ▭ ──●── ▭ 110% ----
+        // ---- menu-bar size: a BUTTON on the bar, the track behind it ----
         // Drives the per-pane HEADER height (+ its glyphs/icons/title), not the
-        // terminal text. The two flanking ▭ glyphs (small → large) read as
-        // "short bar → tall bar".
+        // terminal text. The track used to sit inline on the mother bar, where it
+        // was the widest control on the row and the first thing to break a thin
+        // tile — a 90px fixed track cannot shrink. It now lives in a popover
+        // raised by `scale_btn`, so the bar carries a glyph and a percentage
+        // instead, and the row survives any width.
         let ratio = ((scale - 0.7) / 0.9).clamp(0., 1.);
         let scrub_store = self.scrub_bounds.clone();
-        let scrubber = div()
+        let scale_track = div()
             .flex()
             .flex_row()
             .items_center()
@@ -8831,12 +8826,34 @@ impl Render for Workspace {
                     .text_size(px(15. * scale))
                     .text_color(th.text)
                     .child("▭"),
+            );
+
+        // What the mother bar actually shows: ▭ 110%, one click to the track.
+        let scrubber = Self::hicon_s(&th, self.scale_menu, scale)
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(4. * scale))
+            .py(px(2. * scale))
+            .child(
+                div()
+                    .text_size(px(11. * scale))
+                    .text_color(th.text)
+                    .child("\u{25ad}"),
             )
             .child(
                 div()
                     .text_size(px(10. * scale))
                     .text_color(th.accent)
                     .child(format!("{}%", (scale * 100.).round() as i32)),
+            )
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                    cx.stop_propagation();
+                    ws.scale_menu = true;
+                    cx.notify();
+                }),
             );
 
         // The split buttons read as primary actions: taller (matched to the
@@ -8926,6 +8943,125 @@ impl Render for Workspace {
                         window.remove_window();
                     }),
                 ))
+            });
+
+        // ---- header glyph row, and what it becomes on a thin tile ----
+        // Six glyphs, the size scrubber, the split cluster and the window buttons
+        // all want the same line. Past `HEADER_NARROW` they stop fitting and the
+        // row used to overflow into the brand. So below that width the glyphs
+        // COLLAPSE to the agent wall — the one surface you actually steer TD
+        // from — plus a `…` that raises the rest as a menu. Nothing is lost, and
+        // the row stops fighting for space it does not have.
+        const HEADER_NARROW: f32 = 720.;
+        let header_vw = f32::from(window.viewport_size().width);
+        let header_narrow = header_vw < HEADER_NARROW;
+
+        let ic_theme = Self::hicon_s(&th, self.theme_menu.is_some(), scale)
+            .text_size(px(pane::HICON * scale))
+            .line_height(px(pane::HICON * scale))
+            .child("🎨")
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                    cx.stop_propagation();
+                    ws.theme_menu = Some(MenuScope::Outer);
+                    ws.menu_at = None;
+                    cx.notify();
+                }),
+            );
+        let ic_osd = Self::hicon_s(&th, self.osd_menu.is_some(), scale)
+            .flex()
+            .items_center()
+            .child(pane::eq_icon(th.accent, scale))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                    cx.stop_propagation();
+                    ws.osd_menu = Some(MenuScope::Outer);
+                    ws.osd_at = None;
+                    cx.notify();
+                }),
+            );
+        // MCP: the agent wall. This is the glyph that SURVIVES the collapse.
+        let ic_mcp = Self::hicon_s(&th, self.mcp_menu || self.mcp.enabled, scale)
+            .flex()
+            .items_center()
+            .child(pane::robot_icon(th.accent, scale))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                    cx.stop_propagation();
+                    ws.mcp_menu = true;
+                    cx.notify();
+                }),
+            );
+        let ic_dead = Self::hicon_s(&th, self.dead_menu, scale)
+            .text_size(px(pane::HICON * scale))
+            .line_height(px(pane::HICON * scale))
+            .child("\u{1faa6}")
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                    cx.stop_propagation();
+                    ws.dead_filter = None;
+                    ws.dead_menu = true;
+                    cx.notify();
+                }),
+            );
+        let ic_plugins = Self::hicon_s(&th, self.plugins_menu, scale)
+            .text_size(px(pane::HICON * scale))
+            .line_height(px(pane::HICON * scale))
+            .child("\u{1f9e9}")
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                    cx.stop_propagation();
+                    ws.plugins_menu = true;
+                    cx.notify();
+                }),
+            );
+        let ic_help = Self::hicon_s(&th, self.help_open, scale)
+            .text_size(px(pane::HICON * scale))
+            .line_height(px(pane::HICON * scale))
+            .child("❔")
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                    cx.stop_propagation();
+                    ws.help_open = true;
+                    cx.notify();
+                }),
+            );
+        let ic_more = Self::hicon_s(&th, self.more_menu, scale)
+            .text_size(px(pane::HICON * scale))
+            .line_height(px(pane::HICON * scale))
+            .child("\u{2026}")
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                    cx.stop_propagation();
+                    ws.more_menu = true;
+                    cx.notify();
+                }),
+            );
+
+        let header_icons = div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(12. * scale))
+            .map(|d| {
+                if header_narrow {
+                    // agent wall, then everything else behind the ellipsis
+                    d.child(ic_mcp).child(ic_more)
+                } else {
+                    d.child(ic_theme)
+                        .child(ic_osd)
+                        .child(ic_mcp)
+                        .child(ic_dead)
+                        .child(ic_plugins)
+                        .child(ic_help)
+                }
             });
 
         let bezel_top = div()
@@ -9025,104 +9161,7 @@ impl Render for Workspace {
                             .flex_row()
                             .items_center()
                             .gap(px(12. * scale))
-                            .child(
-                                // outer theme: a consistent 🎨 (trigger for the breakout)
-                                Self::hicon_s(&th, self.theme_menu.is_some(), scale)
-                                    .text_size(px(pane::HICON * scale))
-                                    .line_height(px(pane::HICON * scale))
-                                    .child("🎨")
-                                    .on_mouse_down(
-                                        MouseButton::Left,
-                                        cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                                            cx.stop_propagation();
-                                            ws.theme_menu = Some(MenuScope::Outer);
-                                            ws.menu_at = None;
-                                            cx.notify();
-                                        }),
-                                    ),
-                            )
-                            .child(
-                                // outer display: a consistent EQ-waveform (monitor-OSD).
-                                // The whole mother bar scales with the menu-bar slider.
-                                Self::hicon_s(&th, self.osd_menu.is_some(), scale)
-                                    .flex()
-                                    .items_center()
-                                    .child(pane::eq_icon(th.accent, scale))
-                                    .on_mouse_down(
-                                        MouseButton::Left,
-                                        cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                                            cx.stop_propagation();
-                                            ws.osd_menu = Some(MenuScope::Outer);
-                                            ws.osd_at = None;
-                                            cx.notify();
-                                        }),
-                                    ),
-                            )
-                            .child(
-                                // MCP: a drawn robot — opens the read-only agent-watch
-                                // control surface. Lights up when the panel is open OR
-                                // the server policy is currently enabled.
-                                Self::hicon_s(&th, self.mcp_menu || self.mcp.enabled, scale)
-                                    .flex()
-                                    .items_center()
-                                    .child(pane::robot_icon(th.accent, scale))
-                                    .on_mouse_down(
-                                        MouseButton::Left,
-                                        cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                                            cx.stop_propagation();
-                                            ws.mcp_menu = true;
-                                            cx.notify();
-                                        }),
-                                    ),
-                            )
-                            .child(
-                                // 👻 recover: the dead-agent manifest — resurrect a
-                                // closed agent (Claude/Codex) from its saved session.
-                                Self::hicon_s(&th, self.dead_menu, scale)
-                                    .text_size(px(pane::HICON * scale))
-                                    .line_height(px(pane::HICON * scale))
-                                    .child("\u{1faa6}")
-                                    .on_mouse_down(
-                                        MouseButton::Left,
-                                        cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                                            cx.stop_propagation();
-                                            ws.dead_filter = None;
-                                            ws.dead_menu = true;
-                                            cx.notify();
-                                        }),
-                                    ),
-                            )
-                            .child(
-                                // 🧩 plugins: the MCP plugin host — reach for plugins
-                                // (context-delight harvest, …) that act on the agents.
-                                Self::hicon_s(&th, self.plugins_menu, scale)
-                                    .text_size(px(pane::HICON * scale))
-                                    .line_height(px(pane::HICON * scale))
-                                    .child("\u{1f9e9}")
-                                    .on_mouse_down(
-                                        MouseButton::Left,
-                                        cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                                            cx.stop_propagation();
-                                            ws.plugins_menu = true;
-                                            cx.notify();
-                                        }),
-                                    ),
-                            )
-                            .child(
-                                // help: keys + commands reference, themed by the outer
-                                Self::hicon_s(&th, self.help_open, scale)
-                                    .text_size(px(pane::HICON * scale))
-                                    .line_height(px(pane::HICON * scale))
-                                    .child("❔")
-                                    .on_mouse_down(
-                                        MouseButton::Left,
-                                        cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                                            cx.stop_propagation();
-                                            ws.help_open = true;
-                                            cx.notify();
-                                        }),
-                                    ),
-                            )
+                            .child(header_icons)
                             .child(scrubber)
                             .child(cluster)
                             .child(win_controls),
@@ -12120,18 +12159,234 @@ impl Render for Workspace {
         // The language pack: every chrome string below comes from this table.
         let s = self.lang.strings();
         let cur_lang = self.lang;
+        // ---- ▭ menu-bar SIZE popover: the track, plus the presets ----
+        // Raised by the ▭ button on the mother bar. Anchored top-right under the
+        // controls rather than centred, so it reads as belonging to the button
+        // that opened it and never covers the tabs.
+        let scale_overlay = self.scale_menu.then(|| {
+            let pct = (scale * 100.).round() as i32;
+            let preset = |label: &'static str, val: f32| {
+                Self::bezel_btn(&th, label, (scale - val).abs() < 0.01)
+                    .id(SharedString::from(format!("scale-preset-{label}")))
+                    .hover(|s| s.border_color(th.accent))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                            cx.stop_propagation();
+                            ws.set_scale(val, cx);
+                        }),
+                    )
+            };
+            let panel = div()
+                .absolute()
+                .top(px(74. * scale))
+                .right(px(12. * scale))
+                .w(px(240.))
+                .p_4()
+                .rounded_lg()
+                .border_2()
+                .border_color(th.accent.alpha(0.85))
+                .bg(darken(th.surface, 0.45))
+                .text_color(th.text)
+                .font_family(th.font_family.clone())
+                .shadow(float_shadows(th.accent))
+                .flex()
+                .flex_col()
+                .gap_3()
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|_, _: &MouseDownEvent, _w, cx| cx.stop_propagation()),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .justify_between()
+                        .child(
+                            div()
+                                .text_size(px(10.5))
+                                .font_weight(gpui::FontWeight::BOLD)
+                                .text_color(th.complement)
+                                .child(s.g_menu_bar.to_string()),
+                        )
+                        .child(
+                            div()
+                                .text_size(px(11.))
+                                .text_color(th.accent)
+                                .child(format!("{pct}%")),
+                        ),
+                )
+                .child(scale_track)
+                .child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .gap_2()
+                        .child(preset("S", 0.85))
+                        .child(preset("M", 1.0))
+                        .child(preset("L", 1.25))
+                        .child(preset("XL", 1.5)),
+                )
+                .child(
+                    div()
+                        .text_size(px(9.))
+                        .text_color(th.text.alpha(0.45))
+                        .child(s.k_text_size_key.to_string()),
+                );
+            div()
+                .absolute()
+                .inset_0()
+                // occlude, or the pane's warped CRT layer paints over the panel
+                .occlude()
+                .bg(hsla(0., 0., 0., 0.18))
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                        ws.scale_menu = false;
+                        cx.notify();
+                    }),
+                )
+                .child(panel)
+        });
+
+        // ---- `…` header-overflow popover ----
+        // Only reachable on a narrow window, where the glyph row collapsed to the
+        // agent wall + `…`. The entries carry their glyph AND a name — a menu has
+        // the room the bar did not, so nothing here is a bare pictogram.
+        let more_overlay = self.more_menu.then(|| {
+            let entry = |glyph: &str, label: &str, id: &'static str| {
+                div()
+                    .id(SharedString::from(id))
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_3()
+                    .px_2()
+                    .py_1()
+                    .rounded_sm()
+                    .cursor_pointer()
+                    .text_size(px(11.5))
+                    .text_color(th.text)
+                    .hover(|s| s.bg(th.accent.alpha(0.2)))
+                    .child(div().w(px(18.)).flex_none().child(glyph.to_string()))
+                    .child(div().flex_1().min_w(px(0.)).child(label.to_string()))
+            };
+            let panel = div()
+                .absolute()
+                .top(px(74. * scale))
+                .right(px(12. * scale))
+                .w(px(230.))
+                .p_2()
+                .rounded_lg()
+                .border_2()
+                .border_color(th.accent.alpha(0.85))
+                .bg(darken(th.surface, 0.45))
+                .text_color(th.text)
+                .font_family(th.font_family.clone())
+                .shadow(float_shadows(th.accent))
+                .flex()
+                .flex_col()
+                .gap_0p5()
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|_, _: &MouseDownEvent, _w, cx| cx.stop_propagation()),
+                )
+                .child(entry("\u{1f3a8}", s.t_theme, "more-theme").on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                        cx.stop_propagation();
+                        ws.more_menu = false;
+                        ws.theme_menu = Some(MenuScope::Outer);
+                        ws.menu_at = None;
+                        cx.notify();
+                    }),
+                ))
+                .child(entry("\u{1f4ca}", s.d_display, "more-osd").on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                        cx.stop_propagation();
+                        ws.more_menu = false;
+                        ws.osd_menu = Some(MenuScope::Outer);
+                        ws.osd_at = None;
+                        cx.notify();
+                    }),
+                ))
+                .child(entry("\u{1faa6}", s.kf_restore, "more-dead").on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                        cx.stop_propagation();
+                        ws.more_menu = false;
+                        ws.dead_filter = None;
+                        ws.dead_menu = true;
+                        cx.notify();
+                    }),
+                ))
+                .child(entry("\u{1f9e9}", s.plugins, "more-plugins").on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                        cx.stop_propagation();
+                        ws.more_menu = false;
+                        ws.plugins_menu = true;
+                        cx.notify();
+                    }),
+                ))
+                .child(entry("\u{2754}", s.help, "more-help").on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                        cx.stop_propagation();
+                        ws.more_menu = false;
+                        ws.help_open = true;
+                        cx.notify();
+                    }),
+                ));
+            div()
+                .absolute()
+                .inset_0()
+                // occlude, or the pane's warped CRT layer paints over the panel
+                .occlude()
+                .bg(hsla(0., 0., 0., 0.18))
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                        ws.more_menu = false;
+                        cx.notify();
+                    }),
+                )
+                .child(panel)
+        });
+
+        let help_vp = window.viewport_size();
+        let (help_vw, help_vh) = (f32::from(help_vp.width), f32::from(help_vp.height));
+        // A thin TD tile (a narrow Hyprland column) cannot carry the two-column
+        // keycap layout: the key column is a fixed 150px, so the description gets
+        // squeezed to nothing and wraps ONE CHARACTER PER LINE. Past this width
+        // the modal folds to a single column and each row stacks the key above
+        // its description, which is the only layout that survives a 400px window.
+        let help_narrow = help_vw < 720.;
         let help_overlay = self.help_open.then(|| {
             let (kc, dc, hc) = (th.accent, th.text.alpha(0.85), th.complement);
             let row = move |k: &str, d: &str| {
                 div()
                     .flex()
-                    .flex_row()
-                    .gap_2()
-                    .items_start()
+                    .map(|d| {
+                        if help_narrow {
+                            d.flex_col()
+                        } else {
+                            d.flex_row().gap_2().items_start()
+                        }
+                    })
                     .child(
                         div()
-                            .min_w(px(150.))
-                            .flex_none()
+                            // the fixed key column is what breaks a narrow panel,
+                            // so it only exists in the two-column layout
+                            .map(|d| {
+                                if help_narrow {
+                                    d
+                                } else {
+                                    d.min_w(px(150.)).flex_none()
+                                }
+                            })
                             .text_color(kc)
                             .text_size(px(11.5))
                             .child(k.to_string()),
@@ -12173,8 +12428,7 @@ impl Render for Workspace {
                         row("Ctrl+PgUp / PgDn", s.switch_tabs),
                         row("Ctrl+Shift+PgUp / PgDn", s.move_tab),
                         row("Alt+V / H · Ctrl+Alt+R / D", s.split),
-                        row(s.k_ctrl_arrows, s.move_focus_dir),
-                        row(s.k_alt_arrows, s.move_focus),
+                        row(s.k_alt_arrows, s.move_focus_dir),
                         row(s.k_drag_subtab, s.drag_subtab),
                         row(s.k_rclick_tab, s.rclick_tab),
                     ],
@@ -12185,6 +12439,7 @@ impl Render for Workspace {
                         row(s.k_rclick, s.rclick),
                         row("Ctrl+Shift+C / V", s.copy_paste),
                         row("Ctrl+X", s.cut),
+                        row(s.k_ctrl_arrows, s.word_jump),
                         row("Ctrl+F", s.find),
                         row("Ctrl+Shift+F", s.find_all),
                         row(s.k_dbl_click, s.select_wl),
@@ -12352,7 +12607,7 @@ impl Render for Workspace {
                     }),
                 );
             let panel = div()
-                .w(gpui::relative(0.9))
+                .w(gpui::relative(0.94))
                 .max_w(px(940.))
                 .max_h(gpui::relative(0.88))
                 .overflow_hidden()
@@ -12404,11 +12659,24 @@ impl Render for Workspace {
                         ),
                 )
                 .child(
+                    // The body SCROLLS. It is capped against the viewport, and the
+                    // panel clips (overflow_hidden) — without this the last rows
+                    // were simply cut off with no way to reach them, which is how
+                    // "right-click a tab" went missing on a short window.
                     div()
+                        .id("help-body")
                         .flex()
-                        .flex_row()
+                        .map(|d| {
+                            if help_narrow {
+                                d.flex_col().gap_4()
+                            } else {
+                                d.flex_row().gap_8()
+                            }
+                        })
                         .w_full()
-                        .gap_8()
+                        .min_h(px(0.))
+                        .max_h(px((help_vh * 0.88 - 150.).max(120.)))
+                        .overflow_y_scroll()
                         .child(if help_features { feat_a } else { col_a })
                         .child(if help_features { feat_b } else { col_b }),
                 )
@@ -13416,6 +13684,8 @@ impl Render for Workspace {
                     .children(plugins_overlay)
                     .children(savings_overlay)
                     .children(confirm_overlay)
+                    .children(scale_overlay)
+                    .children(more_overlay)
                     .children(help_overlay)
                     .children(tab_menu_overlay)
                     .children(group_menu_overlay)
@@ -14982,7 +15252,7 @@ const CROSS_TOLERANCE: f32 = 0.15;
 ///
 /// Ranking, in order: the nearest that way wins; among equally near panes the
 /// better-centred one wins; and among panes that are *roughly* equally centred
-/// the top one wins for ctrl+←/→, the left one for ctrl+↑/↓. That last rule is
+/// the top one wins for alt+←/→, the left one for alt+↑/↓. That last rule is
 /// deliberate rather than incidental — ranking on the leading edge states it
 /// outright instead of leaning on the order the leaves happen to be walked in.
 ///
@@ -15051,7 +15321,7 @@ mod nav_tests {
     }
 
     #[test]
-    fn ctrl_arrow_moves_to_the_pane_that_is_actually_that_way() {
+    fn alt_arrow_moves_to_the_pane_that_is_actually_that_way() {
         // from the tall left pane, → has two equally-centred candidates and
         // takes the top one (see the roughly-equal rule below)
         assert_eq!(neighbour_in_dir(LEFT, &others(0), "right"), Some(1));
