@@ -69,8 +69,13 @@ pub struct RowBudget {
 }
 
 impl RowBudget {
-    pub fn of(lines: usize) -> Self {
-        Self { lines }
+    /// Everything the source retains — for a terminal, the whole scrollback.
+    /// Sources clamp to what actually exists, so "all" is a request, not a claim.
+    /// (A bounded constructor existed briefly; the mirror's move to full-history
+    /// documents left it with no caller, so it went. Reintroduce it as `of()` if
+    /// a surface ever wants less than everything.)
+    pub fn all() -> Self {
+        Self { lines: usize::MAX }
     }
 }
 

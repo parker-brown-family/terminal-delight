@@ -1572,6 +1572,22 @@ impl GradeCoeffs {
 /// (effective choice, mode, inherit_theme, theme generation).
 type ThemeMemo = Option<(theme::ThemeChoice, PaneMode, bool, u64, Theme)>;
 
+/// Cache key for [`TerminalView::mirror_document`]. Matching keys guarantee a
+/// byte-identical document: `generation` moves on every terminal event, the
+/// grid dimensions cover resizes, and the remaining fields are exactly what
+/// [`TerminalView::resolved_theme`]'s memo keys on — its guarantee is what makes
+/// comparing these enough, with no hash over the resolved palette.
+#[derive(Clone, PartialEq)]
+struct MirrorDocKey {
+    generation: u64,
+    cols: usize,
+    rows: usize,
+    eff: theme::ThemeChoice,
+    mode: PaneMode,
+    inherit: bool,
+    theme_gen: u64,
+}
+
 pub struct TerminalView {
     focus_handle: FocusHandle,
     session: term::Session,
@@ -1645,6 +1661,12 @@ pub struct TerminalView {
     /// grade-transforms the palette, and render() calls it every frame; this
     /// reuses the last result until one of those inputs actually changes.
     theme_cache: RefCell<ThemeMemo>,
+    /// Memoised full-scrollback document for the FOCUS reader — see
+    /// [`Self::mirror_document`] for the key's correctness argument. The `u64`
+    /// is the document REVISION: bumped on every rebuild, never reused, so
+    /// downstream caches (the reader's layout) can key on it safely where an
+    /// `Arc` pointer would be unsound (a freed allocation's address can recur).
+    mirror_doc: RefCell<Option<(MirrorDocKey, u64, Arc<Document>)>>,
     /// Right-click context menu (Copy / Paste / Open link) anchor, window-space.
     ctx_menu: Option<gpui::Point<Pixels>>,
     /// A bell rang (agent finished): a SNOOZE bar shows across the pane top and
@@ -1797,8 +1819,12 @@ enum PaintKey {
 /// or one duplicated line at the top of the document, which is invisible until you
 /// go looking for it.
 fn budget_range(oldest: i32, newest: i32, lines: usize) -> (i32, i32) {
-    let want = lines.max(1) as i32;
-    ((newest - want + 1).max(oldest), newest)
+    // i64 internally: `RowBudget::all()` passes usize::MAX, which `as i32` would
+    // wrap NEGATIVE — want = -1, first = newest + 2, an inverted range, and the
+    // reader would render an empty document precisely when asked for everything.
+    let want = (lines.max(1)).min(i64::MAX as usize) as i64;
+    let first = (newest as i64 - want + 1).max(oldest as i64);
+    (first as i32, newest)
 }
 
 /// A pane as a [`DocumentSource`]: the terminal grid, scrollback included, run
@@ -1928,7 +1954,9 @@ pub struct MirrorSnapshot {
     /// The reader's document: logical lines with scrollback, width-breaks healed.
     /// This is what the FOCUS reader lays out. `lines` below is the raw mirrored
     /// viewport, still needed by the crawl path (which never wraps or joins).
-    pub doc: Document,
+    pub doc: Arc<Document>,
+    /// Revision of `doc` — bumps on every rebuild, for downstream layout caches.
+    pub doc_rev: u64,
     pub lines: Vec<(String, Vec<TextRun>)>,
     pub bg: Hsla,
     pub text: Hsla,
@@ -2001,6 +2029,44 @@ impl TerminalView {
     /// FOCUS modal. Reuses the exact same styled rows the live pane renders, so
     /// the mirror is pixel-identical and stays live (the workspace re-renders
     /// whenever this pane notifies). No second terminal, no extra PTY work.
+    /// The reader's document — this pane's ENTIRE retained scrollback as logical
+    /// lines — memoised against a key that can only match when the result would
+    /// be byte-identical: the terminal's content generation (bumped by the I/O
+    /// thread on every event), the grid dimensions, and exactly the inputs
+    /// [`Self::resolved_theme`]'s own memo keys on. Same key ⇒ same colours went
+    /// into every run, by that memo's guarantee — no hashing of the theme itself.
+    ///
+    /// A mouse-move frame therefore costs one Arc clone; only real PTY output,
+    /// a resize, or a theme change pays for the 10k-line rebuild.
+    fn mirror_document(&self, th: &Theme, cx: &App) -> (Arc<Document>, u64) {
+        let key = MirrorDocKey {
+            generation: self.session.content_generation(),
+            cols: self.grid.cols,
+            rows: self.grid.rows,
+            eff: self.appearance.effective(&theme::outer_choice(cx)),
+            mode: self.mode.clone(),
+            inherit: self.appearance.inherit_theme,
+            theme_gen: theme::theme_gen(cx),
+        };
+        let next_rev = {
+            let cache = self.mirror_doc.borrow();
+            match &*cache {
+                Some((k, rev, doc)) if *k == key => return (doc.clone(), *rev),
+                Some((_, rev, _)) => rev + 1,
+                None => 1,
+            }
+        };
+        let doc = Arc::new(
+            PaneSource {
+                pane: self,
+                theme: th,
+            }
+            .document(RowBudget::all()),
+        );
+        *self.mirror_doc.borrow_mut() = Some((key, next_rev, doc.clone()));
+        (doc, next_rev)
+    }
+
     pub fn mirror_snapshot(&self, cx: &App) -> MirrorSnapshot {
         let th = self.resolved_theme(cx);
         // Mirror the live pane's anchor-to-top inverted read: bottom-anchor the
@@ -2037,18 +2103,17 @@ impl TerminalView {
         let (k1, k2) = crate::theme::warp_coeffs(th.warp);
         // The reader's document — scrollback included, so shrinking its text can
         // reveal MORE content instead of merely smaller content. The budget is a
-        // fixed multiple of a screenful rather than a value derived from the
-        // reader's zoom: the zoom depends on the snapshot's metrics, so deriving it
-        // here would be circular. `SCROLLBACK_FACTOR` screenfuls comfortably covers
-        // the smallest glyph the size slider can reach, and clamps the work.
-        const SCROLLBACK_FACTOR: usize = 8;
-        let doc = PaneSource {
-            pane: self,
-            theme: &th,
-        }
-        .document(RowBudget::of(self.grid.rows * SCROLLBACK_FACTOR));
+        // whole retained scrollback ("the entire terminal convo" — operator
+        // decision, 2026-08-31), rebuilt only when the terminal's content
+        // generation moves. Building a 10k-line document with styled runs every
+        // render frame would jank the modal; the cache makes a mouse-move frame
+        // an Arc clone, and only real PTY output (or a theme/width change) pays
+        // for a rebuild. The key mirrors `resolved_theme`'s own memo exactly, so
+        // "same key" *guarantees* the same colours went into the runs.
+        let (doc, doc_rev) = self.mirror_document(&th, cx);
         MirrorSnapshot {
             doc,
+            doc_rev,
             lines,
             bg: th.bg,
             text: th.text,
@@ -2337,6 +2402,7 @@ impl TerminalView {
             last_scroll_offset: None,
             seeking: false,
             theme_cache: RefCell::new(None),
+            mirror_doc: RefCell::new(None),
             gamba: crate::gamba::Reels::new(seed),
             last_think_scan: Instant::now()
                 .checked_sub(std::time::Duration::from_secs(1))
@@ -7103,6 +7169,12 @@ mod tests {
         let (a, b) = budget_range(oldest, newest, 0);
         assert_eq!((a, b), (46, 46));
         assert!(a <= b, "the range is never inverted");
+
+        // RowBudget::all() passes usize::MAX. Cast naively to i32 that wraps to
+        // -1 and the range inverts — the reader would go BLANK exactly when
+        // asked for the whole scrollback. Must clamp to history instead.
+        assert_eq!(budget_range(oldest, newest, usize::MAX), (-200, 46));
+        assert_eq!(budget_range(0, 0, usize::MAX), (0, 0), "empty fresh pane");
     }
 
     /// The headline case: the command that failed to paste four times on

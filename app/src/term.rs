@@ -10,6 +10,7 @@
 
 use std::fs::File;
 use std::io;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use alacritty_terminal::{
@@ -41,12 +42,17 @@ impl Dimensions for GridSize {
     }
 }
 
-/// Forwards terminal events from the EventLoop thread onto an async channel.
+/// Forwards terminal events from the EventLoop thread onto an async channel,
+/// and bumps the session's content generation as it does — every event marks a
+/// moment the emulation state may have changed, so "the counter moved" is a
+/// sound (if slightly over-eager) proxy for "the grid is different now".
+/// Consumers cache derived views (the FOCUS reader's document) against it.
 #[derive(Clone)]
-pub struct EventProxy(UnboundedSender<TermEvent>);
+pub struct EventProxy(UnboundedSender<TermEvent>, Arc<AtomicU64>);
 
 impl EventListener for EventProxy {
     fn send_event(&self, event: TermEvent) {
+        self.1.fetch_add(1, Ordering::Relaxed);
         let _ = self.0.unbounded_send(event);
     }
 }
@@ -60,6 +66,18 @@ pub struct Session {
     /// foreground process is (tcgetpgrp), powering mode detection.
     pub master: Option<File>,
     pub shell_pid: u32,
+    /// Monotonic content generation, bumped by [`EventProxy`] on every terminal
+    /// event. Equal generations guarantee the grid has not changed since; a
+    /// changed generation merely *permits* change (title/bell events bump it
+    /// too), which errs on the safe side for cache invalidation.
+    pub generation: Arc<AtomicU64>,
+}
+
+impl Session {
+    /// The current content generation (see [`Session::generation`]).
+    pub fn content_generation(&self) -> u64 {
+        self.generation.load(Ordering::Relaxed)
+    }
 }
 
 impl Session {
@@ -91,7 +109,8 @@ pub fn spawn_in(
     cwd: Option<std::path::PathBuf>,
 ) -> io::Result<Session> {
     let (tx, rx) = unbounded();
-    let proxy = EventProxy(tx);
+    let generation = Arc::new(AtomicU64::new(0));
+    let proxy = EventProxy(tx, generation.clone());
 
     let window_size = WindowSize {
         num_lines: size.rows as u16,
@@ -135,6 +154,7 @@ pub fn spawn_in(
         events: Some(rx),
         master,
         shell_pid,
+        generation,
     })
 }
 
