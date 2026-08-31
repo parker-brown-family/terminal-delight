@@ -4884,6 +4884,114 @@ fn wrap_source_row(
 /// The result is the exact set of on-screen rows, in order — so its length × the
 /// line height is the precise content height (no measuring), and `(src_row,
 /// src_col0)` lets a click on any wrapped row resolve to a real source cell.
+/// Rejoin mirrored grid rows into LOGICAL lines before the reader re-wraps them.
+///
+/// This is what makes the reader's size slider mean something. The mirror carries
+/// the source pane's grid rows, already hard-broken at *its* column count — so
+/// however wide the reader gets, no mirrored row is longer than `src_cols` and
+/// re-wrapping can never lengthen a line. Shrinking the text then just zoomed out:
+/// smaller glyphs, same column count, same thin ribbon.
+///
+/// Healing those width-breaks first gives the wrapper real logical lines to work
+/// with, so a narrower glyph genuinely fits MORE text per line. The join policy is
+/// [`wrap_join`] — the same one drag-select copy uses — so indented rows, code
+/// fences, box-drawing rules and blank lines are never merged, and text wrapped at
+/// a narrower fixed column is left alone.
+///
+/// Runs travel with the text: joining concatenates them, and a word-boundary join
+/// extends the preceding run by the one space it inserts, so the space inherits the
+/// style of the text it follows and every byte stays accounted for.
+///
+/// Trailing padding is stripped per row FIRST. A grid row is space-padded to the
+/// full column count, and `wrap_join`'s width test reads a padded row as full — feed
+/// them in raw and every row looks like a wrap, gluing the screen into one line.
+pub fn join_focus_lines(
+    lines: &[(String, Vec<TextRun>)],
+    src_cols: usize,
+) -> Vec<(String, Vec<TextRun>)> {
+    // Trim the grid padding, clamping each row's runs to the glyphs that survive.
+    let trimmed: Vec<(String, Vec<TextRun>)> = lines
+        .iter()
+        .map(|(t, r)| {
+            let keep = t.trim_end_matches(' ').len();
+            (t[..keep].to_string(), slice_runs(r, 0, keep))
+        })
+        .collect();
+    // Strip the COMMON left indent before judging structure.
+    //
+    // `wrap_join` refuses to merge any row that starts with whitespace, because an
+    // indented row is normally a code block or a list continuation. But a TUI agent
+    // indents its ENTIRE transcript — Claude Code by two spaces — so every mirrored
+    // row trips that guard and nothing ever joins. A margin shared by every row is
+    // not structure; it is a margin. Removing it first restores the guard to what it
+    // is actually for: rows indented *relative to their neighbours*.
+    //
+    // A block with no shared margin dedents by zero and is untouched, so a genuine
+    // code block sitting inside flush-left prose still refuses to merge.
+    let indent = trimmed
+        .iter()
+        .filter(|(t, _)| !t.trim().is_empty())
+        .map(|(t, _)| t.len() - t.trim_start_matches(' ').len())
+        .min()
+        .unwrap_or(0);
+    let trimmed: Vec<(String, Vec<TextRun>)> = if indent == 0 {
+        trimmed
+    } else {
+        trimmed
+            .into_iter()
+            .map(|(t, r)| {
+                let cut = indent.min(t.len());
+                (t[cut..].to_string(), slice_runs(&r, cut, t.len()))
+            })
+            .collect()
+    };
+    // The width test must judge against the width actually available to text once
+    // that margin is gone, or a dedented full row reads as short of the edge.
+    let src_cols = src_cols.saturating_sub(indent).max(1);
+    let mut out: Vec<(String, Vec<TextRun>)> = Vec::with_capacity(trimmed.len());
+    // The logical line under construction, plus the char-width of the last raw row
+    // appended to it — the row `wrap_join`'s width test is applied against.
+    let mut cur: Option<((String, Vec<TextRun>), usize)> = None;
+    for (raw, runs) in &trimmed {
+        let row_len = raw.chars().count();
+        if raw.trim().is_empty() {
+            if let Some((line, _)) = cur.take() {
+                out.push(line);
+            }
+            out.push((raw.clone(), runs.clone()));
+            continue;
+        }
+        match cur.take() {
+            None => cur = Some(((raw.clone(), runs.clone()), row_len)),
+            Some(((mut text, mut acc_runs), prev_len)) => {
+                match wrap_join(&text, prev_len, raw, src_cols) {
+                    WrapJoin::Break => {
+                        out.push((text, acc_runs));
+                        cur = Some(((raw.clone(), runs.clone()), row_len));
+                    }
+                    join => {
+                        if matches!(join, WrapJoin::Space) {
+                            text.push(' ');
+                            // the inserted space wears the style it follows
+                            match acc_runs.last_mut() {
+                                Some(last) => last.len += 1,
+                                None => acc_runs.extend(slice_runs(runs, 0, 1)),
+                            }
+                        }
+                        text.push_str(raw);
+                        acc_runs.extend(runs.iter().cloned());
+                        cur = Some(((text, acc_runs), row_len));
+                    }
+                }
+            }
+        }
+    }
+    if let Some((line, _)) = cur.take() {
+        out.push(line);
+    }
+    out
+}
+
 pub fn wrap_focus_lines(lines: &[(String, Vec<TextRun>)], fit_cols: usize) -> Vec<VisualRow> {
     let mut out = Vec::new();
     for (r, (text, runs)) in lines.iter().enumerate() {
@@ -7302,6 +7410,103 @@ mod tests {
         ] {
             assert!(!is_copyable_command(prose), "must stay silent: {prose:?}");
         }
+    }
+
+    /// The reader's size slider only means something if shrinking the glyphs fits
+    /// MORE text per line. That needs the source pane's width-breaks healed first.
+    #[test]
+    fn join_focus_lines_heals_width_breaks_and_accounts_for_every_byte() {
+        let mk = |s: &str| (s.to_string(), vec![run(s.len())]);
+        let lines = [
+            mk("cd ~/.claude && jq --slurpfile e /tmp/x/automode-env.json"),
+            mk("'.autoMode.environment = $e[0]' settings.json > s.tmp"),
+        ];
+        let out = join_focus_lines(&lines, 60);
+        assert_eq!(out.len(), 1, "the width-break is healed");
+        assert!(
+            out[0]
+                .0
+                .contains("automode-env.json '.autoMode.environment"),
+            "got {:?}",
+            out[0].0
+        );
+        // Runs must cover the text exactly — including the space the join inserted.
+        // A short count silently drops styling off the tail of every joined line.
+        let run_bytes: usize = out[0].1.iter().map(|r| r.len).sum();
+        assert_eq!(run_bytes, out[0].0.len(), "runs account for every byte");
+    }
+
+    /// Structure is never merged: an indented code row, a box-drawing rule (the
+    /// borders of every Links table) and a blank line all bound a paragraph.
+    #[test]
+    fn join_focus_lines_leaves_structure_alone() {
+        let mk = |s: &str| (s.to_string(), vec![run(s.len())]);
+        let indented = [
+            mk("this line runs right up to edge"),
+            mk("    let x = code_block();"),
+        ];
+        assert_eq!(join_focus_lines(&indented, 30).len(), 2);
+
+        let ruled = [
+            mk("a full width heading line here"),
+            mk("──────────────────────────────"),
+            mk("body paragraph text follows on"),
+        ];
+        assert_eq!(join_focus_lines(&ruled, 30).len(), 3);
+
+        let blank = [mk("git status"), mk(""), mk("git log")];
+        assert_eq!(join_focus_lines(&blank, 80).len(), 3);
+    }
+
+    /// A TUI agent indents its WHOLE transcript, which used to trip `wrap_join`'s
+    /// indented-row guard on every single row — so nothing ever joined and the
+    /// reader could only ever zoom. The shared margin must be stripped before the
+    /// structure test runs.
+    #[test]
+    fn join_focus_lines_dedents_a_uniformly_indented_transcript() {
+        let mk = |s: &str| (s.to_string(), vec![run(s.len())]);
+        // every row carries Claude Code's two-space margin
+        let lines = [
+            mk("  Target: https://github.com/parker-brown-fami"),
+            mk("  ly/terminal-delight/pull/212"),
+        ];
+        let out = join_focus_lines(&lines, 48);
+        assert_eq!(out.len(), 1, "a shared margin must not block the join");
+        assert!(
+            !out[0].0.starts_with(' '),
+            "the common indent is stripped, got {:?}",
+            out[0].0
+        );
+        let run_bytes: usize = out[0].1.iter().map(|r| r.len).sum();
+        assert_eq!(run_bytes, out[0].0.len(), "runs survive the dedent");
+    }
+
+    /// …but a row indented RELATIVE to its neighbours is still structure, and must
+    /// still refuse to merge. Dedent removes the shared margin, not the meaning.
+    #[test]
+    fn join_focus_lines_still_refuses_a_relatively_indented_row() {
+        let mk = |s: &str| (s.to_string(), vec![run(s.len())]);
+        let lines = [
+            mk("  this line runs right up to edge"),
+            mk("      let x = code_block();"),
+        ];
+        // common indent is 2; the second row keeps 4 of its own ⇒ still indented
+        assert_eq!(join_focus_lines(&lines, 32).len(), 2);
+    }
+
+    /// The padding trap again, in the mirror this time: grid rows arrive padded to
+    /// the full column count, and an untrimmed padded row reads as full-width to
+    /// the join test — which would glue the entire reader into one line.
+    #[test]
+    fn join_focus_lines_trims_grid_padding_first() {
+        let cols = 20;
+        let mk = |s: &str| (format!("{s:cols$}"), vec![run(cols)]);
+        let padded = [mk("git status"), mk("git log")];
+        let out = join_focus_lines(&padded, cols);
+        assert_eq!(out.len(), 2, "padded rows must not glue together");
+        assert_eq!(out[0].0, "git status", "padding is stripped");
+        let run_bytes: usize = out[0].1.iter().map(|r| r.len).sum();
+        assert_eq!(run_bytes, out[0].0.len(), "runs clamp to the trimmed text");
     }
 
     #[test]

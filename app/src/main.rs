@@ -13362,20 +13362,33 @@ impl Render for Workspace {
             // Reader padding: a third roomier than the old 16px so the text
             // breathes inside the glass.
             let pad = 21.0_f32;
+            // Side padding scales with the panel — a fixed 21px reads as a hairline
+            // margin on a wide monitor. 7% each side keeps the text off the glass
+            // edge at any size, with the old 21px as the floor on a small window.
+            let pad_x = (panel_w * 0.07).max(pad);
             let hdr_h = 30.0_f32;
-            let avail_w = (panel_w - pad * 2.).max(1.);
+            let avail_w = (panel_w - pad_x * 2.).max(1.);
             let avail_h = (panel_h - hdr_h - pad * 2.).max(1.);
             let content_w = (snap.cols as f32 * snap.cell_w).max(1.);
             let content_h = (snap.rows as f32 * snap.cell_h).max(1.);
-            // Auto-fit (1.0 on the slider). A flat read WRAPS, so its width never
-            // constrains the fit — scale to fill the panel HEIGHT so a wide-but-short
-            // source (e.g. a directory listing) fills the glass instead of shrinking
-            // to a tiny band with a big blank above it. Crawl doesn't wrap, so it
-            // keeps the both-axes fit that guarantees each whole row stays visible.
+            // Auto-fit (1.0 on the slider) = fill the WIDTH.
+            //
+            // The mirror carries the source pane's grid rows, already hard-broken at
+            // ITS column count — so no mirrored row is ever longer than `snap.cols`
+            // and re-wrapping them at a wider `fit_cols` can never lengthen a line.
+            // Fitting to height therefore left the text in a narrow column with the
+            // panel's whole width empty either side: a 57-column pane opened into a
+            // full-screen reader read as a thin ribbon.
+            //
+            // Scaling to the width instead makes those columns span the glass, which
+            // is the whole point of a reader. A short read no longer fills the height
+            // — `v_offset` centres it, which looks deliberate where a thin ribbon
+            // looked broken. Crawl doesn't wrap at all, so it keeps the both-axes fit
+            // that guarantees each whole row stays visible.
             let fit = if snap.crawl {
                 (avail_w / content_w).min(avail_h / content_h)
             } else {
-                avail_h / content_h
+                avail_w / content_w
             }
             .clamp(0.7, 6.0);
             // The header slider rides on top of the fit: 1.0 = fit-to-modal. The
@@ -13399,10 +13412,25 @@ impl Render for Workspace {
             // Every grid row soft-wraps to this, so a flat read can NEVER overflow
             // horizontally — there is no sideways scroll any more.
             let fit_cols = (avail_w / glyph_w).floor().max(1.0) as usize;
+            // Heal the source pane's width-breaks BEFORE re-wrapping, or the slider
+            // only ever zooms: the mirrored rows are already broken at `snap.cols`,
+            // so no amount of extra `fit_cols` can lengthen one. Joined first, a
+            // narrower glyph genuinely fits more text per line.
+            //
+            // The joined lines become the reader's own coordinate space: a
+            // `VisualRow`'s `src_row` is an index into THEM, not into the source
+            // grid. That is why `src_lines` below must be the joined text too —
+            // selection, highlight and copy all read the same space, and a wrapped
+            // command now copies back as the single line it really is.
+            let joined = if crawl {
+                Vec::new()
+            } else {
+                pane::join_focus_lines(&snap.lines, snap.cols)
+            };
             let vrows = if crawl {
                 Vec::new()
             } else {
-                pane::wrap_focus_lines(&snap.lines, fit_cols)
+                pane::wrap_focus_lines(&joined, fit_cols)
             };
             // Exact content height — crawl is one row per grid row, a wrapped read
             // one row per visual (wrapped) row. Counted, never measured.
@@ -13431,8 +13459,10 @@ impl Render for Workspace {
             };
             let h_offset = ((avail_w - body_w) * 0.5).max(0.0);
             // Left inset of the content this frame — the hit-test maps clicks against
-            // it, so it must include the centring offset.
-            let content_left = pad + h_offset;
+            // it, so it must include the side padding AND the centring offset. It
+            // tracks `pad_x`, not `pad`: get this wrong and every reader click lands
+            // one margin's worth off.
+            let content_left = pad_x + h_offset;
             let base_size = snap.base_size * ms;
             // Stash this frame's wrapped layout so a click in the reading area maps
             // back to a source cell for selection + copy. Crawl gets an empty map
@@ -13447,7 +13477,13 @@ impl Render for Workspace {
             };
             *self.focus_map.lock().unwrap() = Some(FocusMap {
                 rows: map_rows,
-                src_lines: snap.lines.iter().map(|(t, _)| t.clone()).collect(),
+                // The JOINED lines, matching the space `VisualRow::src_row` indexes
+                // into. Crawl never joins, so it keeps the raw mirrored rows.
+                src_lines: if crawl {
+                    snap.lines.iter().map(|(t, _)| t.clone()).collect()
+                } else {
+                    joined.iter().map(|(t, _)| t.clone()).collect()
+                },
                 line_h: cell_h,
                 glyph_w,
                 pad: content_left,
