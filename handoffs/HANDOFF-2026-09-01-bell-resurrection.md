@@ -61,17 +61,26 @@ screen. The trough alpha is deliberately >0 — a vanishing glyph would read as
 "no agent" mid-glance.
 
 **Second coda — the full glyph taxonomy.** The 🔔 badge is retired; a tab now
-tells the whole story: **❓ pulsing fast** (850ms) = an agent stopped WAITING
-ON A HUMAN (picker/permission/trust prompt detected on the live rows —
-`wants_human`, strict phrase list; "esc to interrupt" never matches), **🤖
-pulsing slow** (1.4s) = working, **✅ steady** = finished clean, **❌ steady** =
-finished BLOCKED (`looks_blocked`: the CLI's own banners — API error, usage
-limit, credit balance, expired OAuth, timeout — never the agent's tool-output
-errors). ❓ is live and un-latched (clears when the prompt is answered); ✅/❌
+tells the whole story: **needs-input** = an agent stopped WAITING ON A HUMAN
+(picker/permission/trust prompt detected on the live rows — `wants_human`,
+strict phrase list; "esc to interrupt" never matches), **working** = slow
+breathe (1.4s), **✅ steady** = finished clean, **❌ steady** = finished BLOCKED
+(`looks_blocked`: the CLI's own banners — API error, usage limit, credit
+balance, expired OAuth, timeout — never the agent's tool-output errors).
+Needs-input is live and un-latched (clears when the prompt is answered); ✅/❌
 latch until the pane is focused. The header mirrors it (❓ your turn / ✔ done /
-✘ blocked), and the system toast title leads with the same glyph
+✘ blocked), and the system toast title leads with the matching glyph
 (`flavor_title`; ❓ outranks ❌ — a prompt IS the wall and answering it is the
 fix). States from different panes can show together on one tab.
+
+**Third coda — the mascot.** Parker's robot art (`app/assets/img/`, 64² layers
+cut from one 1254² piece; `art.rs` embeds them binary-side like the ping)
+replaces the emoji on the tab: **working** = robot-only breathing; **needs
+input** = robot standing steady with its yellow HEY blinker layer overlaid at
+identical bounds and **hard-BLINKED** — square wave (`blink_alpha`, 700ms,
+55% duty), explicitly never a throb: onsets grab the eye. The pane header
+keeps the text ❓ (a text row can't blink a PNG). Rendered via the same
+`gpui::img(PathBuf)` path the logo feature proved.
 
 ## First hands-on checks after restart
 
