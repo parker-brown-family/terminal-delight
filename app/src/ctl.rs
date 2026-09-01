@@ -503,6 +503,24 @@ fn hypr_request(cmd: &str) -> Option<String> {
     Some(out)
 }
 
+/// Focus THIS process's window compositor-side (used by the agent-finished
+/// notification's click-to-jump). Omarchy's Hyprland fork speaks Lua on the
+/// command socket — probed live: `dispatch hl.dsp.focus({window="pid:N"})`
+/// executes (a bogus pid answers "window not found", not a syntax error) while
+/// the classic `dispatch focuswindow pid:N` is a Lua error. The classic form is
+/// still sent as a fallback when the Lua form errors, so a stock Hyprland
+/// works too. Blocking (~ms unix-socket round trip) — call off the UI thread.
+pub(crate) fn focus_this_window() {
+    let pid = std::process::id();
+    let lua = format!("dispatch hl.dsp.focus({{window=\"pid:{pid}\"}})");
+    match hypr_request(&lua) {
+        Some(reply) if !reply.starts_with("error") => {}
+        _ => {
+            let _ = hypr_request(&format!("dispatch focuswindow pid:{pid}"));
+        }
+    }
+}
+
 /// The pids of terminal-delight windows on the selected workspace, straight
 /// out of `j/clients`. Numeric selectors match the workspace id, anything else
 /// the workspace name — Hyprland names default to the id's digits, so both
