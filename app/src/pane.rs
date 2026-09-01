@@ -2759,21 +2759,38 @@ impl TerminalView {
             // finished", so a plain shell BEL (e.g. readline's "cannot perform that
             // action" beep on a failed tab-complete) must NOT trigger it.
             //
-            // And gated on the agent not still WORKING. A BEL is an accelerator
-            // for the finish, never an independent trigger: a TUI beeps for its
-            // own reasons mid-turn — scrolling past the end of its history is the
-            // common one — and this arm used to take every one of them as a
-            // completed turn, carrying none of the guards the thinking-scan path
-            // below has (no real-spell test, no debounce, no scroll-settle gate).
-            // If the spinner is still on the LIVE bottom screen the agent is
-            // demonstrably working and the beep is UI noise.
+            // A BEL is an ACCELERATOR for a finish, never an independent trigger.
+            // This arm used to take every bell byte as a completed turn, carrying
+            // none of the guards the thinking-scan path below has — no real-spell
+            // test, no debounce, no scroll-settle gate — so two ordinary things
+            // both rang it falsely:
+            //
+            //   - a TUI beeping mid-turn (scrolling past the end of its own
+            //     history is the one that gets hit), and
+            //   - a NEW window, where restoring the session replays each resumed
+            //     agent's transcript and with it every bell that transcript
+            //     already contains, so opening a window announced a burst of
+            //     completions for turns that finished hours ago.
+            //
+            // Two conditions, one for each. `think_since` is Some only while a
+            // turn has STARTED in this pane and not yet produced a finish (it is
+            // set when the spinner appears and cleared when a finish rings), so
+            // it is exactly "there is an outstanding turn to complete" — a
+            // freshly restored pane has none, and a replayed bell is ignored. And
+            // if the spinner is still on the LIVE bottom screen the agent is
+            // demonstrably working, so the beep is UI noise. It also drops a
+            // duplicate bell arriving after a finish already rang.
             //
             // Suppressing a REAL bell costs nothing: the 120ms scan rings the
             // same finish ~300ms later through the debounced path, so the failure
             // mode is a slightly later notification rather than a lost one. That
             // asymmetry is the whole argument — a false finish interrupts Parker,
             // clears the tab's badge, and lies about an agent that is still going.
-            TermEvent::Bell if self.mode.is_agent() && !self.agent_is_thinking() => {
+            TermEvent::Bell
+                if self.mode.is_agent()
+                    && self.think_since.is_some()
+                    && !self.agent_is_thinking() =>
+            {
                 self.bell = true;
                 self.bell_blocked = looks_blocked(&self.recent_lines(14));
                 self.bell_player.play();
