@@ -416,6 +416,252 @@ pub struct Grade {
     pub crawl_depth: f32,
 }
 
+/// One addressable channel of a [`Grade`] — every dial a pane can own, the two
+/// non-slider ones (`Crawl`, `Tracking`) included. [`GradeKey`] is the subset the
+/// OSD draws as a slider row; this is the FULL set, because provenance is tracked
+/// per channel and a pane must be able to own a crawl toggle or a tracking dial
+/// exactly the way it owns a brightness.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
+pub enum GradeChannel {
+    Brightness,
+    Contrast,
+    Colour,
+    Text,
+    Background,
+    Gamma,
+    Scale,
+    TextSize,
+    Warp,
+    CrawlAngle,
+    CrawlDepth,
+    Crawl,
+    Tracking,
+}
+
+impl GradeChannel {
+    /// Every channel in bit order. This is the wire order too, so a serialized
+    /// pin list reads the same way every time.
+    pub const ALL: [GradeChannel; 13] = [
+        Self::Brightness,
+        Self::Contrast,
+        Self::Colour,
+        Self::Text,
+        Self::Background,
+        Self::Gamma,
+        Self::Scale,
+        Self::TextSize,
+        Self::Warp,
+        Self::CrawlAngle,
+        Self::CrawlDepth,
+        Self::Crawl,
+        Self::Tracking,
+    ];
+
+    /// The wire name. STABLE — it is written into state files, so renaming one
+    /// silently unpins that channel on every existing pane.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Brightness => "brightness",
+            Self::Contrast => "contrast",
+            Self::Colour => "colour",
+            Self::Text => "text",
+            Self::Background => "background",
+            Self::Gamma => "gamma",
+            Self::Scale => "scale",
+            Self::TextSize => "text_size",
+            Self::Warp => "warp",
+            Self::CrawlAngle => "crawl_angle",
+            Self::CrawlDepth => "crawl_depth",
+            Self::Crawl => "crawl",
+            Self::Tracking => "tracking",
+        }
+    }
+
+    /// Parse a wire name. An unknown name reads as "no such channel" and is
+    /// dropped rather than failing the whole state file — a pin list written by
+    /// a newer build must not brick an older one's session.
+    pub fn parse(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|c| c.name() == name)
+    }
+
+    const fn bit(self) -> u16 {
+        1 << (self as u16)
+    }
+
+    /// True when `a` and `b` carry the same value for this channel.
+    fn same(self, a: &Grade, b: &Grade) -> bool {
+        const EPS: f32 = 1e-4;
+        let close = |x: f32, y: f32| (x - y).abs() < EPS;
+        match self {
+            Self::Brightness => close(a.brightness, b.brightness),
+            Self::Contrast => close(a.contrast, b.contrast),
+            Self::Colour => close(a.colour, b.colour),
+            Self::Text => close(a.text, b.text),
+            Self::Background => close(a.background, b.background),
+            Self::Gamma => close(a.gamma, b.gamma),
+            Self::Scale => close(a.scale, b.scale),
+            Self::TextSize => close(a.text_size, b.text_size),
+            Self::Warp => close(a.warp, b.warp),
+            Self::CrawlAngle => close(a.crawl_angle, b.crawl_angle),
+            Self::CrawlDepth => close(a.crawl_depth, b.crawl_depth),
+            Self::Crawl => a.crawl == b.crawl,
+            Self::Tracking => match (a.tracking, b.tracking) {
+                (None, None) => true,
+                (Some(x), Some(y)) => x.iter().zip(y.iter()).all(|(p, q)| close(*p, *q)),
+                _ => false,
+            },
+        }
+    }
+
+    /// Copy this one channel from `src` into `dst`, leaving the rest alone.
+    fn copy(self, dst: &mut Grade, src: &Grade) {
+        match self {
+            Self::Brightness => dst.brightness = src.brightness,
+            Self::Contrast => dst.contrast = src.contrast,
+            Self::Colour => dst.colour = src.colour,
+            Self::Text => dst.text = src.text,
+            Self::Background => dst.background = src.background,
+            Self::Gamma => dst.gamma = src.gamma,
+            Self::Scale => dst.scale = src.scale,
+            Self::TextSize => dst.text_size = src.text_size,
+            Self::Warp => dst.warp = src.warp,
+            Self::CrawlAngle => dst.crawl_angle = src.crawl_angle,
+            Self::CrawlDepth => dst.crawl_depth = src.crawl_depth,
+            Self::Crawl => dst.crawl = src.crawl,
+            Self::Tracking => dst.tracking = src.tracking,
+        }
+    }
+}
+
+impl From<GradeKey> for GradeChannel {
+    fn from(k: GradeKey) -> Self {
+        match k {
+            GradeKey::Brightness => Self::Brightness,
+            GradeKey::Contrast => Self::Contrast,
+            GradeKey::Colour => Self::Colour,
+            GradeKey::Text => Self::Text,
+            GradeKey::Background => Self::Background,
+            GradeKey::Gamma => Self::Gamma,
+            GradeKey::Scale => Self::Scale,
+            GradeKey::TextSize => Self::TextSize,
+            GradeKey::Warp => Self::Warp,
+            GradeKey::CrawlAngle => Self::CrawlAngle,
+            GradeKey::CrawlDepth => Self::CrawlDepth,
+        }
+    }
+}
+
+/// The set of grade channels a pane OWNS — the provenance record behind
+/// "`outer` is the default, and a pane's own value sticks only where something
+/// explicitly set that value at that pane".
+///
+/// A channel lands in here when a human moves its OSD slider or an agent names
+/// it in an MCP `set_pane_config` patch. It never lands here by construction: a
+/// fresh pane, a split, a restored layout all start empty and therefore track
+/// the outer scope live, so changing outer moves every pane nobody has dressed.
+#[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
+pub struct GradePins(u16);
+
+impl GradePins {
+    /// Own nothing — follow outer for every channel. A fresh pane's state.
+    pub const NONE: Self = Self(0);
+
+    /// Own everything — the pane is fully detached from outer. What the old
+    /// group-level `inherit_grade = false` meant, and what "reset" and an
+    /// explicit un-follow still produce.
+    pub fn all() -> Self {
+        let mut out = Self::NONE;
+        for c in GradeChannel::ALL {
+            out.insert(c);
+        }
+        out
+    }
+
+    pub fn is_empty(self) -> bool {
+        self.0 == 0
+    }
+
+    /// `skip_serializing_if` shim — serde hands a reference.
+    pub fn is_none(pins: &Self) -> bool {
+        pins.is_empty()
+    }
+
+    pub fn has(self, c: GradeChannel) -> bool {
+        self.0 & c.bit() != 0
+    }
+
+    pub fn insert(&mut self, c: GradeChannel) {
+        self.0 |= c.bit();
+    }
+
+    pub fn extend(&mut self, other: Self) {
+        self.0 |= other.0;
+    }
+
+    /// Channels in BOTH sets.
+    pub fn and(self, other: Self) -> Self {
+        Self(self.0 & other.0)
+    }
+
+    pub fn iter(self) -> impl Iterator<Item = GradeChannel> {
+        GradeChannel::ALL.into_iter().filter(move |c| self.has(*c))
+    }
+
+    /// A single-channel set — what one slider drag or one patched MCP field pins.
+    pub fn only(c: GradeChannel) -> Self {
+        let mut out = Self::NONE;
+        out.insert(c);
+        out
+    }
+
+    /// The channels where `own` differs from `base`. This is the migration
+    /// oracle: an old state file pinned all thirteen channels whether or not a
+    /// human ever touched them, and a channel that already equals outer is
+    /// provably not a deliberate divergence, so only the differences survive.
+    pub fn differing(own: &Grade, base: &Grade) -> Self {
+        let mut out = Self::NONE;
+        for c in GradeChannel::ALL {
+            if !c.same(own, base) {
+                out.insert(c);
+            }
+        }
+        out
+    }
+
+    /// Resolve a pane: start from `base` (the outer grade) and overlay only the
+    /// channels this pane owns from `own`.
+    pub fn merge(self, base: Grade, own: Grade) -> Grade {
+        if self.is_empty() {
+            return base;
+        }
+        let mut out = base;
+        for c in self.iter() {
+            c.copy(&mut out, &own);
+        }
+        out
+    }
+}
+
+impl Serialize for GradePins {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        let names: Vec<&str> = self.iter().map(GradeChannel::name).collect();
+        names.serialize(s)
+    }
+}
+
+impl<'de> Deserialize<'de> for GradePins {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let names = Vec::<String>::deserialize(d)?;
+        let mut out = Self::NONE;
+        for n in names {
+            if let Some(c) = GradeChannel::parse(&n) {
+                out.insert(c);
+            }
+        }
+        Ok(out)
+    }
+}
+
 impl Default for Grade {
     /// The shipped "house" grade — Parker's personal monitor look, baked in as
     /// the default for every fresh pane/window (see the breakout DISPLAY tray).
@@ -654,10 +900,10 @@ pub fn house_outer() -> ThemeChoice {
             text: 0.5,
             background: 0.5,
             gamma: 0.5,
-            scale: 1.16,        // 116%
-            text_size: 1.0,     // terminal grid at config size
-            warp: WARP_DEFAULT, // the house near-fishbowl bend
-            tracking: None,     // defer to the theme's authored roll bar
+            scale: HOUSE_SCALE,         // 80%
+            text_size: HOUSE_TEXT_SIZE, // 75%
+            warp: WARP_DEFAULT,         // the house near-fishbowl bend
+            tracking: None,             // defer to the theme's authored roll bar
             crawl: false,
             crawl_angle: CRAWL_ANGLE_DEFAULT,
             crawl_depth: CRAWL_DEPTH_DEFAULT,
@@ -686,14 +932,13 @@ pub fn house_terminal() -> ThemeChoice {
         syntax: true,
         syntax_scheme: SyntaxScheme::Agentic,
         // GAUGES default = neutral sliders + the house warp (matches the shipped
-        // DISPLAY/GAUGES tray: everything +0, warp +143) — except the two SIZE
-        // channels, which open smaller than 100%: Parker runs a dense wall of
-        // panes, so a fresh terminal is born with the chrome at 80% and the grid
-        // font at 75% rather than needing a hand-tuned pass per pane.
+        // DISPLAY/GAUGES tray: everything +0/100%, warp +143). NB: a fresh pane
+        // does NOT take this grade — [`PaneTheme::house`] pins only the theme
+        // group, so the grade rides the outer scope until a human dials one
+        // channel here. This grade is the pane's look only in tests and in the
+        // legacy full-override migration.
         grade: Grade {
             warp: WARP_DEFAULT,
-            scale: HOUSE_SCALE,
-            text_size: HOUSE_TEXT_SIZE,
             ..Grade::neutral()
         },
         dynamic: Dynamic::Wood,
@@ -785,15 +1030,32 @@ pub struct PaneTheme {
     /// `inherit_theme` is on; `None` only before the group has ever diverged.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub theme: Option<ThemeGroup>,
-    /// Retained grade-group override (the six OSD sliders). Same retention rule.
+    /// The pane's own grade VALUES. Only the channels named in [`Self::pins`]
+    /// are read; the rest is dead storage, kept so releasing a channel to outer
+    /// and re-pinning it restores what the pane had rather than re-freezing
+    /// outer.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub grade: Option<Grade>,
+    /// Which grade channels this pane OWNS. Empty ⇒ every channel tracks the
+    /// outer scope live, which is what a fresh pane is born with: `outer` is the
+    /// default, and a pane's own value sticks only where something explicitly
+    /// set that channel HERE (an OSD gesture, or an MCP `set_pane_config` field).
+    #[serde(default, skip_serializing_if = "GradePins::is_none")]
+    pub pins: GradePins,
+    /// Pins parked by the "follow outer" switch, so flipping it back restores
+    /// the pane's own dressing instead of freezing whatever outer says now.
+    #[serde(default, skip_serializing_if = "GradePins::is_none")]
+    pub retained: GradePins,
     /// Follow the outer scope's theme group. Default `true` (a fresh pane inherits).
     #[serde(default = "yes", skip_serializing_if = "is_true")]
     pub inherit_theme: bool,
-    /// Follow the outer scope's grade group. Default `true`.
-    #[serde(default = "yes", skip_serializing_if = "is_true")]
-    pub inherit_grade: bool,
+    /// LEGACY: the pre-per-channel grade-group switch. Written by builds where a
+    /// single `false` detached all thirteen channels at once — including the
+    /// twelve no human had ever touched. Present only in old state files;
+    /// [`Self::migrate_legacy_grade`] consumes it into [`Self::pins`] on load and
+    /// it is never written back.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inherit_grade: Option<bool>,
 }
 
 impl Default for PaneTheme {
@@ -801,30 +1063,44 @@ impl Default for PaneTheme {
         Self {
             theme: None,
             grade: None,
+            pins: GradePins::NONE,
+            retained: GradePins::NONE,
             inherit_theme: true,
-            inherit_grade: true,
+            inherit_grade: None,
         }
     }
 }
 
 impl PaneTheme {
-    /// True when the pane carries nothing of its own — both groups follow outer
-    /// and no override is retained. Such a pane is omitted from the state file.
+    /// True when the pane carries nothing of its own — it follows outer for the
+    /// theme group and owns no grade channel, with nothing retained. Such a pane
+    /// is omitted from the state file.
     pub fn is_pristine(&self) -> bool {
-        self.inherit_theme && self.inherit_grade && self.theme.is_none() && self.grade.is_none()
+        self.inherit_theme
+            && self.theme.is_none()
+            && self.grade.is_none()
+            && self.pins.is_empty()
+            && self.retained.is_empty()
+            && self.inherit_grade.is_none()
     }
 
-    /// The choice this pane actually renders with: each group resolved
-    /// independently to the outer scope's value (when inheriting, or before it
-    /// has diverged) or the pane's own retained override.
+    /// True when the pane owns no grade channel — every slider tracks outer.
+    /// Drives the OSD's "follow outer" indicator.
+    pub fn follows_outer_grade(&self) -> bool {
+        self.pins.is_empty()
+    }
+
+    /// The choice this pane actually renders with. The theme group resolves as a
+    /// group (pinned or inherited); the grade resolves PER CHANNEL — outer is
+    /// the base and the pane overlays only what it owns.
     pub fn effective(&self, outer: &ThemeChoice) -> ThemeChoice {
         let g = match (self.inherit_theme, &self.theme) {
             (false, Some(g)) => g.clone(),
             _ => ThemeGroup::of(outer),
         };
-        let grade = match (self.inherit_grade, self.grade) {
-            (false, Some(grade)) => grade,
-            _ => outer.grade,
+        let grade = match self.grade {
+            Some(own) => self.pins.merge(outer.grade, own),
+            None => outer.grade,
         };
         ThemeChoice {
             id: g.id,
@@ -848,10 +1124,22 @@ impl PaneTheme {
         self.inherit_theme = false;
     }
 
-    /// Pin the grade group to `grade` and stop following outer (an OSD edit).
-    pub fn set_grade(&mut self, grade: Grade) {
+    /// Record an explicit set of `channels` at this pane. `grade` is the whole
+    /// effective grade the caller just mutated — it is stored wholesale (so the
+    /// dead channels hold the pane's last resolved look, ready for a re-pin),
+    /// but only `channels` join [`Self::pins`], so everything the caller did NOT
+    /// name keeps tracking outer.
+    pub fn pin_grade(&mut self, grade: Grade, channels: GradePins) {
         self.grade = Some(grade);
-        self.inherit_grade = false;
+        self.pins.extend(channels);
+    }
+
+    /// Pin every channel to `grade` — the pane owns its whole monitor and outer
+    /// no longer reaches it. Used by RESET (an explicit "no grading here") and by
+    /// the legacy full-override migration.
+    #[cfg(test)]
+    pub fn set_grade(&mut self, grade: Grade) {
+        self.pin_grade(grade, GradePins::all());
     }
 
     /// Flip the theme group's follow-outer switch. On the *first* detach (no
@@ -867,32 +1155,85 @@ impl PaneTheme {
     }
 
     /// Flip the grade group's follow-outer switch (see [`Self::toggle_theme`]).
+    /// Releasing parks the pin set so re-detaching restores exactly the channels
+    /// the pane used to own; a pane that never owned any freezes the whole
+    /// current look, which is the only sensible thing to hand back.
     pub fn toggle_grade(&mut self, outer: &ThemeChoice) {
-        if self.inherit_grade {
+        if self.pins.is_empty() {
             self.grade.get_or_insert(outer.grade);
-            self.inherit_grade = false;
+            self.pins = if self.retained.is_empty() {
+                GradePins::all()
+            } else {
+                self.retained
+            };
+            self.retained = GradePins::NONE;
         } else {
-            self.inherit_grade = true;
+            self.retained = self.pins;
+            self.pins = GradePins::NONE;
         }
     }
 
+    /// Fold a legacy grade-group switch into per-channel pins. A `false` meant
+    /// "this pane owns its whole monitor", but it was stamped on by construction
+    /// as often as by a human, so it cannot be trusted channel-for-channel.
+    ///
+    /// Two independent proofs that a channel has NO human provenance, and either
+    /// one releases it:
+    ///
+    /// 1. it already equals `outer` — pinning it changes nothing, so it cannot
+    ///    be a deliberate divergence;
+    /// 2. it still equals the value [`PaneTheme::house`] stamped at birth (the
+    ///    [`house_terminal`] grade) — nobody has moved it since the pane opened.
+    ///
+    /// What survives is the intersection: channels that differ from outer AND
+    /// from the birth value, which somebody must have dialled. The one false
+    /// negative is a human who deliberately set a channel back to exactly its
+    /// birth value; that reads as untouched, and is one drag to restore.
+    pub fn migrate_legacy_grade(&mut self, outer: &ThemeChoice) {
+        let Some(followed_outer) = self.inherit_grade.take() else {
+            return;
+        };
+        self.pins = match (followed_outer, self.grade) {
+            (false, Some(own)) => GradePins::differing(&own, &outer.grade)
+                .and(GradePins::differing(&own, &house_terminal().grade)),
+            _ => GradePins::NONE,
+        };
+    }
+
     /// Migrate a legacy single full-pane override: it pinned *both* groups and
-    /// followed outer for neither.
+    /// followed outer for neither. The grade half is left for
+    /// [`Self::migrate_legacy_grade`] to resolve against outer.
     pub fn from_legacy(c: ThemeChoice) -> Self {
         Self {
             theme: Some(ThemeGroup::of(&c)),
             grade: Some(c.grade),
+            pins: GradePins::all(),
+            retained: GradePins::NONE,
             inherit_theme: false,
-            inherit_grade: false,
+            inherit_grade: Some(false),
         }
     }
 
     /// A brand-new terminal pane's shipped appearance: pin the green
-    /// [`house_terminal`] look and do NOT follow the warm outer cabinet, so a
+    /// [`house_terminal`] THEME and do NOT follow the warm outer cabinet, so a
     /// fresh terminal is the green phosphor CRT regardless of the mother theme.
     /// The "follow outer" toggle still re-attaches it on demand.
+    ///
+    /// The GRADE is deliberately left un-pinned. The grade is the monitor, and
+    /// the monitor is the window: a fresh pane owns no channel, so every dial
+    /// tracks outer live until a human moves one here. This is what makes a
+    /// single change to the outer scope reach every pane nobody has dressed —
+    /// stamping the house grade in at birth (what the old `from_legacy` call did)
+    /// detached each new pane from outer before it had ever been looked at.
     pub fn house() -> Self {
-        Self::from_legacy(house_terminal())
+        Self {
+            theme: Some(ThemeGroup::of(&house_terminal())),
+            grade: None,
+            pins: GradePins::NONE,
+            retained: GradePins::NONE,
+            inherit_theme: false,
+            inherit_grade: None,
+        }
     }
 }
 
@@ -2315,6 +2656,236 @@ mod tests {
     }
 
     #[test]
+    fn a_fresh_pane_owns_no_grade_channel_and_tracks_outer_live() {
+        // THE RULE: outer is the default for every channel, and a pane's own
+        // value sticks only where something set that channel HERE. A pane that
+        // has never been dressed must therefore move when outer moves — the
+        // whole point of the per-channel model.
+        let p = PaneTheme::house();
+        let mut outer = house_outer();
+        outer.grade.brightness = 0.9;
+        outer.grade.text_size = 1.8;
+        let eff = p.effective(&outer);
+        assert!((eff.grade.brightness - 0.9).abs() < 1e-6);
+        assert!((eff.grade.text_size - 1.8).abs() < 1e-6);
+
+        // ...and again, live, with no re-pinning in between.
+        outer.grade.brightness = 0.1;
+        assert!((p.effective(&outer).grade.brightness - 0.1).abs() < 1e-6);
+    }
+
+    #[test]
+    fn setting_one_channel_pins_only_that_channel() {
+        // One slider drag must not detach the other twelve. This is the defect
+        // the group-level switch had: every write pinned the whole grade.
+        let mut outer = house_outer();
+        outer.grade.brightness = 0.9;
+        let mut p = PaneTheme::house();
+
+        let mut g = p.effective(&outer).grade;
+        g.set(GradeKey::TextSize, 1.25);
+        p.pin_grade(g, GradePins::only(GradeChannel::TextSize));
+
+        assert_eq!(p.pins, GradePins::only(GradeChannel::TextSize));
+        assert!(!p.follows_outer_grade(), "the pane owns something now");
+
+        // the pinned channel is the pane's...
+        outer.grade.text_size = 0.6;
+        assert!((p.effective(&outer).grade.text_size - 1.25).abs() < 1e-6);
+        // ...and every other channel still tracks outer, live.
+        outer.grade.brightness = 0.2;
+        assert!((p.effective(&outer).grade.brightness - 0.2).abs() < 1e-6);
+
+        // A second gesture adds to the set rather than replacing it.
+        let mut g = p.effective(&outer).grade;
+        g.crawl = true;
+        p.pin_grade(g, GradePins::only(GradeChannel::Crawl));
+        assert!(p.pins.has(GradeChannel::TextSize) && p.pins.has(GradeChannel::Crawl));
+        outer.grade.brightness = 0.7;
+        assert!(
+            (p.effective(&outer).grade.brightness - 0.7).abs() < 1e-6,
+            "brightness was never set here, so it still follows"
+        );
+    }
+
+    #[test]
+    fn legacy_group_detach_keeps_only_the_channels_that_differ_from_outer() {
+        // An old state file's `inherit_grade = false` pinned all thirteen
+        // channels whether or not a human touched them. Migration resolves it
+        // against outer: identical channels were birth-copies and are released;
+        // the divergences were dialled by somebody and stay.
+        let mut outer = house_outer();
+        outer.grade.brightness = 0.4;
+        let own = Grade {
+            brightness: 0.4, // == outer → a birth-copy, release it
+            gamma: 0.25,     // != outer, != birth → somebody dialled this, keep it
+            ..outer.grade
+        };
+        let mut p = PaneTheme {
+            grade: Some(own),
+            inherit_grade: Some(false),
+            ..Default::default()
+        };
+        p.migrate_legacy_grade(&outer);
+
+        assert_eq!(p.pins, GradePins::only(GradeChannel::Gamma));
+        assert_eq!(p.inherit_grade, None, "the legacy switch is consumed");
+        // The look is byte-identical the moment migration runs...
+        let eff = p.effective(&outer);
+        assert!((eff.grade.gamma - 0.25).abs() < 1e-6);
+        assert!((eff.grade.brightness - 0.4).abs() < 1e-6);
+        // ...but brightness now follows outer, where before it never would have.
+        outer.grade.brightness = 0.05;
+        assert!((p.effective(&outer).grade.brightness - 0.05).abs() < 1e-6);
+        assert!(
+            (p.effective(&outer).grade.gamma - 0.25).abs() < 1e-6,
+            "the deliberate divergence survives"
+        );
+    }
+
+    #[test]
+    fn legacy_migration_releases_channels_still_sitting_at_their_birth_value() {
+        // The other half of the provenance proof: a channel differing from outer
+        // is NOT automatically human — the old constructor stamped the whole
+        // house grade into every pane at birth, so a channel still holding that
+        // stamp was never touched, however far outer has drifted from it.
+        let mut outer = house_outer();
+        outer.grade.brightness = 0.38; // the dim cabinet
+        outer.grade.contrast = 0.21;
+        let birth = house_terminal().grade; // brightness/contrast at neutral 0.5
+        let own = Grade {
+            brightness: 0.5, // == birth, != outer → untouched, release it
+            contrast: 0.332, // != birth, != outer → hand-dialled, keep it
+            ..birth
+        };
+        let mut p = PaneTheme {
+            grade: Some(own),
+            inherit_grade: Some(false),
+            ..Default::default()
+        };
+        p.migrate_legacy_grade(&outer);
+
+        assert_eq!(
+            p.pins,
+            GradePins::only(GradeChannel::Contrast),
+            "only the channel that is neither outer's nor the birth stamp"
+        );
+        let eff = p.effective(&outer);
+        assert!(
+            (eff.grade.brightness - 0.38).abs() < 1e-6,
+            "the untouched channel finally reaches the cabinet's value"
+        );
+        assert!(
+            (eff.grade.contrast - 0.332).abs() < 1e-6,
+            "the dialled one is the pane's own"
+        );
+    }
+
+    #[test]
+    fn legacy_inheriting_pane_migrates_to_owning_nothing() {
+        // `inherit_grade = true` (or absent) already meant "follow outer" — it
+        // must not acquire pins on the way through.
+        let mut p = PaneTheme {
+            grade: Some(Grade::neutral()),
+            inherit_grade: Some(true),
+            ..Default::default()
+        };
+        p.migrate_legacy_grade(&house_outer());
+        assert!(p.follows_outer_grade() && p.inherit_grade.is_none());
+    }
+
+    #[test]
+    fn follow_outer_parks_the_panes_own_channels_and_hands_them_back() {
+        let mut outer = house_outer();
+        outer.grade.gamma = 0.8;
+        let mut p = PaneTheme::house();
+        let mut g = p.effective(&outer).grade;
+        g.set(GradeKey::Gamma, 0.1);
+        p.pin_grade(g, GradePins::only(GradeChannel::Gamma));
+
+        // Release: the pane owns nothing and wears outer whole.
+        p.toggle_grade(&outer);
+        assert!(p.follows_outer_grade());
+        assert!((p.effective(&outer).grade.gamma - 0.8).abs() < 1e-6);
+
+        // Re-detach: it gets back exactly the channel it had, not a freeze of
+        // every channel outer happens to be showing.
+        p.toggle_grade(&outer);
+        assert_eq!(p.pins, GradePins::only(GradeChannel::Gamma));
+        assert!((p.effective(&outer).grade.gamma - 0.1).abs() < 1e-6);
+    }
+
+    #[test]
+    fn grade_pins_round_trip_by_name_and_ignore_unknown_channels() {
+        let pins = GradePins::only(GradeChannel::TextSize);
+        let wire = toml::to_string(&PaneTheme {
+            pins,
+            ..Default::default()
+        })
+        .unwrap();
+        assert!(wire.contains("text_size"), "pinned by NAME: {wire}");
+        let back: PaneTheme = toml::from_str(&wire).unwrap();
+        assert_eq!(back.pins, pins);
+
+        // An empty set is omitted entirely, so a pane that owns nothing writes
+        // nothing — and a pin list from a newer build never bricks this one.
+        let none = toml::to_string(&PaneTheme::default()).unwrap();
+        assert!(
+            !none.contains("pins"),
+            "an empty pin set is skipped: {none}"
+        );
+        let future: PaneTheme = toml::from_str("pins = [\"warp\", \"hologram\"]").unwrap();
+        assert_eq!(future.pins, GradePins::only(GradeChannel::Warp));
+    }
+
+    #[test]
+    fn every_grade_channel_is_addressable_and_merges_independently() {
+        // A channel missing from ALL/name/copy would silently never pin, so walk
+        // the whole set: pin exactly one, and only that one may leave `base`.
+        let base = Grade::neutral();
+        let own = Grade {
+            brightness: 0.1,
+            contrast: 0.2,
+            colour: 0.3,
+            text: 0.4,
+            background: 0.6,
+            gamma: 0.7,
+            scale: 1.5,
+            text_size: 1.9,
+            warp: 2.0,
+            crawl_angle: 40.0,
+            crawl_depth: 9.0,
+            crawl: true,
+            tracking: Some([0.3, 0.4, 0.5]),
+        };
+        for c in GradeChannel::ALL {
+            assert_eq!(
+                GradeChannel::parse(c.name()),
+                Some(c),
+                "{} round-trips",
+                c.name()
+            );
+            let merged = GradePins::only(c).merge(base, own);
+            assert!(c.same(&merged, &own), "{} came from the pane", c.name());
+            for other in GradeChannel::ALL {
+                if other != c {
+                    assert!(
+                        other.same(&merged, &base),
+                        "pinning {} moved {}",
+                        c.name(),
+                        other.name()
+                    );
+                }
+            }
+        }
+        assert_eq!(
+            GradePins::differing(&own, &base),
+            GradePins::all(),
+            "every channel differs here, so every channel is detectable"
+        );
+    }
+
+    #[test]
     fn pane_theme_follows_outer_live_until_it_diverges() {
         let p = PaneTheme::default();
         assert!(p.is_pristine());
@@ -2751,24 +3322,38 @@ mod tests {
             (t.grade.brightness - 0.5).abs() < f32::EPSILON,
             "GAUGES sliders start neutral"
         );
-        // ...except the two SIZE channels: a fresh pane opens small, not at 100%.
-        assert_eq!(t.grade.scale, HOUSE_SCALE, "menu bar opens at 80%");
-        assert_eq!(t.grade.text_size, HOUSE_TEXT_SIZE, "grid font opens at 75%");
 
         let p = PaneTheme::house();
         assert!(
-            !p.inherit_theme && !p.inherit_grade,
-            "a fresh terminal is pinned, NOT following the warm cabinet"
+            !p.inherit_theme,
+            "the THEME is pinned, NOT following the warm cabinet"
+        );
+        assert!(
+            p.follows_outer_grade() && p.grade.is_none(),
+            "the GRADE is owned by nobody — a fresh pane tracks the outer monitor"
         );
         assert!(!p.is_pristine());
         // rendered against the amber cabinet, the pane keeps its own Wood design
-        let eff = p.effective(&house_outer());
+        // but wears the cabinet's monitor grade, dials and all.
+        let outer = house_outer();
+        let eff = p.effective(&outer);
         assert_eq!(
             eff.dynamic,
             Dynamic::Wood,
             "the pane's own Wood design inside the cabinet"
         );
-        assert_eq!(eff.grade.warp, WARP_DEFAULT, "pane keeps the warped GAUGES");
+        assert_eq!(
+            eff.grade, outer.grade,
+            "every grade channel comes from outer"
+        );
+        assert_eq!(
+            eff.grade.scale, HOUSE_SCALE,
+            "so the menu bar opens at the cabinet's 80%"
+        );
+        assert_eq!(
+            eff.grade.text_size, HOUSE_TEXT_SIZE,
+            "and the grid font at 75%"
+        );
     }
 
     #[test]
@@ -3043,7 +3628,7 @@ mod tests {
         own.set(GradeKey::Scale, 0.85);
         let detached = PaneTheme {
             grade: Some(own),
-            inherit_grade: false,
+            pins: GradePins::only(GradeChannel::Scale),
             ..Default::default()
         };
         assert!((detached.effective(&outer).grade.scale - 0.85).abs() < 1e-6);
