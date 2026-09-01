@@ -5827,6 +5827,18 @@ impl Workspace {
     fn activate_tab(&mut self, i: usize, window: &mut Window, cx: &mut Context<Self>) {
         if i < self.tabs.len() {
             self.active = i;
+            // Visiting the tab IS reading its finish badges: clear every
+            // latched ✅/❌ in it. The focus-in edge alone can miss — a bell
+            // that latched while this pane already held (idle) keyboard focus
+            // never produces an edge, and the badge froze exactly there.
+            if let Some(tab) = self.tabs.get(i) {
+                let mut leaves = vec![];
+                tab.root.leaves(&mut leaves);
+                let leaves: Vec<_> = leaves.into_iter().cloned().collect();
+                for p in leaves {
+                    p.update(cx, |v, cx| v.ack_bell(cx));
+                }
+            }
             self.save(cx);
             cx.notify();
             // Defer the focus: a mother-bar click is still being dispatched, and
