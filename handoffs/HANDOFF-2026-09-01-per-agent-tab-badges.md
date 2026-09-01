@@ -2,11 +2,17 @@
 
 ## Status
 
-**UNCOMMITTED.** `main` @ `2a8661e` (= `origin/main`, nothing ahead, no stashes,
-one worktree). `app/src/pane.rs` and `app/src/main.rs` are modified and not
-committed — Parker has not given the commit call, and tie-off records rather than
-ships. No branch, no PR. `handoffs/HANDOFF-2026-09-01-pane-grade-provenance.md`
-is untracked and belongs to a **concurrent session** — do not touch it.
+**Landed and deployed.** Merged as
+[#238](https://github.com/parker-brown-family/terminal-delight/pull/238) (squash)
+→ `origin/main` = `ab9e750`. Release-built and deployed to
+`~/.local/lib/terminal-delight/td-ab9e750`, with `~/.local/bin/terminal-delight`
+repointed at it. Verified by symbol probe: the new binary contains
+`agent_badge` / `tab_agent_badges` / `prompt_sentence`; `td-2a8661e` contains
+none of them.
+
+**Not yet RUNNING.** Parker's windows were still on `td-2a8661e` (one on
+`td-e82dd33`) at deploy time — deployed is not running, and the badges only
+appear after a relaunch.
 
 ## What's done
 
