@@ -109,6 +109,51 @@ pub fn is_human_input_line(text: &str) -> bool {
     }
 }
 
+/// Does this rendered row read as part of an INTERACTION PROMPT — the agent
+/// stopped to ask the human something (an option picker, a permission gate, a
+/// trust dialog), as opposed to being done? Matches the stable footer/header
+/// phrases Claude Code and Codex print with their pickers. Deliberately
+/// STRICT, like the copy gate: a false "come interact" cries wolf, a miss just
+/// means the plain done-bell semantics. "esc to interrupt" (the WORKING
+/// footer) must never match — only "esc to cancel" (a prompt's footer).
+pub fn row_wants_human(text: &str) -> bool {
+    let t = text.trim().to_ascii_lowercase();
+    if t.is_empty() {
+        return false;
+    }
+    t.contains("enter to select")
+        || t.contains("esc to cancel")
+        || t.contains("do you want to")
+        || t.contains("do you trust")
+        || t.contains("would you like to proceed")
+}
+
+/// Is an interaction prompt on screen RIGHT NOW? Scans the last few live rows
+/// (prompts sit at the bottom of an agent TUI). Pure over the rows for tests.
+pub fn wants_human(recent_rows: &[String]) -> bool {
+    recent_rows.iter().any(|r| row_wants_human(r))
+}
+
+/// Did the agent stop because it hit a WALL rather than the end of its turn?
+/// Matches the error banners the agent CLI itself prints — API failures,
+/// exhausted limits, expired auth — NOT the word "error", which appears
+/// constantly in the agent's own tool output (a failing build is the agent
+/// WORKING, not the agent blocked). Classifies the finish badge: ✅ clean, ❌
+/// blocked. Strict for the same reason as [`row_wants_human`].
+pub fn looks_blocked(recent_rows: &[String]) -> bool {
+    recent_rows.iter().any(|r| {
+        let t = r.trim().to_ascii_lowercase();
+        !t.is_empty()
+            && (t.contains("api error")
+                || t.contains("usage limit")
+                || t.contains("credit balance")
+                || t.contains("oauth token")
+                || t.contains("rate_limit_error")
+                || t.contains("overloaded_error")
+                || t.contains("request timed out"))
+    })
+}
+
 /// Mark which rows belong to *the user's own turn*, spanning a wrapped multi-line
 /// message — not just the caret row. An agent TUI prints the human's turn behind
 /// a prompt caret (see `is_human_input_line`) and indents any wrapped
@@ -1669,6 +1714,16 @@ pub struct TerminalView {
     /// played, the tab wears its 🔔 badge and the header reads "● done" until
     /// the focus-in edge acknowledges it ([`Self::ack_bell`]).
     bell: bool,
+    /// The agent is stopped WAITING ON A HUMAN — a picker or permission prompt
+    /// is on screen (see [`wants_human`]). Live state maintained by the 120ms
+    /// scan, never latched: true exactly while the prompt is up. Drives the
+    /// tab ❓ pulse and the "needs you" notification flavour.
+    needs_input: bool,
+    /// How the latched finish classified at ring time: `true` = the agent hit
+    /// a wall (an error banner was on screen — see [`looks_blocked`]) → the ❌
+    /// badge; `false` = a clean finish → ✅. Meaningless while `bell` is off;
+    /// cleared with it.
+    bell_blocked: bool,
     /// The live player child for this pane's ping (hard-killed on stop/drop).
     bell_player: crate::bell::BellPlayer,
     /// Responsive header: when the pane narrows, controls tuck into a ⋯ overflow
@@ -1940,10 +1995,11 @@ impl gpui::EventEmitter<CloseFocusRead> for TerminalView {}
 pub struct AgentDone;
 impl gpui::EventEmitter<AgentDone> for TerminalView {}
 
-/// The cached "agent is working" state flipped (either direction). The
-/// workspace listens so the mother-bar 🤖 pulse appears and disappears on the
-/// actual edge — the pulse animation drives its own repaints only while it is
-/// already on screen, so something must repaint the tab bar to START it.
+/// A cached attention state flipped (either direction): "agent is working"
+/// (the 🤖 pulse) or "agent needs a human" (the ❓ pulse). The workspace
+/// listens so the mother bar repaints on the actual edge — the pulse
+/// animations drive their own repaints only while already on screen, so
+/// something must repaint the tab bar to START one.
 pub struct AgentWorkingChanged;
 impl gpui::EventEmitter<AgentWorkingChanged> for TerminalView {}
 
@@ -2314,6 +2370,21 @@ impl TerminalView {
                                     view.not_thinking_since = Some(Instant::now());
                                 }
                             }
+                            // COME INTERACT: the agent stopped because it needs a
+                            // HUMAN — a picker or permission prompt is on screen,
+                            // not a finished turn. Live state, never latched: it
+                            // clears the moment the prompt is answered. Drives
+                            // the tab ❓ pulse, the header "❓ your turn", and
+                            // upgrades the finish notification to "needs you".
+                            // ONE bottom-rows scan feeds this and the ✅/❌
+                            // classification when the bell latches below.
+                            let recent = view.recent_lines(14);
+                            let needs = view.mode.is_agent() && !thinking && wants_human(&recent);
+                            if needs != view.needs_input {
+                                view.needs_input = needs;
+                                cx.emit(AgentWorkingChanged);
+                                cx.notify();
+                            }
                             // Only ring the bell if we've been not-thinking for 300ms+ AND
                             // the original thinking period was real (> 1200ms).
                             if !thinking && view.mode.is_agent() {
@@ -2332,6 +2403,9 @@ impl TerminalView {
                                         };
                                         if real && !view.bell {
                                             view.bell = true;
+                                            // classify the finish while the
+                                            // stop-state is still on screen
+                                            view.bell_blocked = looks_blocked(&recent);
                                             view.bell_player.play();
                                             view.think_since = None;
                                             view.not_thinking_since = None;
@@ -2414,6 +2488,8 @@ impl TerminalView {
             appearance: PaneTheme::default(),
             ctx_menu: None,
             bell: false,
+            needs_input: false,
+            bell_blocked: false,
             bell_player: crate::bell::BellPlayer::default(),
             hdr_overflow: None,
             copy_hint: None,
@@ -2631,6 +2707,18 @@ impl TerminalView {
         self.mode.is_agent() && self.gamba.is_thinking()
     }
 
+    /// Is the agent stopped WAITING ON A HUMAN right now (picker / permission
+    /// prompt on screen)? Cached by the same 120ms scan; live, never latched.
+    pub fn needs_input(&self) -> bool {
+        self.needs_input
+    }
+
+    /// Did the latched finish classify as BLOCKED (an error banner was on
+    /// screen at ring time)? Only meaningful while [`Self::has_bell`] is true.
+    pub fn bell_blocked(&self) -> bool {
+        self.bell && self.bell_blocked
+    }
+
     fn handle_term_event(&mut self, event: TermEvent, cx: &mut Context<Self>) -> bool {
         match event {
             TermEvent::Wakeup => {
@@ -2652,6 +2740,7 @@ impl TerminalView {
             // action" beep on a failed tab-complete) must NOT trigger it.
             TermEvent::Bell if self.mode.is_agent() => {
                 self.bell = true;
+                self.bell_blocked = looks_blocked(&self.recent_lines(14));
                 self.bell_player.play();
                 cx.emit(AgentDone);
                 cx.notify();
@@ -4119,6 +4208,7 @@ impl TerminalView {
             return;
         }
         self.bell = false;
+        self.bell_blocked = false;
         self.bell_player.stop();
         self.not_thinking_since = None;
         cx.notify();
@@ -5565,8 +5655,15 @@ impl Render for TerminalView {
             self.paint_to_grid = None;
         }
         let ps = crate::lang::current().strings();
-        let status = if self.bell {
-            format!("● {}", ps.ph_done)
+        let status = if self.needs_input {
+            // waiting on the HUMAN outranks "done": the turn isn't over, it's
+            // yours. (English literal for now — the prompt phrases it detects
+            // are English-only anyway; i18n rides along when they do.)
+            "❓ your turn".to_string()
+        } else if self.bell_blocked() {
+            "✘ blocked".to_string()
+        } else if self.bell {
+            format!("✔ {}", ps.ph_done)
         } else if self.exited {
             ps.ph_exited.to_string()
         } else {
@@ -6778,6 +6875,59 @@ mod tests {
             "!important",
         ] {
             assert!(!is_copyable_command(prose), "must stay silent: {prose:?}");
+        }
+    }
+
+    /// The COME-INTERACT detector matches the agent CLI's own prompt furniture
+    /// — picker footers, permission questions, the trust dialog — and nothing
+    /// else. "esc to interrupt" is the WORKING footer and must stay silent, and
+    /// ordinary prose (even about wanting things) must never summon Parker.
+    #[test]
+    fn interaction_prompts_are_detected_and_working_footers_are_not() {
+        let rows = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        for prompt in [
+            "  Enter to select · ↑/↓ to navigate · Esc to cancel",
+            "  Do you want to proceed?",
+            "  Do you trust the files in this folder?",
+            "  Would you like to proceed with this plan?",
+        ] {
+            assert!(wants_human(&rows(&[prompt])), "should summon: {prompt:?}");
+        }
+        for quiet in [
+            "✶ Crunching… (esc to interrupt)",
+            "I want to refactor the reader next.",
+            "error[E0425]: cannot find function `ensure_seeded`",
+            "",
+        ] {
+            assert!(!wants_human(&rows(&[quiet])), "must stay quiet: {quiet:?}");
+        }
+    }
+
+    /// The ✅/❌ split: the CLI's own failure banners classify a stop as
+    /// blocked; the agent's tool output failing (a red cargo error) is the
+    /// agent WORKING and must classify as a clean finish when it stops.
+    #[test]
+    fn blocked_finishes_are_the_clis_banners_not_tool_errors() {
+        let rows = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        for wall in [
+            "  ⎿  API Error: 529 overloaded_error",
+            "  You've reached your usage limit — resets 3pm",
+            "  Credit balance too low",
+            "  OAuth token has expired",
+            "  Request timed out after 60s",
+        ] {
+            assert!(
+                looks_blocked(&rows(&[wall])),
+                "should read blocked: {wall:?}"
+            );
+        }
+        for fine in [
+            "error[E0308]: mismatched types",
+            "test result: FAILED. 3 passed; 1 failed",
+            "Done — merged #227 and deployed.",
+            "",
+        ] {
+            assert!(!looks_blocked(&rows(&[fine])), "must read clean: {fine:?}");
         }
     }
 

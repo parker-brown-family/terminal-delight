@@ -3951,7 +3951,18 @@ impl Workspace {
                 v.recent_lines(2).join(" · "),
             )
         };
-        let title = notify::notify_title(&tab_label, &pane_label);
+        // WHY it stopped decorates the title: ❓ waiting on Parker (the 300ms
+        // ring debounce means the prompt scan has already run by now), ❌ hit a
+        // wall, ✅ clean — the same glyphs the tab wears.
+        let (needs, blocked) = {
+            let v = pane.read(cx);
+            (v.needs_input(), v.bell_blocked())
+        };
+        let title = notify::flavor_title(
+            &notify::notify_title(&tab_label, &pane_label),
+            needs,
+            blocked,
+        );
         let pane_id = pane.entity_id();
         cx.spawn(async move |this, cx| {
             // One background task end-to-end: resolve the transcript, build the
@@ -5826,8 +5837,8 @@ impl Workspace {
     }
 
     /// Does any pane in tab `i` host an agent that is WORKING right now? Drives
-    /// the mother-bar 🤖 pulse — the in-flight twin of the 🔔 done badge — off
-    /// each pane's cached thinking state (free to read per frame).
+    /// the mother-bar 🤖 pulse off each pane's cached thinking state (free to
+    /// read per frame).
     fn tab_has_working_agent(&self, i: usize, cx: &App) -> bool {
         let Some(tab) = self.tabs.get(i) else {
             return false;
@@ -5835,6 +5846,29 @@ impl Workspace {
         let mut leaves = vec![];
         tab.root.leaves(&mut leaves);
         leaves.iter().any(|p| p.read(cx).agent_working())
+    }
+
+    /// Does any pane in tab `i` have an agent stopped WAITING ON A HUMAN?
+    /// Drives the mother-bar ❓ pulse — the loudest of the tab states.
+    fn tab_needs_input(&self, i: usize, cx: &App) -> bool {
+        let Some(tab) = self.tabs.get(i) else {
+            return false;
+        };
+        let mut leaves = vec![];
+        tab.root.leaves(&mut leaves);
+        leaves.iter().any(|p| p.read(cx).needs_input())
+    }
+
+    /// Did any latched finish in tab `i` classify as BLOCKED? Picks the badge
+    /// glyph: any wall in the tab shows ❌ (a failure outranks a success), else
+    /// the finishes show ✅.
+    fn tab_bell_blocked(&self, i: usize, cx: &App) -> bool {
+        let Some(tab) = self.tabs.get(i) else {
+            return false;
+        };
+        let mut leaves = vec![];
+        tab.root.leaves(&mut leaves);
+        leaves.iter().any(|p| p.read(cx).bell_blocked())
     }
 
     /// Does any pane in tab `i` have an unacknowledged "agent finished" bell? It
@@ -7935,10 +7969,24 @@ impl Workspace {
                         .bg(th.accent.alpha(0.25)),
                 )
             })
+            // ❓ pulse: an agent in this tab is stopped WAITING ON YOU — a
+            // picker or permission prompt is up. The loudest tab state: same
+            // breathe as the 🤖 but a quicker cycle, urgency without a strobe.
+            .when(self.tab_needs_input(i, cx), |d| {
+                d.child(
+                    div().text_size(px(11. * s)).child("❓").with_animation(
+                        ("tab-needs-input-pulse", i),
+                        Animation::new(Duration::from_millis(850))
+                            .repeat()
+                            .with_easing(gpui::bounce(gpui::ease_in_out)),
+                        |el, t| el.opacity(pulse_alpha(t)),
+                    ),
+                )
+            })
             // 🤖 pulse: an agent somewhere in this tab is WORKING right now.
             // Breathes like the battery-charging glow — bounce-eased opacity,
             // never below the trough alpha, so it reads "gently but firmly" at
-            // a glance instead of strobing. The finished twin is the 🔔 below.
+            // a glance instead of strobing.
             .when(self.tab_has_working_agent(i, cx), |d| {
                 d.child(
                     div().text_size(px(11. * s)).child("🤖").with_animation(
@@ -7950,11 +7998,18 @@ impl Workspace {
                     ),
                 )
             })
-            // 🔔 badge: an agent run finished in a pane of this tab and hasn't been
-            // acknowledged yet (cleared by focusing that pane — or the
-            // notification click, which does the same thing via the jump).
+            // Finish badge: a run in this tab ended and nobody has looked yet.
+            // ✅ = clean finish, ❌ = the agent hit a wall (an error banner was
+            // on screen at ring time; any wall in the tab outranks successes).
+            // Steady, not pulsing — the past needs a glance, not a heartbeat.
+            // Cleared by focusing the finished pane (or the notification jump).
             .when(self.tab_has_bell(i, cx), |d| {
-                d.child(div().text_size(px(11. * s)).child("🔔"))
+                let glyph = if self.tab_bell_blocked(i, cx) {
+                    "❌"
+                } else {
+                    "✅"
+                };
+                d.child(div().text_size(px(11. * s)).child(glyph))
             })
             .child(pencil)
             .child(close_x)
