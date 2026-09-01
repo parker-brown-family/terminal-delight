@@ -46,10 +46,10 @@ use std::time::{Duration, Instant};
 
 use gpui::{
     canvas, div, fill, hsla, linear_color_stop, linear_gradient, point, prelude::*, px, size,
-    white, Animation, AnimationExt, App, Bounds, BoxShadow, ClipboardItem, Context, Decorations,
-    Entity, EntityId, Focusable, Hsla, KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, Pixels, Point, ScrollWheelEvent, SharedString, TitlebarOptions, Window,
-    WindowBounds, WindowDecorations, WindowOptions,
+    white, Animation, AnimationExt, AnyElement, App, Bounds, BoxShadow, ClipboardItem, Context,
+    Decorations, Entity, EntityId, Focusable, Hsla, KeyDownEvent, MouseButton, MouseDownEvent,
+    MouseMoveEvent, MouseUpEvent, Pixels, Point, ScrollWheelEvent, SharedString, TitlebarOptions,
+    Window, WindowBounds, WindowDecorations, WindowOptions,
 };
 use gpui_platform::application;
 use pane::{
@@ -5849,52 +5849,36 @@ impl Workspace {
         }
     }
 
-    /// Does any pane in tab `i` host an agent that is WORKING right now? Drives
-    /// the mother-bar 🤖 pulse off each pane's cached thinking state (free to
-    /// read per frame).
-    fn tab_has_working_agent(&self, i: usize, cx: &App) -> bool {
+    /// The mother-bar badge strip for tab `i`: ONE badge per agent pane that has
+    /// something to say, in pane order (so a badge keeps its slot as long as the
+    /// splits don't move, and the strip doesn't shuffle under your eye).
+    ///
+    /// This is the tab's whole agent roster, not an aggregate — four agents in
+    /// flight paint four pulses, and one of them stopping to ask you something
+    /// turns exactly that one into a blinker while its neighbours carry on. Free
+    /// to read per frame: every input is a flag the pane already caches.
+    fn tab_agent_badges(&self, i: usize, cx: &App) -> Vec<AgentBadge> {
         let Some(tab) = self.tabs.get(i) else {
-            return false;
+            return vec![];
         };
         let mut leaves = vec![];
         tab.root.leaves(&mut leaves);
-        leaves.iter().any(|p| p.read(cx).agent_working())
-    }
-
-    /// Does any pane in tab `i` have an agent stopped WAITING ON A HUMAN?
-    /// Drives the mother-bar ❓ pulse — the loudest of the tab states.
-    fn tab_needs_input(&self, i: usize, cx: &App) -> bool {
-        let Some(tab) = self.tabs.get(i) else {
-            return false;
-        };
-        let mut leaves = vec![];
-        tab.root.leaves(&mut leaves);
-        leaves.iter().any(|p| p.read(cx).needs_input())
-    }
-
-    /// Did any latched finish in tab `i` classify as BLOCKED? Picks the badge
-    /// glyph: any wall in the tab shows ❌ (a failure outranks a success), else
-    /// the finishes show ✅.
-    fn tab_bell_blocked(&self, i: usize, cx: &App) -> bool {
-        let Some(tab) = self.tabs.get(i) else {
-            return false;
-        };
-        let mut leaves = vec![];
-        tab.root.leaves(&mut leaves);
-        leaves.iter().any(|p| p.read(cx).bell_blocked())
-    }
-
-    /// Does any pane in tab `i` have an unacknowledged "agent finished" bell? It
-    /// drives the per-tab 🔔 badge, so a run that finishes in a background tab is
-    /// visible on the mother bar without opening every pane. Mirrors the pane's
-    /// own bell — focusing the finished pane clears both at once.
-    fn tab_has_bell(&self, i: usize, cx: &App) -> bool {
-        let Some(tab) = self.tabs.get(i) else {
-            return false;
-        };
-        let mut leaves = vec![];
-        tab.root.leaves(&mut leaves);
-        leaves.iter().any(|p| p.read(cx).has_bell())
+        leaves
+            .iter()
+            .map(|p| p.read(cx))
+            // No mode gate: every flag below is one only an AGENT pane ever
+            // sets. Gating on the live mode would drop a latched finish the
+            // moment its `claude` exited back to a shell — the badge you had
+            // not looked at yet.
+            .filter_map(|p| {
+                agent_badge(
+                    p.needs_input(),
+                    p.agent_working(),
+                    p.has_bell(),
+                    p.bell_blocked(),
+                )
+            })
+            .collect()
     }
 
     /// How many panes a tab holds — drives the "close more than one?" gate.
@@ -7819,6 +7803,64 @@ impl Workspace {
         cx.notify();
     }
 
+    /// One agent's badge on the mother bar, at `slot` in tab `tab`'s strip.
+    ///
+    /// - NEEDS INPUT — the mascot stands steady while its yellow HEY blinker
+    ///   layer (same canvas, identical bounds, so the composition is the
+    ///   original art) BLINKS as a hard square wave on a LINEAR cycle.
+    ///   Deliberately not a throb: onsets grab the eye, and a blink is two per
+    ///   cycle.
+    /// - WORKING — the robot alone (blinker off) breathing like the
+    ///   battery-charging glow: bounce-eased opacity, never below the trough
+    ///   alpha, "gently but firmly" instead of strobing.
+    /// - DONE / BLOCKED — ✅ or ❌, steady rather than pulsing: the past needs a
+    ///   glance, not a heartbeat. Cleared by visiting the pane.
+    ///
+    /// The animation keys carry `(tab, slot)` so each agent animates on its own
+    /// element — share a key across a tab's badges and gpui reuses one
+    /// animation for all of them.
+    fn agent_badge_el(badge: AgentBadge, tab: usize, slot: usize, s: f32) -> AnyElement {
+        let side = px(15. * s);
+        let key = tab * MAX_TAB_BADGES + slot;
+        match badge {
+            AgentBadge::NeedsInput => div()
+                .relative()
+                .w(side)
+                .h(side)
+                .child(
+                    gpui::img(crate::art::robot_png())
+                        .absolute()
+                        .inset_0()
+                        .size_full(),
+                )
+                .child(
+                    gpui::img(crate::art::blinker_png())
+                        .absolute()
+                        .inset_0()
+                        .size_full()
+                        .with_animation(
+                            ("tab-hey-blinker", key),
+                            Animation::new(Duration::from_millis(700)).repeat(),
+                            |el, t| el.opacity(blink_alpha(t)),
+                        ),
+                )
+                .into_any_element(),
+            AgentBadge::Working => gpui::img(crate::art::robot_png())
+                .w(side)
+                .h(side)
+                .with_animation(
+                    ("tab-agent-pulse", key),
+                    Animation::new(Duration::from_millis(1400))
+                        .repeat()
+                        .with_easing(gpui::bounce(gpui::ease_in_out)),
+                    |el, t| el.opacity(pulse_alpha(t)),
+                )
+                .into_any_element(),
+            AgentBadge::Done => div().text_size(px(11. * s)).child("✅").into_any_element(),
+            AgentBadge::Blocked => div().text_size(px(11. * s)).child("❌").into_any_element(),
+        }
+    }
+
     /// One mother-bar tab button (or its inline rename box). Tinted by the tab's
     /// resolved fill/text (own override → group lead → bezel default). Right-click
     /// or ctrl+click opens the tab config pane; ✎ / double-click rename.
@@ -7982,68 +8024,31 @@ impl Workspace {
                         .bg(th.accent.alpha(0.25)),
                 )
             })
-            // Robot-needs-help: an agent in this tab is stopped WAITING ON
-            // YOU — a picker or permission prompt is up. The mascot stands
-            // steady while its yellow HEY blinker layer (same canvas,
-            // identical bounds — the composition is the original art) BLINKS
-            // as a hard square wave on a LINEAR cycle. Deliberately not a
-            // throb: onsets grab the eye, and a blink is two per cycle.
-            .when(self.tab_needs_input(i, cx), |d| {
-                let side = px(15. * s);
-                d.child(
-                    div()
-                        .relative()
-                        .w(side)
-                        .h(side)
-                        .child(
-                            gpui::img(crate::art::robot_png())
-                                .absolute()
-                                .inset_0()
-                                .size_full(),
-                        )
-                        .child(
-                            gpui::img(crate::art::blinker_png())
-                                .absolute()
-                                .inset_0()
-                                .size_full()
-                                .with_animation(
-                                    ("tab-hey-blinker", i),
-                                    Animation::new(Duration::from_millis(700)).repeat(),
-                                    |el, t| el.opacity(blink_alpha(t)),
-                                ),
-                        ),
-                )
-            })
-            // Working: the robot (blinker off) breathing like the
-            // battery-charging glow — bounce-eased opacity, never below the
-            // trough alpha, "gently but firmly" instead of strobing.
-            .when(self.tab_has_working_agent(i, cx), |d| {
-                let side = px(15. * s);
-                d.child(
-                    gpui::img(crate::art::robot_png())
-                        .w(side)
-                        .h(side)
-                        .with_animation(
-                            ("tab-agent-pulse", i),
-                            Animation::new(Duration::from_millis(1400))
-                                .repeat()
-                                .with_easing(gpui::bounce(gpui::ease_in_out)),
-                            |el, t| el.opacity(pulse_alpha(t)),
-                        ),
-                )
-            })
-            // Finish badge: a run in this tab ended and nobody has looked yet.
-            // ✅ = clean finish, ❌ = the agent hit a wall (an error banner was
-            // on screen at ring time; any wall in the tab outranks successes).
-            // Steady, not pulsing — the past needs a glance, not a heartbeat.
-            // Cleared by focusing the finished pane (or the notification jump).
-            .when(self.tab_has_bell(i, cx), |d| {
-                let glyph = if self.tab_bell_blocked(i, cx) {
-                    "❌"
-                } else {
-                    "✅"
-                };
-                d.child(div().text_size(px(11. * s)).child(glyph))
+            // The agent roster: one badge per agent in this tab, each carrying
+            // that agent's OWN state. Four in flight is four robots breathing;
+            // when one of them stops to ask you something only that one starts
+            // blinking. See [`agent_badge`] for the per-pane precedence.
+            .children({
+                let badges = self.tab_agent_badges(i, cx);
+                let over = badge_overflow(badges.len());
+                let mut strip: Vec<AnyElement> = badges
+                    .into_iter()
+                    .take(MAX_TAB_BADGES)
+                    .enumerate()
+                    .map(|(slot, badge)| Self::agent_badge_el(badge, i, slot, s))
+                    .collect();
+                if over > 0 {
+                    // more agents than the strip can hold: keep the COUNT even
+                    // when the glyphs don't fit
+                    strip.push(
+                        div()
+                            .text_size(px(9. * s))
+                            .text_color(th.faint)
+                            .child(format!("+{over}"))
+                            .into_any_element(),
+                    );
+                }
+                strip
             })
             .child(pencil)
             .child(close_x)
@@ -14401,6 +14406,49 @@ mod tests {
         assert_eq!(pulse_alpha(1.7), 1.0);
     }
 
+    /// Each agent earns exactly ONE badge, loudest state first — waiting on a
+    /// human beats working beats an unread finish — and an agent with nothing
+    /// to say earns none. One glyph per agent is what makes the strip
+    /// countable: two badges for one pane and four robots no longer means four
+    /// agents.
+    #[test]
+    fn an_agent_earns_one_badge_and_the_loudest_wins() {
+        // (needs_input, working, bell, blocked) → the single badge
+        let cases = [
+            ((false, false, false, false), None),
+            ((false, true, false, false), Some(AgentBadge::Working)),
+            ((true, false, false, false), Some(AgentBadge::NeedsInput)),
+            ((false, false, true, false), Some(AgentBadge::Done)),
+            ((false, false, true, true), Some(AgentBadge::Blocked)),
+            // a pane that is asking AND has an unread finish is asking
+            ((true, false, true, true), Some(AgentBadge::NeedsInput)),
+            // back at work with last turn's bell still latched: it's working
+            ((false, true, true, false), Some(AgentBadge::Working)),
+            // asking outranks working (the scan can catch both on one tick)
+            ((true, true, false, false), Some(AgentBadge::NeedsInput)),
+            // `blocked` without a bell is stale classification — say nothing
+            ((false, false, false, true), None),
+        ];
+        for ((needs, working, bell, blocked), want) in cases {
+            assert_eq!(
+                agent_badge(needs, working, bell, blocked),
+                want,
+                "needs={needs} working={working} bell={bell} blocked={blocked}"
+            );
+        }
+    }
+
+    /// The strip is capped so a tab full of agents can't crowd out its own
+    /// name, and the overflow keeps the COUNT the glyphs had to drop. A tab
+    /// holds at most MAX_PANES agents, so the chip never has to say more.
+    #[test]
+    fn the_badge_strip_caps_and_the_rest_become_a_count() {
+        assert_eq!(badge_overflow(0), 0);
+        assert_eq!(badge_overflow(MAX_TAB_BADGES), 0);
+        assert_eq!(badge_overflow(MAX_TAB_BADGES + 1), 1);
+        assert_eq!(badge_overflow(MAX_PANES), MAX_PANES - MAX_TAB_BADGES);
+    }
+
     /// PageDown from the bottom stays at the bottom (and stays armed); PageUp
     /// releases follow-bottom; a PageUp past the top clamps to 0; ctrl+End from
     /// anywhere lands at the true bottom re-armed; ctrl+Home lands at 0
@@ -15876,8 +15924,6 @@ node = "Leaf"
     }
 }
 
-/// Which pane a tab should focus when you switch to it: the one you were last in
-/// (if it's still open), else the first. Pure so the precedence is testable.
 /// The working-pulse opacity for an eased cycle position `t` (0→1→0 under
 /// the bounce easing): a breathe between 0.35 and 1.0. The trough is
 /// deliberately well above zero — the glyph must never *vanish* mid-glance,
@@ -15896,6 +15942,60 @@ fn blink_alpha(t: f32) -> f32 {
     } else {
         0.0
     }
+}
+
+/// What ONE agent pane is saying on the mother bar. Every agent in a tab earns
+/// its own badge — four agents in flight read as four robots, not one — so this
+/// is per PANE, never per tab. That is the whole point: you can count the
+/// agents by counting the glyphs.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum AgentBadge {
+    /// Stopped, waiting on a human — the robot with its HEY blinker going.
+    NeedsInput,
+    /// Mid-turn — the robot breathing.
+    Working,
+    /// Finished clean, and nobody has looked yet.
+    Done,
+    /// Finished against a wall (an error banner was on screen when it rang).
+    Blocked,
+}
+
+/// The one badge an agent pane earns, LOUDEST state first: waiting on a human
+/// outranks working, which outranks a finish nobody has looked at yet. Exactly
+/// one glyph per agent — let a single pane contribute two and the count stops
+/// meaning anything. `None` is an agent with nothing to say, which stays off
+/// the bar entirely (an idle roster must not crowd out the tab's own name).
+/// Pure so the precedence is testable.
+pub fn agent_badge(
+    needs_input: bool,
+    working: bool,
+    bell: bool,
+    blocked: bool,
+) -> Option<AgentBadge> {
+    if needs_input {
+        Some(AgentBadge::NeedsInput)
+    } else if working {
+        Some(AgentBadge::Working)
+    } else if bell {
+        Some(if blocked {
+            AgentBadge::Blocked
+        } else {
+            AgentBadge::Done
+        })
+    } else {
+        None
+    }
+}
+
+/// How many badges a tab actually paints, and what the overflow chip says.
+/// A tab can hold [`MAX_PANES`] agents and the mother bar is already crowded,
+/// so the strip is capped and the rest collapse into a `+N` — the count still
+/// survives even when the glyphs don't fit. Pure for the arithmetic.
+const MAX_TAB_BADGES: usize = 4;
+/// A cap above the pane limit could never be reached — catch that at compile time.
+const _: () = assert!(MAX_TAB_BADGES <= MAX_PANES);
+fn badge_overflow(total: usize) -> usize {
+    total.saturating_sub(MAX_TAB_BADGES)
 }
 
 /// Where a [`ReadNav`] takes the reader's scroll, as `(scroll_y, at_bottom)`.

@@ -109,6 +109,16 @@ pub fn is_human_input_line(text: &str) -> bool {
     }
 }
 
+/// Strip a row down to its sentence: the surrounding whitespace plus the box
+/// drawing the agent CLI frames a dialog in, so `│ Do you want to proceed?   │`
+/// reads as the question it is. `>`/`❯` are deliberately NOT stripped — they
+/// mark the human's own echoed input, and a line the HUMAN typed must never
+/// read as the CLI asking something.
+fn prompt_sentence(text: &str) -> &str {
+    // U+2500..U+257F is the whole Box Drawing block — │ ─ ╭ ╰ and the rest.
+    text.trim_matches(|c: char| c.is_whitespace() || ('\u{2500}'..='\u{257f}').contains(&c))
+}
+
 /// Does this rendered row read as part of an INTERACTION PROMPT — the agent
 /// stopped to ask the human something (an option picker, a permission gate, a
 /// trust dialog), as opposed to being done? Matches the stable footer/header
@@ -116,16 +126,26 @@ pub fn is_human_input_line(text: &str) -> bool {
 /// STRICT, like the copy gate: a false "come interact" cries wolf, a miss just
 /// means the plain done-bell semantics. "esc to interrupt" (the WORKING
 /// footer) must never match — only "esc to cancel" (a prompt's footer).
+///
+/// The question forms are ANCHORED: the phrase has to OPEN the row and the row
+/// has to be the question (ends in `?`). A dialog header is its own line inside
+/// a box; the identical words in the agent's own prose arrive mid-sentence —
+/// "What do you want to work on?" is the agent talking, and matching it pinned
+/// the blinker on forever, because a finished reply just sits there on screen.
 pub fn row_wants_human(text: &str) -> bool {
-    let t = text.trim().to_ascii_lowercase();
+    let t = prompt_sentence(text).to_ascii_lowercase();
     if t.is_empty() {
         return false;
     }
-    t.contains("enter to select")
-        || t.contains("esc to cancel")
-        || t.contains("do you want to")
-        || t.contains("do you trust")
-        || t.contains("would you like to proceed")
+    // Footer furniture: the CLI prints these only under a LIVE picker, so they
+    // stand alone wherever on the row they land.
+    if t.contains("enter to select") || t.contains("esc to cancel") {
+        return true;
+    }
+    t.ends_with('?')
+        && (t.starts_with("do you want to")
+            || t.starts_with("do you trust")
+            || t.starts_with("would you like to proceed"))
 }
 
 /// Is an interaction prompt on screen RIGHT NOW? Scans the last few live rows
@@ -6898,6 +6918,8 @@ mod tests {
             "  Do you want to proceed?",
             "  Do you trust the files in this folder?",
             "  Would you like to proceed with this plan?",
+            // the same headers as the CLI actually draws them: inside a box
+            "│ Do you want to make this edit to pane.rs?                    │",
         ] {
             assert!(wants_human(&rows(&[prompt])), "should summon: {prompt:?}");
         }
@@ -6906,6 +6928,15 @@ mod tests {
             "I want to refactor the reader next.",
             "error[E0425]: cannot find function `ensure_seeded`",
             "",
+            // THE regression: an agent that finished its turn by asking a
+            // conversational question left the blinker lit forever, because a
+            // finished reply just sits in the live rows. The phrase is only a
+            // prompt when it OPENS the row and the row IS the question.
+            "  Hi Parker. Nothing is blocked. What do you want to work on?",
+            "  and test/run. What do you want to work on?",
+            "  Say the word and I'll commit — do you want the .gitignore in?",
+            // the human's own echoed input must never read as the CLI asking
+            "> do you want to proceed?",
         ] {
             assert!(!wants_human(&rows(&[quiet])), "must stay quiet: {quiet:?}");
         }
