@@ -44,6 +44,16 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
   same click that opens it. The right-click menu carries the same action as
   **Reveal in folder**, shown only when the link names something on this disk.
 
+### Changed
+
+- **Opened links are scoped to the desktop, not to the terminal**, on a
+  uwsm-managed session (Omarchy's). `xdg-open` now runs through `uwsm-app --`
+  when `wayland-wm-app-daemon`'s socket is present, which is how the rest of
+  such a session launches apps: the PDF a click opens gets its own systemd
+  scope under `app.slice` instead of living inside the terminal's cgroup.
+  Sessions without that daemon — GNOME, KDE, X11, a bare compositor — spawn
+  exactly as before.
+
 - **Paint with the desktop's own palettes.** The paint overlay now carries TWO
   shelves, turned with `z` (`shift+z` back) or by clicking a pill: the existing
   COLOUR SETS, and DESKTOP PALETTES — every Omarchy theme installed on the

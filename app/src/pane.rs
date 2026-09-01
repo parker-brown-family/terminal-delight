@@ -760,10 +760,34 @@ fn spawn_detached(program: &str, args: &[&str]) {
     let _ = cmd.spawn();
 }
 
+/// Is this session managed by uwsm (Omarchy's, and any `uwsm start`ed Wayland
+/// session)? There, a GUI app is expected to be launched through `uwsm-app --`,
+/// which puts it in its OWN systemd scope under `app.slice` instead of leaving
+/// it a child of whatever spawned it — Omarchy's launchers are literally
+/// `exec setsid uwsm-app -- nautilus …`, and its Quickshell panels reveal files
+/// the same way. `uwsm-app` is a client for `wayland-wm-app-daemon.service` and
+/// talks to it through a FIFO in `$XDG_RUNTIME_DIR`; with no daemon it restarts
+/// units and blocks on its own timeouts, so the FIFO is the honest test of
+/// whether this route is available. Anywhere else — GNOME, KDE, X11, a bare
+/// compositor — this is false and we spawn the program directly, as before.
+fn session_uses_uwsm() -> bool {
+    let Ok(dir) = std::env::var("XDG_RUNTIME_DIR") else {
+        return false;
+    };
+    std::path::Path::new(&format!("{dir}/uwsm-app-daemon-in")).exists()
+}
+
 /// Hand a URL/path to the system default tool (`xdg-open`), detached so it
-/// outlives the click and never blocks the UI.
+/// outlives the click and never blocks the UI. On a uwsm session the launch
+/// goes through `uwsm-app` so the opened app is scoped to the desktop rather
+/// than to this terminal — closing the pane that printed a link should not be
+/// able to take the PDF it opened with it.
 fn open_with_system(target: &str) {
-    spawn_detached("xdg-open", &[target]);
+    if session_uses_uwsm() {
+        spawn_detached("uwsm-app", &["--", "xdg-open", target]);
+    } else {
+        spawn_detached("xdg-open", &[target]);
+    }
 }
 
 /// The filesystem item a clicked link points at, or None when there is nothing
@@ -829,29 +853,45 @@ fn shell_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', r"'\''"))
 }
 
-/// Show `path` in the system file manager with the item itself *selected*,
-/// rather than opening it — the "where does this actually live?" answer to a
-/// path a pane just printed. `org.freedesktop.FileManager1.ShowItems` is the
-/// desktop-wide interface for this (Nautilus, Dolphin, Nemo, Thunar and PCManFM
-/// all export it), and it is what "reveal in folder" means on every other OS.
-/// A desktop with no such manager gets the containing directory opened instead,
-/// which is the same answer minus the selection. The `||` fallback lives inside
-/// one detached `sh` because the dbus call's failure is only knowable after it
-/// returns, and we refuse to block the UI thread waiting for it.
-fn reveal_with_system(path: &str) {
+/// The shell one-liner that reveals `path`. Pure, so the quoting and both
+/// branches are testable without a desktop.
+///
+/// `org.freedesktop.FileManager1.ShowItems` is the desktop-wide interface for
+/// showing an item *selected* in its folder — Nautilus, Dolphin, Nemo, Thunar
+/// and PCManFM all export it, and it is what "reveal in folder" means on every
+/// other OS. It is also D-Bus *activation*: the manager is started by the
+/// session, not by us, so it is correctly scoped whatever desktop this is. Only
+/// the fallback — a desktop exporting no such manager, which gets the containing
+/// directory opened instead — is ours to place, and there `use_uwsm` routes it
+/// through `uwsm-app` the way the rest of an Omarchy session launches apps.
+///
+/// The fallback rides inside the same `sh` because whether the D-Bus call failed
+/// is only knowable after it returns, and the UI thread will not wait for it.
+fn reveal_script(path: &str, use_uwsm: bool) -> String {
     let parent = std::path::Path::new(path)
         .parent()
         .map(|p| p.to_string_lossy().into_owned())
         .filter(|p| !p.is_empty())
         .unwrap_or_else(|| "/".to_string());
-    let script = format!(
+    let opener = if use_uwsm {
+        "uwsm-app -- xdg-open"
+    } else {
+        "xdg-open"
+    };
+    format!(
         "dbus-send --session --print-reply --dest=org.freedesktop.FileManager1 \
          /org/freedesktop/FileManager1 org.freedesktop.FileManager1.ShowItems \
-         array:string:{} string:'' >/dev/null 2>&1 || xdg-open {} >/dev/null 2>&1",
+         array:string:{} string:'' >/dev/null 2>&1 || {opener} {} >/dev/null 2>&1",
         shell_quote(&path_to_file_uri(path)),
         shell_quote(&parent),
-    );
-    spawn_detached("sh", &["-c", &script]);
+    )
+}
+
+/// Show `path` in the system file manager with the item itself selected, rather
+/// than opening it — the "where does this actually live?" answer to a path a
+/// pane just printed.
+fn reveal_with_system(path: &str) {
+    spawn_detached("sh", &["-c", &reveal_script(path, session_uses_uwsm())]);
 }
 
 /// Screen→content barrel map — identical to the per-rect warp in
@@ -6792,6 +6832,25 @@ mod tests {
     fn shell_quote_survives_a_quote_in_the_name() {
         assert_eq!(shell_quote("/a/b"), "'/a/b'");
         assert_eq!(shell_quote("/a/it's"), r"'/a/it'\''s'");
+    }
+
+    // The reveal always asks the desktop's file manager first; only the fallback
+    // is ours to place, and on a uwsm session it goes through `uwsm-app` so the
+    // opened window is scoped to the desktop rather than to this terminal.
+    #[test]
+    fn reveal_script_asks_dbus_first_then_falls_back_to_the_folder() {
+        let plain = reveal_script("/home/parker/kf-aero/letter.pdf", false);
+        assert!(plain.contains("org.freedesktop.FileManager1.ShowItems"));
+        assert!(plain.contains("array:string:'file:///home/parker/kf-aero/letter.pdf'"));
+        // the fallback opens the CONTAINING folder, not the file
+        assert!(plain.ends_with("|| xdg-open '/home/parker/kf-aero' >/dev/null 2>&1"));
+        assert!(!plain.contains("uwsm-app"));
+
+        let uwsm = reveal_script("/home/parker/kf-aero/letter.pdf", true);
+        assert!(uwsm.ends_with("|| uwsm-app -- xdg-open '/home/parker/kf-aero' >/dev/null 2>&1"));
+
+        // a file at the root still has a folder to open
+        assert!(reveal_script("/passwd", false).contains("xdg-open '/'"));
     }
 
     #[test]
