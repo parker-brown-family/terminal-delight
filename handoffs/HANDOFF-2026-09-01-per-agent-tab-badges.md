@@ -2,17 +2,18 @@
 
 ## Status
 
-**Landed and deployed.** Merged as
-[#238](https://github.com/parker-brown-family/terminal-delight/pull/238) (squash)
-→ `origin/main` = `ab9e750`. Release-built and deployed to
-`~/.local/lib/terminal-delight/td-ab9e750`, with `~/.local/bin/terminal-delight`
-repointed at it. Verified by symbol probe: the new binary contains
-`agent_badge` / `tab_agent_badges` / `prompt_sentence`; `td-2a8661e` contains
-none of them.
+**Landed and deployed, one question still open.**
 
-**Not yet RUNNING.** Parker's windows were still on `td-2a8661e` (one on
-`td-e82dd33`) at deploy time — deployed is not running, and the badges only
-appear after a relaunch.
+- #238 (per-agent badges + the anchored blinker) → `ab9e750`
+- #239 (a bare BEL is no longer a finished turn) → `f3484fc`
+
+`origin/main` = `f3484fc`, deployed to `~/.local/lib/terminal-delight/td-f3484fc`
+with `~/.local/bin/terminal-delight` repointed. Symbol-probed: the new binary
+carries `agent_badge` / `tab_agent_badges` / `prompt_sentence`; `td-2a8661e`
+carries none.
+
+**Nothing is running it yet.** At handoff: 11 windows on `td-2a8661e`, 2 on
+`td-ab9e750`, 1 on `td-e82dd33`, 0 on `td-f3484fc`.
 
 ## What's done
 
@@ -69,22 +70,17 @@ larger `timeout_ms` and let it block rather than polling `background_action`.
 
 ## Not done / next
 
-- **Parker's commit call.** Two separate commits under the three-paragraph
-  doctrine (the blinker fix and the badge strip are independent), then rebuild +
-  redeploy. Remember: deployed = merged **and** built **and** the running window
-  restarted — several of Parker's windows already run old `td-*` binaries.
-- **The 4-badge strip is visually UNVERIFIED.** `TD_DEMO` cannot fake agent
-  states, so nobody has looked at a real row of four. Needs eyes on a four-agent
-  tab. Filed as
-  [#236](https://github.com/parker-brown-family/terminal-delight/issues/236)
-  (add a synthetic agent-state hook so this stops depending on a photograph).
-- [#237](https://github.com/parker-brown-family/terminal-delight/issues/237) —
-  `wants_human` residual: a **wrapped** prose line that opens with the question
-  phrase and ends in `?` still matches. Filed as a *hunch*; its invalidation
-  check (grep a week of transcripts) runs first.
+- **Run the #240 discriminating test.** Relaunch onto `td-f3484fc` (confirm with
+  `readlink /proc/<pid>/exe`) and open a new window that restores resumed agent
+  panes. Burst gone ⇒ #239 covered it, close #240 `invalid`. Burst persists ⇒ the
+  cause is the bare `"interrupt)"` substring in `agent_is_thinking`
+  (`app/src/pane.rs:2568`), whose spurious match sets `think_since` and so
+  *satisfies* #239's guard rather than tripping it.
+- **The 4-badge strip is still visually unverified.** No way to render a
+  synthetic agent state ([#236](https://github.com/parker-brown-family/terminal-delight/issues/236)),
+  which now blocks verifying #239 and #240 too. Highest-leverage item here.
 - [context-delight#10](https://github.com/parker-brown-family/context-delight/issues/10)
-  — `cdx-audit` counts native `Read`/`Edit`/`Write` as `ctx_*`-substitutable, so
-  it reported `20:0` for a session that used `ctx_*` heavily.
+  — `cdx-audit` counts native `Read`/`Edit`/`Write` as `ctx_*`-substitutable.
 
 ## Watch out
 
