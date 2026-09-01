@@ -686,9 +686,14 @@ pub fn house_terminal() -> ThemeChoice {
         syntax: true,
         syntax_scheme: SyntaxScheme::Agentic,
         // GAUGES default = neutral sliders + the house warp (matches the shipped
-        // DISPLAY/GAUGES tray: everything +0/100%, warp +143).
+        // DISPLAY/GAUGES tray: everything +0, warp +143) — except the two SIZE
+        // channels, which open smaller than 100%: Parker runs a dense wall of
+        // panes, so a fresh terminal is born with the chrome at 80% and the grid
+        // font at 75% rather than needing a hand-tuned pass per pane.
         grade: Grade {
             warp: WARP_DEFAULT,
+            scale: HOUSE_SCALE,
+            text_size: HOUSE_TEXT_SIZE,
             ..Grade::neutral()
         },
         dynamic: Dynamic::Wood,
@@ -1787,6 +1792,15 @@ pub fn select_outer(cx: &mut App, choice: ThemeChoice) {
 /// [`Theme::warp`] and the renderer registers each tube with its own `(k1, k2)`.
 /// `0` = dead flat; the slider runs to [`WARP_MAX`] for a full fishbowl.
 pub const WARP_DEFAULT: f32 = 1.43;
+
+/// The size a fresh terminal pane opens at — the two SIZE channels of
+/// [`house_terminal`]'s grade. `scale` is the menu-bar/chrome multiplier
+/// (`0.7..1.6`) and `text_size` the grid-font multiplier (`0.6..2.0`); both read
+/// on the OSD gauge as `stored × 100`, so these show 80% and 75%. Deliberately
+/// below the `1.0` identity: a fresh pane should already be the dense look
+/// rather than something to hand-shrink after every split.
+pub const HOUSE_SCALE: f32 = 0.80;
+pub const HOUSE_TEXT_SIZE: f32 = 0.75;
 pub const WARP_MAX: f32 = 1.5;
 
 /// The barrel coefficients `(k1, k2)` the renderer + hit-testing use for a given
@@ -2737,6 +2751,9 @@ mod tests {
             (t.grade.brightness - 0.5).abs() < f32::EPSILON,
             "GAUGES sliders start neutral"
         );
+        // ...except the two SIZE channels: a fresh pane opens small, not at 100%.
+        assert_eq!(t.grade.scale, HOUSE_SCALE, "menu bar opens at 80%");
+        assert_eq!(t.grade.text_size, HOUSE_TEXT_SIZE, "grid font opens at 75%");
 
         let p = PaneTheme::house();
         assert!(
