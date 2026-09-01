@@ -2758,7 +2758,22 @@ impl TerminalView {
             // Gated to agent (claude/codex) panes: the card literally reads "agent
             // finished", so a plain shell BEL (e.g. readline's "cannot perform that
             // action" beep on a failed tab-complete) must NOT trigger it.
-            TermEvent::Bell if self.mode.is_agent() => {
+            //
+            // And gated on the agent not still WORKING. A BEL is an accelerator
+            // for the finish, never an independent trigger: a TUI beeps for its
+            // own reasons mid-turn — scrolling past the end of its history is the
+            // common one — and this arm used to take every one of them as a
+            // completed turn, carrying none of the guards the thinking-scan path
+            // below has (no real-spell test, no debounce, no scroll-settle gate).
+            // If the spinner is still on the LIVE bottom screen the agent is
+            // demonstrably working and the beep is UI noise.
+            //
+            // Suppressing a REAL bell costs nothing: the 120ms scan rings the
+            // same finish ~300ms later through the debounced path, so the failure
+            // mode is a slightly later notification rather than a lost one. That
+            // asymmetry is the whole argument — a false finish interrupts Parker,
+            // clears the tab's badge, and lies about an agent that is still going.
+            TermEvent::Bell if self.mode.is_agent() && !self.agent_is_thinking() => {
                 self.bell = true;
                 self.bell_blocked = looks_blocked(&self.recent_lines(14));
                 self.bell_player.play();
