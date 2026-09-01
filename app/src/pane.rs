@@ -1940,6 +1940,13 @@ impl gpui::EventEmitter<CloseFocusRead> for TerminalView {}
 pub struct AgentDone;
 impl gpui::EventEmitter<AgentDone> for TerminalView {}
 
+/// The cached "agent is working" state flipped (either direction). The
+/// workspace listens so the mother-bar 🤖 pulse appears and disappears on the
+/// actual edge — the pulse animation drives its own repaints only while it is
+/// already on screen, so something must repaint the tab bar to START it.
+pub struct AgentWorkingChanged;
+impl gpui::EventEmitter<AgentWorkingChanged> for TerminalView {}
+
 /// Where a paging key asks the FOCUS reader's view to go. `Top`/`Bottom` are the
 /// ends of the whole document (ctrl+Home / ctrl+End); the pages overlap slightly
 /// so context carries across a press.
@@ -2295,6 +2302,9 @@ impl TerminalView {
                             let thinking = view.agent_is_thinking();
                             if thinking != view.gamba.is_thinking() {
                                 view.gamba.set_thinking(thinking);
+                                // repaint the mother bar: the tab 🤖 pulse
+                                // starts/stops on this edge
+                                cx.emit(AgentWorkingChanged);
                                 if thinking {
                                     view.think_since = Some(Instant::now());
                                     view.not_thinking_since = None;
@@ -2610,6 +2620,15 @@ impl TerminalView {
     /// the focus-in edge (looking at the pane is the acknowledgement).
     pub fn has_bell(&self) -> bool {
         self.bell
+    }
+
+    /// Is the agent in this pane actively working RIGHT NOW? Reads the cached
+    /// thinking state the 120ms effects-clock scan maintains — the same signal
+    /// that rolls the GAMBA reels and arms the bell edge — so the mother-bar 🤖
+    /// pulse can ask every frame for free. Flips are announced via
+    /// [`AgentWorkingChanged`].
+    pub fn agent_working(&self) -> bool {
+        self.mode.is_agent() && self.gamba.is_thinking()
     }
 
     fn handle_term_event(&mut self, event: TermEvent, cx: &mut Context<Self>) -> bool {

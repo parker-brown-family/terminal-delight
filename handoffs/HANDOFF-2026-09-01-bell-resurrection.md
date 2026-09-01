@@ -49,6 +49,18 @@ whole config surface is deleted and the feature is always on for agent panes:
   Durable fix belongs in the includeIf profiles — coordinate with the
   identity-rework owner (see the issue).
 
+## Coda — the working pulse (same day, after the close-down)
+
+Dev reopened for one addition: the mother-bar tab now shows a **🤖 that
+breathes** (bounce-eased opacity 0.35↔1.0, 1.4s cycle — the battery-charging
+feel) while ANY pane in that tab hosts a working agent. It reads the cached
+thinking state the 120ms effects-clock scan already maintains (the GAMBA/bell
+signal), so it costs nothing per frame; `AgentWorkingChanged` repaints the bar
+on the exact start/stop edges, and the animation self-drives repaints while on
+screen. The trough alpha is deliberately >0 — a vanishing glyph would read as
+"no agent" mid-glance. The 🔔 done badge sits beside it; working and finished
+can show together (different panes).
+
 ## First hands-on checks after restart
 
 1. Start an agent turn in a pane, switch to ANOTHER tab → on finish: ping +

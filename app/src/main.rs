@@ -45,16 +45,16 @@ use std::time::{Duration, Instant};
 
 use gpui::{
     canvas, div, fill, hsla, linear_color_stop, linear_gradient, point, prelude::*, px, size,
-    white, App, Bounds, BoxShadow, ClipboardItem, Context, Decorations, Entity, EntityId,
-    Focusable, Hsla, KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    Pixels, Point, ScrollWheelEvent, SharedString, TitlebarOptions, Window, WindowBounds,
-    WindowDecorations, WindowOptions,
+    white, Animation, AnimationExt, App, Bounds, BoxShadow, ClipboardItem, Context, Decorations,
+    Entity, EntityId, Focusable, Hsla, KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent,
+    MouseUpEvent, Pixels, Point, ScrollWheelEvent, SharedString, TitlebarOptions, Window,
+    WindowBounds, WindowDecorations, WindowOptions,
 };
 use gpui_platform::application;
 use pane::{
-    AgentDone, CloseFocusRead, ClosePane, DragPaneStart, FocusReadNav, OpenAgentPanel,
-    OpenDisplayMenu, OpenFind, OpenFocusRead, OpenHelp, OpenLogoPicker, OpenThemeMenu,
-    PaintApplied, PaneRenamed, ReadNav, RequestCloseTab, TerminalView,
+    AgentDone, AgentWorkingChanged, CloseFocusRead, ClosePane, DragPaneStart, FocusReadNav,
+    OpenAgentPanel, OpenDisplayMenu, OpenFind, OpenFocusRead, OpenHelp, OpenLogoPicker,
+    OpenThemeMenu, PaintApplied, PaneRenamed, ReadNav, RequestCloseTab, TerminalView,
 };
 use serde::{Deserialize, Serialize};
 use theme::{PaneTheme, ThemeChoice};
@@ -2200,6 +2200,12 @@ fn make_pane_restored(
     // click-to-jump), unless Parker was already looking at it.
     cx.subscribe_in(&pane, window, |ws, pane, _ev: &AgentDone, window, cx| {
         ws.agent_done(pane.clone(), window, cx);
+    })
+    .detach();
+    // The pane's working state flipped → repaint the mother bar so the tab's
+    // 🤖 pulse starts/stops on the real edge.
+    cx.subscribe(&pane, |_ws, _pane, _ev: &AgentWorkingChanged, cx| {
+        cx.notify();
     })
     .detach();
     // F1 in any pane toggles the help modal
@@ -5819,6 +5825,18 @@ impl Workspace {
         }
     }
 
+    /// Does any pane in tab `i` host an agent that is WORKING right now? Drives
+    /// the mother-bar 🤖 pulse — the in-flight twin of the 🔔 done badge — off
+    /// each pane's cached thinking state (free to read per frame).
+    fn tab_has_working_agent(&self, i: usize, cx: &App) -> bool {
+        let Some(tab) = self.tabs.get(i) else {
+            return false;
+        };
+        let mut leaves = vec![];
+        tab.root.leaves(&mut leaves);
+        leaves.iter().any(|p| p.read(cx).agent_working())
+    }
+
     /// Does any pane in tab `i` have an unacknowledged "agent finished" bell? It
     /// drives the per-tab 🔔 badge, so a run that finishes in a background tab is
     /// visible on the mother bar without opening every pane. Mirrors the pane's
@@ -7915,6 +7933,21 @@ impl Workspace {
                         .border_1()
                         .border_color(th.accent)
                         .bg(th.accent.alpha(0.25)),
+                )
+            })
+            // 🤖 pulse: an agent somewhere in this tab is WORKING right now.
+            // Breathes like the battery-charging glow — bounce-eased opacity,
+            // never below the trough alpha, so it reads "gently but firmly" at
+            // a glance instead of strobing. The finished twin is the 🔔 below.
+            .when(self.tab_has_working_agent(i, cx), |d| {
+                d.child(
+                    div().text_size(px(11. * s)).child("🤖").with_animation(
+                        ("tab-agent-pulse", i),
+                        Animation::new(Duration::from_millis(1400))
+                            .repeat()
+                            .with_easing(gpui::bounce(gpui::ease_in_out)),
+                        |el, t| el.opacity(pulse_alpha(t)),
+                    ),
                 )
             })
             // 🔔 badge: an agent run finished in a pane of this tab and hasn't been
@@ -14251,6 +14284,20 @@ impl Render for Workspace {
 mod tests {
     use super::*;
 
+    /// The pulse dims to 0.35 at the cycle ends and peaks at 1.0 mid-cycle —
+    /// never invisible (a vanishing glyph reads as "no agent" at a glance),
+    /// never over-bright, monotone with the eased input.
+    #[test]
+    fn working_pulse_breathes_between_dim_and_full() {
+        assert_eq!(pulse_alpha(0.0), 0.35);
+        assert_eq!(pulse_alpha(1.0), 1.0);
+        let mid = pulse_alpha(0.5);
+        assert!(mid > 0.35 && mid < 1.0);
+        // easing outputs outside 0..1 (overshoot easings) stay clamped
+        assert_eq!(pulse_alpha(-0.2), 0.35);
+        assert_eq!(pulse_alpha(1.7), 1.0);
+    }
+
     /// PageDown from the bottom stays at the bottom (and stays armed); PageUp
     /// releases follow-bottom; a PageUp past the top clamps to 0; ctrl+End from
     /// anywhere lands at the true bottom re-armed; ctrl+Home lands at 0
@@ -15728,6 +15775,14 @@ node = "Leaf"
 
 /// Which pane a tab should focus when you switch to it: the one you were last in
 /// (if it's still open), else the first. Pure so the precedence is testable.
+/// The 🤖 working-pulse opacity for an eased cycle position `t` (0→1→0 under
+/// the bounce easing): a breathe between 0.35 and 1.0. The trough is
+/// deliberately well above zero — the glyph must never *vanish* mid-glance,
+/// only dim; "gently but firmly".
+fn pulse_alpha(t: f32) -> f32 {
+    0.35 + 0.65 * t.clamp(0.0, 1.0)
+}
+
 /// Where a [`ReadNav`] takes the reader's scroll, as `(scroll_y, at_bottom)`.
 /// Pure so the arithmetic is testable: `cur` is the current pan, `overflow` the
 /// scrollable range (0 = everything fits), `page` the per-press stride.
