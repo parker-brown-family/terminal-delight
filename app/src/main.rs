@@ -14,6 +14,7 @@
 //!
 //! TODO(os-chrome): client-side window decorations (WindowDecorations::Client).
 
+mod art;
 mod bell;
 mod crt;
 mod csd;
@@ -7969,33 +7970,54 @@ impl Workspace {
                         .bg(th.accent.alpha(0.25)),
                 )
             })
-            // ❓ pulse: an agent in this tab is stopped WAITING ON YOU — a
-            // picker or permission prompt is up. The loudest tab state: same
-            // breathe as the 🤖 but a quicker cycle, urgency without a strobe.
+            // Robot-needs-help: an agent in this tab is stopped WAITING ON
+            // YOU — a picker or permission prompt is up. The mascot stands
+            // steady while its yellow HEY blinker layer (same canvas,
+            // identical bounds — the composition is the original art) BLINKS
+            // as a hard square wave on a LINEAR cycle. Deliberately not a
+            // throb: onsets grab the eye, and a blink is two per cycle.
             .when(self.tab_needs_input(i, cx), |d| {
+                let side = px(15. * s);
                 d.child(
-                    div().text_size(px(11. * s)).child("❓").with_animation(
-                        ("tab-needs-input-pulse", i),
-                        Animation::new(Duration::from_millis(850))
-                            .repeat()
-                            .with_easing(gpui::bounce(gpui::ease_in_out)),
-                        |el, t| el.opacity(pulse_alpha(t)),
-                    ),
+                    div()
+                        .relative()
+                        .w(side)
+                        .h(side)
+                        .child(
+                            gpui::img(crate::art::robot_png())
+                                .absolute()
+                                .inset_0()
+                                .size_full(),
+                        )
+                        .child(
+                            gpui::img(crate::art::blinker_png())
+                                .absolute()
+                                .inset_0()
+                                .size_full()
+                                .with_animation(
+                                    ("tab-hey-blinker", i),
+                                    Animation::new(Duration::from_millis(700)).repeat(),
+                                    |el, t| el.opacity(blink_alpha(t)),
+                                ),
+                        ),
                 )
             })
-            // 🤖 pulse: an agent somewhere in this tab is WORKING right now.
-            // Breathes like the battery-charging glow — bounce-eased opacity,
-            // never below the trough alpha, so it reads "gently but firmly" at
-            // a glance instead of strobing.
+            // Working: the robot (blinker off) breathing like the
+            // battery-charging glow — bounce-eased opacity, never below the
+            // trough alpha, "gently but firmly" instead of strobing.
             .when(self.tab_has_working_agent(i, cx), |d| {
+                let side = px(15. * s);
                 d.child(
-                    div().text_size(px(11. * s)).child("🤖").with_animation(
-                        ("tab-agent-pulse", i),
-                        Animation::new(Duration::from_millis(1400))
-                            .repeat()
-                            .with_easing(gpui::bounce(gpui::ease_in_out)),
-                        |el, t| el.opacity(pulse_alpha(t)),
-                    ),
+                    gpui::img(crate::art::robot_png())
+                        .w(side)
+                        .h(side)
+                        .with_animation(
+                            ("tab-agent-pulse", i),
+                            Animation::new(Duration::from_millis(1400))
+                                .repeat()
+                                .with_easing(gpui::bounce(gpui::ease_in_out)),
+                            |el, t| el.opacity(pulse_alpha(t)),
+                        ),
                 )
             })
             // Finish badge: a run in this tab ended and nobody has looked yet.
@@ -14339,6 +14361,20 @@ impl Render for Workspace {
 mod tests {
     use super::*;
 
+    /// The HEY blinker is a square wave, not a fade: hard ON through the first
+    /// 55% of the cycle, hard OFF after — nothing in between, ever.
+    #[test]
+    fn hey_blinker_blinks_it_does_not_throb() {
+        assert_eq!(blink_alpha(0.0), 1.0);
+        assert_eq!(blink_alpha(0.54), 1.0);
+        assert_eq!(blink_alpha(0.56), 0.0);
+        assert_eq!(blink_alpha(0.99), 0.0);
+        for i in 0..=100 {
+            let a = blink_alpha(i as f32 / 100.0);
+            assert!(a == 0.0 || a == 1.0, "no half-lit blinker: {a}");
+        }
+    }
+
     /// The pulse dims to 0.35 at the cycle ends and peaks at 1.0 mid-cycle —
     /// never invisible (a vanishing glyph reads as "no agent" at a glance),
     /// never over-bright, monotone with the eased input.
@@ -15830,12 +15866,24 @@ node = "Leaf"
 
 /// Which pane a tab should focus when you switch to it: the one you were last in
 /// (if it's still open), else the first. Pure so the precedence is testable.
-/// The 🤖 working-pulse opacity for an eased cycle position `t` (0→1→0 under
+/// The working-pulse opacity for an eased cycle position `t` (0→1→0 under
 /// the bounce easing): a breathe between 0.35 and 1.0. The trough is
 /// deliberately well above zero — the glyph must never *vanish* mid-glance,
 /// only dim; "gently but firmly".
 fn pulse_alpha(t: f32) -> f32 {
     0.35 + 0.65 * t.clamp(0.0, 1.0)
+}
+
+/// The HEY blinker's opacity over a LINEAR cycle position: a hard square wave
+/// — full-on for the first 55% of the cycle, gone for the rest. Explicitly not
+/// a throb: the eye is wired to notice onsets, and a blink delivers two per
+/// cycle where a breathe delivers none.
+fn blink_alpha(t: f32) -> f32 {
+    if t < 0.55 {
+        1.0
+    } else {
+        0.0
+    }
 }
 
 /// Where a [`ReadNav`] takes the reader's scroll, as `(scroll_y, at_bottom)`.
