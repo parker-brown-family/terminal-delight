@@ -245,18 +245,6 @@ pub fn robot_icon(accent: gpui::Hsla, scale: f32) -> gpui::Div {
         )
 }
 
-/// New value for a dragged bell-trim pip: move start or end to time `t`, keeping
-/// a 0.2s gap and staying within [0, dur]. `end <= start` means "to the clip
-/// end", so the effective end is `dur`. Pure so the drag math is unit-testable.
-fn trim_drag_value(is_end: bool, t: f32, start: f32, end: f32, dur: f32) -> f32 {
-    let eff_end = if end > start { end } else { dur };
-    if is_end {
-        t.clamp(start + 0.2, dur.max(start + 0.2))
-    } else {
-        t.clamp(0.0, (eff_end - 0.2).max(0.0))
-    }
-}
-
 /// The Alt-held copy affordance: one reconstructed logical line and the PAINTED
 /// rows it occupies. The text is what lands on the clipboard — wrap seams already
 /// healed — and the row span is where the border is drawn, in painted order so it
@@ -1677,15 +1665,12 @@ pub struct TerminalView {
     mirror_doc: RefCell<Option<(MirrorDocKey, u64, Arc<Document>)>>,
     /// Right-click context menu (Copy / Paste / Open link) anchor, window-space.
     ctx_menu: Option<gpui::Point<Pixels>>,
-    /// A bell rang (agent finished): a SNOOZE bar shows across the pane top and
-    /// the configured sound plays, until SNOOZE or the always-visible bell-off.
+    /// An agent in this pane finished and nobody has looked yet: the ping has
+    /// played, the tab wears its 🔔 badge and the header reads "● done" until
+    /// the focus-in edge acknowledges it ([`Self::ack_bell`]).
     bell: bool,
-    /// Per-pane bell settings (sound file, trim window, loop, volume, on/off).
-    bell_cfg: crate::bell::BellConfig,
-    /// The live ffplay child for this pane (hard-killed on stop/drop).
+    /// The live player child for this pane's ping (hard-killed on stop/drop).
     bell_player: crate::bell::BellPlayer,
-    /// The BELL+ config tray is open.
-    bell_menu: bool,
     /// Responsive header: when the pane narrows, controls tuck into a ⋯ overflow
     /// menu. `Some(pos)` = that menu is open, anchored at the ⋯ click. None = shut.
     hdr_overflow: Option<gpui::Point<Pixels>>,
@@ -1696,8 +1681,6 @@ pub struct TerminalView {
     /// When the last Alt+click copy landed — drives the brief "copied"
     /// confirmation in the chip. No timer: the next pointer move repaints it.
     copy_flash: Option<Instant>,
-    /// Cached duration (s) of the selected sound, for the scrubber track.
-    bell_dur: Option<f32>,
     /// Last-known OS focus, for edge-detected focus reporting (CSI I / CSI O).
     was_focused: bool,
     /// 🎰 GAMBA slot-machine reels — rolled while an agent in this pane is
@@ -1722,10 +1705,6 @@ pub struct TerminalView {
     /// from transient state changes (e.g., error messages clearing). Only ring the bell
     /// if not-thinking persists for at least 300ms.
     not_thinking_since: Option<Instant>,
-    /// Which bell-trim pip is being dragged (false = start, true = end); None idle.
-    bell_drag: Option<bool>,
-    /// Window-space bounds of the bell trim track, for pip drag math.
-    bell_track_bounds: Arc<Mutex<Option<Bounds<Pixels>>>>,
     /// Agent-wall HUD token accounting (agent panes only). `tokens_banked` sums
     /// the peak token count of every *completed* turn this session;
     /// `turn_peak_tokens` is the running peak of the turn in flight;
@@ -2201,7 +2180,7 @@ impl TerminalView {
     /// — decoration that carries no click target (the 🎰 reels, the bell toast)
     /// deliberately does not, since bending costs nothing there.
     pub fn popup_open(&self) -> bool {
-        self.hdr_overflow.is_some() || self.ctx_menu.is_some() || self.bell_menu
+        self.hdr_overflow.is_some() || self.ctx_menu.is_some()
     }
 
     /// Plain spawn (no restore context); kept for `cx.new(TerminalView::new)`.
@@ -2327,7 +2306,7 @@ impl TerminalView {
                             }
                             // Only ring the bell if we've been not-thinking for 300ms+ AND
                             // the original thinking period was real (> 1200ms).
-                            if !thinking && view.bell_cfg.enabled && view.mode.is_agent() {
+                            if !thinking && view.mode.is_agent() {
                                 if let Some(not_since) = view.not_thinking_since {
                                     if not_since.elapsed() > std::time::Duration::from_millis(300) {
                                         // "Real" = the thinking spell itself lasted
@@ -2343,9 +2322,12 @@ impl TerminalView {
                                         };
                                         if real && !view.bell {
                                             view.bell = true;
-                                            view.bell_player.play(&view.bell_cfg);
+                                            view.bell_player.play();
                                             view.think_since = None;
                                             view.not_thinking_since = None;
+                                            // the workspace decides whether this
+                                            // becomes a system notification
+                                            cx.emit(AgentDone);
                                             cx.notify();
                                         }
                                     }
@@ -2422,13 +2404,10 @@ impl TerminalView {
             appearance: PaneTheme::default(),
             ctx_menu: None,
             bell: false,
-            bell_cfg: crate::bell::BellConfig::default(),
             bell_player: crate::bell::BellPlayer::default(),
-            bell_menu: false,
             hdr_overflow: None,
             copy_hint: None,
             copy_flash: None,
-            bell_dur: None,
             was_focused: false,
             pending_grid: None,
             last_scroll_offset: None,
@@ -2443,8 +2422,6 @@ impl TerminalView {
             kbd_sel: None,
             think_since: None,
             not_thinking_since: None,
-            bell_drag: None,
-            bell_track_bounds: Arc::new(Mutex::new(None)),
             tokens_banked: 0,
             turn_peak_tokens: 0,
             tok_was_working: false,
@@ -2629,10 +2606,10 @@ impl TerminalView {
     }
 
     /// Does this pane have an unacknowledged "agent finished" bell raised? Read by
-    /// the workspace to badge the owning tab; cleared by the in-terminal ack click
-    /// (see [`snooze_bell`]).
+    /// the workspace to badge the owning tab; cleared by [`Self::ack_bell`] on
+    /// the focus-in edge (looking at the pane is the acknowledgement).
     pub fn has_bell(&self) -> bool {
-        crate::bell::ENABLED && self.bell
+        self.bell
     }
 
     fn handle_term_event(&mut self, event: TermEvent, cx: &mut Context<Self>) -> bool {
@@ -2654,9 +2631,10 @@ impl TerminalView {
             // Gated to agent (claude/codex) panes: the card literally reads "agent
             // finished", so a plain shell BEL (e.g. readline's "cannot perform that
             // action" beep on a failed tab-complete) must NOT trigger it.
-            TermEvent::Bell if self.bell_cfg.enabled && self.mode.is_agent() => {
+            TermEvent::Bell if self.mode.is_agent() => {
                 self.bell = true;
-                self.bell_player.play(&self.bell_cfg);
+                self.bell_player.play();
+                cx.emit(AgentDone);
                 cx.notify();
             }
             TermEvent::Exit | TermEvent::ChildExit(_) => {
@@ -3271,13 +3249,6 @@ impl TerminalView {
         // Escape closes the ⋯ header overflow menu before reaching the PTY.
         if self.hdr_overflow.is_some() && ks.key.as_str() == "escape" {
             self.hdr_overflow = None;
-            cx.notify();
-            return;
-        }
-        // Escape closes the bell/sound config tray instead of reaching the PTY —
-        // otherwise the ESC byte hits the running agent and kills it.
-        if self.bell_menu && ks.key.as_str() == "escape" {
-            self.bell_menu = false;
             cx.notify();
             return;
         }
@@ -4119,90 +4090,19 @@ impl TerminalView {
         cx.notify();
     }
 
-    // ---- bell controls -------------------------------------------------------
-    /// SNOOZE: silence the current sound and drop the bar (bell stays enabled).
-    fn snooze_bell(&mut self, cx: &mut Context<Self>) {
+    /// Acknowledge the "agent finished" bell: clear the flag (tab badge and
+    /// "● done" status revert) and stop a ping still sounding. Fired on the
+    /// focus-in edge — looking at the pane IS the acknowledgement — and by the
+    /// workspace when a notification click jumps here (the jump focuses the
+    /// pane, so this is also just the focus edge arriving).
+    pub fn ack_bell(&mut self, cx: &mut Context<Self>) {
+        if !self.bell {
+            return;
+        }
         self.bell = false;
         self.bell_player.stop();
         self.not_thinking_since = None;
         cx.notify();
-    }
-    /// The always-visible bell toggle: mute/unmute this pane's bell and stop any
-    /// sound that's ringing right now.
-    fn toggle_bell_enabled(&mut self, cx: &mut Context<Self>) {
-        self.bell_cfg.enabled = !self.bell_cfg.enabled;
-        if !self.bell_cfg.enabled {
-            self.bell = false;
-            self.bell_player.stop();
-        }
-        cx.notify();
-    }
-    /// Choose this pane's sound; caches the clip length and resets the trim to a
-    /// short opening sample (full tracks are minutes long — the scrubber widens it).
-    fn set_bell_file(&mut self, file: Option<std::path::PathBuf>, cx: &mut Context<Self>) {
-        self.bell_dur = file.as_deref().and_then(crate::bell::duration);
-        self.bell_cfg.start = 0.0;
-        // default to the first ~12s (or the whole clip if it's shorter)
-        self.bell_cfg.end = self.bell_dur.map(|d| d.min(12.0)).unwrap_or(0.0);
-        self.bell_cfg.file = file;
-        cx.notify();
-    }
-    /// Preview the current clip once (ignores loop so the button can't run away).
-    fn preview_bell(&mut self) {
-        let mut c = self.bell_cfg.clone();
-        c.looping = false;
-        // a preview should always be audible even if the pane's bell is muted
-        c.enabled = true;
-        self.bell_player.play(&c);
-    }
-
-    /// "+ Add": open a native file picker (zenity), copy the chosen audio into
-    /// the user sounds dir so it persists + shows up in the picker, then select
-    /// it. The dialog runs off the UI thread so the window keeps painting.
-    fn import_bell_file(&mut self, cx: &mut Context<Self>) {
-        cx.spawn(async move |this, cx| {
-            let picked = cx
-                .background_executor()
-                .spawn(async {
-                    use std::process::Command;
-                    let out = Command::new("zenity")
-                        .args([
-                            "--file-selection",
-                            "--title=Add a notification sound",
-                            "--file-filter=Audio | *.mp3 *.ogg *.oga *.wav *.flac *.m4a *.opus *.aac *.MP3 *.WAV *.FLAC *.OGG",
-                            "--file-filter=All files | *",
-                        ])
-                        .output()
-                        .ok()?;
-                    if !out.status.success() {
-                        return None; // user cancelled
-                    }
-                    let p = String::from_utf8_lossy(&out.stdout).trim().to_string();
-                    (!p.is_empty()).then(|| std::path::PathBuf::from(p))
-                })
-                .await;
-            let Some(src) = picked else { return };
-            // copy into the sounds dir (best-effort) so it persists across runs
-            let dest = cx
-                .background_executor()
-                .spawn(async move {
-                    let dir = crate::bell::sounds_dir();
-                    let _ = std::fs::create_dir_all(&dir);
-                    let name = src.file_name()?;
-                    let dest = dir.join(name);
-                    if dest != src {
-                        std::fs::copy(&src, &dest).ok()?;
-                    }
-                    Some(dest)
-                })
-                .await;
-            if let Some(dest) = dest {
-                let _ = this.update(cx, |view, cx| {
-                    view.set_bell_file(Some(dest), cx);
-                });
-            }
-        })
-        .detach();
     }
 
     fn on_mouse_down(&mut self, ev: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
@@ -4229,14 +4129,6 @@ impl TerminalView {
                 cx.notify();
                 return;
             }
-        }
-        // A ringing "agent finished" alert is acknowledged by clicking anywhere
-        // in this pane: stop the sound and dismiss the card — no button to chase.
-        // The click is consumed (it doesn't also start a selection) so it reads
-        // purely as "dismiss". Left-click only; right-click still opens the menu.
-        if self.bell && ev.button == MouseButton::Left {
-            self.snooze_bell(cx);
-            return;
         }
         // right-click → copy/paste context menu at the cursor
         if ev.button == MouseButton::Right {
@@ -4278,35 +4170,7 @@ impl TerminalView {
         cx.notify();
     }
 
-    /// Map a window-space x to a clip time (seconds) over the bell trim track.
-    fn bell_time_from_pos(&self, x: Pixels) -> Option<f32> {
-        let b = (*self.bell_track_bounds.lock().unwrap())?;
-        let dur = self.bell_dur?;
-        let w = f32::from(b.size.width);
-        if dur <= 0.0 || w <= 0.0 {
-            return None;
-        }
-        let r = ((f32::from(x) - f32::from(b.origin.x)) / w).clamp(0.0, 1.0);
-        Some(r * dur)
-    }
-
     fn on_mouse_move(&mut self, ev: &MouseMoveEvent, _w: &mut Window, cx: &mut Context<Self>) {
-        // dragging a bell-trim pip: move start/end along the track, keep a gap
-        if let Some(is_end) = self.bell_drag {
-            if ev.pressed_button == Some(MouseButton::Left) {
-                if let Some(t) = self.bell_time_from_pos(ev.position.x) {
-                    let dur = self.bell_dur.unwrap_or(t);
-                    let v = trim_drag_value(is_end, t, self.bell_cfg.start, self.bell_cfg.end, dur);
-                    if is_end {
-                        self.bell_cfg.end = v;
-                    } else {
-                        self.bell_cfg.start = v;
-                    }
-                    cx.notify();
-                }
-            }
-            return;
-        }
         // The Alt-held copy affordance. Gated on the modifier so the grid is only
         // re-read while Alt is actually down — ordinary mousing costs nothing, and
         // nothing can arm by accident.
@@ -4341,10 +4205,6 @@ impl TerminalView {
     }
 
     fn on_mouse_up(&mut self, _ev: &MouseUpEvent, _w: &mut Window, cx: &mut Context<Self>) {
-        if self.bell_drag.take().is_some() {
-            cx.notify();
-            return;
-        }
         self.selecting = false;
         self.autoscroll = 0.;
         // Finishing a drag publishes the selection to the X11 PRIMARY selection
@@ -5567,11 +5427,16 @@ impl Render for TerminalView {
         // correctly whether this pane is bent and its neighbour flat, or vice versa.
         self.warp_k = theme::warp_coeffs(th.warp);
         // edge-detected focus reporting (CSI I / CSI O) for apps that ask for it.
-        // The bell intentionally persists until SNOOZE / bell-off (so you never
-        // miss which agent finished while you were away).
+        // The bell persists until you actually LOOK at the pane: the focus-in
+        // edge below is the acknowledgement (a click, alt+arrows, or the
+        // notification jump all land here), so you never miss which agent
+        // finished while you were away, and there is nothing to dismiss.
         let focused_now = self.focus_handle(cx).is_focused(window);
         if focused_now != self.was_focused {
             self.was_focused = focused_now;
+            if focused_now {
+                self.ack_bell(cx);
+            }
             if self
                 .session
                 .term
@@ -5705,13 +5570,9 @@ impl Render for TerminalView {
         let show_human = SHOW_HUMAN_NAV_GLYPH && pane_w >= 470.; // 1st: 👤 ▲▼ nav
         let show_eq = pane_w >= 410.; //    2nd: EQ / display
         let show_theme = pane_w >= 360.; //  3rd: 🎨 theme
-                                         // Deprecated (crate::bell::ENABLED == false): the 🔔 never shows and never
-                                         // tucks into ⋯. The width rule is kept for when it comes back.
-        let show_bell = crate::bell::ENABLED && pane_w >= 310.; // 4th: 🔔 notifications
-        let show_focus = SHOW_FOCUS_GLYPH && pane_w >= 264.; // 5th & last: 👓 FOCUS
+        let show_focus = SHOW_FOCUS_GLYPH && pane_w >= 264.; // 4th & last: 👓 FOCUS
                                                              // ⋯ shows only once something is actually tucked (👤-nav is agent-only).
         let overflow = (SHOW_FOCUS_GLYPH && !show_focus)
-            || (crate::bell::ENABLED && !show_bell)
             || !show_theme
             || !show_eq
             || (SHOW_HUMAN_NAV_GLYPH && !show_human && self.mode.is_agent());
@@ -5807,18 +5668,6 @@ impl Render for TerminalView {
                         cx.stop_propagation();
                         v.hdr_overflow = None;
                         cx.emit(OpenThemeMenu { at: pos });
-                        cx.notify();
-                    }),
-                ));
-            }
-            if crate::bell::ENABLED && !show_bell {
-                menu = menu.child(item("🔔", "Notifications").on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(move |v, _ev: &MouseDownEvent, _w, cx| {
-                        cx.stop_propagation();
-                        v.bell_dur = v.bell_cfg.file.as_deref().and_then(crate::bell::duration);
-                        v.bell_menu = true;
-                        v.hdr_overflow = None;
                         cx.notify();
                     }),
                 ));
@@ -6130,45 +5979,6 @@ impl Render for TerminalView {
                                 ),
                         )
                     })
-                    // notification bell 🔔 (click → config tray; the ENABLE
-                    // toggle and trim live in there). Lights when ringing.
-                    .when(show_bell, |row| {
-                        row.child(
-                            div()
-                                .px_1()
-                                .rounded_sm()
-                                .border_1()
-                                .border_color(if self.bell_cfg.enabled {
-                                    th.accent.alpha(0.5)
-                                } else {
-                                    th.faint
-                                })
-                                .text_color(if self.bell {
-                                    th.accent
-                                } else if self.bell_cfg.enabled {
-                                    bar_fg
-                                } else {
-                                    th.faint
-                                })
-                                .cursor_pointer()
-                                .text_size(px(hicon))
-                                .line_height(px(hicon))
-                                .child("🔔")
-                                .on_mouse_down(
-                                    MouseButton::Left,
-                                    cx.listener(|v, _: &MouseDownEvent, _w, cx| {
-                                        cx.stop_propagation();
-                                        v.bell_dur = v
-                                            .bell_cfg
-                                            .file
-                                            .as_deref()
-                                            .and_then(crate::bell::duration);
-                                        v.bell_menu = true;
-                                        cx.notify();
-                                    }),
-                                ),
-                        )
-                    })
                     // ⋯ overflow: appears once anything has been tucked away. Tap to
                     // open the menu of hidden controls (built above as overflow_el).
                     .when(overflow, |row| {
@@ -6247,437 +6057,6 @@ impl Render for TerminalView {
             }
             header = header.shadow(shadows);
         }
-
-        // ---- SNOOZE bar: spans the top of the pane while the bell is ringing ----
-        let (acc, txt, faint) = (th.accent, th.text, th.faint);
-        let ff = th.font_family.clone();
-        // ---- "agent finished" alert: a flat, bordered card floating at the top-
-        // centre of the pane (mirrors the HELP box look). There is NO button —
-        // clicking anywhere in this terminal acknowledges it (see on_mouse_down):
-        // the sound stops and the card disappears. The bell stays enabled for the
-        // next turn; mute lives in the 🔔 tray.
-        let agent_alert = self.bell.then(|| {
-            let name = self
-                .bell_cfg
-                .file
-                .as_deref()
-                .map(crate::bell::display_name)
-                .unwrap_or_else(|| "alert".to_string());
-            // solid dark surface, same recipe as the HELP panel (surface · 0.45)
-            let panel_bg = Hsla {
-                l: th.surface.l * 0.45,
-                ..th.surface
-            };
-            div()
-                // a full-width, click-through positioning layer: the card is
-                // centred horizontally and sits just below the header. Mouse
-                // events fall through to the pane's own handler, which is what
-                // acknowledges the bell.
-                .absolute()
-                .top(px(header_h + 16.))
-                .left_0()
-                .right_0()
-                .flex()
-                .flex_row()
-                .justify_center()
-                .child(
-                    div()
-                        .px_4()
-                        .py(px(8.))
-                        .rounded_lg()
-                        .border_2()
-                        .border_color(acc.alpha(0.85))
-                        .bg(panel_bg)
-                        .text_color(txt)
-                        .text_size(px(12.))
-                        .font_family(ff.clone())
-                        .shadow(crate::float_shadows(acc))
-                        .flex()
-                        .flex_col()
-                        .items_center()
-                        .gap_1()
-                        .child(
-                            div()
-                                .flex()
-                                .flex_row()
-                                .items_center()
-                                .gap_2()
-                                .child(
-                                    div()
-                                        .text_color(acc)
-                                        .font_weight(FontWeight::BOLD)
-                                        .child("♪ ▸"),
-                                )
-                                .child(
-                                    div()
-                                        .font_weight(FontWeight::BOLD)
-                                        .text_color(th.complement)
-                                        .child(format!("AGENT FINISHED · {name}")),
-                                ),
-                        )
-                        .child(
-                            div()
-                                .text_size(px(10.5))
-                                .text_color(txt.alpha(0.6))
-                                .child("click anywhere in this terminal to acknowledge"),
-                        ),
-                )
-        });
-
-        // ---- BELL+ config tray: pick a sound, trim it, loop, volume, preview ----
-        let bell_tray = self.bell_menu.then(|| {
-            let cfg = self.bell_cfg.clone();
-            let dur = self.bell_dur.unwrap_or(0.0);
-            let s = cfg.start;
-            let e = if cfg.end > cfg.start { cfg.end } else { dur };
-            let mini = move |label: String| {
-                div()
-                    .px(px(7.))
-                    .py(px(1.))
-                    .rounded_sm()
-                    .border_1()
-                    .border_color(acc.alpha(0.55))
-                    .text_color(txt)
-                    .cursor_pointer()
-                    .child(label)
-            };
-            // sound list (default alert + every file in the sounds dir)
-            let mut list = div().flex().flex_col().gap_1().child(
-                div()
-                    .px_2()
-                    .py(px(3.))
-                    .rounded_sm()
-                    .cursor_pointer()
-                    .bg(if cfg.file.is_none() {
-                        acc.alpha(0.25)
-                    } else {
-                        acc.alpha(0.0)
-                    })
-                    .text_color(txt)
-                    .child("◦ default alert")
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(|v, _: &MouseDownEvent, _w, cx| {
-                            cx.stop_propagation();
-                            v.set_bell_file(None, cx);
-                        }),
-                    ),
-            );
-            for path in crate::bell::list_sounds() {
-                let sel = cfg.file.as_deref() == Some(path.as_path());
-                let nm = crate::bell::display_name(&path);
-                let p = path.clone();
-                list = list.child(
-                    div()
-                        .px_2()
-                        .py(px(3.))
-                        .rounded_sm()
-                        .cursor_pointer()
-                        .bg(if sel { acc.alpha(0.25) } else { acc.alpha(0.0) })
-                        .text_color(if sel { txt } else { txt.alpha(0.85) })
-                        .child(format!("♪ {nm}"))
-                        .on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(move |v, _: &MouseDownEvent, _w, cx| {
-                                cx.stop_propagation();
-                                v.set_bell_file(Some(p.clone()), cx);
-                            }),
-                        ),
-                );
-            }
-            // visual trim track: highlight the [start,end] window over the clip
-            let frac = |t: f32| {
-                if dur > 0.0 {
-                    (t / dur).clamp(0.0, 1.0)
-                } else {
-                    0.0
-                }
-            };
-            // dual-pip scrubber: drag the two pips; the highlighted span between
-            // them is the slice of the clip that plays. (Pip drag is handled in
-            // on_mouse_move via bell_track_bounds, captured by the canvas below.)
-            let track_store = self.bell_track_bounds.clone();
-            let pip_ring = th.surface;
-            let pip = move |at: f32, is_end: bool, cx: &mut Context<Self>| {
-                div()
-                    .absolute()
-                    .top(px(-5.))
-                    .left(gpui::relative(at))
-                    .ml(px(-8.))
-                    .w(px(16.))
-                    .h(px(16.))
-                    .rounded_full()
-                    .bg(acc)
-                    .border_2()
-                    .border_color(pip_ring)
-                    .cursor_pointer()
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(move |v, _: &MouseDownEvent, _w, cx| {
-                            cx.stop_propagation();
-                            v.bell_drag = Some(is_end);
-                            cx.notify();
-                        }),
-                    )
-            };
-            let track = div()
-                .relative()
-                .w_full()
-                .h(px(12.))
-                .my(px(8.))
-                .rounded_full()
-                .bg(faint.alpha(0.35))
-                .cursor_pointer()
-                // click anywhere on the track → grab the nearer pip and start a drag
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(|v, ev: &MouseDownEvent, _w, cx| {
-                        cx.stop_propagation();
-                        if let Some(t) = v.bell_time_from_pos(ev.position.x) {
-                            let dur = v.bell_dur.unwrap_or(t);
-                            let end = if v.bell_cfg.end > v.bell_cfg.start {
-                                v.bell_cfg.end
-                            } else {
-                                dur
-                            };
-                            // grab whichever pip is nearer the click, then drag it
-                            let is_end = (t - v.bell_cfg.start).abs() > (t - end).abs();
-                            v.bell_drag = Some(is_end);
-                            let nv =
-                                trim_drag_value(is_end, t, v.bell_cfg.start, v.bell_cfg.end, dur);
-                            if is_end {
-                                v.bell_cfg.end = nv;
-                            } else {
-                                v.bell_cfg.start = nv;
-                            }
-                            cx.notify();
-                        }
-                    }),
-                )
-                // the play-span between the pips
-                .child(
-                    div()
-                        .absolute()
-                        .top_0()
-                        .bottom_0()
-                        .rounded_full()
-                        .bg(acc.alpha(0.7))
-                        .left(gpui::relative(frac(s)))
-                        .w(gpui::relative((frac(e) - frac(s)).max(0.01))),
-                )
-                // invisible canvas just to record the track's window-space bounds
-                .child(
-                    canvas(
-                        move |bounds, _, _| {
-                            *track_store.lock().unwrap() = Some(bounds);
-                        },
-                        |_, _, _, _| {},
-                    )
-                    .absolute()
-                    .size_full(),
-                )
-                .child(pip(frac(s), false, cx))
-                .child(pip(frac(e), true, cx));
-            let labeled = move |lbl: &'static str, val: String| {
-                div()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap_2()
-                    .child(
-                        div()
-                            .w(px(52.))
-                            .text_color(faint)
-                            .text_size(px(10.))
-                            .child(lbl),
-                    )
-                    .child(
-                        div()
-                            .min_w(px(52.))
-                            .text_color(txt)
-                            .text_size(px(11.))
-                            .child(val),
-                    )
-            };
-            let panel = div()
-                .w(px(330.))
-                .p_3()
-                .rounded_md()
-                .border_1()
-                .border_color(acc.alpha(0.6))
-                .bg(th.surface)
-                .text_color(txt)
-                .text_size(px(11.))
-                .font_family(ff.clone())
-                .flex()
-                .flex_col()
-                .gap_2()
-                .occlude()
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(|_, _: &MouseDownEvent, _w, cx| cx.stop_propagation()),
-                )
-                // the panel occludes the pane, so the trim-pip drag is driven from
-                // here (move + release) rather than the pane root behind it
-                .on_mouse_move(cx.listener(Self::on_mouse_move))
-                .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
-                // header
-                .child(
-                    div()
-                        .flex()
-                        .flex_row()
-                        .items_center()
-                        .justify_between()
-                        .child(
-                            div()
-                                .font_weight(gpui::FontWeight::BOLD)
-                                .text_color(acc)
-                                .child("🔔 NOTIFICATIONS"),
-                        )
-                        .child(mini("done".into()).on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(|v, _: &MouseDownEvent, _w, cx| {
-                                cx.stop_propagation();
-                                v.bell_menu = false;
-                                cx.notify();
-                            }),
-                        )),
-                )
-                // ENABLE toggle — was the header ♪; styled like the display-config
-                // "follow outer" toggle (filled when on)
-                .child(
-                    div()
-                        .px_2()
-                        .py(px(3.))
-                        .rounded_sm()
-                        .border_1()
-                        .border_color(acc.alpha(0.6))
-                        .bg(if cfg.enabled {
-                            acc.alpha(0.22)
-                        } else {
-                            acc.alpha(0.0)
-                        })
-                        .text_color(if cfg.enabled { txt } else { faint })
-                        .cursor_pointer()
-                        .child(if cfg.enabled {
-                            "🔔 notifications ON — ring on agent completion"
-                        } else {
-                            "🔕 notifications OFF — click to enable"
-                        })
-                        .on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(|v, _: &MouseDownEvent, _w, cx| {
-                                cx.stop_propagation();
-                                v.toggle_bell_enabled(cx);
-                            }),
-                        ),
-                )
-                .child(list)
-                // bring your own: pick any audio file → copied into the sounds
-                // dir and selected (full-width, dashed-feel "add" affordance)
-                .child(
-                    div()
-                        .px_2()
-                        .py(px(3.))
-                        .rounded_sm()
-                        .border_1()
-                        .border_color(acc.alpha(0.5))
-                        .text_color(acc)
-                        .cursor_pointer()
-                        .child("＋ Add audio file…")
-                        .on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(|v, _: &MouseDownEvent, _w, cx| {
-                                cx.stop_propagation();
-                                v.import_bell_file(cx);
-                            }),
-                        ),
-                )
-                // TRIM readout + the dual-pip scrubber (drag the pips; the lit
-                // span between them is what plays)
-                .child(labeled("TRIM", format!("{s:.1}s – {e:.1}s")))
-                .child(track)
-                // loop + volume + preview row
-                .child(
-                    div()
-                        .flex()
-                        .flex_row()
-                        .items_center()
-                        .gap_2()
-                        .child(
-                            mini(if cfg.looping {
-                                "↻ loop on".into()
-                            } else {
-                                "↻ loop off".into()
-                            })
-                            .on_mouse_down(
-                                MouseButton::Left,
-                                cx.listener(|v, _: &MouseDownEvent, _w, cx| {
-                                    cx.stop_propagation();
-                                    v.bell_cfg.looping = !v.bell_cfg.looping;
-                                    cx.notify();
-                                }),
-                            ),
-                        )
-                        .child(mini("vol −".into()).on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(|v, _: &MouseDownEvent, _w, cx| {
-                                cx.stop_propagation();
-                                v.bell_cfg.volume = (v.bell_cfg.volume - 0.1).max(0.0);
-                                cx.notify();
-                            }),
-                        ))
-                        .child(
-                            div()
-                                .min_w(px(34.))
-                                .text_color(txt)
-                                .child(format!("{}%", (cfg.volume * 100.0).round() as i32)),
-                        )
-                        .child(mini("vol +".into()).on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(|v, _: &MouseDownEvent, _w, cx| {
-                                cx.stop_propagation();
-                                v.bell_cfg.volume = (v.bell_cfg.volume + 0.1).min(1.5);
-                                cx.notify();
-                            }),
-                        )),
-                )
-                .child(
-                    div()
-                        .flex()
-                        .flex_row()
-                        .gap_2()
-                        .child(mini("▶ preview".into()).on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(|v, _: &MouseDownEvent, _w, cx| {
-                                cx.stop_propagation();
-                                v.preview_bell();
-                            }),
-                        ))
-                        .child(mini("■ stop".into()).on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(|v, _: &MouseDownEvent, _w, cx| {
-                                cx.stop_propagation();
-                                v.bell_player.stop();
-                            }),
-                        )),
-                );
-            div()
-                .absolute()
-                .inset_0()
-                .flex()
-                .items_center()
-                .justify_center()
-                .bg(th.bg.alpha(0.55))
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(|v, _: &MouseDownEvent, _w, cx| {
-                        v.bell_menu = false;
-                        cx.notify();
-                    }),
-                )
-                .child(panel)
-        });
 
         let jiggle = self.fx.jiggle_px;
         // 🎰 GAMBA reels — shown only on the gamba DESIGN texture while the agent
@@ -6875,13 +6254,10 @@ impl Render for TerminalView {
             })
             // raised bezel frame sits above the glass, framing the whole pane
             .when(th.bezel > 0.001, |el| el.child(crt::bezel(&th)))
-            // 🎰 the slot reels ride above the bezel, below the bell modal
+            // 🎰 the slot reels ride above the bezel, below the menus
             .children(gamba_overlay)
-            // the "agent finished" card floats above the content, top-centre
-            .children(agent_alert)
             .children(ctx_menu_el)
             .children(overflow_el)
-            .children(bell_tray)
             // the paint overlay is the topmost surface — painted last, above
             // every menu and tray, matching its Esc-first place in on_key
             .children(paint_el)
@@ -7038,20 +6414,6 @@ mod tests {
             graded(bg, &d, Channel::Bg).l < bg.l,
             "dim still dims the screen"
         );
-    }
-
-    #[test]
-    fn trim_drag_clamps_and_keeps_a_gap() {
-        // drag END: lands on t, but never below start+0.2, never above dur
-        assert_eq!(trim_drag_value(true, 7.0, 2.0, 10.0, 12.0), 7.0);
-        assert_eq!(trim_drag_value(true, 99.0, 2.0, 10.0, 12.0), 12.0); // clamp to dur
-        assert_eq!(trim_drag_value(true, 1.0, 5.0, 10.0, 12.0), 5.2); // keep gap above start
-                                                                      // drag START: lands on t, but never above end-0.2, never below 0
-        assert_eq!(trim_drag_value(false, 3.0, 0.0, 10.0, 12.0), 3.0);
-        assert_eq!(trim_drag_value(false, -5.0, 0.0, 10.0, 12.0), 0.0); // clamp to 0
-        assert_eq!(trim_drag_value(false, 11.0, 0.0, 10.0, 12.0), 9.8); // keep gap below end
-                                                                        // end<=start means "to the clip end" → start clamps against dur
-        assert_eq!(trim_drag_value(false, 20.0, 0.0, 0.0, 12.0), 11.8);
     }
 
     #[test]

@@ -28,6 +28,7 @@ mod lang;
 mod mcp;
 mod mcp_tail;
 mod mcp_transport;
+mod notify;
 mod palette;
 mod pane;
 mod plugins;
@@ -51,9 +52,9 @@ use gpui::{
 };
 use gpui_platform::application;
 use pane::{
-    CloseFocusRead, ClosePane, DragPaneStart, FocusReadNav, OpenAgentPanel, OpenDisplayMenu,
-    OpenFind, OpenFocusRead, OpenHelp, OpenLogoPicker, OpenThemeMenu, PaintApplied, PaneRenamed,
-    ReadNav, RequestCloseTab, TerminalView,
+    AgentDone, CloseFocusRead, ClosePane, DragPaneStart, FocusReadNav, OpenAgentPanel,
+    OpenDisplayMenu, OpenFind, OpenFocusRead, OpenHelp, OpenLogoPicker, OpenThemeMenu,
+    PaintApplied, PaneRenamed, ReadNav, RequestCloseTab, TerminalView,
 };
 use serde::{Deserialize, Serialize};
 use theme::{PaneTheme, ThemeChoice};
@@ -2080,6 +2081,11 @@ struct Workspace {
     /// The reader's inner viewport height (px) this frame, so PageUp/PageDown
     /// page by what is actually on screen at the current zoom.
     focus_page_h: f32,
+    /// A clicked agent-finished notification parks the target pane here; the
+    /// next render frame (which holds a `Window`) performs the zip — activates
+    /// the owning tab and focuses the pane. The async notification task can't
+    /// touch the Window itself.
+    pending_jump: Option<EntityId>,
     /// On-screen box of the FOCUS reading area (the clip box below the header),
     /// captured each frame. This is the SAME rect registered as the warp tube, so a
     /// click normalises into it and applies the identical barrel map the shader
@@ -2188,6 +2194,12 @@ fn make_pane_restored(
     // Paging keys inside the modal (same routing) → move the reader's view.
     cx.subscribe(&pane, |ws, _pane, ev: &FocusReadNav, cx| {
         ws.focus_read_nav(ev.0, cx);
+    })
+    .detach();
+    // An agent finished in this pane → maybe a system notification (with a
+    // click-to-jump), unless Parker was already looking at it.
+    cx.subscribe_in(&pane, window, |ws, pane, _ev: &AgentDone, window, cx| {
+        ws.agent_done(pane.clone(), window, cx);
     })
     .detach();
     // F1 in any pane toggles the help modal
@@ -2438,6 +2450,7 @@ impl Workspace {
             focus_overflow: 0.0,
             focus_line_h: 0.0,
             focus_page_h: 0.0,
+            pending_jump: None,
             focus_body_bounds: Arc::new(Mutex::new(None)),
             focus_map: Arc::new(Mutex::new(None)),
             focus_sel: None,
@@ -3878,6 +3891,106 @@ impl Workspace {
         // free the (potentially 10k-row) memoised layout with the modal
         self.focus_layout = None;
         cx.notify();
+    }
+
+    /// An agent finished in `pane` (the bell edge). If Parker is looking at that
+    /// exact pane — this window is active AND the pane holds keyboard focus —
+    /// acknowledge on the spot: watching it finish IS the notification. In
+    /// every other case the tab keeps its 🔔 badge and a system notification
+    /// goes out through the desktop daemon (omarchy: Quickshell): the title is
+    /// `tab → pane`, the body is a recap of the agent's last words from its own
+    /// transcript, and clicking it prints `default` from notify-send, which
+    /// parks a [`Self::pending_jump`] — the next frame zips there.
+    fn agent_done(
+        &mut self,
+        pane: Entity<TerminalView>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let watching =
+            window.is_window_active() && pane.read(cx).focus_handle(cx).is_focused(window);
+        if watching {
+            pane.update(cx, |v, cx| v.ack_bell(cx));
+            return;
+        }
+        // Naming: which tab group to look at, then which pane inside it.
+        let tab_label = self
+            .tabs
+            .iter()
+            .position(|t| {
+                let mut ls = Vec::new();
+                t.root.leaves(&mut ls);
+                ls.iter().any(|p| p.entity_id() == pane.entity_id())
+            })
+            .map(|i| {
+                self.tabs[i]
+                    .name
+                    .clone()
+                    .unwrap_or_else(|| format!("TAB {}", i + 1))
+            })
+            .unwrap_or_else(|| "TD".into());
+        let (pane_label, rt, mode, fallback) = {
+            let v = pane.read(cx);
+            let label = v.name.clone().unwrap_or_else(|| {
+                if v.title.trim().is_empty() {
+                    v.mode.label().to_string()
+                } else {
+                    v.title.clone()
+                }
+            });
+            (
+                label,
+                v.runtime(),
+                v.mode.clone(),
+                v.recent_lines(2).join(" · "),
+            )
+        };
+        let title = notify::notify_title(&tab_label, &pane_label);
+        let pane_id = pane.entity_id();
+        cx.spawn(async move |this, cx| {
+            // One background task end-to-end: resolve the transcript, build the
+            // body, post the notification, and WAIT on notify-send — it exits
+            // when the toast is clicked (printing `default`), dismissed, or
+            // expires. Blocking one pool thread for its 12s lifetime is the
+            // same trade the old zenity import made.
+            let clicked = cx
+                .background_executor()
+                .spawn(async move {
+                    let home = std::path::PathBuf::from(std::env::var("HOME").unwrap_or_default());
+                    let cwd = rt.cwd.unwrap_or_default();
+                    let transcript = match mode {
+                        pane::PaneMode::Claude => {
+                            session::claude_transcript(&cwd, rt.resume.as_deref(), &home)
+                        }
+                        pane::PaneMode::Codex => session::codex_transcript(&cwd, &home),
+                        _ => None,
+                    };
+                    let body = transcript
+                        .as_deref()
+                        .and_then(notify::recap_from_transcript)
+                        .unwrap_or(fallback);
+                    let out = std::process::Command::new("notify-send")
+                        .args(notify::notify_args(&title, &body))
+                        .output();
+                    let clicked = matches!(
+                        out,
+                        Ok(ref o) if String::from_utf8_lossy(&o.stdout).contains("default")
+                    );
+                    if clicked {
+                        // compositor-side: raise + focus THIS TD window first
+                        crate::ctl::focus_this_window();
+                    }
+                    clicked
+                })
+                .await;
+            if clicked {
+                let _ = this.update(cx, |ws, cx| {
+                    ws.pending_jump = Some(pane_id);
+                    cx.notify();
+                });
+            }
+        })
+        .detach();
     }
 
     /// A paging key routed up from the mirrored pane: move the reader's view a
@@ -5709,7 +5822,7 @@ impl Workspace {
     /// Does any pane in tab `i` have an unacknowledged "agent finished" bell? It
     /// drives the per-tab 🔔 badge, so a run that finishes in a background tab is
     /// visible on the mother bar without opening every pane. Mirrors the pane's
-    /// own bell — the in-terminal ack click clears both at once.
+    /// own bell — focusing the finished pane clears both at once.
     fn tab_has_bell(&self, i: usize, cx: &App) -> bool {
         let Some(tab) = self.tabs.get(i) else {
             return false;
@@ -7805,7 +7918,8 @@ impl Workspace {
                 )
             })
             // 🔔 badge: an agent run finished in a pane of this tab and hasn't been
-            // acknowledged yet (cleared by the in-terminal ack click).
+            // acknowledged yet (cleared by focusing that pane — or the
+            // notification click, which does the same thing via the jump).
             .when(self.tab_has_bell(i, cx), |d| {
                 d.child(div().text_size(px(11. * s)).child("🔔"))
             })
@@ -8752,6 +8866,23 @@ fn td_anchor_top_forced() -> bool {
 impl Render for Workspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.reap(window, cx);
+        // A clicked agent-finished notification lands here on the next frame:
+        // the async task can't reach the Window, so it parked the pane id and
+        // this frame performs the zip — activate the owning tab and focus the
+        // pane. The pane's focus-in edge then acks its bell (badge clears).
+        if let Some(id) = self.pending_jump.take() {
+            let hit = self.tabs.iter().enumerate().find_map(|(i, t)| {
+                let mut ls = Vec::new();
+                t.root.leaves(&mut ls);
+                ls.iter()
+                    .find(|p| p.entity_id() == id)
+                    .map(|p| (i, (*p).clone()))
+            });
+            if let Some((idx, target)) = hit {
+                self.active = idx;
+                window.focus(&target.read(cx).focus_handle(cx), cx);
+            }
+        }
         if !self.pending_adopts.is_empty() {
             // Adoptions queued by the window-less ctl ticker land here, where a
             // Window exists; defer so the tab build never runs mid-render.
@@ -15908,12 +16039,11 @@ fn main() {
         // The desktop's own colour schemes, scanned once. Must follow theme::init
         // (a state restore resolves panes against both) and precede any window.
         palette::init(cx);
-        bell::ensure_seeded(); // populate the sounds dir from bundled defaults if empty
-                               // Release the workspace claim at the very start of shutdown — `on_app_quit`
-                               // handlers run BEFORE windows/PTYs tear down (App::shutdown), so this
-                               // frees the lock seconds ahead of actual process exit. That is what lets
-                               // a close → immediate reopen re-claim the workspace and restore, instead
-                               // of the reopen racing the closing process's PTY teardown linger.
+        // Release the workspace claim at the very start of shutdown — `on_app_quit`
+        // handlers run BEFORE windows/PTYs tear down (App::shutdown), so this
+        // frees the lock seconds ahead of actual process exit. That is what lets
+        // a close → immediate reopen re-claim the workspace and restore, instead
+        // of the reopen racing the closing process's PTY teardown linger.
         cx.on_app_quit(|_cx| {
             instance::release();
             async move {}
