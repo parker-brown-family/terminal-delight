@@ -9,6 +9,21 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ### Added
 
+- **An Omarchy kiosk.** `omarchy.html` joins the kiosk family (info · agents ·
+  tv · global · gamba · start-crawl) and tells the desktop-integration story the
+  README has been carrying alone: the two-shelf paint overlay, the eleven shared
+  variant names, `SUPER+ALT+T` window adoption, Quickshell-rendered agent
+  notifications, and the three-repo topology with `td-tint` as the seam.
+  - The page **wears the themes it describes.** All 23 Omarchy schemes installed
+    on a stock box are inlined as their named roles, and picking one repaints
+    the whole page through the same role→slot mapping a painted pane uses —
+    including the light schemes. `?t=<theme>` opens it already wearing one, and
+    the choice is remembered.
+  - The **agent-badge strip** is documented with the real mascot art and the
+    real timings: the HEY blinker's 700 ms square wave and the 1.4 s bounce-eased
+    breath, so NEEDS INPUT / WORKING / DONE / BLOCKED read on the page the way
+    they read on the mother bar.
+
 - **Paint with the desktop's own palettes.** The paint overlay now carries TWO
   shelves, turned with `z` (`shift+z` back) or by clicking a pill: the existing
   COLOUR SETS, and DESKTOP PALETTES — every Omarchy theme installed on the
