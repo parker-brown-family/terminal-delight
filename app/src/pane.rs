@@ -3319,6 +3319,10 @@ impl TerminalView {
     // Guarded by `pane_on_key_only_stops_propagation_when_it_consumes_the_key`.
     fn on_key(&mut self, ev: &KeyDownEvent, _window: &mut Window, cx: &mut Context<Self>) {
         let ks = &ev.keystroke;
+        // Typing into the pane is attention too — covers the frozen-badge case
+        // where the pane kept idle keyboard focus across the whole latch, so
+        // no focus-in edge ever fired. No-op when nothing is latched.
+        self.ack_bell(cx);
         // F1 opens the help modal (handled by the workspace), never the PTY.
         // STOP the event here: the workspace root also binds F1 (its no-pane-
         // focused fallback), and a bubbled F1 toggled `help_open` a SECOND time
@@ -4222,6 +4226,10 @@ impl TerminalView {
         // the split buttons (which target the focused pane) follow the pane the
         // user is actually working in — not whichever pane happened to start focused.
         window.focus(&self.focus_handle, cx);
+        // A click is attention even when it makes no focus EDGE (a bell that
+        // latched while this pane already held idle focus froze the ✅ badge —
+        // the edge never came). ack_bell is a no-op when nothing is latched.
+        self.ack_bell(cx);
         // Alt+click on the armed copy chip takes the reconstructed line. Handled
         // here rather than as a click target on the chip element: the chip is
         // painted inside the warped tube, so gpui would hit-test it flat and land
