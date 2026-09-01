@@ -493,6 +493,21 @@ impl SavedNode {
             }
         }
     }
+
+    /// Fold every leaf's legacy grade-group switch into per-channel pins, once,
+    /// on load. See [`PaneTheme::migrate_legacy_grade`] — it needs the resolved
+    /// outer grade to tell a deliberate divergence from a channel that was only
+    /// ever a birth-copy, so this runs after outer is known and before any pane
+    /// is built.
+    fn migrate_grades(&mut self, outer: &ThemeChoice) {
+        match self {
+            SavedNode::Leaf { appearance, .. } => appearance.migrate_legacy_grade(outer),
+            SavedNode::Split { a, b, .. } => {
+                a.migrate_grades(outer);
+                b.migrate_grades(outer);
+            }
+        }
+    }
 }
 
 /// Two panes sharing a working directory can capture the *same* resume command:
@@ -2308,7 +2323,7 @@ impl Workspace {
     ) -> Self {
         // A demo window restores its cloned layout from the throwaway demo state,
         // never the real session — and never writes back (scratch for saving).
-        let saved = if demo {
+        let mut saved = if demo {
             load_demo_state()
         } else {
             load_state()
@@ -2326,6 +2341,15 @@ impl Workspace {
         // outer grade so a saved fishbowl/roll survives the migration.
         outer.grade.warp = saved.warp.clamp(0.0, theme::WARP_MAX);
         outer.grade.tracking = saved.track;
+        // Panes written by a pre-per-channel build carry `inherit_grade = false`,
+        // which detached all thirteen channels whether or not a human had ever
+        // touched them. Resolve that against the outer grade we just settled:
+        // channels that already match outer are released, the genuine
+        // divergences stay pinned. Runs before any pane is built, so the very
+        // first frame is already the migrated look.
+        for tab in &mut saved.tabs {
+            tab.node.migrate_grades(&outer);
+        }
         theme::select_outer(cx, outer);
         let mut ws = Self {
             tabs: vec![],
@@ -2813,44 +2837,59 @@ impl Workspace {
     /// channel goes through [`theme::Grade::set`], which clamps into its range.
     /// The API is "dumb" — this stores the absolute number given; it never
     /// interprets a relative ask. The agent does that math from a prior read.
-    fn apply_config_patch(g: &mut theme::Grade, patch: &mcp::ConfigPatch) {
+    /// Returns the channels the patch actually named. On a pane those — and only
+    /// those — become the pane's own; the rest keep tracking outer, so an agent
+    /// dressing one channel never silently detaches the other twelve.
+    fn apply_config_patch(g: &mut theme::Grade, patch: &mcp::ConfigPatch) -> theme::GradePins {
         use theme::GradeKey as K;
+        let mut touched = theme::GradePins::NONE;
+        fn set(g: &mut theme::Grade, touched: &mut theme::GradePins, key: K, pct: f32) {
+            g.set(key, key.from_percent(pct));
+            touched.insert(key.into());
+        }
+        macro_rules! set {
+            ($key:expr, $pct:expr) => {
+                set(g, &mut touched, $key, $pct)
+            };
+        }
         if let Some(p) = patch.brightness {
-            g.set(K::Brightness, K::Brightness.from_percent(p));
+            set!(K::Brightness, p);
         }
         if let Some(p) = patch.contrast {
-            g.set(K::Contrast, K::Contrast.from_percent(p));
+            set!(K::Contrast, p);
         }
         if let Some(p) = patch.colour {
-            g.set(K::Colour, K::Colour.from_percent(p));
+            set!(K::Colour, p);
         }
         if let Some(p) = patch.text {
-            g.set(K::Text, K::Text.from_percent(p));
+            set!(K::Text, p);
         }
         if let Some(p) = patch.background {
-            g.set(K::Background, K::Background.from_percent(p));
+            set!(K::Background, p);
         }
         if let Some(p) = patch.gamma {
-            g.set(K::Gamma, K::Gamma.from_percent(p));
+            set!(K::Gamma, p);
         }
         if let Some(p) = patch.menu_bar {
-            g.set(K::Scale, K::Scale.from_percent(p));
+            set!(K::Scale, p);
         }
         if let Some(p) = patch.text_size {
-            g.set(K::TextSize, K::TextSize.from_percent(p));
+            set!(K::TextSize, p);
         }
         if let Some(p) = patch.warp {
-            g.set(K::Warp, K::Warp.from_percent(p));
+            set!(K::Warp, p);
         }
         if let Some(p) = patch.crawl_angle {
-            g.set(K::CrawlAngle, K::CrawlAngle.from_percent(p));
+            set!(K::CrawlAngle, p);
         }
         if let Some(p) = patch.crawl_depth {
-            g.set(K::CrawlDepth, K::CrawlDepth.from_percent(p));
+            set!(K::CrawlDepth, p);
         }
         if let Some(c) = patch.crawl {
             g.crawl = c;
+            touched.insert(theme::GradeChannel::Crawl);
         }
+        touched
     }
 
     /// Apply a parsed `set_pane_config` batch on the gpui main thread (called by
@@ -2870,7 +2909,9 @@ impl Workspace {
             match target {
                 mcp::Target::Outer => {
                     let mut choice = theme::outer_choice(cx);
-                    Self::apply_config_patch(&mut choice.grade, patch);
+                    // Outer owns its whole grade — nothing to pin, and every
+                    // pane that has not been dressed follows this change.
+                    let _ = Self::apply_config_patch(&mut choice.grade, patch);
                     let report = Self::grade_report(&choice.grade);
                     theme::select_outer(cx, choice);
                     changed = true;
@@ -2930,8 +2971,8 @@ impl Workspace {
                                     let outer = theme::outer_choice(cx);
                                     let report = leaf.update(cx, |view, cx| {
                                         let mut g = view.appearance.effective(&outer).grade;
-                                        Self::apply_config_patch(&mut g, patch);
-                                        view.appearance.set_grade(g);
+                                        let touched = Self::apply_config_patch(&mut g, patch);
+                                        view.appearance.pin_grade(g, touched);
                                         if let Some(new_logo) = logo_change {
                                             view.logo = new_logo;
                                         }
@@ -6924,17 +6965,22 @@ impl Workspace {
         let (min, max, _) = key.range();
         let mut grade = self.choice_for(&scope, cx).grade;
         grade.set(key, min + ratio * (max - min));
-        self.write_grade(&scope, grade, cx);
+        // A human just dialled THIS channel here: it becomes the pane's own and
+        // stops tracking outer. Every other channel is untouched and keeps
+        // following outer, so one slider nudge no longer detaches the pane.
+        self.write_grade(&scope, grade, theme::GradePins::only(key.into()), cx);
     }
 
     /// Reset the active OSD scope's grade to the neutral identity — no monitor
     /// grading at all (this clears the shipped house grade too, see
-    /// [`theme::Grade::neutral`]). A pane stays detached; "follow outer" re-inherits.
+    /// [`theme::Grade::neutral`]). An explicit "I want nothing here", so on a
+    /// pane it pins EVERY channel: reset and "follow outer" are different
+    /// gestures, and neutral is not the same as whatever outer happens to say.
     fn reset_grade(&mut self, cx: &mut Context<Self>) {
         let Some(scope) = self.osd_menu.clone() else {
             return;
         };
-        self.write_grade(&scope, theme::Grade::neutral(), cx);
+        self.write_grade(&scope, theme::Grade::neutral(), theme::GradePins::all(), cx);
     }
 
     /// Flip the active OSD scope's Star-Wars text-crawl mode (per-pane via the
@@ -6946,16 +6992,28 @@ impl Workspace {
         };
         let mut grade = self.choice_for(&scope, cx).grade;
         grade.crawl = !grade.crawl;
-        self.write_grade(&scope, grade, cx);
+        self.write_grade(
+            &scope,
+            grade,
+            theme::GradePins::only(theme::GradeChannel::Crawl),
+            cx,
+        );
     }
 
-    /// Commit a grade to a scope: pin it on a pane (grade group only), or set it
-    /// on the outer choice.
-    fn write_grade(&mut self, scope: &MenuScope, grade: theme::Grade, cx: &mut Context<Self>) {
+    /// Commit a grade to a scope. On a pane only `channels` become the pane's
+    /// own — everything else keeps tracking outer — so the caller must name
+    /// exactly what it just changed. On outer the whole grade is the scope's.
+    fn write_grade(
+        &mut self,
+        scope: &MenuScope,
+        grade: theme::Grade,
+        channels: theme::GradePins,
+        cx: &mut Context<Self>,
+    ) {
         match scope {
             MenuScope::Pane(pane) => {
                 pane.update(cx, |view, cx| {
-                    view.appearance.set_grade(grade);
+                    view.appearance.pin_grade(grade, channels);
                     cx.notify();
                 });
             }
@@ -7217,7 +7275,12 @@ impl Workspace {
         let mut d = grade.tracking.unwrap_or(seed);
         d[idx] = v.clamp(0.0, 1.0);
         grade.tracking = Some(d);
-        self.write_grade(&scope, grade, cx);
+        self.write_grade(
+            &scope,
+            grade,
+            theme::GradePins::only(theme::GradeChannel::Tracking),
+            cx,
+        );
     }
 
     /// One tracking-band slider (idx 0=intensity, 1=speed, 2=size). Writes the
@@ -9986,7 +10049,7 @@ impl Render for Workspace {
             let grade = cur.grade;
             // Grade-group "follow outer" state — independent of the theme tray.
             let following = match &scope {
-                MenuScope::Pane(p) => p.read(cx).appearance.inherit_grade,
+                MenuScope::Pane(p) => p.read(cx).appearance.follows_outer_grade(),
                 MenuScope::Outer => false,
             };
             let label = |s: &str| {
@@ -10077,7 +10140,12 @@ impl Render for Workspace {
                                 if let Some(scope) = ws.osd_menu.clone() {
                                     let mut g = ws.choice_for(&scope, cx).grade;
                                     g.tracking = None;
-                                    ws.write_grade(&scope, g, cx);
+                                    ws.write_grade(
+                                        &scope,
+                                        g,
+                                        theme::GradePins::only(theme::GradeChannel::Tracking),
+                                        cx,
+                                    );
                                 }
                             }),
                         ),
@@ -14933,6 +15001,34 @@ b = "Leaf"
     }
 
     #[test]
+    fn an_mcp_patch_pins_only_the_channels_it_names() {
+        // set_pane_config is an explicit set, so what it names sticks — but a
+        // patch that touches one channel must leave the other twelve following
+        // outer, exactly like one slider drag does.
+        let patch: mcp::ConfigPatch =
+            serde_json::from_value(serde_json::json!({ "text_size": 75, "crawl": true })).unwrap();
+        let mut g = theme::Grade::neutral();
+        let touched = Workspace::apply_config_patch(&mut g, &patch);
+
+        assert!(touched.has(theme::GradeChannel::TextSize));
+        assert!(touched.has(theme::GradeChannel::Crawl));
+        for c in theme::GradeChannel::ALL {
+            if c != theme::GradeChannel::TextSize && c != theme::GradeChannel::Crawl {
+                assert!(!touched.has(c), "{} was not in the patch", c.name());
+            }
+        }
+
+        // ...and applying it to a fresh pane leaves the rest tracking outer.
+        let mut pane = theme::PaneTheme::house();
+        pane.pin_grade(g, touched);
+        let mut outer = theme::house_outer();
+        outer.grade.brightness = 0.03;
+        let eff = pane.effective(&outer);
+        assert!((eff.grade.brightness - 0.03).abs() < 1e-6, "still follows");
+        assert!(eff.grade.crawl, "the patched channel is the pane's own");
+    }
+
+    #[test]
     fn legacy_per_pane_theme_override_migrates_to_full_override() {
         // Pre-per-group state files wrote a single `theme` table under a leaf,
         // meaning "this pane overrides everything and follows outer for nothing".
@@ -14942,14 +15038,49 @@ active = 0
 [tabs.node.Leaf.theme]
 id = "hacker"
 "#;
-        let state: StateFile = toml::from_str(legacy).expect("legacy leaf parses");
+        let mut state: StateFile = toml::from_str(legacy).expect("legacy leaf parses");
         let SavedNode::Leaf { appearance, .. } = &state.tabs[0].node else {
             panic!("leaf expected");
         };
         assert_eq!(appearance.theme.as_ref().unwrap().id, "hacker");
         assert!(
-            !appearance.inherit_theme && !appearance.inherit_grade,
-            "a legacy override follows outer for neither group"
+            !appearance.inherit_theme && appearance.inherit_grade == Some(false),
+            "a legacy override follows outer for neither group, pending migration"
+        );
+
+        // ...and the load-time migration resolves that grade half: a channel is
+        // released when it matches outer OR still holds the birth stamp, so only
+        // hand-dialled divergences survive as pins.
+        let SavedNode::Leaf { appearance, .. } = &mut state.tabs[0].node else {
+            panic!("leaf expected");
+        };
+        appearance.grade = Some(theme::Grade {
+            gamma: 0.25, // neither outer's nor the birth value → a real pin
+            ..theme::house_terminal().grade
+        });
+        let mut outer = theme::house_outer();
+        outer.grade.brightness = 0.9; // pane still holds the birth 0.5 here
+        for tab in &mut state.tabs {
+            tab.node.migrate_grades(&outer);
+        }
+        let SavedNode::Leaf { appearance, .. } = &state.tabs[0].node else {
+            panic!("leaf expected");
+        };
+        assert_eq!(
+            appearance.inherit_grade, None,
+            "the legacy switch is consumed, never written back"
+        );
+        assert!(
+            appearance.pins.has(theme::GradeChannel::Gamma),
+            "gamma is neither outer's nor the birth stamp → the pane owns it"
+        );
+        assert!(
+            !appearance.pins.has(theme::GradeChannel::Brightness),
+            "brightness still sits at its birth value → released to follow outer"
+        );
+        assert!(
+            !appearance.pins.has(theme::GradeChannel::Warp),
+            "warp already matched outer → released to follow it"
         );
     }
 
