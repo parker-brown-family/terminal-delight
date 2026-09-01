@@ -119,6 +119,20 @@ pub fn notify_title(tab: &str, pane: &str) -> String {
     format!("{tab} → {pane}")
 }
 
+/// Flavour the title with WHY the agent stopped, matching the tab glyphs:
+/// ❓ it needs a human (a prompt is up — outranks everything: the turn is not
+/// over, it's yours), ❌ it hit a wall (error banner at ring time), ✅ a clean
+/// finish. The glyph leads so the toast is scannable from across the room.
+pub fn flavor_title(base: &str, needs_input: bool, blocked: bool) -> String {
+    if needs_input {
+        format!("❓ {base} — your move")
+    } else if blocked {
+        format!("❌ {base} — blocked")
+    } else {
+        format!("✅ {base}")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -161,5 +175,15 @@ mod tests {
         assert_eq!(a[i + 1], "default=Jump to pane");
         assert_eq!(&a[a.len() - 3..], ["--", "TD → CLAUDE", "done"]);
         assert_eq!(notify_title("RESEARCH", "CLAUDE"), "RESEARCH → CLAUDE");
+    }
+
+    /// The stop-reason flavour mirrors the tab glyphs, and needs-input outranks
+    /// blocked: a prompt IS the wall, and answering it is the fix.
+    #[test]
+    fn stop_reason_flavours_the_title() {
+        assert_eq!(flavor_title("A → B", false, false), "✅ A → B");
+        assert_eq!(flavor_title("A → B", false, true), "❌ A → B — blocked");
+        assert_eq!(flavor_title("A → B", true, false), "❓ A → B — your move");
+        assert_eq!(flavor_title("A → B", true, true), "❓ A → B — your move");
     }
 }

@@ -58,8 +58,20 @@ thinking state the 120ms effects-clock scan already maintains (the GAMBA/bell
 signal), so it costs nothing per frame; `AgentWorkingChanged` repaints the bar
 on the exact start/stop edges, and the animation self-drives repaints while on
 screen. The trough alpha is deliberately >0 — a vanishing glyph would read as
-"no agent" mid-glance. The 🔔 done badge sits beside it; working and finished
-can show together (different panes).
+"no agent" mid-glance.
+
+**Second coda — the full glyph taxonomy.** The 🔔 badge is retired; a tab now
+tells the whole story: **❓ pulsing fast** (850ms) = an agent stopped WAITING
+ON A HUMAN (picker/permission/trust prompt detected on the live rows —
+`wants_human`, strict phrase list; "esc to interrupt" never matches), **🤖
+pulsing slow** (1.4s) = working, **✅ steady** = finished clean, **❌ steady** =
+finished BLOCKED (`looks_blocked`: the CLI's own banners — API error, usage
+limit, credit balance, expired OAuth, timeout — never the agent's tool-output
+errors). ❓ is live and un-latched (clears when the prompt is answered); ✅/❌
+latch until the pane is focused. The header mirrors it (❓ your turn / ✔ done /
+✘ blocked), and the system toast title leads with the same glyph
+(`flavor_title`; ❓ outranks ❌ — a prompt IS the wall and answering it is the
+fix). States from different panes can show together on one tab.
 
 ## First hands-on checks after restart
 
