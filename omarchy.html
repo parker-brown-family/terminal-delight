@@ -1,0 +1,830 @@
+<!doctype html>
+<html lang="en" data-theme="terminal-delight">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <!-- Same posture as the other kiosks: nothing third-party can ever load here.
+       The palette payload is inline, the mascot art is same-origin. -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; script-src 'self' 'unsafe-inline'; frame-src 'none'; object-src 'none'; base-uri 'self'; form-action 'none'" />
+  <title>terminal-delight — the Omarchy kiosk</title>
+  <meta name="description" content="Terminal Delight on Omarchy: panes that wear the desktop's own colour schemes, a keyboard-first paint overlay over the whole workspace, per-agent status on the tab bar, and SUPER+ALT+T to pull any terminal tile — agents and all — into the wall." />
+
+  <meta property="og:title" content="terminal-delight — the Omarchy kiosk" />
+  <meta property="og:description" content="The desktop is agentic. So is the terminal. Wear any of 23 Omarchy themes, paint the whole workspace from the keyboard, and watch every agent from the tab bar." />
+  <meta property="og:type" content="website" />
+  <meta property="og:image" content="assets/crt-wall.png" />
+  <meta name="twitter:card" content="summary_large_image" />
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=JetBrains+Mono:wght@400;700;800&family=Inter:wght@400;600;800&display=swap" rel="stylesheet" />
+
+  <style>
+    /* ------------------------------------------------------------------
+       Every colour on this page is a role from an Omarchy `colors.toml`.
+       Nothing is hard-coded: the theme rail rewrites these custom
+       properties, which is the same thing a painted pane does to its
+       colour table. The page IS the demo.
+       ------------------------------------------------------------------ */
+    :root {
+      --bg:  #030708;  --bg2: #0a1410;  --bg0: #010304;
+      --fg:  #b9f7c0;  --fg2: #4f8f63;  --fgb: #ffffff;
+      --acc: #67F454;  --mut: #163a22;  --sel: #123018;
+      --red: #ff6b6b;  --grn: #67F454;  --yel: #ffd166;
+      --blu: #6fd0ff;  --mag: #d98eff;  --cyn: #5ee7d7;
+
+      --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+      --sans: "Inter", system-ui, sans-serif;
+      --display: "Space Grotesk", "Inter", system-ui, sans-serif;
+      --maxw: 1080px;
+      --line: color-mix(in srgb, var(--mut) 85%, var(--fg) 15%);
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--fg);
+      font-family: var(--sans);
+      line-height: 1.55;
+      -webkit-font-smoothing: antialiased;
+      transition: background 320ms ease, color 320ms ease;
+    }
+    /* The scanline veil is a texture, not a colour — painting a pane with a
+       desktop palette leaves its texture alone, and so does this page. */
+    body::before {
+      content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 0;
+      background: repeating-linear-gradient(0deg, rgba(0,0,0,0.16) 0 1px, transparent 1px 3px);
+      mix-blend-mode: multiply; opacity: 0.55;
+    }
+    body::after {
+      content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 0;
+      background: radial-gradient(120% 100% at 50% 45%, transparent 58%, rgba(0,0,0,0.5) 100%);
+    }
+    body[data-mode="light"]::before { opacity: 0.22; }
+    body[data-mode="light"]::after  { background: radial-gradient(120% 100% at 50% 45%, transparent 65%, rgba(0,0,0,0.14) 100%); }
+
+    .wrap { position: relative; z-index: 1; max-width: var(--maxw); margin: 0 auto; padding: 0 22px; }
+    a { color: var(--acc); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    code, kbd {
+      font-family: var(--mono); background: var(--bg2); border: 1px solid var(--line);
+      border-radius: 5px; padding: 1px 6px; font-size: 0.85em; color: var(--fgb);
+    }
+    kbd { font-weight: 700; color: var(--acc); }
+    h1, h2, h3 { font-family: var(--display); font-weight: 700; letter-spacing: -0.01em; line-height: 1.12; color: var(--fgb); }
+    section { padding: 62px 0; border-top: 1px solid var(--line); }
+    .eyebrow { font-family: var(--mono); color: var(--fg2); text-transform: uppercase; letter-spacing: 0.18em; font-size: 12px; }
+    .lede { font-size: 17.5px; max-width: 720px; }
+    .dim { color: var(--fg2); }
+
+    /* ---- nav ---- */
+    nav.top {
+      position: sticky; top: 0; z-index: 6;
+      backdrop-filter: blur(9px);
+      background: color-mix(in srgb, var(--bg) 82%, transparent);
+      border-bottom: 1px solid var(--line);
+    }
+    nav.top .wrap { display: flex; align-items: center; gap: 20px; height: 54px; }
+    .brand { font-family: var(--mono); font-weight: 800; color: var(--fgb); }
+    .brand .blink { animation: blink 1.1s steps(1) infinite; color: var(--acc); }
+    @keyframes blink { 50% { opacity: 0; } }
+    nav.top .links { margin-left: auto; display: flex; gap: 17px; font-size: 14px; }
+    nav.top .links a { color: var(--fg2); }
+    nav.top .links a:hover { color: var(--acc); text-decoration: none; }
+    @media (max-width: 760px) { nav.top .links a.hide-sm { display: none; } }
+
+    /* ---- hero ---- */
+    .hero { padding: 62px 0 26px; border-top: none; text-align: center; }
+    .hero h1 {
+      font-family: var(--mono); font-size: clamp(30px, 5.4vw, 54px);
+      margin: 12px 0 8px; color: var(--fgb);
+    }
+    .hero h1 .u { color: var(--acc); }
+    .hero .tag { font-size: clamp(16px, 2.3vw, 21px); max-width: 730px; margin: 8px auto 6px; }
+    .hero .sub { color: var(--fg2); max-width: 660px; margin: 0 auto 22px; font-size: 15px; }
+    .cta { display: inline-flex; gap: 11px; flex-wrap: wrap; justify-content: center; }
+    .btn {
+      font-family: var(--mono); font-weight: 700; font-size: 13.5px;
+      padding: 10px 17px; border-radius: 9px; border: 1px solid var(--line);
+      background: var(--bg2); color: var(--fg); cursor: pointer; transition: 120ms;
+    }
+    .btn:hover { text-decoration: none; border-color: var(--acc); transform: translateY(-1px); }
+    .btn.primary {
+      background: color-mix(in srgb, var(--acc) 18%, var(--bg2));
+      border-color: var(--acc); color: var(--fgb);
+    }
+
+    /* ---- the theme rail: the whole point of the page ---- */
+    .rail-shell { margin: 30px auto 0; max-width: 960px; text-align: left; }
+    .rail-head {
+      display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap;
+      font-family: var(--mono); font-size: 12px; color: var(--fg2);
+      text-transform: uppercase; letter-spacing: 0.16em; margin-bottom: 10px;
+    }
+    .rail-head .now { color: var(--acc); letter-spacing: 0.06em; text-transform: none; font-size: 13px; font-weight: 700; }
+    .rail {
+      display: flex; gap: 8px; overflow-x: auto; padding: 4px 2px 12px;
+      scrollbar-width: thin;
+    }
+    .chip {
+      flex: 0 0 auto; display: flex; align-items: center; gap: 7px;
+      font-family: var(--mono); font-size: 12px; color: var(--fg);
+      background: var(--bg2); border: 1px solid var(--line);
+      border-radius: 999px; padding: 6px 12px 6px 7px; cursor: pointer;
+      transition: 110ms; white-space: nowrap;
+    }
+    .chip:hover { border-color: var(--acc); transform: translateY(-1px); }
+    .chip[aria-pressed="true"] { border-color: var(--acc); color: var(--fgb); background: color-mix(in srgb, var(--acc) 15%, var(--bg2)); }
+    .chip .sw {
+      width: 15px; height: 15px; border-radius: 50%;
+      border: 1px solid rgba(128,128,128,0.45);
+      background: conic-gradient(var(--c1) 0 25%, var(--c2) 0 50%, var(--c3) 0 75%, var(--c4) 0);
+    }
+    .chip .lt { font-size: 9px; opacity: 0.6; letter-spacing: 0.1em; }
+
+    /* ---- terminal mock ---- */
+    .screen {
+      border: 1px solid var(--line); border-radius: 13px; overflow: hidden;
+      background: var(--bg0); box-shadow: 0 26px 70px -34px color-mix(in srgb, var(--acc) 55%, transparent);
+      transition: background 320ms ease, border-color 320ms ease;
+    }
+    .screen .bar {
+      display: flex; align-items: center; gap: 9px; padding: 8px 12px;
+      background: var(--bg2); border-bottom: 1px solid var(--line);
+      font-family: var(--mono); font-size: 11.5px; color: var(--fg2);
+    }
+    .screen .bar .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--acc); box-shadow: 0 0 8px var(--acc); }
+    .screen .mock {
+      margin: 0; padding: 18px 18px 22px; font-family: var(--mono);
+      font-size: clamp(11.5px, 1.45vw, 14px); line-height: 1.7; color: var(--fg);
+      text-align: left; white-space: pre-wrap; word-break: break-word;
+      background: var(--bg);
+    }
+    .mock .p { color: var(--acc); font-weight: 700; }
+    .mock .r { color: var(--red); } .mock .g { color: var(--grn); }
+    .mock .y { color: var(--yel); } .mock .b { color: var(--blu); }
+    .mock .m { color: var(--mag); } .mock .c { color: var(--cyn); }
+    .mock .d { color: var(--fg2); }
+    .mock .cur { animation: blink 1.1s steps(1) infinite; color: var(--fgb); }
+
+    /* ---- ANSI slot table ---- */
+    .slots { display: grid; grid-template-columns: repeat(auto-fit, minmax(112px, 1fr)); gap: 8px; margin-top: 22px; }
+    .slot {
+      border: 1px solid var(--line); border-radius: 9px; overflow: hidden;
+      background: var(--bg2); font-family: var(--mono); font-size: 11px;
+    }
+    .slot .sw { height: 34px; border-bottom: 1px solid var(--line); }
+    .slot .nm { padding: 5px 8px 2px; color: var(--fgb); }
+    .slot .rl { padding: 0 8px 6px; color: var(--fg2); font-size: 10px; }
+
+    /* ---- generic cards ---- */
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(238px, 1fr)); gap: 15px; margin-top: 28px; }
+    .card { background: var(--bg2); border: 1px solid var(--line); border-radius: 12px; padding: 19px; }
+    .card h3 { margin: 0 0 6px; font-size: 16.5px; }
+    .card .ic { font-family: var(--mono); color: var(--acc); font-size: 19px; }
+    .card p { margin: 6px 0 0; color: var(--fg2); font-size: 14px; }
+
+    .two { display: grid; grid-template-columns: 1fr 1fr; gap: 26px; align-items: start; }
+    @media (max-width: 820px) { .two { grid-template-columns: 1fr; } }
+
+    pre.code {
+      background: var(--bg0); border: 1px solid var(--line); border-radius: 10px;
+      padding: 14px 16px; overflow-x: auto; font-family: var(--mono);
+      font-size: 12.5px; color: var(--fg); line-height: 1.65;
+    }
+    pre.code .c { color: var(--fg2); }
+    pre.code .k { color: var(--acc); }
+
+    /* ---- the mother bar / agent badges ---- */
+    .motherbar {
+      border: 1px solid var(--line); border-radius: 11px; background: var(--bg2);
+      padding: 10px 12px; display: flex; flex-wrap: wrap; gap: 9px; align-items: center;
+    }
+    .tabmock {
+      display: flex; align-items: center; gap: 8px;
+      border: 1px solid var(--line); border-radius: 7px;
+      background: var(--bg); padding: 5px 10px;
+      font-family: var(--mono); font-size: 12px; color: var(--fg);
+    }
+    .tabmock.on { border-color: var(--acc); color: var(--fgb); background: color-mix(in srgb, var(--acc) 13%, var(--bg)); }
+    .tabmock .strip { display: flex; align-items: center; gap: 4px; }
+    .bdg { width: 16px; height: 16px; position: relative; display: inline-block; line-height: 1; }
+    .bdg img { position: absolute; inset: 0; width: 100%; height: 100%; }
+    .bdg.emoji { font-size: 12px; text-align: center; }
+    /* NEEDS INPUT — hard square wave on a linear cycle. Onsets grab the eye. */
+    @keyframes heyblink { 0%,49.9% { opacity: 1; } 50%,100% { opacity: 0; } }
+    .bdg .hey { animation: heyblink 700ms steps(1) infinite; }
+    /* WORKING — breathing, never down to zero. Gently but firmly. */
+    @keyframes breathe { 0%,100% { opacity: 0.42; } 50% { opacity: 1; } }
+    .bdg.working img { animation: breathe 1400ms ease-in-out infinite; }
+
+    .states { display: grid; grid-template-columns: repeat(auto-fit, minmax(196px, 1fr)); gap: 13px; margin-top: 20px; }
+    .state {
+      border: 1px solid var(--line); border-radius: 10px; background: var(--bg2);
+      padding: 15px; display: flex; gap: 12px; align-items: flex-start;
+    }
+    .state .who { font-family: var(--mono); font-size: 11.5px; color: var(--acc); letter-spacing: 0.08em; }
+    .state p { margin: 3px 0 0; font-size: 13px; color: var(--fg2); line-height: 1.5; }
+    .state .bdg { flex: 0 0 auto; width: 22px; height: 22px; margin-top: 2px; }
+    .state .bdg.emoji { font-size: 17px; }
+
+    /* ---- key legend ---- */
+    .keys { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 10px; margin-top: 22px; }
+    .keyrow {
+      display: flex; gap: 11px; align-items: baseline;
+      border: 1px solid var(--line); border-radius: 9px; background: var(--bg2); padding: 11px 13px;
+    }
+    .keyrow .k {
+      font-family: var(--mono); font-weight: 700; color: var(--acc);
+      background: var(--bg0); border: 1px solid var(--line); border-radius: 5px;
+      padding: 2px 8px; font-size: 12px; flex: 0 0 auto;
+    }
+    .keyrow .t { font-size: 13px; color: var(--fg2); line-height: 1.45; }
+
+    /* ---- repo topology ---- */
+    .repos { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 15px; margin-top: 26px; }
+    .repo { border: 1px solid var(--line); border-radius: 12px; background: var(--bg2); padding: 18px; }
+    .repo .n { font-family: var(--mono); font-weight: 800; color: var(--fgb); font-size: 14px; }
+    .repo .w { font-family: var(--mono); font-size: 10.5px; color: var(--acc); letter-spacing: 0.14em; text-transform: uppercase; }
+    .repo p { margin: 8px 0 0; font-size: 13.5px; color: var(--fg2); }
+
+    .seam {
+      margin-top: 18px; border: 1px dashed var(--line); border-radius: 11px;
+      background: var(--bg0); padding: 16px 18px;
+    }
+    .seam b { color: var(--acc); font-family: var(--mono); }
+
+    /* ---- figure ---- */
+    figure.shot { margin: 26px 0 0; border: 1px solid var(--line); border-radius: 11px; overflow: hidden; background: var(--bg0); }
+    figure.shot img { display: block; width: 100%; }
+    figure.shot figcaption { font-family: var(--mono); font-size: 11.5px; color: var(--fg2); padding: 9px 12px; border-top: 1px solid var(--line); background: var(--bg2); }
+
+    /* ---- footer ---- */
+    footer { border-top: 1px solid var(--line); padding: 34px 0 60px; color: var(--fg2); font-size: 13.5px; }
+    footer .cols { display: grid; grid-template-columns: 1.3fr 1fr 1fr; gap: 22px; }
+    @media (max-width: 760px) { footer .cols { grid-template-columns: 1fr; } }
+    .pill {
+      font-family: var(--mono); font-size: 10.5px; border: 1px solid var(--line);
+      border-radius: 999px; padding: 2px 9px; color: var(--fg2); display: inline-block;
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; transition-duration: 0.001ms !important; }
+    }
+  </style>
+</head>
+<body data-mode="dark">
+
+  <nav class="top">
+    <div class="wrap">
+      <span class="brand">▸ terminal-delight<span class="blink">_</span></span>
+      <span class="links">
+        <a href="info.html">home</a>
+        <a href="#wear" style="color:var(--acc)">omarchy ★</a>
+        <a href="#agents" class="hide-sm">agents</a>
+        <a href="agents.html" class="hide-sm">live wall ↗</a>
+        <a href="#install">install</a>
+        <a href="https://github.com/parker-brown-family/terminal-delight">GitHub ↗</a>
+      </span>
+    </div>
+  </nav>
+
+  <header class="hero">
+    <div class="wrap">
+      <div class="eyebrow">the omarchy kiosk</div>
+      <h1>The desktop is agentic.<br /><span class="u">So is the terminal.</span></h1>
+      <p class="tag">
+        Omarchy hands every window the same colour vocabulary and the same
+        keyboard. Terminal Delight takes it literally: panes wear the desktop's
+        own themes, one keystroke paints the whole workspace, and the tab bar
+        tells you which agent needs you — from across the room.
+      </p>
+      <p class="sub">
+        Everything below is live. Pick a theme and the page repaints itself
+        through the exact role-to-slot mapping a painted pane uses.
+      </p>
+      <div class="cta">
+        <a class="btn primary" href="#wear">See it wear the desktop</a>
+        <a class="btn" href="agents.html">The agent wall ↗</a>
+        <a class="btn" href="#install">Install the desktop half</a>
+      </div>
+
+      <div class="rail-shell">
+        <div class="rail-head">
+          <span>desktop palettes</span>
+          <span id="railCount"></span>
+          <span class="now" id="railNow"></span>
+        </div>
+        <div class="rail" id="rail" role="group" aria-label="Omarchy themes installed on this machine"></div>
+      </div>
+    </div>
+  </header>
+
+  <!-- ============================================================ WEAR -->
+  <section id="wear">
+    <div class="wrap">
+      <div class="eyebrow">wear the desktop</div>
+      <h2>A pane can match every other window — without giving up the look</h2>
+      <p class="lede">
+        The paint overlay carries two shelves. One holds Terminal Delight's own
+        colour sets. The other holds <b>every Omarchy theme installed on the
+        machine</b> — <code>/usr/share/omarchy/themes</code> plus
+        <code>~/.config/omarchy/themes</code>, user themes shadowing stock ones
+        by name, the same precedence Omarchy itself applies.
+      </p>
+      <p class="lede dim" style="margin-top:14px">
+        A palette replaces the pane's whole colour table and leaves its
+        <b>texture</b> alone — scanlines, bloom, curvature, font all survive. So
+        a terminal can be tokyo-night like everything else on the workspace and
+        still be a CRT.
+      </p>
+
+      <div class="two" style="margin-top:30px">
+        <div>
+          <div class="screen">
+            <div class="bar"><span class="dot"></span><span id="paneTitle">claude · terminal-delight</span></div>
+<pre class="mock"><span class="d">$</span> <span class="p">cargo test</span> palette
+<span class="d">   Compiling</span> terminal-delight <span class="d">v0.2.0</span>
+<span class="g">test</span> the_ansi_table_is_omarchys_own_terminal_template <span class="g">... ok</span>
+<span class="g">test</span> a_user_theme_shadows_a_stock_one_by_name <span class="g">... ok</span>
+<span class="y">warn</span>  <span class="d">2 palettes carry no `cursor` role</span>
+<span class="r">fail</span>  <span class="d">0</span>
+
+<span class="c">roles</span> <span class="d">→</span> <span class="b">background</span> <span class="m">muted</span> <span class="y">accent</span> <span class="g">bright_*</span>
+<span class="d">$</span> <span class="cur">█</span></pre>
+          </div>
+          <p class="dim" style="font-size:13px;margin-top:12px">
+            The same six hues, re-read from whichever theme is selected above.
+          </p>
+        </div>
+        <div>
+          <h3 style="margin-top:0">The mapping is copied, not invented</h3>
+          <p class="dim" style="font-size:14.5px">
+            Omarchy publishes each theme as a <code>colors.toml</code> of named
+            roles, not an ANSI table. Turning roles into the sixteen terminal
+            slots is a decision, and getting it wrong is how a "matching" theme
+            ends up subtly not matching.
+          </p>
+          <p class="dim" style="font-size:14.5px">
+            So the mapping is taken verbatim from Omarchy's own terminal
+            template, <code>default/themed/alacritty.toml.tpl</code>: normal
+            black is <b>background</b>, bright black is <b>muted</b>, the cursor
+            is <b>bright_foreground</b>. A pane painted <code>tokyo-night</code>
+            renders colour for colour the way alacritty, foot and ghostty do
+            under the same theme — and there is a test that fails if it ever
+            stops doing so.
+          </p>
+          <div class="slots" id="slots"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- =========================================================== PAINT -->
+  <section id="paint">
+    <div class="wrap">
+      <div class="eyebrow">terminal paint</div>
+      <h2>One keystroke, the whole workspace</h2>
+      <p class="lede">
+        <code>terminal-delight ctl paint on</code> raises the palette over every
+        pane at once — from the 🎨 bar widget, a Hyprland bind, or any script.
+        It is mouse-optional and reads like Omarchy's own picker: the focused
+        pane is <b>spotlit</b> — a thin scrim and a bright frame on it, a heavy
+        scrim on everything else — so which terminal you are painting is
+        answered from across the room.
+      </p>
+
+      <div class="keys">
+        <div class="keyrow"><span class="k">← ↑ ↓ →</span><span class="t">Bare arrows walk the wall in the direction you press. <kbd>ctrl</kbd> keeps its usual meaning.</span></div>
+        <div class="keyrow"><span class="k">a … w</span><span class="t">A set's <b>first letter</b> paints it. The eleven names are unique and alphabetical, so the letters run in reading order.</span></div>
+        <div class="keyrow"><span class="k">z / shift+z</span><span class="t">Turn between the two shelves — <b>colour sets</b> and <b>desktop palettes</b>.</span></div>
+        <div class="keyrow"><span class="k">d</span><span class="t">Return the pane to the desktop's current theme.</span></div>
+        <div class="keyrow"><span class="k">esc</span><span class="t">Fold the overlay away.</span></div>
+        <div class="keyrow"><span class="k">🎨</span><span class="t">The Omarchy bar widget, from <code>omarchy-td-palette</code>, raises the same overlay.</span></div>
+      </div>
+
+      <div class="seam" style="margin-top:24px">
+        <b>Eleven names, shared with the desktop.</b> The colour-set shelf offers
+        exactly the variants the Omarchy theme pack ships —
+        <code>army badger cherry ember glacier nuclear pineapple retro tide
+        violet wood</code> — rather than a private vocabulary. Five sets took the
+        desktop's name for the same colours when the two lists were reconciled.
+        Renames are display-only: saved themes serialise the variant, not the
+        label, so nothing you already picked moved.
+      </div>
+    </div>
+  </section>
+
+  <!-- ========================================================== AGENTS -->
+  <section id="agents">
+    <div class="wrap">
+      <div class="eyebrow">agents on the bar</div>
+      <h2>Which agent needs you, without opening a tab</h2>
+      <p class="lede">
+        Omarchy is a desktop you drive with agents. A wall of them is only useful
+        if you can read it at a glance — so every tab carries a badge strip:
+        <b>one badge per agent pane that has something to say</b>, in pane order,
+        so a badge keeps its slot as long as the agent holds its state.
+      </p>
+
+      <div class="motherbar" style="margin-top:26px" aria-hidden="true">
+        <span class="tabmock on">TERMINAL DELIGHT
+          <span class="strip">
+            <span class="bdg"><img src="assets/omarchy/robot-only.png" alt="" /><img class="hey" src="assets/omarchy/blinker-only.png" alt="" /></span>
+            <span class="bdg working"><img src="assets/omarchy/robot-only.png" alt="" /></span>
+          </span>
+        </span>
+        <span class="tabmock">SKYTRAC <span class="strip"><span class="bdg emoji">✅</span></span></span>
+        <span class="tabmock">ROOT <span class="strip"><span class="bdg working"><img src="assets/omarchy/robot-only.png" alt="" /></span></span></span>
+        <span class="tabmock">RESEARCH <span class="strip"><span class="bdg emoji">❌</span></span></span>
+        <span class="tabmock">SYSTEM</span>
+      </div>
+      <p class="dim" style="font-size:12.5px;margin-top:9px;font-family:var(--mono)">
+        ↑ the real mascot art, the real timings. An idle agent shows nothing —
+        a quiet roster must not crowd out the tab's own name.
+      </p>
+
+      <div class="states">
+        <div class="state">
+          <span class="bdg"><img src="assets/omarchy/robot-only.png" alt="" /><img class="hey" src="assets/omarchy/blinker-only.png" alt="" /></span>
+          <div>
+            <div class="who">NEEDS INPUT</div>
+            <p>Stopped, waiting on a human. The mascot stands steady while its
+            yellow HEY layer blinks as a hard square wave — deliberately not a
+            throb, because onsets grab the eye and a blink gives you two per
+            cycle.</p>
+          </div>
+        </div>
+        <div class="state">
+          <span class="bdg working"><img src="assets/omarchy/robot-only.png" alt="" /></span>
+          <div>
+            <div class="who">WORKING</div>
+            <p>Mid-turn. The robot alone, breathing on a bounce-eased curve and
+            never falling to zero — gently but firmly, instead of strobing.</p>
+          </div>
+        </div>
+        <div class="state">
+          <span class="bdg emoji">✅</span>
+          <div>
+            <div class="who">DONE</div>
+            <p>Finished clean, and nobody has looked yet. Steady rather than
+            pulsing: the past needs a glance, not a heartbeat. Clears when you
+            visit the pane.</p>
+          </div>
+        </div>
+        <div class="state">
+          <span class="bdg emoji">❌</span>
+          <div>
+            <div class="who">BLOCKED</div>
+            <p>Finished against a wall — an error banner was on screen when it
+            rang. Same steady treatment, different answer.</p>
+          </div>
+        </div>
+      </div>
+
+      <p class="lede dim" style="margin-top:24px">
+        Exactly one glyph per agent, loudest state first: waiting on a human
+        outranks working, which outranks a finish nobody has looked at yet. Let
+        a single pane contribute two badges and the count stops meaning
+        anything.
+      </p>
+    </div>
+  </section>
+
+  <!-- ============================================================ WALL -->
+  <section id="wall">
+    <div class="wrap">
+      <div class="eyebrow">the agent wall</div>
+      <h2>Read the whole fleet, from anywhere</h2>
+      <div class="two" style="margin-top:24px">
+        <div>
+          <p class="lede">
+            The same roster the tab bar summarises is available over MCP, so an
+            agent — or a browser on your phone — can watch the wall.
+            <code>list_panes</code> reports who is running where.
+            <code>pane_events</code> tails an agent's own transcript rather than
+            the rendered screen. <code>grep</code> searches every exposed pane's
+            scrollback at once, which is how you find <i>where</i> an error is
+            across eighteen panes.
+          </p>
+          <p class="lede dim" style="margin-top:14px">
+            <code>get_pane_config</code> and <code>set_pane_config</code> read
+            and change appearance in uniform 0–100 percents. Setting
+            <code>outer</code> re-grades every pane that inherits it — the whole
+            wall in one call.
+          </p>
+          <div class="seam" style="margin-top:18px">
+            <b>Appearance only.</b> Nothing in the control surface can write
+            bytes to a terminal or a PTY. It watches agent panes; it never
+            types into one.
+          </div>
+          <p style="margin-top:18px"><a class="btn primary" href="agents.html">Open the agent wall ↗</a></p>
+        </div>
+        <div>
+          <figure class="shot">
+            <img src="assets/agents-wall.png" alt="The agent wall: every pane as a card, grouped by project, filtered by program and state." loading="lazy" />
+            <figcaption>agents.html — grouped by project, filtered by program and state</figcaption>
+          </figure>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================ SEND -->
+  <section id="send">
+    <div class="wrap">
+      <div class="eyebrow">super + alt + t</div>
+      <h2>Pull any terminal tile into the wall — agents and all</h2>
+      <p class="lede">
+        Focus any terminal tile on the workspace — foot, Alacritty, kitty,
+        Ghostty, <code>org.omarchy.*</code> — and press the bind. The session
+        <b>migrates</b> into a Terminal Delight pane: idle shells re-open at
+        their working directory, <code>claude</code> and <code>codex</code>
+        agents <b>resume by session id</b>, tmux attaches re-attach.
+      </p>
+      <p class="lede dim" style="margin-top:14px">
+        Anything else in the foreground — vim, htop — is refused, and nothing is
+        closed. With no adoptable window running, a fresh one is seeded to
+        receive the session. <code>td-send --dry-run</code> prints the plan
+        without touching anything.
+      </p>
+
+      <div class="grid">
+        <div class="card">
+          <div class="ic">⇥</div>
+          <h3>It moves, it doesn't copy</h3>
+          <p>The source window is closed only after the destination pane has the
+          session. A refusal leaves your terminal exactly as it was.</p>
+        </div>
+        <div class="card">
+          <div class="ic">↺</div>
+          <h3>Agents survive the trip</h3>
+          <p>An agent is resumed by its session id, not restarted — the
+          conversation comes with it.</p>
+        </div>
+        <div class="card">
+          <div class="ic">⌨</div>
+          <h3>Omarchy's own bind helper</h3>
+          <p>The installer writes <code>o.bind(…)</code> into
+          <code>~/.config/hypr/bindings.lua</code>. On plain Hyprland, bind it
+          yourself — one line.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- =========================================================== NOTIFY -->
+  <section id="notify">
+    <div class="wrap">
+      <div class="eyebrow">notifications, omarchy-shaped</div>
+      <h2>A finish you weren't looking at, and one click back to it</h2>
+      <div class="two" style="margin-top:22px">
+        <div>
+          <p class="lede">
+            When an agent pane rings while you are <b>not</b> looking at it,
+            Terminal Delight posts a desktop notification through
+            <code>notify-send</code> — which Omarchy's Quickshell daemon renders,
+            actions and all. The title is <code>tab → pane</code>. The body is a
+            recap of the agent's <b>last words</b>.
+          </p>
+          <p class="lede dim" style="margin-top:14px">
+            Clicking it zips you there: the window is focused over the Hyprland
+            socket, the tab activates, the pane takes focus. Both the ≥0.56 Lua
+            dispatcher and the legacy string form are spoken.
+          </p>
+        </div>
+        <div>
+          <div class="screen">
+            <div class="bar"><span class="dot"></span>quickshell · notification</div>
+            <div style="padding:16px 18px;font-family:var(--mono);font-size:12.5px;line-height:1.6">
+              <div style="color:var(--fgb);font-weight:700">TERMINAL DELIGHT → claude</div>
+              <div style="color:var(--fg2);margin-top:6px">Landed — per-agent badges plus the blinker fix; relaunch your windows to see it. The false COMPLETE came from the deferred focus in <span style="color:var(--acc)">activate_tab</span>, not the thinking scan…</div>
+              <div style="color:var(--acc);margin-top:10px;font-size:11px;letter-spacing:0.1em">▸ CLICK TO JUMP</div>
+            </div>
+          </div>
+          <p class="dim" style="font-size:12.5px;margin-top:10px">
+            The recap is read from the agent's own transcript — the grid under a
+            status line is a poor summary of a finished turn.
+          </p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================ REPOS -->
+  <section id="repos">
+    <div class="wrap">
+      <div class="eyebrow">three repos, one seam</div>
+      <h2>The desktop half is its own project</h2>
+      <p class="lede">
+        The terminal does not need to know about the desktop, and the desktop
+        does not need to know about the terminal. What they share is a colour
+        table and a window address.
+      </p>
+
+      <div class="repos">
+        <div class="repo">
+          <div class="w">the terminal</div>
+          <div class="n">terminal-delight</div>
+          <p>GPU-native, Rust, tiling panes, per-pane grading. Reads Omarchy's
+          themes; never writes them.</p>
+        </div>
+        <div class="repo">
+          <div class="w">the desktop half</div>
+          <div class="n">omarchy-terminal-delight-theme</div>
+          <p>The Omarchy theme, the eleven-variant set, the compositor curve,
+          and <code>td-tint</code>.</p>
+        </div>
+        <div class="repo">
+          <div class="w">the bar widget</div>
+          <div class="n">omarchy-td-palette</div>
+          <p><i>Terminal Paint</i> — the 🎨 widget that raises the picker over
+          every terminal tile on the workspace.</p>
+        </div>
+      </div>
+
+      <div class="seam">
+        <b>td-tint is the seam.</b> It writes a variant's OSC palette down
+        another terminal's tty and puts the matching gradient on its window
+        border. That is how foot, Alacritty, kitty and Ghostty get the same
+        one-click identity a Terminal Delight pane has — and why the palette
+        widget can paint a whole workspace without any of those terminals
+        knowing this project exists.
+      </div>
+    </div>
+  </section>
+
+  <!-- ========================================================== INSTALL -->
+  <section id="install">
+    <div class="wrap">
+      <div class="eyebrow">install</div>
+      <h2>The desktop half, in three commands</h2>
+      <p class="lede dim">
+        Runtime dependencies are checked by the scripts, which fail with a
+        message rather than half-installing: <b>Hyprland</b>
+        (<code>hyprctl</code>), <b>jq</b>, and optionally
+        <code>omarchy-notification-send</code> — notifications are skipped
+        without it.
+      </p>
+
+      <h3 style="margin-top:26px;font-size:15px">Bind SUPER+ALT+T and install <code>td-send</code></h3>
+<pre class="code">scripts/install-send-hotkey.sh</pre>
+
+      <h3 style="margin-top:22px;font-size:15px">Preview an adoption without touching anything</h3>
+<pre class="code">td-send --dry-run</pre>
+
+      <h3 style="margin-top:22px;font-size:15px">Raise the paint overlay over every pane</h3>
+<pre class="code">terminal-delight ctl paint on</pre>
+
+      <p class="dim" style="font-size:13.5px;margin-top:20px">
+        Reverting is symmetric — <code>scripts/install-send-hotkey.sh
+        --uninstall</code> removes the binding. On plain, non-Omarchy Hyprland,
+        bind it by hand instead:
+      </p>
+<pre class="code">bind = SUPER ALT, T, exec, td-send</pre>
+    </div>
+  </section>
+
+  <footer>
+    <div class="wrap cols">
+      <div>
+        <div class="brand">▸ terminal-delight<span class="blink">_</span></div>
+        <div style="margin-top:8px">MIT source &amp; binary · Linux only</div>
+        <div style="margin-top:10px">
+          <span class="pill">omarchy</span> <span class="pill">hyprland</span>
+          <span class="pill">rust</span> <span class="pill">gpui</span>
+        </div>
+      </div>
+      <div>
+        <div><a href="info.html">Home</a></div>
+        <div><a href="agents.html">The agent wall</a></div>
+        <div><a href="global.html">In every language</a></div>
+        <div><a href="tv.html">On a 1950s television</a></div>
+        <div><a href="start-crawl.html">The text crawl cabinet</a></div>
+      </div>
+      <div>
+        <div><a href="https://github.com/parker-brown-family/terminal-delight">terminal-delight ↗</a></div>
+        <div><a href="https://github.com/parker-brown-family/omarchy-terminal-delight-theme">omarchy-terminal-delight-theme ↗</a></div>
+        <div><a href="https://github.com/parker-brown-family/omarchy-td-palette">omarchy-td-palette ↗</a></div>
+        <div><a href="https://github.com/parker-brown-family/terminal-delight/blob/main/docs/mcp.md">MCP control surface</a></div>
+      </div>
+    </div>
+  </footer>
+
+<script>
+/* --------------------------------------------------------------------------
+   The palettes below were read off a stock Omarchy box at build time, from the
+   same two roots and with the same shadowing rule TD's palette.rs applies:
+   ~/.config/omarchy/themes wins over /usr/share/omarchy/themes by name.
+   Selecting one rewrites the page's role variables — which is exactly what
+   painting a pane does to its colour table, and why the texture never moves.
+   -------------------------------------------------------------------------- */
+const PALETTES = [
+  {"name":"catppuccin","mode":"dark","bg":"#1e1e2e","bg2":"#313244","bg0":"#101019","fg":"#cdd6f4","fg2":"#6c7086","fgb":"#cdd6f4","acc":"#89b4fa","mut":"#585b70","sel":"#45475a","red":"#f38ba8","grn":"#a6e3a1","yel":"#f9e2af","blu":"#89b4fa","mag":"#f5c2e7","cyn":"#94e2d5"},
+  {"name":"catppuccin-latte","mode":"light","bg":"#eff1f5","bg2":"#dce0e8","bg0":"#d7d8dc","fg":"#4c4f69","fg2":"#9ca0b0","fgb":"#4c4f69","acc":"#1e66f5","mut":"#acb0be","sel":"#ccd0da","red":"#d20f39","grn":"#40a02b","yel":"#df8e1d","blu":"#1e66f5","mag":"#ea76cb","cyn":"#179299"},
+  {"name":"ethereal","mode":"dark","bg":"#060B1E","bg2":"#131a3a","bg0":"#030610","fg":"#ffcead","fg2":"#6d7db6","fgb":"#ffcead","acc":"#7d82d9","mut":"#6d7db6","sel":"#252e56","red":"#ED5B5A","grn":"#92a593","yel":"#E9BB4F","blu":"#7d82d9","mag":"#c89dc1","cyn":"#a3bfd1"},
+  {"name":"everforest","mode":"dark","bg":"#2d353b","bg2":"#343f44","bg0":"#181d20","fg":"#d3c6aa","fg2":"#4f585e","fgb":"#d3c6aa","acc":"#7fbbb3","mut":"#475258","sel":"#3d484d","red":"#e67e80","grn":"#a7c080","yel":"#dbbc7f","blu":"#7fbbb3","mag":"#d699b6","cyn":"#83c092"},
+  {"name":"flexoki-light","mode":"light","bg":"#FFFCF0","bg2":"#E6E4D9","bg0":"#e5e2d8","fg":"#100F0F","fg2":"#878580","fgb":"#100F0F","acc":"#205EA6","mut":"#B7B5AC","sel":"#CECDC3","red":"#D14D41","grn":"#879A39","yel":"#D0A215","blu":"#205EA6","mag":"#CE5D97","cyn":"#3AA99F"},
+  {"name":"gruvbox","mode":"dark","bg":"#282828","bg2":"#3c3836","bg0":"#161616","fg":"#d4be98","fg2":"#7c6f64","fgb":"#d4be98","acc":"#7daea3","mut":"#665c54","sel":"#504945","red":"#ea6962","grn":"#a9b665","yel":"#d8a657","blu":"#7daea3","mag":"#d3869b","cyn":"#89b482"},
+  {"name":"hackerman","mode":"dark","bg":"#0B0C16","bg2":"#151828","bg0":"#06060c","fg":"#ddf7ff","fg2":"#6a6e95","fgb":"#ddf7ff","acc":"#82FB9C","mut":"#2d3450","sel":"#1f253a","red":"#50f872","grn":"#4fe88f","yel":"#50f7d4","blu":"#829dd4","mag":"#86a7df","cyn":"#7cf8f7"},
+  {"name":"kanagawa","mode":"dark","bg":"#1f1f28","bg2":"#223249","bg0":"#111116","fg":"#dcd7ba","fg2":"#727169","fgb":"#dcd7ba","acc":"#dcd7ba","mut":"#54546D","sel":"#363646","red":"#c34043","grn":"#76946a","yel":"#c0a36e","blu":"#7e9cd8","mag":"#957fb8","cyn":"#6a9589"},
+  {"name":"last-horizon","mode":"dark","bg":"#0c0b0c","bg2":"#0c0b0c","bg0":"#060606","fg":"#FAFCFB","fg2":"#584e51","fgb":"#e2dddc","acc":"#b59790","mut":"#584e51","sel":"#584e51","red":"#c38b7b","grn":"#87a9b0","yel":"#6B5E73","blu":"#b59790","mag":"#c4d8e2","cyn":"#a5a0b6"},
+  {"name":"lumon","mode":"dark","bg":"#16242d","bg2":"#1b2d40","bg0":"#0b1216","fg":"#d6e2ee","fg2":"#4d86b0","fgb":"#f2fcff","acc":"#8bc9eb","mut":"#304860","sel":"#243d56","red":"#4d86b0","grn":"#5e95bc","yel":"#6fa4c9","blu":"#6fb8e3","mag":"#8bc9eb","cyn":"#b4e4f6"},
+  {"name":"lupine","mode":"light","bg":"#fafafa","bg2":"#f5f5f5","bg0":"#dedede","fg":"#212121","fg2":"#757575","fgb":"#000000","acc":"#3264eb","mut":"#9e9e9e","sel":"#d0d0d0","red":"#c900c4","grn":"#4a2fd0","yel":"#026fde","blu":"#3264eb","mag":"#8a4ad7","cyn":"#0c67de"},
+  {"name":"matte-black","mode":"dark","bg":"#121212","bg2":"#1e1e1e","bg0":"#090909","fg":"#bebebe","fg2":"#555555","fgb":"#bebebe","acc":"#e68e0d","mut":"#333333","sel":"#2a2a2a","red":"#D35F5F","grn":"#FFC107","yel":"#b91c1c","blu":"#e68e0d","mag":"#D35F5F","cyn":"#bebebe"},
+  {"name":"miasma","mode":"dark","bg":"#222222","bg2":"#2c2c2c","bg0":"#121212","fg":"#c2c2b0","fg2":"#555555","fgb":"#c2c2b0","acc":"#78824b","mut":"#666666","sel":"#383838","red":"#685742","grn":"#5f875f","yel":"#b36d43","blu":"#78824b","mag":"#bb7744","cyn":"#c9a554"},
+  {"name":"nord","mode":"dark","bg":"#2e3440","bg2":"#3b4252","bg0":"#191c23","fg":"#d8dee9","fg2":"#667080","fgb":"#d8dee9","acc":"#81a1c1","mut":"#4c566a","sel":"#434c5e","red":"#bf616a","grn":"#a3be8c","yel":"#ebcb8b","blu":"#81a1c1","mag":"#b48ead","cyn":"#88c0d0"},
+  {"name":"osaka-jade","mode":"dark","bg":"#111c18","bg2":"#23372B","bg0":"#090f0d","fg":"#C1C497","fg2":"#81B8A8","fgb":"#F7E8B2","acc":"#509475","mut":"#53685B","sel":"#32473B","red":"#FF5345","grn":"#549e6a","yel":"#459451","blu":"#509475","mag":"#D2689C","cyn":"#2DD5B7"},
+  {"name":"retro-82","mode":"dark","bg":"#05182e","bg2":"#0a2540","bg0":"#020c17","fg":"#f6dcac","fg2":"#3f8f8a","fgb":"#f6dcac","acc":"#faa968","mut":"#2a6b78","sel":"#134e5a","red":"#f85525","grn":"#028391","yel":"#e97b3c","blu":"#3f8f8a","mag":"#3f8f8a","cyn":"#8cbfb8"},
+  {"name":"ristretto","mode":"dark","bg":"#2c2525","bg2":"#3d2f2a","bg0":"#181414","fg":"#e6d9db","fg2":"#72696a","fgb":"#e6d9db","acc":"#f38d70","mut":"#72696a","sel":"#403e41","red":"#fd6883","grn":"#adda78","yel":"#f9cc6c","blu":"#f38d70","mag":"#a8a9eb","cyn":"#85dacc"},
+  {"name":"rose-pine","mode":"light","bg":"#faf4ed","bg2":"#f2e9e1","bg0":"#e1dbd5","fg":"#575279","fg2":"#9893a5","fgb":"#575279","acc":"#56949f","mut":"#cecacd","sel":"#dfdad9","red":"#b4637a","grn":"#286983","yel":"#ea9d34","blu":"#56949f","mag":"#907aa9","cyn":"#d7827e"},
+  {"name":"solitude","mode":"dark","bg":"#101315","bg2":"#101315","bg0":"#080a0b","fg":"#cacccc","fg2":"#4b4e55","fgb":"#a5aeb4","acc":"#798186","mut":"#4b4e55","sel":"#343d41","red":"#565d60","grn":"#9fa5a9","yel":"#d9dbdc","blu":"#798186","mag":"#aeaeae","cyn":"#707070"},
+  {"name":"terminal-delight","mode":"dark","bg":"#030708","bg2":"#0C1823","bg0":"#010304","fg":"#B5BEAC","fg2":"#5A6061","fgb":"#DFE2E3","acc":"#67F454","mut":"#282E32","sel":"#14262C","red":"#D6483C","grn":"#44B064","yel":"#C89944","blu":"#45A4AE","mag":"#916D86","cyn":"#45A4AE"},
+  {"name":"tokyo-night","mode":"dark","bg":"#1a1b26","bg2":"#24283b","bg0":"#0e0e14","fg":"#a9b1d6","fg2":"#565f89","fgb":"#c0caf5","acc":"#7aa2f7","mut":"#414868","sel":"#292e42","red":"#f7768e","grn":"#9ece6a","yel":"#e0af68","blu":"#7aa2f7","mag":"#ad8ee6","cyn":"#449dab"},
+  {"name":"vantablack","mode":"dark","bg":"#000000","bg2":"#1a1a1a","bg0":"#070707","fg":"#ffffff","fg2":"#505050","fgb":"#ffffff","acc":"#8d8d8d","mut":"#7a7a7a","sel":"#1a1a1a","red":"#a4a4a4","grn":"#b6b6b6","yel":"#cecece","blu":"#8d8d8d","mag":"#9b9b9b","cyn":"#b0b0b0"},
+  {"name":"white","mode":"light","bg":"#ffffff","bg2":"#c0c0c0","bg0":"#e8e8e8","fg":"#000000","fg2":"#c0c0c0","fgb":"#000000","acc":"#6e6e6e","mut":"#808080","sel":"#c0c0c0","red":"#2a2a2a","grn":"#3a3a3a","yel":"#4a4a4a","blu":"#1a1a1a","mag":"#2e2e2e","cyn":"#3e3e3e"}
+]
+;
+
+const ROLE_SLOTS = [
+  ['bg',  'black',   'background'],
+  ['red', 'red',     'red'],
+  ['grn', 'green',   'green'],
+  ['yel', 'yellow',  'yellow'],
+  ['blu', 'blue',    'blue'],
+  ['mag', 'magenta', 'magenta'],
+  ['cyn', 'cyan',    'cyan'],
+  ['fg',  'white',   'foreground'],
+  ['mut', 'br black','muted'],
+  ['fgb', 'cursor',  'bright_fg'],
+];
+
+const root  = document.documentElement;
+const rail  = document.getElementById('rail');
+const now   = document.getElementById('railNow');
+const count = document.getElementById('railCount');
+const slots = document.getElementById('slots');
+const paneTitle = document.getElementById('paneTitle');
+
+const VARS = ['bg','bg2','bg0','fg','fg2','fgb','acc','mut','sel','red','grn','yel','blu','mag','cyn'];
+
+function apply(p) {
+  for (const v of VARS) root.style.setProperty('--' + v, p[v]);
+  root.setAttribute('data-theme', p.name);
+  document.body.setAttribute('data-mode', p.mode === 'light' ? 'light' : 'dark');
+  now.textContent = '▸ ' + p.name;
+  paneTitle.textContent = 'claude · painted ' + p.name;
+
+  for (const b of rail.querySelectorAll('.chip'))
+    b.setAttribute('aria-pressed', String(b.dataset.name === p.name));
+
+  slots.innerHTML = '';
+  for (const [key, slot, role] of ROLE_SLOTS) {
+    const el = document.createElement('div');
+    el.className = 'slot';
+    el.innerHTML =
+      '<div class="sw" style="background:' + p[key] + '"></div>' +
+      '<div class="nm"></div><div class="rl"></div>';
+    el.querySelector('.nm').textContent = slot;
+    el.querySelector('.rl').textContent = role;
+    slots.appendChild(el);
+  }
+
+  try { localStorage.setItem('td-omarchy-theme', p.name); } catch (e) { /* private window */ }
+}
+
+function build() {
+  count.textContent = PALETTES.length + ' installed';
+  for (const p of PALETTES) {
+    const b = document.createElement('button');
+    b.className = 'chip';
+    b.type = 'button';
+    b.dataset.name = p.name;
+    b.setAttribute('aria-pressed', 'false');
+    b.title = p.name + ' · ' + p.mode;
+    b.innerHTML = '<span class="sw"></span><span class="nm"></span>' +
+                  (p.mode === 'light' ? '<span class="lt">LIGHT</span>' : '');
+    const sw = b.querySelector('.sw');
+    sw.style.setProperty('--c1', p.acc);
+    sw.style.setProperty('--c2', p.grn);
+    sw.style.setProperty('--c3', p.mag);
+    sw.style.setProperty('--c4', p.yel);
+    b.querySelector('.nm').textContent = p.name;
+    b.addEventListener('click', () => apply(p));
+    rail.appendChild(b);
+  }
+
+  // ?t=<theme> wins over the remembered choice, so a link can open the kiosk
+  // already wearing a specific desktop theme.
+  let want = 'terminal-delight';
+  try { want = localStorage.getItem('td-omarchy-theme') || want; } catch (e) { /* ignore */ }
+  const asked = new URLSearchParams(location.search).get('t');
+  if (asked && PALETTES.some(p => p.name === asked)) want = asked;
+  apply(PALETTES.find(p => p.name === want) || PALETTES[0]);
+}
+
+if (PALETTES.length) build();
+</script>
+</body>
+</html>
