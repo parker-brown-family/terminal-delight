@@ -33,6 +33,17 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
     itself for the light palettes; `prefers-reduced-motion` parks the backdrop
     and never arms the loop.
 
+- **Super+Ctrl-click reveals a path in the file manager**, where Shift- or
+  Ctrl-click opens it. A pane full of printed paths — an agent's Links table,
+  a build log — provokes two different questions, and only one of them was
+  answerable by a click. The file manager comes up with the item *selected*
+  (`org.freedesktop.FileManager1.ShowItems`, which Nautilus, Dolphin, Nemo,
+  Thunar and PCManFM all export); a desktop exporting no such manager gets the
+  containing directory opened instead. Works on a bare path and on a `file://`
+  URI, percent-escapes and all, so a wrapped Links-table row reveals from the
+  same click that opens it. The right-click menu carries the same action as
+  **Reveal in folder**, shown only when the link names something on this disk.
+
 - **Paint with the desktop's own palettes.** The paint overlay now carries TWO
   shelves, turned with `z` (`shift+z` back) or by clicking a pill: the existing
   COLOUR SETS, and DESKTOP PALETTES — every Omarchy theme installed on the

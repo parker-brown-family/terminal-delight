@@ -13038,7 +13038,10 @@ impl Render for Workspace {
                 ))
                 .child(section(
                     s.s_links,
-                    vec![row(s.k_shift_ctrl_click, s.open_link)],
+                    vec![
+                        row(s.k_shift_ctrl_click, s.open_link),
+                        row(s.k_super_ctrl_click, s.reveal_link),
+                    ],
                 ));
             let col_b = div()
                 .flex()
