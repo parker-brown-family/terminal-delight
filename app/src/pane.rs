@@ -1954,6 +1954,13 @@ impl gpui::EventEmitter<OpenFocusRead> for TerminalView {}
 pub struct CloseFocusRead;
 impl gpui::EventEmitter<CloseFocusRead> for TerminalView {}
 
+/// An agent in this pane just finished a real turn (the bell edge, both the
+/// thinking-scan and a BEL from the app itself). The workspace turns it into a
+/// system notification when the pane isn't the one being watched — the pane
+/// can't decide that alone, and the tab/window naming lives up there too.
+pub struct AgentDone;
+impl gpui::EventEmitter<AgentDone> for TerminalView {}
+
 /// Where a paging key asks the FOCUS reader's view to go. `Top`/`Bottom` are the
 /// ends of the whole document (ctrl+Home / ctrl+End); the pages overlap slightly
 /// so context carries across a press.

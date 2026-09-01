@@ -1,193 +1,88 @@
-//! DEPRECATED — the agent-finished bell is unplugged (see `ENABLED`). The module
-//! is retained, compiled and unit-tested, so re-enabling is a one-line change;
-//! nothing reaches the UI or spawns audio while `ENABLED` is false.
+//! The agent-finished ping: fixed sound, zero configuration.
 //!
-//! Per-pane "agent finished" bell: pick a sound, trim a clip with two scrubbers,
-//! optionally loop, and play it through `ffplay` (no in-process audio deps — keeps
-//! the binary lean and works wherever ffmpeg is installed). Stopping is a hard kill,
-//! so the always-visible bell-off / SNOOZE controls are instant.
+//! v1 shipped a per-pane config tray — sound picker, dual-pip trim scrubber,
+//! loop, volume, import dialog — and the overhead buried the feature until it
+//! was killed outright. The point was never the configuration; it was knowing
+//! when an agent finishes. So v2 is the opposite shape: the alert clip is
+//! EMBEDDED in the binary (no sounds dir, no seeding, no picker), plays once at
+//! a fixed volume through the first audio player found (`ffplay`, then
+//! `pw-play`), and nothing about it is configurable. The visible surfaces are
+//! the tab 🔔 badge, the header "● done" status, and the system notification —
+//! all driven by the pane's `bell` flag, acknowledged by focusing the pane.
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 
-/// Master kill switch for the whole notification bell: the header 🔔, its config
-/// tray, the ⋯ overflow entry, the tab badge, sound seeding and every ffplay
-/// spawn. Flip to `true` to restore the feature exactly as it was.
-pub const ENABLED: bool = false;
+/// The bundled ping (2KB mp3, CC0). Compiled in so a deployed bare binary —
+/// there is no assets dir next to `~/.local/lib/terminal-delight/td-<sha>` —
+/// still rings without any install step.
+const PING: &[u8] = include_bytes!("../assets/sounds/alert.mp3");
 
-#[allow(dead_code)]
-const AUDIO_EXTS: &[&str] = &["mp3", "ogg", "oga", "wav", "flac", "m4a", "opus", "aac"];
-
-/// One pane's bell settings. `file = None` falls back to the default alert.
-#[derive(Clone, Debug, PartialEq)]
-pub struct BellConfig {
-    pub file: Option<PathBuf>,
-    /// Trim window in seconds (the two scrubbers). `end <= start` ⇒ play to the end.
-    pub start: f32,
-    pub end: f32,
-    pub looping: bool,
-    pub volume: f32, // 0.0..=1.5
-    /// Master per-pane switch — the always-visible bell toggles this.
-    pub enabled: bool,
-}
-impl Default for BellConfig {
-    fn default() -> Self {
-        Self {
-            file: None,
-            start: 0.0,
-            end: 0.0,
-            looping: false,
-            volume: 0.7,
-            enabled: ENABLED,
-        }
-    }
+/// Where the embedded ping is materialised for the player. Runtime dir (tmpfs,
+/// per-user) when available, else the tmp dir. Written once per boot.
+pub fn ping_path() -> PathBuf {
+    let base = std::env::var_os("XDG_RUNTIME_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir);
+    base.join("terminal-delight-ping.mp3")
 }
 
-/// `$XDG_CONFIG_HOME/terminal-delight/sounds` (or `~/.config/...`). User drops
-/// their own mp3s here; the seeded defaults live here too.
-pub fn sounds_dir() -> PathBuf {
-    crate::instance::config_dir().join("sounds")
+/// Ensure the ping file exists on disk (idempotent; size-checked so a truncated
+/// write from a crashed run heals). Returns the playable path.
+fn ensure_ping() -> PathBuf {
+    let p = ping_path();
+    let ok = std::fs::metadata(&p).map(|m| m.len() == PING.len() as u64);
+    if !matches!(ok, Ok(true)) {
+        let _ = std::fs::write(&p, PING);
+    }
+    p
 }
 
-/// Audio files in the sounds dir, sorted. Creates the dir if missing.
-pub fn list_sounds() -> Vec<PathBuf> {
-    let dir = sounds_dir();
-    let _ = std::fs::create_dir_all(&dir);
-    let mut v: Vec<PathBuf> = std::fs::read_dir(&dir)
-        .into_iter()
-        .flatten()
-        .flatten()
-        .map(|e| e.path())
-        .filter(|p| {
-            p.extension()
-                .and_then(|e| e.to_str())
-                .map(|e| AUDIO_EXTS.contains(&e.to_ascii_lowercase().as_str()))
-                .unwrap_or(false)
-        })
-        .collect();
-    v.sort();
-    v
-}
-
-/// On first run, copy the bundled PD/CC0 default clips into the user sounds dir
-/// if it's empty — so the defaults are present without a manual install step.
-/// Best-effort: tries `assets/sounds` next to the binary and `$TD_SOUNDS`.
-pub fn ensure_seeded() {
-    if !ENABLED {
-        return; // deprecated: never litter ~/.config/terminal-delight/sounds
-    }
-    let dir = sounds_dir();
-    let _ = std::fs::create_dir_all(&dir);
-    if !list_sounds().is_empty() {
-        return;
-    }
-    let mut candidates: Vec<PathBuf> = Vec::new();
-    if let Ok(exe) = std::env::current_exe() {
-        for a in exe.ancestors() {
-            candidates.push(a.join("assets/sounds"));
-        }
-    }
-    if let Some(env) = std::env::var_os("TD_SOUNDS") {
-        candidates.push(PathBuf::from(env));
-    }
-    for src in candidates {
-        if !src.is_dir() {
-            continue;
-        }
-        for entry in std::fs::read_dir(&src).into_iter().flatten().flatten() {
-            let p = entry.path();
-            let is_audio = p
-                .extension()
-                .and_then(|e| e.to_str())
-                .map(|e| AUDIO_EXTS.contains(&e.to_ascii_lowercase().as_str()))
-                .unwrap_or(false);
-            if is_audio {
-                if let Some(name) = p.file_name() {
-                    let _ = std::fs::copy(&p, dir.join(name));
-                }
-            }
-        }
-        if !list_sounds().is_empty() {
-            return;
-        }
-    }
-}
-
-pub fn default_alert() -> Option<PathBuf> {
-    let p = sounds_dir().join("alert.mp3");
-    if p.exists() {
-        Some(p)
+/// The player command for the ping: program + args, first available wins.
+/// Pure over the probe result so the mapping is unit-testable.
+pub fn player_cmd(have_ffplay: bool, file: &Path) -> Option<(&'static str, Vec<String>)> {
+    let f = file.to_string_lossy().into_owned();
+    if have_ffplay {
+        // -volume 70 ≈ the fixed volume the old default used
+        Some((
+            "ffplay",
+            vec![
+                "-nodisp".into(),
+                "-autoexit".into(),
+                "-loglevel".into(),
+                "quiet".into(),
+                "-volume".into(),
+                "70".into(),
+                f,
+            ],
+        ))
     } else {
-        list_sounds().into_iter().next()
+        Some(("pw-play", vec![f]))
     }
 }
 
-pub fn display_name(path: &Path) -> String {
-    path.file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("sound")
-        .to_string()
+fn have(prog: &str) -> bool {
+    std::env::var_os("PATH")
+        .map(|p| std::env::split_paths(&p).any(|d| d.join(prog).is_file()))
+        .unwrap_or(false)
 }
 
-/// Clip length in seconds via ffprobe (for the scrubber track). None if unknown.
-pub fn duration(path: &Path) -> Option<f32> {
-    let out = Command::new("ffprobe")
-        .args([
-            "-v",
-            "quiet",
-            "-show_entries",
-            "format=duration",
-            "-of",
-            "csv=p=0",
-        ])
-        .arg(path)
-        .output()
-        .ok()?;
-    String::from_utf8_lossy(&out.stdout).trim().parse().ok()
-}
-
-/// The ffplay arguments (after the program name) for a config + resolved file.
-/// Pure so the trim/loop/volume mapping is unit-testable.
-pub fn ffplay_args(cfg: &BellConfig, file: &Path) -> Vec<String> {
-    let mut a = vec![
-        "-nodisp".into(),
-        "-autoexit".into(),
-        "-loglevel".into(),
-        "quiet".into(),
-        "-volume".into(),
-        ((cfg.volume.clamp(0.0, 1.5) * 100.0).round() as i32).to_string(),
-    ];
-    if cfg.start > 0.01 {
-        a.push("-ss".into());
-        a.push(format!("{:.3}", cfg.start));
-    }
-    if cfg.end > cfg.start + 0.05 {
-        a.push("-t".into());
-        a.push(format!("{:.3}", cfg.end - cfg.start));
-    }
-    if cfg.looping {
-        a.push("-loop".into());
-        a.push("0".into());
-    }
-    a.push(file.to_string_lossy().into_owned());
-    a
-}
-
-/// Owns the live ffplay child for one pane. Dropping (or `stop`) hard-kills it.
+/// Owns the live player child for one pane. Dropping (or `stop`) hard-kills it.
 #[derive(Default)]
 pub struct BellPlayer {
     child: Option<Child>,
 }
 impl BellPlayer {
-    pub fn play(&mut self, cfg: &BellConfig) {
+    /// Play the ping once. A ring that arrives while the last one is still
+    /// sounding restarts it (stop-then-spawn), so overlapping agents don't
+    /// stack audio.
+    pub fn play(&mut self) {
         self.stop();
-        if !ENABLED {
-            return; // deprecated: no audio is ever spawned
-        }
-        let Some(file) = cfg.file.clone().or_else(default_alert) else {
+        let file = ensure_ping();
+        let Some((prog, args)) = player_cmd(have("ffplay"), &file) else {
             return;
         };
-        let mut cmd = Command::new("ffplay");
-        cmd.args(ffplay_args(cfg, &file))
+        let mut cmd = Command::new(prog);
+        cmd.args(args)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null());
@@ -207,9 +102,9 @@ impl BellPlayer {
             let _ = c.wait();
         }
     }
-    /// Reap a clip that finished on its own (e.g. `-autoexit` after the trim),
-    /// so a long session doesn't accumulate `<defunct>` ffplay zombies. Cheap;
-    /// call it from the per-pane tick.
+    /// Reap a clip that finished on its own (`-autoexit`), so a long session
+    /// doesn't accumulate `<defunct>` children. Cheap; called from the per-pane
+    /// tick.
     pub fn reap(&mut self) {
         if let Some(c) = self.child.as_mut() {
             if matches!(c.try_wait(), Ok(Some(_))) {
@@ -227,28 +122,28 @@ impl Drop for BellPlayer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The ping ships inside the binary: non-trivial, and actually an MPEG
+    /// stream (ID3 tag or a raw frame-sync header), so a bad asset path or a
+    /// truncated commit fails HERE and not silently at ring time.
     #[test]
-    fn ffplay_args_map_trim_loop_volume() {
-        let f = Path::new("/s/x.mp3");
-        // default: no trim, no loop, volume 70, file last
-        let a = ffplay_args(&BellConfig::default(), f);
-        assert!(a.contains(&"70".to_string()));
-        assert!(!a.iter().any(|s| s == "-loop"));
-        assert!(!a.iter().any(|s| s == "-ss"));
-        assert_eq!(a.last().unwrap(), "/s/x.mp3");
-        // trimmed + looping
-        let cfg = BellConfig {
-            start: 12.0,
-            end: 22.0,
-            looping: true,
-            volume: 1.0,
-            ..Default::default()
-        };
-        let a = ffplay_args(&cfg, f);
-        let s = a.join(" ");
-        assert!(s.contains("-ss 12.000"));
-        assert!(s.contains("-t 10.000")); // end-start
-        assert!(s.contains("-loop 0"));
-        assert!(s.contains("100")); // volume
+    fn the_embedded_ping_is_a_real_clip() {
+        assert!(PING.len() > 500, "embedded ping suspiciously small");
+        let id3 = PING.starts_with(b"ID3");
+        let sync = PING.len() >= 2 && PING[0] == 0xFF && (PING[1] & 0xE0) == 0xE0;
+        assert!(id3 || sync, "embedded ping is not an mp3 stream");
+    }
+
+    #[test]
+    fn player_mapping_prefers_ffplay_and_falls_back() {
+        let f = Path::new("/run/x.mp3");
+        let (prog, args) = player_cmd(true, f).unwrap();
+        assert_eq!(prog, "ffplay");
+        assert!(args.contains(&"-autoexit".to_string()));
+        assert!(!args.iter().any(|a| a == "-loop"), "the ping never loops");
+        assert_eq!(args.last().unwrap(), "/run/x.mp3");
+        let (prog, args) = player_cmd(false, f).unwrap();
+        assert_eq!(prog, "pw-play");
+        assert_eq!(args, vec!["/run/x.mp3".to_string()]);
     }
 }
