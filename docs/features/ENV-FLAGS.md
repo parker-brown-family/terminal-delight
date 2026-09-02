@@ -29,6 +29,7 @@ Every environment flag Terminal Delight reads, grouped by purpose. Demo flags st
 | `TD_LATENCY=1` | Input→echo→parse latency probe (p50/p99 + throughput) |
 | `TD_HITDEBUG=1` | Visual overlay for barrel-warp hit-testing |
 | `TD_KEYDEBUG` / `TD_FXDEBUG` | Trace key dispatch / FX clock |
+| `TD_USAGE_LIVE` | Open the </> usage face on the machine's REAL usage records (dev only — never for capture) |
 
 ## Demo / capture (fictional data only)
 
@@ -42,6 +43,7 @@ Every environment flag Terminal Delight reads, grouped by purpose. Demo flags st
 | `TD_DEMO_SEED` | Deterministic demo PRNG seed |
 | `TD_GRAVEYARD_DEMO` | Fictional dead-agent list |
 | `TD_SAVINGS_DEMO` | Demo mode for the LeanCTX savings plugin |
+| `TD_USAGE_DEMO` | Fictional subscriptions on the </> card's usage face |
 | `TD_GAMBA` / `TD_GAMBA_DEMO` | Slot-machine satire overlay (rig jackpot in demo) |
 | `TD_CONFIRM_DEMO` | Auto-confirm certain dialogs for capture |
 
