@@ -377,9 +377,14 @@ pub fn layout(content: Bounds<Pixels>, tilt: f32) -> Option<Layout> {
         // to the glass instead of riding proud of it the way the cut-out version
         // did, so the presence has to come from where it sits rather than from
         // disagreeing with the curve.
+        //
+        // The extra tenth-of-a-sheet off each edge is Parker's calibration on the
+        // built thing, and it is written in the note's OWN height rather than as
+        // pixels so a 128px note on a tiled pane and a 200px one on a full screen
+        // sit at the same place by eye instead of the same distance by number.
         center: point(
-            content.origin.x + px(w - note_w * 0.5 - 24.0),
-            content.origin.y + px(note_h * 0.5 + 22.0),
+            content.origin.x + px(w - note_w * 0.5 - 24.0 - note_h * 0.10),
+            content.origin.y + px(note_h * 0.5 + 22.0 + note_h * 0.10),
         ),
         size: size(px(note_w), px(note_h)),
         tilt,
