@@ -287,6 +287,41 @@
   .sv-file .fn{ color:#9fc7b3; flex:1; } .sv-file .fm{ color:var(--phos); font-weight:700; } .sv-file .fp{ color:var(--dim); width:46px; text-align:right; }
   .sv-foot{ color:var(--dim2); font-size:11px; margin-top:14px; border-top:1px solid var(--line); padding-top:12px; line-height:1.55; }
   .sv-foot a{ color:var(--phos-d); text-decoration:none; } .sv-foot a:hover{ color:var(--phos); }
+
+  /* ===== Σ usage — the card's OTHER face (mirrors app/src/usage.rs + the in-app panel) ===== */
+  .sv-tabs{ margin-left:auto; display:flex; gap:6px; }
+  .sv-tab{ cursor:pointer; border:1px solid var(--line); border-radius:999px; padding:4px 12px;
+    color:var(--dim); font-size:11px; font-weight:700; transition:.15s; }
+  .sv-tab:hover{ color:var(--ink); border-color:var(--phos-d); }
+  .sv-tab.on{ color:var(--phos); border-color:var(--phos-d); background:#0c2417; box-shadow:0 0 10px -4px var(--phos); }
+  .us-subs{ display:flex; gap:7px; flex-wrap:wrap; padding:16px 0 4px; }
+  .us-sub{ cursor:pointer; border:1px solid var(--line); border-radius:8px; padding:5px 11px;
+    background:#08160e; color:var(--dim); font-size:11.5px; transition:.15s; }
+  .us-sub:hover{ color:var(--ink); }
+  .us-sub.on{ color:var(--ink); border-color:var(--phos-d); box-shadow:0 0 10px -4px var(--phos); }
+  .us-sub b{ color:var(--phos); font-weight:700; } .us-sub .tier{ color:var(--dim2); }
+  .us-note{ margin:12px 0 2px; border-left:2px solid var(--amber); background:#170f04;
+    border-radius:0 7px 7px 0; padding:8px 11px; font-size:11.5px; color:var(--amber); }
+  .us-note .help{ display:block; color:var(--dim); margin-top:3px; }
+  .us-lim{ margin:9px 0; }
+  .us-lim .lh{ display:flex; align-items:baseline; gap:8px; font-size:11.5px; }
+  .us-lim .lh .lab{ color:var(--ink); } .us-lim .lh .rs{ color:var(--dim2); font-size:10.5px; }
+  .us-lim .lh .pc{ margin-left:auto; font-weight:800; }
+  .meter{ height:7px; border-radius:999px; background:#ffffff1a; overflow:hidden; margin-top:5px; }
+  .meter i{ display:block; height:100%; border-radius:999px; }
+  .us-today{ display:flex; align-items:baseline; gap:9px; margin:15px 0 3px; }
+  .us-today .l{ color:var(--dim); font-size:9.5px; letter-spacing:.09em; }
+  .us-today .v{ color:var(--ink); font-size:12px; }
+  .us-day{ display:flex; align-items:center; gap:9px; font-size:11px; margin:3px 0; }
+  .us-day .wd{ color:var(--dim); width:32px; }
+  .us-day .bar{ flex:1; height:6px; border-radius:999px; background:#ffffff12; overflow:hidden; }
+  .us-day .bar i{ display:block; height:100%; border-radius:999px; background:var(--phos-d); }
+  .us-day.now .bar i{ background:var(--phos); box-shadow:0 0 8px -2px var(--phos); }
+  .us-day .tk{ color:var(--dim); width:60px; text-align:right; }
+  .us-day.now .tk{ color:var(--phos); }
+  .us-model{ display:flex; gap:10px; align-items:baseline; font-size:11.5px; padding:4px 0; }
+  .us-model .m{ color:var(--ink); } .us-model .sp{ color:var(--dim2); flex:1; }
+  .us-model .tt{ color:var(--phos); font-weight:700; }
 </style></head>
 <body>
   <div class="console">
@@ -471,8 +506,10 @@ function render(){
     + `<span class="pill c-err">✕ <b>${n('error')}</b></span><span class="pill c-done">✓ <b>${n('done')}</b></span>`
     + `<span class="pill c-idle">○ <b>${n('idle')}</b></span>`
     + `<span class="pill spend"><span class="k">Δ</span> ${ktok(dTok)}</span><span class="pill spend"><span class="k">Σ</span> ${ktok(sTok)}</span>`
-    + `<span class="pill sv" id="sv-btn" title="lean-ctx token savings — click">&lt;/&gt; savings</span>`;
-  const svb=document.getElementById('sv-btn'); if(svb) svb.onclick=openSavings;
+    + `<span class="pill sv" id="sv-btn" title="lean-ctx token savings — click">&lt;/&gt; savings</span>`
+    + `<span class="pill sv" id="us-btn" title="agent subscription usage — click">&Sigma; usage</span>`;
+  const svb=document.getElementById('sv-btn'); if(svb) svb.onclick=()=>openCard('savings');
+  const usb=document.getElementById('us-btn'); if(usb) usb.onclick=()=>openCard('usage');
   document.getElementById('npanes').textContent = A.filter(a=>a.state!=='shell').length;
 }
 
@@ -608,7 +645,7 @@ function buildSavings(){
   const files=[['app/src/main.rs',11.8e6,98],['agents.html',5.2e6,97],['app/src/pane.rs',3.3e6,92],['docs/features/01-agentic-mcp.md',1.2e6,88],['app/src/theme.rs',1.0e6,86]];
   svpanel.innerHTML =
       `<div class="sv-h"><div class="sv-logo"><span class="lb">&lt;/&gt;</span> Lean<span class="lc">CTX</span> <span class="sub2">token savings</span></div>`
-    + `<span class="sv-badge">★ 73 · Lv4 Guardian</span></div>`
+    + `<span class="sv-badge">★ 73 · Lv4 Guardian</span>` + cardTabs('savings') + `</div>`
     + `<div class="sv-stats">`
     + `<div class="sv-stat"><div class="v g">${svm(total)}</div><div class="l">tokens saved</div></div>`
     + `<div class="sv-stat"><div class="v c">85%</div><div class="l">compression</div></div>`
@@ -619,7 +656,104 @@ function buildSavings(){
     + files.map(f=>`<div class="sv-file"><span class="fn">${f[0]}</span><span class="fm">${svm(f[1])}</span><span class="fp">${f[2]}%</span></div>`).join('')
     + `<div class="sv-foot">context saved by <a href="https://leanctx.com/" target="_blank" rel="noopener">lean-ctx</a> (compression on lean-ctx-touched traffic), valued at Opus 4.x input pricing ($5/M) — notional, not your full provider bill · per-agent = estimated until lean-ctx stamps <code>agent_id</code> into the savings ledger.<br>esc or click outside to close · <a href="https://leanctx.com/" target="_blank" rel="noopener">leanctx.com →</a></div>`;
 }
-function openSavings(){ buildSavings(); svmodal.classList.add('open'); }
+// ---- the Σ usage face — every AI coding subscription and how close it is to its ceiling ----
+// Mirrors the in-app panel (app/src/usage.rs + Workspace::render_usage_body) on the same
+// fictional afternoon TD_USAGE_DEMO stages, so both faces of the card tell one story.
+const USAGE=[
+  { id:'claude', name:'Claude Code', tier:'Max 20x', prompts:true,
+    limits:[ {label:'Session (5-hour)', pct:0.41, resets:'resets in 2h 51m'},
+             {label:'Weekly (7-day)',   pct:0.88, resets:'resets Thu'} ],
+    today:{tokens:96.4e6, prompts:412, sessions:9},
+    days:[['2026-06-16',41.2e6],['2026-06-17',78.9e6],['2026-06-18',12.4e6],['2026-06-19',64.1e6],
+          ['2026-06-20',103.8e6],['2026-06-21',22.7e6],['2026-06-22',96.4e6]],
+    models:[['claude-opus-5',9.1e3,1.94e6,402.1e6,11.3e6],['claude-sonnet-5',2.4e3,310e3,61.8e6,2.1e6]],
+    totals:{prompts:3180, sessions:44, activeDays:21} },
+  { id:'codex', name:'Codex', tier:'Plus', prompts:true,
+    status:'Codex limits unavailable', help:'Sign in with `codex login` to read the plan’s windows.',
+    limits:[], today:{tokens:3.91e6, prompts:38, sessions:2},
+    days:[['2026-06-20',1.1e6],['2026-06-21',640e3],['2026-06-22',3.91e6]],
+    models:[['gpt-5.6-sol',118e3,21.4e3,2.94e6,0]],
+    totals:{prompts:96, sessions:11, activeDays:6} },
+  { id:'fireworks', name:'Fireworks', tier:'Prepaid', prompts:false,
+    limits:[], balance:{remaining:6.40, funded:20.00, spent:13.60, currency:'USD', estimated:true},
+    today:{tokens:1.24e6},
+    days:[['2026-06-21',810e3],['2026-06-22',1.24e6]],
+    models:[['kimi-k2-instruct',640e3,92e3,0,0]] },
+];
+let usPick=0;
+// A gauge is read before it is understood, so this ramp is deliberately NOT themed:
+// green under two thirds, amber past it, red in the last sixth. A palette that made
+// 90% of a weekly limit look calm would be a prettier lie than TD is willing to tell.
+function pressure(f){ return f>=0.85?'var(--red)':f>=0.66?'var(--amber)':'var(--phos)'; }
+function meter(frac,col,h){ const f=Math.max(0,Math.min(1,frac));
+  // a non-zero share never renders as an empty track: the difference between "barely
+  // used" and "not reporting" is the whole reason to look at the row.
+  const w=f>0?Math.max(f*100,1.5):0;
+  return `<div class="meter" style="height:${h}px"><i style="width:${w}%;background:${col}"></i></div>`; }
+function wd(d){ return ['SUN','MON','TUE','WED','THU','FRI','SAT'][new Date(d+'T00:00:00Z').getUTCDay()]; }
+function buildUsage(){
+  const r=USAGE[usPick];
+  let b='';
+  b += `<div class="us-subs">` + USAGE.map((u,i)=>
+        `<span class="us-sub${i===usPick?' on':''}" data-us="${i}"><b>${esc(u.name)}</b> <span class="tier">${esc(u.tier)}</span></span>`
+      ).join('') + `</div>`;
+  if(r.status) b += `<div class="us-note">${esc(r.status)}<span class="help">${esc(r.help||'')}</span></div>`;
+  r.limits.forEach(l=>{ const c=pressure(l.pct);
+    b += `<div class="us-lim"><div class="lh"><span class="lab">${esc(l.label)}</span>`
+       + `<span class="rs">${esc(l.resets||'')}</span>`
+       + `<span class="pc" style="color:${c}">${Math.round(l.pct*100)}%</span></div>`
+       + meter(l.pct,c,7) + `</div>`; });
+  if(r.balance){ const bal=r.balance, used=bal.spent/bal.funded, c=pressure(used);
+    // the gauge DRAINS, so the pressure ramp reads the SPENT share, not what is left
+    b += `<div class="us-lim"><div class="lh"><span class="lab">Credit remaining</span>`
+       + `<span class="rs">${bal.estimated?'estimated — funding minus spend':''}</span>`
+       + `<span class="pc" style="color:${c}">${bal.currency} ${bal.remaining.toFixed(2)}</span></div>`
+       + meter(1-used,c,7)
+       + `<div class="us-day" style="margin-top:6px"><span class="wd"></span><span class="bar" style="background:none"></span>`
+       + `<span class="tk" style="width:auto">${bal.currency} ${bal.spent.toFixed(2)} of ${bal.funded.toFixed(2)} spent</span></div></div>`; }
+  const t=r.today;
+  b += `<div class="us-today"><span class="l">TODAY</span><span class="v">`
+     + (r.prompts ? `${svm(t.tokens)} tokens &nbsp;·&nbsp; ${t.prompts} prompts &nbsp;·&nbsp; ${t.sessions} sessions`
+                  : `${svm(t.tokens)} tokens`)
+     + `</span></div>`;
+  const peak=Math.max(...r.days.map(d=>d[1]));
+  b += `<div class="sv-secn">LAST ${r.days.length} DAYS:</div>`
+     + r.days.map((d,i)=>`<div class="us-day${i===r.days.length-1?' now':''}"><span class="wd">${wd(d[0])}</span>`
+       + `<span class="bar"><i style="width:${Math.max(d[1]/peak*100,1.5)}%"></i></span>`
+       + `<span class="tk">${svm(d[1])}</span></div>`).join('');
+  b += `<div class="sv-secn">BY MODEL:</div>`
+     + r.models.map(m=>{ const tot=m[1]+m[2]+m[3]+m[4];
+         return `<div class="us-model"><span class="m">${esc(m[0])}</span>`
+           + `<span class="sp">in ${svm(m[1])} · out ${svm(m[2])} · cache ${svm(m[3]+m[4])}</span>`
+           + `<span class="tt">${svm(tot)}</span></div>`; }).join('');
+  const prov=['collected 6m ago'].concat(r.totals
+    ? [`${r.totals.prompts.toLocaleString()} prompts over ${r.totals.sessions} sessions, ${r.totals.activeDays} active days`] : []).join(' &nbsp;·&nbsp; ');
+  svpanel.innerHTML =
+      `<div class="sv-h"><div class="sv-logo"><span class="lb">&Sigma;</span> agent <span class="lc">usage</span> <span class="sub2">subscriptions &amp; ceilings</span></div>`
+    + `<span class="sv-badge">${USAGE.length} subscriptions</span>` + cardTabs('usage') + `</div>`
+    + b
+    + `<div class="sv-foot">${prov}<br>`
+    + `<b>TD collects none of this.</b> Each subscription arrives as one JSON record written by a per-vendor `
+    + `<em>collector</em> — Claude Code's transcripts plus Anthropic's OAuth usage endpoint, Codex's app-server RPC, `
+    + `Fireworks' billing API — and this panel just reads the directory. Publish a record under a new <code>id</code> `
+    + `and the panel gains a tab; no patch. On Omarchy the <code>omarchy-agent-usage-*</code> collectors already `
+    + `publish that record for the agents widget, so TD picks it up for free; on any other Linux the agent-usage `
+    + `plugin writes it. Two directories are searched and the newer <code>updatedAt</code> wins, so a box that `
+    + `later installs Omarchy never ends up with two stale halves of the same answer.<br>`
+    + `esc or click outside to close</div>`;
+  // through openCard, so the face tabs get rebound along with the subscription chips
+  svpanel.querySelectorAll('.us-sub').forEach(el=>{ el.onclick=()=>{ usPick=+el.dataset.us; openCard('usage'); }; });
+}
+function cardTabs(face){
+  return `<div class="sv-tabs"><span class="sv-tab${face==='savings'?' on':''}" data-face="savings">savings</span>`
+       + `<span class="sv-tab${face==='usage'?' on':''}" data-face="usage">usage</span></div>`;
+}
+function openCard(face){
+  face==='usage' ? buildUsage() : buildSavings();
+  svpanel.querySelectorAll('.sv-tab').forEach(el=>{ el.onclick=()=>openCard(el.dataset.face); });
+  svmodal.classList.add('open');
+}
+function openSavings(){ openCard('savings'); }
 function closeSavings(){ svmodal.classList.remove('open'); }
 svmodal.addEventListener('click', e=>{ if(e.target===svmodal) closeSavings(); });
 
