@@ -1,9 +1,10 @@
 //! A sticky note pinned to a pane's glass.
 //!
 //! `alt+s` sticks one to the top-right of the focused terminal and hands it the
-//! cursor; `alt+backspace` peels it off. It survives a restart beside the pane's
-//! cwd, so coming back to a wall of twenty agents you read the notes instead of
-//! scrolling each one for your last prompt.
+//! cursor, and pressing it again puts the pen down; so does Enter, and so does
+//! clicking anywhere off the paper. `alt+backspace` peels it off. It survives a
+//! restart beside the pane's cwd, so coming back to a wall of twenty agents you
+//! read the notes instead of scrolling each one for your last prompt.
 //!
 //! Three things here are deliberate and easy to undo by accident:
 //!
@@ -14,7 +15,7 @@
 //!   ship (see [`press`]).
 //! * **The note is PRE-WARPED, not cut out of the warp.** A pane's barrel
 //!   distortion is a pixel post-pass, so the note is drawn through the same map
-//!   the pass will later undo and comes out flat on a bent tube — see [`Affine`].
+//!   the pass will later undo and comes out flat on a bent tube — see [`Warp`].
 //!   The earlier approach punched a curvature-free hole for it, which cost a
 //!   visible seam; the note now shares its pane's glass exactly.
 //! * **Nothing under the tilt is hit-tested by gpui.** Glyph sprites and filled
@@ -686,6 +687,53 @@ pub fn press(composing: bool, key: &str) -> Press {
     }
 }
 
+/// What a gesture at the note does.
+///
+/// There are three ways in and out — `alt+s`, a click on the paper, a click
+/// anywhere else — and they all have to agree with Enter about what "done"
+/// means. Routing them through one enum is what stops that drifting.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Act {
+    /// Give the note the cursor (or keep it, if it already has it).
+    Open,
+    /// Post what is written and hand the cursor back — exactly Enter.
+    Post,
+    /// Tear the note off.
+    Peel,
+    /// Nothing to do with the note; the pane handles the gesture.
+    Pass,
+}
+
+/// `alt+s` — a TOGGLE.
+///
+/// The chord that gives the note the cursor takes it back, so the way out is the
+/// way in and Enter is not the only exit. It never destroys: a chord that both
+/// created and destroyed would make a blind press a coin flip over whatever was
+/// written, which is why peeling stayed a separate gesture.
+pub fn alt_s(composing: bool) -> Act {
+    if composing {
+        Act::Post
+    } else {
+        Act::Open
+    }
+}
+
+/// A left click, given where it landed.
+///
+/// Clicking away from a note that is being written POSTS it, the same way
+/// clicking away from the tab-rename box saves the rename — you have moved on,
+/// and an editor that keeps the keyboard after you have visibly gone somewhere
+/// else is an editor that eats the next thing you type. The click still reaches
+/// the terminal underneath; committing is not a reason to swallow it.
+pub fn click(composing: bool, hit: Option<Hit>) -> Act {
+    match hit {
+        Some(Hit::Peel) => Act::Peel,
+        Some(Hit::Body) => Act::Open,
+        None if composing => Act::Post,
+        None => Act::Pass,
+    }
+}
+
 /// Where a click landed on the note.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Hit {
@@ -1129,6 +1177,74 @@ mod tests {
         for key in ["c", "backspace", "tab", "left", "space", "f1"] {
             assert_eq!(press(true, key), Press::Write, "{key} escaped the composer");
         }
+    }
+
+    /// Alt+S is a toggle, and the way out has to be the same door as the way in.
+    /// If this ever becomes "open, always", the only exits left are Enter and Esc
+    /// — and Esc is deliberately not one of them.
+    #[test]
+    fn alt_s_lets_you_back_out_the_way_you_came_in() {
+        assert_eq!(alt_s(false), Act::Open, "no note yet: pick up the pen");
+        assert_eq!(alt_s(true), Act::Post, "already writing: put it down");
+        assert_ne!(
+            alt_s(true),
+            Act::Peel,
+            "the chord must never destroy a note"
+        );
+    }
+
+    /// Clicking away from a note being written posts it, the same as Enter — but
+    /// it must NOT be swallowed on the way. An editor that keeps the keyboard
+    /// after you have visibly clicked somewhere else eats what you type next.
+    #[test]
+    fn clicking_away_posts_the_note_without_eating_the_click() {
+        assert_eq!(click(true, None), Act::Post, "clicking off commits");
+        assert_eq!(
+            click(false, None),
+            Act::Pass,
+            "with nothing being written, a miss is just a click"
+        );
+        assert_eq!(click(true, Some(Hit::Body)), Act::Open, "still writing");
+        assert_eq!(click(false, Some(Hit::Body)), Act::Open, "pick up the pen");
+        // The peel corner peels whether or not the note is being written.
+        assert_eq!(click(true, Some(Hit::Peel)), Act::Peel);
+        assert_eq!(click(false, Some(Hit::Peel)), Act::Peel);
+    }
+
+    /// Why the note's chords are handled BEFORE the composer rather than inside
+    /// it.
+    ///
+    /// The composer's buffer drops alt-modified keys, so an `alt+s` that reaches
+    /// it does nothing AT ALL — and does it silently. That is what shipped for a
+    /// build: pressing `alt+s` again while writing was a complete no-op, because
+    /// the composer claimed the key first and then discarded it, and neither half
+    /// of that is visible. The ordering in `TerminalView::on_key` is the fix;
+    /// this pins the fact that makes the ordering necessary.
+    #[test]
+    fn the_composer_silently_drops_alt_chords() {
+        let mut buf = crate::EditBuffer::seeded("note");
+        let alt = gpui::Modifiers {
+            alt: true,
+            ..Default::default()
+        };
+        buf.apply("s", &alt, Some("s"), MAX_CHARS);
+        assert_eq!(
+            buf.text(),
+            "note",
+            "an alt chord typed into the note instead of being dropped — the \
+             composer can no longer be relied on to leave chords alone"
+        );
+    }
+
+    /// Every way out of the composer agrees on what "done" means. Three gestures
+    /// that each decided for themselves is how one of them ends up saving and
+    /// another discarding.
+    #[test]
+    fn every_exit_means_the_same_thing() {
+        let enter = press(true, "enter");
+        assert_eq!(enter, Press::Post);
+        assert_eq!(alt_s(true), Act::Post);
+        assert_eq!(click(true, None), Act::Post);
     }
 
     /// Clicks are resolved against the ROTATED paper. A point just outside a
