@@ -895,7 +895,13 @@ pub fn house_outer() -> ThemeChoice {
         syntax_scheme: SyntaxScheme::Code,
         grade: Grade {
             brightness: 0.38, // −12
-            contrast: 0.21,   // −29
+            // Neutral. This shipped at 0.21 (−29) as part of the "gentle
+            // de-contrast", but a fresh window is the one screen a new pane has
+            // nothing to compare itself against, and it opened visibly flat —
+            // the dial read −29 with nobody having touched it. Darkening still
+            // happens, via brightness above; crushing the range as well was one
+            // grade too many. The DISPLAY tray now reads +0 on a fresh install.
+            contrast: 0.5, // 0
             colour: 0.5,
             text: 0.5,
             background: 0.5,
@@ -3272,6 +3278,29 @@ mod tests {
         assert!(
             (th2.human.h - want.h).abs() < 2e-3 && (th2.human.l - want.l).abs() < 2e-3,
             "explicit file human is honoured"
+        );
+    }
+
+    /// A fresh install opens at NEUTRAL contrast. The DISPLAY tray prints a
+    /// signed offset from neutral, so this asserts the number Parker actually
+    /// reads on the dial rather than the stored float — the bug was that a
+    /// window nobody had touched showed "−29".
+    #[test]
+    fn a_fresh_window_opens_with_the_contrast_dial_at_zero() {
+        // the tray's own arithmetic (see the grade row in main::render)
+        let dial = |v: f32, neutral: f32| ((v - neutral) * 100.0).round() as i32;
+        let (_, _, neutral) = GradeKey::Contrast.range();
+        let g = house_outer().grade;
+        assert_eq!(
+            dial(g.contrast, neutral),
+            0,
+            "a fresh cabinet must not ship pre-de-contrasted"
+        );
+        // brightness is still deliberately down — the screen is dim, and that is
+        // the dial doing the darkening now that contrast is out of it
+        assert!(
+            dial(g.brightness, neutral) < 0,
+            "the house look is still a dim screen"
         );
     }
 
