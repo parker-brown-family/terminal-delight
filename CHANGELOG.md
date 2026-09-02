@@ -41,10 +41,21 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
     here. Each stop also rolls into focus through a central band (opacity,
     scale, a light blur) and the hero drifts off above it. Eight wallpapers
     cost 504KB after a 1600px cap and a webp re-encode, and each is fetched a
-    screen before it is needed. The rail carries those eight themes rather than
-    all 23, a chip pick pins the page with a "↕ follow scroll" pill to undo it,
-    and `prefers-reduced-motion` still wears each stop's theme while nothing
-    moves.
+    screen before it is needed. The rail carries seven curated themes rather
+    than all 23 — gruvbox, osaka-jade, tokyo-night, ethereal, everforest,
+    miasma, retro-82 — laid out as a wrapping grid that never scrolls
+    sideways, with a standing "follow scroll" toggle that says whether the
+    scroll or a pick owns the page. `prefers-reduced-motion` still wears each
+    stop's theme while nothing moves, and inside the last half-screen of the
+    document every stop returns to full focus, so the bottom of the page is
+    sharp at any viewport height.
+  - **The MCP control surface gets its own section, second from the top** —
+    `list_panes`, `pane_events`, `grep`, `get_pane_config`, `set_pane_config`
+    and the push notifications, each with what it returns, plus the master
+    switch and the appearance-only line. The nav gained an MCP entry.
+  - **Figures open in a lightbox.** A screenshot reduced to a column width is
+    unreadable; click, Enter or Space opens it as large as the window allows,
+    and Escape, the backdrop or the ✕ closes it with focus returned.
 
 - **Super+Ctrl-click reveals a path in the file manager**, where Shift- or
   Ctrl-click opens it. A pane full of printed paths — an agent's Links table,
