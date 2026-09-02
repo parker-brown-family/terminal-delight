@@ -12303,9 +12303,13 @@ impl Render for Workspace {
                         .logo
                         .clone()
                         .or_else(|| {
+                            // The SCENE here, not the bare prop: this window is
+                            // ~116px, which is room for the robot who is holding
+                            // the thing. The pane header takes the prop alone,
+                            // because at 18px a whole character is a smudge.
                             tool_face
                                 .as_ref()
-                                .map(|f| f.plate.to_string_lossy().into_owned())
+                                .map(|f| f.scene.to_string_lossy().into_owned())
                         })
                         .or_else(|| p.dir_logo.clone())
                         .or_else(|| demo_logo_for(&format!("{title}/{id:?}")));

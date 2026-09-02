@@ -28,32 +28,34 @@ use std::sync::OnceLock;
 /// The generated tool table. Regenerate with `scripts/sync-tool-props.mjs`.
 const MANIFEST: &str = include_str!("../assets/tool-props.json");
 
-/// Every baked plate, compiled in. The unit test below asserts this table
-/// covers every `art` the manifest names — a new drawing in the playhouse
-/// fails HERE, at `cargo test`, not as a blank square on somebody's wall.
-const ART: &[(&str, &[u8])] = &[
-    ("board", include_bytes!("../assets/img/props/board.png")),
-    ("book", include_bytes!("../assets/img/props/book.png")),
-    ("chisel", include_bytes!("../assets/img/props/chisel.png")),
-    ("compass", include_bytes!("../assets/img/props/compass.png")),
-    ("console", include_bytes!("../assets/img/props/console.png")),
-    ("dish", include_bytes!("../assets/img/props/dish.png")),
-    ("frame", include_bytes!("../assets/img/props/frame.png")),
-    ("horn", include_bytes!("../assets/img/props/horn.png")),
-    ("ledger", include_bytes!("../assets/img/props/ledger.png")),
-    ("lens", include_bytes!("../assets/img/props/lens.png")),
-    ("map", include_bytes!("../assets/img/props/map.png")),
-    ("net", include_bytes!("../assets/img/props/net.png")),
-    ("parcel", include_bytes!("../assets/img/props/parcel.png")),
-    (
-        "question",
-        include_bytes!("../assets/img/props/question.png"),
-    ),
-    ("quill", include_bytes!("../assets/img/props/quill.png")),
-    ("radar", include_bytes!("../assets/img/props/radar.png")),
-    ("scroll", include_bytes!("../assets/img/props/scroll.png")),
-    ("tile", include_bytes!("../assets/img/props/tile.png")),
-    ("wrench", include_bytes!("../assets/img/props/wrench.png")),
+/// Every drawing the terminal ships, named once.
+///
+/// Each name becomes two compiled-in assets, because the two places a face is
+/// worn are different sizes and want different things:
+///
+/// * **the prop alone**, for the pane header square — it renders about 18px,
+///   where a whole robot is a smudge and one object still reads;
+/// * **the robot holding it**, for the agent wall's card art — that renders
+///   about 116px, where there is room for a character and the character IS the
+///   point.
+///
+/// One list rather than two tables so a drawing added to the playhouse is added
+/// here once; `include_bytes!` then fails the BUILD if either half is missing,
+/// rather than leaving a blank square on somebody's wall.
+macro_rules! art_tables {
+    ($($name:literal),+ $(,)?) => {
+        const PROPS: &[(&str, &[u8])] = &[
+            $(($name, include_bytes!(concat!("../assets/img/props/", $name, ".png")))),+
+        ];
+        const SCENES: &[(&str, &[u8])] = &[
+            $(($name, include_bytes!(concat!("../assets/img/scenes/", $name, ".png")))),+
+        ];
+    };
+}
+
+art_tables![
+    "board", "book", "chisel", "compass", "console", "dish", "frame", "horn", "ledger", "lens",
+    "map", "net", "parcel", "question", "quill", "radar", "scroll", "tile", "wrench",
 ];
 
 /// The plate a tool nobody wrote a row for reaches — the playhouse's lettered
@@ -209,8 +211,11 @@ pub fn tint_rgb(hex: &str) -> Option<u32> {
 /// and gerund that go with it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Face {
-    /// The baked plate on disk, ready for `gpui::img`.
+    /// The prop alone, for a small square — the pane header. Ready for
+    /// `gpui::img`.
     pub plate: PathBuf,
+    /// The robot holding it, for a big one — the agent wall's card art.
+    pub scene: PathBuf,
     /// Two letters, set only when `plate` is the anonymous fallback — a known
     /// tool's drawing IS its identity and wants no lettering over it.
     pub mark: Option<String>,
@@ -244,11 +249,11 @@ pub fn face(tool: &str) -> Option<Face> {
     let row = row(tool);
     let art = row
         .and_then(|r| r.art.as_deref())
-        .filter(|a| ART.iter().any(|(n, _)| n == a))
+        .filter(|a| PROPS.iter().any(|(n, _)| n == a))
         .unwrap_or(FALLBACK_ART);
-    let plate = plate_path(art)?;
     Some(Face {
-        plate,
+        plate: materialise(PROPS, "prop", art)?,
+        scene: materialise(SCENES, "scene", art)?,
         mark: (art == FALLBACK_ART).then(|| {
             row.and_then(|r| r.glyph.clone())
                 .unwrap_or_else(|| initials(tool))
@@ -261,11 +266,11 @@ pub fn face(tool: &str) -> Option<Face> {
     })
 }
 
-/// Materialise one plate to the runtime dir and hand back its path.
-fn plate_path(art: &str) -> Option<PathBuf> {
-    let bytes = ART.iter().find(|(n, _)| *n == art).map(|(_, b)| *b)?;
+/// Materialise one embedded asset to the runtime dir and hand back its path.
+fn materialise(table: &[(&str, &[u8])], kind: &str, art: &str) -> Option<PathBuf> {
+    let bytes = table.iter().find(|(n, _)| *n == art).map(|(_, b)| *b)?;
     Some(crate::art::runtime_asset(
-        &format!("terminal-delight-prop-{art}.png"),
+        &format!("terminal-delight-{kind}-{art}.png"),
         bytes,
     ))
 }
@@ -364,32 +369,44 @@ mod tests {
         assert_eq!(t["Bash"].art.as_deref(), Some("console"));
     }
 
-    /// Every drawing the manifest names is compiled in. A prop added to the
-    /// playhouse and synced without rebuilding this table fails HERE.
+    /// Every drawing the manifest names is compiled in, in BOTH sizes. A prop
+    /// added to the playhouse and synced without adding it to `art_tables!`
+    /// fails HERE — and a name in `art_tables!` with only one of its two files
+    /// fails earlier still, at `include_bytes!`.
     #[test]
-    fn every_named_drawing_is_embedded() {
+    fn every_named_drawing_is_embedded_in_both_sizes() {
         for (tool, row) in table() {
             let Some(art) = row.art.as_deref() else {
                 continue;
             };
-            assert!(
-                ART.iter().any(|(n, _)| *n == art),
-                "{tool} wants plate '{art}', which is not embedded"
-            );
+            for (kind, t) in [("prop", PROPS), ("scene", SCENES)] {
+                assert!(
+                    t.iter().any(|(n, _)| *n == art),
+                    "{tool} wants {kind} '{art}', which is not embedded"
+                );
+            }
         }
-        assert!(ART.iter().any(|(n, _)| *n == FALLBACK_ART));
+        assert!(PROPS.iter().any(|(n, _)| *n == FALLBACK_ART));
+        assert!(SCENES.iter().any(|(n, _)| *n == FALLBACK_ART));
+        assert_eq!(
+            PROPS.len(),
+            SCENES.len(),
+            "the two tables come from one list and cannot differ in length"
+        );
     }
 
-    /// Every embedded plate is a real PNG — a bad path or a stripped commit
+    /// Every embedded asset is a real PNG — a bad path or a stripped commit
     /// fails at build, not as an invisible logo at runtime.
     #[test]
-    fn every_embedded_plate_is_a_real_png() {
-        for (name, bytes) in ART {
-            assert!(bytes.len() > 500, "{name} suspiciously small");
-            assert!(
-                bytes.starts_with(b"\x89PNG\r\n\x1a\n"),
-                "{name} is not a PNG stream"
-            );
+    fn every_embedded_asset_is_a_real_png() {
+        for (kind, table) in [("prop", PROPS), ("scene", SCENES)] {
+            for (name, bytes) in table {
+                assert!(bytes.len() > 500, "{kind} {name} suspiciously small");
+                assert!(
+                    bytes.starts_with(b"\x89PNG\r\n\x1a\n"),
+                    "{kind} {name} is not a PNG stream"
+                );
+            }
         }
     }
 
@@ -422,6 +439,10 @@ mod tests {
     fn a_known_tool_is_unlettered_and_an_unknown_one_is_not() {
         let known = face("Bash").expect("plate materialises");
         assert!(known.plate.ends_with("terminal-delight-prop-console.png"));
+        assert!(
+            known.scene.ends_with("terminal-delight-scene-console.png"),
+            "a face carries BOTH sizes: the prop for the header, the robot for the wall"
+        );
         assert_eq!(known.mark, None);
         assert_eq!(known.tint, Some(0xc98500));
         assert_eq!(known.verb, "at the console");
