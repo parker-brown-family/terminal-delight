@@ -32,6 +32,11 @@ pub struct PaneRestore {
     /// Shown to the left of the program label in this pane's header; a user setting
     /// (not kernel-captured), so it lives only here, threaded through save/restore.
     pub logo: Option<String>,
+    /// The sticky note on this pane's glass, as `(text, tilt seed)`. Like `logo`
+    /// it is a user setting rather than something captured from the kernel — and
+    /// like `logo` it must survive a restart, because a note that only lives as
+    /// long as the window is a note you have to write again every morning.
+    pub note: Option<(String, u32)>,
 }
 
 /// What capture() learned about a live pane. Field-for-field what we persist.

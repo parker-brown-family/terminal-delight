@@ -1905,6 +1905,17 @@ pub struct TerminalView {
     /// True while this pane is the one mirrored in the FOCUS modal — a plain Esc
     /// then closes the modal instead of reaching the PTY. Set by the workspace.
     being_read: bool,
+    /// The sticky note pinned to this pane's glass, if any. See [`crate::sticky`]
+    /// — in particular why Esc does NOT take it down.
+    note: Option<crate::sticky::Sticky>,
+    /// The text of the note last peeled off, so `alt+s` re-opens the composer
+    /// holding it (selected). This is what makes intercepting `alt+backspace`
+    /// defensible: the chord already means word-erase in a shell, so a note up
+    /// changes what it does, and the cost of being wrong has to be one keystroke.
+    peeled: Option<String>,
+    /// Which part of the note the pointer is over. Drives the peel corner's
+    /// curl, which is the only thing that teaches the mouse gesture.
+    note_hover: Option<crate::sticky::Hit>,
     /// Keyboard-driven selection state: `(anchor, active end)` in absolute grid
     /// points. `shift+←/→` (char) and `shift+ctrl+←/→` (word) move the active end
     /// while the anchor stays put — combinative, never resetting. `None` until a
@@ -1966,6 +1977,13 @@ impl gpui::EventEmitter<RequestCloseTab> for TerminalView {}
 /// persists the layout so the custom name survives a restart.
 pub struct PaneRenamed;
 impl gpui::EventEmitter<PaneRenamed> for TerminalView {}
+
+/// A sticky note was posted or peeled off — the workspace persists the layout so
+/// the note is still there tomorrow morning (same contract as [`PaneRenamed`]).
+/// Emitted only on COMMIT, never per keystroke: a note being typed rewrites the
+/// state file once, when you press Enter.
+pub struct StickyChanged;
+impl gpui::EventEmitter<StickyChanged> for TerminalView {}
 
 /// Click on this pane's header logo (or the `＋ logo` placeholder when none is
 /// set) — ask the workspace to open the image-file picker scoped to this pane.
@@ -2420,6 +2438,17 @@ impl TerminalView {
             rows: 28,
         };
         let logo = restore.logo.clone();
+        // A restored note comes back POSTED, never composing: the window just
+        // opened and the cursor belongs to the shell, not to a piece of paper.
+        let note = restore
+            .note
+            .clone()
+            .filter(|(text, _)| !text.trim().is_empty())
+            .map(|(text, seed)| crate::sticky::Sticky {
+                text,
+                seed,
+                edit: None,
+            });
         let cwd = restore.cwd.clone().map(std::path::PathBuf::from);
         let mut session = term::spawn_in(grid, 8, 20, cwd).expect("spawn shell");
         if let Some(cmd) = restore.resume.as_deref() {
@@ -2665,6 +2694,9 @@ impl TerminalView {
                 .checked_sub(std::time::Duration::from_secs(1))
                 .unwrap_or_else(Instant::now),
             being_read: false,
+            note,
+            peeled: None,
+            note_hover: None,
             kbd_sel: None,
             think_since: None,
             not_thinking_since: None,
@@ -3504,6 +3536,163 @@ impl TerminalView {
         self.appearance.effective(&theme::outer_choice(cx)).palette
     }
 
+    /// This pane's note box on the glass — recomputed from the LIVE content rect
+    /// rather than cached, so a resize can never leave the paper and the thing
+    /// you click in different places.
+    fn note_layout(&self) -> Option<crate::sticky::Layout> {
+        let note = self.note.as_ref()?;
+        let bounds = (*self.content_bounds.lock().ok()?)?;
+        crate::sticky::layout(bounds, note.tilt())
+    }
+
+    /// `alt+s`, or a click on the paper: stick a note on, or pick the pen back up
+    /// on the one already here.
+    ///
+    /// Alt+S never DESTROYS. One chord that both creates and destroys makes a
+    /// blind press a coin flip over thirty seconds of typing, so taking a note
+    /// down is always an explicit second gesture.
+    pub fn sticky_open(&mut self, cx: &mut Context<Self>) {
+        match self.note.as_mut() {
+            Some(note) => note.reopen(),
+            None => {
+                // A note peeled off a moment ago comes back SELECTED, so this is
+                // both "write a note" and the undo for a stray alt+backspace,
+                // and the first keystroke still replaces it either way.
+                let prefill = self.peeled.clone().unwrap_or_default();
+                self.note = Some(crate::sticky::Sticky::composing(
+                    &prefill,
+                    crate::sticky::seed(),
+                ));
+            }
+        }
+        cx.notify();
+    }
+
+    /// Take the note down. `false` when there was none, so the caller can let the
+    /// keystroke through to the PTY instead of silently eating it.
+    pub fn sticky_peel(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some(note) = self.note.take() else {
+            return false;
+        };
+        let text = match note.edit {
+            Some(edit) => edit.buf.text(),
+            None => note.text,
+        };
+        if !text.trim().is_empty() {
+            self.peeled = Some(text);
+        }
+        self.note_hover = None;
+        cx.emit(StickyChanged);
+        cx.notify();
+        true
+    }
+
+    /// This pane's note as `(text, seed)` for the state file.
+    ///
+    /// A note being COMPOSED saves what has been typed, not the draft's
+    /// ancestor: an unattended save — a window closing, a crash — should not
+    /// throw away the sentence you were half way through.
+    pub fn saved_note(&self) -> Option<(String, u32)> {
+        let note = self.note.as_ref()?;
+        let text = match &note.edit {
+            Some(edit) => edit.buf.text(),
+            None => note.text.clone(),
+        };
+        let text = text.trim().to_string();
+        (!text.is_empty()).then_some((text, note.seed))
+    }
+
+    pub fn sticky_composing(&self) -> bool {
+        self.note.as_ref().is_some_and(|n| n.is_editing())
+    }
+
+    /// One keystroke offered to the note's composer. `true` when the note took
+    /// it, which is EVERY key while composing: the composer is modal, and a
+    /// letter that leaked past it would land in whatever is running behind.
+    ///
+    /// Esc lives here and only here. While composing it reverts the draft and
+    /// the PTY never sees it — same contract as the inline rename box. Once the
+    /// note is posted this function isn't reached at all, so a posted note
+    /// cannot swallow the Esc that stops a running agent.
+    fn sticky_key(&mut self, ks: &Keystroke, cx: &mut Context<Self>) -> bool {
+        let Some(note) = self.note.as_mut() else {
+            return false;
+        };
+        let Some(edit) = note.edit.as_mut() else {
+            return false;
+        };
+        match crate::sticky::press(true, ks.key.as_str()) {
+            crate::sticky::Press::Pass => return false,
+            crate::sticky::Press::Post => {
+                let text = edit.buf.text().trim().to_string();
+                if text.is_empty() {
+                    // Clearing a note and committing it is the keyboard's
+                    // deliberate way to throw it away — the one place Enter can
+                    // remove one, because you had to empty it first.
+                    self.sticky_peel(cx);
+                } else {
+                    note.text = text;
+                    note.edit = None;
+                    cx.emit(StickyChanged);
+                    cx.notify();
+                }
+            }
+            crate::sticky::Press::Revert => {
+                match edit.restore.take() {
+                    Some(previous) => {
+                        note.text = previous;
+                        note.edit = None;
+                    }
+                    None => {
+                        self.note = None;
+                    }
+                }
+                cx.notify();
+            }
+            crate::sticky::Press::Write => {
+                edit.buf.apply(
+                    ks.key.as_str(),
+                    &ks.modifiers,
+                    ks.key_char.as_deref(),
+                    crate::sticky::MAX_CHARS,
+                );
+                cx.notify();
+            }
+        }
+        true
+    }
+
+    /// A click resolved against the note, inverting its tilt. `true` when the
+    /// note took the click, so the pane's own selection never starts under it.
+    fn sticky_click(&mut self, at: gpui::Point<Pixels>, cx: &mut Context<Self>) -> bool {
+        let Some(lay) = self.note_layout() else {
+            return false;
+        };
+        match crate::sticky::Hit::at(at, &lay) {
+            Some(crate::sticky::Hit::Peel) => {
+                self.sticky_peel(cx);
+                true
+            }
+            Some(crate::sticky::Hit::Body) => {
+                self.sticky_open(cx);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Track what the pointer is over so the peel corner can curl under it —
+    /// the only thing that teaches the mouse gesture.
+    fn sticky_hover(&mut self, at: gpui::Point<Pixels>, cx: &mut Context<Self>) {
+        let was = self.note_hover;
+        self.note_hover = self
+            .note_layout()
+            .and_then(|l| crate::sticky::Hit::at(at, &l));
+        if was != self.note_hover {
+            cx.notify();
+        }
+    }
+
     // INVARIANT: a key this handler DECLINES must bubble to the Workspace.
     // Every workspace chord — alt+arrows (pane nav), alt+v/h and ctrl+alt+r/d
     // (split), ctrl+pgup/pgdn (tabs) — reaches the Workspace only by bubbling out of
@@ -3581,6 +3770,14 @@ impl TerminalView {
                 return;
             }
         }
+        // A note holding the cursor owns the keyboard, rename-box style: every
+        // keystroke writes on the paper instead of reaching the PTY, Enter posts
+        // it, Esc reverts it. This runs ONLY while composing — see
+        // `sticky_key` for why a posted note must never see a key.
+        if self.sticky_composing() && self.sticky_key(ks, cx) {
+            cx.stop_propagation();
+            return;
+        }
         // The inline rename box owns the keyboard while open — keystrokes edit
         // the name instead of reaching the PTY. Mirrors the main-tab rename.
         if let Some(mut buf) = self.renaming.take() {
@@ -3610,6 +3807,25 @@ impl TerminalView {
             return;
         }
         let m = &ks.modifiers;
+        // Alt+S sticks a note to this pane, or picks the pen back up on the one
+        // already there. Taken here rather than at the Workspace because the note
+        // belongs to the pane, and the pane's handler runs first — routing it
+        // through the Workspace would let `keystroke_bytes` send `ESC s` on the
+        // way past. It costs the shell alt+s, which nothing standard binds.
+        if m.alt && !m.control && !m.shift && ks.key.as_str() == "s" {
+            self.sticky_open(cx);
+            cx.stop_propagation();
+            return;
+        }
+        // Alt+Backspace peels it off — but ONLY when a note is actually stuck
+        // here. With no note the chord falls through untouched and readline still
+        // gets its backward-kill-word, so the shell loses the binding exactly
+        // when the pane is visibly carrying a note and not otherwise. Peeling by
+        // accident costs one keystroke: alt+s brings the text straight back.
+        if m.alt && !m.control && ks.key.as_str() == "backspace" && self.sticky_peel(cx) {
+            cx.stop_propagation();
+            return;
+        }
         // Ctrl+W closes the whole tab (always confirmed by the workspace). We
         // intercept it here so it never reaches the PTY as werase (^W) — the
         // workspace owns this chord, like new-tab/copy/paste below.
@@ -4429,6 +4645,15 @@ impl TerminalView {
         // latched while this pane already held idle focus froze the ✅ badge —
         // the edge never came). ack_bell is a no-op when nothing is latched.
         self.ack_bell(cx);
+        // The note is a physical object lying on the glass, so a click lands on
+        // it before anything underneath: the bottom-left corner tears it off,
+        // anywhere else picks the pen back up. Resolved here rather than with a
+        // gpui click target for the same reason as the copy chip below — the
+        // paper is tilted, and gpui would hit-test its flat layout box.
+        if ev.button == MouseButton::Left && self.sticky_click(ev.position, cx) {
+            cx.stop_propagation();
+            return;
+        }
         // Alt+click on the armed copy chip takes the reconstructed line. Handled
         // here rather than as a click target on the chip element: the chip is
         // painted inside the warped tube, so gpui would hit-test it flat and land
@@ -4504,6 +4729,9 @@ impl TerminalView {
     }
 
     fn on_mouse_move(&mut self, ev: &MouseMoveEvent, _w: &mut Window, cx: &mut Context<Self>) {
+        // The peel corner curls under the pointer. No-op with no note stuck here,
+        // and it only notifies on a change, so ordinary mousing costs nothing.
+        self.sticky_hover(ev.position, cx);
         // The Alt-held copy affordance. Gated on the modifier so the grid is only
         // re-read while Alt is actually down — ordinary mousing costs nothing, and
         // nothing can arm by accident.
@@ -6492,6 +6720,33 @@ impl Render for TerminalView {
                         }),
                 )
         });
+        // The sticky note. Painted at PANE level rather than inside the screen
+        // div so it sits above the glass and the bezel: it is stuck to the
+        // outside of the monitor, and a note wearing the tube's scanlines would
+        // read as something the terminal drew rather than something you put
+        // there. Menus still cover it. Its geometry comes from the SAME
+        // `content_bounds` the warp cutout was computed from — one source, so
+        // the paper and the hole it sits in can never disagree.
+        let note_el = self.note.clone().map(|note| {
+            let store = self.content_bounds.clone();
+            let th = th.clone();
+            let peeling = self.note_hover == Some(crate::sticky::Hit::Peel);
+            div().absolute().inset_0().child(
+                canvas(
+                    |_, _, _| {},
+                    move |_, _, window, cx| {
+                        let Some(content) = store.lock().ok().and_then(|b| *b) else {
+                            return;
+                        };
+                        if let Some(lay) = crate::sticky::layout(content, note.tilt()) {
+                            crate::sticky::paint(&note, &lay, &th, peeling, window, cx);
+                        }
+                    },
+                )
+                .size_full(),
+            )
+        });
+
         div()
             .track_focus(&self.focus_handle(cx))
             .on_key_down(cx.listener(Self::on_key))
@@ -6526,6 +6781,7 @@ impl Render for TerminalView {
                     .child({
                         let store = self.content_bounds.clone();
                         let weak = cx.entity().downgrade();
+                        let note_tilt = self.note.as_ref().map(|n| n.tilt());
                         div().absolute().inset_0().child(
                             canvas(
                                 move |bounds, window, cx| {
@@ -6548,6 +6804,16 @@ impl Render for TerminalView {
                                     } else {
                                         [0.0, 1.0, 1.0]
                                     };
+                                    // A sticky note is a flat object ON the
+                                    // glass, so punch its box out of the warp
+                                    // FIRST — the shader's first-rect-wins loop
+                                    // is what makes ordering the mechanism here.
+                                    if let Some(cut) = note_tilt
+                                        .and_then(|t| crate::sticky::layout(bounds, t))
+                                        .map(|l| crate::sticky::cutout(&l, sf))
+                                    {
+                                        crate::warp::register_note_cutout(cut);
+                                    }
                                     crate::warp::register_tube(
                                         [
                                             f32::from(bounds.origin.x) * sf,
@@ -6638,6 +6904,7 @@ impl Render for TerminalView {
             .when(th.bezel > 0.001, |el| el.child(crt::bezel(&th)))
             // 🎰 the slot reels ride above the bezel, below the menus
             .children(gamba_overlay)
+            .children(note_el)
             .children(ctx_menu_el)
             .children(overflow_el)
             // the paint overlay is the topmost surface — painted last, above

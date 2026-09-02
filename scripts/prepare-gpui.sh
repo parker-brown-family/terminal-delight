@@ -9,6 +9,13 @@
 #   0003-text-crawl         — Star-Wars text-crawl perspective pre-map in the CRT
 #                             pass + per-rect crawl uniform (delta on 0001+0002;
 #                             extends set_crt_rects_tubes, which warp.rs calls)
+#   0005-glyph-transform    — an ambient transform for painted glyphs
+#                             (Window::with_text_transformation); the sprite
+#                             structs already carried the matrix and the shaders
+#                             already consumed it, only paint_glyph pinned it to
+#                             the unit matrix. Independent of 0001-0004 (it
+#                             touches gpui, not gpui_wgpu); app/src/sticky.rs
+#                             needs it to write a note at an angle.
 #   0002-sever-gpl-crates   — drops the GPL crates (ztracing/zlog) that the
 #                             gpui -> sum_tree edge would otherwise link into
 #                             the binary, keeping a *distributed* build MIT-clean
@@ -22,10 +29,11 @@ patch_crt="$repo_root/docs/patches/0001-td-crt-pass.patch"
 patch_blur="$repo_root/docs/patches/0002-focus-blur.patch"
 patch_crawl="$repo_root/docs/patches/0003-text-crawl.patch"
 patch_tubes="$repo_root/docs/patches/0004-warp-tube-cap-32.patch"
+patch_glyph="$repo_root/docs/patches/0005-glyph-transform.patch"
 patch_gpl="$repo_root/docs/patches/0002-sever-gpl-crates.patch"
 
 [ -n "$zed_rev" ] || { echo "zed_rev not found in app/Cargo.toml" >&2; exit 1; }
-for p in "$patch_crt" "$patch_blur" "$patch_crawl" "$patch_tubes" "$patch_gpl"; do
+for p in "$patch_crt" "$patch_blur" "$patch_crawl" "$patch_tubes" "$patch_glyph" "$patch_gpl"; do
     [ -f "$p" ] || { echo "missing $p" >&2; exit 1; }
 done
 
@@ -75,6 +83,11 @@ apply_patch "$patch_crawl" "text-crawl" \
 # sentinel: the 32-wide rects array present means the cap bump is already in the tree
 apply_patch "$patch_tubes" "warp-tube-cap-32" \
     'grep -rqF "array<vec4<f32>, 32>" crates/gpui_wgpu/src'
+# 0005-glyph-transform touches crates/gpui only, so it is independent of the
+# renderer patches above and could apply anywhere in this list.
+# sentinel: the ambient text transform present means the patch is already in.
+apply_patch "$patch_glyph" "glyph-transform" \
+    'grep -rqF "with_text_transformation" crates/gpui/src'
 # sentinel: ztracing/zlog gone from sum_tree means the sever is already in the tree
 apply_patch "$patch_gpl" "sever-gpl-crates" \
     '! grep -rqF "ztracing" crates/sum_tree'

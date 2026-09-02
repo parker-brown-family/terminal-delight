@@ -91,6 +91,29 @@ pub fn register_tube(rect: [f32; 4], glare: f32, k1: f32, k2: f32, crawl: [f32; 
     push(&rects);
 }
 
+/// Register a FLAT patch lying ON a tube — the box a sticky note occupies.
+///
+/// `fs_crt` takes the FIRST registered rect that contains a pixel and returns a
+/// straight sample for a tube with no curvature and no crawl, so a cutout pushed
+/// BEFORE the pane's own tube leaves the note's pixels untouched while the rest
+/// of the pane still bows. Without it the note would barrel-distort with the
+/// glass — and it sits in a corner, where that distortion is at its largest.
+///
+/// Follows suppression like [`register_tube`]: when the whole screen is already
+/// flat there is nothing to cut out of. Note that a note costs a pane its second
+/// tube slot, so a wall of more than 16 noted panes hits [`MAX_TUBES`] and the
+/// last ones fall back to plain warping rather than breaking.
+pub fn register_note_cutout(rect: [f32; 4]) {
+    if SUPPRESSED.load(Ordering::Relaxed) {
+        return;
+    }
+    let mut rects = RECTS.lock().unwrap();
+    if rects.len() < MAX_TUBES {
+        rects.push((rect, 0.0, 0.0, 0.0, [0.0, 1.0, 1.0]));
+    }
+    push(&rects);
+}
+
 /// Register one OVERLAY tube (an agent-wall card's logo square) — like
 /// [`register_tube`] but it IGNORES suppression. The dashboard is a suppressed
 /// overlay (so the panes behind read flat), yet we still want each card's art to
