@@ -23,6 +23,15 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
     real timings: the HEY blinker's 700 ms square wave and the 1.4 s bounce-eased
     breath, so NEEDS INPUT / WORKING / DONE / BLOCKED read on the page the way
     they read on the mother bar.
+  - The page is built on a **scroll-driven backdrop and glass chrome**. The
+    repo's own `crt-wall` screenshot sits on a fixed layer that drifts at 16% of
+    scroll and scales to 1.30 across the page, blurred so it reads as phosphor
+    bloom rather than as legible terminal text competing with the headline.
+    Buttons, chips, cards and panels are frosted glass over a translucent tint
+    of the theme's own surface colour, so the moving wall is visible *through*
+    the chrome. The scrim opens at the hero and closes for prose, re-weighting
+    itself for the light palettes; `prefers-reduced-motion` parks the backdrop
+    and never arms the loop.
 
 - **Paint with the desktop's own palettes.** The paint overlay now carries TWO
   shelves, turned with `z` (`shift+z` back) or by clicking a pill: the existing
