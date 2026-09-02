@@ -741,13 +741,13 @@ fn resolve_path(p: &str, cwd: Option<&str>) -> Option<String> {
     Some(lexical_normalize(&full))
 }
 
-/// Hand a URL/path to the system default tool (`xdg-open`), detached so it
-/// outlives the click and never blocks the UI.
-fn open_with_system(target: &str) {
+/// Spawn a helper detached from us — its own session, no inherited stdio — so
+/// it outlives the click and never blocks the UI.
+fn spawn_detached(program: &str, args: &[&str]) {
     use std::os::unix::process::CommandExt;
     use std::process::{Command, Stdio};
-    let mut cmd = Command::new("xdg-open");
-    cmd.arg(target)
+    let mut cmd = Command::new(program);
+    cmd.args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
@@ -758,6 +758,140 @@ fn open_with_system(target: &str) {
         });
     }
     let _ = cmd.spawn();
+}
+
+/// Is this session managed by uwsm (Omarchy's, and any `uwsm start`ed Wayland
+/// session)? There, a GUI app is expected to be launched through `uwsm-app --`,
+/// which puts it in its OWN systemd scope under `app.slice` instead of leaving
+/// it a child of whatever spawned it — Omarchy's launchers are literally
+/// `exec setsid uwsm-app -- nautilus …`, and its Quickshell panels reveal files
+/// the same way. `uwsm-app` is a client for `wayland-wm-app-daemon.service` and
+/// talks to it through a FIFO in `$XDG_RUNTIME_DIR`; with no daemon it restarts
+/// units and blocks on its own timeouts, so the FIFO is the honest test of
+/// whether this route is available. Anywhere else — GNOME, KDE, X11, a bare
+/// compositor — this is false and we spawn the program directly, as before.
+fn session_uses_uwsm() -> bool {
+    let Ok(dir) = std::env::var("XDG_RUNTIME_DIR") else {
+        return false;
+    };
+    std::path::Path::new(&format!("{dir}/uwsm-app-daemon-in")).exists()
+}
+
+/// Hand a URL/path to the system default tool (`xdg-open`), detached so it
+/// outlives the click and never blocks the UI. On a uwsm session the launch
+/// goes through `uwsm-app` so the opened app is scoped to the desktop rather
+/// than to this terminal — closing the pane that printed a link should not be
+/// able to take the PDF it opened with it.
+fn open_with_system(target: &str) {
+    if session_uses_uwsm() {
+        spawn_detached("uwsm-app", &["--", "xdg-open", target]);
+    } else {
+        spawn_detached("xdg-open", &[target]);
+    }
+}
+
+/// The filesystem item a clicked link points at, or None when there is nothing
+/// on this disk to show — an `http(s)` link, or a `file://` URI naming another
+/// host. Accepts what `link_under` hands back: an already-absolute path, or a
+/// URL. Pure, so the tricky half (percent-decoding, the `localhost` authority)
+/// is testable without a file manager.
+fn reveal_target(target: &str) -> Option<String> {
+    if target.starts_with('/') {
+        return Some(target.to_string());
+    }
+    let rest = target.strip_prefix("file://")?;
+    // file://<authority>/path — empty or "localhost" means this machine; any
+    // other authority is someone else's disk and we have nothing to reveal.
+    let path = if let Some(p) = rest.strip_prefix("localhost/") {
+        format!("/{p}")
+    } else if rest.starts_with('/') {
+        rest.to_string()
+    } else {
+        return None;
+    };
+    Some(percent_decode(&path))
+}
+
+/// Decode `%XX` escapes in a URI path. Leaves a malformed escape as written —
+/// a literal `%` in a filename is likelier than a truncated escape.
+fn percent_decode(s: &str) -> String {
+    let b = s.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'%' && i + 2 < b.len() {
+            if let Ok(v) = u8::from_str_radix(&s[i + 1..i + 3], 16) {
+                out.push(v);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(b[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// Encode an absolute path as a `file://` URI. Everything outside the URI
+/// unreserved set is escaped, `/` excepted — a space or a `#` in a filename
+/// otherwise truncates the URI at the receiving end.
+fn path_to_file_uri(path: &str) -> String {
+    let mut out = String::from("file://");
+    for byte in path.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' | b'/' => {
+                out.push(byte as char)
+            }
+            _ => out.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    out
+}
+
+/// Wrap a string so a POSIX shell reads it as one literal argument.
+fn shell_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', r"'\''"))
+}
+
+/// The shell one-liner that reveals `path`. Pure, so the quoting and both
+/// branches are testable without a desktop.
+///
+/// `org.freedesktop.FileManager1.ShowItems` is the desktop-wide interface for
+/// showing an item *selected* in its folder — Nautilus, Dolphin, Nemo, Thunar
+/// and PCManFM all export it, and it is what "reveal in folder" means on every
+/// other OS. It is also D-Bus *activation*: the manager is started by the
+/// session, not by us, so it is correctly scoped whatever desktop this is. Only
+/// the fallback — a desktop exporting no such manager, which gets the containing
+/// directory opened instead — is ours to place, and there `use_uwsm` routes it
+/// through `uwsm-app` the way the rest of an Omarchy session launches apps.
+///
+/// The fallback rides inside the same `sh` because whether the D-Bus call failed
+/// is only knowable after it returns, and the UI thread will not wait for it.
+fn reveal_script(path: &str, use_uwsm: bool) -> String {
+    let parent = std::path::Path::new(path)
+        .parent()
+        .map(|p| p.to_string_lossy().into_owned())
+        .filter(|p| !p.is_empty())
+        .unwrap_or_else(|| "/".to_string());
+    let opener = if use_uwsm {
+        "uwsm-app -- xdg-open"
+    } else {
+        "xdg-open"
+    };
+    format!(
+        "dbus-send --session --print-reply --dest=org.freedesktop.FileManager1 \
+         /org/freedesktop/FileManager1 org.freedesktop.FileManager1.ShowItems \
+         array:string:{} string:'' >/dev/null 2>&1 || {opener} {} >/dev/null 2>&1",
+        shell_quote(&path_to_file_uri(path)),
+        shell_quote(&parent),
+    )
+}
+
+/// Show `path` in the system file manager with the item itself selected, rather
+/// than opening it — the "where does this actually live?" answer to a path a
+/// pane just printed.
+fn reveal_with_system(path: &str) {
+    spawn_detached("sh", &["-c", &reveal_script(path, session_uses_uwsm())]);
 }
 
 /// Screen→content barrel map — identical to the per-rect warp in
@@ -4312,6 +4446,23 @@ impl TerminalView {
         if self.hdr_overflow.take().is_some() {
             cx.notify();
         }
+        // Super+Ctrl-click REVEALS the file instead of opening it: the file
+        // manager comes up with the item selected, which is the other question a
+        // printed path provokes ("where does this live?", "what else is beside
+        // it?"). Tested before the plain Ctrl-click branch below, because that
+        // one also matches when Super is held. A target with nothing on disk to
+        // show — an http link — falls through and simply opens, as before.
+        if ev.button == MouseButton::Left && ev.modifiers.platform && ev.modifiers.control {
+            if let Some(item) = self
+                .link_under(ev.position)
+                .as_deref()
+                .and_then(reveal_target)
+            {
+                reveal_with_system(&item);
+                cx.notify();
+                return;
+            }
+        }
         // Shift- or Ctrl-click opens a link/path under the cursor with the system
         // default tool, instead of starting a selection. A modified click that
         // isn't on a link falls through to normal selection behaviour.
@@ -5220,6 +5371,9 @@ impl Render for TerminalView {
                 .font_family(ff)
                 .shadow_md();
             if let Some(l) = link {
+                // Reveal is offered only where there is a file to point at, so
+                // the item never appears dead on an http link.
+                let item = reveal_target(&l);
                 menu = menu.child(row("Open link  ↗", true).on_mouse_down(
                     MouseButton::Left,
                     cx.listener(move |v, _, _, cx| {
@@ -5229,6 +5383,17 @@ impl Render for TerminalView {
                         cx.notify();
                     }),
                 ));
+                if let Some(item) = item {
+                    menu = menu.child(row("Reveal in folder  ⌖", true).on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |v, _, _, cx| {
+                            reveal_with_system(&item);
+                            v.ctx_menu = None;
+                            cx.stop_propagation();
+                            cx.notify();
+                        }),
+                    ));
+                }
             }
             menu = menu
                 .child(row("Copy", has_sel).on_mouse_down(
@@ -6616,6 +6781,76 @@ mod tests {
         // resolves to a cell further from centre — matching what's drawn there)
         let (ex, _) = warp_screen_to_content(0.8, 0.5, 0.14, 0.06);
         assert!(ex > 0.8);
+    }
+
+    // Super+Ctrl-click reveals the ITEM, so the target has to survive the round
+    // trip out of a URI and back into one — the shapes a Links table prints.
+    #[test]
+    fn reveal_target_accepts_paths_and_local_file_uris() {
+        assert_eq!(
+            reveal_target("/home/parker/notes.md"),
+            Some("/home/parker/notes.md".into())
+        );
+        assert_eq!(
+            reveal_target("file:///home/parker/notes.md"),
+            Some("/home/parker/notes.md".into())
+        );
+        // the localhost authority names THIS machine
+        assert_eq!(
+            reveal_target("file://localhost/home/parker/notes.md"),
+            Some("/home/parker/notes.md".into())
+        );
+        // escapes are decoded — a space in a filename is the common one
+        assert_eq!(
+            reveal_target("file:///home/parker/my%20file.md"),
+            Some("/home/parker/my file.md".into())
+        );
+        // nothing on this disk to show
+        assert_eq!(reveal_target("https://example.com/x"), None);
+        assert_eq!(reveal_target("mailto:a@b.c"), None);
+        // someone else's disk
+        assert_eq!(reveal_target("file://otherhost/home/x"), None);
+    }
+
+    #[test]
+    fn file_uri_escapes_what_would_truncate_it() {
+        assert_eq!(
+            path_to_file_uri("/home/parker/a b#c.md"),
+            "file:///home/parker/a%20b%23c.md"
+        );
+        // the unreserved set survives untouched
+        assert_eq!(path_to_file_uri("/a/B-9_x.~y"), "file:///a/B-9_x.~y");
+        // and a decode of our own encoding is the identity
+        let p = "/home/parker/BROWN FAMILY/kf-aero (2026).pdf";
+        assert_eq!(
+            percent_decode(path_to_file_uri(p).strip_prefix("file://").unwrap()),
+            p
+        );
+    }
+
+    #[test]
+    fn shell_quote_survives_a_quote_in_the_name() {
+        assert_eq!(shell_quote("/a/b"), "'/a/b'");
+        assert_eq!(shell_quote("/a/it's"), r"'/a/it'\''s'");
+    }
+
+    // The reveal always asks the desktop's file manager first; only the fallback
+    // is ours to place, and on a uwsm session it goes through `uwsm-app` so the
+    // opened window is scoped to the desktop rather than to this terminal.
+    #[test]
+    fn reveal_script_asks_dbus_first_then_falls_back_to_the_folder() {
+        let plain = reveal_script("/home/parker/kf-aero/letter.pdf", false);
+        assert!(plain.contains("org.freedesktop.FileManager1.ShowItems"));
+        assert!(plain.contains("array:string:'file:///home/parker/kf-aero/letter.pdf'"));
+        // the fallback opens the CONTAINING folder, not the file
+        assert!(plain.ends_with("|| xdg-open '/home/parker/kf-aero' >/dev/null 2>&1"));
+        assert!(!plain.contains("uwsm-app"));
+
+        let uwsm = reveal_script("/home/parker/kf-aero/letter.pdf", true);
+        assert!(uwsm.ends_with("|| uwsm-app -- xdg-open '/home/parker/kf-aero' >/dev/null 2>&1"));
+
+        // a file at the root still has a folder to open
+        assert!(reveal_script("/passwd", false).contains("xdg-open '/'"));
     }
 
     #[test]

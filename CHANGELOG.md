@@ -46,6 +46,27 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
     and `prefers-reduced-motion` still wears each stop's theme while nothing
     moves.
 
+- **Super+Ctrl-click reveals a path in the file manager**, where Shift- or
+  Ctrl-click opens it. A pane full of printed paths — an agent's Links table,
+  a build log — provokes two different questions, and only one of them was
+  answerable by a click. The file manager comes up with the item *selected*
+  (`org.freedesktop.FileManager1.ShowItems`, which Nautilus, Dolphin, Nemo,
+  Thunar and PCManFM all export); a desktop exporting no such manager gets the
+  containing directory opened instead. Works on a bare path and on a `file://`
+  URI, percent-escapes and all, so a wrapped Links-table row reveals from the
+  same click that opens it. The right-click menu carries the same action as
+  **Reveal in folder**, shown only when the link names something on this disk.
+
+### Changed
+
+- **Opened links are scoped to the desktop, not to the terminal**, on a
+  uwsm-managed session (Omarchy's). `xdg-open` now runs through `uwsm-app --`
+  when `wayland-wm-app-daemon`'s socket is present, which is how the rest of
+  such a session launches apps: the PDF a click opens gets its own systemd
+  scope under `app.slice` instead of living inside the terminal's cgroup.
+  Sessions without that daemon — GNOME, KDE, X11, a bare compositor — spawn
+  exactly as before.
+
 - **Paint with the desktop's own palettes.** The paint overlay now carries TWO
   shelves, turned with `z` (`shift+z` back) or by clicking a pill: the existing
   COLOUR SETS, and DESKTOP PALETTES — every Omarchy theme installed on the
