@@ -3605,12 +3605,22 @@ impl Workspace {
                                 div()
                                     .text_size(px(9.))
                                     .text_color(th.text.alpha(0.55))
-                                    .child(if b.estimated { "left (estimated)" } else { "left" }),
+                                    .child(if b.estimated {
+                                        "left (estimated)"
+                                    } else {
+                                        "left"
+                                    }),
                             )
                             .child(div().flex_1().min_w(px(0.)))
-                            .child(div().text_size(px(9.)).text_color(th.text.alpha(0.5)).child(
-                                format!("{:.2} spent of {:.2} funded", b.spent, b.funded),
-                            )),
+                            .child(
+                                div()
+                                    .text_size(px(9.))
+                                    .text_color(th.text.alpha(0.5))
+                                    .child(format!(
+                                        "{:.2} spent of {:.2} funded",
+                                        b.spent, b.funded
+                                    )),
+                            ),
                     )
                     .child(meter(frac, col, 6.)),
             );
@@ -3641,12 +3651,7 @@ impl Workspace {
                         .text_color(th.text.alpha(0.5))
                         .child("TODAY"),
                 )
-                .child(
-                    div()
-                        .text_size(px(10.5))
-                        .text_color(th.text)
-                        .child(today),
-                ),
+                .child(div().text_size(px(10.5)).text_color(th.text).child(today)),
         );
 
         // ---- the week behind it ---------------------------------------------
@@ -3723,12 +3728,11 @@ impl Workspace {
                                 .text_color(th.text.alpha(0.8))
                                 .child(m.model.clone()),
                         )
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w(px(0.))
-                                .child(meter(frac, th.complement.alpha(0.75), 5.)),
-                        )
+                        .child(div().flex_1().min_w(px(0.)).child(meter(
+                            frac,
+                            th.complement.alpha(0.75),
+                            5.,
+                        )))
                         .child(
                             div()
                                 .w(px(58.))
@@ -3991,15 +3995,10 @@ impl Workspace {
             .flex_wrap()
             .items_center()
             .gap_3()
-            .child(
-                div()
-                    .min_w(px(0.))
-                    .overflow_hidden()
-                    .child(match tab {
-                        OverlayTab::Savings => leanctx_brand,
-                        OverlayTab::Usage => usage_brand,
-                    }),
-            )
+            .child(div().min_w(px(0.)).overflow_hidden().child(match tab {
+                OverlayTab::Savings => leanctx_brand,
+                OverlayTab::Usage => usage_brand,
+            }))
             .child(div().flex_1().min_w(px(0.)))
             .child(
                 div()
@@ -9850,13 +9849,11 @@ static SAVINGS_DEMO_ARMED: std::sync::atomic::AtomicBool =
 // FICTIONAL subscriptions. A real record carries this machine's actual plan,
 // prompt counts and how close the account is to its ceiling — none of which
 // belongs in a screenshot.
-static USAGE_DEMO_ARMED: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
+static USAGE_DEMO_ARMED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 // Dev hook: TD_USAGE_LIVE opens the same face on the REAL records. Not for
 // capture — see the comment where it fires.
-static USAGE_LIVE_ARMED: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
+static USAGE_LIVE_ARMED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 // Capture/demo hook: TD_GRAVEYARD_DEMO opens the graveyard once with FICTIONAL
 // entries so the dead-agent cards can be screenshotted leak-free.
@@ -10105,7 +10102,10 @@ impl Render for Workspace {
             // 2026-06-22T07:20Z — the same fictional afternoon TD_SAVINGS_DEMO
             // is set on, so the two faces of the card tell one story.
             let stamped = "2026-06-22T07:20:00+00:00";
-            let day = |d: &str, t: u64| usage::Day { date: d.into(), tokens: t };
+            let day = |d: &str, t: u64| usage::Day {
+                date: d.into(),
+                tokens: t,
+            };
             let model = |m: &str, i: u64, o: u64, cr: u64, cw: u64| usage::ModelUse {
                 model: m.into(),
                 input: i,

@@ -345,7 +345,10 @@ pub fn read_all(home: &Path) -> Vec<Record> {
 pub const COLLECTORS: &[(&str, &str)] = &[
     ("claude", include_str!("vendor/omarchy-agent-usage-claude")),
     ("codex", include_str!("vendor/omarchy-agent-usage-codex")),
-    ("fireworks", include_str!("vendor/omarchy-agent-usage-fireworks")),
+    (
+        "fireworks",
+        include_str!("vendor/omarchy-agent-usage-fireworks"),
+    ),
 ];
 
 /// Where the compiled-in collectors are unpacked to be run.
@@ -370,7 +373,9 @@ fn unpack(home: &Path, id: &str, src: &str) -> Result<PathBuf, String> {
     let dir = collector_dir(home);
     std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     let path = dir.join(format!("omarchy-agent-usage-{id}"));
-    let stale = std::fs::read_to_string(&path).map(|cur| cur != src).unwrap_or(true);
+    let stale = std::fs::read_to_string(&path)
+        .map(|cur| cur != src)
+        .unwrap_or(true);
     if stale {
         std::fs::write(&path, src).map_err(|e| format!("{}: {e}", path.display()))?;
     }
@@ -793,8 +798,15 @@ mod tests {
         // problem here rather than a runtime mystery on somebody's machine.
         assert_eq!(COLLECTORS.len(), 3);
         for (id, src) in COLLECTORS {
-            assert!(src.starts_with("#!/usr/bin/python3"), "{id}: not a python3 script");
-            assert!(src.len() > 5_000, "{id}: suspiciously short ({} bytes)", src.len());
+            assert!(
+                src.starts_with("#!/usr/bin/python3"),
+                "{id}: not a python3 script"
+            );
+            assert!(
+                src.len() > 5_000,
+                "{id}: suspiciously short ({} bytes)",
+                src.len()
+            );
             assert!(
                 src.contains("json.dumps"),
                 "{id}: does not look like it prints a record"
