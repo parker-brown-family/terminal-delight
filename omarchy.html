@@ -176,7 +176,11 @@
       background: color-mix(in srgb, var(--bg) 82%, transparent);
       border-bottom: 1px solid var(--line);
     }
-    nav.top .wrap { display: flex; align-items: center; gap: 20px; height: 54px; }
+    /* min-height, not height: on a narrow window the links wrap to a second
+       line, and a fixed 54px made them spill out of the bar and over whatever
+       sits under it. The tray measures this bar, so letting it grow is what
+       keeps the two from overlapping. */
+    nav.top .wrap { display: flex; align-items: center; gap: 20px; min-height: 54px; flex-wrap: wrap; padding-top: 4px; padding-bottom: 4px; }
     .brand { font-family: var(--mono); font-weight: 800; color: var(--fgb); }
     .brand .blink { animation: blink 1.1s steps(1) infinite; color: var(--acc); }
     @keyframes blink { 50% { opacity: 0; } }
@@ -467,12 +471,19 @@
        Once the hero has gone the rail leaves the flow and docks to the right
        edge, vertically centred, so the themes stay one click away for the
        whole page. `right` is measured from the middle of the window rather
-       than the edge, which keeps a real gap between the panel and the reading
-       column on a wide screen and never lets it drift miles out on an ultra-
-       wide one. Below 1250px there is no room beside the column, so it simply
-       stays where it was. */
+       than the edge: a real gap beside the reading column on a wide screen,
+       and no drifting miles out on an ultrawide one.
+
+       It docks at EVERY width that can hold it, because a tiled pane about
+       900px wide is where this page actually gets read, and a picker that
+       only appears on a maximised 1440 window is a picker that is not there.
+       Three sizes: full panel in the gutter past 1620, a narrow one in the
+       gutter from 1250, and below that a compact column of swatches — a dot
+       and a short name — which overlays the column's right edge rather than
+       covering it. Under 620px (a phone) there is no room for any of it and
+       the rail stays in the flow. */
     .rail-slot { transition: height 200ms ease; }
-    @media (min-width: 1250px) {
+    @media (min-width: 900px) {
       .rail-shell.riding {
         position: fixed; z-index: 8;
         /* Sized and placed to sit in the GUTTER, not on the page. The content
@@ -481,10 +492,10 @@
            enough for the full-width panel and a real gap. Anything wider than
            the gutter would cover the right column of the swatch grid, and an
            overlay that hides content is not a floating picker, it is a lid. */
-        right: max(20px, calc(50vw - 720px));
+        right: max(10px, calc(50vw - 720px));
         top: 50%; transform: translateY(-50%);
-        width: 158px; max-height: 78vh; overflow: auto;
-        margin: 0; padding: 13px 13px 6px;
+        width: 126px; max-height: 78vh; overflow: auto;
+        margin: 0; padding: 10px 10px 4px;
         border-radius: 16px;
         border: 1px solid var(--glass-edge);
         background: linear-gradient(var(--glass-tint), var(--glass-tint-2)),
@@ -502,7 +513,21 @@
         margin-bottom: 8px; font-size: 11px;
       }
       .rail-shell.riding .rail-head .now { font-size: 12px; }
+      .rail-shell.riding .chip { font-size: 11px; padding: 5px 7px 5px 5px; }
+      /* The count is the one thing that says nothing you cannot already see
+         by looking at the panel, so it is what goes when space is short. */
+      .rail-shell.riding #railCount { display: none; }
+      .rail-shell.riding .toggle { padding: 4px 9px 4px 7px; font-size: 10.5px; }
+    }
+    /* From 1250 there is a gutter to sit in rather than an edge to hang off. */
+    @media (min-width: 1250px) {
+      .rail-shell.riding {
+        right: max(20px, calc(50vw - 720px));
+        width: 158px;
+        padding: 13px 13px 6px;
+      }
       .rail-shell.riding .chip { font-size: 11.5px; padding: 6px 9px 6px 6px; }
+      .rail-shell.riding #railCount { display: inline; }
     }
     /* Past ~1620px the gutter is wide enough for the full panel and a gap. */
     @media (min-width: 1620px) {
@@ -512,6 +537,44 @@
       }
       .rail-shell.riding .chip { font-size: 12px; padding: 6px 12px 6px 7px; }
     }
+    /* ---- the tray: the same picker, for a narrow or a hand-held window ---
+       Under 900px there is no gutter to sit in and a side panel would land on
+       the prose, so the rail docks to the TOP instead — a full-width strip
+       under the sticky nav, chips laid out across it. Same element, same
+       clicks, same toggle; only the shape changes with the room available. */
+    @media (max-width: 899px) {
+      .rail-shell.riding {
+        position: fixed; z-index: 8;
+        top: var(--navh, 54px); left: 0; right: 0; width: auto;
+        margin: 0; padding: 8px 12px 4px;
+        max-height: 42vh; overflow: auto;
+        border: 0; border-bottom: 1px solid var(--glass-edge);
+        border-radius: 0;
+        background: linear-gradient(var(--glass-tint), var(--glass-tint-2)),
+                    color-mix(in srgb, var(--bg2) 72%, transparent);
+        box-shadow: 0 14px 30px -18px rgba(0,0,0,0.6);
+        -webkit-backdrop-filter: blur(18px) saturate(1.5);
+        backdrop-filter: blur(18px) saturate(1.5);
+        animation: railtray 280ms cubic-bezier(.2,.7,.2,1);
+      }
+      /* Chips across, as many as fit; the head collapses to the one line that
+         still says something — what you are wearing, and who is driving. */
+      .rail-shell.riding .rail {
+        grid-template-columns: repeat(auto-fit, minmax(104px, 1fr));
+        gap: 6px; padding: 2px 0 4px;
+      }
+      .rail-shell.riding .chip { font-size: 11px; padding: 5px 8px 5px 5px; }
+      .rail-shell.riding .rail-head {
+        gap: 10px; margin-bottom: 6px; font-size: 10.5px;
+      }
+      .rail-shell.riding .rail-head > span:first-child,
+      .rail-shell.riding #railCount { display: none; }
+    }
+    @keyframes railtray {
+      from { opacity: 0; transform: translateY(-10px); }
+      to   { opacity: 1; transform: none; }
+    }
+
     @keyframes raildock {
       from { opacity: 0; transform: translate(14px, -50%); }
       to   { opacity: 1; transform: translate(0, -50%); }
@@ -1351,12 +1414,15 @@ if (PALETTES.length) build();
   // so the page does not shorten under the reader at the moment of docking.
   const shell = document.querySelector('.rail-shell');
   const slot  = document.querySelector('.rail-slot');
-  const wide  = window.matchMedia('(min-width: 1250px)');
+  const nav   = document.querySelector('nav.top');
+  // Every width has a docked form — a side panel with room, a tray without
+  // — so there is no width at which the picker simply disappears.
   let riding = false;
   function ride(on) {
     if (!shell || !slot || on === riding) return;
     if (on) {
       slot.style.height = shell.offsetHeight + 'px';
+      if (nav) shell.style.setProperty('--navh', nav.offsetHeight + 'px');
       shell.classList.add('riding');
       document.body.appendChild(shell);
     } else {
@@ -1451,7 +1517,11 @@ if (PALETTES.length) build();
       heroInner.style.setProperty('--p', p.toFixed(3));
     }
     // Dock once the hero is mostly gone; undock when it comes back.
-    ride(wide.matches && heroRect.bottom < vh * 0.35);
+    ride(heroRect.bottom < vh * 0.35);
+    // The nav's height changes with the window — its links wrap on a narrow
+    // one — and the tray hangs off it, so this is re-read while docked rather
+    // than measured once at the moment of docking.
+    if (riding && nav) shell.style.setProperty('--navh', nav.offsetHeight + 'px');
     dress(pinned || best.dataset.spine, best);
   }
 
