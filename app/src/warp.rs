@@ -91,6 +91,17 @@ pub fn register_tube(rect: [f32; 4], glare: f32, k1: f32, k2: f32, crawl: [f32; 
     push(&rects);
 }
 
+/// Is the barrel pass flattened for this frame?
+///
+/// Read by anything that PRE-COMPENSATES for the warp rather than merely sitting
+/// under it — a sticky note is drawn through the inverse of its pane's
+/// distortion ([`crate::sticky::Affine::prewarp`]), so on a frame where the
+/// whole screen goes flat it has to stop compensating or it becomes the one
+/// thing on screen that is bent.
+pub fn is_suppressed() -> bool {
+    SUPPRESSED.load(Ordering::Relaxed)
+}
+
 /// Register one OVERLAY tube (an agent-wall card's logo square) — like
 /// [`register_tube`] but it IGNORES suppression. The dashboard is a suppressed
 /// overlay (so the panes behind read flat), yet we still want each card's art to

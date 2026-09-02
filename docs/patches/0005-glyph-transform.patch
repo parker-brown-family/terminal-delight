@@ -1,0 +1,86 @@
+diff --git i/crates/gpui/src/window.rs w/crates/gpui/src/window.rs
+index d5fce7a..9217295 100644
+--- i/crates/gpui/src/window.rs
++++ w/crates/gpui/src/window.rs
+@@ -1006,6 +1006,11 @@ pub struct Window {
+     pub(crate) rendered_entity_stack: Vec<EntityId>,
+     pub(crate) element_offset_stack: Vec<Point<Pixels>>,
+     pub(crate) element_opacity: f32,
++    /// Glyphs are rasterized axis-aligned and the sprite quad carries this
++    /// matrix, so a transform here moves painted text WITHOUT moving the layout
++    /// box gpui measured, masked and hit-tested. Callers under a non-unit
++    /// transform own their own hit-testing.
++    pub(crate) text_transform: TransformationMatrix,
+     pub(crate) content_mask_stack: Vec<ContentMask<Pixels>>,
+     pub(crate) requested_autoscroll: Option<Bounds<Pixels>>,
+     pub(crate) image_cache_stack: Vec<AnyImageCache>,
+@@ -1704,6 +1709,7 @@ impl Window {
+             element_offset_stack: Vec::new(),
+             content_mask_stack: Vec::new(),
+             element_opacity: 1.0,
++            text_transform: TransformationMatrix::unit(),
+             requested_autoscroll: None,
+             rendered_frame: Frame::new(DispatchTree::new(cx.keymap.clone(), cx.actions.clone())),
+             next_frame: Frame::new(DispatchTree::new(cx.keymap.clone(), cx.actions.clone())),
+@@ -3269,6 +3275,29 @@ impl Window {
+         result
+     }
+ 
++    /// Paint the glyphs emitted by `f` through `transformation`.
++    ///
++    /// The matrix operates in SCALED (physical) pixels, the space sprite quads
++    /// live in, so rotating about a point is
++    /// `unit().translate(pivot * scale_factor).rotate(angle).translate(-pivot * scale_factor)`.
++    ///
++    /// Only the painted quad moves — layout, content masks and hit-testing stay
++    /// in the flat box, so an element that must stay clickable under a non-unit
++    /// transform has to resolve its own hit-testing.
++    pub fn with_text_transformation<R>(
++        &mut self,
++        transformation: TransformationMatrix,
++        f: impl FnOnce(&mut Self) -> R,
++    ) -> R {
++        self.invalidator.debug_assert_paint_or_prepaint();
++
++        let previous = self.text_transform;
++        self.text_transform = previous.compose(transformation);
++        let result = f(self);
++        self.text_transform = previous;
++        result
++    }
++
+     /// Perform prepaint on child elements in a "retryable" manner, so that any side effects
+     /// of prepaints can be discarded before prepainting again. This is used to support autoscroll
+     /// where we need to prepaint children to detect the autoscroll bounds, then adjust the
+@@ -3844,7 +3873,12 @@ impl Window {
+             (quantized_origin.y.fract() * SUBPIXEL_VARIANTS_Y as f32) as u8,
+         );
+         let integer_origin = quantized_origin.map(|c| ScaledPixels(c.trunc()));
+-        let subpixel_rendering = self.should_use_subpixel_rendering(font_id, font_size);
++        let text_transform = self.text_transform;
++        // Subpixel AA lays its RGB fringes along the pixel grid. A rotated sprite
++        // carries them off that grid, where they read as colour shimmer on the
++        // stems, so transformed text falls back to grayscale coverage.
++        let subpixel_rendering = text_transform == TransformationMatrix::unit()
++            && self.should_use_subpixel_rendering(font_id, font_size);
+         let dilation = self.text_system().glyph_dilation_for_color(color);
+         let params = RenderGlyphParams {
+             font_id,
+@@ -3880,7 +3914,7 @@ impl Window {
+                     content_mask,
+                     color: color.opacity(element_opacity),
+                     tile,
+-                    transformation: TransformationMatrix::unit(),
++                    transformation: text_transform,
+                 });
+             } else {
+                 self.next_frame.scene.insert_primitive(MonochromeSprite {
+@@ -3890,7 +3924,7 @@ impl Window {
+                     content_mask,
+                     color: color.opacity(element_opacity),
+                     tile,
+-                    transformation: TransformationMatrix::unit(),
++                    transformation: text_transform,
+                 });
+             }
+         }

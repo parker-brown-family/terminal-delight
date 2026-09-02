@@ -7,6 +7,8 @@
 //! drag a tab to reorder · ctrl+click a tab: set its binder-divider colour
 //! 👓 on a sub-tab header: FOCUS — mirror that pane big, rest dimmed, esc closes
 //! (alt+↑/↓ jumps between your messages in a claude/codex pane) ·
+//! alt+s: stick a note to this pane's glass (alt+backspace peels it off; it
+//! survives a restart — see [`sticky`]) ·
 //! ctrl+scroll or the bezel scrubber: menu-bar size.
 //!
 //! One restorable session per compositor workspace: see [`instance`] for how a
@@ -35,6 +37,7 @@ mod pane;
 mod plugins;
 mod recover;
 mod session;
+mod sticky;
 mod term;
 mod theme;
 mod warp;
@@ -336,6 +339,7 @@ impl<L: Clone> Tree<L> {
                     resume: s.resume,
                     name: s.name,
                     logo: s.logo,
+                    note: s.note,
                 }
             }
             Tree::Split {
@@ -367,6 +371,9 @@ impl Node {
                 resume: rt.resume,
                 name: view.name.clone(),
                 logo: view.logo.clone(),
+                note: view
+                    .saved_note()
+                    .map(|(text, seed)| SavedNote { text, seed }),
             }
         })
     }
@@ -381,6 +388,17 @@ struct LeafState {
     resume: Option<String>,
     name: Option<String>,
     logo: Option<String>,
+    note: Option<SavedNote>,
+}
+
+/// A sticky note on its way into the state file. The seed travels with the text
+/// because it fixes the lean: a note that came back at a different angle would
+/// read as a different note, and the whole point is recognising the pane by it.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+struct SavedNote {
+    text: String,
+    #[serde(default)]
+    seed: u32,
 }
 
 // A transient (de)serialization DTO for the layout tree — built, written, and
@@ -400,6 +418,8 @@ enum SavedNode {
         name: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         logo: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        note: Option<SavedNote>,
     },
     Split {
         dir: SplitDir,
@@ -429,6 +449,8 @@ impl<'de> Deserialize<'de> for SavedNode {
             name: Option<String>,
             #[serde(default)]
             logo: Option<String>,
+            #[serde(default)]
+            note: Option<SavedNote>,
         }
         // A leaf's appearance: the new per-group form if present, else migrate a
         // legacy `theme` override, else pristine (follows outer for everything).
@@ -460,6 +482,7 @@ impl<'de> Deserialize<'de> for SavedNode {
                         resume: None,
                         name: None,
                         logo: None,
+                        note: None,
                     }),
                     other => Err(E::custom(format!("unknown node: {other}"))),
                 }
@@ -481,6 +504,7 @@ impl<'de> Deserialize<'de> for SavedNode {
                             resume: f.resume.take(),
                             name: f.name.take(),
                             logo: f.logo.take(),
+                            note: f.note.take(),
                         })
                     }
                     "Split" => {
@@ -622,8 +646,8 @@ fn is_word_char(c: char) -> bool {
 /// arrows (char), ctrl+arrows (word), shift+… (extend selection), home/end,
 /// ctrl+a (select all), backspace/delete. Indices are into `chars` (so a
 /// multi-byte glyph is one step). `anchor == cursor` means no selection.
-#[derive(Clone, Default)]
-struct EditBuffer {
+#[derive(Clone, Default, Debug)]
+pub(crate) struct EditBuffer {
     chars: Vec<char>,
     cursor: usize,
     anchor: usize,
@@ -632,7 +656,7 @@ struct EditBuffer {
 impl EditBuffer {
     /// Seed from an existing name with the whole thing selected (the file-manager
     /// rename gesture: the first keystroke replaces it, arrows still navigate).
-    fn seeded(s: &str) -> Self {
+    pub(crate) fn seeded(s: &str) -> Self {
         let chars: Vec<char> = s.chars().collect();
         let len = chars.len();
         Self {
@@ -642,15 +666,20 @@ impl EditBuffer {
         }
     }
 
-    fn text(&self) -> String {
+    pub(crate) fn text(&self) -> String {
         self.chars.iter().collect()
+    }
+
+    /// Caret position, in chars — what a caller drawing its own caret needs.
+    pub(crate) fn caret(&self) -> usize {
+        self.cursor
     }
 
     fn has_sel(&self) -> bool {
         self.cursor != self.anchor
     }
 
-    fn sel_range(&self) -> (usize, usize) {
+    pub(crate) fn sel_range(&self) -> (usize, usize) {
         (self.cursor.min(self.anchor), self.cursor.max(self.anchor))
     }
 
@@ -691,7 +720,13 @@ impl EditBuffer {
 
     /// Apply one keystroke. Enter/Escape are handled by the caller before this is
     /// reached. `max` caps the inserted length.
-    fn apply(&mut self, key: &str, m: &gpui::Modifiers, key_char: Option<&str>, max: usize) {
+    pub(crate) fn apply(
+        &mut self,
+        key: &str,
+        m: &gpui::Modifiers,
+        key_char: Option<&str>,
+        max: usize,
+    ) {
         let extend = m.shift;
         let n = self.chars.len();
         match key {
@@ -2271,6 +2306,11 @@ fn make_pane_restored(
     })
     .detach();
     // a committed rename → persist so the custom name survives a restart
+    // a note went up or came down — persist it like a rename
+    cx.subscribe(&pane, |ws, _pane, _ev: &pane::StickyChanged, cx| {
+        ws.save(cx);
+    })
+    .detach();
     cx.subscribe(&pane, |ws, _pane, _ev: &PaneRenamed, cx| {
         ws.save(cx);
     })
@@ -2292,12 +2332,14 @@ fn build_node(saved: &SavedNode, window: &mut Window, cx: &mut Context<Workspace
             resume,
             name,
             logo,
+            note,
         } => {
             let pane = make_pane_restored(
                 session::PaneRestore {
                     cwd: cwd.clone(),
                     resume: resume.clone(),
                     logo: logo.clone(),
+                    note: note.as_ref().map(|n| (n.text.clone(), n.seed)),
                 },
                 window,
                 cx,
@@ -3103,6 +3145,7 @@ impl Workspace {
             cwd,
             resume: run,
             logo: None,
+            note: None,
         };
         let pane = make_pane_restored(restore, window, cx);
         self.tabs.push(Tab::new(Node::Leaf(pane), None));
@@ -3522,6 +3565,7 @@ impl Workspace {
                 cwd,
                 resume: None,
                 logo: None,
+                note: None,
             },
             window,
             cx,
@@ -13196,6 +13240,8 @@ impl Render for Workspace {
                         row("Alt + ↑ / ↓", s.jump_msg),
                         row("Alt+R", s.focus),
                         row(s.k_focus_inherit_key, s.focus_inherit),
+                        row("Alt+S", s.sticky),
+                        row("Alt+Backspace", s.sticky_peel),
                         row(s.k_wheel_key, s.pan_focus),
                         row(s.k_input_colour, s.input_colour),
                         row(&format!("🤖 {}", s.k_mother_bar), s.mcp),
@@ -15217,6 +15263,7 @@ mod tests {
             resume: resume.map(str::to_string),
             name: None,
             logo: None,
+            note: None,
         };
         let resumes = |tabs: &mut [SavedTab]| {
             let mut out = vec![];
@@ -15292,6 +15339,7 @@ mod tests {
             resume: None,
             name: None,
             logo: None,
+            note: None,
         };
         assert_eq!(count_saved_leaves(&leaf()), 1);
         let split = SavedNode::Split {
@@ -15599,6 +15647,7 @@ id = "hacker"
                     resume: None,
                     name: None,
                     logo: None,
+                    note: None,
                 },
             }],
             groups: vec![],
@@ -15640,6 +15689,7 @@ id = "hacker"
                     resume: Some("claude --resume 48be90b8-5777-44b6-bb6f-1c6069205c0d".into()),
                     name: None,
                     logo: None,
+                    note: None,
                 },
             }],
             groups: vec![],
@@ -15670,6 +15720,7 @@ id = "hacker"
             resume: None,
             name: None,
             logo: None,
+            note: None,
         };
         let state = StateFile {
             panes: 0,
@@ -15912,6 +15963,7 @@ node = "Leaf"
             resume: None,
             name: None,
             logo: Some("/home/u/Pictures/acme.png".to_string()),
+            note: None,
         };
         let toml = toml::to_string(&node).expect("serialize leaf");
         assert!(
@@ -15992,6 +16044,7 @@ node = "Leaf"
             resume: None,
             name: None,
             logo: None,
+            note: None,
         };
         let node = SavedNode::Split {
             dir: SplitDir::Row,
@@ -16199,6 +16252,7 @@ fn scratch_decision(
             cwd,
             resume,
             logo: None,
+            note: None,
         })
     } else {
         None
@@ -16507,6 +16561,14 @@ fn main() {
                     include_bytes!("../assets/fonts/NewsCycle-Bold.ttf").as_slice(),
                 )]) {
                     eprintln!("terminal-delight: failed to load crawl font: {e}");
+                }
+                // Bundle the sticky-note hand (Caveat, SIL OFL) for the same
+                // reason: no box here ships a handwriting face, and a note that
+                // silently fell back to the UI sans would read as a dialog.
+                if let Err(e) = cx.text_system().add_fonts(vec![std::borrow::Cow::Borrowed(
+                    include_bytes!("../assets/fonts/Caveat-Variable.ttf").as_slice(),
+                )]) {
+                    eprintln!("terminal-delight: failed to load the sticky-note font: {e}");
                 }
                 // First-run self-diagnostics for untested boxes (AMD/Intel,
                 // Wayland, fractional scaling): record installed fonts so the grid
