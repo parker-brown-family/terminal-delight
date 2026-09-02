@@ -12704,33 +12704,26 @@ impl Render for Workspace {
                                                     .object_fit(gpui::ObjectFit::Cover),
                                             )
                                         })
-                                        // THE VERB, lettered on the glass. The plate
-                                        // says which tool; the caption says what he is
-                                        // doing with it, which is the thing the art was
-                                        // drawn FROM (web/art/CONVENTIONS.md rule 1).
-                                        // For a tool the vocabulary has never seen, the
-                                        // plate is anonymous and the two letters over it
-                                        // are the only identity it has.
+                                        // THE VERB, lettered on the glass. The scene
+                                        // shows which tool he is holding; the caption
+                                        // says what he is DOING with it, which is the
+                                        // thing the art was drawn from
+                                        // (web/art/CONVENTIONS.md rule 1), and for a
+                                        // tool the vocabulary has never seen it is that
+                                        // tool's own name.
+                                        //
+                                        // No initials over the art here, unlike the pane
+                                        // header: two letters across a robot's chest
+                                        // read as damage, and the caption below him
+                                        // already names the tool. The header has no
+                                        // caption and only 18px, which is where the
+                                        // lettering earns its place.
                                         .when_some(tool_face.clone(), |d, face| {
                                             let ring: gpui::Hsla = face
                                                 .tint
                                                 .map(|t| gpui::rgb(t).into())
                                                 .unwrap_or(theme_col);
-                                            d.when_some(face.mark.clone(), |d, mark| {
-                                                d.child(
-                                                    div()
-                                                        .absolute()
-                                                        .inset_0()
-                                                        .flex()
-                                                        .items_center()
-                                                        .justify_center()
-                                                        .text_size(px(19. * cs))
-                                                        .font_weight(gpui::FontWeight::EXTRA_BOLD)
-                                                        .text_color(ring)
-                                                        .child(mark),
-                                                )
-                                            })
-                                            .child(
+                                            d.child(
                                                 div()
                                                     .absolute()
                                                     .bottom_0()
