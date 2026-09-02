@@ -2863,6 +2863,13 @@ impl TerminalView {
     /// that rolls the GAMBA reels and arms the bell edge — so the mother-bar 🤖
     /// pulse can ask every frame for free. Flips are announced via
     /// [`AgentWorkingChanged`].
+    /// This pane's screen rect as it was last painted, in window coordinates.
+    /// The workspace reads it on the way OUT — a closing pane has to leave its
+    /// stage behind, because by the time the shutdown plays the pane is gone.
+    pub fn screen_rect(&self) -> Option<Bounds<Pixels>> {
+        *self.content_bounds.lock().unwrap()
+    }
+
     pub fn agent_working(&self) -> bool {
         self.mode.is_agent() && self.gamba.is_thinking()
     }

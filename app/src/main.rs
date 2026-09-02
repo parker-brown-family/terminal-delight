@@ -62,6 +62,22 @@ use theme::{PaneTheme, ThemeChoice};
 
 const MAX_PANES: usize = 8;
 
+/// A tube that has been switched off. A closing pane is dropped immediately —
+/// that drop IS the close, it releases the PTY — so the shutdown cannot be
+/// played by the pane itself; it leaves behind the stage (its last painted
+/// rect) and its curvature, and the workspace plays the effect over the space
+/// it vacated. Only a WARPED pane leaves one, for the same reason only a warped
+/// pane ignites: a flat pane has no tube to go dark.
+struct Ghost {
+    rect: Bounds<Pixels>,
+    k1: f32,
+    k2: f32,
+    glare: f32,
+    born: Instant,
+    /// Stable across frames so the animation is not restarted by a repaint.
+    id: u64,
+}
+
 #[derive(Clone, Copy, PartialEq, Debug, Serialize, Deserialize)]
 enum SplitDir {
     Row,
@@ -2125,6 +2141,9 @@ struct Workspace {
     /// richness-regression guard accept a save that drops >50% of panes/tabs —
     /// so a deliberate close persists, but a checkpoint or dead-agent reap can
     /// never silently shrink the saved session. Consumed (reset) on read.
+    /// Tubes still going dark. Drained by age every frame; never persisted.
+    ghosts: Vec<Ghost>,
+    next_ghost_id: u64,
     permit_shrink: std::cell::Cell<bool>,
     /// Set when an auto-`reap` removed panes (a shell/agent exited). While true,
     /// the 30s checkpoint does NOT persist — so a startup where several resumed
@@ -2469,6 +2488,8 @@ impl Workspace {
             // restore branch below) yet must never overwrite the real state
             scratch: scratch || demo,
             should_move: false,
+            ghosts: Vec::new(),
+            next_ghost_id: 0,
             permit_shrink: std::cell::Cell::new(false),
             degraded: std::cell::Cell::new(false),
         };
@@ -5925,6 +5946,18 @@ impl Workspace {
         }
         self.confirm_close = None;
         self.tab_menu = None;
+        // Every tube in the tab goes dark at once — but only if this tab is the
+        // one on screen; a background tab's panes hold stale bounds (see
+        // `ghost_of`), and there is no point animating a screen nobody saw.
+        if i == self.active && self.tabs.len() > 1 {
+            let mut leaves = vec![];
+            self.tabs[i].root.leaves(&mut leaves);
+            let leaves: Vec<_> = leaves.into_iter().cloned().collect();
+            for e in &leaves {
+                let g = self.ghost_of(e, cx);
+                self.ghosts.extend(g);
+            }
+        }
         self.tabs.remove(i);
         if self.tabs.is_empty() {
             cx.quit();
@@ -6784,6 +6817,34 @@ impl Workspace {
     /// Close just one pane (its header ×). Removes the leaf, collapses its parent
     /// split onto the sibling, drops the now-empty tab, and quits if it was the
     /// last pane anywhere — the same end-state as the shell exiting on its own.
+    /// The shutdown ghost a pane leaves behind, if it leaves one at all.
+    ///
+    /// `None` for a FLAT pane — with no curvature there is no tube to go dark
+    /// and the effect would read as a glitch — and `None` for a pane that has
+    /// never been painted, which has no stage to play on.
+    ///
+    /// Callers must only ask for panes that are actually ON SCREEN. A background
+    /// tab's panes still hold the bounds they had when last painted, so ghosting
+    /// one would drop a shutdown over whatever occupies that space now.
+    fn ghost_of(&mut self, pane: &Entity<TerminalView>, cx: &App) -> Option<Ghost> {
+        let view = pane.read(cx);
+        let th = view.resolved_theme(cx);
+        let (k1, k2) = theme::warp_coeffs(th.warp);
+        if k1.abs() <= 1e-5 && k2.abs() <= 1e-5 {
+            return None;
+        }
+        let rect = view.screen_rect()?;
+        self.next_ghost_id += 1;
+        Some(Ghost {
+            rect,
+            k1,
+            k2,
+            glare: th.screen_glare,
+            born: Instant::now(),
+            id: self.next_ghost_id,
+        })
+    }
+
     fn close_pane(&mut self, id: EntityId, window: &mut Window, cx: &mut Context<Self>) {
         let Some(from) = self.tabs.iter().position(|t| {
             let mut v = vec![];
@@ -6792,6 +6853,21 @@ impl Workspace {
         }) else {
             return;
         };
+        // Take the dying tube's stage before it goes. `remove_leaf` below drops
+        // the Entity, which SIGHUPs the shell — after that there is no pane left
+        // to ask where it was or how bent it was.
+        if from == self.active {
+            let mut leaves = vec![];
+            self.tabs[from].root.leaves(&mut leaves);
+            let dying = leaves
+                .iter()
+                .find(|e| e.entity_id() == id)
+                .map(|e| (*e).clone());
+            if let Some(e) = dying {
+                let g = self.ghost_of(&e, cx);
+                self.ghosts.extend(g);
+            }
+        }
         let pred = |e: &Entity<TerminalView>| e.entity_id() == id;
         let tab = self.tabs.remove(from);
         let name = tab.name;
@@ -8993,6 +9069,53 @@ fn td_anchor_top_forced() -> bool {
 impl Render for Workspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.reap(window, cx);
+        // Tubes still going dark. Aged out here rather than on a timer: a ghost
+        // that outlives its animation would keep an overlay tube registered.
+        self.ghosts
+            .retain(|g| g.born.elapsed() < Duration::from_millis(crt::IGNITION_MS));
+        let shutdown_ghosts: Vec<AnyElement> = self
+            .ghosts
+            .iter()
+            .map(|g| {
+                let (k1, k2, glare) = (g.k1, g.k2, g.glare);
+                div()
+                    .absolute()
+                    .left(g.rect.origin.x)
+                    .top(g.rect.origin.y)
+                    .w(g.rect.size.width)
+                    .h(g.rect.size.height)
+                    // Re-register the vacated rect as a warp tube for as long as
+                    // the shutdown runs, so the dying screen bends exactly like
+                    // the pane that was there — the pane's own tube went with it.
+                    .child(div().absolute().inset_0().child(canvas(
+                        move |bounds, window, _| {
+                            let sf = window.scale_factor();
+                            crate::warp::register_overlay_tube(
+                                [
+                                    f32::from(bounds.origin.x) * sf,
+                                    f32::from(bounds.origin.y) * sf,
+                                    f32::from(bounds.size.width) * sf,
+                                    f32::from(bounds.size.height) * sf,
+                                ],
+                                glare,
+                                k1,
+                                k2,
+                                [0.0, 1.0, 1.0],
+                            );
+                        },
+                        |_, _, _, _| {},
+                    )))
+                    .with_animation(
+                        ("crt-shutdown", g.id as usize),
+                        Animation::new(Duration::from_millis(crt::IGNITION_MS)),
+                        |el, t| match crt::shutdown(t) {
+                            Some(ign) => el.child(crt::ignition_flash(ign)),
+                            None => el,
+                        },
+                    )
+                    .into_any_element()
+            })
+            .collect();
         // A clicked agent-finished notification lands here on the next frame:
         // the async task can't reach the Window, so it parked the pane id and
         // this frame performs the zip — activate the owning tab and focus the
@@ -14367,7 +14490,10 @@ impl Render for Workspace {
                     // the language dropdown rides above even the help modal it opens from
                     .children(lang_picker_overlay)
                     // the per-pane logo picker rides on top too (its scrim locks input)
-                    .children(logo_picker_overlay),
+                    .children(logo_picker_overlay)
+                    // a tube going dark rides over everything: it is drawn on
+                    // space that no longer belongs to any pane
+                    .children(shutdown_ghosts),
             );
         // Frameless: wrap the cabinet in client-side decorations (shadow margin,
         // rounded clip, live resize edges) so it runs with no system titlebar.
