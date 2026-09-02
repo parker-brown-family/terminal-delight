@@ -457,6 +457,20 @@ pub fn ignition(t: f32) -> Option<Ignition> {
     })
 }
 
+/// A tube going DARK. A power-down is the second half of a power-up run
+/// forward — the screen closes to a line, the line pinches to a star — so this
+/// remaps onto the same arc from the end of the bloom rather than describing a
+/// second one. Everything the ignition guarantees (ordered phases, a ground
+/// that only opens up, values in range) holds here for free, and a change to
+/// the easing moves both.
+///
+/// The `ground` opening up as the star pinches is what makes it read as a
+/// shutdown rather than a lid: the vacated space is already showing through
+/// before the last of the light is gone.
+pub fn shutdown(t: f32) -> Option<Ignition> {
+    ignition(BLOOM_END + t.clamp(0.0, 1.0) * (1.0 - BLOOM_END))
+}
+
 /// The ignition overlay for one frame. Sits above the grid and below the glass,
 /// inside the pane's screen area, so it is clipped to the tube and picks up the
 /// scanlines and curvature rather than drawing its own.
@@ -647,6 +661,29 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// The shutdown is the ignition's tail, exactly: it opens on a full screen
+    /// (no bloom — the tube is already lit) and ends when the ignition does.
+    #[test]
+    fn a_shutdown_is_the_ignitions_second_half() {
+        match shutdown(0.0).unwrap().phase {
+            IgnitionPhase::Collapse { half } => {
+                assert!(half > 0.49, "a dying tube starts from a whole screen")
+            }
+            other => panic!("a shutdown must not bloom: {other:?}"),
+        }
+        // never a bloom at any point in the sweep
+        for i in 0..100 {
+            let Some(ign) = shutdown(i as f32 / 100.0) else {
+                continue;
+            };
+            assert!(
+                !matches!(ign.phase, IgnitionPhase::Bloom { .. }),
+                "no bloom in a shutdown"
+            );
+        }
+        assert_eq!(shutdown(1.0), None, "and it ends");
     }
 
     /// A negative `t` can arrive from a clock that has not ticked yet; it must
