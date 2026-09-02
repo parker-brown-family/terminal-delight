@@ -6720,17 +6720,22 @@ impl Render for TerminalView {
                         }),
                 )
         });
-        // The sticky note. Painted at PANE level rather than inside the screen
-        // div so it sits above the glass and the bezel: it is stuck to the
-        // outside of the monitor, and a note wearing the tube's scanlines would
-        // read as something the terminal drew rather than something you put
-        // there. Menus still cover it. Its geometry comes from the SAME
-        // `content_bounds` the warp cutout was computed from — one source, so
-        // the paper and the hole it sits in can never disagree.
+        // The sticky note. Its geometry comes from the same `content_bounds` the
+        // warp tube is registered from, because the note is drawn through the
+        // INVERSE of that tube's distortion and the two must be measuring the
+        // same rectangle or the cancellation is against the wrong curve.
         let note_el = self.note.clone().map(|note| {
             let store = self.content_bounds.clone();
-            let th = th.clone();
+            let pal = crate::sticky::paper(th.text, th.accent);
             let peeling = self.note_hover == Some(crate::sticky::Hit::Peel);
+            // The pane's own curvature, and zero while a modal has flattened the
+            // whole screen — the note un-bends with everything else that frame
+            // rather than being the one thing that stayed compensated.
+            let (k1, k2) = if crate::warp::is_suppressed() || th.crawl {
+                (0.0, 0.0)
+            } else {
+                crate::theme::warp_coeffs(th.warp)
+            };
             div().absolute().inset_0().child(
                 canvas(
                     |_, _, _| {},
@@ -6738,8 +6743,9 @@ impl Render for TerminalView {
                         let Some(content) = store.lock().ok().and_then(|b| *b) else {
                             return;
                         };
-                        if let Some(lay) = crate::sticky::layout(content, note.tilt()) {
-                            crate::sticky::paint(&note, &lay, &th, peeling, window, cx);
+                        if let Some(mut lay) = crate::sticky::layout(content, note.tilt()) {
+                            lay.pre_warp(content, k1, k2);
+                            crate::sticky::paint(&note, &lay, &pal, peeling, window, cx);
                         }
                     },
                 )
@@ -6781,7 +6787,6 @@ impl Render for TerminalView {
                     .child({
                         let store = self.content_bounds.clone();
                         let weak = cx.entity().downgrade();
-                        let note_tilt = self.note.as_ref().map(|n| n.tilt());
                         div().absolute().inset_0().child(
                             canvas(
                                 move |bounds, window, cx| {
@@ -6804,16 +6809,6 @@ impl Render for TerminalView {
                                     } else {
                                         [0.0, 1.0, 1.0]
                                     };
-                                    // A sticky note is a flat object ON the
-                                    // glass, so punch its box out of the warp
-                                    // FIRST — the shader's first-rect-wins loop
-                                    // is what makes ordering the mechanism here.
-                                    if let Some(cut) = note_tilt
-                                        .and_then(|t| crate::sticky::layout(bounds, t))
-                                        .map(|l| crate::sticky::cutout(&l, sf))
-                                    {
-                                        crate::warp::register_note_cutout(cut);
-                                    }
                                     crate::warp::register_tube(
                                         [
                                             f32::from(bounds.origin.x) * sf,
@@ -6880,6 +6875,16 @@ impl Render for TerminalView {
                             })),
                     )
                     .children(copy_el)
+                    // The sticky note, INSIDE the screen and therefore inside the
+                    // registered warp tube. It has to be: the note is drawn
+                    // pre-distorted so the barrel pass straightens it out, and
+                    // any of that overdraw that lands outside the tube — over the
+                    // header, say — is never straightened and shows as a smear of
+                    // paper where no paper is. The screen's `overflow_hidden` is
+                    // what guarantees that can't happen. Being under the glass is
+                    // right too, now that the note shares the tube's curve: it
+                    // takes the same scanlines and glare as everything else on it.
+                    .children(note_el)
                     // The tube fires. Last child of the SCREEN, so it paints
                     // over the grid but stays inside the registered warp tube —
                     // the curvature and scanlines in the effect are the shader
@@ -6904,7 +6909,6 @@ impl Render for TerminalView {
             .when(th.bezel > 0.001, |el| el.child(crt::bezel(&th)))
             // 🎰 the slot reels ride above the bezel, below the menus
             .children(gamba_overlay)
-            .children(note_el)
             .children(ctx_menu_el)
             .children(overflow_el)
             // the paint overlay is the topmost surface — painted last, above
