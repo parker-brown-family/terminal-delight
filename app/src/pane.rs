@@ -20,10 +20,10 @@ use alacritty_terminal::{
 use futures::StreamExt;
 use gpui::{
     anchored, canvas, deferred, div, font, linear_color_stop, linear_gradient, point, prelude::*,
-    px, rgb, AnyElement, App, Bounds, BoxShadow, ClipboardItem, Context, FocusHandle, Focusable,
-    Font, FontStyle, FontWeight, Hsla, KeyDownEvent, Keystroke, MouseButton, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, Pixels, ScrollWheelEvent, StyledText, TextRun, UnderlineStyle,
-    Window,
+    px, rgb, Animation, AnimationExt, AnyElement, App, Bounds, BoxShadow, ClipboardItem, Context,
+    FocusHandle, Focusable, Font, FontStyle, FontWeight, Hsla, KeyDownEvent, Keystroke,
+    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, ScrollWheelEvent,
+    StyledText, TextRun, UnderlineStyle, Window,
 };
 
 /// What the tube is showing — drives the per-pane screen colour.
@@ -1825,6 +1825,11 @@ pub struct TerminalView {
     /// Barrel coefficients for the optional renderer patch. Public upstream
     /// GPUI builds keep this at zero so mouse hit testing stays linear.
     warp_k: (f32, f32),
+    /// When this pane came into being — drives the one-shot CRT ignition, and
+    /// nothing else. Set at construction rather than on first render so a pane
+    /// created behind an inactive tab has already "fired" by the time you look
+    /// at it, instead of ambushing you with a flash when you switch over.
+    born: Instant,
     /// Painted-row → grid-viewport-row transform recorded each frame so hit-test
     /// (`cell_at` / `link_under`) and wheel scrolling can invert the same visual
     /// transform the render applied. `paint_offset` is the `bottom_anchor_rows`
@@ -2635,6 +2640,7 @@ impl TerminalView {
             spawned: Instant::now(),
             fx: crt::Fx::new(seed),
             warp_k: (0., 0.),
+            born: Instant::now(),
             paint_offset: 0,
             paint_inverted: false,
             paint_to_grid: None,
@@ -5760,6 +5766,18 @@ impl Render for TerminalView {
         // hit-test coefficients in sync with its OWN resolved warp, so clicks land
         // correctly whether this pane is bent and its neighbour flat, or vice versa.
         self.warp_k = theme::warp_coeffs(th.warp);
+        // Does this pane's tube fire on its way in? Only a BENT tube ignites —
+        // read off the resolved coefficients rather than the dial, so the gate
+        // follows whatever `warp_coeffs` decides "bent" means. The elapsed test
+        // is what makes it one-shot: once the window has passed the overlay
+        // stops being built at all, for the rest of the pane's life.
+        let frozen_ignition = crt::ignition_freeze();
+        let ignites = {
+            let (k1, k2) = self.warp_k;
+            (k1.abs() > 1e-5 || k2.abs() > 1e-5)
+                && (frozen_ignition.is_some()
+                    || self.born.elapsed() < Duration::from_millis(crt::IGNITION_MS))
+        };
         // edge-detected focus reporting (CSI I / CSI O) for apps that ask for it.
         // The bell persists until you actually LOOK at the pane: the focus-in
         // edge below is the acknowledgement (a click, alt+arrows, or the
@@ -6588,7 +6606,23 @@ impl Render for TerminalView {
                                 }
                             })),
                     )
-                    .children(copy_el),
+                    .children(copy_el)
+                    // The tube fires. Last child of the SCREEN, so it paints
+                    // over the grid but stays inside the registered warp tube —
+                    // the curvature and scanlines in the effect are the shader
+                    // and the glass acting on it, not something drawn here.
+                    // Gated on the barrel warp: a flat pane is not pretending to
+                    // be a CRT, and a flash on it would read as a glitch.
+                    .when(ignites, |el| {
+                        el.child(div().absolute().inset_0().with_animation(
+                            "crt-ignition",
+                            Animation::new(Duration::from_millis(crt::IGNITION_MS)),
+                            move |el, t| match crt::ignition(frozen_ignition.unwrap_or(t)) {
+                                Some(ign) => el.child(crt::ignition_flash(ign)),
+                                None => el,
+                            },
+                        ))
+                    }),
             )
             .when(std::env::var("TD_NOGLASS").is_err(), |el| {
                 el.child(crt::glass(&th, &self.fx))
