@@ -3606,6 +3606,38 @@ impl TerminalView {
         self.note.as_ref().is_some_and(|n| n.is_editing())
     }
 
+    /// Post what is being written and hand the cursor back.
+    ///
+    /// The single commit path: Enter, a second `alt+s`, and a click away from the
+    /// note all land here, so "done" cannot come to mean three different things.
+    /// A note emptied first is thrown away instead — the one way a commit can
+    /// remove a note, and it takes deleting the text to reach it.
+    pub fn sticky_commit(&mut self, cx: &mut Context<Self>) {
+        let Some(note) = self.note.as_mut() else {
+            return;
+        };
+        let Some(edit) = note.edit.as_ref() else {
+            return;
+        };
+        let text = edit.buf.text().trim().to_string();
+        if text.is_empty() {
+            self.sticky_peel(cx);
+            return;
+        }
+        note.text = text;
+        note.edit = None;
+        cx.emit(StickyChanged);
+        cx.notify();
+    }
+
+    /// `alt+s`. A toggle: it gives the note the cursor and takes it back.
+    pub fn sticky_toggle(&mut self, cx: &mut Context<Self>) {
+        match crate::sticky::alt_s(self.sticky_composing()) {
+            crate::sticky::Act::Post => self.sticky_commit(cx),
+            _ => self.sticky_open(cx),
+        }
+    }
+
     /// One keystroke offered to the note's composer. `true` when the note took
     /// it, which is EVERY key while composing: the composer is modal, and a
     /// letter that leaked past it would land in whatever is running behind.
@@ -3623,20 +3655,7 @@ impl TerminalView {
         };
         match crate::sticky::press(true, ks.key.as_str()) {
             crate::sticky::Press::Pass => return false,
-            crate::sticky::Press::Post => {
-                let text = edit.buf.text().trim().to_string();
-                if text.is_empty() {
-                    // Clearing a note and committing it is the keyboard's
-                    // deliberate way to throw it away — the one place Enter can
-                    // remove one, because you had to empty it first.
-                    self.sticky_peel(cx);
-                } else {
-                    note.text = text;
-                    note.edit = None;
-                    cx.emit(StickyChanged);
-                    cx.notify();
-                }
-            }
+            crate::sticky::Press::Post => self.sticky_commit(cx),
             crate::sticky::Press::Revert => {
                 match edit.restore.take() {
                     Some(previous) => {
@@ -3662,22 +3681,30 @@ impl TerminalView {
         true
     }
 
-    /// A click resolved against the note, inverting its tilt. `true` when the
-    /// note took the click, so the pane's own selection never starts under it.
+    /// A click resolved against the note, inverting its tilt.
+    ///
+    /// `true` when the note SWALLOWED the click, so the pane's own selection
+    /// never starts under the paper. Committing does not swallow it: a click
+    /// away from a note being written posts the note AND lands in the terminal
+    /// where you aimed it, the same as clicking out of the tab-rename box.
     fn sticky_click(&mut self, at: gpui::Point<Pixels>, cx: &mut Context<Self>) -> bool {
-        let Some(lay) = self.note_layout() else {
-            return false;
-        };
-        match crate::sticky::Hit::at(at, &lay) {
-            Some(crate::sticky::Hit::Peel) => {
+        let hit = self
+            .note_layout()
+            .and_then(|l| crate::sticky::Hit::at(at, &l));
+        match crate::sticky::click(self.sticky_composing(), hit) {
+            crate::sticky::Act::Peel => {
                 self.sticky_peel(cx);
                 true
             }
-            Some(crate::sticky::Hit::Body) => {
+            crate::sticky::Act::Open => {
                 self.sticky_open(cx);
                 true
             }
-            None => false,
+            crate::sticky::Act::Post => {
+                self.sticky_commit(cx);
+                false
+            }
+            crate::sticky::Act::Pass => false,
         }
     }
 
@@ -3770,9 +3797,43 @@ impl TerminalView {
                 return;
             }
         }
+        // The note's OWN chords, ahead of the composer that would otherwise eat
+        // them. A composer that swallows the chord for "put the pen down" leaves
+        // Enter as the only way out, which is exactly the bug this ordering
+        // exists to prevent: alt+s reached `EditBuffer::apply`, which drops
+        // alt-modified keys, so pressing it again did nothing at all.
+        //
+        // Alt+S sticks a note to this pane, picks the pen back up on the one
+        // already there, and — pressed again while writing — posts it. Taken in
+        // the pane rather than at the Workspace because the note belongs to the
+        // pane and the pane's handler runs first: routing it through the
+        // Workspace would let `keystroke_bytes` send `ESC s` on the way past. It
+        // costs the shell alt+s, which nothing standard binds.
+        if ks.modifiers.alt
+            && !ks.modifiers.control
+            && !ks.modifiers.shift
+            && ks.key.as_str() == "s"
+        {
+            self.sticky_toggle(cx);
+            cx.stop_propagation();
+            return;
+        }
+        // Alt+Backspace peels it off — but ONLY when a note is actually stuck
+        // here. With no note the chord falls through untouched and readline still
+        // gets its backward-kill-word, so the shell loses the binding exactly
+        // when the pane is visibly carrying a note and not otherwise. Peeling by
+        // accident costs one keystroke: alt+s brings the text straight back.
+        if ks.modifiers.alt
+            && !ks.modifiers.control
+            && ks.key.as_str() == "backspace"
+            && self.sticky_peel(cx)
+        {
+            cx.stop_propagation();
+            return;
+        }
         // A note holding the cursor owns the keyboard, rename-box style: every
-        // keystroke writes on the paper instead of reaching the PTY, Enter posts
-        // it, Esc reverts it. This runs ONLY while composing — see
+        // OTHER keystroke writes on the paper instead of reaching the PTY, Enter
+        // posts it, Esc reverts it. This runs ONLY while composing — see
         // `sticky_key` for why a posted note must never see a key.
         if self.sticky_composing() && self.sticky_key(ks, cx) {
             cx.stop_propagation();
@@ -3807,25 +3868,6 @@ impl TerminalView {
             return;
         }
         let m = &ks.modifiers;
-        // Alt+S sticks a note to this pane, or picks the pen back up on the one
-        // already there. Taken here rather than at the Workspace because the note
-        // belongs to the pane, and the pane's handler runs first — routing it
-        // through the Workspace would let `keystroke_bytes` send `ESC s` on the
-        // way past. It costs the shell alt+s, which nothing standard binds.
-        if m.alt && !m.control && !m.shift && ks.key.as_str() == "s" {
-            self.sticky_open(cx);
-            cx.stop_propagation();
-            return;
-        }
-        // Alt+Backspace peels it off — but ONLY when a note is actually stuck
-        // here. With no note the chord falls through untouched and readline still
-        // gets its backward-kill-word, so the shell loses the binding exactly
-        // when the pane is visibly carrying a note and not otherwise. Peeling by
-        // accident costs one keystroke: alt+s brings the text straight back.
-        if m.alt && !m.control && ks.key.as_str() == "backspace" && self.sticky_peel(cx) {
-            cx.stop_propagation();
-            return;
-        }
         // Ctrl+W closes the whole tab (always confirmed by the workspace). We
         // intercept it here so it never reaches the PTY as werase (^W) — the
         // workspace owns this chord, like new-tab/copy/paste below.
