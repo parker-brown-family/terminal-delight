@@ -329,12 +329,186 @@ pub fn read_all(home: &Path) -> Vec<Record> {
     out
 }
 
-/// The command that regenerates every record, if this machine has one.
+// ----------------------------------------------------------------------------
+// the collectors, compiled in
+// ----------------------------------------------------------------------------
+
+/// The vendored collectors: `(id, source)`. Byte-identical copies of Omarchy's,
+/// carried inside the binary so that a machine with neither Omarchy nor a plugin
+/// still has something that can write a record — see `vendor/README.md` for the
+/// provenance and the re-sync recipe.
 ///
-/// Omarchy's updater is preferred when present because it is the one already
-/// wired to that box's collectors and settings; TD's own plugin binary is the
-/// fallback for every other Linux. Returning `None` is not an error — it means
-/// the panel draws what is on disk and names the writer it is missing.
+/// They are Python because they are upstream's, unedited, and that is the whole
+/// maintenance plan: `cmp` is the audit and `cp` is the upgrade. Rewriting them
+/// in Rust would buy a dropped `python3` requirement and cost every future
+/// upstream fix — a trade worth making only when TD leaves Linux.
+pub const COLLECTORS: &[(&str, &str)] = &[
+    ("claude", include_str!("vendor/omarchy-agent-usage-claude")),
+    ("codex", include_str!("vendor/omarchy-agent-usage-codex")),
+    ("fireworks", include_str!("vendor/omarchy-agent-usage-fireworks")),
+];
+
+/// Where the compiled-in collectors are unpacked to be run.
+fn collector_dir(home: &Path) -> PathBuf {
+    std::env::var_os("XDG_CACHE_HOME")
+        .map(PathBuf::from)
+        .filter(|p| p.is_absolute())
+        .unwrap_or_else(|| home.join(".cache"))
+        .join("terminal-delight/agent-usage")
+}
+
+/// Where records this binary collected are published. Deliberately NOT Omarchy's
+/// directory: on a machine with both, each writes its own and [`read_all`]
+/// resolves the overlap by `updatedAt` rather than by one clobbering the other.
+pub fn own_dir(home: &Path) -> PathBuf {
+    state_home(home).join("terminal-delight/agents/usage")
+}
+
+/// Unpack one collector to disk if what is there is not already it, and return
+/// its path. Rewritten only on a content change, so the common run is a read.
+fn unpack(home: &Path, id: &str, src: &str) -> Result<PathBuf, String> {
+    let dir = collector_dir(home);
+    std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let path = dir.join(format!("omarchy-agent-usage-{id}"));
+    let stale = std::fs::read_to_string(&path).map(|cur| cur != src).unwrap_or(true);
+    if stale {
+        std::fs::write(&path, src).map_err(|e| format!("{}: {e}", path.display()))?;
+    }
+    Ok(path)
+}
+
+/// Run one collector and publish its record. Returns the record's id on success.
+///
+/// The collector's stdout is parsed before anything is written: a collector that
+/// dies mid-print, or prints a traceback, must not leave half a record on disk
+/// for the panel to read as truth. The write is atomic for the same reason.
+pub fn collect_one(home: &Path, id: &str, src: &str) -> Result<String, String> {
+    let script = unpack(home, id, src)?;
+    let out = std::process::Command::new("python3")
+        .arg(&script)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .map_err(|e| {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                "python3 not found — the bundled collectors need it".to_string()
+            } else {
+                format!("python3: {e}")
+            }
+        })?;
+    if !out.status.success() {
+        let err = String::from_utf8_lossy(&out.stderr);
+        let line = err.lines().last().unwrap_or("collector failed").trim();
+        return Err(format!("{id}: {line}"));
+    }
+    let text = String::from_utf8_lossy(&out.stdout);
+    let v: Value = serde_json::from_str(text.trim())
+        .map_err(|e| format!("{id}: collector printed no usable JSON ({e})"))?;
+    let rec = Record::from_json(&v).ok_or_else(|| format!("{id}: record has no id"))?;
+
+    let dir = own_dir(home);
+    std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let final_path = dir.join(format!("{}.json", rec.id));
+    let tmp = dir.join(format!(".{}.json.tmp", rec.id));
+    std::fs::write(&tmp, text.trim().as_bytes()).map_err(|e| format!("{}: {e}", tmp.display()))?;
+    std::fs::rename(&tmp, &final_path).map_err(|e| format!("{}: {e}", final_path.display()))?;
+    Ok(rec.id)
+}
+
+/// `terminal-delight agent-usage …` — run the compiled-in collectors and publish
+/// one record per subscription. A plain subprocess: no window, no gpui.
+///
+/// One collector failing never fails the run. A machine signed in to Claude and
+/// not to Codex is the normal case, and a Codex error that suppressed Claude's
+/// numbers would be the panel lying about a subscription that is working fine.
+pub fn run_cli(args: &[String]) -> i32 {
+    let home = crate::session::home_dir();
+    let mut only: Option<&str> = None;
+    let mut verb = "update";
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "update" | "list" | "where" => verb = Box::leak(args[i].clone().into_boxed_str()),
+            "--only" => {
+                i += 1;
+                match args.get(i) {
+                    Some(a) => only = Some(Box::leak(a.clone().into_boxed_str())),
+                    None => {
+                        eprintln!("agent-usage: --only needs a collector id");
+                        return 2;
+                    }
+                }
+            }
+            "-h" | "--help" => {
+                println!("{USAGE_CLI_HELP}");
+                return 0;
+            }
+            other => {
+                eprintln!("agent-usage: unknown argument {other:?}\n\n{USAGE_CLI_HELP}");
+                return 2;
+            }
+        }
+        i += 1;
+    }
+
+    match verb {
+        "list" => {
+            for (id, _) in COLLECTORS {
+                println!("{id}");
+            }
+            0
+        }
+        "where" => {
+            for d in dirs(&home) {
+                println!("{}", d.display());
+            }
+            0
+        }
+        _ => {
+            let mut ok = 0usize;
+            let mut failed = 0usize;
+            for (id, src) in COLLECTORS {
+                if only.is_some_and(|o| o != *id) {
+                    continue;
+                }
+                match collect_one(&home, id, src) {
+                    Ok(written) => {
+                        ok += 1;
+                        println!("{written}");
+                    }
+                    Err(e) => {
+                        failed += 1;
+                        eprintln!("agent-usage: {e}");
+                    }
+                }
+            }
+            if ok == 0 && failed > 0 {
+                1
+            } else {
+                0
+            }
+        }
+    }
+}
+
+const USAGE_CLI_HELP: &str = "\
+terminal-delight agent-usage [update|list|where] [--only <id>]
+
+  update   run every compiled-in collector and publish its record (default)
+  list     print the collector ids this binary carries
+  where    print the directories the usage panel reads, in order
+
+Records are written to ${XDG_STATE_HOME:-~/.local/state}/terminal-delight/agents/usage/.
+The collectors are Omarchy's, vendored unedited (MIT); they need python3.";
+
+/// The command that regenerates every record.
+///
+/// Omarchy's updater is preferred when present: it is already wired to that box's
+/// collectors AND to its per-agent enable/disable settings, so using it respects
+/// a subscription the user turned off. Then a `td-agent-usage` on `PATH`, for
+/// anyone who packages the collectors separately. Failing both, **this binary**,
+/// which carries them — so the answer is only `None` if we cannot find our own
+/// executable, which is not a case worth designing around but is a case worth
+/// not panicking on.
 pub fn refresh_command(home: &Path) -> Option<(String, Vec<String>)> {
     if let Some(p) = which("omarchy-agent-usage-update") {
         return Some((p, vec![]));
@@ -346,14 +520,19 @@ pub fn refresh_command(home: &Path) -> Option<(String, Vec<String>)> {
     if local.is_file() {
         return Some((local.to_string_lossy().into_owned(), vec!["update".into()]));
     }
-    None
+    std::env::current_exe().ok().map(|exe| {
+        (
+            exe.to_string_lossy().into_owned(),
+            vec!["agent-usage".into(), "update".into()],
+        )
+    })
 }
 
 /// Run the updater and wait for it. Slow on purpose — it is talking to vendor
 /// endpoints — so this belongs on a background thread, never on the frame.
 pub fn refresh(home: &Path) -> Result<(), String> {
     let Some((cmd, args)) = refresh_command(home) else {
-        return Err("no usage collector installed".into());
+        return Err("cannot locate a usage collector, or this binary".into());
     };
     let out = std::process::Command::new(&cmd)
         .args(&args)
@@ -606,6 +785,44 @@ mod tests {
         assert!(parse_epoch("").is_none());
         assert!(parse_epoch("soon").is_none());
         assert!(parse_epoch("2026-13-02T12:00:00Z").is_none());
+    }
+
+    #[test]
+    fn every_vendored_collector_is_a_python3_script_that_prints_a_record() {
+        // Compiled in, so a corrupt or truncated vendor file is a BUILD-time
+        // problem here rather than a runtime mystery on somebody's machine.
+        assert_eq!(COLLECTORS.len(), 3);
+        for (id, src) in COLLECTORS {
+            assert!(src.starts_with("#!/usr/bin/python3"), "{id}: not a python3 script");
+            assert!(src.len() > 5_000, "{id}: suspiciously short ({} bytes)", src.len());
+            assert!(
+                src.contains("json.dumps"),
+                "{id}: does not look like it prints a record"
+            );
+        }
+        let ids: Vec<&str> = COLLECTORS.iter().map(|(i, _)| *i).collect();
+        assert_eq!(ids, ["claude", "codex", "fireworks"]);
+    }
+
+    #[test]
+    fn the_binary_is_its_own_last_resort_collector() {
+        // With the collectors compiled in there is always something to run, so
+        // the panel's "nothing can write these" state is effectively unreachable
+        // — which is the point of vendoring them.
+        let home = Path::new("/nonexistent-home");
+        let (cmd, args) = refresh_command(home).expect("this binary can always collect");
+        if !cmd.ends_with("omarchy-agent-usage-update") && !cmd.ends_with("td-agent-usage") {
+            assert_eq!(args, ["agent-usage", "update"]);
+        }
+    }
+
+    #[test]
+    fn records_are_published_to_tds_own_directory_not_omarchys() {
+        let home = Path::new("/home/nobody");
+        let own = own_dir(home);
+        assert!(own.ends_with("terminal-delight/agents/usage"), "{own:?}");
+        // and it is one of the directories the panel reads
+        assert!(dirs(home).contains(&own));
     }
 
     #[test]

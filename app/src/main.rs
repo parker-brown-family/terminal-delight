@@ -896,10 +896,10 @@ enum McpFilter {
 }
 
 /// Shown when the panel has nothing to read and nothing that could write it.
-const NO_COLLECTOR: &str =
-    "no usage collector installed (install the agent-usage plugin, or Omarchy's collectors)";
-/// Shown when a collector exists but has not published a record yet.
-const NO_RECORDS: &str = "no usage records on disk yet";
+const NO_COLLECTOR: &str = "cannot locate a usage collector, or this binary";
+/// Shown when nothing has been collected yet. Not an error: the collectors ride
+/// inside the binary, so the fix is the refresh button, not an install.
+const NO_RECORDS: &str = "nothing collected yet \u{2014} press refresh";
 
 /// Which ledger the </> overlay is showing.
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
@@ -3400,9 +3400,10 @@ impl Workspace {
                         .text_size(px(9.5))
                         .text_color(th.text.alpha(0.65))
                         .child(
-                            "TD collects none of this itself \u{2014} it reads one JSON record \
-                             per subscription. Omarchy's collectors already write them; on any \
-                             other Linux the agent-usage plugin does.",
+                            "One JSON record per subscription, written by a collector that knows \
+                             how to ask that vendor. This binary carries the collectors \
+                             (`terminal-delight agent-usage update`, needs python3); on Omarchy \
+                             its own collectors write the same records on their own timer.",
                         ),
                 )
                 .child(
@@ -4227,6 +4228,12 @@ impl Workspace {
         // label columns) has a min-content width of its own. The only width that
         // holds is a definite one, so the viewport decides it — the same way
         // `HEADER_NARROW` lets the glyph row decide what it can afford.
+        //
+        // It is NOT enough at a tiled width: the card still clips, because this
+        // is not the width of the box it is centred in. Tracked as #264 — an
+        // attempt at the CSS-correct fix (min_w(0) on every row so `w_full` can
+        // bind) collapsed the body instead, and was reverted rather than shipped
+        // half-working.
         let w = (vw - 28.).clamp(240., 840.);
         let panel = div()
             .w(px(w))
@@ -17326,6 +17333,16 @@ fn main() {
     // `ctl`, a plain subprocess: no window, no gpui.
     if argv.get(1).map(String::as_str) == Some("mcp") {
         std::process::exit(ctl::run_mcp_cli(&argv[2..]));
+    }
+
+    // `agent-usage`: run the collectors this binary CARRIES and publish one
+    // record per AI coding subscription — what the wall's Σ usage face reads.
+    // Compiled in, so the feature needs no Omarchy, no plugin and no install
+    // step; see [`usage`] and `src/vendor/README.md`. Like `ctl`, a plain
+    // subprocess: no window, no gpui. Slow on purpose — it talks to vendor
+    // endpoints — which is why the panel only ever runs it off the frame.
+    if argv.get(1).map(String::as_str) == Some("agent-usage") {
+        std::process::exit(usage::run_cli(&argv[2..]));
     }
 
     // `probe`: read-only forensics on someone ELSE's terminal — given a tile's
