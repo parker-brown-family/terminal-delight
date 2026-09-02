@@ -467,120 +467,103 @@
     .spine-tag b { color: var(--acc); font-weight: 700; letter-spacing: 0.06em; }
     @media (max-width: 760px) { .spine-tag { display: none; } }
 
-    /* ---- the picker rides along --------------------------------------
-       Once the hero has gone the rail leaves the flow and docks to the right
-       edge, vertically centred, so the themes stay one click away for the
-       whole page. `right` is measured from the middle of the window rather
-       than the edge: a real gap beside the reading column on a wide screen,
-       and no drifting miles out on an ultrawide one.
 
-       It docks at EVERY width that can hold it, because a tiled pane about
-       900px wide is where this page actually gets read, and a picker that
-       only appears on a maximised 1440 window is a picker that is not there.
-       Three sizes: full panel in the gutter past 1620, a narrow one in the
-       gutter from 1250, and below that a compact column of swatches — a dot
-       and a short name — which overlays the column's right edge rather than
-       covering it. Under 620px (a phone) there is no room for any of it and
-       the rail stays in the flow. */
-    .rail-slot { transition: height 200ms ease; }
-    @media (min-width: 900px) {
-      .rail-shell.riding {
-        position: fixed; z-index: 8;
-        /* Sized and placed to sit in the GUTTER, not on the page. The content
-           column is 1080px, so between 1250 and 1620 the only room is the
-           ~180px beside it and the panel is cut to fit; above that there is
-           enough for the full-width panel and a real gap. Anything wider than
-           the gutter would cover the right column of the swatch grid, and an
-           overlay that hides content is not a floating picker, it is a lid. */
-        right: max(10px, calc(50vw - 720px));
-        top: 50%; transform: translateY(-50%);
-        width: 126px; max-height: 78vh; overflow: auto;
-        margin: 0; padding: 10px 10px 4px;
-        border-radius: 16px;
-        border: 1px solid var(--glass-edge);
-        background: linear-gradient(var(--glass-tint), var(--glass-tint-2)),
-                    color-mix(in srgb, var(--bg2) 62%, transparent);
-        box-shadow: var(--glass-shadow);
-        -webkit-backdrop-filter: blur(18px) saturate(1.5);
-        backdrop-filter: blur(18px) saturate(1.5);
-        animation: raildock 320ms cubic-bezier(.2,.7,.2,1);
-      }
-      /* One column while docked: seven names read as a list, and the panel
-         stays narrow enough to leave the prose alone. */
-      .rail-shell.riding .rail { grid-template-columns: 1fr; gap: 6px; padding: 2px 0 6px; }
-      .rail-shell.riding .rail-head {
-        flex-direction: column; align-items: flex-start; gap: 7px;
-        margin-bottom: 8px; font-size: 11px;
-      }
-      .rail-shell.riding .rail-head .now { font-size: 12px; }
-      .rail-shell.riding .chip { font-size: 11px; padding: 5px 7px 5px 5px; }
-      /* The count is the one thing that says nothing you cannot already see
-         by looking at the panel, so it is what goes when space is short. */
-      .rail-shell.riding #railCount { display: none; }
-      .rail-shell.riding .toggle { padding: 4px 9px 4px 7px; font-size: 10.5px; }
+    /* ================= the picker reassembles as you scroll ==============
+       Two rails exist at once: the one under the headline and the one that
+       rides along. A single scrubbed number, `--focus`, runs them in
+       opposition — 1 means "assembled here", 0 means "dispersed". The hero's
+       rail holds 1 at the top and falls to 0; the ride-along does the reverse,
+       so the picker never blinks out of existence, it travels.
+
+       The motion is the convergence stage from /offerings: each chip carries a
+       deterministic displacement, a shrink and a home-distance; the distance
+       drives the blur, so a chip far from home is far out of focus. Opacity is
+       focus², which keeps the middle of the journey legible and the ends
+       clean.
+       ------------------------------------------------------------------- */
+    /* The slot holds the cell; the chip inside it is what moves. */
+    .chip-slot { display: block; position: relative; }
+    .chip-slot > .chip { width: 100%; justify-content: flex-start; }
+    .rail .chip {
+      transform:
+        translate3d(calc(var(--dx, 0px) * (1 - var(--focus, 1))),
+                    calc(var(--dy, 0px) * (1 - var(--focus, 1))), 0)
+        scale(calc(1 - var(--ds, 0.3) * (1 - var(--focus, 1))));
+      filter: blur(calc(var(--mag, 0) * (1 - var(--focus, 1)) * 0.035px));
+      opacity: calc(var(--focus, 1) * var(--focus, 1));
+      /* Chips move under a scrubbed number, not a transition — a transition
+         here would fight the scroll and lag behind it. */
+      transition: border-color 110ms ease, background 110ms ease;
+      will-change: transform, filter, opacity;
     }
-    /* From 1250 there is a gutter to sit in rather than an edge to hang off. */
+    .rail .chip:hover { transform:
+        translate3d(calc(var(--dx, 0px) * (1 - var(--focus, 1))),
+                    calc(var(--dy, 0px) * (1 - var(--focus, 1))), 0)
+        scale(calc(1 - var(--ds, 0.3) * (1 - var(--focus, 1)))) translateY(-1px); }
+
+    /* The ride-along. It exists from the first frame — fixed, out of the hero
+       (whose transform and filter would otherwise make themselves its
+       containing block), and simply dispersed until the scroll assembles it.
+       Nothing is moved between parents, which is what made the old snap
+       restore only sometimes. */
+    .rail-dock {
+      position: fixed; z-index: 8;
+      right: max(10px, calc(50vw - 720px));
+      top: 50%; transform: translateY(-50%);
+      width: 126px; max-height: 78vh; overflow: visible;
+      padding: 10px 10px 4px; border-radius: 16px;
+      border: 1px solid transparent;
+    }
+    /* The panel itself fades in behind the chips rather than with them, so the
+       glass arrives as they land instead of dragging a rectangle across the
+       page. */
+    .rail-dock::before {
+      content: ""; position: absolute; inset: 0; border-radius: inherit;
+      z-index: -1; opacity: var(--panel, 0);
+      border: 1px solid var(--glass-edge);
+      background: linear-gradient(var(--glass-tint), var(--glass-tint-2)),
+                  color-mix(in srgb, var(--bg2) 62%, transparent);
+      box-shadow: var(--glass-shadow);
+      -webkit-backdrop-filter: blur(18px) saturate(1.5);
+      backdrop-filter: blur(18px) saturate(1.5);
+      transition: opacity 200ms ease;
+    }
+    .rail-dock .rail { grid-template-columns: 1fr; gap: 6px; padding: 2px 0 6px; }
+    .rail-dock .rail-head {
+      flex-direction: column; align-items: flex-start; gap: 7px;
+      margin-bottom: 8px; font-size: 11px;
+    }
+    .rail-dock .rail-head .now { font-size: 12px; }
+    .rail-dock .chip { font-size: 11px; padding: 5px 7px 5px 5px; }
     @media (min-width: 1250px) {
-      .rail-shell.riding {
-        right: max(20px, calc(50vw - 720px));
-        width: 158px;
-        padding: 13px 13px 6px;
-      }
-      .rail-shell.riding .chip { font-size: 11.5px; padding: 6px 9px 6px 6px; }
-      .rail-shell.riding #railCount { display: inline; }
+      .rail-dock { right: max(20px, calc(50vw - 720px)); width: 158px; padding: 13px 13px 6px; }
+      .rail-dock .chip { font-size: 11.5px; padding: 6px 9px 6px 6px; }
     }
-    /* Past ~1620px the gutter is wide enough for the full panel and a gap. */
     @media (min-width: 1620px) {
-      .rail-shell.riding {
-        width: 214px;
-        right: max(24px, calc(50vw - 792px));
-      }
-      .rail-shell.riding .chip { font-size: 12px; padding: 6px 12px 6px 7px; }
+      .rail-dock { width: 214px; right: max(24px, calc(50vw - 792px)); }
+      .rail-dock .chip { font-size: 12px; padding: 6px 12px 6px 7px; }
     }
-    /* ---- the tray: the same picker, for a narrow or a hand-held window ---
-       Under 900px there is no gutter to sit in and a side panel would land on
-       the prose, so the rail docks to the TOP instead — a full-width strip
-       under the sticky nav, chips laid out across it. Same element, same
-       clicks, same toggle; only the shape changes with the room available. */
+    /* Under 900px there is no gutter to sit in and a side panel would land on
+       the prose, so the ride-along is a tray under the nav instead. The chips
+       still fly in from the right; they just land in a row. */
     @media (max-width: 899px) {
-      .rail-shell.riding {
-        position: fixed; z-index: 8;
+      .rail-dock {
         top: var(--navh, 54px); left: 0; right: 0; width: auto;
-        margin: 0; padding: 8px 12px 4px;
-        max-height: 42vh; overflow: auto;
-        border: 0; border-bottom: 1px solid var(--glass-edge);
-        border-radius: 0;
-        background: linear-gradient(var(--glass-tint), var(--glass-tint-2)),
-                    color-mix(in srgb, var(--bg2) 72%, transparent);
-        box-shadow: 0 14px 30px -18px rgba(0,0,0,0.6);
-        -webkit-backdrop-filter: blur(18px) saturate(1.5);
-        backdrop-filter: blur(18px) saturate(1.5);
-        animation: railtray 280ms cubic-bezier(.2,.7,.2,1);
+        transform: none;
+        padding: 8px 12px 4px; max-height: 42vh; border-radius: 0;
       }
-      /* Chips across, as many as fit; the head collapses to the one line that
-         still says something — what you are wearing, and who is driving. */
-      .rail-shell.riding .rail {
+      .rail-dock::before { border: 0; border-bottom: 1px solid var(--glass-edge); border-radius: 0; }
+      .rail-dock .rail {
         grid-template-columns: repeat(auto-fit, minmax(104px, 1fr));
         gap: 6px; padding: 2px 0 4px;
       }
-      .rail-shell.riding .chip { font-size: 11px; padding: 5px 8px 5px 5px; }
-      .rail-shell.riding .rail-head {
-        gap: 10px; margin-bottom: 6px; font-size: 10.5px;
-      }
-      .rail-shell.riding .rail-head > span:first-child,
-      .rail-shell.riding #railCount { display: none; }
-    }
-    @keyframes railtray {
-      from { opacity: 0; transform: translateY(-10px); }
-      to   { opacity: 1; transform: none; }
+      .rail-dock .rail-head { flex-direction: row; align-items: baseline; gap: 10px; margin-bottom: 6px; }
     }
 
-    @keyframes raildock {
-      from { opacity: 0; transform: translate(14px, -50%); }
-      to   { opacity: 1; transform: translate(0, -50%); }
-    }
+    /* Reduced motion keeps both rails, drops the flight: the ride-along simply
+       is there once you have left the hero. */
     @media (prefers-reduced-motion: reduce) {
-      .rail-shell.riding { animation: none; }
+      .rail .chip { transform: none !important; filter: none !important; }
     }
 
     /* The follow-scroll toggle is always present — a control that appears
@@ -688,6 +671,20 @@
   </div>
   <div class="spine-tag" id="spineTag" aria-hidden="true"></div>
 
+  <!-- The ride-along picker. Present from the first frame and dispersed; the
+       scroll assembles it. Its chips are the same seven, wired to the same
+       handler as the rail under the headline. -->
+  <div class="rail-dock" id="railDock">
+    <div class="rail-head">
+      <span class="now" id="dockNow"></span>
+      <button class="toggle" id="dockAuto" type="button" aria-pressed="true"
+              title="When on, the page wears the theme of whatever you have scrolled to">
+        <span class="dot" aria-hidden="true"></span><span>follow scroll</span>
+      </button>
+    </div>
+    <div class="rail" id="dockRail" role="group" aria-label="The Omarchy themes this page wears"></div>
+  </div>
+
   <div class="lightbox" id="lightbox" role="dialog" aria-modal="true" aria-label="Enlarged image">
     <button class="close" id="lightboxClose" type="button">esc ✕</button>
     <figure style="margin:0;max-width:100%">
@@ -732,7 +729,6 @@
         <a class="btn" href="#install">Install the desktop half</a>
       </div>
 
-      <div class="rail-slot">
       <div class="rail-shell">
         <div class="rail-head">
           <span>desktop palettes</span>
@@ -744,7 +740,6 @@
           </button>
         </div>
         <div class="rail" id="rail" role="group" aria-label="The Omarchy themes this page wears"></div>
-      </div>
       </div>
     </div>
   </header>
@@ -1262,10 +1257,10 @@ function apply(p, persist) {
   for (const v of VARS) root.style.setProperty('--' + v, p[v]);
   root.setAttribute('data-theme', p.name);
   document.body.setAttribute('data-mode', p.mode === 'light' ? 'light' : 'dark');
-  now.textContent = '▸ ' + p.name;
+  for (const el of document.querySelectorAll('.rail-head .now')) el.textContent = '▸ ' + p.name;
   paneTitle.textContent = 'claude · painted ' + p.name;
 
-  for (const b of rail.querySelectorAll('.chip'))
+  for (const b of document.querySelectorAll('.rail .chip'))
     b.setAttribute('aria-pressed', String(b.dataset.name === p.name));
 
   slots.innerHTML = '';
@@ -1290,26 +1285,69 @@ function apply(p, persist) {
   window.dispatchEvent(new Event('scroll'));
 }
 
+/* Deterministic golden-angle scatter, the /offerings recipe. `i` is the chip's
+   index, so SSR-free rebuilds land in the same place every time and nothing
+   depends on Math.random. `home` is how far the chip starts from where it
+   belongs, and it drives the blur as well as the displacement. */
+function scatterHero(i) {
+  const a = i * 2.39996;                 // golden angle, radians
+  const r = 150 + (i % 5) * 70;          // 150–430px: off the rail, not off the page
+  return { dx: Math.cos(a) * r, dy: Math.sin(a) * r, mag: r, ds: 0.3 + (i % 3) * 0.12 };
+}
+/* The ride-along assembles FROM THE RIGHT, and stays on the glass while it
+   does. Its home is already against the right edge, so a long rightward throw
+   would put the chips outside the window — visible to nobody and clickable by
+   nobody. The travel is therefore short (26–50px) while `mag` stays large: the
+   blur and the shrink carry the drama, the displacement only carries the
+   direction. Vertical spread makes it a flock arriving rather than a queue. */
+function scatterDock(i) {
+  const a = i * 2.39996;
+  return {
+    dx: 26 + (i % 4) * 8,                // rightward, but never off the glass
+    dy: Math.sin(a) * 90,
+    mag: 150 + (i % 5) * 60,             // 150–330 → up to ~11px of blur
+    ds: 0.45,                            // arrives small, grows into place
+  };
+}
+
+function chipFor(p, scatter, i) {
+  // The slot is the grid cell and the stable hit area; the button inside it is
+  // what flies. A click on either lands on the same handler, because the
+  // button is a child of the slot and the event bubbles.
+  const cell = document.createElement('span');
+  cell.className = 'chip-slot';
+  cell.dataset.name = p.name;
+  const b = document.createElement('button');
+  b.className = 'chip';
+  b.type = 'button';
+  b.dataset.name = p.name;
+  b.setAttribute('aria-pressed', 'false');
+  b.title = p.name + ' · ' + p.mode;
+  b.innerHTML = '<span class="sw"></span><span class="nm"></span>' +
+                (p.mode === 'light' ? '<span class="lt">LIGHT</span>' : '');
+  const sw = b.querySelector('.sw');
+  sw.style.setProperty('--c1', p.acc);
+  sw.style.setProperty('--c2', p.grn);
+  sw.style.setProperty('--c3', p.mag);
+  sw.style.setProperty('--c4', p.yel);
+  b.querySelector('.nm').textContent = p.name;
+  const s = scatter(i);
+  b.style.setProperty('--dx', s.dx.toFixed(1) + 'px');
+  b.style.setProperty('--dy', s.dy.toFixed(1) + 'px');
+  b.style.setProperty('--mag', s.mag.toFixed(0));
+  b.style.setProperty('--ds', s.ds.toFixed(2));
+  cell.appendChild(b);
+  cell.addEventListener('click', () => { apply(p, true); pinTheme(p.name); });
+  return cell;
+}
+
 function build() {
   count.textContent = PALETTES.length + ' themes';
-  for (const p of PALETTES) {
-    const b = document.createElement('button');
-    b.className = 'chip';
-    b.type = 'button';
-    b.dataset.name = p.name;
-    b.setAttribute('aria-pressed', 'false');
-    b.title = p.name + ' · ' + p.mode;
-    b.innerHTML = '<span class="sw"></span><span class="nm"></span>' +
-                  (p.mode === 'light' ? '<span class="lt">LIGHT</span>' : '');
-    const sw = b.querySelector('.sw');
-    sw.style.setProperty('--c1', p.acc);
-    sw.style.setProperty('--c2', p.grn);
-    sw.style.setProperty('--c3', p.mag);
-    sw.style.setProperty('--c4', p.yel);
-    b.querySelector('.nm').textContent = p.name;
-    b.addEventListener('click', () => { apply(p, true); pinTheme(p.name); });
-    rail.appendChild(b);
-  }
+  const dockRail = document.getElementById('dockRail');
+  PALETTES.forEach((p, i) => {
+    rail.appendChild(chipFor(p, scatterHero, i));
+    if (dockRail) dockRail.appendChild(chipFor(p, scatterDock, i));
+  });
 
   // ?t=<theme> and a remembered pick both arrive PINNED — see the spine
   // below, which otherwise hands the page to the scroll.
@@ -1403,35 +1441,16 @@ if (PALETTES.length) build();
   const hero   = stops[0];
   const heroInner = hero && hero.querySelector('.hero-parallax');
 
-  // Docking MOVES the rail to the body rather than merely restyling it in
-  // place. The hero carries a transform and a filter for the parallax, and
-  // either one makes itself the containing block for a fixed descendant — the
-  // panel would anchor to the hero instead of the window and sail off the top
-  // of the page with it, wearing the hero's fade on the way out. Out of the
-  // hero, `fixed` means what it says.
-  //
-  // The slot it came from keeps its height for exactly as long as it is away,
-  // so the page does not shorten under the reader at the moment of docking.
-  const shell = document.querySelector('.rail-shell');
-  const slot  = document.querySelector('.rail-slot');
-  const nav   = document.querySelector('nav.top');
-  // Every width has a docked form — a side panel with room, a tray without
-  // — so there is no width at which the picker simply disappears.
-  let riding = false;
-  function ride(on) {
-    if (!shell || !slot || on === riding) return;
-    if (on) {
-      slot.style.height = shell.offsetHeight + 'px';
-      if (nav) shell.style.setProperty('--navh', nav.offsetHeight + 'px');
-      shell.classList.add('riding');
-      document.body.appendChild(shell);
-    } else {
-      shell.classList.remove('riding');
-      slot.appendChild(shell);
-      slot.style.height = '';
-    }
-    riding = on;
-  }
+  // The two rails and the number that runs them. Neither ever changes parent:
+  // the hero's rail stays under the headline and the ride-along is fixed to the
+  // body from the first frame, dispersed. A scrubbed value cannot get stuck
+  // half-applied the way a threshold-triggered DOM move could — which is why
+  // returning to the top used to restore the picker only sometimes.
+  const shell   = document.querySelector('.rail-shell');
+  const dock    = document.getElementById('railDock');
+  const nav     = document.querySelector('nav.top');
+  const heroRail = document.getElementById('rail');
+  const dockRailEl = document.getElementById('dockRail');
 
   const papers = new Map();
   for (const s of stops) {
@@ -1464,11 +1483,12 @@ if (PALETTES.length) build();
   // The toggle is the single readout of who owns the page: lit = the scroll,
   // dim = a pick. A chip click turns it off, clicking it back on hands the
   // page to whatever stop you are standing in.
+  const toggles = [auto, document.getElementById('dockAuto')].filter(Boolean);
   function syncToggle() {
-    if (auto) auto.setAttribute('aria-pressed', String(!pinned));
+    for (const b of toggles) b.setAttribute('aria-pressed', String(!pinned));
   }
-  if (auto) {
-    auto.addEventListener('click', () => {
+  for (const b of toggles) {
+    b.addEventListener('click', () => {
       pinned = pinned ? null : (shown || stops[0].dataset.spine);
       syncToggle();
       frame();
@@ -1516,12 +1536,34 @@ if (PALETTES.length) build();
       const p = Math.max(0, Math.min(1, -heroRect.top / (vh * 0.85)));
       heroInner.style.setProperty('--p', p.toFixed(3));
     }
-    // Dock once the hero is mostly gone; undock when it comes back.
-    ride(heroRect.bottom < vh * 0.35);
-    // The nav's height changes with the window — its links wrap on a narrow
-    // one — and the tray hangs off it, so this is re-read while docked rather
-    // than measured once at the moment of docking.
-    if (riding && nav) shell.style.setProperty('--navh', nav.offsetHeight + 'px');
+    // The reassembly. `t` runs 0 → 1 as the hero's foot crosses the screen:
+    // at 0 the picker is home under the headline, at 1 it has flown to the
+    // ride-along. Nothing snaps, so scrolling back up runs the same numbers
+    // backwards and always lands exactly where it started.
+    // Measured in SCROLL, not in where the hero's foot happens to sit: the
+    // hero is shorter than a tall window, so on one of those its foot is
+    // already high up the screen before a single pixel has been scrolled, and
+    // a band keyed to that would start the flight at rest.
+    const heroFoot = hero.offsetTop + hero.offsetHeight;
+    const t0 = Math.max(0, heroFoot - vh * 0.9);
+    const t1 = Math.max(t0 + 1, heroFoot - vh * 0.25);
+    const y = window.scrollY || window.pageYOffset || 0;
+    const t = Math.max(0, Math.min(1, (y - t0) / (t1 - t0)));
+    if (shell) shell.style.setProperty('--focus', (1 - t).toFixed(3));
+    if (dock) {
+      dock.style.setProperty('--focus', t.toFixed(3));
+      dock.style.setProperty('--panel', (t * t).toFixed(3));
+      // The tray hangs off the nav, whose links wrap on a narrow window, so its
+      // height is re-read rather than assumed.
+      if (nav) dock.style.setProperty('--navh', nav.offsetHeight + 'px');
+    }
+    // Clickable the whole way, in both places — two targets for one action is
+    // free, and a chip you can see is a chip you should be able to hit. Only a
+    // rail that has faded to nothing stops taking clicks, because an invisible
+    // element eating them is a bug rather than a feature.
+    if (heroRail) heroRail.style.pointerEvents = (1 - t) > 0.06 ? 'auto' : 'none';
+    if (dockRailEl) dockRailEl.style.pointerEvents = t > 0.06 ? 'auto' : 'none';
+    if (dock) dock.style.pointerEvents = t > 0.06 ? 'auto' : 'none';
     dress(pinned || best.dataset.spine, best);
   }
 
