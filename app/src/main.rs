@@ -40,6 +40,7 @@ mod session;
 mod sticky;
 mod term;
 mod theme;
+mod usage;
 mod warp;
 
 use std::fs;
@@ -892,6 +893,24 @@ enum McpFilter {
     All,
     Group(u32),
     Ungrouped,
+}
+
+/// Shown when the panel has nothing to read and nothing that could write it.
+const NO_COLLECTOR: &str = "cannot locate a usage collector, or this binary";
+/// Shown when nothing has been collected yet. Not an error: the collectors ride
+/// inside the binary, so the fix is the refresh button, not an install.
+const NO_RECORDS: &str = "nothing collected yet \u{2014} press refresh";
+
+/// Which ledger the </> overlay is showing.
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+enum OverlayTab {
+    /// lean-ctx's compression ledger: tokens TD's own context plumbing never had
+    /// to send. The default, because the `</> savings` button is what opens the
+    /// card and it must keep doing exactly what it did before.
+    #[default]
+    Savings,
+    /// Every AI coding subscription on the machine and what it has left.
+    Usage,
 }
 
 /// One agent's slice of the savings rollup (from the leanctx-savings plugin).
@@ -2006,6 +2025,20 @@ struct Workspace {
     /// Why the savings fetch couldn't run (plugin missing / error), shown in the
     /// overlay instead of the card.
     savings_status: Option<String>,
+    /// Which face of the </> card is showing. One card, two ledgers: what
+    /// lean-ctx saved on the way in, and what the subscriptions spent on the way
+    /// out. They answer the same question from opposite ends, so they share a
+    /// frame rather than each getting a button and an overlay of its own.
+    savings_tab: OverlayTab,
+    /// One record per AI coding subscription, heaviest first. Read off disk —
+    /// see [`usage`] for who writes them and why none of it needs Omarchy.
+    usage_records: Vec<usage::Record>,
+    /// Which subscription's card is open (index into the drawable records).
+    usage_pick: usize,
+    /// What the last refresh said, when it had something to say.
+    usage_status: Option<String>,
+    /// A collector run is in flight on a pool thread.
+    usage_refreshing: bool,
     /// 🎨 toggle in the MCP panel: tint each pane row with that pane's own
     /// resolved screen background + text colour. Defaults off (session-scoped).
     mcp_theme_preview: bool,
@@ -2460,6 +2493,11 @@ impl Workspace {
             savings_menu: false,
             savings_view: None,
             savings_status: None,
+            savings_tab: OverlayTab::Savings,
+            usage_records: Vec::new(),
+            usage_pick: 0,
+            usage_status: None,
+            usage_refreshing: false,
             // Headless-capture hook: TD_WALL_THEME=1 arms the "theme · on" wall
             // skin (per-card logo warp) from boot so the curved-glass cards can be
             // screenshotted without a mouse. Leak-safe — only flips the visual
@@ -3232,13 +3270,593 @@ impl Workspace {
         cx.notify();
     }
 
-    /// The </> LeanCTX token-savings overlay: lean-ctx's precomputed savings as a
-    /// big headline number plus the per-agent and top-file breakdown. A flat
-    /// (warp-suppressed) float card — registered in `set_suppressed`/`close_popups`
-    /// so it floats above the CRT glass instead of bowing with it.
+    /// Open the </> card on its usage face: every AI coding subscription on this
+    /// machine, what its ceilings are and how close today got to them.
+    ///
+    /// Records come straight off disk — a handful of small JSON files — so the
+    /// panel is up on the same frame as the click. A refresh happens only when
+    /// what is on disk has gone stale, and it happens BEHIND the open card:
+    /// asking Anthropic's usage endpoint takes seconds, and a panel that waits on
+    /// the network before drawing numbers it already has is one nobody opens
+    /// twice.
+    fn open_usage(&mut self, cx: &mut Context<Self>) {
+        let home = session::home_dir();
+        self.usage_records = usage::read_all(&home);
+        self.clamp_usage_pick();
+        self.usage_status = None;
+        self.savings_tab = OverlayTab::Usage;
+        self.savings_menu = true;
+        cx.notify();
+        if self.usage_stale() {
+            self.refresh_usage(cx);
+        }
+    }
+
+    /// Keep the selected tab inside the record list after a refresh changes it.
+    fn clamp_usage_pick(&mut self) {
+        let n = self
+            .usage_records
+            .iter()
+            .filter(|r| r.has_content())
+            .count();
+        if self.usage_pick >= n {
+            self.usage_pick = 0;
+        }
+    }
+
+    /// Is what we hold older than the collectors' own cadence? Omarchy's widget
+    /// regenerates every fifteen minutes; anything inside five is fresh enough
+    /// that asking the vendors again is rude to them and slow for us.
+    fn usage_stale(&self) -> bool {
+        const FRESH_SECS: i64 = 300;
+        match self
+            .usage_records
+            .iter()
+            .filter_map(|r| usage::parse_epoch(&r.updated_at))
+            .max()
+        {
+            Some(newest) => usage::now_epoch() - newest > FRESH_SECS,
+            None => true,
+        }
+    }
+
+    /// Run the collectors on a pool thread and swap the records in when they
+    /// land. Never blocks the frame, and a failed run leaves the previous
+    /// records standing — stale numbers beat an empty panel, as long as the card
+    /// says how stale they are, which it does.
+    fn refresh_usage(&mut self, cx: &mut Context<Self>) {
+        if self.usage_refreshing {
+            return;
+        }
+        // Under a capture hook the records on screen are fictional; running a
+        // collector would swap this machine's real plan in behind the camera.
+        if std::env::var("TD_USAGE_DEMO").is_ok() {
+            return;
+        }
+        let home = session::home_dir();
+        if usage::refresh_command(&home).is_none() {
+            self.usage_status = Some(NO_COLLECTOR.into());
+            cx.notify();
+            return;
+        }
+        self.usage_refreshing = true;
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let (err, records) = cx
+                .background_executor()
+                .spawn(async move {
+                    let err = usage::refresh(&home).err();
+                    (err, usage::read_all(&home))
+                })
+                .await;
+            let _ = this.update(cx, |ws, cx| {
+                ws.usage_refreshing = false;
+                if !records.is_empty() {
+                    ws.usage_records = records;
+                }
+                ws.usage_status = err;
+                ws.clamp_usage_pick();
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// The usage face of the </> card: every AI coding subscription on the
+    /// machine, one tab each — the ceilings and how close they are, today, the
+    /// week behind it, and where the tokens actually went.
+    ///
+    /// Every number here is the collector's; nothing is derived, estimated or
+    /// rounded up on this side. Where a vendor cannot answer, its own words go in
+    /// the card (`usageStatusText`) with its own remedy under them.
+    fn render_usage_body(&self, th: &theme::Theme, cx: &mut Context<Self>) -> gpui::Div {
+        let body = div().flex().flex_col().gap_2p5();
+        let drawable: Vec<&usage::Record> = self
+            .usage_records
+            .iter()
+            .filter(|r| r.has_content())
+            .collect();
+
+        // ---- nothing to draw: name the writer, not just the absence ----------
+        if drawable.is_empty() {
+            let msg = self
+                .usage_status
+                .clone()
+                .unwrap_or_else(|| NO_RECORDS.to_string());
+            let looked = usage::dirs(&session::home_dir())
+                .iter()
+                .map(|p| p.to_string_lossy().into_owned())
+                .collect::<Vec<_>>()
+                .join("   ");
+            return body
+                .child(
+                    div()
+                        .text_size(px(10.5))
+                        .text_color(hsla(0.09, 0.8, 0.62, 1.))
+                        .child(msg),
+                )
+                .child(
+                    div()
+                        .text_size(px(9.5))
+                        .text_color(th.text.alpha(0.65))
+                        .child(
+                            "One JSON record per subscription, written by a collector that knows \
+                             how to ask that vendor. This binary carries the collectors \
+                             (`terminal-delight agent-usage update`, needs python3); on Omarchy \
+                             its own collectors write the same records on their own timer.",
+                        ),
+                )
+                .child(
+                    div()
+                        .text_size(px(8.5))
+                        .text_color(th.text.alpha(0.42))
+                        .child(format!("looked in {looked}")),
+                );
+        }
+
+        let pick = self.usage_pick.min(drawable.len() - 1);
+        let rec = drawable[pick];
+
+        // A gauge is read before it is understood, so this ramp is deliberately
+        // NOT themed: green under two thirds, amber past it, red in the last
+        // sixth. A palette that made 90% of a weekly limit look calm would be a
+        // prettier lie than TD is willing to tell.
+        fn pressure(frac: f32) -> gpui::Hsla {
+            if frac >= 0.85 {
+                hsla(0.01, 0.72, 0.60, 1.)
+            } else if frac >= 0.66 {
+                hsla(0.09, 0.82, 0.60, 1.)
+            } else {
+                hsla(0.38, 0.52, 0.52, 1.)
+            }
+        }
+        let track = th.text.alpha(0.10);
+        let meter = move |frac: f32, col: gpui::Hsla, h: f32| {
+            let f = frac.clamp(0., 1.);
+            div()
+                .w_full()
+                .h(px(h))
+                .rounded_full()
+                .bg(track)
+                .overflow_hidden()
+                .child(
+                    div()
+                        .h_full()
+                        // a non-zero share never renders as an empty track: the
+                        // difference between "barely used" and "not reporting"
+                        // is the whole reason to look at the row.
+                        .w(gpui::relative(if f > 0. { f.max(0.02) } else { 0. }))
+                        .rounded_full()
+                        .bg(col),
+                )
+        };
+
+        // ---- one chip per subscription --------------------------------------
+        let mut chips = div().flex().flex_row().flex_wrap().items_center().gap_1p5();
+        for (i, r) in drawable.iter().enumerate() {
+            let on = i == pick;
+            let acc = th.accent;
+            let txt = th.text;
+            let dot = r
+                .worst_limit()
+                .map(|l| pressure(l.percent))
+                .unwrap_or(th.text.alpha(0.35));
+            chips = chips.child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_1p5()
+                    .px_2()
+                    .py_0p5()
+                    .rounded_full()
+                    .border_1()
+                    .border_color(if on { acc.alpha(0.85) } else { txt.alpha(0.16) })
+                    .bg(if on { acc.alpha(0.16) } else { txt.alpha(0.04) })
+                    .text_size(px(10.))
+                    .text_color(if on { txt } else { txt.alpha(0.62) })
+                    .cursor_pointer()
+                    .hover(move |st| st.bg(acc.alpha(0.12)))
+                    .child(div().w(px(5.)).h(px(5.)).rounded_full().bg(dot))
+                    .child(
+                        div()
+                            .when(on, |d| d.font_weight(gpui::FontWeight::EXTRA_BOLD))
+                            .child(r.name.clone()),
+                    )
+                    .when(!r.tier_label.is_empty(), |d| {
+                        d.child(
+                            div()
+                                .text_size(px(8.5))
+                                .text_color(txt.alpha(0.5))
+                                .child(r.tier_label.clone()),
+                        )
+                    })
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                            cx.stop_propagation();
+                            ws.usage_pick = i;
+                            cx.notify();
+                        }),
+                    ),
+            );
+        }
+        let mut body = body.child(chips);
+
+        // ---- the vendor's own bad news, when there is any --------------------
+        if !rec.status_text.is_empty() {
+            let mut card = div()
+                .flex()
+                .flex_col()
+                .gap_0p5()
+                .px_2()
+                .py_1()
+                .rounded_sm()
+                .border_1()
+                .border_color(hsla(0.09, 0.8, 0.6, 0.45))
+                .bg(hsla(0.09, 0.8, 0.6, 0.08))
+                .child(
+                    div()
+                        .text_size(px(10.))
+                        .text_color(hsla(0.09, 0.85, 0.66, 1.))
+                        .child(rec.status_text.clone()),
+                );
+            if !rec.auth_help.is_empty() {
+                card = card.child(
+                    div()
+                        .text_size(px(9.))
+                        .text_color(th.text.alpha(0.6))
+                        .child(rec.auth_help.clone()),
+                );
+            }
+            body = body.child(card);
+        }
+
+        // ---- the ceilings ----------------------------------------------------
+        if !rec.limits.is_empty() {
+            let now = usage::now_epoch();
+            let mut list = div().flex().flex_col().gap_1p5();
+            for l in &rec.limits {
+                let col = pressure(l.percent);
+                let resets = usage::until(&l.resets_at, now)
+                    .map(|t| format!("resets in {t}"))
+                    .unwrap_or_default();
+                list = list.child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_0p5()
+                        .child(
+                            div()
+                                .flex()
+                                .flex_row()
+                                .items_baseline()
+                                .gap_2()
+                                .text_size(px(10.))
+                                .child(div().text_color(th.text.alpha(0.8)).child(l.label.clone()))
+                                .child(
+                                    div()
+                                        .font_weight(gpui::FontWeight::EXTRA_BOLD)
+                                        .text_color(col)
+                                        .child(format!("{:.0}%", l.percent * 100.)),
+                                )
+                                .child(div().flex_1().min_w(px(0.)))
+                                .child(
+                                    div()
+                                        .text_size(px(9.))
+                                        .text_color(th.text.alpha(0.5))
+                                        .child(resets),
+                                ),
+                        )
+                        .child(meter(l.percent, col, 6.)),
+                );
+            }
+            body = body.child(list);
+        }
+
+        // ---- prepaid credit, for the subscriptions that drain instead of reset
+        if let Some(b) = &rec.balance {
+            let frac = if b.funded > 0. {
+                (b.remaining / b.funded).clamp(0., 1.) as f32
+            } else {
+                0.
+            };
+            // the gauge DRAINS, so the pressure ramp reads the spent share
+            let col = pressure(1. - frac);
+            body = body.child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_0p5()
+                    .child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .items_baseline()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .font_weight(gpui::FontWeight::EXTRA_BOLD)
+                                    .text_size(px(16.))
+                                    .text_color(col)
+                                    .child(format!("{} {:.2}", b.currency, b.remaining)),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(9.))
+                                    .text_color(th.text.alpha(0.55))
+                                    .child(if b.estimated {
+                                        "left (estimated)"
+                                    } else {
+                                        "left"
+                                    }),
+                            )
+                            .child(div().flex_1().min_w(px(0.)))
+                            .child(
+                                div()
+                                    .text_size(px(9.))
+                                    .text_color(th.text.alpha(0.5))
+                                    .child(format!(
+                                        "{:.2} spent of {:.2} funded",
+                                        b.spent, b.funded
+                                    )),
+                            ),
+                    )
+                    .child(meter(frac, col, 6.)),
+            );
+        }
+
+        // ---- today -----------------------------------------------------------
+        let today = if rec.has_prompt_stats {
+            format!(
+                "{} tokens  \u{00b7}  {} prompts  \u{00b7}  {} sessions",
+                hud::fmt_tokens(rec.today_tokens),
+                rec.today_prompts,
+                rec.today_sessions
+            )
+        } else {
+            // a billing API reports tokens and nothing else; a confident zero
+            // for prompts would be a number the collector never had.
+            format!("{} tokens", hud::fmt_tokens(rec.today_tokens))
+        };
+        body = body.child(
+            div()
+                .flex()
+                .flex_row()
+                .items_baseline()
+                .gap_2()
+                .child(
+                    div()
+                        .text_size(px(9.))
+                        .text_color(th.text.alpha(0.5))
+                        .child("TODAY"),
+                )
+                .child(div().text_size(px(10.5)).text_color(th.text).child(today)),
+        );
+
+        // ---- the week behind it ---------------------------------------------
+        let peak = rec.recent_days.iter().map(|d| d.tokens).max().unwrap_or(0);
+        if peak > 0 {
+            let last = rec.recent_days.len().saturating_sub(1);
+            let mut list = div().flex().flex_col().gap_0p5();
+            for (i, d) in rec.recent_days.iter().enumerate() {
+                let is_today = i == last;
+                let frac = d.tokens as f32 / peak as f32;
+                let col = if is_today {
+                    th.accent
+                } else {
+                    th.accent.alpha(0.45)
+                };
+                list = list.child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap_2()
+                        .text_size(px(9.))
+                        .child(
+                            div()
+                                .w(px(28.))
+                                .flex_none()
+                                .text_color(th.text.alpha(if is_today { 0.9 } else { 0.5 }))
+                                .child(usage::weekday(&d.date)),
+                        )
+                        .child(div().flex_1().min_w(px(0.)).child(meter(frac, col, 5.)))
+                        .child(
+                            div()
+                                .w(px(58.))
+                                .flex_none()
+                                .text_color(th.text.alpha(if is_today { 0.95 } else { 0.6 }))
+                                .when(is_today, |x| x.font_weight(gpui::FontWeight::BOLD))
+                                .child(hud::fmt_tokens(d.tokens)),
+                        ),
+                );
+            }
+            body = body.child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .child(
+                        div()
+                            .text_size(px(9.))
+                            .text_color(th.text.alpha(0.5))
+                            .child("LAST 7 DAYS"),
+                    )
+                    .child(list),
+            );
+        }
+
+        // ---- where the tokens went ------------------------------------------
+        if !rec.models.is_empty() {
+            let top = rec.models[0].total().max(1);
+            let mut list = div().flex().flex_col().gap_0p5();
+            for m in rec.models.iter().take(6) {
+                let frac = m.total() as f32 / top as f32;
+                list = list.child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap_2()
+                        .text_size(px(9.))
+                        .child(
+                            div()
+                                .w(px(132.))
+                                .flex_none()
+                                .overflow_hidden()
+                                .text_color(th.text.alpha(0.8))
+                                .child(m.model.clone()),
+                        )
+                        .child(div().flex_1().min_w(px(0.)).child(meter(
+                            frac,
+                            th.complement.alpha(0.75),
+                            5.,
+                        )))
+                        .child(
+                            div()
+                                .w(px(58.))
+                                .flex_none()
+                                .text_color(th.text.alpha(0.7))
+                                .child(hud::fmt_tokens(m.total())),
+                        ),
+                );
+            }
+            let (mut i, mut o, mut cr, mut cw) = (0u64, 0u64, 0u64, 0u64);
+            for m in &rec.models {
+                i = i.saturating_add(m.input);
+                o = o.saturating_add(m.output);
+                cr = cr.saturating_add(m.cache_read);
+                cw = cw.saturating_add(m.cache_create);
+            }
+            body = body.child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .child(
+                        div()
+                            .text_size(px(9.))
+                            .text_color(th.text.alpha(0.5))
+                            .child("BY MODEL"),
+                    )
+                    .child(list)
+                    .child(
+                        div()
+                            .text_size(px(8.5))
+                            .text_color(th.text.alpha(0.45))
+                            .child(format!(
+                                "in {}  \u{00b7}  out {}  \u{00b7}  cache read {}  \u{00b7}  cache write {}",
+                                hud::fmt_tokens(i),
+                                hud::fmt_tokens(o),
+                                hud::fmt_tokens(cr),
+                                hud::fmt_tokens(cw)
+                            )),
+                    ),
+            );
+        }
+
+        // ---- provenance, and the button that re-asks --------------------------
+        let mut prov: Vec<String> = Vec::new();
+        if let Some(t) = usage::since(&rec.updated_at, usage::now_epoch()) {
+            prov.push(format!("collected {t}"));
+        }
+        if rec.total_prompts > 0 {
+            prov.push(format!(
+                "{} prompts over {} sessions, {} active days",
+                rec.total_prompts, rec.total_sessions, rec.active_days
+            ));
+        }
+        let prov = prov.join("  \u{00b7}  ");
+        let refreshing = self.usage_refreshing;
+        let acc = th.accent;
+        body = body.child(
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap_2()
+                .child(
+                    div()
+                        .text_size(px(8.5))
+                        .text_color(th.text.alpha(0.45))
+                        .child(prov),
+                )
+                .child(div().flex_1().min_w(px(0.)))
+                .child(
+                    div()
+                        .px_2()
+                        .py_0p5()
+                        .rounded_sm()
+                        .border_1()
+                        .border_color(acc.alpha(if refreshing { 0.3 } else { 0.6 }))
+                        .text_size(px(9.))
+                        .text_color(acc.alpha(if refreshing { 0.5 } else { 1. }))
+                        .cursor_pointer()
+                        .hover(move |st| st.bg(acc.alpha(0.15)))
+                        .child(if refreshing {
+                            "\u{21bb} collecting\u{2026}"
+                        } else {
+                            "\u{21bb} refresh"
+                        })
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                                cx.stop_propagation();
+                                ws.refresh_usage(cx);
+                            }),
+                        ),
+                ),
+        );
+        // a failed collector run under a card that still has yesterday's numbers
+        if let Some(err) = &self.usage_status {
+            body = body.child(
+                div()
+                    .text_size(px(9.))
+                    .text_color(hsla(0.09, 0.8, 0.62, 1.))
+                    .child(err.clone()),
+            );
+        }
+        body
+    }
+
+    /// The </> card, in both of its faces.
+    ///
+    /// **savings** is lean-ctx's precomputed compression ledger — a big headline
+    /// number plus the per-agent and top-file breakdown. **usage** is the other
+    /// end of the same question: what each AI coding subscription has actually
+    /// spent and how close it is to its ceiling. Tokens TD's plumbing never had
+    /// to send, and tokens the vendors billed for, are two readings of one
+    /// budget, so they share a frame instead of each claiming a button and an
+    /// overlay of its own.
+    ///
+    /// A flat (warp-suppressed) float card — registered in
+    /// `set_suppressed`/`close_popups` so it floats above the CRT glass instead
+    /// of bowing with it.
     fn render_savings_overlay(
         &self,
         th: &theme::Theme,
+        vw: f32,
         cx: &mut Context<Self>,
     ) -> Option<gpui::Div> {
         if !self.savings_menu {
@@ -3249,7 +3867,12 @@ impl Workspace {
         // logo + colour read identically under every TD theme.
         let green = hsla(0.43, 0.68, 0.55, 1.);
         let white = hsla(0., 0., 0.96, 1.);
-        let brand = div()
+        // The lean-ctx mark is theme-INDEPENDENT on purpose — white "Lean", green
+        // "CTX", a </> chip on a dark ground — so the logo reads identically under
+        // every TD theme. The usage face gets TD's own accent instead: those
+        // numbers belong to Anthropic and OpenAI, and wearing lean-ctx's colours
+        // over somebody else's bill would be a quiet misattribution.
+        let leanctx_brand = div()
             .flex()
             .flex_row()
             .items_center()
@@ -3290,6 +3913,107 @@ impl Workspace {
                     .text_color(white.alpha(0.5))
                     .child("token savings"),
             );
+        let usage_brand = div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap_2()
+            .child(
+                div()
+                    .px_1p5()
+                    .py_0p5()
+                    .rounded_sm()
+                    .bg(th.accent.alpha(0.12))
+                    .border_1()
+                    .border_color(th.accent.alpha(0.55))
+                    .font_weight(gpui::FontWeight::EXTRA_BOLD)
+                    .text_size(px(13.))
+                    .text_color(th.accent)
+                    .child("\u{03a3}"),
+            )
+            .child(
+                div()
+                    .font_weight(gpui::FontWeight::EXTRA_BOLD)
+                    .text_size(px(15.))
+                    .text_color(th.text)
+                    .child("Subscription"),
+            )
+            .child(
+                div()
+                    .font_weight(gpui::FontWeight::EXTRA_BOLD)
+                    .text_size(px(15.))
+                    .text_color(th.accent)
+                    .child("usage"),
+            )
+            .child(
+                div()
+                    .text_size(px(10.))
+                    .text_color(th.text.alpha(0.5))
+                    .child("what each plan has left"),
+            );
+
+        let tab = self.savings_tab;
+        let tab_chip = |label: &'static str, want: OverlayTab, cx: &mut Context<Self>| {
+            let on = tab == want;
+            let acc = th.accent;
+            let txt = th.text;
+            div()
+                .px_2p5()
+                .py_0p5()
+                .rounded_full()
+                .border_1()
+                .border_color(if on { acc.alpha(0.85) } else { txt.alpha(0.16) })
+                .bg(if on { acc.alpha(0.16) } else { txt.alpha(0.03) })
+                .text_size(px(10.))
+                .when(on, |d| d.font_weight(gpui::FontWeight::EXTRA_BOLD))
+                .text_color(if on { txt } else { txt.alpha(0.6) })
+                .cursor_pointer()
+                .hover(move |st| st.bg(acc.alpha(0.12)))
+                .child(label)
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                        cx.stop_propagation();
+                        match want {
+                            // switching to usage is the same act as opening it,
+                            // so it goes through one door: read, then refresh if
+                            // what we read has gone stale.
+                            OverlayTab::Usage => ws.open_usage(cx),
+                            OverlayTab::Savings => {
+                                ws.savings_tab = OverlayTab::Savings;
+                                cx.notify();
+                            }
+                        }
+                    }),
+                )
+        };
+        // Wraps rather than overflows: in a narrow tile the two tab chips drop
+        // under the wordmark instead of pushing it off the left edge.
+        let header = div()
+            .flex()
+            .flex_row()
+            .flex_wrap()
+            .items_center()
+            .gap_3()
+            .child(div().min_w(px(0.)).overflow_hidden().child(match tab {
+                OverlayTab::Savings => leanctx_brand,
+                OverlayTab::Usage => usage_brand,
+            }))
+            .child(div().flex_1().min_w(px(0.)))
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_1()
+                    .child(tab_chip("savings", OverlayTab::Savings, cx))
+                    .child(tab_chip("usage", OverlayTab::Usage, cx)),
+            );
+
+        if tab == OverlayTab::Usage {
+            let usage_body = self.render_usage_body(th, cx);
+            return Some(Self::savings_shell(th, vw, header, usage_body, cx));
+        }
 
         let mut body = div().flex().flex_col().gap_2();
 
@@ -3480,9 +4204,39 @@ impl Workspace {
             );
         }
 
+        Some(Self::savings_shell(th, vw, header, body, cx))
+    }
+
+    /// The card both faces live in: one float panel, one scrim, one way out.
+    /// Shared so the two ledgers cannot drift apart in size, chrome or dismissal
+    /// behaviour — the thing that makes them read as one surface rather than two
+    /// overlays that happen to look similar.
+    fn savings_shell(
+        th: &theme::Theme,
+        vw: f32,
+        header: gpui::Div,
+        body: gpui::Div,
+        cx: &mut Context<Self>,
+    ) -> gpui::Div {
+        // 840 is the width the card WANTS, not the width it takes. Fixed, it
+        // sailed straight out of a tiled TD window — a tile here is ~380–530px —
+        // and the numbers ran off BOTH edges, because the card was centred and
+        // wider than the window. Neither `w_full` nor `max_w` fixes that: a flex
+        // child's min-width is its content, and this content (a "96.4M tokens ·
+        // 412 prompts · 9 sessions" line that does not wrap, rows with fixed
+        // label columns) has a min-content width of its own. The only width that
+        // holds is a definite one, so the viewport decides it — the same way
+        // `HEADER_NARROW` lets the glyph row decide what it can afford.
+        //
+        // It is NOT enough at a tiled width: the card still clips, because this
+        // is not the width of the box it is centred in. Tracked as #264 — an
+        // attempt at the CSS-correct fix (min_w(0) on every row so `w_full` can
+        // bind) collapsed the body instead, and was reverted rather than shipped
+        // half-working.
+        let w = (vw - 28.).clamp(240., 840.);
         let panel = div()
-            .w(px(840.))
-            .max_h(px(560.))
+            .w(px(w))
+            .max_h(px(600.))
             .overflow_hidden()
             .p_3()
             .rounded_md()
@@ -3499,8 +4253,13 @@ impl Workspace {
                 MouseButton::Left,
                 cx.listener(|_, _: &MouseDownEvent, _w, cx| cx.stop_propagation()),
             )
-            .child(brand)
-            .child(body)
+            .child(header)
+            .child(
+                body.id("savings-scroll")
+                    .min_h(px(0.))
+                    .max_h(px(500.))
+                    .overflow_y_scroll(),
+            )
             .child(
                 div()
                     .text_size(px(8.5))
@@ -3508,24 +4267,23 @@ impl Workspace {
                     .child("esc or click outside to close"),
             );
 
-        Some(
-            div()
-                .absolute()
-                .inset_0()
-                .occlude()
-                .bg(th.bg.alpha(0.70))
-                .flex()
-                .items_center()
-                .justify_center()
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                        ws.savings_menu = false;
-                        cx.notify();
-                    }),
-                )
-                .child(panel),
-        )
+        div()
+            .absolute()
+            .inset_0()
+            .occlude()
+            .bg(th.bg.alpha(0.70))
+            .flex()
+            .items_center()
+            .justify_center()
+            .p_4()
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                    ws.savings_menu = false;
+                    cx.notify();
+                }),
+            )
+            .child(panel)
     }
 
     /// Split ONLY the focused terminal; everything else keeps its exact space.
@@ -9087,6 +9845,16 @@ static FOCUS_DEMO_ARMED: std::sync::atomic::AtomicBool = std::sync::atomic::Atom
 static SAVINGS_DEMO_ARMED: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
+// Capture/demo hook: TD_USAGE_DEMO opens the </> card on its usage face with
+// FICTIONAL subscriptions. A real record carries this machine's actual plan,
+// prompt counts and how close the account is to its ceiling — none of which
+// belongs in a screenshot.
+static USAGE_DEMO_ARMED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+// Dev hook: TD_USAGE_LIVE opens the same face on the REAL records. Not for
+// capture — see the comment where it fires.
+static USAGE_LIVE_ARMED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 // Capture/demo hook: TD_GRAVEYARD_DEMO opens the graveyard once with FICTIONAL
 // entries so the dead-agent cards can be screenshotted leak-free.
 static GRAVEYARD_DEMO_ARMED: std::sync::atomic::AtomicBool =
@@ -9302,6 +10070,140 @@ impl Render for Workspace {
             self.savings_status = None;
             self.savings_menu = true;
             eprintln!("terminal-delight: TD_SAVINGS_DEMO — auto-opening </> savings overlay (fictional data)");
+            cx.notify();
+        }
+        // dev hook (TD_USAGE_LIVE): open the usage face on the REAL records, so
+        // the read path — directory scan, newest-wins merge, parse — can be
+        // exercised end to end without clicking. Not a capture flag: what it
+        // draws is this machine's actual plan and how close it is to its
+        // ceiling, which is exactly what must never reach a screenshot.
+        if std::env::var("TD_USAGE_LIVE").is_ok()
+            && !USAGE_LIVE_ARMED.load(std::sync::atomic::Ordering::Relaxed)
+        {
+            USAGE_LIVE_ARMED.store(true, std::sync::atomic::Ordering::Relaxed);
+            self.mcp_menu = true;
+            self.open_usage(cx);
+            eprintln!(
+                "terminal-delight: TD_USAGE_LIVE \u{2014} usage face on {} real record(s)",
+                self.usage_records.len()
+            );
+        }
+        // demo/capture hook (TD_USAGE_DEMO): open the usage face with FICTIONAL
+        // subscriptions rather than whatever the collectors wrote — a real record
+        // names this machine's plan and how close the account is to its ceiling.
+        // Deliberately exercises every branch the layout has: a plan with two
+        // healthy windows, one deep in the red, and a prepaid account that drains
+        // instead of resetting. Fires once.
+        if std::env::var("TD_USAGE_DEMO").is_ok()
+            && !USAGE_DEMO_ARMED.load(std::sync::atomic::Ordering::Relaxed)
+        {
+            USAGE_DEMO_ARMED.store(true, std::sync::atomic::Ordering::Relaxed);
+            self.mcp_menu = true;
+            // 2026-06-22T07:20Z — the same fictional afternoon TD_SAVINGS_DEMO
+            // is set on, so the two faces of the card tell one story.
+            let stamped = "2026-06-22T07:20:00+00:00";
+            let day = |d: &str, t: u64| usage::Day {
+                date: d.into(),
+                tokens: t,
+            };
+            let model = |m: &str, i: u64, o: u64, cr: u64, cw: u64| usage::ModelUse {
+                model: m.into(),
+                input: i,
+                output: o,
+                cache_read: cr,
+                cache_create: cw,
+            };
+            self.usage_records = vec![
+                usage::Record {
+                    id: "claude".into(),
+                    updated_at: stamped.into(),
+                    name: "Claude Code".into(),
+                    tier_label: "Max 20x".into(),
+                    ready: true,
+                    has_prompt_stats: true,
+                    limits: vec![
+                        usage::Limit {
+                            label: "Session (5-hour)".into(),
+                            percent: 0.41,
+                            resets_at: String::new(),
+                        },
+                        usage::Limit {
+                            label: "Weekly (7-day)".into(),
+                            percent: 0.88,
+                            resets_at: String::new(),
+                        },
+                    ],
+                    today_prompts: 412,
+                    today_sessions: 9,
+                    today_tokens: 96_400_000,
+                    recent_days: vec![
+                        day("2026-06-16", 41_200_000),
+                        day("2026-06-17", 78_900_000),
+                        day("2026-06-18", 12_400_000),
+                        day("2026-06-19", 64_100_000),
+                        day("2026-06-20", 103_800_000),
+                        day("2026-06-21", 22_700_000),
+                        day("2026-06-22", 96_400_000),
+                    ],
+                    models: vec![
+                        model("claude-opus-5", 9_100, 1_940_000, 402_100_000, 11_300_000),
+                        model("claude-sonnet-5", 2_400, 310_000, 61_800_000, 2_100_000),
+                    ],
+                    total_prompts: 3_180,
+                    total_sessions: 44,
+                    active_days: 21,
+                    ..Default::default()
+                },
+                usage::Record {
+                    id: "codex".into(),
+                    updated_at: stamped.into(),
+                    name: "Codex".into(),
+                    tier_label: "Plus".into(),
+                    ready: true,
+                    has_prompt_stats: true,
+                    status_text: "Codex limits unavailable".into(),
+                    auth_help: "Sign in with `codex login` to read the plan's windows.".into(),
+                    today_prompts: 38,
+                    today_sessions: 2,
+                    today_tokens: 3_910_000,
+                    recent_days: vec![
+                        day("2026-06-20", 1_100_000),
+                        day("2026-06-21", 640_000),
+                        day("2026-06-22", 3_910_000),
+                    ],
+                    models: vec![model("gpt-5.6-sol", 118_000, 21_400, 2_940_000, 0)],
+                    total_prompts: 96,
+                    total_sessions: 11,
+                    active_days: 6,
+                    ..Default::default()
+                },
+                usage::Record {
+                    id: "fireworks".into(),
+                    updated_at: stamped.into(),
+                    name: "Fireworks".into(),
+                    tier_label: "Prepaid".into(),
+                    ready: true,
+                    has_prompt_stats: false,
+                    balance: Some(usage::Balance {
+                        remaining: 6.40,
+                        funded: 20.0,
+                        spent: 13.60,
+                        currency: "USD".into(),
+                        estimated: true,
+                    }),
+                    today_tokens: 1_240_000,
+                    recent_days: vec![day("2026-06-21", 810_000), day("2026-06-22", 1_240_000)],
+                    models: vec![model("kimi-k2-instruct", 640_000, 92_000, 0, 0)],
+                    ..Default::default()
+                },
+            ];
+            self.usage_pick = 0;
+            self.usage_status = None;
+            self.savings_tab = OverlayTab::Usage;
+            self.savings_menu = true;
+            eprintln!(
+                "terminal-delight: TD_USAGE_DEMO \u{2014} auto-opening the usage face (fictional subscriptions)"
+            );
             cx.notify();
         }
         // demo/capture hook (TD_GRAVEYARD_DEMO): open the dead-agent manifest with
@@ -9807,9 +10709,13 @@ impl Render for Workspace {
                     // agent wall, then everything else behind the ellipsis
                     d.child(ic_mcp).child(ic_more)
                 } else {
-                    d.child(ic_theme)
+                    // The agent wall LEADS. It is the surface TD is steered
+                    // from, and it is already the one glyph the narrow collapse
+                    // keeps — leaving it third on the wide row made the two
+                    // layouts disagree about which glyph matters most.
+                    d.child(ic_mcp)
+                        .child(ic_theme)
                         .child(ic_osd)
-                        .child(ic_mcp)
                         .child(ic_dead)
                         .child(ic_plugins)
                         .child(ic_help)
@@ -10661,7 +11567,7 @@ impl Render for Workspace {
         let lang_picker_overlay = self.render_lang_picker(&th, cx);
         let logo_picker_overlay = self.render_logo_picker(&th, cx);
         let plugins_overlay = self.render_plugins_overlay(&th, cx);
-        let savings_overlay = self.render_savings_overlay(&th, cx);
+        let savings_overlay = self.render_savings_overlay(&th, header_vw, cx);
 
         // ---- MCP control: the read-only agent-watch surface (the 🤖 button) ----
         let mcp_overlay = self.mcp_menu.then(|| {
@@ -12118,10 +13024,39 @@ impl Render for Workspace {
                                     MouseButton::Left,
                                     cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
                                         cx.stop_propagation();
+                                        ws.savings_tab = OverlayTab::Savings;
                                         ws.fetch_savings(None, cx);
                                     }),
                                 ),
-                        ),
+                        )
+                        // Σ usage: the same card's other face. The savings button
+                        // answers "what did we avoid sending"; this one answers
+                        // "what did the subscriptions charge for what we sent".
+                        .child({
+                            let acc = th.accent;
+                            div()
+                                .id("mcp-btn-usage")
+                                .flex_none()
+                                .px_2()
+                                .py_0p5()
+                                .rounded_sm()
+                                .border_1()
+                                .border_color(acc.alpha(0.6))
+                                .bg(acc.alpha(0.10))
+                                .text_size(px(10.))
+                                .font_weight(gpui::FontWeight::EXTRA_BOLD)
+                                .text_color(acc)
+                                .cursor_pointer()
+                                .hover(move |s| s.bg(acc.alpha(0.22)))
+                                .child("\u{03a3} usage")
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                                        cx.stop_propagation();
+                                        ws.open_usage(cx);
+                                    }),
+                                )
+                        }),
                 )
                 .child(
                     div()
@@ -16398,6 +17333,16 @@ fn main() {
     // `ctl`, a plain subprocess: no window, no gpui.
     if argv.get(1).map(String::as_str) == Some("mcp") {
         std::process::exit(ctl::run_mcp_cli(&argv[2..]));
+    }
+
+    // `agent-usage`: run the collectors this binary CARRIES and publish one
+    // record per AI coding subscription — what the wall's Σ usage face reads.
+    // Compiled in, so the feature needs no Omarchy, no plugin and no install
+    // step; see [`usage`] and `src/vendor/README.md`. Like `ctl`, a plain
+    // subprocess: no window, no gpui. Slow on purpose — it talks to vendor
+    // endpoints — which is why the panel only ever runs it off the frame.
+    if argv.get(1).map(String::as_str) == Some("agent-usage") {
+        std::process::exit(usage::run_cli(&argv[2..]));
     }
 
     // `probe`: read-only forensics on someone ELSE's terminal — given a tile's

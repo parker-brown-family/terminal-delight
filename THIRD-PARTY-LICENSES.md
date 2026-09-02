@@ -8,6 +8,21 @@ Zlib / ISC / MPL-2.0 / Unicode / CC0). Rust dependency licenses are checked in C
 with `cargo deny check` against the allowlist in `app/deny.toml`, with **no GPL
 exceptions**.
 
+## Vendored: Omarchy's agent usage collectors (MIT)
+
+`app/src/vendor/omarchy-agent-usage-{claude,codex,fireworks}` are byte-identical
+copies of three scripts from **Omarchy** (<https://github.com/basecamp/omarchy>,
+MIT), taken from package version `4.0.1-1` on 2026-09-02. They are compiled into
+the binary by `app/src/usage.rs` and run by `terminal-delight agent-usage update`
+to publish one usage record per AI coding subscription.
+
+They are Python 3 **stdlib-only** scripts, so they add nothing to the linked
+dependency graph and change none of the analysis above — the binary stays MIT.
+They are carried unedited, which makes `cmp` against an installed Omarchy the
+whole audit; see `app/src/vendor/README.md` for provenance and the re-sync
+recipe. Running them requires `python3` at runtime, which is a soft dependency:
+without it the usage panel says so and still draws whatever records are on disk.
+
 ## No copyleft in the binary
 
 The pinned Zed dependency graph *would* otherwise link three
