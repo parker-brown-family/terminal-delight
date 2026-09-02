@@ -10,7 +10,7 @@
   <meta name="description" content="Terminal Delight on Omarchy: panes that wear the desktop's own colour schemes, a keyboard-first paint overlay over the whole workspace, per-agent status on the tab bar, and SUPER+ALT+T to pull any terminal tile — agents and all — into the wall." />
 
   <meta property="og:title" content="terminal-delight — the Omarchy kiosk" />
-  <meta property="og:description" content="The desktop is agentic. So is the terminal. Wear the desktop's own themes — eight of them, wallpaper and all — paint the whole workspace from the keyboard, and watch every agent from the tab bar." />
+  <meta property="og:description" content="The desktop is agentic. So is the terminal. Wear the desktop's own themes — seven of them, wallpaper and all — paint the whole workspace from the keyboard, and watch every agent from the tab bar." />
   <meta property="og:type" content="website" />
   <meta property="og:image" content="assets/crt-wall.png" />
   <meta name="twitter:card" content="summary_large_image" />
@@ -212,11 +212,11 @@
     }
     .rail-head .now { color: var(--acc); letter-spacing: 0.06em; text-transform: none; font-size: 13px; font-weight: 700; }
     .rail {
-      display: flex; gap: 8px; overflow-x: auto; padding: 4px 2px 12px;
-      scrollbar-width: thin;
+      display: grid; gap: 8px; padding: 4px 2px 12px;
+      grid-template-columns: repeat(auto-fit, minmax(136px, 1fr));
     }
     .chip {
-      flex: 0 0 auto; display: flex; align-items: center; gap: 7px;
+      display: flex; align-items: center; gap: 7px;
       font-family: var(--mono); font-size: 12px; color: var(--fg);
       background: var(--bg2); border: 1px solid var(--line);
       border-radius: 999px; padding: 6px 12px 6px 7px; cursor: pointer;
@@ -463,9 +463,34 @@
     .spine-tag b { color: var(--acc); font-weight: 700; letter-spacing: 0.06em; }
     @media (max-width: 760px) { .spine-tag { display: none; } }
 
-    /* `display:flex` on .chip beats the UA's [hidden] rule, and the ↕ pill
-       would sit there claiming the page is pinned when it is not. */
-    .chip[hidden] { display: none; }
+    /* The follow-scroll toggle is always present — a control that appears
+       only once you have broken something is a control nobody finds. It reads
+       its own state: lit while the scroll drives the page, dim while a pick
+       holds it. */
+    .rail-head .toggle {
+      display: inline-flex; align-items: center; gap: 7px;
+      font-family: var(--mono); font-size: 11.5px; letter-spacing: 0.06em;
+      text-transform: none; cursor: pointer; padding: 4px 11px 4px 8px;
+      border-radius: 999px; color: var(--fg2);
+      border: 1px solid var(--glass-edge);
+      background: linear-gradient(var(--glass-tint), var(--glass-tint-2)),
+                  color-mix(in srgb, var(--bg2) 55%, transparent);
+      -webkit-backdrop-filter: blur(14px) saturate(1.5);
+      backdrop-filter: blur(14px) saturate(1.5);
+      transition: color 160ms ease, border-color 160ms ease, background 160ms ease;
+    }
+    .rail-head .toggle .dot {
+      width: 7px; height: 7px; border-radius: 50%;
+      background: var(--fg2); transition: background 160ms ease, box-shadow 160ms ease;
+    }
+    .rail-head .toggle[aria-pressed="true"] {
+      color: var(--fgb);
+      border-color: color-mix(in srgb, var(--acc) 60%, transparent);
+    }
+    .rail-head .toggle[aria-pressed="true"] .dot {
+      background: var(--acc); box-shadow: 0 0 8px var(--acc);
+    }
+    .rail-head .toggle:hover { border-color: color-mix(in srgb, var(--acc) 70%, transparent); }
 
     /* ---- button geometry, from the same Liquid Glass recipe -------------
        #243 already gave every surface the glass material; what the reference
@@ -494,6 +519,40 @@
       background: radial-gradient(120% 100% at 28% -25%, #ffffffd9, #ffffff4d 32%, transparent 60%);
     }
 
+    /* ---- lightbox --------------------------------------------------------
+       A screenshot on this page is 940px of terminal shrunk into a column;
+       the detail that makes it worth showing is unreadable at that size. A
+       click opens it at whatever the window will give it. */
+    figure.shot img { cursor: zoom-in; }
+    .lightbox {
+      position: fixed; inset: 0; z-index: 20; display: none;
+      align-items: center; justify-content: center; padding: 4vh 4vw;
+      background: color-mix(in srgb, var(--bg0) 82%, transparent);
+      -webkit-backdrop-filter: blur(10px) saturate(1.2);
+      backdrop-filter: blur(10px) saturate(1.2);
+    }
+    .lightbox[open] { display: flex; }
+    .lightbox img {
+      max-width: 100%; max-height: 84vh; display: block;
+      border-radius: 12px; border: 1px solid var(--glass-edge);
+      box-shadow: var(--glass-shadow); background: var(--bg0);
+    }
+    .lightbox figcaption {
+      font-family: var(--mono); font-size: 12px; color: var(--fg2);
+      margin-top: 10px; text-align: center;
+    }
+    .lightbox .close {
+      position: absolute; top: 16px; right: 18px; cursor: pointer;
+      font-family: var(--mono); font-size: 13px; color: var(--fg);
+      border-radius: 999px; padding: 7px 13px;
+      border: 1px solid var(--glass-edge);
+      background: linear-gradient(var(--glass-tint), var(--glass-tint-2)),
+                  color-mix(in srgb, var(--bg2) 55%, transparent);
+      -webkit-backdrop-filter: blur(14px) saturate(1.5);
+      backdrop-filter: blur(14px) saturate(1.5);
+    }
+    .lightbox .close:hover { border-color: color-mix(in srgb, var(--acc) 70%, transparent); }
+
     /* Motion is an enhancement, never the content. Reduced motion parks the
        backdrop at its resting transform and the rAF loop never arms. */
     @media (prefers-reduced-motion: reduce) {
@@ -508,6 +567,14 @@
     <div class="layer wall"></div>
   </div>
   <div class="spine-tag" id="spineTag" aria-hidden="true"></div>
+
+  <div class="lightbox" id="lightbox" role="dialog" aria-modal="true" aria-label="Enlarged image">
+    <button class="close" id="lightboxClose" type="button">esc ✕</button>
+    <figure style="margin:0;max-width:100%">
+      <img id="lightboxImg" src="" alt="" />
+      <figcaption id="lightboxCap"></figcaption>
+    </figure>
+  </div>
   <div class="hero-scrim" aria-hidden="true"></div>
 
   <nav class="top">
@@ -516,6 +583,7 @@
       <span class="links">
         <a href="info.html">home</a>
         <a href="#wear" style="color:var(--acc)">omarchy ★</a>
+        <a href="#mcp">MCP</a>
         <a href="#agents" class="hide-sm">agents</a>
         <a href="agents.html" class="hide-sm">live wall ↗</a>
         <a href="#install">install</a>
@@ -524,7 +592,7 @@
     </div>
   </nav>
 
-  <header class="hero" data-spine="retro-82">
+  <header class="hero" data-spine="gruvbox">
     <div class="wrap hero-parallax">
       <div class="eyebrow">the omarchy kiosk</div>
       <h1>The desktop is agentic.<br /><span class="u">So is the terminal.</span></h1>
@@ -549,16 +617,84 @@
           <span>desktop palettes</span>
           <span id="railCount"></span>
           <span class="now" id="railNow"></span>
-          <button class="chip" id="railAuto" type="button" hidden
-                  title="Hand the page back to the scroll">↕ follow scroll</button>
+          <button class="toggle" id="railAuto" type="button" aria-pressed="true"
+                  title="When on, the page wears the theme of whatever you have scrolled to">
+            <span class="dot" aria-hidden="true"></span><span>follow scroll</span>
+          </button>
         </div>
         <div class="rail" id="rail" role="group" aria-label="The Omarchy themes this page wears"></div>
       </div>
     </div>
   </header>
 
+  <!-- ============================================================= MCP -->
+  <section id="mcp" data-spine="gruvbox">
+    <div class="wrap">
+      <div class="eyebrow">the control surface</div>
+      <h2>Every pane is readable by an agent, over MCP</h2>
+      <p class="lede">
+        The workspace is not just something you look at. Terminal Delight speaks
+        <b>MCP</b>, so an agent — or a browser on your phone — can ask who is
+        running where, tail an agent's own transcript, search every pane's
+        scrollback at once, and re-grade the whole wall in one call. Five tools,
+        one master switch, and a hard line: <b>appearance only</b>.
+      </p>
+
+      <div class="grid" style="margin-top:26px">
+        <div class="card">
+          <div class="ic">◱</div>
+          <h3><code>list_panes</code></h3>
+          <p>Every exposed pane: tab, title, mode, whether it is an agent, pid,
+             cwd, and a resumable session id.</p>
+        </div>
+        <div class="card">
+          <div class="ic">≣</div>
+          <h3><code>pane_events</code></h3>
+          <p>Recent tool calls for one agent pane, tailed from its <i>own
+             transcript</i> rather than the rendered screen.</p>
+        </div>
+        <div class="card">
+          <div class="ic">⌕</div>
+          <h3><code>grep</code></h3>
+          <p>One substring across every exposed pane's scrollback — how you find
+             <i>where</i> an error is across eighteen panes.</p>
+        </div>
+        <div class="card">
+          <div class="ic">◐</div>
+          <h3><code>get_pane_config</code></h3>
+          <p>The monitor grade as uniform 0–100 percents: brightness, contrast,
+             colour, gamma, warp, crawl. Read-only.</p>
+        </div>
+        <div class="card">
+          <div class="ic">◑</div>
+          <h3><code>set_pane_config</code></h3>
+          <p>PATCH semantics — only the channels you send change. Setting
+             <code>outer</code> re-grades every pane that inherits it.</p>
+        </div>
+        <div class="card">
+          <div class="ic">🔔</div>
+          <h3>push notifications</h3>
+          <p><code>agent_appeared</code> / <code>agent_vanished</code> arrive
+             without polling, so a watcher reacts instead of asking.</p>
+        </div>
+      </div>
+
+      <div class="seam" style="margin-top:20px">
+        <b>Appearance only.</b> Nothing in the control surface can write bytes to
+        a terminal or a PTY, and nothing is exposed until you turn the master
+        switch on — writes need a second toggle of their own. It watches agent
+        panes; it never types into one.
+      </div>
+
+      <p style="margin-top:20px">
+        <a class="btn primary" href="https://github.com/parker-brown-family/terminal-delight/blob/main/docs/mcp.md">Read the MCP docs ↗</a>
+        <a class="btn" href="#wall">See it on the agent wall</a>
+      </p>
+    </div>
+  </section>
+
   <!-- ============================================================ WEAR -->
-  <section id="wear" data-spine="miasma">
+  <section id="wear" data-spine="osaka-jade">
     <div class="wrap">
       <div class="eyebrow">wear the desktop</div>
       <h2>A pane can match every other window — without giving up the look</h2>
@@ -568,7 +704,7 @@
         machine</b> — <code>/usr/share/omarchy/themes</code> plus
         <code>~/.config/omarchy/themes</code>, user themes shadowing stock ones
         by name, the same precedence Omarchy itself applies. This page wears
-        eight of them, one per stop, so the argument can be read by scrolling;
+        seven of them, one per stop, so the argument can be read by scrolling;
         the overlay on your own box lists whatever you have installed.
       </p>
       <p class="lede dim" style="margin-top:14px">
@@ -620,7 +756,7 @@
   </section>
 
   <!-- =========================================================== PAINT -->
-  <section id="paint" data-spine="everforest">
+  <section id="paint" data-spine="tokyo-night">
     <div class="wrap">
       <div class="eyebrow">terminal paint</div>
       <h2>One keystroke, the whole workspace</h2>
@@ -731,7 +867,7 @@
   </section>
 
   <!-- ============================================================ WALL -->
-  <section id="wall" data-spine="tokyo-night">
+  <section id="wall" data-spine="everforest">
     <div class="wrap">
       <div class="eyebrow">the agent wall</div>
       <h2>Read the whole fleet, from anywhere</h2>
@@ -770,7 +906,7 @@
   </section>
 
   <!-- ============================================================ SEND -->
-  <section id="send" data-spine="osaka-jade">
+  <section id="send" data-spine="miasma">
     <div class="wrap">
       <div class="eyebrow">super + alt + t</div>
       <h2>Pull any terminal tile into the wall — agents and all</h2>
@@ -813,7 +949,7 @@
   </section>
 
   <!-- =========================================================== NOTIFY -->
-  <section id="notify" data-spine="catppuccin-latte">
+  <section id="notify" data-spine="miasma">
     <div class="wrap">
       <div class="eyebrow">notifications, omarchy-shaped</div>
       <h2>A finish you weren't looking at, and one click back to it</h2>
@@ -851,7 +987,7 @@
   </section>
 
   <!-- ============================================================ REPOS -->
-  <section id="repos" data-spine="gruvbox">
+  <section id="repos" data-spine="retro-82">
     <div class="wrap">
       <div class="eyebrow">three repos, one seam</div>
       <h2>The desktop half is its own project</h2>
@@ -894,7 +1030,7 @@
   </section>
 
   <!-- ========================================================== INSTALL -->
-  <section id="install" data-spine="gruvbox">
+  <section id="install" data-spine="retro-82">
     <div class="wrap">
       <div class="eyebrow">install</div>
       <h2>The desktop half, in three commands</h2>
@@ -924,7 +1060,7 @@
     </div>
   </section>
 
-  <footer data-spine="gruvbox">
+  <footer data-spine="retro-82">
     <div class="wrap cols">
       <div>
         <div class="brand">▸ terminal-delight<span class="blink">_</span></div>
@@ -965,14 +1101,13 @@
    painting a pane does to its colour table, and why the texture never moves.
    -------------------------------------------------------------------------- */
 const PALETTES = [
-  {"name":"retro-82","mode":"dark","bg":"#05182e","bg2":"#0a2540","bg0":"#020c17","fg":"#f6dcac","fg2":"#3f8f8a","fgb":"#f6dcac","acc":"#faa968","mut":"#2a6b78","sel":"#134e5a","red":"#f85525","grn":"#028391","yel":"#e97b3c","blu":"#3f8f8a","mag":"#3f8f8a","cyn":"#8cbfb8"},
-  {"name":"miasma","mode":"dark","bg":"#222222","bg2":"#2c2c2c","bg0":"#121212","fg":"#c2c2b0","fg2":"#555555","fgb":"#c2c2b0","acc":"#78824b","mut":"#666666","sel":"#383838","red":"#685742","grn":"#5f875f","yel":"#b36d43","blu":"#78824b","mag":"#bb7744","cyn":"#c9a554"},
-  {"name":"everforest","mode":"dark","bg":"#2d353b","bg2":"#343f44","bg0":"#181d20","fg":"#d3c6aa","fg2":"#4f585e","fgb":"#d3c6aa","acc":"#7fbbb3","mut":"#475258","sel":"#3d484d","red":"#e67e80","grn":"#a7c080","yel":"#dbbc7f","blu":"#7fbbb3","mag":"#d699b6","cyn":"#83c092"},
-  {"name":"ethereal","mode":"dark","bg":"#060B1E","bg2":"#131a3a","bg0":"#030610","fg":"#ffcead","fg2":"#6d7db6","fgb":"#ffcead","acc":"#7d82d9","mut":"#6d7db6","sel":"#252e56","red":"#ED5B5A","grn":"#92a593","yel":"#E9BB4F","blu":"#7d82d9","mag":"#c89dc1","cyn":"#a3bfd1"},
-  {"name":"tokyo-night","mode":"dark","bg":"#1a1b26","bg2":"#24283b","bg0":"#0e0e14","fg":"#a9b1d6","fg2":"#565f89","fgb":"#c0caf5","acc":"#7aa2f7","mut":"#414868","sel":"#292e42","red":"#f7768e","grn":"#9ece6a","yel":"#e0af68","blu":"#7aa2f7","mag":"#ad8ee6","cyn":"#449dab"},
+  {"name":"gruvbox","mode":"dark","bg":"#282828","bg2":"#3c3836","bg0":"#161616","fg":"#d4be98","fg2":"#7c6f64","fgb":"#d4be98","acc":"#7daea3","mut":"#665c54","sel":"#504945","red":"#ea6962","grn":"#a9b665","yel":"#d8a657","blu":"#7daea3","mag":"#d3869b","cyn":"#89b482"},
   {"name":"osaka-jade","mode":"dark","bg":"#111c18","bg2":"#23372B","bg0":"#090f0d","fg":"#C1C497","fg2":"#81B8A8","fgb":"#F7E8B2","acc":"#509475","mut":"#53685B","sel":"#32473B","red":"#FF5345","grn":"#549e6a","yel":"#459451","blu":"#509475","mag":"#D2689C","cyn":"#2DD5B7"},
-  {"name":"catppuccin-latte","mode":"light","bg":"#eff1f5","bg2":"#dce0e8","bg0":"#d7d8dc","fg":"#4c4f69","fg2":"#9ca0b0","fgb":"#4c4f69","acc":"#1e66f5","mut":"#acb0be","sel":"#ccd0da","red":"#d20f39","grn":"#40a02b","yel":"#df8e1d","blu":"#1e66f5","mag":"#ea76cb","cyn":"#179299"},
-  {"name":"gruvbox","mode":"dark","bg":"#282828","bg2":"#3c3836","bg0":"#161616","fg":"#d4be98","fg2":"#7c6f64","fgb":"#d4be98","acc":"#7daea3","mut":"#665c54","sel":"#504945","red":"#ea6962","grn":"#a9b665","yel":"#d8a657","blu":"#7daea3","mag":"#d3869b","cyn":"#89b482"}
+  {"name":"tokyo-night","mode":"dark","bg":"#1a1b26","bg2":"#24283b","bg0":"#0e0e14","fg":"#a9b1d6","fg2":"#565f89","fgb":"#c0caf5","acc":"#7aa2f7","mut":"#414868","sel":"#292e42","red":"#f7768e","grn":"#9ece6a","yel":"#e0af68","blu":"#7aa2f7","mag":"#ad8ee6","cyn":"#449dab"},
+  {"name":"ethereal","mode":"dark","bg":"#060B1E","bg2":"#131a3a","bg0":"#030610","fg":"#ffcead","fg2":"#6d7db6","fgb":"#ffcead","acc":"#7d82d9","mut":"#6d7db6","sel":"#252e56","red":"#ED5B5A","grn":"#92a593","yel":"#E9BB4F","blu":"#7d82d9","mag":"#c89dc1","cyn":"#a3bfd1"},
+  {"name":"everforest","mode":"dark","bg":"#2d353b","bg2":"#343f44","bg0":"#181d20","fg":"#d3c6aa","fg2":"#4f585e","fgb":"#d3c6aa","acc":"#7fbbb3","mut":"#475258","sel":"#3d484d","red":"#e67e80","grn":"#a7c080","yel":"#dbbc7f","blu":"#7fbbb3","mag":"#d699b6","cyn":"#83c092"},
+  {"name":"miasma","mode":"dark","bg":"#222222","bg2":"#2c2c2c","bg0":"#121212","fg":"#c2c2b0","fg2":"#555555","fgb":"#c2c2b0","acc":"#78824b","mut":"#666666","sel":"#383838","red":"#685742","grn":"#5f875f","yel":"#b36d43","blu":"#78824b","mag":"#bb7744","cyn":"#c9a554"},
+  {"name":"retro-82","mode":"dark","bg":"#05182e","bg2":"#0a2540","bg0":"#020c17","fg":"#f6dcac","fg2":"#3f8f8a","fgb":"#f6dcac","acc":"#faa968","mut":"#2a6b78","sel":"#134e5a","red":"#f85525","grn":"#028391","yel":"#e97b3c","blu":"#3f8f8a","mag":"#3f8f8a","cyn":"#8cbfb8"}
 ]
 ;
 
@@ -1062,6 +1197,59 @@ function build() {
 if (PALETTES.length) build();
 
 /* --------------------------------------------------------------------------
+   The lightbox. Every figure on the page is a screenshot reduced to a column
+   width; clicking one opens it as large as the window allows. Delegated, so a
+   figure added later needs no wiring. Escape, the backdrop and the ✕ all
+   close it, and focus goes back to the image that opened it.
+   -------------------------------------------------------------------------- */
+(function () {
+  const box = document.getElementById('lightbox');
+  const img = document.getElementById('lightboxImg');
+  const cap = document.getElementById('lightboxCap');
+  const shut = document.getElementById('lightboxClose');
+  if (!box || !img) return;
+  let opener = null;
+
+  function open(src, alt, caption, from) {
+    img.src = src; img.alt = alt || '';
+    cap.textContent = caption || '';
+    box.setAttribute('open', '');
+    opener = from || null;
+    shut.focus();
+  }
+  function close() {
+    box.removeAttribute('open');
+    img.removeAttribute('src');
+    if (opener) opener.focus();
+    opener = null;
+  }
+
+  document.addEventListener('click', (e) => {
+    const hit = e.target.closest('figure.shot img');
+    if (!hit) return;
+    const fig = hit.closest('figure');
+    const cp = fig && fig.querySelector('figcaption');
+    open(hit.currentSrc || hit.src, hit.alt, cp ? cp.textContent : '', hit);
+  });
+  box.addEventListener('click', (e) => { if (e.target === box || e.target === shut) close(); });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && box.hasAttribute('open')) close();
+  });
+
+  // The figure is a button in everything but name, so give it a keyboard.
+  for (const el of document.querySelectorAll('figure.shot img')) {
+    el.tabIndex = 0;
+    el.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' && e.key !== ' ') return;
+      e.preventDefault();
+      const fig = el.closest('figure');
+      const cp = fig && fig.querySelector('figcaption');
+      open(el.currentSrc || el.src, el.alt, cp ? cp.textContent : '', el);
+    });
+  }
+})();
+
+/* --------------------------------------------------------------------------
    The backdrop drive. Scroll writes two custom properties and nothing else —
    no layout is read per frame and no element is restyled, so the whole effect
    is one compositor transform on one layer.
@@ -1111,8 +1299,8 @@ if (PALETTES.length) build();
   let pinned = null, shown = null;
   window.pinTheme = function (name) {   // called by a chip click
     pinned = name;
-    if (auto) auto.hidden = false;
     shown = name;                        // the chip already applied the palette
+    syncToggle();
     dress(name, null);
   };
   try {
@@ -1121,10 +1309,20 @@ if (PALETTES.length) build();
   } catch (e) { /* private window */ }
   const asked = new URLSearchParams(location.search).get('t');
   if (asked && byName.has(asked)) pinned = asked;
-  if (auto) {
-    auto.hidden = !pinned;
-    auto.addEventListener('click', () => { pinned = null; auto.hidden = true; frame(); });
+  // The toggle is the single readout of who owns the page: lit = the scroll,
+  // dim = a pick. A chip click turns it off, clicking it back on hands the
+  // page to whatever stop you are standing in.
+  function syncToggle() {
+    if (auto) auto.setAttribute('aria-pressed', String(!pinned));
   }
+  if (auto) {
+    auto.addEventListener('click', () => {
+      pinned = pinned ? null : (shown || stops[0].dataset.spine);
+      syncToggle();
+      frame();
+    });
+  }
+  syncToggle();
 
   function dress(name, stop) {
     for (const [n, el] of papers) el.classList.toggle('on', n === name);
@@ -1141,13 +1339,23 @@ if (PALETTES.length) build();
   function spine() {
     const vh = window.innerHeight;
     const top = vh * 0.14, bot = vh * 0.80, band = bot - top;
+    // How much scrolling is left. Within the last half-screen of it the whole
+    // page returns to full focus — the bottom of a document is a destination,
+    // not something to read through a blur, and on a viewport tall enough that
+    // nothing scrolls this is 1 from the first frame.
+    const docMax = Math.max(0, document.documentElement.scrollHeight - vh);
+    const remain = Math.max(0, docMax - (window.scrollY || window.pageYOffset || 0));
+    const release = docMax <= 0 ? 1
+      : Math.max(0, Math.min(1, 1 - remain / (vh * 0.5)));
     let best = stops[0], bestF = -1;
     for (const s of stops) {
       const r = s.getBoundingClientRect();
       const overlap = Math.max(0, Math.min(r.bottom, bot) - Math.max(r.top, top));
       const denom = Math.min(band, r.height || band) || 1;
       const f = Math.max(0, Math.min(1, overlap / denom));
-      s.style.setProperty('--f', f.toFixed(3));
+      // The theme still follows the band (raw f), so the release cannot make
+      // every stop tie for "the one you are looking at" at the end of the page.
+      s.style.setProperty('--f', (f + (1 - f) * release).toFixed(3));
       if (f > bestF) { bestF = f; best = s; }
       if (r.top < vh * 2 && r.bottom > -vh) warm(s.dataset.spine);   // a screen ahead
     }
