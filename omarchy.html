@@ -10,7 +10,7 @@
   <meta name="description" content="Terminal Delight on Omarchy: panes that wear the desktop's own colour schemes, a keyboard-first paint overlay over the whole workspace, per-agent status on the tab bar, and SUPER+ALT+T to pull any terminal tile — agents and all — into the wall." />
 
   <meta property="og:title" content="terminal-delight — the Omarchy kiosk" />
-  <meta property="og:description" content="The desktop is agentic. So is the terminal. Wear the desktop's own themes — seven of them, wallpaper and all — paint the whole workspace from the keyboard, and watch every agent from the tab bar." />
+  <meta property="og:description" content="The desktop is agentic. So is the terminal. Wear the desktop's own themes — seven of Omarchy's and one of ours, wallpaper and all — paint the whole workspace from the keyboard, and watch every agent from the tab bar." />
   <meta property="og:type" content="website" />
   <meta property="og:image" content="assets/crt-wall.png" />
   <meta name="twitter:card" content="summary_large_image" />
@@ -58,6 +58,14 @@
          `.sub` line was the first thing to lose against it. */
       --scrim-hero: 0.58;
     }
+    /* Last Voyage's plate is the brightest on the page by a distance — two
+       thirds of it is lit orange, where every Omarchy wallpaper here is
+       dark-dominant. At the shared 0.58 the hero's `.sub` line sits on the sun
+       and disappears. Only the hero number moves: the reading scrim already
+       holds by the MCP section below, because the backdrop's drift has carried
+       the crop off the sun and down into the waves by then. Same lesson as
+       #243, one theme further along. */
+    :root[data-theme="last-voyage"] { --scrim-hero: 0.72; }
     * { box-sizing: border-box; }
     html { scroll-behavior: smooth; }
     body {
@@ -672,7 +680,7 @@
   <div class="spine-tag" id="spineTag" aria-hidden="true"></div>
 
   <!-- The ride-along picker. Present from the first frame and dispersed; the
-       scroll assembles it. Its chips are the same seven, wired to the same
+       scroll assembles it. Its chips are the same eight, wired to the same
        handler as the rail under the headline. -->
   <div class="rail-dock" id="railDock">
     <div class="rail-head">
@@ -682,7 +690,7 @@
         <span class="dot" aria-hidden="true"></span><span>follow scroll</span>
       </button>
     </div>
-    <div class="rail" id="dockRail" role="group" aria-label="The Omarchy themes this page wears"></div>
+    <div class="rail" id="dockRail" role="group" aria-label="The themes this page wears"></div>
   </div>
 
   <div class="lightbox" id="lightbox" role="dialog" aria-modal="true" aria-label="Enlarged image">
@@ -709,7 +717,7 @@
     </div>
   </nav>
 
-  <header class="hero" data-spine="gruvbox">
+  <header class="hero" data-spine="last-voyage">
     <div class="wrap hero-parallax">
       <div class="eyebrow">the omarchy kiosk</div>
       <h1>The desktop is agentic.<br /><span class="u">So is the terminal.</span></h1>
@@ -739,13 +747,13 @@
             <span class="dot" aria-hidden="true"></span><span>follow scroll</span>
           </button>
         </div>
-        <div class="rail" id="rail" role="group" aria-label="The Omarchy themes this page wears"></div>
+        <div class="rail" id="rail" role="group" aria-label="The themes this page wears"></div>
       </div>
     </div>
   </header>
 
   <!-- ============================================================= MCP -->
-  <section id="mcp" data-spine="gruvbox">
+  <section id="mcp" data-spine="last-voyage">
     <div class="wrap">
       <div class="eyebrow">the control surface</div>
       <h2>Every pane is readable by an agent, over MCP</h2>
@@ -821,8 +829,10 @@
         machine</b> — <code>/usr/share/omarchy/themes</code> plus
         <code>~/.config/omarchy/themes</code>, user themes shadowing stock ones
         by name, the same precedence Omarchy itself applies. This page wears
-        seven of them, one per stop, so the argument can be read by scrolling;
-        the overlay on your own box lists whatever you have installed.
+        seven of them, one per stop, so the argument can be read by scrolling.
+        The one it opens on, <b>Last Voyage</b>, is ours rather than Omarchy's,
+        because the shelf takes both. The overlay on your own box lists
+        whatever you have installed.
       </p>
       <p class="lede dim" style="margin-top:14px">
         A palette replaces the pane's whole colour table and leaves its
@@ -1147,7 +1157,7 @@
   </section>
 
   <!-- ========================================================== INSTALL -->
-  <section id="install" data-spine="retro-82">
+  <section id="install" data-spine="gruvbox">
     <div class="wrap">
       <div class="eyebrow">install</div>
       <h2>The desktop half, in three commands</h2>
@@ -1177,7 +1187,7 @@
     </div>
   </section>
 
-  <footer data-spine="retro-82">
+  <footer data-spine="gruvbox">
     <div class="wrap cols">
       <div>
         <div class="brand">▸ terminal-delight<span class="blink">_</span></div>
@@ -1202,10 +1212,11 @@
       </div>
     </div>
     <div class="wrap" style="margin-top:22px;font-size:12px;opacity:0.75">
-      The backdrop on each stop is that Omarchy theme's own shipped wallpaper,
+      The backdrop on each Omarchy stop is that theme's own shipped wallpaper,
       from <code>/usr/share/omarchy/themes/&lt;theme&gt;/backgrounds/</code>,
-      resized and re-encoded for the web. The art belongs to Omarchy and its
-      theme authors, not to this project.
+      resized and re-encoded for the web; that art belongs to Omarchy and its
+      theme authors, not to this project. <b>Last Voyage</b>, the theme the page
+      opens in, is the exception: the palette and the plate are both ours.
     </div>
   </footer>
 
@@ -1218,6 +1229,16 @@
    painting a pane does to its colour table, and why the texture never moves.
    -------------------------------------------------------------------------- */
 const PALETTES = [
+  /* Last Voyage is ours, not Omarchy's: the eight ANSI slots are read off
+     the plate itself, which is an ink drawing in two inks. There is
+     no green and no blue in it, so those slots take the rigging brown and
+     the burnt hull rather than inventing a hue the picture never had —
+     miasma does the same thing with its olives.
+
+     It leads the array on purpose: PALETTES[0] is what the page paints
+     before a single pixel has scrolled, and the hero wears it too, so the
+     two agree instead of the spine repainting on the first frame. */
+  {"name":"last-voyage","mode":"dark","bg":"#14100C","bg2":"#201913","bg0":"#0B0907","fg":"#E2C79A","fg2":"#A07A50","fgb":"#F3D69B","acc":"#DD6D16","mut":"#6C4727","sel":"#54351E","red":"#E2542A","grn":"#93663B","yel":"#D8A55E","blu":"#A1561C","mag":"#B7935E","cyn":"#F58E28"},
   {"name":"gruvbox","mode":"dark","bg":"#282828","bg2":"#3c3836","bg0":"#161616","fg":"#d4be98","fg2":"#7c6f64","fgb":"#d4be98","acc":"#7daea3","mut":"#665c54","sel":"#504945","red":"#ea6962","grn":"#a9b665","yel":"#d8a657","blu":"#7daea3","mag":"#d3869b","cyn":"#89b482"},
   {"name":"osaka-jade","mode":"dark","bg":"#111c18","bg2":"#23372B","bg0":"#090f0d","fg":"#C1C497","fg2":"#81B8A8","fgb":"#F7E8B2","acc":"#509475","mut":"#53685B","sel":"#32473B","red":"#FF5345","grn":"#549e6a","yel":"#459451","blu":"#509475","mag":"#D2689C","cyn":"#2DD5B7"},
   {"name":"tokyo-night","mode":"dark","bg":"#1a1b26","bg2":"#24283b","bg0":"#0e0e14","fg":"#a9b1d6","fg2":"#565f89","fgb":"#c0caf5","acc":"#7aa2f7","mut":"#414868","sel":"#292e42","red":"#f7768e","grn":"#9ece6a","yel":"#e0af68","blu":"#7aa2f7","mag":"#ad8ee6","cyn":"#449dab"},
