@@ -53,6 +53,15 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
     `list_panes`, `pane_events`, `grep`, `get_pane_config`, `set_pane_config`
     and the push notifications, each with what it returns, plus the master
     switch and the appearance-only line. The nav gained an MCP entry.
+  - **The theme picker scatters and reassembles as you scroll.** Two rails
+    exist at once and one scrubbed number runs them in opposition: the hero's
+    chips disperse on golden angles, blurring in proportion to their distance
+    from home, while the ride-along's arrive from the right and converge into
+    place. Both take clicks the whole way through — each chip sits in a slot
+    that never moves and carries the handler, so the pill wherever it has flown
+    to and the place it belongs are two targets for one action. Replacing the
+    old threshold-and-DOM-move with a scrubbed value also fixed a restore that
+    only worked sometimes: eight of eight returns to the top now land home.
   - **The theme picker rides along.** Past the hero on a window wider than
     1250px the rail docks to the right-hand gutter, vertically centred, as a
     narrow glass column carrying the seven themes and the follow-scroll
