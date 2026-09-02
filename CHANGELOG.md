@@ -53,6 +53,15 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
     `list_panes`, `pane_events`, `grep`, `get_pane_config`, `set_pane_config`
     and the push notifications, each with what it returns, plus the master
     switch and the appearance-only line. The nav gained an MCP entry.
+  - **The theme picker rides along.** Past the hero on a window wider than
+    1250px the rail docks to the right-hand gutter, vertically centred, as a
+    narrow glass column carrying the seven themes and the follow-scroll
+    toggle; scrolling back up returns it to its place under the headline. It
+    is sized to the gutter (158px between 1250 and 1620, 214px above that) so
+    it never covers the content column, and docking moves the node out of the
+    hero — a transformed or filtered ancestor would otherwise make itself the
+    containing block for a fixed child — while the vacated slot holds its
+    height so the page cannot shorten under the reader.
   - **Figures open in a lightbox.** A screenshot reduced to a column width is
     unreadable; click, Enter or Space opens it as large as the window allows,
     and Escape, the backdrop or the ✕ closes it with focus returned.

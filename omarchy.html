@@ -463,6 +463,63 @@
     .spine-tag b { color: var(--acc); font-weight: 700; letter-spacing: 0.06em; }
     @media (max-width: 760px) { .spine-tag { display: none; } }
 
+    /* ---- the picker rides along --------------------------------------
+       Once the hero has gone the rail leaves the flow and docks to the right
+       edge, vertically centred, so the themes stay one click away for the
+       whole page. `right` is measured from the middle of the window rather
+       than the edge, which keeps a real gap between the panel and the reading
+       column on a wide screen and never lets it drift miles out on an ultra-
+       wide one. Below 1250px there is no room beside the column, so it simply
+       stays where it was. */
+    .rail-slot { transition: height 200ms ease; }
+    @media (min-width: 1250px) {
+      .rail-shell.riding {
+        position: fixed; z-index: 8;
+        /* Sized and placed to sit in the GUTTER, not on the page. The content
+           column is 1080px, so between 1250 and 1620 the only room is the
+           ~180px beside it and the panel is cut to fit; above that there is
+           enough for the full-width panel and a real gap. Anything wider than
+           the gutter would cover the right column of the swatch grid, and an
+           overlay that hides content is not a floating picker, it is a lid. */
+        right: max(20px, calc(50vw - 720px));
+        top: 50%; transform: translateY(-50%);
+        width: 158px; max-height: 78vh; overflow: auto;
+        margin: 0; padding: 13px 13px 6px;
+        border-radius: 16px;
+        border: 1px solid var(--glass-edge);
+        background: linear-gradient(var(--glass-tint), var(--glass-tint-2)),
+                    color-mix(in srgb, var(--bg2) 62%, transparent);
+        box-shadow: var(--glass-shadow);
+        -webkit-backdrop-filter: blur(18px) saturate(1.5);
+        backdrop-filter: blur(18px) saturate(1.5);
+        animation: raildock 320ms cubic-bezier(.2,.7,.2,1);
+      }
+      /* One column while docked: seven names read as a list, and the panel
+         stays narrow enough to leave the prose alone. */
+      .rail-shell.riding .rail { grid-template-columns: 1fr; gap: 6px; padding: 2px 0 6px; }
+      .rail-shell.riding .rail-head {
+        flex-direction: column; align-items: flex-start; gap: 7px;
+        margin-bottom: 8px; font-size: 11px;
+      }
+      .rail-shell.riding .rail-head .now { font-size: 12px; }
+      .rail-shell.riding .chip { font-size: 11.5px; padding: 6px 9px 6px 6px; }
+    }
+    /* Past ~1620px the gutter is wide enough for the full panel and a gap. */
+    @media (min-width: 1620px) {
+      .rail-shell.riding {
+        width: 214px;
+        right: max(24px, calc(50vw - 792px));
+      }
+      .rail-shell.riding .chip { font-size: 12px; padding: 6px 12px 6px 7px; }
+    }
+    @keyframes raildock {
+      from { opacity: 0; transform: translate(14px, -50%); }
+      to   { opacity: 1; transform: translate(0, -50%); }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .rail-shell.riding { animation: none; }
+    }
+
     /* The follow-scroll toggle is always present — a control that appears
        only once you have broken something is a control nobody finds. It reads
        its own state: lit while the scroll drives the page, dim while a pick
@@ -612,6 +669,7 @@
         <a class="btn" href="#install">Install the desktop half</a>
       </div>
 
+      <div class="rail-slot">
       <div class="rail-shell">
         <div class="rail-head">
           <span>desktop palettes</span>
@@ -623,6 +681,7 @@
           </button>
         </div>
         <div class="rail" id="rail" role="group" aria-label="The Omarchy themes this page wears"></div>
+      </div>
       </div>
     </div>
   </header>
@@ -1281,6 +1340,33 @@ if (PALETTES.length) build();
   const hero   = stops[0];
   const heroInner = hero && hero.querySelector('.hero-parallax');
 
+  // Docking MOVES the rail to the body rather than merely restyling it in
+  // place. The hero carries a transform and a filter for the parallax, and
+  // either one makes itself the containing block for a fixed descendant — the
+  // panel would anchor to the hero instead of the window and sail off the top
+  // of the page with it, wearing the hero's fade on the way out. Out of the
+  // hero, `fixed` means what it says.
+  //
+  // The slot it came from keeps its height for exactly as long as it is away,
+  // so the page does not shorten under the reader at the moment of docking.
+  const shell = document.querySelector('.rail-shell');
+  const slot  = document.querySelector('.rail-slot');
+  const wide  = window.matchMedia('(min-width: 1250px)');
+  let riding = false;
+  function ride(on) {
+    if (!shell || !slot || on === riding) return;
+    if (on) {
+      slot.style.height = shell.offsetHeight + 'px';
+      shell.classList.add('riding');
+      document.body.appendChild(shell);
+    } else {
+      shell.classList.remove('riding');
+      slot.appendChild(shell);
+      slot.style.height = '';
+    }
+    riding = on;
+  }
+
   const papers = new Map();
   for (const s of stops) {
     const name = s.dataset.spine;
@@ -1359,10 +1445,13 @@ if (PALETTES.length) build();
       if (f > bestF) { bestF = f; best = s; }
       if (r.top < vh * 2 && r.bottom > -vh) warm(s.dataset.spine);   // a screen ahead
     }
+    const heroRect = hero.getBoundingClientRect();
     if (heroInner) {
-      const p = Math.max(0, Math.min(1, -hero.getBoundingClientRect().top / (vh * 0.85)));
+      const p = Math.max(0, Math.min(1, -heroRect.top / (vh * 0.85)));
       heroInner.style.setProperty('--p', p.toFixed(3));
     }
+    // Dock once the hero is mostly gone; undock when it comes back.
+    ride(wide.matches && heroRect.bottom < vh * 0.35);
     dress(pinned || best.dataset.spine, best);
   }
 
