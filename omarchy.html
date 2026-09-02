@@ -38,6 +38,22 @@
       --display: "Space Grotesk", "Inter", system-ui, sans-serif;
       --maxw: 1080px;
       --line: color-mix(in srgb, var(--mut) 85%, var(--fg) 15%);
+
+      /* Glass, lifted verbatim from the recipe this was modelled on: a hard
+         top highlight, a dark bottom lip, and a wide inner bloom — that trio is
+         what reads as a thick pane rather than a tinted rectangle. */
+      --glass-shadow:
+        0 12px 34px #00000047,
+        inset 0 1px 0 #ffffff80,
+        inset 0 -1px 0 #00000038,
+        inset 0 0 30px #ffffff0d;
+      --glass-tint: #ffffff1a;
+      --glass-tint-2: #ffffff05;
+      --glass-edge: #ffffff33;
+      /* Scrim over the backdrop. Lower = more wall showing. The hero opens it
+         up; the reading sections close it down so prose stays legible. */
+      --scrim: 0.84;
+      --scrim-hero: 0.50;
     }
     * { box-sizing: border-box; }
     html { scroll-behavior: smooth; }
@@ -50,21 +66,73 @@
       -webkit-font-smoothing: antialiased;
       transition: background 320ms ease, color 320ms ease;
     }
+    /* ---- the backdrop: our own wall, behind everything, moving on scroll ----
+       A fixed layer that translates slower than the page and scales up as you
+       descend, so the wall appears to push toward you. The image is the repo's
+       own crt-wall screenshot — MIT, already shipped, no third-party photo.
+       `--bgy` and `--s` are written by rAF on scroll; with JS off or motion
+       reduced they stay at their defaults and this is simply a still image. */
+    .backdrop {
+      position: fixed; inset: -10vh -4vw; z-index: 0; pointer-events: none;
+      background: url("assets/crt-wall.png") center 30% / cover no-repeat;
+      /* Blurred on purpose. Unblurred, the wall is a screenshot full of small
+         legible terminal text, and it fights the headline for the eye — the
+         reference works because a sky is calm behind the words. Blur turns the
+         same image into what we actually want from it: phosphor bloom, pane
+         geometry, and the theme's colour, with nothing to read. The saturate
+         puts back the glow the blur averages away.
+         Rasterised once; only the transform re-composites per frame. */
+      filter: blur(7px) saturate(1.25);
+      transform: translate3d(0, calc(var(--bgy, 0) * 1px), 0) scale(var(--s, 1));
+      transform-origin: 50% 38%;
+      will-change: transform;
+    }
+    /* The scrim is what keeps text readable and what ties the wall to the
+       selected palette — it is the theme's own background colour, so a
+       gruvbox page gets a gruvbox-tinted wall. */
+    .backdrop::after {
+      content: ""; position: absolute; inset: 0;
+      background: var(--bg);
+      opacity: var(--scrim);
+      transition: opacity 320ms ease, background 320ms ease;
+    }
+    .hero-scrim {
+      position: fixed; inset: 0; z-index: 0; pointer-events: none;
+      background: linear-gradient(to bottom,
+        color-mix(in srgb, var(--bg) 20%, transparent) 0%,
+        transparent 42%);
+    }
+
     /* The scanline veil is a texture, not a colour — painting a pane with a
-       desktop palette leaves its texture alone, and so does this page. */
+       desktop palette leaves its texture alone, and so does this page. It sits
+       ABOVE the backdrop so the wall is seen through the CRT, not beside it. */
     body::before {
-      content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 0;
+      content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 1;
       background: repeating-linear-gradient(0deg, rgba(0,0,0,0.16) 0 1px, transparent 1px 3px);
       mix-blend-mode: multiply; opacity: 0.55;
     }
     body::after {
-      content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 0;
+      content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 1;
       background: radial-gradient(120% 100% at 50% 45%, transparent 58%, rgba(0,0,0,0.5) 100%);
     }
     body[data-mode="light"]::before { opacity: 0.22; }
     body[data-mode="light"]::after  { background: radial-gradient(120% 100% at 50% 45%, transparent 65%, rgba(0,0,0,0.14) 100%); }
 
-    .wrap { position: relative; z-index: 1; max-width: var(--maxw); margin: 0 auto; padding: 0 22px; }
+    /* A light palette cannot carry white glass or a dark wall — both invert. */
+    body[data-mode="light"] {
+      --glass-tint: #ffffffb0;
+      --glass-tint-2: #ffffff5c;
+      --glass-edge: #00000018;
+      --glass-shadow:
+        0 12px 30px #0000001f,
+        inset 0 1px 0 #ffffffcc,
+        inset 0 -1px 0 #00000012,
+        inset 0 0 30px #ffffff40;
+      --scrim: 0.93;
+      --scrim-hero: 0.80;
+    }
+
+    .wrap { position: relative; z-index: 2; max-width: var(--maxw); margin: 0 auto; padding: 0 22px; }
     a { color: var(--acc); text-decoration: none; }
     a:hover { text-decoration: underline; }
     code, kbd {
@@ -106,13 +174,10 @@
     .cta { display: inline-flex; gap: 11px; flex-wrap: wrap; justify-content: center; }
     .btn {
       font-family: var(--mono); font-weight: 700; font-size: 13.5px;
-      padding: 10px 17px; border-radius: 9px; border: 1px solid var(--line);
-      background: var(--bg2); color: var(--fg); cursor: pointer; transition: 120ms;
-    }
-    .btn:hover { text-decoration: none; border-color: var(--acc); transform: translateY(-1px); }
-    .btn.primary {
-      background: color-mix(in srgb, var(--acc) 18%, var(--bg2));
-      border-color: var(--acc); color: var(--fgb);
+      min-height: 44px; padding: 11px 20px; border-radius: 999px;
+      color: var(--fg); cursor: pointer;
+      display: inline-flex; align-items: center; justify-content: center;
+      transition: transform 140ms ease, border-color 140ms ease, background 240ms ease;
     }
 
     /* ---- the theme rail: the whole point of the page ---- */
@@ -269,12 +334,85 @@
       border-radius: 999px; padding: 2px 9px; color: var(--fg2); display: inline-block;
     }
 
+    /* ================================================================ GLASS
+       Deliberately last in the sheet, so it wins over the solid backgrounds
+       declared above without those nineteen rules having to be rewritten —
+       each keeps its own radius, padding and layout, and only its surface is
+       replaced. One recipe: a layered white gradient over a translucent tint
+       of the theme's own surface colour, a hairline edge, and the four-part
+       shadow. saturate() earns its place — without it the blurred phosphor
+       behind the glass turns grey.
+
+       The wall is legible THROUGH the chrome, not merely around it. That is
+       the whole point: scrolling moves the backdrop *inside* every card. */
+    .btn, .chip, .card, .state, .keyrow, .repo, .seam, .slot,
+    .motherbar, .tabmock, figure.shot, .pill, pre.code, .screen .bar {
+      -webkit-backdrop-filter: blur(16px) saturate(1.5);
+      backdrop-filter: blur(16px) saturate(1.5);
+      background: linear-gradient(var(--glass-tint), var(--glass-tint-2)),
+                  color-mix(in srgb, var(--bg2) 55%, transparent);
+      border: 1px solid var(--glass-edge);
+      box-shadow: var(--glass-shadow);
+    }
+    /* The terminal mock stays OPAQUE. A screen you can see the wall through is
+       not a screen, and this one is standing in for a real pane. */
+    .screen { background: color-mix(in srgb, var(--bg0) 88%, transparent); }
+    .screen .mock { background: var(--bg); }
+    .slot .sw { box-shadow: none; }
+
+    .btn:hover {
+      text-decoration: none; transform: translateY(-2px);
+      border-color: color-mix(in srgb, var(--acc) 70%, transparent);
+    }
+    .btn.primary {
+      -webkit-backdrop-filter: blur(14px) saturate(1.5);
+      backdrop-filter: blur(14px) saturate(1.5);
+      background: linear-gradient(#ffffff38, #ffffff0d),
+                  color-mix(in srgb, var(--acc) 40%, transparent);
+      border: 1px solid color-mix(in srgb, var(--acc) 55%, #ffffff 45%);
+      color: var(--fgb);
+    }
+    /* NOT var(--bg0) here. In a light palette `darker_background` is still a
+       light colour, so using it as button text renders pale-on-pale — the
+       role name describes its position in the ramp, not its luminance. The
+       readable choice on light glass is the palette's own foreground. */
+    body[data-mode="light"] .btn.primary {
+      background: linear-gradient(#ffffff70, #ffffff20),
+                  color-mix(in srgb, var(--acc) 30%, transparent);
+      color: var(--fg);
+      border-color: color-mix(in srgb, var(--acc) 45%, transparent);
+    }
+    /* The muted role is chosen for contrast against a DARK ground; over a pale
+       scrimmed wall it drops under readable. Pull it toward the foreground. */
+    body[data-mode="light"] {
+      --fg2: color-mix(in srgb, var(--fg) 62%, var(--mut));
+    }
+    .chip:hover { border-color: color-mix(in srgb, var(--acc) 65%, transparent); }
+    .chip[aria-pressed="true"] {
+      border-color: color-mix(in srgb, var(--acc) 75%, transparent);
+      color: var(--fgb);
+      background: linear-gradient(var(--glass-tint), var(--glass-tint-2)),
+                  color-mix(in srgb, var(--acc) 26%, transparent);
+    }
+    .tabmock.on {
+      border-color: color-mix(in srgb, var(--acc) 70%, transparent);
+      color: var(--fgb);
+      background: linear-gradient(var(--glass-tint), var(--glass-tint-2)),
+                  color-mix(in srgb, var(--acc) 22%, transparent);
+    }
+
+    /* Motion is an enhancement, never the content. Reduced motion parks the
+       backdrop at its resting transform and the rAF loop never arms. */
     @media (prefers-reduced-motion: reduce) {
       *, *::before, *::after { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; transition-duration: 0.001ms !important; }
+      .backdrop { transform: none !important; }
     }
   </style>
 </head>
 <body data-mode="dark">
+
+  <div class="backdrop" id="backdrop" aria-hidden="true"></div>
+  <div class="hero-scrim" aria-hidden="true"></div>
 
   <nav class="top">
     <div class="wrap">
@@ -792,6 +930,11 @@ function apply(p) {
   }
 
   try { localStorage.setItem('td-omarchy-theme', p.name); } catch (e) { /* private window */ }
+
+  // Switching to or from a light palette changes the scrim pair, and the
+  // backdrop carries an inline --scrim from the last frame. Re-run the drive
+  // so the wall re-weights immediately instead of on the next scroll.
+  window.dispatchEvent(new Event('scroll'));
 }
 
 function build() {
@@ -825,6 +968,59 @@ function build() {
 }
 
 if (PALETTES.length) build();
+
+/* --------------------------------------------------------------------------
+   The backdrop drive. Scroll writes two custom properties and nothing else —
+   no layout is read per frame and no element is restyled, so the whole effect
+   is one compositor transform on one layer.
+
+   The wall translates at a FRACTION of scroll (it falls behind the content,
+   which is what reads as depth) and scales up across the page, so descending
+   pushes it toward you. Both are clamped: past the end of the document the
+   zoom stops rather than growing without limit.
+   -------------------------------------------------------------------------- */
+(function () {
+  const bg = document.getElementById('backdrop');
+  if (!bg) return;
+  if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+
+  const DRIFT = 0.16;   // backdrop moves at 16% of scroll — the parallax
+  const ZOOM  = 0.30;   // +30% scale from top of page to bottom
+  let ticking = false;
+
+  function frame() {
+    ticking = false;
+    const y = window.scrollY || window.pageYOffset || 0;
+    const doc = Math.max(1,
+      document.documentElement.scrollHeight - window.innerHeight);
+    const p = Math.min(1, Math.max(0, y / doc));
+
+    bg.style.setProperty('--bgy', (y * DRIFT).toFixed(1));
+    bg.style.setProperty('--s', (1 + p * ZOOM).toFixed(4));
+
+    // The hero opens the scrim; it closes as soon as prose starts, so the
+    // wall is a texture under the reading and a subject at the top.
+    // Read the pair off BODY, not :root — the light palettes override them on
+    // body[data-mode="light"], and a light wall needs a heavier scrim than a
+    // dark one to keep dark text on it readable. Reading :root would silently
+    // give every light theme the dark theme's numbers.
+    const cs = getComputedStyle(document.body);
+    const base = parseFloat(cs.getPropertyValue('--scrim')) || 0.88;
+    const hero = parseFloat(cs.getPropertyValue('--scrim-hero')) || 0.62;
+    const open = Math.max(0, 1 - y / (window.innerHeight * 0.9));
+    bg.style.setProperty('--scrim', (base - (base - hero) * open).toFixed(3));
+  }
+
+  function onScroll() {
+    if (ticking) return;
+    ticking = true;
+    requestAnimationFrame(frame);
+  }
+
+  window.addEventListener('scroll', onScroll, { passive: true });
+  window.addEventListener('resize', onScroll, { passive: true });
+  frame();
+})();
 </script>
 </body>
 </html>
