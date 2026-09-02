@@ -109,22 +109,35 @@ fn parse_line(line: &str) -> Vec<ToolEvent> {
         }
     }
 
-    // Codex: a function_call, either under `payload` or at the top level.
+    // Codex: a tool call, either under `payload` or at the top level.
+    //
+    // TWO SHAPES, and the second one is why this ever missed. Codex wrote
+    // `function_call` with a JSON-string `arguments`; current Codex writes
+    // `custom_tool_call` with a raw-string `input` (the sandboxed script it is
+    // about to run, not JSON at all). Matching only the older name meant every
+    // Codex pane reported no tool activity whatsoever — silently, because an
+    // empty event list is also what a fresh transcript looks like.
+    let is_call = |t: Option<&str>| matches!(t, Some("function_call") | Some("custom_tool_call"));
     let call = v
         .pointer("/payload")
-        .filter(|p| p.get("type").and_then(Value::as_str) == Some("function_call"))
-        .or_else(|| (v.get("type").and_then(Value::as_str) == Some("function_call")).then_some(&v));
+        .filter(|p| is_call(p.get("type").and_then(Value::as_str)))
+        .or_else(|| is_call(v.get("type").and_then(Value::as_str)).then_some(&v));
     if let Some(call) = call {
         let tool = call
             .get("name")
             .and_then(Value::as_str)
             .unwrap_or("?")
             .to_string();
-        let summary = match call.get("arguments") {
-            // Codex stores arguments as a JSON *string* — parse it for a gist.
-            Some(Value::String(s)) => summarize(&serde_json::from_str(s).unwrap_or(Value::Null)),
-            Some(other) => summarize(other),
-            None => String::new(),
+        let summary = match (call.get("arguments"), call.get("input")) {
+            // `function_call` stores arguments as a JSON *string* — parse for a gist.
+            (Some(Value::String(s)), _) => {
+                summarize(&serde_json::from_str(s).unwrap_or(Value::Null))
+            }
+            (Some(other), _) => summarize(other),
+            // `custom_tool_call` stores the raw script; the first line is the gist.
+            (None, Some(Value::String(s))) => clip(s.lines().next().unwrap_or("")),
+            (None, Some(other)) => summarize(other),
+            (None, None) => String::new(),
         };
         return vec![ToolEvent { ts, tool, summary }];
     }
@@ -225,6 +238,24 @@ mod tests {
         assert_eq!(evs.len(), 1);
         assert_eq!(evs[0].tool, "shell");
         assert_eq!(evs[0].summary, "git status");
+    }
+
+    /// The shape current Codex actually writes, copied from a real rollout on
+    /// this machine: `custom_tool_call`, with the script in `input` as a raw
+    /// string rather than JSON `arguments`. Matching only `function_call` made
+    /// every Codex pane look like it had never called a tool (issue #255).
+    #[test]
+    fn codex_custom_tool_call_payload_is_parsed() {
+        let line = r#"{"timestamp":"2026-08-31T14:47:51.992Z","type":"response_item","payload":{"type":"custom_tool_call","call_id":"call_7yby","name":"exec","input":"const r = await tools.web__run({q:\"kelowna\"});\ntext(r)\n"}}"#;
+        let p = write_tmp("codex-custom.jsonl", &format!("{line}\n"));
+        let evs = tail_tool_events(&p, 10);
+        std::fs::remove_file(&p).ok();
+        assert_eq!(evs.len(), 1);
+        assert_eq!(evs[0].tool, "exec");
+        assert_eq!(
+            evs[0].summary, "const r = await tools.web__run({q:\"kelowna\"});",
+            "the gist is the first line of the script, not the whole thing"
+        );
     }
 
     #[test]

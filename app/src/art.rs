@@ -13,7 +13,11 @@ const BLINKER: &[u8] = include_bytes!("../assets/img/blinker-only.png");
 
 /// Write an embedded asset to the runtime dir once (size-checked, so a
 /// truncated write from a crashed run heals) and hand back the path.
-fn runtime_asset(name: &str, bytes: &[u8]) -> PathBuf {
+///
+/// Shared with [`crate::toolprop`], which makes the same bargain for the tool
+/// plates: compiled in so a bare `td-<sha>` carries its own art, materialised
+/// on demand because gpui's `img()` eats paths.
+pub(crate) fn runtime_asset(name: &str, bytes: &[u8]) -> PathBuf {
     let base = std::env::var_os("XDG_RUNTIME_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(std::env::temp_dir);

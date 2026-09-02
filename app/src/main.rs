@@ -40,6 +40,7 @@ mod session;
 mod sticky;
 mod term;
 mod theme;
+mod toolprop;
 mod usage;
 mod warp;
 
@@ -1974,6 +1975,11 @@ struct Workspace {
     /// `dir-logos.toml` by `refresh_dir_logos` — render-side cache only, the
     /// file is the truth (see [`dirlogo`]).
     dir_logos: std::collections::HashMap<String, String>,
+    /// What the tool sweep saw last time, per pane: where that pane's transcript
+    /// is, how big it was, and what tool it ended on. Carried across sweeps so
+    /// an unchanged transcript costs one `stat` instead of a 256KB read —
+    /// which is most panes most of the time, since only a working agent writes.
+    tool_probe: std::collections::HashMap<EntityId, toolprop::ToolProbe>,
     renaming: Option<(usize, EditBuffer)>,
     /// Tab index awaiting a "close all its panes?" confirmation, if any.
     confirm_close: Option<usize>,
@@ -2473,6 +2479,7 @@ impl Workspace {
             logo_picker: None,
             logo_scan_epoch: 0,
             dir_logos: dirlogo::load(),
+            tool_probe: std::collections::HashMap::new(),
             renaming: None,
             confirm_close: None,
             help_open: false,
@@ -2659,6 +2666,33 @@ impl Workspace {
             cx.background_executor().timer(Duration::from_secs(2)).await;
             if this
                 .update(cx, |ws: &mut Workspace, cx| ws.refresh_dir_logos(cx))
+                .is_err()
+            {
+                break;
+            }
+        })
+        .detach();
+        // tool sweep: an agent's logo follows the tool in its hands, read off
+        // its own transcript. Same 2s cadence as the dir-logo sweep and the same
+        // reason — a tool call fires no structural event either — but the read
+        // is real I/O (up to 256KB of JSONL per pane), so it goes to the
+        // background executor between two short main-thread hops rather than
+        // being done inline the way the cheap `/proc` readlink is.
+        cx.spawn(async move |this, cx| loop {
+            cx.background_executor().timer(Duration::from_secs(2)).await;
+            let Ok(reqs) = this.update(cx, |ws: &mut Workspace, cx| ws.tool_probe_requests(cx))
+            else {
+                break; // window gone
+            };
+            if reqs.is_empty() {
+                continue; // no agent panes, or the feature is switched off
+            }
+            let probes = cx
+                .background_executor()
+                .spawn(async move { toolprop::resolve_probes(reqs) })
+                .await;
+            if this
+                .update(cx, |ws: &mut Workspace, cx| ws.apply_tool_faces(probes, cx))
                 .is_err()
             {
                 break;
@@ -4888,6 +4922,66 @@ impl Workspace {
             }
         }
         None
+    }
+
+    /// Snapshot every agent pane for the tool sweep. Main thread, but no more
+    /// work than the wall already does per frame — a few `/proc` reads and the
+    /// status line the HUD parses anyway. The transcript reading happens off
+    /// this thread, in [`toolprop::resolve_probes`].
+    fn tool_probe_requests(&self, cx: &App) -> Vec<toolprop::ToolProbeReq> {
+        if !toolprop::follows_tool() {
+            return vec![];
+        }
+        let mut out = vec![];
+        for tab in &self.tabs {
+            let mut leaves = vec![];
+            tab.root.leaves(&mut leaves);
+            for leaf in leaves {
+                let p = leaf.read(cx);
+                if !p.mode.is_agent() {
+                    continue;
+                }
+                let id = leaf.entity_id();
+                let rt = p.runtime();
+                out.push(toolprop::ToolProbeReq {
+                    id,
+                    mode: p.mode.label().to_string(),
+                    cwd: rt.cwd,
+                    session: rt.resume,
+                    working: p.agent_status().state == hud::AgentState::Working,
+                    prev: self.tool_probe.get(&id).cloned().unwrap_or_default(),
+                });
+            }
+        }
+        out
+    }
+
+    /// Apply a finished sweep. A WORKING agent wears the tool in its hands; a
+    /// resting one wears nothing, and falls back to the logo its directory
+    /// lends it — which is why adding this did not cost the per-directory
+    /// default anything. Panes notify only when the face actually changed, so
+    /// an agent running twenty `ctx_read`s in a row re-renders once.
+    fn apply_tool_faces(
+        &mut self,
+        probes: Vec<(EntityId, toolprop::ToolProbe, bool)>,
+        cx: &mut Context<Self>,
+    ) {
+        self.tool_probe = probes.iter().map(|(id, pr, _)| (*id, pr.clone())).collect();
+        for (id, probe, working) in probes {
+            let want = working
+                .then_some(probe.tool.as_deref())
+                .flatten()
+                .and_then(toolprop::face);
+            let Some(leaf) = self.pane_by_id(id) else {
+                continue;
+            };
+            if leaf.read(cx).tool_face != want {
+                leaf.update(cx, |v, cx| {
+                    v.tool_face = want;
+                    cx.notify();
+                });
+            }
+        }
     }
 
     /// Reload the per-directory map and re-resolve every pane's inherited logo
@@ -12197,9 +12291,21 @@ impl Render for Workspace {
                     } else {
                         Vec::new()
                     };
+                    // The card wears the same face as the pane header: explicit
+                    // logo, then the TOOL in flight, then the directory's default.
+                    // Routing the plate through `logo_path` rather than drawing it
+                    // separately means it inherits the card's own barrel warp and
+                    // glass sheen for nothing — a wrench on a little curved screen,
+                    // which is the entire argument for the wall.
+                    let tool_face = p.tool_face.clone().filter(|_| p.logo.is_none());
                     let logo_path = p
                         .logo
                         .clone()
+                        .or_else(|| {
+                            tool_face
+                                .as_ref()
+                                .map(|f| f.plate.to_string_lossy().into_owned())
+                        })
                         .or_else(|| p.dir_logo.clone())
                         .or_else(|| demo_logo_for(&format!("{title}/{id:?}")));
                     // DEFAULT CARD ART (no uploaded logo): a generated crest built
@@ -12591,6 +12697,54 @@ impl Render for Workspace {
                                                 gpui::img(std::path::PathBuf::from(path))
                                                     .size_full()
                                                     .object_fit(gpui::ObjectFit::Cover),
+                                            )
+                                        })
+                                        // THE VERB, lettered on the glass. The plate
+                                        // says which tool; the caption says what he is
+                                        // doing with it, which is the thing the art was
+                                        // drawn FROM (web/art/CONVENTIONS.md rule 1).
+                                        // For a tool the vocabulary has never seen, the
+                                        // plate is anonymous and the two letters over it
+                                        // are the only identity it has.
+                                        .when_some(tool_face.clone(), |d, face| {
+                                            let ring: gpui::Hsla = face
+                                                .tint
+                                                .map(|t| gpui::rgb(t).into())
+                                                .unwrap_or(theme_col);
+                                            d.when_some(face.mark.clone(), |d, mark| {
+                                                d.child(
+                                                    div()
+                                                        .absolute()
+                                                        .inset_0()
+                                                        .flex()
+                                                        .items_center()
+                                                        .justify_center()
+                                                        .text_size(px(19. * cs))
+                                                        .font_weight(gpui::FontWeight::EXTRA_BOLD)
+                                                        .text_color(ring)
+                                                        .child(mark),
+                                                )
+                                            })
+                                            .child(
+                                                div()
+                                                    .absolute()
+                                                    .bottom_0()
+                                                    .left_0()
+                                                    .right_0()
+                                                    .px(px(3. * cs))
+                                                    .py(px(1.5 * cs))
+                                                    .flex()
+                                                    .justify_center()
+                                                    .overflow_hidden()
+                                                    .bg(gpui::black().alpha(0.62))
+                                                    .child(
+                                                        div()
+                                                            .truncate()
+                                                            .text_size(px(7.5 * cs))
+                                                            .font_weight(gpui::FontWeight::BOLD)
+                                                            .text_color(ring)
+                                                            .child(face.caption().to_string()),
+                                                    ),
                                             )
                                         })
                                         .when(logo_path.is_none(), |d| {

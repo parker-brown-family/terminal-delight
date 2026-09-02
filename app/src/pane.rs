@@ -1800,6 +1800,12 @@ pub struct TerminalView {
     /// (`dirlogo`), resolved by the workspace's sweep — display state, never
     /// persisted (the map itself is the durable record). Shadowed by `logo`.
     pub dir_logo: Option<String>,
+    /// The TOOL this agent is holding right now, read off its own transcript by
+    /// the workspace's sweep. Display state, never persisted, and `None` the
+    /// moment the agent stops working — which is the whole design: a busy pane
+    /// wears what it is doing, a resting one goes back to wearing where it is.
+    /// Outranks `dir_logo`, never outranks the explicit `logo`.
+    pub tool_face: Option<crate::toolprop::Face>,
     /// Active inline-rename buffer; `Some` steals the keyboard from the PTY.
     renaming: Option<String>,
     pub exited: bool,
@@ -2653,6 +2659,7 @@ impl TerminalView {
             name: None,
             logo,
             dir_logo: None,
+            tool_face: None,
             renaming: None,
             exited: false,
             grid,
@@ -6368,7 +6375,42 @@ impl Render for TerminalView {
                         cx.emit(OpenLogoPicker);
                     }),
                 );
-            if let Some(path) = self.logo.clone().or_else(|| self.dir_logo.clone()) {
+            // PRECEDENCE — explicit logo, then the TOOL the agent is holding,
+            // then the logo its directory lends it. A working agent wears what
+            // it is doing; the moment it rests, `tool_face` goes to None and the
+            // pane goes back to wearing WHERE it is. That ordering is why the
+            // per-directory default did not have to be given up to get this.
+            if let Some(face) = self.tool_face.as_ref().filter(|_| self.logo.is_none()) {
+                let ring: gpui::Hsla = face.tint.map(|t| gpui::rgb(t).into()).unwrap_or(th.accent);
+                base.w(px(logo_box))
+                    .relative()
+                    .overflow_hidden()
+                    .rounded(px(4. * scale))
+                    .border_1()
+                    .border_color(ring.alpha(0.65))
+                    .child(
+                        gpui::img(face.plate.clone())
+                            .size_full()
+                            .object_fit(gpui::ObjectFit::Cover),
+                    )
+                    // Lettering ONLY on the anonymous plate: a known tool's
+                    // drawing is its identity and wants nothing written on it.
+                    .when_some(face.mark.clone(), |d, mark| {
+                        d.child(
+                            div()
+                                .absolute()
+                                .inset_0()
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .text_size(px((logo_box * 0.42).max(7.)))
+                                .font_weight(gpui::FontWeight::EXTRA_BOLD)
+                                .text_color(ring)
+                                .child(mark),
+                        )
+                    })
+                    .into_any_element()
+            } else if let Some(path) = self.logo.clone().or_else(|| self.dir_logo.clone()) {
                 base.w(px(logo_box))
                     .overflow_hidden()
                     .rounded(px(4. * scale))

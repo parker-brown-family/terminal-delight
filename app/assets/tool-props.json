@@ -1,0 +1,357 @@
+{
+  "_source": "agent-playhouse web/skin.json — regenerate with scripts/sync-tool-props.mjs, never hand-edit",
+  "props": {
+    "Bash": {
+      "art": "console",
+      "face": "focus",
+      "glyph": "SH",
+      "verb": "at the console",
+      "tint": "#c98500"
+    },
+    "ctx_shell": {
+      "art": "console",
+      "face": "focus",
+      "glyph": "SH",
+      "verb": "at the console",
+      "tint": "#c98500"
+    },
+    "exec": {
+      "art": "console",
+      "face": "focus",
+      "glyph": "SH",
+      "verb": "at the console",
+      "tint": "#c98500"
+    },
+    "ctx_call": {
+      "art": "console",
+      "face": "focus",
+      "glyph": "CL",
+      "verb": "calling through",
+      "tint": "#c98500"
+    },
+    "Read": {
+      "art": "scroll",
+      "face": "read",
+      "glyph": "RD",
+      "verb": "reading",
+      "tint": "#3987e5"
+    },
+    "ctx_read": {
+      "art": "scroll",
+      "face": "read",
+      "glyph": "RD",
+      "verb": "reading",
+      "tint": "#3987e5"
+    },
+    "ctx_expand": {
+      "art": "scroll",
+      "face": "read",
+      "glyph": "EX",
+      "verb": "unrolling the whole thing",
+      "tint": "#3987e5"
+    },
+    "read_session": {
+      "art": "scroll",
+      "face": "read",
+      "glyph": "RS",
+      "verb": "reading the record",
+      "tint": "#3987e5"
+    },
+    "NotebookEdit": {
+      "art": "quill",
+      "face": "focus",
+      "glyph": "NB",
+      "verb": "at the notebook",
+      "tint": "#199e70"
+    },
+    "Write": {
+      "art": "quill",
+      "face": "focus",
+      "glyph": "WR",
+      "verb": "writing",
+      "tint": "#199e70"
+    },
+    "Edit": {
+      "art": "chisel",
+      "face": "focus",
+      "glyph": "ED",
+      "verb": "at the bench",
+      "tint": "#199e70"
+    },
+    "ctx_patch": {
+      "art": "chisel",
+      "face": "focus",
+      "glyph": "PA",
+      "verb": "at the bench",
+      "tint": "#199e70"
+    },
+    "set_pane_config": {
+      "art": "chisel",
+      "face": "focus",
+      "glyph": "PC",
+      "verb": "adjusting the glass",
+      "tint": "#199e70"
+    },
+    "Grep": {
+      "art": "lens",
+      "face": "curious",
+      "glyph": "GR",
+      "verb": "into the cave",
+      "tint": "#2aa9a0"
+    },
+    "ctx_search": {
+      "art": "lens",
+      "face": "curious",
+      "glyph": "SE",
+      "verb": "into the cave",
+      "tint": "#2aa9a0"
+    },
+    "grep": {
+      "art": "lens",
+      "face": "curious",
+      "glyph": "GR",
+      "verb": "into the cave",
+      "tint": "#2aa9a0"
+    },
+    "garrison_search": {
+      "art": "lens",
+      "face": "curious",
+      "glyph": "GS",
+      "verb": "through the stacks",
+      "tint": "#2aa9a0"
+    },
+    "Glob": {
+      "art": "net",
+      "face": "curious",
+      "glyph": "GL",
+      "verb": "casting the net",
+      "tint": "#2aa9a0"
+    },
+    "ctx_glob": {
+      "art": "net",
+      "face": "curious",
+      "glyph": "GL",
+      "verb": "casting the net",
+      "tint": "#2aa9a0"
+    },
+    "ToolSearch": {
+      "art": "wrench",
+      "face": "focus",
+      "glyph": "TS",
+      "verb": "reaching for a tool",
+      "tint": "#7f8aa8"
+    },
+    "apes_tasks": {
+      "art": "board",
+      "face": "read",
+      "glyph": "KB",
+      "verb": "moving a card",
+      "tint": "#7f8aa8"
+    },
+    "TodoWrite": {
+      "art": "board",
+      "face": "read",
+      "glyph": "TD",
+      "verb": "ticking the list",
+      "tint": "#7f8aa8"
+    },
+    "apes_list_projects": {
+      "art": "board",
+      "face": "read",
+      "glyph": "LP",
+      "verb": "checking the roster",
+      "tint": "#7f8aa8"
+    },
+    "get_pane_config": {
+      "art": "board",
+      "face": "read",
+      "glyph": "PC",
+      "verb": "reading the settings",
+      "tint": "#7f8aa8"
+    },
+    "list_sessions": {
+      "art": "board",
+      "face": "read",
+      "glyph": "LS",
+      "verb": "counting the records",
+      "tint": "#7f8aa8"
+    },
+    "ctx_session": {
+      "art": "ledger",
+      "face": "focus",
+      "offhand": "pencil",
+      "glyph": "SS",
+      "verb": "writing it down",
+      "tint": "#7f8aa8"
+    },
+    "ctx_knowledge": {
+      "art": "ledger",
+      "face": "focus",
+      "offhand": "pencil",
+      "glyph": "KN",
+      "verb": "writing it down",
+      "tint": "#7f8aa8"
+    },
+    "apes_context": {
+      "art": "ledger",
+      "face": "read",
+      "glyph": "CX",
+      "verb": "opening the ledger",
+      "tint": "#7f8aa8"
+    },
+    "apes_fieldcraft": {
+      "art": "ledger",
+      "face": "read",
+      "glyph": "FC",
+      "verb": "consulting what worked",
+      "tint": "#7f8aa8"
+    },
+    "apes_orient": {
+      "art": "compass",
+      "face": "read",
+      "glyph": "OR",
+      "verb": "taking a bearing",
+      "tint": "#3987e5"
+    },
+    "ctx_compose": {
+      "art": "compass",
+      "face": "read",
+      "glyph": "CO",
+      "verb": "getting oriented",
+      "tint": "#3987e5"
+    },
+    "ctx_tree": {
+      "art": "map",
+      "face": "read",
+      "glyph": "TR",
+      "verb": "surveying",
+      "tint": "#3987e5"
+    },
+    "list_panes": {
+      "art": "map",
+      "face": "read",
+      "glyph": "LP",
+      "verb": "surveying the floor",
+      "tint": "#3987e5"
+    },
+    "WebFetch": {
+      "art": "dish",
+      "face": "watch",
+      "glyph": "((",
+      "verb": "aerial to the sky",
+      "tint": "#9085e9"
+    },
+    "WebSearch": {
+      "art": "dish",
+      "face": "watch",
+      "glyph": "((",
+      "verb": "aerial to the sky",
+      "tint": "#9085e9"
+    },
+    "Monitor": {
+      "art": "radar",
+      "face": "watch",
+      "glyph": "MN",
+      "verb": "keeping watch",
+      "tint": "#9085e9"
+    },
+    "pane_events": {
+      "art": "radar",
+      "face": "watch",
+      "glyph": "PE",
+      "verb": "watching the floor",
+      "tint": "#9085e9"
+    },
+    "Skill": {
+      "art": "book",
+      "face": "read",
+      "glyph": "SK",
+      "verb": "opening the manual",
+      "tint": "#d55181"
+    },
+    "garrison_list_notebooks": {
+      "art": "book",
+      "face": "read",
+      "glyph": "GN",
+      "verb": "along the shelf",
+      "tint": "#d55181"
+    },
+    "Task": {
+      "art": "horn",
+      "face": "focus",
+      "glyph": "!!",
+      "verb": "summoning a squire",
+      "tint": "#d55181"
+    },
+    "Agent": {
+      "art": "horn",
+      "face": "focus",
+      "glyph": "!!",
+      "verb": "summoning a squire",
+      "tint": "#d55181"
+    },
+    "SendMessage": {
+      "art": "horn",
+      "face": "focus",
+      "glyph": "->",
+      "verb": "calling across",
+      "tint": "#d55181"
+    },
+    "ListAgents": {
+      "art": "horn",
+      "face": "read",
+      "glyph": "LA",
+      "verb": "counting the crew",
+      "tint": "#d55181"
+    },
+    "TaskStop": {
+      "art": "horn",
+      "face": "focus",
+      "glyph": "ST",
+      "verb": "calling it off",
+      "tint": "#d55181"
+    },
+    "PushNotification": {
+      "art": "horn",
+      "face": "focus",
+      "glyph": "PN",
+      "verb": "ringing the bell",
+      "tint": "#d55181"
+    },
+    "AskUserQuestion": {
+      "art": "question",
+      "face": "curious",
+      "glyph": "??",
+      "verb": "asking the boss",
+      "tint": "#d95926"
+    },
+    "SendFeedback": {
+      "art": "parcel",
+      "face": "focus",
+      "glyph": "FB",
+      "verb": "posting a note",
+      "tint": "#199e70"
+    },
+    "SendUserFile": {
+      "art": "parcel",
+      "face": "focus",
+      "glyph": "->",
+      "verb": "handing it over",
+      "tint": "#199e70"
+    },
+    "write_package": {
+      "art": "parcel",
+      "face": "focus",
+      "glyph": "PK",
+      "verb": "packing it up",
+      "tint": "#199e70"
+    },
+    "Artifact": {
+      "art": "frame",
+      "face": "focus",
+      "glyph": "AR",
+      "verb": "mounting the frame",
+      "tint": "#199e70"
+    }
+  }
+}
