@@ -10,7 +10,7 @@
   <meta name="description" content="Terminal Delight on Omarchy: panes that wear the desktop's own colour schemes, a keyboard-first paint overlay over the whole workspace, per-agent status on the tab bar, and SUPER+ALT+T to pull any terminal tile — agents and all — into the wall." />
 
   <meta property="og:title" content="terminal-delight — the Omarchy kiosk" />
-  <meta property="og:description" content="The desktop is agentic. So is the terminal. Wear any of 23 Omarchy themes, paint the whole workspace from the keyboard, and watch every agent from the tab bar." />
+  <meta property="og:description" content="The desktop is agentic. So is the terminal. Wear the desktop's own themes — eight of them, wallpaper and all — paint the whole workspace from the keyboard, and watch every agent from the tab bar." />
   <meta property="og:type" content="website" />
   <meta property="og:image" content="assets/crt-wall.png" />
   <meta name="twitter:card" content="summary_large_image" />
@@ -53,7 +53,10 @@
       /* Scrim over the backdrop. Lower = more wall showing. The hero opens it
          up; the reading sections close it down so prose stays legible. */
       --scrim: 0.84;
-      --scrim-hero: 0.50;
+      /* 0.50 in #243, when the wall was one blurred screenshot. A photographic
+         wallpaper carries far more contrast of its own, and the hero's small
+         `.sub` line was the first thing to lose against it. */
+      --scrim-hero: 0.58;
     }
     * { box-sizing: border-box; }
     html { scroll-behavior: smooth; }
@@ -74,7 +77,6 @@
        reduced they stay at their defaults and this is simply a still image. */
     .backdrop {
       position: fixed; inset: -10vh -4vw; z-index: 0; pointer-events: none;
-      background: url("assets/crt-wall.png") center 30% / cover no-repeat;
       /* Blurred on purpose. Unblurred, the wall is a screenshot full of small
          legible terminal text, and it fights the headline for the eye — the
          reference works because a sky is calm behind the words. Blur turns the
@@ -82,11 +84,32 @@
          geometry, and the theme's colour, with nothing to read. The saturate
          puts back the glow the blur averages away.
          Rasterised once; only the transform re-composites per frame. */
-      filter: blur(7px) saturate(1.25);
       transform: translate3d(0, calc(var(--bgy, 0) * 1px), 0) scale(var(--s, 1));
       transform-origin: 50% 38%;
       will-change: transform;
     }
+    /* Every layer fills the backdrop; only one is `.on` at a time. `filter`
+       cannot be undone by a child, so it lives on the layers rather than on
+       the backdrop — the wall needs a heavy blur to stop being legible text,
+       a wallpaper needs almost none. */
+    .backdrop .layer {
+      position: absolute; inset: 0;
+      background-position: center center; background-size: cover;
+      background-repeat: no-repeat;
+      transition: opacity 760ms ease;
+    }
+    .backdrop .wall {
+      background-image: url("assets/crt-wall.png");
+      background-position: center 30%;
+      filter: blur(7px) saturate(1.25);
+    }
+    /* The desktop's own wallpaper for the theme this stop wears. Art, not a
+       screenshot: it wants a whisper of blur, not seven pixels of it. */
+    .backdrop .paper { filter: blur(2.5px) saturate(1.08); opacity: 0; }
+    .backdrop .paper.on { opacity: 1; }
+    /* Once a wallpaper is up, the wall underneath it would only muddy the
+       colour, so it steps back. */
+    .backdrop.papered .wall { opacity: 0; }
     /* The scrim is what keeps text readable and what ties the wall to the
        selected palette — it is the theme's own background colour, so a
        gruvbox page gets a gruvbox-tinted wall. */
@@ -401,6 +424,76 @@
                   color-mix(in srgb, var(--acc) 22%, transparent);
     }
 
+    /* ---- the spine: one theme per stop, wallpaper and all ----------------
+       Each stop carries `data-spine="<theme>"`. The choreography is the one
+       from the wellness-with-kate build: content slides over the fixed
+       backdrop and each stop rolls into and out of focus through a central
+       band. The opacity floor is higher than that page's, and the blur
+       lighter, because this one is dense technical copy rather than
+       photographs — text you are still reading must not dim as far. */
+    @media (prefers-reduced-motion: no-preference) {
+      .choreo-on :is(section, footer)[data-spine] > .wrap {
+        opacity: calc(0.34 + 0.66 * var(--f, 1));
+        transform: scale(calc(0.992 + 0.008 * var(--f, 1)));
+        transform-origin: center top;
+        filter: blur(calc((1 - var(--f, 1)) * 2.6px));
+        will-change: opacity, transform, filter;
+      }
+      .choreo-on .hero-parallax {
+        transform: translateY(calc(var(--p, 0) * -54px));
+        opacity: calc(1 - 0.92 * var(--p, 0));
+        filter: blur(calc(var(--p, 0) * 4px));
+        will-change: opacity, transform, filter;
+      }
+    }
+
+    /* The name of the theme you are currently inside. */
+    .spine-tag {
+      position: fixed; left: 14px; bottom: 13px; z-index: 5;
+      font-family: var(--mono); font-size: 11px; letter-spacing: 0.14em;
+      text-transform: uppercase; color: var(--fg2);
+      background: linear-gradient(var(--glass-tint), var(--glass-tint-2)),
+                  color-mix(in srgb, var(--bg2) 55%, transparent);
+      border: 1px solid var(--glass-edge); box-shadow: var(--glass-shadow);
+      -webkit-backdrop-filter: blur(16px) saturate(1.5);
+      backdrop-filter: blur(16px) saturate(1.5);
+      border-radius: 999px; padding: 5px 11px; pointer-events: none;
+      transition: color 320ms ease, border-color 320ms ease;
+    }
+    .spine-tag b { color: var(--acc); font-weight: 700; letter-spacing: 0.06em; }
+    @media (max-width: 760px) { .spine-tag { display: none; } }
+
+    /* `display:flex` on .chip beats the UA's [hidden] rule, and the ↕ pill
+       would sit there claiming the page is pinned when it is not. */
+    .chip[hidden] { display: none; }
+
+    /* ---- button geometry, from the same Liquid Glass recipe -------------
+       #243 already gave every surface the glass material; what the reference
+       build does differently for BUTTONS is the shape and the light: a full
+       pill, a highlight raked across the top-left, and a lift on hover. The
+       tints stay #243's, so a button still repaints with the theme. */
+    .btn {
+      position: relative; isolation: isolate;
+      display: inline-flex; align-items: center; justify-content: center; gap: 0.5rem;
+      min-height: 42px; padding: 10px 20px; border-radius: 999px;
+      line-height: 1;
+      transition: transform 180ms cubic-bezier(.2,.7,.2,1), box-shadow 180ms ease,
+        background 180ms ease, border-color 180ms ease, filter 180ms ease;
+    }
+    .btn::before {
+      content: ""; position: absolute; inset: 0; border-radius: inherit;
+      pointer-events: none; z-index: 0; opacity: 0.8; transition: opacity 200ms ease;
+      background: radial-gradient(120% 100% at 28% -25%, #ffffff8c, #ffffff1f 32%, transparent 60%);
+    }
+    .btn > * { position: relative; z-index: 1; }
+    .btn:hover { filter: brightness(1.05); }
+    .btn:hover::before { opacity: 1; }
+    .btn:active { transform: translateY(1px) scale(0.985); filter: brightness(0.98); }
+    .btn:focus-visible { outline: 3px solid color-mix(in srgb, var(--acc) 85%, transparent); outline-offset: 3px; }
+    body[data-mode="light"] .btn::before {
+      background: radial-gradient(120% 100% at 28% -25%, #ffffffd9, #ffffff4d 32%, transparent 60%);
+    }
+
     /* Motion is an enhancement, never the content. Reduced motion parks the
        backdrop at its resting transform and the rAF loop never arms. */
     @media (prefers-reduced-motion: reduce) {
@@ -411,7 +504,10 @@
 </head>
 <body data-mode="dark">
 
-  <div class="backdrop" id="backdrop" aria-hidden="true"></div>
+  <div class="backdrop" id="backdrop" aria-hidden="true">
+    <div class="layer wall"></div>
+  </div>
+  <div class="spine-tag" id="spineTag" aria-hidden="true"></div>
   <div class="hero-scrim" aria-hidden="true"></div>
 
   <nav class="top">
@@ -428,8 +524,8 @@
     </div>
   </nav>
 
-  <header class="hero">
-    <div class="wrap">
+  <header class="hero" data-spine="retro-82">
+    <div class="wrap hero-parallax">
       <div class="eyebrow">the omarchy kiosk</div>
       <h1>The desktop is agentic.<br /><span class="u">So is the terminal.</span></h1>
       <p class="tag">
@@ -453,14 +549,16 @@
           <span>desktop palettes</span>
           <span id="railCount"></span>
           <span class="now" id="railNow"></span>
+          <button class="chip" id="railAuto" type="button" hidden
+                  title="Hand the page back to the scroll">↕ follow scroll</button>
         </div>
-        <div class="rail" id="rail" role="group" aria-label="Omarchy themes installed on this machine"></div>
+        <div class="rail" id="rail" role="group" aria-label="The Omarchy themes this page wears"></div>
       </div>
     </div>
   </header>
 
   <!-- ============================================================ WEAR -->
-  <section id="wear">
+  <section id="wear" data-spine="miasma">
     <div class="wrap">
       <div class="eyebrow">wear the desktop</div>
       <h2>A pane can match every other window — without giving up the look</h2>
@@ -469,7 +567,9 @@
         colour sets. The other holds <b>every Omarchy theme installed on the
         machine</b> — <code>/usr/share/omarchy/themes</code> plus
         <code>~/.config/omarchy/themes</code>, user themes shadowing stock ones
-        by name, the same precedence Omarchy itself applies.
+        by name, the same precedence Omarchy itself applies. This page wears
+        eight of them, one per stop, so the argument can be read by scrolling;
+        the overlay on your own box lists whatever you have installed.
       </p>
       <p class="lede dim" style="margin-top:14px">
         A palette replaces the pane's whole colour table and leaves its
@@ -520,7 +620,7 @@
   </section>
 
   <!-- =========================================================== PAINT -->
-  <section id="paint">
+  <section id="paint" data-spine="everforest">
     <div class="wrap">
       <div class="eyebrow">terminal paint</div>
       <h2>One keystroke, the whole workspace</h2>
@@ -555,7 +655,7 @@
   </section>
 
   <!-- ========================================================== AGENTS -->
-  <section id="agents">
+  <section id="agents" data-spine="ethereal">
     <div class="wrap">
       <div class="eyebrow">agents on the bar</div>
       <h2>Which agent needs you, without opening a tab</h2>
@@ -631,7 +731,7 @@
   </section>
 
   <!-- ============================================================ WALL -->
-  <section id="wall">
+  <section id="wall" data-spine="tokyo-night">
     <div class="wrap">
       <div class="eyebrow">the agent wall</div>
       <h2>Read the whole fleet, from anywhere</h2>
@@ -670,7 +770,7 @@
   </section>
 
   <!-- ============================================================ SEND -->
-  <section id="send">
+  <section id="send" data-spine="osaka-jade">
     <div class="wrap">
       <div class="eyebrow">super + alt + t</div>
       <h2>Pull any terminal tile into the wall — agents and all</h2>
@@ -713,7 +813,7 @@
   </section>
 
   <!-- =========================================================== NOTIFY -->
-  <section id="notify">
+  <section id="notify" data-spine="catppuccin-latte">
     <div class="wrap">
       <div class="eyebrow">notifications, omarchy-shaped</div>
       <h2>A finish you weren't looking at, and one click back to it</h2>
@@ -751,7 +851,7 @@
   </section>
 
   <!-- ============================================================ REPOS -->
-  <section id="repos">
+  <section id="repos" data-spine="gruvbox">
     <div class="wrap">
       <div class="eyebrow">three repos, one seam</div>
       <h2>The desktop half is its own project</h2>
@@ -794,7 +894,7 @@
   </section>
 
   <!-- ========================================================== INSTALL -->
-  <section id="install">
+  <section id="install" data-spine="gruvbox">
     <div class="wrap">
       <div class="eyebrow">install</div>
       <h2>The desktop half, in three commands</h2>
@@ -824,7 +924,7 @@
     </div>
   </section>
 
-  <footer>
+  <footer data-spine="gruvbox">
     <div class="wrap cols">
       <div>
         <div class="brand">▸ terminal-delight<span class="blink">_</span></div>
@@ -848,6 +948,12 @@
         <div><a href="https://github.com/parker-brown-family/terminal-delight/blob/main/docs/mcp.md">MCP control surface</a></div>
       </div>
     </div>
+    <div class="wrap" style="margin-top:22px;font-size:12px;opacity:0.75">
+      The backdrop on each stop is that Omarchy theme's own shipped wallpaper,
+      from <code>/usr/share/omarchy/themes/&lt;theme&gt;/backgrounds/</code>,
+      resized and re-encoded for the web. The art belongs to Omarchy and its
+      theme authors, not to this project.
+    </div>
   </footer>
 
 <script>
@@ -859,29 +965,14 @@
    painting a pane does to its colour table, and why the texture never moves.
    -------------------------------------------------------------------------- */
 const PALETTES = [
-  {"name":"catppuccin","mode":"dark","bg":"#1e1e2e","bg2":"#313244","bg0":"#101019","fg":"#cdd6f4","fg2":"#6c7086","fgb":"#cdd6f4","acc":"#89b4fa","mut":"#585b70","sel":"#45475a","red":"#f38ba8","grn":"#a6e3a1","yel":"#f9e2af","blu":"#89b4fa","mag":"#f5c2e7","cyn":"#94e2d5"},
-  {"name":"catppuccin-latte","mode":"light","bg":"#eff1f5","bg2":"#dce0e8","bg0":"#d7d8dc","fg":"#4c4f69","fg2":"#9ca0b0","fgb":"#4c4f69","acc":"#1e66f5","mut":"#acb0be","sel":"#ccd0da","red":"#d20f39","grn":"#40a02b","yel":"#df8e1d","blu":"#1e66f5","mag":"#ea76cb","cyn":"#179299"},
-  {"name":"ethereal","mode":"dark","bg":"#060B1E","bg2":"#131a3a","bg0":"#030610","fg":"#ffcead","fg2":"#6d7db6","fgb":"#ffcead","acc":"#7d82d9","mut":"#6d7db6","sel":"#252e56","red":"#ED5B5A","grn":"#92a593","yel":"#E9BB4F","blu":"#7d82d9","mag":"#c89dc1","cyn":"#a3bfd1"},
-  {"name":"everforest","mode":"dark","bg":"#2d353b","bg2":"#343f44","bg0":"#181d20","fg":"#d3c6aa","fg2":"#4f585e","fgb":"#d3c6aa","acc":"#7fbbb3","mut":"#475258","sel":"#3d484d","red":"#e67e80","grn":"#a7c080","yel":"#dbbc7f","blu":"#7fbbb3","mag":"#d699b6","cyn":"#83c092"},
-  {"name":"flexoki-light","mode":"light","bg":"#FFFCF0","bg2":"#E6E4D9","bg0":"#e5e2d8","fg":"#100F0F","fg2":"#878580","fgb":"#100F0F","acc":"#205EA6","mut":"#B7B5AC","sel":"#CECDC3","red":"#D14D41","grn":"#879A39","yel":"#D0A215","blu":"#205EA6","mag":"#CE5D97","cyn":"#3AA99F"},
-  {"name":"gruvbox","mode":"dark","bg":"#282828","bg2":"#3c3836","bg0":"#161616","fg":"#d4be98","fg2":"#7c6f64","fgb":"#d4be98","acc":"#7daea3","mut":"#665c54","sel":"#504945","red":"#ea6962","grn":"#a9b665","yel":"#d8a657","blu":"#7daea3","mag":"#d3869b","cyn":"#89b482"},
-  {"name":"hackerman","mode":"dark","bg":"#0B0C16","bg2":"#151828","bg0":"#06060c","fg":"#ddf7ff","fg2":"#6a6e95","fgb":"#ddf7ff","acc":"#82FB9C","mut":"#2d3450","sel":"#1f253a","red":"#50f872","grn":"#4fe88f","yel":"#50f7d4","blu":"#829dd4","mag":"#86a7df","cyn":"#7cf8f7"},
-  {"name":"kanagawa","mode":"dark","bg":"#1f1f28","bg2":"#223249","bg0":"#111116","fg":"#dcd7ba","fg2":"#727169","fgb":"#dcd7ba","acc":"#dcd7ba","mut":"#54546D","sel":"#363646","red":"#c34043","grn":"#76946a","yel":"#c0a36e","blu":"#7e9cd8","mag":"#957fb8","cyn":"#6a9589"},
-  {"name":"last-horizon","mode":"dark","bg":"#0c0b0c","bg2":"#0c0b0c","bg0":"#060606","fg":"#FAFCFB","fg2":"#584e51","fgb":"#e2dddc","acc":"#b59790","mut":"#584e51","sel":"#584e51","red":"#c38b7b","grn":"#87a9b0","yel":"#6B5E73","blu":"#b59790","mag":"#c4d8e2","cyn":"#a5a0b6"},
-  {"name":"lumon","mode":"dark","bg":"#16242d","bg2":"#1b2d40","bg0":"#0b1216","fg":"#d6e2ee","fg2":"#4d86b0","fgb":"#f2fcff","acc":"#8bc9eb","mut":"#304860","sel":"#243d56","red":"#4d86b0","grn":"#5e95bc","yel":"#6fa4c9","blu":"#6fb8e3","mag":"#8bc9eb","cyn":"#b4e4f6"},
-  {"name":"lupine","mode":"light","bg":"#fafafa","bg2":"#f5f5f5","bg0":"#dedede","fg":"#212121","fg2":"#757575","fgb":"#000000","acc":"#3264eb","mut":"#9e9e9e","sel":"#d0d0d0","red":"#c900c4","grn":"#4a2fd0","yel":"#026fde","blu":"#3264eb","mag":"#8a4ad7","cyn":"#0c67de"},
-  {"name":"matte-black","mode":"dark","bg":"#121212","bg2":"#1e1e1e","bg0":"#090909","fg":"#bebebe","fg2":"#555555","fgb":"#bebebe","acc":"#e68e0d","mut":"#333333","sel":"#2a2a2a","red":"#D35F5F","grn":"#FFC107","yel":"#b91c1c","blu":"#e68e0d","mag":"#D35F5F","cyn":"#bebebe"},
-  {"name":"miasma","mode":"dark","bg":"#222222","bg2":"#2c2c2c","bg0":"#121212","fg":"#c2c2b0","fg2":"#555555","fgb":"#c2c2b0","acc":"#78824b","mut":"#666666","sel":"#383838","red":"#685742","grn":"#5f875f","yel":"#b36d43","blu":"#78824b","mag":"#bb7744","cyn":"#c9a554"},
-  {"name":"nord","mode":"dark","bg":"#2e3440","bg2":"#3b4252","bg0":"#191c23","fg":"#d8dee9","fg2":"#667080","fgb":"#d8dee9","acc":"#81a1c1","mut":"#4c566a","sel":"#434c5e","red":"#bf616a","grn":"#a3be8c","yel":"#ebcb8b","blu":"#81a1c1","mag":"#b48ead","cyn":"#88c0d0"},
-  {"name":"osaka-jade","mode":"dark","bg":"#111c18","bg2":"#23372B","bg0":"#090f0d","fg":"#C1C497","fg2":"#81B8A8","fgb":"#F7E8B2","acc":"#509475","mut":"#53685B","sel":"#32473B","red":"#FF5345","grn":"#549e6a","yel":"#459451","blu":"#509475","mag":"#D2689C","cyn":"#2DD5B7"},
   {"name":"retro-82","mode":"dark","bg":"#05182e","bg2":"#0a2540","bg0":"#020c17","fg":"#f6dcac","fg2":"#3f8f8a","fgb":"#f6dcac","acc":"#faa968","mut":"#2a6b78","sel":"#134e5a","red":"#f85525","grn":"#028391","yel":"#e97b3c","blu":"#3f8f8a","mag":"#3f8f8a","cyn":"#8cbfb8"},
-  {"name":"ristretto","mode":"dark","bg":"#2c2525","bg2":"#3d2f2a","bg0":"#181414","fg":"#e6d9db","fg2":"#72696a","fgb":"#e6d9db","acc":"#f38d70","mut":"#72696a","sel":"#403e41","red":"#fd6883","grn":"#adda78","yel":"#f9cc6c","blu":"#f38d70","mag":"#a8a9eb","cyn":"#85dacc"},
-  {"name":"rose-pine","mode":"light","bg":"#faf4ed","bg2":"#f2e9e1","bg0":"#e1dbd5","fg":"#575279","fg2":"#9893a5","fgb":"#575279","acc":"#56949f","mut":"#cecacd","sel":"#dfdad9","red":"#b4637a","grn":"#286983","yel":"#ea9d34","blu":"#56949f","mag":"#907aa9","cyn":"#d7827e"},
-  {"name":"solitude","mode":"dark","bg":"#101315","bg2":"#101315","bg0":"#080a0b","fg":"#cacccc","fg2":"#4b4e55","fgb":"#a5aeb4","acc":"#798186","mut":"#4b4e55","sel":"#343d41","red":"#565d60","grn":"#9fa5a9","yel":"#d9dbdc","blu":"#798186","mag":"#aeaeae","cyn":"#707070"},
-  {"name":"terminal-delight","mode":"dark","bg":"#030708","bg2":"#0C1823","bg0":"#010304","fg":"#B5BEAC","fg2":"#5A6061","fgb":"#DFE2E3","acc":"#67F454","mut":"#282E32","sel":"#14262C","red":"#D6483C","grn":"#44B064","yel":"#C89944","blu":"#45A4AE","mag":"#916D86","cyn":"#45A4AE"},
+  {"name":"miasma","mode":"dark","bg":"#222222","bg2":"#2c2c2c","bg0":"#121212","fg":"#c2c2b0","fg2":"#555555","fgb":"#c2c2b0","acc":"#78824b","mut":"#666666","sel":"#383838","red":"#685742","grn":"#5f875f","yel":"#b36d43","blu":"#78824b","mag":"#bb7744","cyn":"#c9a554"},
+  {"name":"everforest","mode":"dark","bg":"#2d353b","bg2":"#343f44","bg0":"#181d20","fg":"#d3c6aa","fg2":"#4f585e","fgb":"#d3c6aa","acc":"#7fbbb3","mut":"#475258","sel":"#3d484d","red":"#e67e80","grn":"#a7c080","yel":"#dbbc7f","blu":"#7fbbb3","mag":"#d699b6","cyn":"#83c092"},
+  {"name":"ethereal","mode":"dark","bg":"#060B1E","bg2":"#131a3a","bg0":"#030610","fg":"#ffcead","fg2":"#6d7db6","fgb":"#ffcead","acc":"#7d82d9","mut":"#6d7db6","sel":"#252e56","red":"#ED5B5A","grn":"#92a593","yel":"#E9BB4F","blu":"#7d82d9","mag":"#c89dc1","cyn":"#a3bfd1"},
   {"name":"tokyo-night","mode":"dark","bg":"#1a1b26","bg2":"#24283b","bg0":"#0e0e14","fg":"#a9b1d6","fg2":"#565f89","fgb":"#c0caf5","acc":"#7aa2f7","mut":"#414868","sel":"#292e42","red":"#f7768e","grn":"#9ece6a","yel":"#e0af68","blu":"#7aa2f7","mag":"#ad8ee6","cyn":"#449dab"},
-  {"name":"vantablack","mode":"dark","bg":"#000000","bg2":"#1a1a1a","bg0":"#070707","fg":"#ffffff","fg2":"#505050","fgb":"#ffffff","acc":"#8d8d8d","mut":"#7a7a7a","sel":"#1a1a1a","red":"#a4a4a4","grn":"#b6b6b6","yel":"#cecece","blu":"#8d8d8d","mag":"#9b9b9b","cyn":"#b0b0b0"},
-  {"name":"white","mode":"light","bg":"#ffffff","bg2":"#c0c0c0","bg0":"#e8e8e8","fg":"#000000","fg2":"#c0c0c0","fgb":"#000000","acc":"#6e6e6e","mut":"#808080","sel":"#c0c0c0","red":"#2a2a2a","grn":"#3a3a3a","yel":"#4a4a4a","blu":"#1a1a1a","mag":"#2e2e2e","cyn":"#3e3e3e"}
+  {"name":"osaka-jade","mode":"dark","bg":"#111c18","bg2":"#23372B","bg0":"#090f0d","fg":"#C1C497","fg2":"#81B8A8","fgb":"#F7E8B2","acc":"#509475","mut":"#53685B","sel":"#32473B","red":"#FF5345","grn":"#549e6a","yel":"#459451","blu":"#509475","mag":"#D2689C","cyn":"#2DD5B7"},
+  {"name":"catppuccin-latte","mode":"light","bg":"#eff1f5","bg2":"#dce0e8","bg0":"#d7d8dc","fg":"#4c4f69","fg2":"#9ca0b0","fgb":"#4c4f69","acc":"#1e66f5","mut":"#acb0be","sel":"#ccd0da","red":"#d20f39","grn":"#40a02b","yel":"#df8e1d","blu":"#1e66f5","mag":"#ea76cb","cyn":"#179299"},
+  {"name":"gruvbox","mode":"dark","bg":"#282828","bg2":"#3c3836","bg0":"#161616","fg":"#d4be98","fg2":"#7c6f64","fgb":"#d4be98","acc":"#7daea3","mut":"#665c54","sel":"#504945","red":"#ea6962","grn":"#a9b665","yel":"#d8a657","blu":"#7daea3","mag":"#d3869b","cyn":"#89b482"}
 ]
 ;
 
@@ -907,7 +998,10 @@ const paneTitle = document.getElementById('paneTitle');
 
 const VARS = ['bg','bg2','bg0','fg','fg2','fgb','acc','mut','sel','red','grn','yel','blu','mag','cyn'];
 
-function apply(p) {
+// `persist` is true only for a pick the reader made themselves. The spine
+// calls this on every scroll-driven change, and a scroll must never
+// overwrite the theme someone deliberately chose last visit.
+function apply(p, persist) {
   for (const v of VARS) root.style.setProperty('--' + v, p[v]);
   root.setAttribute('data-theme', p.name);
   document.body.setAttribute('data-mode', p.mode === 'light' ? 'light' : 'dark');
@@ -929,7 +1023,9 @@ function apply(p) {
     slots.appendChild(el);
   }
 
-  try { localStorage.setItem('td-omarchy-theme', p.name); } catch (e) { /* private window */ }
+  if (persist) {
+    try { localStorage.setItem('td-omarchy-theme', p.name); } catch (e) { /* private window */ }
+  }
 
   // Switching to or from a light palette changes the scrim pair, and the
   // backdrop carries an inline --scrim from the last frame. Re-run the drive
@@ -938,7 +1034,7 @@ function apply(p) {
 }
 
 function build() {
-  count.textContent = PALETTES.length + ' installed';
+  count.textContent = PALETTES.length + ' themes';
   for (const p of PALETTES) {
     const b = document.createElement('button');
     b.className = 'chip';
@@ -954,17 +1050,13 @@ function build() {
     sw.style.setProperty('--c3', p.mag);
     sw.style.setProperty('--c4', p.yel);
     b.querySelector('.nm').textContent = p.name;
-    b.addEventListener('click', () => apply(p));
+    b.addEventListener('click', () => { apply(p, true); pinTheme(p.name); });
     rail.appendChild(b);
   }
 
-  // ?t=<theme> wins over the remembered choice, so a link can open the kiosk
-  // already wearing a specific desktop theme.
-  let want = 'terminal-delight';
-  try { want = localStorage.getItem('td-omarchy-theme') || want; } catch (e) { /* ignore */ }
-  const asked = new URLSearchParams(location.search).get('t');
-  if (asked && PALETTES.some(p => p.name === asked)) want = asked;
-  apply(PALETTES.find(p => p.name === want) || PALETTES[0]);
+  // ?t=<theme> and a remembered pick both arrive PINNED — see the spine
+  // below, which otherwise hands the page to the scroll.
+  apply(PALETTES[0], false);
 }
 
 if (PALETTES.length) build();
@@ -982,11 +1074,89 @@ if (PALETTES.length) build();
 (function () {
   const bg = document.getElementById('backdrop');
   if (!bg) return;
-  if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  const REDUCED = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
   const DRIFT = 0.16;   // backdrop moves at 16% of scroll — the parallax
   const ZOOM  = 0.30;   // +30% scale from top of page to bottom
   let ticking = false;
+
+  /* ---- the spine ------------------------------------------------------
+     Each stop names a theme; crossing into one cross-fades the backdrop to
+     that theme's own wallpaper and applies its palette, so the page makes
+     the choice an Omarchy user actually makes — colours and wallpaper are
+     one pick, not two. Rides this same loop: one scroll listener, one frame. */
+  const BG_DIR = 'assets/omarchy/bg/';
+  const stops  = Array.from(document.querySelectorAll('[data-spine]'));
+  const byName = new Map(PALETTES.map(p => [p.name, p]));
+  const tag    = document.getElementById('spineTag');
+  const auto   = document.getElementById('railAuto');
+  const hero   = stops[0];
+  const heroInner = hero && hero.querySelector('.hero-parallax');
+
+  const papers = new Map();
+  for (const s of stops) {
+    const name = s.dataset.spine;
+    if (papers.has(name)) continue;
+    const el = document.createElement('div');
+    el.className = 'layer paper';
+    el.dataset.src = BG_DIR + name + '.webp';
+    bg.appendChild(el);
+    papers.set(name, el);
+  }
+  function warm(name) {
+    const el = papers.get(name);
+    if (el && !el.style.backgroundImage) el.style.backgroundImage = 'url("' + el.dataset.src + '")';
+  }
+
+  let pinned = null, shown = null;
+  window.pinTheme = function (name) {   // called by a chip click
+    pinned = name;
+    if (auto) auto.hidden = false;
+    shown = name;                        // the chip already applied the palette
+    dress(name, null);
+  };
+  try {
+    const remembered = localStorage.getItem('td-omarchy-theme');
+    if (remembered && byName.has(remembered)) pinned = remembered;
+  } catch (e) { /* private window */ }
+  const asked = new URLSearchParams(location.search).get('t');
+  if (asked && byName.has(asked)) pinned = asked;
+  if (auto) {
+    auto.hidden = !pinned;
+    auto.addEventListener('click', () => { pinned = null; auto.hidden = true; frame(); });
+  }
+
+  function dress(name, stop) {
+    for (const [n, el] of papers) el.classList.toggle('on', n === name);
+    bg.classList.toggle('papered', papers.has(name));
+    if (papers.has(name)) warm(name);
+    if (tag) tag.innerHTML = (papers.has(name) ? 'wearing <b>' : 'painted <b>') + name + '</b>';
+    if (name !== shown) {
+      const p = byName.get(name);
+      if (p) apply(p, false);
+      shown = name;
+    }
+  }
+
+  function spine() {
+    const vh = window.innerHeight;
+    const top = vh * 0.14, bot = vh * 0.80, band = bot - top;
+    let best = stops[0], bestF = -1;
+    for (const s of stops) {
+      const r = s.getBoundingClientRect();
+      const overlap = Math.max(0, Math.min(r.bottom, bot) - Math.max(r.top, top));
+      const denom = Math.min(band, r.height || band) || 1;
+      const f = Math.max(0, Math.min(1, overlap / denom));
+      s.style.setProperty('--f', f.toFixed(3));
+      if (f > bestF) { bestF = f; best = s; }
+      if (r.top < vh * 2 && r.bottom > -vh) warm(s.dataset.spine);   // a screen ahead
+    }
+    if (heroInner) {
+      const p = Math.max(0, Math.min(1, -hero.getBoundingClientRect().top / (vh * 0.85)));
+      heroInner.style.setProperty('--p', p.toFixed(3));
+    }
+    dress(pinned || best.dataset.spine, best);
+  }
 
   function frame() {
     ticking = false;
@@ -1009,6 +1179,8 @@ if (PALETTES.length) build();
     const hero = parseFloat(cs.getPropertyValue('--scrim-hero')) || 0.62;
     const open = Math.max(0, 1 - y / (window.innerHeight * 0.9));
     bg.style.setProperty('--scrim', (base - (base - hero) * open).toFixed(3));
+
+    spine();
   }
 
   function onScroll() {
@@ -1017,6 +1189,11 @@ if (PALETTES.length) build();
     requestAnimationFrame(frame);
   }
 
+  // Under reduced motion the page still WEARS its stop — a theme change is
+  // a colour change, not an animation — but nothing drifts, zooms or blurs,
+  // and the choreography class is never added.
+  if (REDUCED) { spine(); return; }
+  document.body.classList.add('choreo-on');
   window.addEventListener('scroll', onScroll, { passive: true });
   window.addEventListener('resize', onScroll, { passive: true });
   frame();

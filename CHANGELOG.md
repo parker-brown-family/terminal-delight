@@ -32,6 +32,19 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
     the chrome. The scrim opens at the hero and closes for prose, re-weighting
     itself for the light palettes; `prefers-reduced-motion` parks the backdrop
     and never arms the loop.
+  - **The backdrop is the desktop's, and it changes as you scroll.** Every stop
+    on the page — hero, seven sections, footer — names an Omarchy theme, and
+    crossing into one cross-fades that theme's own shipped wallpaper onto the
+    same fixed layer while the palette repaints: retro-82 → miasma →
+    everforest → ethereal → tokyo-night → osaka-jade → catppuccin-latte →
+    gruvbox. Colour and wallpaper are one pick on Omarchy, so they are one pick
+    here. Each stop also rolls into focus through a central band (opacity,
+    scale, a light blur) and the hero drifts off above it. Eight wallpapers
+    cost 504KB after a 1600px cap and a webp re-encode, and each is fetched a
+    screen before it is needed. The rail carries those eight themes rather than
+    all 23, a chip pick pins the page with a "↕ follow scroll" pill to undo it,
+    and `prefers-reduced-motion` still wears each stop's theme while nothing
+    moves.
 
 - **Paint with the desktop's own palettes.** The paint overlay now carries TWO
   shelves, turned with `z` (`shift+z` back) or by clicking a pill: the existing
