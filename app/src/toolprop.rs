@@ -33,11 +33,18 @@ const MANIFEST: &str = include_str!("../assets/tool-props.json");
 /// Each name becomes two compiled-in assets, because the two places a face is
 /// worn are different sizes and want different things:
 ///
-/// * **the prop alone**, for the pane header square — it renders about 18px,
-///   where a whole robot is a smudge and one object still reads;
-/// * **the robot holding it**, for the agent wall's card art — that renders
-///   about 116px, where there is room for a character and the character IS the
-///   point.
+/// * **the prop alone**, a still PNG, for the pane header square — it renders
+///   about 18px, where a whole robot is a smudge and one object still reads;
+/// * **the robot holding it**, an ANIMATED WebP, for the agent wall's card art
+///   — 228×116, where there is room for a character and the character is the
+///   point. He hovers, his forearm pumps, and he blinks, all sampled off the
+///   playhouse's own stylesheet.
+///
+/// The animation costs the render code nothing: gpui decodes multi-frame WebP
+/// and advances it on its own clock, and only while the window is ACTIVE and
+/// the element is actually laid out. A closed wall, a background window, or a
+/// pane header (which wears the still prop) all cost zero — which is what makes
+/// motion affordable here at all.
 ///
 /// One list rather than two tables so a drawing added to the playhouse is added
 /// here once; `include_bytes!` then fails the BUILD if either half is missing,
@@ -48,7 +55,7 @@ macro_rules! art_tables {
             $(($name, include_bytes!(concat!("../assets/img/props/", $name, ".png")))),+
         ];
         const SCENES: &[(&str, &[u8])] = &[
-            $(($name, include_bytes!(concat!("../assets/img/scenes/", $name, ".png")))),+
+            $(($name, include_bytes!(concat!("../assets/img/scenes/", $name, ".webp")))),+
         ];
     };
 }
@@ -252,8 +259,8 @@ pub fn face(tool: &str) -> Option<Face> {
         .filter(|a| PROPS.iter().any(|(n, _)| n == a))
         .unwrap_or(FALLBACK_ART);
     Some(Face {
-        plate: materialise(PROPS, "prop", art)?,
-        scene: materialise(SCENES, "scene", art)?,
+        plate: materialise(PROPS, "prop", "png", art)?,
+        scene: materialise(SCENES, "scene", "webp", art)?,
         mark: (art == FALLBACK_ART).then(|| {
             row.and_then(|r| r.glyph.clone())
                 .unwrap_or_else(|| initials(tool))
@@ -267,10 +274,15 @@ pub fn face(tool: &str) -> Option<Face> {
 }
 
 /// Materialise one embedded asset to the runtime dir and hand back its path.
-fn materialise(table: &[(&str, &[u8])], kind: &str, art: &str) -> Option<PathBuf> {
+///
+/// gpui sniffs the format from the bytes (`image::guess_format`), not from the
+/// name, so the extension is for humans and for anything that filters by one —
+/// but it is still written truthfully, because a `.png` holding WebP bytes is a
+/// trap for the next person to look in the runtime directory.
+fn materialise(table: &[(&str, &[u8])], kind: &str, ext: &str, art: &str) -> Option<PathBuf> {
     let bytes = table.iter().find(|(n, _)| *n == art).map(|(_, b)| *b)?;
     Some(crate::art::runtime_asset(
-        &format!("terminal-delight-{kind}-{art}.png"),
+        &format!("terminal-delight-{kind}-{art}.{ext}"),
         bytes,
     ))
 }
@@ -395,18 +407,35 @@ mod tests {
         );
     }
 
-    /// Every embedded asset is a real PNG — a bad path or a stripped commit
-    /// fails at build, not as an invisible logo at runtime.
+    /// Every embedded asset is a real image OF THE RIGHT KIND — props are still
+    /// PNGs, scenes are animated WebP.
+    ///
+    /// The `ANIM` assertion is the one that earns its place. gpui sniffs the
+    /// format from the bytes, so a still image in the scenes table would render
+    /// perfectly happily and simply never move, and nobody would file that as a
+    /// bug — they would just think the animation had been dropped.
     #[test]
-    fn every_embedded_asset_is_a_real_png() {
-        for (kind, table) in [("prop", PROPS), ("scene", SCENES)] {
-            for (name, bytes) in table {
-                assert!(bytes.len() > 500, "{kind} {name} suspiciously small");
-                assert!(
-                    bytes.starts_with(b"\x89PNG\r\n\x1a\n"),
-                    "{kind} {name} is not a PNG stream"
-                );
-            }
+    fn every_embedded_asset_is_the_image_kind_it_claims() {
+        for (name, bytes) in PROPS {
+            assert!(bytes.len() > 500, "prop {name} suspiciously small");
+            assert!(
+                bytes.starts_with(b"\x89PNG\r\n\x1a\n"),
+                "prop {name} is not a PNG stream"
+            );
+        }
+        for (name, bytes) in SCENES {
+            assert!(bytes.len() > 2000, "scene {name} suspiciously small");
+            assert!(
+                bytes.starts_with(b"RIFF") && bytes[8..12] == *b"WEBP",
+                "scene {name} is not a WebP stream"
+            );
+            // `VP8X` is the extended header, and animation lives behind it —
+            // a single-frame WebP would still render, just stand perfectly
+            // still, which is the failure nobody would notice.
+            assert!(
+                bytes.windows(4).any(|w| w == b"ANIM"),
+                "scene {name} carries no animation chunk"
+            );
         }
     }
 
@@ -440,8 +469,8 @@ mod tests {
         let known = face("Bash").expect("plate materialises");
         assert!(known.plate.ends_with("terminal-delight-prop-console.png"));
         assert!(
-            known.scene.ends_with("terminal-delight-scene-console.png"),
-            "a face carries BOTH sizes: the prop for the header, the robot for the wall"
+            known.scene.ends_with("terminal-delight-scene-console.webp"),
+            "a face carries BOTH sizes: the still prop for the header, the animated robot for the wall"
         );
         assert_eq!(known.mark, None);
         assert_eq!(known.tint, Some(0xc98500));

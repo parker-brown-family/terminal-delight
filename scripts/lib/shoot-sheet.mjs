@@ -123,15 +123,32 @@ async function evaluate(send, expression) {
 }
 
 /**
- * Load `path` from `webDir` and photograph one element per named cell.
+ * Load `path` from `webDir` and photograph every named cell, `frames` times.
  *
- * `pick` is evaluated IN THE PAGE and must return `[{name, sel}]` — the caller
- * decides what a cell is, because only the caller knows the page. Every element
- * is captured at `size`² with `scale`× pixel density.
+ * `pick` is evaluated IN THE PAGE and returns `[{name, rect}]` — the caller
+ * decides what a cell is and how it is framed, because only the caller knows
+ * the page.
  *
- * Returns `Map<name, Buffer>` of PNGs.
+ * With `frames > 1` the page is shot once per frame with `frameCss(i, frames)`
+ * applied, which is how a CSS animation is sampled: pause every animation and
+ * give it a negative `animation-delay`, and the browser renders it frozen at
+ * that instant. The rects are measured ONCE, before the first frame, so every
+ * frame of a cell is the same crop — a per-frame measurement would make the
+ * camera bob along with the subject and cancel the motion out.
+ *
+ * Returns `Map<name, Buffer[]>` — one PNG per frame, in order.
  */
-export async function shoot({ webDir, path = "/", pick, css = "", size = 320, scale = 2, chromium = "chromium" }) {
+export async function shoot({
+  webDir,
+  path = "/",
+  pick,
+  css = "",
+  frames = 1,
+  frameCss = () => "",
+  size = 320,
+  scale = 2,
+  chromium = "chromium",
+}) {
   const { srv, port: httpPort } = await serveDir(webDir);
   let chrome;
   let cdp;
@@ -158,41 +175,65 @@ export async function shoot({ webDir, path = "/", pick, css = "", size = 320, sc
       await new Promise((r) => setTimeout(r, 100));
     }
 
-    // Square the cells and stop every animation, so a photograph is the pose
-    // and not an arbitrary frame of a blink. Injected rather than asked of the
+    // Size the cells for the camera. Injected rather than asked of the
     // playhouse: its layout is right for a human reviewing a sheet, and this is
     // a camera rig, not an opinion about their page.
-    await evaluate(
-      send,
-      `(() => { const s = document.createElement('style');
-        s.textContent = ${JSON.stringify(
-          `.grid{grid-template-columns:repeat(auto-fill,${size}px)!important}` +
-            `.cell .scene{height:${size}px!important}` +
-            `*,*::before,*::after{animation:none!important;transition:none!important}` +
-            css,
-        )};
-        document.head.appendChild(s); })()`,
+    const style = (id, text) =>
+      evaluate(
+        send,
+        `(() => { let s = document.getElementById(${JSON.stringify(id)});
+          if (!s) { s = document.createElement('style'); s.id = ${JSON.stringify(id)}; document.head.appendChild(s); }
+          s.textContent = ${JSON.stringify(text)}; })()`,
+      );
+
+    await style(
+      "td-shoot-layout",
+      `.grid{grid-template-columns:repeat(auto-fill,${size}px)!important}` +
+        `.cell .scene{height:${size}px!important}` +
+        `*,*::before,*::after{transition:none!important}` +
+        css,
     );
-    // One frame for layout to settle after the reflow.
+    // One tick for layout to settle after the reflow.
     await new Promise((r) => setTimeout(r, 250));
 
     const cells = await evaluate(send, `(${pick.toString()})()`);
     if (!cells?.length) throw new Error("the picker matched no cells");
 
-    const out = new Map();
-    for (const { name, rect } of cells) {
-      const shot = await send("Page.captureScreenshot", {
-        format: "png",
-        captureBeyondViewport: true,
-        clip: { x: rect.x, y: rect.y, width: rect.width, height: rect.height, scale },
+    const out = new Map(cells.map((c) => [c.name, []]));
+    for (let i = 0; i < frames; i++) {
+      await style("td-shoot-frame", frameCss(i, frames));
+      // A style change needs a paint before the pixels are the new ones.
+      await send("Runtime.evaluate", {
+        expression: "new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))",
+        awaitPromise: true,
       });
-      out.set(name, Buffer.from(shot.data, "base64"));
+      for (const { name, rect } of cells) {
+        const shot = await send("Page.captureScreenshot", {
+          format: "png",
+          captureBeyondViewport: true,
+          clip: { x: rect.x, y: rect.y, width: rect.width, height: rect.height, scale },
+        });
+        out.get(name).push(Buffer.from(shot.data, "base64"));
+      }
     }
     return out;
   } finally {
+    // Teardown must never lose a successful capture. Chromium keeps writing to
+    // its profile while it exits, so removing the directory the instant after
+    // `kill()` raced it and threw ENOTEMPTY — out of a `finally`, which
+    // discarded three hundred good screenshots. Wait for the exit, then treat
+    // any leftover as litter in /tmp rather than as a failure.
     cdp?.close();
-    chrome?.proc.kill();
-    if (chrome) rmSync(chrome.dir, { recursive: true, force: true });
+    if (chrome) {
+      const gone = new Promise((r) => chrome.proc.once("exit", r));
+      chrome.proc.kill();
+      await Promise.race([gone, new Promise((r) => setTimeout(r, 3000))]);
+      try {
+        rmSync(chrome.dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+      } catch {
+        // a stray profile dir is not worth failing a build over
+      }
+    }
     srv.close();
   }
 }

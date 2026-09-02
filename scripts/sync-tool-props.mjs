@@ -9,7 +9,7 @@
 //
 //   app/assets/tool-props.json       the props table, verbatim + provenance
 //   app/assets/img/props/<art>.png   the prop alone, 128² — for the pane header
-//   app/assets/img/scenes/<art>.png  the ROBOT holding it, 256² — for the wall
+//   app/assets/img/scenes/<art>.webp the ROBOT holding it, 448×224, ANIMATED
 //
 // TWO PIPELINES, because the two assets are different kinds of thing:
 //
@@ -50,13 +50,36 @@ const PLAYHOUSE = resolve(
 /** The box every prop is drawn in, and the sizes we rasterise to. */
 const BOX = 56;
 const PROP_PX = 128; // the header square draws these ~18px; 128 is ample.
-const SCENE_PX = 256; // the wall card draws these ~48-100px.
+/** The wall card's art window is `228 × 116` device-independent pixels — very
+ *  nearly 2:1 — and gpui COVER-crops what it is given. A square scene therefore
+ *  loses half its height to that crop, which is precisely how the first version
+ *  cut the robot's legs and his console off. Bake the shape of the hole. */
+const SCENE_W = 448;
+const SCENE_H = 224;
 const SUPER = 512; // rasterise props here, trim and centre, then land on PROP_PX.
 const INK = 0.72; // how much of the tile the drawing fills once centred.
 /** How much of the shot scene the rig occupies BEFORE cropping. Deliberately
  *  modest: the crop below frames on the drawn content, so this only has to
- *  leave every prop room to reach without touching the scene's edge. */
-const BOT_FILL = 0.58;
+ *  leave every prop room to reach without touching the scene's edge — and room
+ *  to HOVER, since the body rises 7px and the camera must not follow it. */
+const BOT_FILL = 0.52;
+
+/** The animation loop.
+ *
+ *  gpui decodes animated WebP and advances it itself, and only while the window
+ *  is active and the element is actually laid out — so a closed wall or a
+ *  background window costs exactly nothing, and the pane header (which wears
+ *  the still prop, not the scene) never animates at all. That containment is
+ *  what makes this affordable: the cost is bounded to "someone is looking at
+ *  the wall, and an agent is working".
+ *
+ *  PERIOD is two of the rig's 0.62s forearm pumps — the motion that says
+ *  "working" and the fastest thing worth sampling. Every other animation is
+ *  overridden to a duration that divides it, so the loop closes seamlessly
+ *  instead of snapping back. FRAMES then buys smoothness: 16 gives eight
+ *  samples per pump, which is where the arm stops looking stepped. */
+const PERIOD = 1.24;
+const FRAMES = 16;
 /** How far a re-shot scene may drift before we call it a change, 0..1 RMSE.
  *  Screenshots are not byte-reproducible across chromium builds and font
  *  rendering; a pose change is worth ~an order of magnitude more than that. */
@@ -208,12 +231,26 @@ function bakeProp(art, tint, outDir) {
  * which for that section is the art name.
  */
 async function shootScenes(outDir) {
-  const size = SCENE_PX + 64; // shoot larger than we ship, then downsample.
+  const size = 340; // the scene box we shoot inside; the crop below is 2:1 of it.
   const cells = await shoot({
     webDir: join(PLAYHOUSE, "web"),
     path: "/sheet.html",
     size,
     scale: 2,
+    frames: FRAMES,
+    // Sample the rig's own animations rather than inventing motion: pause
+    // everything and wind each frame forward with a negative delay, which is
+    // what the browser does to render an animation frozen at an instant.
+    // Durations are re-timed to divide PERIOD so the loop closes — the body's
+    // 3.4s hover and the eyes' 5.2s blink would otherwise snap back mid-arc.
+    // The motes are stopped outright: they drift 40px over 34 seconds, which is
+    // two invisible pixels here and a discontinuity at the loop point.
+    frameCss: (i, n) =>
+      `*,*::before,*::after{animation-play-state:paused!important;` +
+      `animation-delay:-${((i * PERIOD) / n).toFixed(4)}s!important}` +
+      `.motes{animation:none!important}` +
+      `#bot-body,#bot-shadow,.eye,.fx-sweep{animation-duration:${PERIOD}s!important}` +
+      `#bot-jet,.fx-blink,#prop-slot{animation-duration:${PERIOD / 2}s!important}`,
     // The sheet draws him 168px wide in a 192px cell, sized for a human
     // scanning thirty-one frames at once. A pane logo is one frame at 48px, so
     // he has to fill it: scale the rig with the box and drop the floor's empty
@@ -233,7 +270,9 @@ async function shootScenes(outDir) {
         (s) => s.querySelector("h2")?.textContent.trim() === "props",
       );
       if (!section) return [];
-      const PAD = 0.1;
+      const PAD = 0.12;
+      const HOVER = 9; // the body rises 7px; leave headroom so it never clips.
+      const ASPECT = 2; // the shape of the card's art window.
       return [...section.querySelectorAll(".cell")].map((cell) => {
         const scene = cell.querySelector(".scene");
         const box = scene.getBoundingClientRect();
@@ -245,37 +284,52 @@ async function shootScenes(outDir) {
 
         const x0 = Math.min(...parts.map((r) => r.left));
         const x1 = Math.max(...parts.map((r) => r.right));
-        const y0 = Math.min(...parts.map((r) => r.top));
+        const y0 = Math.min(...parts.map((r) => r.top)) - HOVER;
         const y1 = Math.max(...parts.map((r) => r.bottom));
         const cx = (x0 + x1) / 2;
         const cy = (y0 + y1) / 2;
-        let side = Math.max(x1 - x0, y1 - y0) * (1 + PAD * 2);
-        side = Math.min(side, box.width, box.height);
 
-        // Keep the square inside the scene without letting it drift off the
-        // subject: clamp the centre, never the size.
-        const x = Math.min(Math.max(cx - side / 2, box.left), box.right - side);
-        const y = Math.min(Math.max(cy - side / 2, box.top), box.bottom - side);
+        // Fit the drawn content inside a 2:1 rect: whichever axis is tighter
+        // decides the size, so nothing is ever cropped out of the frame.
+        let h = Math.max((x1 - x0) / ASPECT, y1 - y0) * (1 + PAD * 2);
+        h = Math.min(h, box.height, box.width / ASPECT);
+        const w = h * ASPECT;
+
+        // Clamp the centre, never the size, so the crop stays inside this
+        // scene and never borrows a pixel of the cell next door.
+        const x = Math.min(Math.max(cx - w / 2, box.left), box.right - w);
+        const y = Math.min(Math.max(cy - h / 2, box.top), box.bottom - h);
         return {
           name: cell.querySelector(".cap b")?.textContent.trim(),
-          rect: { x: x + window.scrollX, y: y + window.scrollY, width: side, height: side },
+          rect: { x: x + window.scrollX, y: y + window.scrollY, width: w, height: h },
         };
       });
     },
   });
 
-  for (const [art, png] of cells) {
-    const raw = join(outDir, `${art}.raw.png`);
-    writeFileSync(raw, png);
+  // One animated WebP per drawing. gpui decodes multi-frame WebP natively and
+  // advances it on its own clock, so this costs the render code nothing: the
+  // wall asks for the same `img(path)` it already asked for.
+  const delay = Math.round((PERIOD / FRAMES) * 1000);
+  for (const [art, pngs] of cells) {
+    const raws = pngs.map((png, i) => {
+      const p = join(outDir, `${art}.${String(i).padStart(2, "0")}.png`);
+      writeFileSync(p, png);
+      return p;
+    });
     execFileSync("magick", [
-      raw,
+      "-delay", String(Math.round(delay / 10)), // magick counts in centiseconds
+      "-loop", "0",
+      ...raws,
       "-filter", "Lanczos",
-      "-resize", `${SCENE_PX}x${SCENE_PX}^`,
-      "-gravity", "center", "-extent", `${SCENE_PX}x${SCENE_PX}`,
-      "-strip", "-define", "png:compression-level=9",
-      join(outDir, `${art}.png`),
+      "-resize", `${SCENE_W}x${SCENE_H}!`,
+      "-strip",
+      "-define", "webp:lossless=false",
+      "-define", "webp:method=6",
+      "-quality", "74",
+      join(outDir, `${art}.webp`),
     ]);
-    rmSync(raw);
+    for (const p of raws) rmSync(p);
   }
   return [...cells.keys()];
 }
@@ -337,13 +391,15 @@ for (const f of readdirSync(propDir).filter((f) => f.endsWith(".png"))) {
   if (!b || !a.equals(b)) drift.push(`app/assets/img/props/${f}`);
 }
 
-for (const f of readdirSync(sceneDir).filter((f) => f.endsWith(".png"))) {
+for (const f of readdirSync(sceneDir).filter((f) => f.endsWith(".webp"))) {
   const live = join(REPO, "app/assets/img/scenes", f);
   let rmse = 1;
   try {
     // `compare` exits non-zero when images differ, so read the metric off
-    // stderr rather than trusting the exit code.
-    execFileSync("magick", ["compare", "-metric", "RMSE", join(sceneDir, f), live, "null:"], {
+    // stderr rather than trusting the exit code. `[0]` pins it to the first
+    // frame — these are animations, and comparing a whole sequence would
+    // compare the loop's phase as much as its content.
+    execFileSync("magick", ["compare", "-metric", "RMSE", `${join(sceneDir, f)}[0]`, `${live}[0]`, "null:"], {
       stdio: ["ignore", "ignore", "pipe"],
     });
     rmse = 0;
