@@ -2909,6 +2909,7 @@ impl Workspace {
                     pid: p.shell_pid(),
                     cwd: rt.cwd,
                     session: rt.resume,
+                    tool: p.tool_face.as_ref().map(|f| f.tool.clone()),
                     exposed: mcp::should_expose(&self.mcp, is_agent),
                     // the look the pane actually renders with (own override else
                     // inherited outer), in the config API's 0..100 percents

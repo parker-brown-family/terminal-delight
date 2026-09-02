@@ -87,7 +87,7 @@ struct Manifest {
 /// glyph = "DT"
 /// verb = "shipping it"
 /// ```
-#[derive(Deserialize, Default)]
+#[derive(Deserialize)]
 struct UserLayer {
     #[serde(default = "yes")]
     follows_tool: bool,
@@ -97,6 +97,22 @@ struct UserLayer {
 
 fn yes() -> bool {
     true
+}
+
+/// Hand-written, and it has to be: `#[derive(Default)]` would hand back
+/// `bool::default()` — FALSE — because serde's `default = "yes"` applies only
+/// when a field is missing from a document being deserialised, never to
+/// `Default::default()`. Since no machine ships a `tool-props.toml`, the derive
+/// meant `follows_tool` was false everywhere, the sweep returned an empty list
+/// every time, and the whole feature was off by construction while every test
+/// passed. Both paths now read the same `yes()`.
+impl Default for UserLayer {
+    fn default() -> Self {
+        Self {
+            follows_tool: yes(),
+            props: HashMap::new(),
+        }
+    }
 }
 
 fn user_layer() -> &'static UserLayer {
@@ -465,6 +481,32 @@ mod tests {
             probe_transcript(None, &ToolProbe::default()),
             ToolProbe::default()
         );
+    }
+
+    /// THE regression. No machine ships a `tool-props.toml`, so the absent-file
+    /// path is the only path that ever runs, and a derived `Default` silently
+    /// made it `false` — the sweep returned nothing, no pane ever wore a tool,
+    /// and every other test in this file still passed because none of them went
+    /// through the switch. Assert the default the feature actually ships with.
+    #[test]
+    fn the_feature_is_on_when_there_is_no_config_file() {
+        assert!(
+            UserLayer::default().follows_tool,
+            "a missing tool-props.toml must leave the feature ON"
+        );
+        assert!(follows_tool(), "and that is what the accessor reports");
+    }
+
+    /// A user layer that names only props must not switch the feature off as a
+    /// side effect — the same trap one level down, in serde this time.
+    #[test]
+    fn a_partial_config_keeps_the_feature_on() {
+        let l: UserLayer = toml::from_str("[props.frob]\nart = \"wrench\"\n").unwrap();
+        assert!(l.follows_tool);
+        assert_eq!(l.props["frob"].art.as_deref(), Some("wrench"));
+
+        let off: UserLayer = toml::from_str("follows_tool = false\n").unwrap();
+        assert!(!off.follows_tool, "and it can still be switched off");
     }
 
     #[test]

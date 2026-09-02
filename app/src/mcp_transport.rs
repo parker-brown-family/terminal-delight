@@ -398,6 +398,7 @@ mod tests {
                 pid,
                 cwd: Some(cwd.into()),
                 session: Some("claude --resume x".into()),
+                tool: None,
                 exposed: true,
                 grade: mcp::GradeReport::default(),
             }],

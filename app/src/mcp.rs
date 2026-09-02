@@ -103,6 +103,13 @@ pub struct PaneInfo {
     /// lives on disk. `None` for non-agent panes.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub session: Option<String>,
+    /// The tool this pane is holding right now — the same resolution its LOGO
+    /// wears (see [`crate::toolprop`]), so `None` here and a tool plate on
+    /// screen can never both be true. Present so that "is the pane wearing the
+    /// right thing?" is a question something can ANSWER, rather than one only a
+    /// photograph of the screen could settle.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool: Option<String>,
     /// Whether this pane would be exposed under the current policy.
     pub exposed: bool,
     /// The pane's *effective* grade — what it actually renders with (its own
@@ -639,9 +646,18 @@ fn list_panes(snap: &Snapshot) -> Value {
             .map(|p| {
                 let cwd = p.cwd.as_deref().unwrap_or("?");
                 let sess = p.session.as_deref().unwrap_or("-");
+                // The tool in flight rides the LINE, not just the structured
+                // half — an agent reading this listing sees what each pane is
+                // doing, and so does anyone checking that a pane is wearing the
+                // right face without photographing the screen.
+                let tool = p
+                    .tool
+                    .as_deref()
+                    .map(|t| format!(" · \u{2692} {t}"))
+                    .unwrap_or_default();
                 format!(
-                    "tab {} · {} · {} · {} · {}",
-                    p.tab, p.title, p.mode, cwd, sess
+                    "tab {} · {} · {} · {} · {}{}",
+                    p.tab, p.title, p.mode, cwd, sess, tool
                 )
             })
             .collect::<Vec<_>>()
@@ -1126,6 +1142,7 @@ mod tests {
             pid,
             cwd: Some("/work/x".into()),
             session: Some("claude --resume abc".into()),
+            tool: None,
             exposed,
             grade: GradeReport::default(),
         }
@@ -1739,6 +1756,7 @@ mod tests {
             pid: 7,
             cwd: None,
             session: None,
+            tool: None,
             exposed: true,
             grade: GradeReport::default(),
         };
