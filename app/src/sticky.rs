@@ -6,6 +6,12 @@
 //! restart beside the pane's cwd, so coming back to a wall of twenty agents you
 //! read the notes instead of scrolling each one for your last prompt.
 //!
+//! **Right-clicking the paper sticks a PIN through it**, and the pin surfaces on
+//! the pane's tab in the mother bar. That is the reminder half of the feature: a
+//! note only exists on the tab you are already looking at, so a note asking you
+//! to come back to something can only ask it of a tab you are not on. Nothing
+//! but a second right-click takes the pin out — see [`right_click`].
+//!
 //! Three things here are deliberate and easy to undo by accident:
 //!
 //! * **Esc never removes a posted note.** It reverts the composer, because a
@@ -66,6 +72,25 @@ pub struct Sticky {
     pub seed: u32,
     /// Present while the note holds the cursor.
     pub edit: Option<Edit>,
+    /// A pin stuck through the paper: come back to this one. It rides up to the
+    /// pane's TAB, which is the whole point — the note itself is only visible on
+    /// the tab you are already looking at, and the thing you want to be reminded
+    /// of is the tab you are not. Set and cleared by right-clicking the paper,
+    /// and by nothing else: see [`right_click`].
+    pub pinned: bool,
+}
+
+/// A note on its way to or from the state file — what it says, the seed that
+/// fixes its lean, and whether it is pinned.
+///
+/// It exists so the three things that must travel together cannot be separated
+/// by a tuple growing a field: the pin was added to a `(text, seed)` pair that
+/// four call sites destructured positionally.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Saved {
+    pub text: String,
+    pub seed: u32,
+    pub pinned: bool,
 }
 
 /// The composer, alive only while the note has the keyboard.
@@ -89,6 +114,7 @@ impl Sticky {
                 buf: crate::EditBuffer::seeded(prefill),
                 restore: None,
             }),
+            pinned: false,
         }
     }
 
@@ -399,6 +425,11 @@ pub fn layout(content: Bounds<Pixels>, tilt: f32) -> Option<Layout> {
 pub struct Paper {
     pub base: Hsla,
     pub ink: Hsla,
+    /// The pushpin's head. The paper's OPPOSITE hue, which is the one colour
+    /// guaranteed to survive whatever the sheet turned out to be: a red pin is
+    /// the physical object, but a red pin on the hot-pink paper a pink theme
+    /// produces is a bump, not a flag.
+    pub pin: Hsla,
 }
 
 /// The note's palette: a saturated sheet in the theme's own voice, written on in
@@ -424,6 +455,7 @@ pub fn paper(text: Hsla, accent: Hsla) -> Paper {
     Paper {
         base: hsla(hue, 0.88, 0.63, PAPER_ALPHA),
         ink: hsla(hue, 0.24, 0.085, 0.95),
+        pin: hsla((hue + 0.5).fract(), 0.86, 0.52, 1.0),
     }
 }
 
@@ -620,6 +652,16 @@ fn quadratic(out: &mut Vec<(f32, f32)>, a: (f32, f32), c: (f32, f32), b: (f32, f
     }
 }
 
+/// A closed polygon in note-local space, edge by edge, so every side is
+/// flattened for the barrel map the same way the sheet's are.
+fn poly(pts: &[(f32, f32)]) -> Vec<(f32, f32)> {
+    let mut v = Vec::new();
+    for (i, a) in pts.iter().enumerate() {
+        line(&mut v, *a, pts[(i + 1) % pts.len()]);
+    }
+    v
+}
+
 /// An axis-aligned quad in note-local space.
 fn quad(x0: f32, y0: f32, x1: f32, y1: f32) -> Vec<(f32, f32)> {
     let mut v = Vec::new();
@@ -628,6 +670,19 @@ fn quad(x0: f32, y0: f32, x1: f32, y1: f32) -> Vec<(f32, f32)> {
     line(&mut v, (x1, y1), (x0, y1));
     line(&mut v, (x0, y1), (x0, y0));
     v
+}
+
+/// A circle in note-local space. Flattened four times as densely as an edge:
+/// the pin's head is the smallest round thing on the sheet, and a chord that
+/// reads as straight across a 200px sheet reads as a facet across a 9px head.
+fn disc(x: f32, y: f32, r: f32) -> Vec<(f32, f32)> {
+    let n = SEG * 4;
+    (0..n)
+        .map(|i| {
+            let a = i as f32 / n as f32 * std::f32::consts::TAU;
+            (x + r * a.cos(), y + r * a.sin())
+        })
+        .collect()
 }
 
 /// Fill a note-local polyline, mapping every vertex through the tilt and the
@@ -700,6 +755,8 @@ pub enum Act {
     Post,
     /// Tear the note off.
     Peel,
+    /// Push the pin in, or pull it back out — a toggle, see [`right_click`].
+    Pin,
     /// Nothing to do with the note; the pane handles the gesture.
     Pass,
 }
@@ -730,6 +787,26 @@ pub fn click(composing: bool, hit: Option<Hit>) -> Act {
         Some(Hit::Peel) => Act::Peel,
         Some(Hit::Body) => Act::Open,
         None if composing => Act::Post,
+        None => Act::Pass,
+    }
+}
+
+/// A right click, given where it landed.
+///
+/// Anywhere on the paper pins it — INCLUDING the peel corner. The corner is a
+/// left-click affordance, and making the same pixels destroy a note under one
+/// button while flagging it under the other is the kind of thing you find out
+/// about by losing a note. Right-clicking the note therefore has exactly one
+/// meaning wherever it lands, and it is the only way in or out of the pinned
+/// state: no keystroke sets it, no other gesture clears it, and posting or
+/// re-editing the note leaves it alone. A pin you can drop by accident is not a
+/// reminder, because you stop trusting that it is still there.
+///
+/// A miss passes straight through to the pane, which opens its copy/paste menu
+/// as it always has.
+pub fn right_click(hit: Option<Hit>) -> Act {
+    match hit {
+        Some(_) => Act::Pin,
         None => Act::Pass,
     }
 }
@@ -867,6 +944,99 @@ pub fn paint(
     );
 
     paint_writing(note, lay, pal, window, cx);
+
+    if note.pinned {
+        paint_pin(lay, pal, window);
+    }
+}
+
+/// The pushpin, stuck through the top edge.
+///
+/// It straddles the edge rather than sitting on the sheet: the head is mostly
+/// ABOVE the paper and only the needle crosses into the adhesive band, so the
+/// pin never lands on a word. Putting it in the middle of the sheet was the
+/// first try and it covered the first line of every four-line note — the one
+/// line you can read from across the room.
+fn paint_pin(lay: &Layout, pal: &Paper, window: &mut Window) {
+    let (hw, hh) = (
+        f32::from(lay.size.width) / 2.0,
+        f32::from(lay.size.height) / 2.0,
+    );
+    // Scaled off the sheet so a 128px tiled note and a 200px full-screen one
+    // carry the same pin by eye, with a floor that keeps it a recognisable
+    // object rather than a dot.
+    let r = (hw * 0.17).clamp(7.0, 16.0);
+    // The head sits mostly ABOVE the sheet; the needle is what crosses onto it.
+    // The first build had the tip at the head's own bottom edge, so the needle
+    // was drawn entirely underneath the head and the whole thing read as a
+    // bubble peeking over the top of the note. The needle has to CLEAR the head
+    // or there is no pin, only a dome.
+    let head = -hh - r * 0.35;
+    let collar = -hh + r * 0.45;
+    let tip = -hh + r * 2.1;
+
+    // Shadow, on the paper only: a pool under the head and a thin one along the
+    // needle, both thrown down-right by the light the sheet is lit by.
+    fill(
+        lay,
+        &disc(r * 0.45, -hh + r * 0.75, r * 0.85),
+        hsla(0.0, 0.0, 0.0, 0.13),
+        window,
+    );
+    fill(
+        lay,
+        &poly(&[
+            (r * 0.12, collar),
+            (r * 0.46, collar),
+            (r * 0.62, tip),
+            (r * 0.48, tip),
+        ]),
+        hsla(0.0, 0.0, 0.0, 0.10),
+        window,
+    );
+
+    // The needle: a taper, not a stick, leaning with the hand that pushed it in.
+    fill(
+        lay,
+        &poly(&[
+            (-r * 0.14, collar),
+            (r * 0.18, collar),
+            (r * 0.30, tip),
+            (r * 0.22, tip),
+        ]),
+        hsla(0.0, 0.0, 0.46, 0.95),
+        window,
+    );
+    // The ferrule where the needle leaves the head — the one detail that stops
+    // the head reading as a bead threaded onto a wire.
+    fill(
+        lay,
+        &poly(&[
+            (-r * 0.30, collar - r * 0.34),
+            (r * 0.30, collar - r * 0.34),
+            (r * 0.22, collar + r * 0.06),
+            (-r * 0.20, collar + r * 0.06),
+        ]),
+        hsla(0.0, 0.0, 0.68, 0.95),
+        window,
+    );
+
+    // The head: a rim, the dome inside it offset up-left, and one specular dot.
+    // Three flat fills read as a sphere because the dot is small and high — the
+    // same trick the battery pip uses.
+    fill(lay, &disc(0.0, head, r), shift(pal.pin, 0.66), window);
+    fill(
+        lay,
+        &disc(-r * 0.06, head - r * 0.07, r * 0.84),
+        pal.pin,
+        window,
+    );
+    fill(
+        lay,
+        &disc(-r * 0.32, head - r * 0.34, r * 0.26),
+        hsla(0.0, 0.0, 1.0, 0.6),
+        window,
+    );
 }
 
 /// The handwriting, and the composer's selection and caret.
@@ -1109,6 +1279,7 @@ mod tests {
                 text: String::new(),
                 seed,
                 edit: None,
+                pinned: false,
             };
             let t = note.tilt();
             assert!(
@@ -1132,11 +1303,13 @@ mod tests {
             text: "x".into(),
             seed: 12345,
             edit: None,
+            pinned: false,
         };
         let b = Sticky {
             text: "different text".into(),
             seed: 12345,
             edit: None,
+            pinned: false,
         };
         assert_eq!(a.tilt(), b.tilt(), "the tilt comes from the seed alone");
     }
@@ -1209,6 +1382,48 @@ mod tests {
         // The peel corner peels whether or not the note is being written.
         assert_eq!(click(true, Some(Hit::Peel)), Act::Peel);
         assert_eq!(click(false, Some(Hit::Peel)), Act::Peel);
+    }
+
+    /// The pin goes in and comes out by the SAME gesture, and by no other.
+    ///
+    /// The peel corner is the trap: it is a live left-click target, so if right
+    /// clicking it peeled — or did nothing while the rest of the sheet pinned —
+    /// the one corner of the note would answer the same button differently from
+    /// the rest of it, and finding that out costs a note.
+    #[test]
+    fn right_clicking_anywhere_on_the_paper_pins_it() {
+        assert_eq!(right_click(Some(Hit::Body)), Act::Pin);
+        assert_eq!(
+            right_click(Some(Hit::Peel)),
+            Act::Pin,
+            "the peel corner must pin like the rest of the sheet, never destroy"
+        );
+        assert_eq!(
+            right_click(None),
+            Act::Pass,
+            "a right click off the paper still belongs to the pane's own menu"
+        );
+    }
+
+    /// Nothing but that gesture may reach the pin. A reminder you can knock off
+    /// by putting the pen down is one you stop believing, so the other two mouse
+    /// verbs are checked for silence here rather than left to be noticed later.
+    /// Keystrokes need no check: [`Press`] has no pin variant to return.
+    #[test]
+    fn no_other_gesture_touches_the_pin() {
+        for composing in [false, true] {
+            assert_ne!(alt_s(composing), Act::Pin);
+            for hit in [None, Some(Hit::Body), Some(Hit::Peel)] {
+                assert_ne!(click(composing, hit), Act::Pin);
+            }
+        }
+    }
+
+    /// A fresh note arrives unpinned: the pin is something you decide to add,
+    /// never a state a note can be born in.
+    #[test]
+    fn a_new_note_carries_no_pin() {
+        assert!(!Sticky::composing("", 7).pinned);
     }
 
     /// Why the note's chords are handled BEFORE the composer rather than inside

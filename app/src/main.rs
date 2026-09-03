@@ -373,9 +373,11 @@ impl Node {
                 resume: rt.resume,
                 name: view.name.clone(),
                 logo: view.logo.clone(),
-                note: view
-                    .saved_note()
-                    .map(|(text, seed)| SavedNote { text, seed }),
+                note: view.saved_note().map(|n| SavedNote {
+                    text: n.text,
+                    seed: n.seed,
+                    pinned: n.pinned,
+                }),
             }
         })
     }
@@ -401,6 +403,11 @@ struct SavedNote {
     text: String,
     #[serde(default)]
     seed: u32,
+    /// The pin stuck through it — the reminder that this pane wants you back.
+    /// Defaulted, so a state file written before pins existed reads as a note
+    /// with no pin rather than failing to load the whole layout.
+    #[serde(default)]
+    pinned: bool,
 }
 
 // A transient (de)serialization DTO for the layout tree — built, written, and
@@ -2378,7 +2385,11 @@ fn build_node(saved: &SavedNode, window: &mut Window, cx: &mut Context<Workspace
                     cwd: cwd.clone(),
                     resume: resume.clone(),
                     logo: logo.clone(),
-                    note: note.as_ref().map(|n| (n.text.clone(), n.seed)),
+                    note: note.as_ref().map(|n| sticky::Saved {
+                        text: n.text.clone(),
+                        seed: n.seed,
+                        pinned: n.pinned,
+                    }),
                 },
                 window,
                 cx,
@@ -6799,6 +6810,22 @@ impl Workspace {
             .collect()
     }
 
+    /// How many of tab `i`'s panes carry a PINNED note.
+    ///
+    /// A tab is one badge however many of its panes are flagged, with the count
+    /// beside it past the first: the pin says "there is something here you asked
+    /// to come back to", and which pane it is on is a question you answer by
+    /// opening the tab and looking at the paper. Free to read per frame — the
+    /// pin is a bool on a struct the pane already holds.
+    fn tab_pinned_notes(&self, i: usize, cx: &App) -> usize {
+        let Some(tab) = self.tabs.get(i) else {
+            return 0;
+        };
+        let mut leaves = vec![];
+        tab.root.leaves(&mut leaves);
+        leaves.iter().filter(|p| p.read(cx).note_pinned()).count()
+    }
+
     /// How many panes a tab holds — drives the "close more than one?" gate.
     fn tab_pane_count(&self, i: usize) -> usize {
         self.tabs
@@ -8996,6 +9023,24 @@ impl Workspace {
                         .border_color(th.accent)
                         .bg(th.accent.alpha(0.25)),
                 )
+            })
+            // A pinned note somewhere in this tab. Ahead of the agent roster so
+            // it holds a fixed slot: an agent finishing must not shuffle the pin
+            // out from under the eye that has learned where it sits. Steady, not
+            // pulsing — like ✅ and ❌, it is a thing you left for yourself, and
+            // a reminder that flashes at you is an alarm.
+            .children({
+                let pinned = self.tab_pinned_notes(i, cx);
+                (pinned > 0).then(|| {
+                    div()
+                        .text_size(px(11. * ts))
+                        .child(if pinned > 1 {
+                            SharedString::from(format!("📌{pinned}"))
+                        } else {
+                            SharedString::from("📌")
+                        })
+                        .into_any_element()
+                })
             })
             // The agent roster: one badge per agent in this tab, each carrying
             // that agent's OWN state. Four in flight is four robots breathing;
@@ -14329,6 +14374,7 @@ impl Render for Workspace {
                         row(s.k_focus_inherit_key, s.focus_inherit),
                         row("Alt+S", s.sticky),
                         row("Alt+Backspace", s.sticky_peel),
+                        row(s.k_rclick_note, s.sticky_pin),
                         row(s.k_wheel_key, s.pan_focus),
                         row(s.k_input_colour, s.input_colour),
                         row(&format!("🤖 {}", s.k_mother_bar), s.mcp),

@@ -2449,11 +2449,12 @@ impl TerminalView {
         let note = restore
             .note
             .clone()
-            .filter(|(text, _)| !text.trim().is_empty())
-            .map(|(text, seed)| crate::sticky::Sticky {
-                text,
-                seed,
+            .filter(|n| !n.text.trim().is_empty())
+            .map(|n| crate::sticky::Sticky {
+                text: n.text,
+                seed: n.seed,
                 edit: None,
+                pinned: n.pinned,
             });
         let cwd = restore.cwd.clone().map(std::path::PathBuf::from);
         let mut session = term::spawn_in(grid, 8, 20, cwd).expect("spawn shell");
@@ -3594,19 +3595,29 @@ impl TerminalView {
         true
     }
 
-    /// This pane's note as `(text, seed)` for the state file.
+    /// This pane's note for the state file.
     ///
     /// A note being COMPOSED saves what has been typed, not the draft's
     /// ancestor: an unattended save — a window closing, a crash — should not
     /// throw away the sentence you were half way through.
-    pub fn saved_note(&self) -> Option<(String, u32)> {
+    pub fn saved_note(&self) -> Option<crate::sticky::Saved> {
         let note = self.note.as_ref()?;
         let text = match &note.edit {
             Some(edit) => edit.buf.text(),
             None => note.text.clone(),
         };
         let text = text.trim().to_string();
-        (!text.is_empty()).then_some((text, note.seed))
+        (!text.is_empty()).then_some(crate::sticky::Saved {
+            text,
+            seed: note.seed,
+            pinned: note.pinned,
+        })
+    }
+
+    /// Is this pane's note pinned? Read every frame by the mother bar to decide
+    /// whether the tab carries a pin badge, so it stays a field read.
+    pub fn note_pinned(&self) -> bool {
+        self.note.as_ref().is_some_and(|n| n.pinned)
     }
 
     pub fn sticky_composing(&self) -> bool {
@@ -3711,8 +3722,41 @@ impl TerminalView {
                 self.sticky_commit(cx);
                 false
             }
-            crate::sticky::Act::Pass => false,
+            // A LEFT click never pins — `click` cannot return it, and the arm is
+            // written out rather than folded into `Pass` so that adding a
+            // left-button route to the pin has to be a deliberate edit here.
+            crate::sticky::Act::Pin | crate::sticky::Act::Pass => false,
         }
+    }
+
+    /// A right click resolved against the note: push the pin in, or pull it out.
+    ///
+    /// `true` when the note took the gesture, which is what keeps the pane's
+    /// copy/paste tray from opening on top of the note you just pinned. A right
+    /// click that misses the paper returns `false` and the menu comes up exactly
+    /// where it always has.
+    ///
+    /// It does NOT touch the composer. Pinning a note you are still writing is a
+    /// reasonable thing to do — you are marking it as you write it — and posting
+    /// the note out from under the pen because the other mouse button was used
+    /// would be a surprise on a gesture whose whole job is to be uneventful.
+    fn sticky_right_click(&mut self, at: gpui::Point<Pixels>, cx: &mut Context<Self>) -> bool {
+        let hit = self
+            .note_layout()
+            .and_then(|l| crate::sticky::Hit::at(at, &l));
+        if crate::sticky::right_click(hit) != crate::sticky::Act::Pin {
+            return false;
+        }
+        let Some(note) = self.note.as_mut() else {
+            return false;
+        };
+        note.pinned = !note.pinned;
+        // Persisted like a rename: a pin that did not survive a restart would be
+        // a reminder that forgets itself overnight, which is the one night it
+        // needed to hold.
+        cx.emit(StickyChanged);
+        cx.notify();
+        true
     }
 
     /// Track what the pointer is over so the peel corner can curl under it —
@@ -4700,6 +4744,15 @@ impl TerminalView {
         // gpui click target for the same reason as the copy chip below — the
         // paper is tilted, and gpui would hit-test its flat layout box.
         if ev.button == MouseButton::Left && self.sticky_click(ev.position, cx) {
+            cx.stop_propagation();
+            return;
+        }
+        // Right-click on the paper pins the note (or unpins it), and the pane's
+        // copy/paste tray stays shut. Resolved HERE, ahead of the context-menu
+        // branch below, for the same reason the left-click one is: the menu
+        // would otherwise open over the note under the same pixels, and the
+        // gesture would read as doing two things at once.
+        if ev.button == MouseButton::Right && self.sticky_right_click(ev.position, cx) {
             cx.stop_propagation();
             return;
         }
