@@ -269,7 +269,7 @@ pub fn resume_session_id(resume: &str) -> Option<String> {
 
 /// Claude Code's per-project transcript dir slug: every non-alphanumeric
 /// character of the absolute cwd becomes '-'.
-fn claude_slug(cwd: &str) -> String {
+pub(crate) fn claude_slug(cwd: &str) -> String {
     cwd.chars()
         .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
         .collect()
@@ -331,7 +331,7 @@ fn written_since(path: &Path, floor: Option<u64>) -> bool {
 /// [`proc_start_time`] as plain unix seconds — the staleness floor the disk
 /// lookups compare against. `None` (unreadable /proc, or the pid 0 the tests
 /// pass) means we could not tell, and every source is trusted as it was before.
-fn proc_start_unix(pid: u32) -> Option<u64> {
+pub(crate) fn proc_start_unix(pid: u32) -> Option<u64> {
     proc_start_time(pid)?
         .duration_since(SystemTime::UNIX_EPOCH)
         .ok()

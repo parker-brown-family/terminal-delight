@@ -42,6 +42,7 @@ mod term;
 mod theme;
 mod toolprop;
 mod usage;
+mod vitals;
 mod warp;
 
 use std::fs;
@@ -2052,6 +2053,14 @@ struct Workspace {
     usage_status: Option<String>,
     /// A collector run is in flight on a pool thread.
     usage_refreshing: bool,
+    /// Three bars per agent card — how full its context is, how tired it is, and
+    /// how much of what it holds still serves the task. Keyed by the pane's
+    /// shell pid, which is what a card is; the transcript behind it is resolved
+    /// as a fleet so two panes can never draw the same conversation.
+    /// See [`vitals`].
+    agent_vitals: std::collections::HashMap<u32, vitals::Vitals>,
+    /// A vitals pass is parsing transcripts on a pool thread.
+    vitals_refreshing: bool,
     /// 🎨 toggle in the MCP panel: tint each pane row with that pane's own
     /// resolved screen background + text colour. Defaults off (session-scoped).
     mcp_theme_preview: bool,
@@ -2516,6 +2525,8 @@ impl Workspace {
             usage_pick: 0,
             usage_status: None,
             usage_refreshing: false,
+            agent_vitals: std::collections::HashMap::new(),
+            vitals_refreshing: false,
             // Headless-capture hook: TD_WALL_THEME=1 arms the "theme · on" wall
             // skin (per-card logo warp) from boot so the curved-glass cards can be
             // screenshotted without a mouse. Leak-safe — only flips the visual
@@ -2704,6 +2715,42 @@ impl Workspace {
                 .await;
             if this
                 .update(cx, |ws: &mut Workspace, cx| ws.apply_tool_faces(probes, cx))
+                .is_err()
+            {
+                break;
+            }
+        })
+        .detach();
+        // vitals sweep: the three bars on each agent card. Slower cadence than
+        // the tool sweep because this reads whole transcripts — measured at
+        // 560ms for a seventeen-agent fleet, and only for files that grew — and
+        // because a context window does not move fast enough to be worth
+        // watching at 2s. Same shape as the sweeps above: gather on the main
+        // thread, do the I/O on the pool, apply back.
+        cx.spawn(async move |this, cx| loop {
+            cx.background_executor()
+                .timer(Duration::from_secs(10))
+                .await;
+            let Ok(reqs) = this.update(cx, |ws: &mut Workspace, cx| {
+                if ws.vitals_refreshing {
+                    return Vec::new(); // a pass is still out; do not pile on
+                }
+                let reqs = ws.vitals_requests(cx);
+                ws.vitals_refreshing = !reqs.is_empty();
+                reqs
+            }) else {
+                break; // window gone
+            };
+            if reqs.is_empty() {
+                continue; // no agent panes
+            }
+            let home = session::home_dir();
+            let found = cx
+                .background_executor()
+                .spawn(async move { vitals::sweep(&reqs, &home) })
+                .await;
+            if this
+                .update(cx, |ws: &mut Workspace, cx| ws.apply_vitals(found, cx))
                 .is_err()
             {
                 break;
@@ -3335,6 +3382,55 @@ impl Workspace {
         cx.notify();
         if self.usage_stale() {
             self.refresh_usage(cx);
+        }
+    }
+
+    /// One request per live agent pane, carrying the stamp of what the card is
+    /// already showing so an unchanged transcript is never re-parsed.
+    fn vitals_requests(&self, cx: &App) -> Vec<vitals::PaneReq> {
+        let mut out = Vec::new();
+        for tab in self.tabs.iter() {
+            let mut leaves = Vec::new();
+            tab.root.leaves(&mut leaves);
+            for e in leaves {
+                let view = e.read(cx);
+                if !view.mode.is_agent() {
+                    continue;
+                }
+                let rt = view.runtime();
+                let pid = view.shell_pid();
+                out.push(vitals::PaneReq {
+                    shell_pid: pid,
+                    cwd: rt.cwd,
+                    resume: rt.resume,
+                    known: self.agent_vitals.get(&pid).map(|v| v.stamp),
+                });
+            }
+        }
+        out
+    }
+
+    /// Swap in what the sweep found. A pane whose transcript is gone loses its
+    /// bars rather than keeping a stale set — a FATIGUE reading is a shutdown
+    /// decision, and one taken on a conversation that has moved on is worse than
+    /// none.
+    fn apply_vitals(&mut self, found: Vec<(u32, vitals::Update)>, cx: &mut Context<Self>) {
+        let mut changed = false;
+        for (pid, up) in found {
+            match up {
+                vitals::Update::Keep => {}
+                vitals::Update::Clear => {
+                    changed |= self.agent_vitals.remove(&pid).is_some();
+                }
+                vitals::Update::Set(v) => {
+                    self.agent_vitals.insert(pid, *v);
+                    changed = true;
+                }
+            }
+        }
+        self.vitals_refreshing = false;
+        if changed {
+            cx.notify();
         }
     }
 
@@ -9518,6 +9614,27 @@ fn brighten(mut c: Hsla, f: f32) -> Hsla {
     c
 }
 
+/// Blend `a` toward `b` by `t`. Used by the vitals bars, where a stat's distance
+/// from white IS the reading — so the mix has to move saturation as well as
+/// lightness, and interpolating hue would swing a red tip through orange on its
+/// way out of white rather than simply fading in.
+fn mix(a: Hsla, b: Hsla, t: f32) -> Hsla {
+    let t = t.clamp(0., 1.);
+    let lerp = |x: f32, y: f32| x + (y - x) * t;
+    Hsla {
+        // White has no meaningful hue, so take the target's and let saturation
+        // do the fading; blending hues here produces a muddy sweep.
+        h: if a.s <= f32::EPSILON {
+            b.h
+        } else {
+            lerp(a.h, b.h)
+        },
+        s: lerp(a.s, b.s),
+        l: lerp(a.l, b.l),
+        a: lerp(a.a, b.a),
+    }
+}
+
 fn agent_state_glow(th: &theme::Theme, idle: Hsla, state: hud::AgentState) -> Hsla {
     match state {
         hud::AgentState::Working => th.accent,
@@ -12528,6 +12645,89 @@ impl Render for Workspace {
                                     .child(val),
                             )
                     };
+                    let vit = self.agent_vitals.get(&p.shell_pid());
+                    // ONE BAR. The length is the number; the colour is only
+                    // which direction is bad.
+                    //
+                    // The gradient runs white → the tone's colour across the
+                    // TRACK's width and is clipped by the fill, so a 7% bar
+                    // shows just the white origin and a full one shows the whole
+                    // sweep. Sizing the gradient to the FILL instead would paint
+                    // a 7% bar fully saturated and make every quiet agent shout.
+                    //
+                    // White is the neutral origin on purpose: a bar's distance
+                    // from white is how far from ordinary it has travelled, in
+                    // one of two directions. No yellow, no blue, no threshold
+                    // flip — the video-game palette says "this is a category",
+                    // and these are all one quantity.
+                    let bar_row = |b: &vitals::Bar, track_w: f32, wide: bool| {
+                        let end = match b.tone {
+                            vitals::Tone::Bad => hsla(0.008, 0.72, 0.60, 1.0),
+                            vitals::Tone::Good => hsla(0.36, 0.52, 0.55, 1.0),
+                        };
+                        // `charge` is what saturates the far end, and it is NOT
+                        // the same as fill: WINDOW rides a delayed ramp so a
+                        // half-full context stays white, because a half-full
+                        // context is genuinely fine.
+                        let tip = mix(white(), end, b.charge.clamp(0., 1.));
+                        let filled = track_w * b.drawn();
+                        div()
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap_1()
+                            .child(
+                                div()
+                                    .flex_none()
+                                    .w(px(if wide { 46. } else { 8. } * cs))
+                                    .text_size(px(6.5 * cs))
+                                    .text_color(row_text.alpha(0.55))
+                                    // A tiled pane gets narrow; the label drops
+                                    // to its initial rather than eating the track.
+                                    .child(if wide {
+                                        b.label.to_string()
+                                    } else {
+                                        b.label.chars().take(1).collect::<String>()
+                                    }),
+                            )
+                            .child(
+                                // Fixed, not `flex_1`: the fill and the
+                                // gradient inside it are sized in absolute
+                                // pixels off `track_w`, so a track that
+                                // stretched to fill the row would leave every
+                                // bar reading short by whatever the row gave it.
+                                div()
+                                    .flex_none()
+                                    .w(px(track_w))
+                                    .h(px(4.5 * cs))
+                                    .rounded_sm()
+                                    .bg(row_text.alpha(0.10))
+                                    .overflow_hidden()
+                                    .child(
+                                        div()
+                                            .h_full()
+                                            .w(px(filled))
+                                            .rounded_sm()
+                                            .overflow_hidden()
+                                            .child(div().h_full().w(px(track_w)).bg(
+                                                linear_gradient(
+                                                    90.,
+                                                    linear_color_stop(white().alpha(0.92), 0.),
+                                                    linear_color_stop(tip, 1.),
+                                                ),
+                                            )),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .flex_none()
+                                    .w(px(20. * cs))
+                                    .text_size(px(6.5 * cs))
+                                    .font_weight(gpui::FontWeight::BOLD)
+                                    .text_color(mix(row_text.alpha(0.75), tip, b.charge * 0.8))
+                                    .child(b.caption.clone()),
+                            )
+                    };
                     // the SWCCG "rules text" box = the agent's recent message feed
                     let mut rules = div()
                         .flex()
@@ -12541,7 +12741,25 @@ impl Render for Workspace {
                         .border_color(status_glow.alpha(0.20))
                         .bg(well_bg.alpha(0.55))
                         .overflow_hidden();
-                    if agentic {
+                    if let Some(v) = vit {
+                        // The box that used to scroll the message feed. The feed
+                        // was the card's dead space — four clipped lines of
+                        // whatever happened to be on screen — and this is the
+                        // question you actually open the wall to answer: is this
+                        // agent worth keeping alive?
+                        //
+                        // WINDOW against RELEVANCE is the pair that earns the
+                        // room, because a full context means opposite things
+                        // depending on the second bar and no token counter can
+                        // tell them apart: full of ballast is a cheap compaction,
+                        // full of live detail is a hand-off.
+                        let wide = cs >= 0.95;
+                        let track = if wide { 60. * cs } else { 44. * cs };
+                        rules = rules
+                            .justify_center()
+                            .gap_1()
+                            .children(v.bars().map(|b| bar_row(b, track, wide)));
+                    } else if agentic {
                         for fl in feed.iter() {
                             let t: String = fl.chars().take(40).collect();
                             rules = rules.child(
@@ -12630,16 +12848,27 @@ impl Render for Workspace {
                                                     "\u{25c7}"
                                                 }),
                                         )
-                                        .when(is_agent && status.state.needs_you(), |d| {
-                                            d.child(
-                                                div()
-                                                    .flex_none()
-                                                    .text_size(px(9. * cs))
-                                                    .font_weight(gpui::FontWeight::EXTRA_BOLD)
-                                                    .text_color(hsla(0., 0.85, 0.62, 1.))
-                                                    .child("\u{26a0}"),
-                                            )
-                                        })
+                                        // An agent that should be stopped or
+                                        // handed off wants a decision exactly
+                                        // as much as a blocked one does, so it
+                                        // wears the same warning. Being full of
+                                        // load-bearing context is not a state
+                                        // the status line can ever report.
+                                        .when(
+                                            is_agent
+                                                && (status.state.needs_you()
+                                                    || vit.is_some_and(|v| v.call.needs_you())),
+                                            |d| {
+                                                d.child(
+                                                    div()
+                                                        .flex_none()
+                                                        .text_size(px(9. * cs))
+                                                        .font_weight(gpui::FontWeight::EXTRA_BOLD)
+                                                        .text_color(hsla(0., 0.85, 0.62, 1.))
+                                                        .child("\u{26a0}"),
+                                                )
+                                            },
+                                        )
                                         .child(
                                             div()
                                                 .flex_1()
@@ -12872,16 +13101,35 @@ impl Render for Workspace {
                                         .flex_wrap()
                                         .gap_1();
                                     if is_agent {
-                                        let model_val = model_disp
-                                            .clone()
-                                            .unwrap_or_else(|| mode_lbl.clone())
-                                            .to_uppercase();
-                                        stats = stats.child(stat_box("MODEL", model_val, kind_col));
-                                        if let Some(effort) = status.effort.clone() {
+                                        // ONE chip: `OPUS · MAX`. It replaces the
+                                        // MODEL/EFFORT pair, which never once
+                                        // showed a model — `parse_model` reads a
+                                        // `--model` flag nobody passes, fell
+                                        // through to the PROGRAM name, and put
+                                        // `MODEL CLAUDE` on all seventeen cards.
+                                        //
+                                        // The transcript knows both, and is the
+                                        // only source that can say `max` at all:
+                                        // `hud::extract_effort` scrapes the
+                                        // status line and knows just high/
+                                        // medium/low. Version dropped — opus-5
+                                        // and opus-4-8 are both OPUS.
+                                        let chip = vit
+                                            .and_then(|v| v.chip())
+                                            .or_else(|| {
+                                                model_disp.clone().map(|m| m.to_uppercase())
+                                            })
+                                            .unwrap_or_else(|| mode_lbl.to_uppercase());
+                                        stats = stats.child(stat_box("AGENT", chip, kind_col));
+                                        // The call, when the agent wants one. RUN
+                                        // and WATCH stay quiet: a wall that
+                                        // labels every healthy agent teaches you
+                                        // to read past the labels.
+                                        if let Some(v) = vit.filter(|v| v.call.needs_you()) {
                                             stats = stats.child(stat_box(
-                                                "EFFORT",
-                                                effort.to_uppercase(),
-                                                status_glow,
+                                                "CALL",
+                                                v.call.label().to_string(),
+                                                hsla(0.008, 0.72, 0.62, 1.0),
                                             ));
                                         }
                                     } else {
@@ -17541,6 +17789,16 @@ fn main() {
     // endpoints — which is why the panel only ever runs it off the frame.
     if argv.get(1).map(String::as_str) == Some("agent-usage") {
         std::process::exit(usage::run_cli(&argv[2..]));
+    }
+
+    // `agent-vitals`: the three bars for one transcript, as JSON. The wall
+    // computes these in-process; this exists so the Rust can be diffed against
+    // `scripts/td-agent-vitals.mjs`, the reference implementation, on real
+    // transcripts. The metrics' failure mode is a plausible WRONG number —
+    // nothing crashes, a bar draws, the call is wrong — and two independent
+    // implementations agreeing is the cheapest guard there is against it.
+    if argv.get(1).map(String::as_str) == Some("agent-vitals") {
+        std::process::exit(vitals::run_cli(&argv[2..]));
     }
 
     // `probe`: read-only forensics on someone ELSE's terminal — given a tile's
