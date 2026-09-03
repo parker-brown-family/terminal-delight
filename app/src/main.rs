@@ -12672,10 +12672,16 @@ impl Render for Workspace {
                     // which direction is bad.
                     //
                     // The gradient runs white → the tone's colour across the
-                    // TRACK's width and is clipped by the fill, so a 7% bar
-                    // shows just the white origin and a full one shows the whole
-                    // sweep. Sizing the gradient to the FILL instead would paint
-                    // a 7% bar fully saturated and make every quiet agent shout.
+                    // FILL, so every bar shows the whole sweep and ends at its
+                    // own saturation. Spanning the TRACK instead — which this
+                    // did first — meant a short bar showed only the first slice
+                    // of the ramp, i.e. white, however hot its charge was. That
+                    // made a starved RELEVANCE invisible exactly when it matters
+                    // most, because a "high is good" stat draws SHORT when bad.
+                    //
+                    // Quiet agents still stay pale: `charge` is near zero at low
+                    // values for the stats where low IS calm, so the sweep they
+                    // show runs white to white.
                     //
                     // White is the neutral origin on purpose: a bar's distance
                     // from white is how far from ordinary it has travelled, in
@@ -12729,20 +12735,17 @@ impl Render for Workspace {
                                     .rounded_sm()
                                     .bg(row_text.alpha(0.10))
                                     .overflow_hidden()
-                                    .child(
-                                        div()
-                                            .h_full()
-                                            .w(px(filled))
-                                            .rounded_sm()
-                                            .overflow_hidden()
-                                            .child(div().h_full().w(px(track_w)).bg(
-                                                linear_gradient(
-                                                    90.,
-                                                    linear_color_stop(white().alpha(0.92), 0.),
-                                                    linear_color_stop(tip, 1.),
-                                                ),
-                                            )),
-                                    ),
+                                    // The gradient is ON the fill, so it spans
+                                    // exactly what is drawn — no inner clipping
+                                    // layer, and a short bar still reaches its
+                                    // full colour at its own right edge.
+                                    .child(div().h_full().w(px(filled)).rounded_sm().bg(
+                                        linear_gradient(
+                                            90.,
+                                            linear_color_stop(white().alpha(0.92), 0.),
+                                            linear_color_stop(tip, 1.),
+                                        ),
+                                    )),
                             )
                             .child(
                                 div()
