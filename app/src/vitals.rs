@@ -140,6 +140,44 @@ fn smoothstep(lo: f32, hi: f32, v: f32) -> f32 {
 const WINDOW_CALM: f32 = 0.60;
 const WINDOW_ALARM: f32 = 0.98;
 
+/// The same, for FATIGUE — and the calm band is deliberately wide.
+///
+/// Fatigue reads LOW on healthy sessions: measured across a live seventeen-agent
+/// fleet the typical value was 14–25%, because the weighted mix only approaches
+/// its ceiling when several signals go bad together. Ramping colour from zero
+/// therefore painted every card faintly pink permanently, which is the
+/// cry-wolf failure WINDOW already has a delayed ramp to avoid.
+///
+/// It aims at STOP (0.70) rather than at WATCH (0.45), because WATCH's own
+/// sentence is "Nothing wrong yet" — a state whose text says nothing is wrong
+/// should not be wearing a warning colour.
+const FATIGUE_CALM: f32 = 0.55;
+const FATIGUE_ALARM: f32 = 0.78;
+
+/// RELEVANCE is the one bar that is bad at BOTH ends of nothing — it is good
+/// when high and bad when low, so its hue diverges rather than ramping one way.
+///
+/// The thresholds are deliberately the same numbers [`verdict`] decides on: at
+/// or above `RELEVANCE_GOOD` a full window is a hand-off rather than a
+/// compaction, and at or below `RELEVANCE_BAD` the call is COMPACT. Sharing them
+/// means the bar cannot look calm while the chip beside it says to act.
+const RELEVANCE_GOOD: f32 = 0.65;
+const RELEVANCE_BAD: f32 = 0.45;
+
+/// Hue and saturation for a relevance reading: green as it approaches all,
+/// red as it approaches none, white through the band where it is merely
+/// unremarkable.
+fn relevance_tone(v: f32) -> (Tone, f32) {
+    if v >= RELEVANCE_GOOD {
+        (Tone::Good, smoothstep(RELEVANCE_GOOD, 1.0, v))
+    } else if v <= RELEVANCE_BAD {
+        // Inverted: the closer to nothing, the hotter.
+        (Tone::Bad, 1.0 - smoothstep(0.0, RELEVANCE_BAD, v))
+    } else {
+        (Tone::Good, 0.0) // neutral band — white, whatever the tone says
+    }
+}
+
 // ─── the call ──────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1212,14 +1250,22 @@ pub fn from_body(body: &str, stamp: (u64, u64)) -> Option<Vitals> {
             label: "FATIGUE",
             fill: fat.score as f32,
             tone: Tone::Bad,
-            charge: fat.score as f32,
+            // Calm through the band a working session actually lives in, then
+            // reddening as STOP comes into view. Fill still tells the truth —
+            // a tired agent's bar is longer either way — but the colour is
+            // reserved for the reading you would act on.
+            charge: smoothstep(FATIGUE_CALM, FATIGUE_ALARM, fat.score as f32),
             caption: format!("{}%", (fat.score * 100.0).round()),
         },
         relevance: Bar {
             label: "RELEVANCE",
             fill: rel.score as f32,
-            tone: Tone::Good,
-            charge: rel.score as f32,
+            // Diverging, not ramping: a window that has gone mostly ballast is
+            // the loudest thing this card can say, and as a "high is good" stat
+            // it draws SHORT — so without red it read as "nothing here" rather
+            // than "act on this".
+            tone: relevance_tone(rel.score as f32).0,
+            charge: relevance_tone(rel.score as f32).1,
             caption: format!("{}%", (rel.score * 100.0).round()),
         },
         call,
@@ -1888,6 +1934,86 @@ mod tests {
         assert!(smoothstep(WINDOW_CALM, WINDOW_ALARM, 0.75) > 0.1);
         assert!(smoothstep(WINDOW_CALM, WINDOW_ALARM, 0.95) > 0.9);
         assert_eq!(smoothstep(WINDOW_CALM, WINDOW_ALARM, 1.0), 1.0);
+    }
+
+    #[test]
+    fn a_healthy_session_shows_no_pink_at_all() {
+        // The band a working session actually occupies: measured 14–25% across a
+        // live seventeen-agent fleet. Ramping from zero put a permanent faint
+        // pink on every card, which is how a warning colour stops meaning
+        // anything.
+        for v in [0.0_f32, 0.14, 0.20, 0.25, 0.40, 0.50] {
+            assert_eq!(
+                smoothstep(FATIGUE_CALM, FATIGUE_ALARM, v),
+                0.0,
+                "fatigue {v} is an ordinary working session and must draw white"
+            );
+        }
+    }
+
+    #[test]
+    fn fatigue_reddens_as_stop_comes_into_view() {
+        // WATCH says "Nothing wrong yet", so WATCH territory stays white; the
+        // ramp aims at STOP instead.
+        assert_eq!(
+            smoothstep(FATIGUE_CALM, FATIGUE_ALARM, 0.45),
+            0.0,
+            "WATCH is not a warning"
+        );
+        assert!(
+            smoothstep(FATIGUE_CALM, FATIGUE_ALARM, 0.70) > 0.6,
+            "STOP must be visibly red"
+        );
+        assert_eq!(smoothstep(FATIGUE_CALM, FATIGUE_ALARM, 0.90), 1.0);
+    }
+
+    #[test]
+    fn a_starved_relevance_is_loud_not_quiet() {
+        // The failure this fixes: RELEVANCE is a "high is good" stat, so when it
+        // is BAD the bar is SHORT. Ramping its colour with its value therefore
+        // drew the worst possible reading as a small white stub — visually
+        // indistinguishable from a card with nothing to say.
+        let (tone, charge) = relevance_tone(0.08);
+        assert_eq!(tone, Tone::Bad, "almost no relevance must read as bad");
+        assert!(charge > 0.7, "and loudly: got {charge}");
+    }
+
+    #[test]
+    fn relevance_is_green_when_high_white_in_between_red_when_low() {
+        assert_eq!(relevance_tone(0.97).0, Tone::Good);
+        assert!(
+            relevance_tone(0.97).1 > 0.8,
+            "nearly all of it is load-bearing"
+        );
+
+        // The middle band is genuinely unremarkable, and Parker's rule is that
+        // a stat which is neither good nor bad stays white.
+        assert_eq!(relevance_tone(0.55).1, 0.0);
+        assert_eq!(relevance_tone(0.50).1, 0.0);
+
+        assert_eq!(relevance_tone(0.20).0, Tone::Bad);
+        assert!(relevance_tone(0.20).1 > 0.3);
+    }
+
+    #[test]
+    fn the_relevance_bar_agrees_with_the_call_beside_it() {
+        // The bar and the verdict share thresholds on purpose: a bar that looked
+        // calm while the chip said COMPACT would teach you to trust neither.
+        let compact = at(0.70, (RELEVANCE_BAD - 0.01) as f64, 0.10, 200_000);
+        assert_eq!(compact.0, Call::Compact);
+        assert_eq!(
+            relevance_tone(RELEVANCE_BAD - 0.01).0,
+            Tone::Bad,
+            "if the call is COMPACT for low relevance, the bar must be red"
+        );
+
+        let handoff = at(0.90, (RELEVANCE_GOOD + 0.01) as f64, 0.10, 200_000);
+        assert_eq!(handoff.0, Call::HandOff);
+        assert_eq!(
+            relevance_tone(RELEVANCE_GOOD + 0.01).0,
+            Tone::Good,
+            "if the call is HAND OFF because the context is in use, the bar is green"
+        );
     }
 
     #[test]
