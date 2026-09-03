@@ -2732,8 +2732,15 @@ impl Workspace {
                 .timer(Duration::from_secs(10))
                 .await;
             let Ok(reqs) = this.update(cx, |ws: &mut Workspace, cx| {
-                if ws.vitals_refreshing {
-                    return Vec::new(); // a pass is still out; do not pile on
+                // Only while the wall is actually on screen. The sweep runs
+                // `edges` over every transcript in each live pane's project
+                // directory — one of those directories holds 47 — so leaving it
+                // ticking behind a closed overlay was tens of megabytes of reads
+                // every ten seconds, permanently, to compute bars nobody could
+                // see. The wall is a glance surface; it costs nothing to keep
+                // one until it is looked at.
+                if !ws.mcp_menu || ws.vitals_refreshing {
+                    return Vec::new(); // closed, or a pass is still out
                 }
                 let reqs = ws.vitals_requests(cx);
                 ws.vitals_refreshing = !reqs.is_empty();
@@ -3416,6 +3423,21 @@ impl Workspace {
     /// none.
     fn apply_vitals(&mut self, found: Vec<(u32, vitals::Update)>, cx: &mut Context<Self>) {
         let mut changed = false;
+        // Forget panes that are gone. The map is keyed by shell pid, and a pid
+        // is reused eventually — so an entry left behind by a closed pane is not
+        // merely a slow leak, it is a card that could one day draw a dead
+        // agent's FATIGUE against a live one that happens to inherit its number.
+        let live: std::collections::HashSet<u32> = found.iter().map(|(pid, _)| *pid).collect();
+        let stale: Vec<u32> = self
+            .agent_vitals
+            .keys()
+            .copied()
+            .filter(|pid| !live.contains(pid))
+            .collect();
+        for pid in stale {
+            self.agent_vitals.remove(&pid);
+            changed = true;
+        }
         for (pid, up) in found {
             match up {
                 vitals::Update::Keep => {}
@@ -12679,7 +12701,11 @@ impl Render for Workspace {
                             .child(
                                 div()
                                     .flex_none()
-                                    .w(px(if wide { 46. } else { 8. } * cs))
+                                    // 54, not 46: "CTX WINDOW" is a character
+                                    // longer than the previous widest label, and
+                                    // a column that clips its own heading is
+                                    // worse than a slightly shorter track.
+                                    .w(px(if wide { 54. } else { 8. } * cs))
                                     .text_size(px(6.5 * cs))
                                     .text_color(row_text.alpha(0.55))
                                     // A tiled pane gets narrow; the label drops
