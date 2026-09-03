@@ -27,6 +27,7 @@ mod doc;
 mod gamba;
 mod hud;
 mod instance;
+mod keepalive;
 mod lang;
 mod mcp;
 mod mcp_tail;
@@ -2062,6 +2063,10 @@ struct Workspace {
     agent_vitals: std::collections::HashMap<u32, vitals::Vitals>,
     /// A vitals pass is parsing transcripts on a pool thread.
     vitals_refreshing: bool,
+    /// A keepalive pass is out. Pings take seconds — a whole round trip to the
+    /// API — so the sweep must never be allowed to stack on itself. See
+    /// [`keepalive`].
+    keepalive_running: bool,
     /// 🎨 toggle in the MCP panel: tint each pane row with that pane's own
     /// resolved screen background + text colour. Defaults off (session-scoped).
     mcp_theme_preview: bool,
@@ -2534,6 +2539,7 @@ impl Workspace {
             usage_refreshing: false,
             agent_vitals: std::collections::HashMap::new(),
             vitals_refreshing: false,
+            keepalive_running: false,
             // Headless-capture hook: TD_WALL_THEME=1 arms the "theme · on" wall
             // skin (per-card logo warp) from boot so the curved-glass cards can be
             // screenshotted without a mouse. Leak-safe — only flips the visual
@@ -2771,6 +2777,69 @@ impl Workspace {
             }
         })
         .detach();
+        // cache keepalive: read each idle agent's prompt cache before its
+        // one-hour TTL runs out, so coming back to a parked session costs 0.1x
+        // the conversation instead of 2.0x. Off unless TD_KEEPALIVE is set —
+        // it spends money on a timer, and that does not get a default.
+        //
+        // Deliberately NOT gated on the wall being open, unlike the vitals
+        // sweep above: the whole point is the sessions nobody is looking at.
+        // The cost of ticking is one directory listing and a transcript tail
+        // per agent pane per minute, and it only spawns anything at all when a
+        // pane crosses 55 minutes idle. Nothing here writes to a terminal —
+        // see [`keepalive`] for why that is the design and not a limitation.
+        {
+            let cfg = keepalive::Config::from_env();
+            if cfg.enabled {
+                cx.spawn(async move |this, cx| loop {
+                    cx.background_executor()
+                        .timer(Duration::from_secs(60))
+                        .await;
+                    let Ok(reqs) = this.update(cx, |ws: &mut Workspace, cx| {
+                        if ws.keepalive_running {
+                            return Vec::new(); // a pass is still out
+                        }
+                        let reqs = ws.vitals_requests(cx);
+                        ws.keepalive_running = !reqs.is_empty();
+                        reqs
+                    }) else {
+                        break; // window gone
+                    };
+                    if reqs.is_empty() {
+                        continue;
+                    }
+                    let home = session::home_dir();
+                    let cfg = cfg.clone();
+                    let reports = cx
+                        .background_executor()
+                        .spawn(async move { keepalive::sweep(&reqs, &home, &cfg) })
+                        .await;
+                    // Every ping reports its own billing, and three of the four
+                    // failure modes look exactly like success from the outside.
+                    // Say so rather than accumulating a silent tax.
+                    for r in &reports {
+                        match &r.effect {
+                            Some(keepalive::Effect::Warm { read, saved_eq }) => eprintln!(
+                                "keepalive {}: warm, read {read} (saved ~{saved_eq:.0} eq)",
+                                &r.session[..8.min(r.session.len())]
+                            ),
+                            Some(e) => eprintln!(
+                                "keepalive {}: {e:?}",
+                                &r.session[..8.min(r.session.len())]
+                            ),
+                            None => {}
+                        }
+                    }
+                    if this
+                        .update(cx, |ws: &mut Workspace, _| ws.keepalive_running = false)
+                        .is_err()
+                    {
+                        break;
+                    }
+                })
+                .detach();
+            }
+        }
         // session checkpoint: live state (pane cwds, agent sessions, window
         // bounds) changes without structural events, so re-snapshot every 30s —
         // a crash loses at most that much recency, never the layout. (Clean quit
