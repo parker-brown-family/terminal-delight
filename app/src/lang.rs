@@ -172,6 +172,7 @@ pub struct Strings {
     #[allow(dead_code)]
     pub bell: &'static str,
     pub mcp: &'static str,
+    pub usage: &'static str,
     pub plugins: &'static str,
     pub new_window: &'static str,
     // ── features view · descriptions ──
@@ -389,6 +390,7 @@ pub const EN: Strings = Strings {
     input_colour: "Your turns stand out (👤 wheel pip)",
     bell: "Pane shows ● done + a per-agent sound",
     mcp: "MCP — read-only agent-watch surface",
+    usage: "\u{3a3} usage — what each AI subscription has left",
     plugins: "Plugins",
     new_window: "New window (quick scratch)",
     f_tiling: "Splits divide only the focused pane",
@@ -577,6 +579,7 @@ pub const ES: Strings = Strings {
     input_colour: "Tus turnos resaltan (pip 👤 de la rueda)",
     bell: "El panel muestra ● listo + un sonido por agente",
     mcp: "MCP — superficie de observación de agentes, solo lectura",
+    usage: "\u{3a3} uso — lo que le queda a cada suscripción de IA",
     plugins: "Complementos",
     new_window: "Nueva ventana (borrador rápido)",
     f_tiling: "Las divisiones afectan solo al panel enfocado",
@@ -765,6 +768,7 @@ pub const DE: Strings = Strings {
     input_colour: "Deine Beiträge stechen hervor (👤-Rad-Pip)",
     bell: "Panel zeigt ● fertig + einen Ton pro Agent",
     mcp: "MCP — schreibgeschützte Agenten-Beobachtung",
+    usage: "\u{3a3} Nutzung — was jedem KI-Abo noch bleibt",
     plugins: "Plugins",
     new_window: "Neues Fenster (schneller Notizblock)",
     f_tiling: "Teilungen betreffen nur das fokussierte Panel",
@@ -953,6 +957,7 @@ pub const ZH: Strings = Strings {
     input_colour: "你的发言更突出（👤 色环标记）",
     bell: "面板显示 ● 完成 + 每个智能体的提示音",
     mcp: "MCP——只读的智能体观察面",
+    usage: "\u{3a3} 用量——每个 AI 订阅的剩余额度",
     plugins: "插件",
     new_window: "新窗口（快速草稿）",
     f_tiling: "拆分只切分当前聚焦的面板",
@@ -1141,6 +1146,7 @@ pub const FR: Strings = Strings {
     input_colour: "Vos tours ressortent (pastille 👤 de la roue)",
     bell: "Le volet affiche ● terminé + un son par agent",
     mcp: "MCP — surface d'observation des agents, lecture seule",
+    usage: "\u{3a3} usage — ce qu'il reste à chaque abonnement IA",
     plugins: "Extensions",
     new_window: "Nouvelle fenêtre (brouillon rapide)",
     f_tiling: "Les divisions ne touchent que le volet ciblé",
@@ -1329,6 +1335,7 @@ pub const RU: Strings = Strings {
     input_colour: "Ваши реплики выделяются (метка 👤 круга)",
     bell: "Панель показывает ● готово + звук на агента",
     mcp: "MCP — поверхность наблюдения за агентами, только чтение",
+    usage: "\u{3a3} расход — сколько осталось у каждой подписки ИИ",
     plugins: "Плагины",
     new_window: "Новое окно (быстрый черновик)",
     f_tiling: "Разделения затрагивают только активную панель",
@@ -1517,6 +1524,7 @@ pub const JA: Strings = Strings {
     input_colour: "あなたの発言が目立つ（👤 ホイールのピップ）",
     bell: "ペインに ● 完了 + エージェントごとの音",
     mcp: "MCP — 読み取り専用のエージェント監視面",
+    usage: "\u{3a3} 使用量 — 各 AI サブスクリプションの残量",
     plugins: "プラグイン",
     new_window: "新しいウィンドウ（クイックスクラッチ）",
     f_tiling: "分割はフォーカス中のペインのみを区切る",
@@ -1705,6 +1713,7 @@ pub const KO: Strings = Strings {
     input_colour: "당신의 차례가 돋보임 (👤 휠 핍)",
     bell: "창에 ● 완료 + 에이전트별 소리 표시",
     mcp: "MCP — 읽기 전용 에이전트 관찰 면",
+    usage: "\u{3a3} 사용량 — 각 AI 구독의 남은 양",
     plugins: "플러그인",
     new_window: "새 창 (빠른 스크래치)",
     f_tiling: "분할은 포커스된 창만 나눔",
@@ -1894,6 +1903,7 @@ pub const HI: Strings = Strings {
     input_colour: "आपकी बारी अलग दिखती है (👤 व्हील पिप)",
     bell: "पेन ● पूर्ण + प्रति-एजेंट ध्वनि दिखाता है",
     mcp: "MCP — केवल-पढ़ने वाली एजेंट निगरानी सतह",
+    usage: "\u{3a3} उपयोग — हर AI सदस्यता में कितना बचा है",
     plugins: "प्लगइन",
     new_window: "नई विंडो (त्वरित स्क्रैच)",
     f_tiling: "विभाजन केवल फ़ोकस किए पेन को बाँटते हैं",
@@ -2047,6 +2057,23 @@ mod tests {
         assert_eq!(codes.len(), Lang::ALL.len());
         // the default language is the first in picker order
         assert_eq!(Lang::default(), Lang::ALL[0]);
+    }
+
+    #[test]
+    fn every_language_names_the_usage_panel() {
+        // A help row added in English alone is worse than no row: the shortcut
+        // still works and nothing explains it for anyone reading in the other
+        // eight. This catches a language table that gains a field by `..EN`
+        // default or a copy-paste that leaves it blank.
+        for &l in &Lang::ALL {
+            let u = l.strings().usage;
+            assert!(!u.trim().is_empty(), "{} has no usage string", l.code());
+            assert!(
+                u.contains('\u{3a3}'),
+                "{} should keep the Σ that labels the panel itself: {u}",
+                l.code()
+            );
+        }
     }
 
     #[test]
