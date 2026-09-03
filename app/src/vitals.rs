@@ -1177,17 +1177,10 @@ fn verdict(win: &WindowStat, fat: &FatigueStat, rel: &RelevanceStat) -> (Call, S
     )
 }
 
-/// `1.2M`, `59.0k`, `412` — matching `hud::fmt_tokens` so the card reads as one
-/// surface.
-fn fmt_tokens(n: u64) -> String {
-    if n >= 1_000_000 {
-        format!("{:.1}M", n as f64 / 1e6)
-    } else if n >= 1_000 {
-        format!("{:.1}k", n as f64 / 1e3)
-    } else {
-        n.to_string()
-    }
-}
+/// `1.2M`, `59.0k`, `412`. Re-exported from [`crate::hud`] rather than
+/// reimplemented: the card puts these numbers beside Δ and Σ, which hud already
+/// formats, and two copies of a formatter drift into two house styles.
+use crate::hud::fmt_tokens;
 
 // ─── the entry point ───────────────────────────────────────────────────────
 
@@ -1207,7 +1200,7 @@ pub fn from_body(body: &str, stamp: (u64, u64)) -> Option<Vitals> {
 
     Some(Vitals {
         window: Bar {
-            label: "WINDOW",
+            label: "CTX WINDOW",
             fill: win.fill as f32,
             tone: Tone::Bad,
             // Neutral through the comfortable range: a half-full window is fine,
@@ -1395,6 +1388,61 @@ pub fn assign(panes: &[FleetPane], cands: &[Cand]) -> HashMap<u32, usize> {
     out
 }
 
+/// Memoised [`edges`] results, keyed by path and invalidated by size+mtime.
+///
+/// A transcript's first record never changes and its last only changes when the
+/// file grows, so this is a pure function of file state — but it costs two
+/// 256KB reads per candidate, and the fleet sweep runs `edges` over EVERY
+/// transcript in each live pane's project directory. One of those directories
+/// holds 47. Uncached that was tens of megabytes of reads on every tick, for
+/// answers that were identical every time.
+type EdgeCache = std::sync::Mutex<HashMap<std::path::PathBuf, ((u64, u64), Cand)>>;
+static EDGE_CACHE: std::sync::OnceLock<EdgeCache> = std::sync::OnceLock::new();
+
+/// Above this the cache is cleared rather than grown. 380 transcripts exist on
+/// this machine today; a bound an order of magnitude clear of that keeps a
+/// long-lived window from accumulating entries for files it will never see again.
+const EDGE_CACHE_MAX: usize = 4096;
+
+fn stamp_of(path: &Path) -> Option<(u64, u64)> {
+    let md = std::fs::metadata(path).ok()?;
+    Some((
+        md.len(),
+        md.modified()
+            .ok()
+            .and_then(|m| m.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_secs())
+            .unwrap_or(0),
+    ))
+}
+
+/// [`edges`], but reading the file only when it has changed since last time.
+pub fn edges_cached(path: &Path) -> Cand {
+    let Some(stamp) = stamp_of(path) else {
+        return edges(path);
+    };
+    let cell = EDGE_CACHE.get_or_init(|| std::sync::Mutex::new(HashMap::new()));
+    // A poisoned lock means another thread panicked mid-update; the cache is
+    // only ever an optimisation, so fall through to the real read.
+    let Ok(map) = cell.lock() else {
+        return edges(path);
+    };
+    if let Some((seen, cand)) = map.get(path) {
+        if *seen == stamp {
+            return cand.clone();
+        }
+    }
+    drop(map);
+    let cand = edges(path);
+    if let Ok(mut map) = cell.lock() {
+        if map.len() >= EDGE_CACHE_MAX {
+            map.clear();
+        }
+        map.insert(path.to_path_buf(), (stamp, cand.clone()));
+    }
+    cand
+}
+
 /// First and last record timestamps, read from the two ends of the file rather
 /// than by parsing all of it. Line one is routinely a `leafUuid` record with no
 /// timestamp at all, so both ends scan for the first line that carries one.
@@ -1555,7 +1603,7 @@ pub fn sweep(reqs: &[PaneReq], home: &Path) -> Vec<(u32, Update)> {
                 let p = e.path();
                 if p.extension().is_some_and(|x| x == "jsonl") {
                     idx.push(cands.len());
-                    cands.push(edges(&p));
+                    cands.push(edges_cached(&p));
                     paths.push(p);
                 }
             }
@@ -2352,6 +2400,39 @@ mod tests {
             got[&111], got[&222],
             "two agents cannot hold one conversation"
         );
+    }
+
+    #[test]
+    fn the_edge_cache_notices_a_transcript_that_grew() {
+        // The sweep reads `edges` over every transcript in a live pane's project
+        // directory — 47 of them in one dir here — so the result is memoised.
+        // A cache that missed a growing file would pin a live conversation's
+        // "last spoken" to whenever it was first seen, and the /clear rotation
+        // rule is built entirely on that value.
+        let dir = std::env::temp_dir().join(format!("td-vitals-edge-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let p = dir.join("11111111-2222-3333-4444-555555555555.jsonl");
+
+        let line = |ts: &str| format!("{{\"type\":\"user\",\"timestamp\":\"{ts}\"}}\n");
+        std::fs::write(&p, line("2026-09-02T10:00:00.000Z")).unwrap();
+        let first = edges_cached(&p);
+        assert_eq!(first.began, first.spoke, "one record: both ends are it");
+
+        // Grow it. Size changes, so the stamp changes, so the cache must re-read.
+        let mut body = line("2026-09-02T10:00:00.000Z");
+        body.push_str(&line("2026-09-02T11:30:00.000Z"));
+        std::fs::write(&p, &body).unwrap();
+
+        let after = edges_cached(&p);
+        assert_eq!(after.began, first.began, "the first record never moves");
+        assert!(
+            after.spoke > first.spoke,
+            "a grown transcript must report the newer last record, got {:?} then {:?}",
+            first.spoke,
+            after.spoke
+        );
+        assert_eq!(after.spoke, edges(&p).spoke, "cached and uncached agree");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
