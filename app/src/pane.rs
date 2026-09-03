@@ -2005,6 +2005,10 @@ impl gpui::EventEmitter<OpenHelp> for TerminalView {}
 pub struct OpenAgentPanel;
 impl gpui::EventEmitter<OpenAgentPanel> for TerminalView {}
 
+/// Ctrl+Shift+U — the Σ usage face: what each AI subscription has left.
+pub struct OpenUsagePanel;
+impl gpui::EventEmitter<OpenUsagePanel> for TerminalView {}
+
 /// Ctrl+F (`global = false`) / Ctrl+Shift+F (`global = true`) was pressed in this
 /// pane — ask the workspace to open the find panel. In-pane find searches just
 /// this pane (and the panel centres over it); global find searches every pane.
@@ -3957,13 +3961,24 @@ impl TerminalView {
                     self.clear_scrollback(cx);
                     return;
                 }
-                // Ctrl+Shift+A → agent-watch (MCP) panel; Ctrl+Shift+D → this
-                // pane's DESIGN menu (theme); Ctrl+Shift+G → this pane's GAUGES
-                // tray (display). The Shift guard keeps raw Ctrl+A/D/G (line-start
-                // / EOF / BEL) reaching the PTY. The menus anchor at this pane's
-                // top-right, under the header, where the icon click opens them.
+                // Ctrl+Shift+A → agent-watch (MCP) panel; Ctrl+Shift+U → Σ usage;
+                // Ctrl+Shift+D → this pane's DESIGN menu (theme); Ctrl+Shift+G →
+                // this pane's GAUGES tray (display). The Shift guard keeps raw
+                // Ctrl+A/D/G/U (line-start / EOF / BEL / kill-line) reaching the
+                // PTY. The menus anchor at this pane's top-right, under the
+                // header, where the icon click opens them.
+                //
+                // These live HERE, not in `Workspace::on_key`, and the difference
+                // is the whole feature: a focused terminal takes the keystroke
+                // first, so the workspace handler only ever runs when no pane has
+                // focus — which is almost never. A chord added there compiles,
+                // tests green, and does nothing when you press it.
                 "a" => {
                     cx.emit(OpenAgentPanel);
+                    return;
+                }
+                "u" => {
+                    cx.emit(OpenUsagePanel);
                     return;
                 }
                 "d" => {
@@ -8661,6 +8676,13 @@ mod tests {
     fn keystroke_bytes_encodes_the_pty_protocol() {
         let bytes = |s: &str| keystroke_bytes(&Keystroke::parse(s).unwrap());
         assert_eq!(bytes("ctrl-c"), Some(vec![3]));
+        // Ctrl+U must stay readline's kill-line. Ctrl+SHIFT+U is TD's usage
+        // panel, and the Shift guard on that chord is the only thing keeping the
+        // two apart — a guard dropped there would silently take kill-line away
+        // from every shell in the app.
+        assert_eq!(bytes("ctrl-u"), Some(vec![0x15]));
+        // ...and the same for the neighbours that share the chord table.
+        assert_eq!(bytes("ctrl-a"), Some(vec![1]));
         assert_eq!(bytes("enter"), Some(b"\r".to_vec()));
         // shift/alt+enter = literal newline (line break) for claude/codex multiline
         assert_eq!(bytes("shift-enter"), Some(b"\n".to_vec()));

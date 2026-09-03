@@ -61,7 +61,8 @@ use gpui_platform::application;
 use pane::{
     AgentDone, AgentWorkingChanged, CloseFocusRead, ClosePane, DragPaneStart, FocusReadNav,
     OpenAgentPanel, OpenDisplayMenu, OpenFind, OpenFocusRead, OpenHelp, OpenLogoPicker,
-    OpenThemeMenu, PaintApplied, PaneRenamed, ReadNav, RequestCloseTab, TerminalView,
+    OpenThemeMenu, OpenUsagePanel, PaintApplied, PaneRenamed, ReadNav, RequestCloseTab,
+    TerminalView,
 };
 use serde::{Deserialize, Serialize};
 use theme::{PaneTheme, ThemeChoice};
@@ -2322,6 +2323,12 @@ fn make_pane_restored(
     cx.subscribe(&pane, |ws, _pane, _ev: &OpenHelp, cx| {
         ws.help_open = !ws.help_open;
         cx.notify();
+    })
+    .detach();
+    // Ctrl+Shift+A in any pane opens the agent-watch (MCP) panel — same surface
+    // the header robot icon toggles on.
+    cx.subscribe(&pane, |ws, _pane, _ev: &OpenUsagePanel, cx| {
+        ws.open_usage(cx);
     })
     .detach();
     // Ctrl+Shift+A in any pane opens the agent-watch (MCP) panel — same surface
@@ -7414,16 +7421,11 @@ impl Workspace {
             self.new_tab(window, cx);
             return;
         }
-        // Ctrl+Shift+U opens Σ usage — what each AI subscription has left.
-        //
-        // It had no key at all: the only way in was the `</>` card on the agent
-        // wall, so answering "how much is left this week" meant opening one
-        // overlay to reach another. `open_usage` also refreshes when the records
-        // are stale, off the frame, so the shortcut is the whole gesture.
-        if m.control && m.shift && ks.key.as_str() == "u" {
-            self.open_usage(cx);
-            return;
-        }
+        // Ctrl+Shift+U is NOT handled here — it is a pane chord that arrives as
+        // `OpenUsagePanel` (see the subscription above), exactly like
+        // Ctrl+Shift+A. It sat in this function first and did nothing at all: a
+        // focused terminal consumes the keystroke, so this handler only runs
+        // when no pane has focus.
         if m.control && !m.alt && self.tabs.len() > 1 {
             match ks.key.as_str() {
                 // ctrl+shift+pgup → MOVE the active tab left (clamped to its
