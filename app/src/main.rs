@@ -1,7 +1,7 @@
 //! terminal-delight — tiling tree · tabs · device bezel · menu-bar size scrubber.
 //!
 //! Splits divide ONLY the focused terminal's space (true tiling tree); every
-//! other pane keeps its exact place. ctrl+shift+t / [+]: new tab ·
+//! other pane keeps its exact place. ctrl+shift+t / [+]: new tab · ctrl+shift+u: Σ usage ·
 //! ctrl+pgup/pgdn: switch · right-click tab: rename · alt+arrows: pane focus
 //! by direction · ctrl+arrows: word-jump in the shell · alt+v / alt+h: split ↔ / ↕
 //! drag a tab to reorder · ctrl+click a tab: set its binder-divider colour
@@ -7414,6 +7414,16 @@ impl Workspace {
             self.new_tab(window, cx);
             return;
         }
+        // Ctrl+Shift+U opens Σ usage — what each AI subscription has left.
+        //
+        // It had no key at all: the only way in was the `</>` card on the agent
+        // wall, so answering "how much is left this week" meant opening one
+        // overlay to reach another. `open_usage` also refreshes when the records
+        // are stale, off the frame, so the shortcut is the whole gesture.
+        if m.control && m.shift && ks.key.as_str() == "u" {
+            self.open_usage(cx);
+            return;
+        }
         if m.control && !m.alt && self.tabs.len() > 1 {
             match ks.key.as_str() {
                 // ctrl+shift+pgup → MOVE the active tab left (clamped to its
@@ -14656,6 +14666,7 @@ impl Render for Workspace {
                         row(s.k_input_colour, s.input_colour),
                         row(&format!("🤖 {}", s.k_mother_bar), s.mcp),
                         row("Ctrl+Shift+A", s.mcp),
+                        row("Ctrl+Shift+U", s.usage),
                     ],
                 ))
                 .child(section(s.s_window, vec![row("Ctrl+Alt+T", s.new_window)]));
