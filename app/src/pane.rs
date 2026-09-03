@@ -3977,7 +3977,17 @@ impl TerminalView {
                     cx.emit(OpenAgentPanel);
                     return;
                 }
-                "u" => {
+                // Two keys for one panel, and the second is not redundant.
+                //
+                // fcitx5's Unicode addon binds Ctrl+Shift+U — `libunicode.so`
+                // carries both `Control+Shift+U` and `Control+Alt+Shift+U` — and
+                // an input method takes the chord before the compositor hands it
+                // on, so on a box running fcitx or ibus this arm never runs. It
+                // is kept because U is the obvious key for usage and most
+                // machines have nothing claiming it; Y is the one that always
+                // arrives. Verified by logging what the pane actually receives:
+                // Ctrl+Shift+A landed seven times, Ctrl+Shift+U never once.
+                "u" | "y" => {
                     cx.emit(OpenUsagePanel);
                     return;
                 }
@@ -8681,6 +8691,9 @@ mod tests {
         // two apart — a guard dropped there would silently take kill-line away
         // from every shell in the app.
         assert_eq!(bytes("ctrl-u"), Some(vec![0x15]));
+        // Ctrl+Y is the usage panel's second key — the one fcitx does not claim
+        // — so raw Ctrl+Y must likewise still reach the shell as its yank.
+        assert_eq!(bytes("ctrl-y"), Some(vec![0x19]));
         // ...and the same for the neighbours that share the chord table.
         assert_eq!(bytes("ctrl-a"), Some(vec![1]));
         assert_eq!(bytes("enter"), Some(b"\r".to_vec()));
