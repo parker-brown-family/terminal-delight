@@ -6894,7 +6894,17 @@ impl Render for TerminalView {
             .track_focus(&self.focus_handle(cx))
             .on_key_down(cx.listener(Self::on_key))
             .on_scroll_wheel(cx.listener(Self::on_wheel))
+            // BOTH buttons, and the second one is not optional. gpui's
+            // `on_mouse_down` filters on the button it is registered with
+            // (`event.button == button`), so a handler bound only to Left is
+            // never handed a right click — and every `ev.button ==
+            // MouseButton::Right` branch inside it is dead code that reads as
+            // live. The pane's copy/paste tray sat in exactly that state from
+            // the MVP commit onward: written, rendered, documented in the help
+            // modal, and unreachable, because the only registration was Left.
+            // Guarded by `pane_registers_every_button_its_mouse_handler_branches_on`.
             .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
+            .on_mouse_down(MouseButton::Right, cx.listener(Self::on_mouse_down))
             .on_mouse_move(cx.listener(Self::on_mouse_move))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .size_full()
@@ -8609,6 +8619,40 @@ mod tests {
                 "stop_propagation in TerminalView::on_key must belong to a \
                  branch that returns, or the chords the handler declines never \
                  reach the Workspace — see the INVARIANT comment above on_key"
+            );
+        }
+    }
+
+    #[test]
+    fn pane_registers_every_button_its_mouse_handler_branches_on() {
+        // gpui hands a `on_mouse_down(button, ..)` listener only the events for
+        // THAT button. So a branch inside the handler testing for a button the
+        // element never registered is dead code with no compile error, no
+        // warning and no failing test — it simply never runs, and it reads at
+        // the call site exactly like code that does.
+        //
+        // That is not hypothetical: the pane's right-click copy/paste tray was
+        // written, rendered and documented in the help modal, and never once
+        // opened, because the root div bound `on_mouse_down` for Left alone.
+        // The sticky note's pin landed in the same hole the day it was added.
+        // The source is the only place the pairing is observable.
+        let src = include_str!("pane.rs");
+        let at = src
+            .find("fn on_mouse_down(&mut self, ev: &MouseDownEvent")
+            .expect("TerminalView::on_mouse_down");
+        let end = src[at..].find("\n    fn ").expect("end of on_mouse_down");
+        let body = &src[at..at + end];
+        for button in ["Left", "Right", "Middle"] {
+            if !body.contains(&format!("ev.button == MouseButton::{button}")) {
+                continue;
+            }
+            assert!(
+                src.contains(&format!(
+                    ".on_mouse_down(MouseButton::{button}, cx.listener(Self::on_mouse_down))"
+                )),
+                "TerminalView::on_mouse_down branches on MouseButton::{button} but the \
+                 root div never registers that button, so the branch can never run — \
+                 register it beside the others in `render`"
             );
         }
     }
