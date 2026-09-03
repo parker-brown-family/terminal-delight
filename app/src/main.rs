@@ -1,7 +1,7 @@
 //! terminal-delight — tiling tree · tabs · device bezel · menu-bar size scrubber.
 //!
 //! Splits divide ONLY the focused terminal's space (true tiling tree); every
-//! other pane keeps its exact place. ctrl+shift+t / [+]: new tab · ctrl+shift+u: Σ usage ·
+//! other pane keeps its exact place. ctrl+shift+t / [+]: new tab · ctrl+shift+u|y: Σ usage ·
 //! ctrl+pgup/pgdn: switch · right-click tab: rename · alt+arrows: pane focus
 //! by direction · ctrl+arrows: word-jump in the shell · alt+v / alt+h: split ↔ / ↕
 //! drag a tab to reorder · ctrl+click a tab: set its binder-divider colour
@@ -14668,7 +14668,7 @@ impl Render for Workspace {
                         row(s.k_input_colour, s.input_colour),
                         row(&format!("🤖 {}", s.k_mother_bar), s.mcp),
                         row("Ctrl+Shift+A", s.mcp),
-                        row("Ctrl+Shift+U", s.usage),
+                        row("Ctrl+Shift+U / Y", s.usage),
                     ],
                 ))
                 .child(section(s.s_window, vec![row("Ctrl+Alt+T", s.new_window)]));
