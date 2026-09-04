@@ -94,14 +94,28 @@ if (absent.length) {
   process.exit(2);
 }
 
+/* ImageMagick 7 puts everything behind `magick`; version 6 — which is what
+   `apt-get install imagemagick` still gives you on the CI runner — ships the
+   verbs as their own binaries and has no `magick` at all. Ask, rather than
+   assume the version the author happened to have. */
+function identify(args) {
+  for (const argv of [['magick', 'identify', ...args], ['identify', ...args]]) {
+    try {
+      return execFileSync(argv[0], argv.slice(1), { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+    } catch (e) {
+      if (e.code !== 'ENOENT') throw e;
+    }
+  }
+  console.error('neither `magick` nor `identify` is on PATH — install imagemagick');
+  process.exit(2);
+}
+
 /* A scene that is not animated is a bug that looks exactly like a working one:
    the card renders, the robot is there, and he simply never moves. Assert the
    frame count rather than trusting the copy. */
 const still = [];
 for (const f of readdirSync(stageScenes)) {
-  const n = execFileSync('magick', ['identify', '-format', '%n\n', join(stageScenes, f)], {
-    encoding: 'utf8',
-  }).trim().split('\n')[0];
+  const n = identify(['-format', '%n\n', join(stageScenes, f)]).trim().split('\n')[0];
   if (Number(n) < 2) still.push(`${f} (${n} frame)`);
 }
 if (still.length) {
