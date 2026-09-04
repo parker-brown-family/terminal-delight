@@ -1,26 +1,45 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>terminal-delight — the agent wall</title>
-<meta name="description" content="terminal-delight as mission control for a fleet of coding agents: a read-only console of themed cards — each agent's project, model, effort, what it's doing right now, live token spend, and whether it's blocked on you. Filter by program and state; click a card to watch.">
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' rx='3' fill='%23021107'/><text y='12' x='2' font-size='11' fill='%2336ff7e'>▟</text></svg>">
+<meta name="description" content="terminal-delight as mission control for a fleet of coding agents: a read-only console of themed cards — each agent's project, what it's doing right now, live token spend, and three bars read from its own transcript (CTX WINDOW, FATIGUE, RELEVANCE) with the call they add up to. Filter by program and state; click a card to watch.">
+<!-- kiosk family chrome -->
+<link rel="icon" href="/favicon.ico" sizes="any">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; script-src 'self' 'unsafe-inline'; frame-src 'none'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta property="og:title" content="terminal-delight — the agent wall">
+<meta property="og:description" content="Mission control for a fleet of coding agents. Every pane is a card carrying three bars read from that agent's own transcript — CTX WINDOW, FATIGUE, RELEVANCE — and the call they add up to. Read-only; it never writes to a terminal.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://terminal-delight.brownfamilysports.com/agents.html">
+<meta property="og:image" content="https://terminal-delight.brownfamilysports.com/assets/agents-wall.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="stylesheet" href="/assets/kiosk-chrome.css">
+<script src="/assets/kiosk-theme.js"></script>
+<script src="/assets/kiosk-chrome.js" data-kiosk="agents" data-rail="on" data-paint="root" data-float="on"></script>
 <style>
+  /* The console's surfaces run through Omarchy roles; its STATUS colours do
+     not. assets/kiosk-theme.js writes the roles onto :root, so the glass, the
+     phosphor and the rules all follow whichever theme the reader picked
+     elsewhere in the family — while amber/red/cyan/violet/pink stay exactly
+     what they are, because on this page colour is a reading of the fleet.
+     miasma's red is #685742, and an error wearing it would look calm. */
   :root{
-    --bg:#04100a; --bg2:#020806; --ink:#cfeede; --dim:#5f8f76; --dim2:#3f6354;
-    --phos:#36ff7e; --phos-d:#1f9a52;
-    --amber:#ffb13c; --red:#ff5d52; --cyan:#46d9e8; --violet:#c084fc; --pink:#ff7eb6;
-    --line:#103b28; --row:#07140d;
+    --bg:#04100a; --bg-deep:var(--bg0, #020806); --ink:var(--fg, #cfeede);
+    --dim:var(--fg2, #5f8f76); --dim2:color-mix(in srgb, var(--fg2, #5f8f76) 62%, var(--bg0, #020806));
+    --phos:var(--acc, #36ff7e); --phos-d:color-mix(in srgb, var(--acc, #36ff7e) 55%, var(--bg0, #020806));
+    --amber:#ffb13c; --st-red:#ff5d52; --cyan:#46d9e8; --violet:#c084fc; --pink:#ff7eb6;
+    --line:var(--mut, #103b28); --row:var(--bg2, #07140d);
     --glow:0 0 8px;
     --gi:0.62; --scan:0.5;
-    --spill:rgba(54,255,126,.16);
+    --spill:color-mix(in srgb, var(--acc, #36ff7e) 16%, transparent);
   }
   *{box-sizing:border-box}
   html,body{margin:0;height:100%}
   body{
-    background:radial-gradient(130% 90% at 50% -8%, #0a1c12 0%, var(--bg) 52%, #010504 100%), var(--bg2);
+    background:radial-gradient(130% 90% at 50% -8%, color-mix(in srgb, var(--bg) 84%, var(--fg,#7dffa0)) 0%, var(--bg) 52%, var(--bg0, #010504) 100%), var(--bg-deep);
     color:var(--ink); min-height:100%;
     font-family:ui-monospace,"SF Mono","Cascadia Code",Menlo,Consolas,monospace;
     -webkit-font-smoothing:antialiased; letter-spacing:.01em;
-    display:flex; align-items:center; justify-content:center; padding:24px 22px 30px;
+    display:flex; align-items:center; justify-content:center; padding:74px 22px 30px;
   }
   body::after{content:"";position:fixed;left:0;right:0;bottom:0;height:26%;pointer-events:none;z-index:0;
     background:linear-gradient(#0000,#08160e66 45%,#0a1c1299);
@@ -56,7 +75,7 @@
     mix-blend-mode:multiply; opacity:var(--scan); }
   .screen::after{ content:""; position:absolute; inset:0; pointer-events:none; z-index:7; border-radius:14px;
     box-shadow:0 0 130px 12px #000000aa inset, 0 0 46px 5px #16ff7e16 inset;
-    background:radial-gradient(125% 92% at 50% 4%, #36ff7e12, #0000 52%); }
+    background:radial-gradient(125% 92% at 50% 4%, color-mix(in srgb, var(--phos) 7%, transparent), #0000 52%); }
   .sheen{ position:absolute; inset:0; pointer-events:none; z-index:8; border-radius:14px;
     background:radial-gradient(150% 56% at 26% -4%, #ffffff12, #fff0 42%); mix-blend-mode:screen; }
 
@@ -65,17 +84,17 @@
     padding-bottom:9px; border-bottom:1px solid var(--line); position:relative; z-index:4; }
   .eyebrow{ font-size:10.5px; letter-spacing:.32em; color:var(--dim); text-transform:uppercase; }
   .title{ font-size:17px; font-weight:800; letter-spacing:.16em; color:var(--phos);
-    text-shadow:var(--glow) #36ff7e88; }
+    text-shadow:var(--glow) color-mix(in srgb, var(--phos) 53%, transparent); }
   .roll{ margin-left:auto; display:flex; gap:15px; align-items:baseline; font-size:12.5px; flex-wrap:wrap; }
   .pill{ display:inline-flex; gap:5px; align-items:baseline; }
   .pill b{ font-weight:800; }
   .c-work{ color:var(--phos); } .c-block{ color:var(--amber); }
-  .c-err{ color:var(--red); } .c-done{ color:var(--phos-d); } .c-idle{ color:var(--dim); }
+  .c-err{ color:var(--st-red); } .c-done{ color:var(--phos-d); } .c-idle{ color:var(--dim); }
   .spend{ color:var(--ink); } .spend .k{ color:var(--dim); }
 
   .sub{ display:flex; gap:10px; align-items:center; font-size:11px; color:var(--dim);
     padding:7px 0 8px; position:relative; z-index:4; flex-wrap:wrap; }
-  .sub .dot{ width:6px;height:6px;border-radius:50%;background:var(--phos);box-shadow:var(--glow) #36ff7e; animation:beat 1.6s infinite; }
+  .sub .dot{ width:6px;height:6px;border-radius:50%;background:var(--phos);box-shadow:var(--glow) var(--phos); animation:beat 1.6s infinite; }
   @keyframes beat{ 0%,100%{opacity:.35} 50%{opacity:1} }
 
   /* ---- filter chips: program + state, like the in-app wall ---- */
@@ -153,6 +172,36 @@
   .sbox b{ color:color-mix(in srgb,var(--gc) 85%,#fff); font-weight:800; }
   .sbox .lab{ color:var(--dim2); }
 
+  /* ---- vitals: three bars and the call they add up to --------------------
+     The tone classes are the whole point. White is neutral and carries no
+     opinion; amber and red are only ever worn by a bar whose own threshold
+     the verdict has crossed, so scanning the wall for colour and reading the
+     chips give the same answer. */
+  .t-ok   { --vt: var(--ink); }
+  .t-warn { --vt: var(--amber); }
+  .t-bad  { --vt: var(--st-red); }
+
+  .mdl{ font-size:7px; letter-spacing:.07em; padding:2px 6px; border-radius:4px; display:inline-flex; gap:3px; align-items:center;
+    border:1px solid color-mix(in srgb,var(--gc) 34%,#0000); background:color-mix(in srgb,var(--gc) 9%,#0000); color:#9fc7b3; }
+  .mdl b{ color:color-mix(in srgb,var(--gc) 85%,#fff); font-weight:800; }
+  .mdl i{ font-style:normal; color:var(--dim2); }
+
+  .call{ font-size:7px; font-weight:800; letter-spacing:.09em; padding:2px 6px; border-radius:4px;
+    color:var(--vt); border:1px solid color-mix(in srgb,var(--vt) 42%,#0000);
+    background:color-mix(in srgb,var(--vt) 12%,#0000); cursor:help; }
+
+  .vitals{ display:grid; gap:2px; margin:5px 0 1px; }
+  .vitals.none{ font-size:7px; letter-spacing:.05em; color:var(--dim2); padding:3px 0 1px; }
+  .vitals .vq{ border:1px solid var(--dim2); border-radius:50%; padding:0 3px; margin-left:2px; cursor:help; }
+  .vrow{ display:grid; grid-template-columns:52px 1fr 26px; gap:5px; align-items:center; font-size:6.5px; letter-spacing:.06em; }
+  .vlab{ color:var(--dim2); white-space:nowrap; }
+  .vnum{ color:var(--vt); text-align:right; font-weight:700; font-variant-numeric:tabular-nums; }
+  .vbar{ height:3px; border-radius:2px; background:color-mix(in srgb,var(--line) 80%,#0000); overflow:hidden; }
+  /* The ramp spans the FILL, not the track — a gradient across the track puts
+     the alarming end of the scale on screen even when the bar is short. */
+  .vbar i{ display:block; height:100%; border-radius:2px;
+    background:linear-gradient(90deg, color-mix(in srgb,var(--vt) 45%,#0000) 0%, var(--vt) 100%); }
+
   .recap{ font-size:9px; line-height:1.45; color:#9fc7b3; min-height:34px;
     display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; }
   .recap .g{ color:var(--gc); margin-right:4px; }
@@ -166,7 +215,7 @@
     padding:2px 6px; border-radius:6px; border:1px solid; }
   .pip.working{ color:var(--phos); border-color:#1f6a40; background:#0c2417; box-shadow:0 0 10px -3px var(--phos); }
   .pip.blocked{ color:var(--amber); border-color:#5a3f12; background:#1c1404; }
-  .pip.error{ color:var(--red); border-color:#5a1f1c; background:#1c0807; }
+  .pip.error{ color:var(--st-red); border-color:#5a1f1c; background:#1c0807; }
   .pip.done{ color:var(--phos-d); border-color:#16482e; background:#0a1b11; }
   .pip.idle{ color:var(--dim); border-color:#173a28; background:#08160e; }
   .pip.shell{ color:var(--dim); border-color:#173a28; background:#08160e; }
@@ -244,7 +293,7 @@
   .t-h{ color:var(--phos); } .t-hp{ color:#eafff2; font-weight:600; }
   .t-b{ color:var(--phos-d); } .t-tool{ color:var(--cyan); font-weight:700; } .t-arg{ color:var(--dim); }
   .t-r{ color:#7fb79a; } .t-a{ color:var(--ink); } .t-mut{ color:var(--dim2); }
-  .t-err{ color:var(--red); font-weight:700; } .t-done{ color:var(--phos); font-weight:700; }
+  .t-err{ color:var(--st-red); font-weight:700; } .t-done{ color:var(--phos); font-weight:700; }
   .t-blk{ color:var(--amber); font-weight:700; } .t-opt{ color:var(--ink); } .t-optc{ color:var(--phos); }
   .cur{ display:inline-block; width:.62em; height:1.05em; vertical-align:text-bottom; background:var(--phos);
     box-shadow:0 0 7px var(--phos); animation:blink 1.05s steps(1) infinite; }
@@ -396,24 +445,24 @@ const GERUNDS = ['Reading files','Editing','Running tests','Searching','Reasonin
 // state: working|idle|blocked|error|done|shell · eff 0..1 · sess Σ · kind claude|codex|shell
 let A = [
   {g:'terminal-delight', tab:'render-hotpath', kind:'codex',  model:'gpt-5.5', eff:.85, state:'working', prompt:'Hoisting the grade coefficients out of the per-cell styled_lines loop', t:24, tok:126,  sess:2200},
-  {g:'terminal-delight', tab:'agents-kiosk',   kind:'claude', model:'opus-4.8', eff:.85, state:'working', prompt:'Rebuilding the live agent-wall kiosk as themed cards with real portrait art', t:11, tok:393,  sess:773},
-  {g:'terminal-delight', tab:'i18n-coverage',  kind:'claude', model:'opus-4.8', eff:1.0, state:'done',    prompt:'Localize the entire UI into nine languages, compiler-checked', t:0, tok:0, sess:24100},
-  {g:'terminal-delight', tab:'crt-webgl',      kind:'claude', model:'sonnet-4.6', eff:.55, state:'working', prompt:'Investigating retro-term WebGL CRT effects for the focus tube', t:33, tok:1800, sess:1800},
-  {g:'terminal-delight', tab:'focus-reader',   kind:'claude', model:'opus-4.8', eff:.85, state:'done',    prompt:'Wrap-to-fit reader with warp-aware select, no side jiggle', t:0, tok:0, sess:6900},
+  {g:'terminal-delight', tab:'agents-kiosk',   kind:'claude', model:'opus-4.8', eff:.85, state:'working', prompt:'Rebuilding the live agent-wall kiosk as themed cards with real portrait art', t:11, tok:393,  sess:773, ctx:62, fat:30, rel:71},
+  {g:'terminal-delight', tab:'i18n-coverage',  kind:'claude', model:'opus-4.8', eff:1.0, state:'done',    prompt:'Localize the entire UI into nine languages, compiler-checked', t:0, tok:0, sess:24100, ctx:88, fat:41, rel:72},
+  {g:'terminal-delight', tab:'crt-webgl',      kind:'claude', model:'sonnet-4.6', eff:.55, state:'working', prompt:'Investigating retro-term WebGL CRT effects for the focus tube', t:33, tok:1800, sess:1800, ctx:71, fat:22, rel:38},
+  {g:'terminal-delight', tab:'focus-reader',   kind:'claude', model:'opus-4.8', eff:.85, state:'done',    prompt:'Wrap-to-fit reader with warp-aware select, no side jiggle', t:0, tok:0, sess:6900, ctx:44, fat:18, rel:66},
 
-  {g:'aurora-api', tab:'cold-start',   kind:'claude', model:'opus-4.8', eff:.85, state:'working', prompt:'Profiling the cold-start path and caching the slow startup query', t:64, tok:1600, sess:1600},
-  {g:'aurora-api', tab:'auth-tests',   kind:'claude', model:'opus-4.8', eff:1.0, state:'blocked', prompt:'Add integration tests for the auth middleware — needs your review of the fixtures', t:0, tok:0, sess:4100},
+  {g:'aurora-api', tab:'cold-start',   kind:'claude', model:'opus-4.8', eff:.85, state:'working', prompt:'Profiling the cold-start path and caching the slow startup query', t:64, tok:1600, sess:1600, ctx:55, fat:33, rel:58},
+  {g:'aurora-api', tab:'auth-tests',   kind:'claude', model:'opus-4.8', eff:1.0, state:'blocked', prompt:'Add integration tests for the auth middleware — needs your review of the fixtures', t:0, tok:0, sess:4100, ctx:67, fat:29, rel:69},
   {g:'aurora-api', tab:'upload-retry', kind:'codex',  model:'gpt-5.5', eff:.85, state:'error',   prompt:'Add retry with exponential backoff to the upload client', t:0, tok:1800, sess:1800},
-  {g:'aurora-api', tab:'flaky-ci',     kind:'claude', model:'sonnet-4.6', eff:.55, state:'idle', prompt:'Triage the flaky CI tests and quarantine the worst offenders', t:0, tok:0, sess:0},
+  {g:'aurora-api', tab:'flaky-ci',     kind:'claude', model:'sonnet-4.6', eff:.55, state:'idle', prompt:'Triage the flaky CI tests and quarantine the worst offenders', t:0, tok:0, sess:0, ctx:12, fat:8, rel:84},
 
-  {g:'storefront-web', tab:'checkout-flow', kind:'claude', model:'opus-4.8', eff:.85, state:'working', prompt:'Refactoring the checkout flow into smaller, testable components', t:47, tok:690, sess:2400},
-  {g:'storefront-web', tab:'api-v2-docs',   kind:'claude', model:'opus-4.8', eff:.85, state:'done',    prompt:'Draft the API reference for the v2 endpoints', t:0, tok:0, sess:3000},
+  {g:'storefront-web', tab:'checkout-flow', kind:'claude', model:'opus-4.8', eff:.85, state:'working', prompt:'Refactoring the checkout flow into smaller, testable components', t:47, tok:690, sess:2400, ctx:78, fat:52, rel:41},
+  {g:'storefront-web', tab:'api-v2-docs',   kind:'claude', model:'opus-4.8', eff:.85, state:'done',    prompt:'Draft the API reference for the v2 endpoints', t:0, tok:0, sess:3000, ctx:35, fat:15, rel:77},
   {g:'storefront-web', tab:'onboarding',    kind:'codex',  model:'gpt-5.5', eff:.55, state:'idle',    prompt:'Polish the first-run onboarding copy', t:0, tok:0, sess:0},
 
-  {g:'ml-pipeline', tab:'feature-bench', kind:'claude', model:'sonnet-4.6', eff:.55, state:'working', prompt:'Benchmarking the feature-extraction stage on large batches', t:19, tok:540, sess:1100},
-  {g:'ml-pipeline', tab:'eval-harness',  kind:'claude', model:'opus-4.8', eff:.85, state:'blocked', prompt:'Wire the eval harness to the new scorer — confirm the rubric before I run it', t:0, tok:0, sess:5200},
+  {g:'ml-pipeline', tab:'feature-bench', kind:'claude', model:'sonnet-4.6', eff:.55, state:'working', prompt:'Benchmarking the feature-extraction stage on large batches', t:19, tok:540, sess:1100, ctx:49, fat:26, rel:63},
+  {g:'ml-pipeline', tab:'eval-harness',  kind:'claude', model:'opus-4.8', eff:.85, state:'blocked', prompt:'Wire the eval harness to the new scorer — confirm the rubric before I run it', t:0, tok:0, sess:5200, ctx:91, fat:44, rel:81},
 
-  {g:'infra', tab:'dep-bump', kind:'claude', model:'opus-4.8', eff:.85, state:'done', prompt:'Bump dependencies and fix the breaking changes', t:0, tok:0, sess:5500},
+  {g:'infra', tab:'dep-bump', kind:'claude', model:'opus-4.8', eff:.85, state:'done', prompt:'Bump dependencies and fix the breaking changes', t:0, tok:0, sess:5500, ctx:58, fat:74, rel:55},
   {g:'docs-site', tab:'static-gen', kind:'codex', model:'gpt-5.5', eff:.30, state:'idle', prompt:'Migrate the docs to the new static-site generator', t:0, tok:0, sess:0},
 
   {g:'workstation', tab:'build-watch', kind:'shell', model:null, eff:0, state:'shell', prompt:'cargo watch -x build', t:0, tok:0, sess:0},
@@ -423,6 +472,66 @@ A.forEach((a,i)=>a._id=i);
 
 const STATE = { working:{glyph:'▶'}, idle:{glyph:'○'}, blocked:{glyph:'‖'}, error:{glyph:'✕'}, done:{glyph:'✓'}, shell:{glyph:'·'} };
 const effWord = e => e>=.95?'max':e>=.8?'high':e>=.5?'medium':e>0?'low':'';
+
+/* ---- vitals -------------------------------------------------------------
+   The app reads three numbers out of each agent's own transcript and turns
+   them into one call. This mirrors the ladder in scripts/td-agent-vitals.mjs
+   so the page cannot drift into telling a story the tool would not tell.
+
+   The pair that earns the space is CTX WINDOW × RELEVANCE. A window that is
+   full of ballast and one that is full of load-bearing detail look identical
+   on a token counter, and they want opposite things: the first compacts for
+   free, the second must be handed off, because compaction would throw away
+   what is still in use.
+
+   Two rules of the real thing are kept exactly. Colour means direction and
+   length means number — so a bar is white while nothing is wrong and only
+   takes a colour at the threshold the verdict turns on, which is what stops
+   a calm-looking bar sitting next to a chip that says STOP. And RELEVANCE
+   diverges: high relevance is the good case on a roomy window and the alarming
+   one on a full window, so its ramp follows the call rather than the number.
+
+   Left out, deliberately: the two rules that need real token accounting —
+   ballast measured in absolute tokens, and turns-of-headroom. Inventing those
+   from staged data would be inventing evidence. -------------------------- */
+function verdict(a){
+  if (a.ctx == null) return null;
+  const fill = a.ctx, r = a.rel, f = a.fat;
+  if (f >= 70)               return {call:'STOP',     tone:'bad',  why:'fatigue '+f+' — a fresh session on the same task starts cleaner than this one continues.'};
+  if (fill >= 85 && r >= 65) return {call:'HAND OFF', tone:'bad',  why:fill+'% full and '+r+'% of it load-bearing. Compaction here throws away detail still in use.'};
+  if (fill >= 85)            return {call:'COMPACT',  tone:'warn', why:fill+'% full, most of it ballast. Compaction is cheap right now.'};
+  if (fill >= 60 && r < 45)  return {call:'COMPACT',  tone:'warn', why:'only '+r+'% of the window still serves the task — the rest is re-read every turn for nothing.'};
+  if (fill >= 60 || f >= 45) return {call:'WATCH',    tone:'warn', why:fill+'% full, fatigue '+f+'. Nothing wrong yet.'};
+  return {call:'RUN', tone:'ok', why:fill+'% full, '+r+'% relevant, room to spare.'};
+}
+
+/* A bar is neutral until it crosses the line the call turns on. */
+function ctxTone(v){ return v>=85?'bad':v>=60?'warn':'ok'; }
+function fatTone(v){ return v>=70?'bad':v>=45?'warn':'ok'; }
+function relTone(v, call){ return call==='HAND OFF'?'bad':(v<45?'warn':'ok'); }
+
+function vbar(lab, val, tone){
+  return `<div class="vrow t-${tone}"><span class="vlab">${lab}</span>`
+       + `<span class="vbar"><i style="width:${Math.max(0,Math.min(100,val))}%"></i></span>`
+       + `<span class="vnum">${val}%</span></div>`;
+}
+function vitalsHTML(a){
+  const v = verdict(a);
+  /* Codex panes draw no bars — #279. `total_token_usage` would reach CTX
+     WINDOW, but FATIGUE and RELEVANCE have no honest definition against a
+     rollout schema this different, and a plausible invented number is worse
+     than a blank. */
+  if (!v) return a.kind==='codex'
+    ? `<div class="vitals none">no vitals — codex rollout schema <span class="vq" title="Reachable for CTX WINDOW; FATIGUE and RELEVANCE are not defined for it yet.">?</span></div>`
+    : '';
+  return `<div class="vitals">`
+    + vbar('CTX WINDOW', a.ctx, ctxTone(a.ctx))
+    + vbar('FATIGUE',    a.fat, fatTone(a.fat))
+    + vbar('RELEVANCE',  a.rel, relTone(a.rel, v.call))
+    + `</div>`;
+}
+/* 'opus-4.8' is a model FILE name; the chip shows the model. */
+const mdlWord = m => String(m||'').split('-')[0].toUpperCase() || 'SHELL';
 const mmss = s => (s>=60? Math.floor(s/60)+'m '+String(s%60).padStart(2,'0')+'s' : s+'s');
 const ktok = n => n>=1000 ? (n/1000).toFixed(n>=10000?0:1)+'k' : String(n);
 const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
@@ -460,9 +569,13 @@ function cardHTML(a){
   const art = G.art
     ? `<div class="art"><img src="${G.art}" alt="" loading="lazy"><div class="arttone"></div></div>`
     : `<div class="art gen"><span class="mono">${esc(a.tab.slice(0,2).toUpperCase())}</span><div class="arttone"></div></div>`;
+  /* One chip, model then effort. It replaced a MODEL box and an EFFORT box in
+     #273 — the MODEL box never once showed a model, because parse_model read
+     a --model flag nobody passes. */
+  const v = verdict(a);
   const model = shell ? `<span class="sbox"><span class="lab">SERVICE</span> <b>SHELL</b></span>`
-    : `<span class="sbox"><span class="lab">MODEL</span> <b>${esc((a.model||'').toUpperCase())}</b></span>`
-      + (a.state==='working'?`<span class="sbox"><span class="lab">EFFORT</span> <b>${effWord(a.eff).toUpperCase()}</b></span>`:'');
+    : `<span class="mdl"><b>${esc(mdlWord(a.model))}</b><i>·</i>${effWord(a.eff).toUpperCase()}</span>`
+      + (v ? `<span class="call t-${v.tone}" title="${esc(v.why)}">${v.call}</span>` : '');
   const ger = a.state==='working' ? `<span class="ger">${GERUNDS[(gerundPhase+a.t)%GERUNDS.length]}… </span>` : '';
   const recap = shell ? `<span class="g">$</span>${esc(a.prompt)}` : `<span class="g">›</span>${ger}${esc(a.prompt)}`;
   const dT = (a.state==='working' && a.tok) ? `<span class="d">Δ${ktok(a.tok)}</span>` : `<span class="d">Δ0</span>`;
@@ -475,6 +588,7 @@ function cardHTML(a){
       <div class="cwd">${esc(a.g)}/</div>
       ${art}
       <div class="statbar">${model}</div>
+      ${vitalsHTML(a)}
       <div class="recap">${recap}</div>
       <div class="cardbot">${dT}${sS}<span class="pip ${a.state}">${pg} ${pipTxt}</span></div>
     </div>
@@ -684,7 +798,7 @@ let usPick=0;
 // A gauge is read before it is understood, so this ramp is deliberately NOT themed:
 // green under two thirds, amber past it, red in the last sixth. A palette that made
 // 90% of a weekly limit look calm would be a prettier lie than TD is willing to tell.
-function pressure(f){ return f>=0.85?'var(--red)':f>=0.66?'var(--amber)':'var(--phos)'; }
+function pressure(f){ return f>=0.85?'var(--st-red)':f>=0.66?'var(--amber)':'var(--phos)'; }
 function meter(frac,col,h){ const f=Math.max(0,Math.min(1,frac));
   // a non-zero share never renders as an empty track: the difference between "barely
   // used" and "not reporting" is the whole reason to look at the row.

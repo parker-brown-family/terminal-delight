@@ -9,6 +9,49 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ### Added
 
+- **The kiosk family is one site.** All seven pages — info · omarchy · agents ·
+  tv · global · gamba · start-crawl — now carry the same head furniture and a
+  shared strip that names every other kiosk, so `tv`, `global` and `gamba`
+  stop being places you can reach and not leave.
+  - **A real favicon.** `favicon.ico` (16/32/48) and `favicon.svg`, cut down
+    from the app's own CRT mark until it survives 16px: the tube silhouette
+    and the three phosphor panes, without the stand, the scanlines or the
+    eight lines of text that are a grey smudge at that size. `/favicon.ico`
+    stops answering 404 on every page load.
+  - **The theme travels.** The palette table moved out of `omarchy.html` into
+    `assets/kiosk-theme.js`, and the pick is remembered under one key for the
+    whole family — choose gruvbox on the Omarchy kiosk and the info page and
+    the agent wall are already wearing it. `?t=<theme>` still opens a page
+    already dressed.
+  - **The cabinets keep their cabinets.** A console television that turns
+    tokyo-night is no longer a console television, so on `tv`, `global`,
+    `gamba` and `start-crawl` the roles are written onto the strip alone. It
+    also keeps GAMBA's own `--red`, which a document-level repaint would have
+    silently replaced with whatever red the palette shipped.
+  - Social cards and a content-security policy on every page, not just the two
+    newest.
+- **`scripts/verify-kiosks.mjs`** — 104 assertions over the family: a clean
+  console on every page, head parity, the strip's links, the pick surviving a
+  navigation, the cabinets *not* repainting, the wall's bars agreeing with its
+  verdicts, and no horizontal overflow at six widths down to 390px. It asserts
+  on computed style and the console rather than on screenshots, because the
+  defect it was written for was invisible in a screenshot.
+
+### Changed
+
+- **The agent wall shows what the app shows.** Each card carries the three bars
+  read from that agent's own transcript — CTX WINDOW, FATIGUE, RELEVANCE — and
+  the call they add up to, replacing the MODEL and EFFORT boxes with one
+  `OPUS · MAX` chip. The verdict ladder mirrors `scripts/td-agent-vitals.mjs`,
+  so a bar cannot read calm while the chip beside it says to act, and
+  RELEVANCE diverges: high relevance is the good case on a roomy window and the
+  alarming one on a full one. Codex panes draw no bars, which is the honest
+  state of `#279` rather than an invented number.
+- The wall's screenshot on the info page was two generations stale — it still
+  showed the pre-card row layout and an effort gauge beside a model box that
+  never once displayed a model. Regenerated from the live kiosk, and at half
+  the file size.
+
 - **An Omarchy kiosk.** `omarchy.html` joins the kiosk family (info · agents ·
   tv · global · gamba · start-crawl) and tells the desktop-integration story the
   README has been carrying alone: the two-shelf paint overlay, the eleven shared
