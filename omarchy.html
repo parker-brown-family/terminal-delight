@@ -7,11 +7,18 @@
        The palette payload is inline, the mascot art is same-origin. -->
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; script-src 'self' 'unsafe-inline'; frame-src 'none'; object-src 'none'; base-uri 'self'; form-action 'none'" />
   <title>terminal-delight — the Omarchy kiosk</title>
+<!-- kiosk family chrome -->
+<link rel="icon" href="/favicon.ico" sizes="any">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/assets/kiosk-chrome.css">
+<script src="/assets/kiosk-theme.js"></script>
+<script src="/assets/kiosk-chrome.js" data-kiosk="omarchy" data-rail="off" data-paint="none" data-float="off"></script>
   <meta name="description" content="Terminal Delight on Omarchy: panes that wear the desktop's own colour schemes, a keyboard-first paint overlay over the whole workspace, per-agent status on the tab bar, and SUPER+ALT+T to pull any terminal tile — agents and all — into the wall." />
 
   <meta property="og:title" content="terminal-delight — the Omarchy kiosk" />
   <meta property="og:description" content="The desktop is agentic. So is the terminal. Wear the desktop's own themes — seven of Omarchy's and one of ours, wallpaper and all — paint the whole workspace from the keyboard, and watch every agent from the tab bar." />
   <meta property="og:type" content="website" />
+  <meta property="og:url" content="https://terminal-delight.brownfamilysports.com/omarchy.html" />
   <meta property="og:image" content="assets/crt-wall.png" />
   <meta name="twitter:card" content="summary_large_image" />
 
@@ -1228,39 +1235,12 @@
    Selecting one rewrites the page's role variables — which is exactly what
    painting a pane does to its colour table, and why the texture never moves.
    -------------------------------------------------------------------------- */
-const PALETTES = [
-  /* Last Voyage is ours, not Omarchy's: the eight ANSI slots are read off
-     the plate itself, which is an ink drawing in two inks. There is
-     no green and no blue in it, so those slots take the rigging brown and
-     the burnt hull rather than inventing a hue the picture never had —
-     miasma does the same thing with its olives.
+/* The table moved to assets/kiosk-theme.js when the other kiosks needed it
+   too. One copy: a palette added there appears here, on the wall, and in
+   the family strip at the same moment. */
+const PALETTES = TD_KIOSK.PALETTES;
 
-     It leads the array on purpose: PALETTES[0] is what the page paints
-     before a single pixel has scrolled, and the hero wears it too, so the
-     two agree instead of the spine repainting on the first frame. */
-  {"name":"last-voyage","mode":"dark","bg":"#14100C","bg2":"#201913","bg0":"#0B0907","fg":"#E2C79A","fg2":"#A07A50","fgb":"#F3D69B","acc":"#DD6D16","mut":"#6C4727","sel":"#54351E","red":"#E2542A","grn":"#93663B","yel":"#D8A55E","blu":"#A1561C","mag":"#B7935E","cyn":"#F58E28"},
-  {"name":"gruvbox","mode":"dark","bg":"#282828","bg2":"#3c3836","bg0":"#161616","fg":"#d4be98","fg2":"#7c6f64","fgb":"#d4be98","acc":"#7daea3","mut":"#665c54","sel":"#504945","red":"#ea6962","grn":"#a9b665","yel":"#d8a657","blu":"#7daea3","mag":"#d3869b","cyn":"#89b482"},
-  {"name":"osaka-jade","mode":"dark","bg":"#111c18","bg2":"#23372B","bg0":"#090f0d","fg":"#C1C497","fg2":"#81B8A8","fgb":"#F7E8B2","acc":"#509475","mut":"#53685B","sel":"#32473B","red":"#FF5345","grn":"#549e6a","yel":"#459451","blu":"#509475","mag":"#D2689C","cyn":"#2DD5B7"},
-  {"name":"tokyo-night","mode":"dark","bg":"#1a1b26","bg2":"#24283b","bg0":"#0e0e14","fg":"#a9b1d6","fg2":"#565f89","fgb":"#c0caf5","acc":"#7aa2f7","mut":"#414868","sel":"#292e42","red":"#f7768e","grn":"#9ece6a","yel":"#e0af68","blu":"#7aa2f7","mag":"#ad8ee6","cyn":"#449dab"},
-  {"name":"ethereal","mode":"dark","bg":"#060B1E","bg2":"#131a3a","bg0":"#030610","fg":"#ffcead","fg2":"#6d7db6","fgb":"#ffcead","acc":"#7d82d9","mut":"#6d7db6","sel":"#252e56","red":"#ED5B5A","grn":"#92a593","yel":"#E9BB4F","blu":"#7d82d9","mag":"#c89dc1","cyn":"#a3bfd1"},
-  {"name":"everforest","mode":"dark","bg":"#2d353b","bg2":"#343f44","bg0":"#181d20","fg":"#d3c6aa","fg2":"#4f585e","fgb":"#d3c6aa","acc":"#7fbbb3","mut":"#475258","sel":"#3d484d","red":"#e67e80","grn":"#a7c080","yel":"#dbbc7f","blu":"#7fbbb3","mag":"#d699b6","cyn":"#83c092"},
-  {"name":"miasma","mode":"dark","bg":"#222222","bg2":"#2c2c2c","bg0":"#121212","fg":"#c2c2b0","fg2":"#555555","fgb":"#c2c2b0","acc":"#78824b","mut":"#666666","sel":"#383838","red":"#685742","grn":"#5f875f","yel":"#b36d43","blu":"#78824b","mag":"#bb7744","cyn":"#c9a554"},
-  {"name":"retro-82","mode":"dark","bg":"#05182e","bg2":"#0a2540","bg0":"#020c17","fg":"#f6dcac","fg2":"#3f8f8a","fgb":"#f6dcac","acc":"#faa968","mut":"#2a6b78","sel":"#134e5a","red":"#f85525","grn":"#028391","yel":"#e97b3c","blu":"#3f8f8a","mag":"#3f8f8a","cyn":"#8cbfb8"}
-]
-;
-
-const ROLE_SLOTS = [
-  ['bg',  'black',   'background'],
-  ['red', 'red',     'red'],
-  ['grn', 'green',   'green'],
-  ['yel', 'yellow',  'yellow'],
-  ['blu', 'blue',    'blue'],
-  ['mag', 'magenta', 'magenta'],
-  ['cyn', 'cyan',    'cyan'],
-  ['fg',  'white',   'foreground'],
-  ['mut', 'br black','muted'],
-  ['fgb', 'cursor',  'bright_fg'],
-];
+const ROLE_SLOTS = TD_KIOSK.ROLE_SLOTS;
 
 const root  = document.documentElement;
 const rail  = document.getElementById('rail');
@@ -1297,7 +1277,7 @@ function apply(p, persist) {
   }
 
   if (persist) {
-    try { localStorage.setItem('td-omarchy-theme', p.name); } catch (e) { /* private window */ }
+    TD_KIOSK.remember(p.name);   // one key for the whole family
   }
 
   // Switching to or from a light palette changes the scrim pair, and the
@@ -1496,7 +1476,7 @@ if (PALETTES.length) build();
     dress(name, null);
   };
   try {
-    const remembered = localStorage.getItem('td-omarchy-theme');
+    const remembered = TD_KIOSK.recall();   // migrates the old key forward
     if (remembered && byName.has(remembered)) pinned = remembered;
   } catch (e) { /* private window */ }
   const asked = new URLSearchParams(location.search).get('t');

@@ -7,12 +7,19 @@
        images are self-only, fonts limited to Google. Locks in the "no embeds" call. -->
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; script-src 'self' 'unsafe-inline'; frame-src 'none'; object-src 'none'; base-uri 'self'; form-action 'none'" />
   <title>terminal-delight — GPU-native Linux terminal</title>
+<!-- kiosk family chrome -->
+<link rel="icon" href="/favicon.ico" sizes="any">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/assets/kiosk-chrome.css">
+<script src="/assets/kiosk-theme.js"></script>
+<script src="/assets/kiosk-chrome.js" data-kiosk="info" data-rail="on" data-paint="root" data-float="off"></script>
   <meta name="description" content="A GPU-native Linux terminal in Rust (gpui + alacritty_terminal): hot-reloadable CRT-flavored themes, tiling multi-pane, per-pane monitor-OSD grading. MIT — download the AppImage or build from source." />
 
   <!-- Open Graph / social cards -->
   <meta property="og:title" content="terminal-delight" />
   <meta property="og:description" content="GPU-native Linux terminal with hot-reloadable CRT-flavored themes and tiling multi-pane." />
   <meta property="og:type" content="website" />
+  <meta property="og:url" content="https://terminal-delight.brownfamilysports.com/info.html" />
   <meta property="og:image" content="assets/crt-wall.png" />
   <meta name="twitter:card" content="summary_large_image" />
 
@@ -21,17 +28,23 @@
   <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=JetBrains+Mono:wght@400;700;800&family=Inter:wght@400;600;800&display=swap" rel="stylesheet" />
 
   <style>
+    /* Every colour below is the page's original green with an Omarchy role in
+       front of it. assets/kiosk-theme.js writes those roles onto :root as
+       inline custom properties, which outrank these declarations — so the page
+       wears whatever theme the reader last picked on any kiosk in the family,
+       and falls back to the phosphor it always had when scripting is off or
+       storage is blocked. The literals are the fallbacks, not dead code. */
     :root {
       --bg:       #07120c;
-      --bg-2:     #0a1a10;
-      --surface:  #0e2418;
-      --line:     #14442b;
-      --text:     #7dffa0;
-      --text-dim: #4f9f6c;
-      --accent:   #36ff86;
-      --accent-d: #0c9b4c;
-      --warn:     #ffd166;
-      --danger:   #ff6b6b;
+      --bg-2:     var(--bg2, #0a1a10);
+      --surface:  var(--sel, #0e2418);
+      --line:     var(--mut, #14442b);
+      --text:     var(--fg,  #7dffa0);
+      --text-dim: var(--fg2, #4f9f6c);
+      --accent:   var(--acc, #36ff86);
+      --accent-d: color-mix(in srgb, var(--acc, #36ff86) 58%, var(--bg0, #04140a));
+      --warn:     var(--yel, #ffd166);
+      --danger:   var(--red, #ff6b6b);
       --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
       --sans: "Inter", system-ui, sans-serif;
       --display: "Space Grotesk", "Inter", system-ui, sans-serif;
@@ -41,7 +54,7 @@
     html { scroll-behavior: smooth; }
     body {
       margin: 0;
-      background: radial-gradient(120% 80% at 50% -10%, var(--bg-2) 0%, var(--bg) 55%, #050d08 100%);
+      background: radial-gradient(120% 80% at 50% -10%, var(--bg-2) 0%, var(--bg) 55%, var(--bg0, #050d08) 100%);
       color: var(--text);
       font-family: var(--sans);
       line-height: 1.55;
@@ -69,7 +82,7 @@
     nav.top {
       position: sticky; top: 0; z-index: 5;
       backdrop-filter: blur(8px);
-      background: rgba(7,18,12,0.78);
+      background: color-mix(in srgb, var(--bg) 78%, transparent);
       border-bottom: 1px solid var(--line);
     }
     nav.top .wrap { display: flex; align-items: center; gap: 22px; height: 54px; }
@@ -94,20 +107,20 @@
       background: var(--surface); color: var(--text); cursor: pointer; transition: 120ms;
     }
     .btn:hover { text-decoration: none; border-color: var(--accent); transform: translateY(-1px); }
-    .btn.primary { background: linear-gradient(135deg, rgba(54,255,134,0.28), rgba(54,255,134,0.08)); border-color: var(--accent); color: #eafff2; }
+    .btn.primary { background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 28%, transparent), color-mix(in srgb, var(--accent) 8%, transparent)); border-color: var(--accent); color: var(--fgb, #eafff2); }
 
     /* ---- demo frame ---- */
     .screen {
       margin: 34px auto 0; max-width: 940px; position: relative;
       border: 1px solid var(--line); border-radius: 14px; overflow: hidden;
-      background: #000; box-shadow: 0 30px 80px -30px rgba(54,255,134,0.25), 0 0 0 1px rgba(0,0,0,0.4);
+      background: #000; box-shadow: 0 30px 80px -30px color-mix(in srgb, var(--accent) 25%, transparent), 0 0 0 1px rgba(0,0,0,0.4);
     }
     .screen .bar { display: flex; align-items: center; gap: 8px; padding: 9px 13px; background: var(--bg-2); border-bottom: 1px solid var(--line); font-family: var(--mono); font-size: 12px; color: var(--text-dim); }
     .screen .bar .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 8px var(--accent); }
     .screen img { display: block; width: 100%; }
     .screen .playnote { position: absolute; left: 0; right: 0; bottom: 0; padding: 14px; background: linear-gradient(transparent, rgba(0,0,0,0.85)); font-family: var(--mono); font-size: 13px; color: var(--text); }
     .screen .playnote b { color: var(--accent); }
-    .screen .mock { margin: 0; padding: 22px 20px 30px; font-family: var(--mono); font-size: clamp(12px, 1.6vw, 15px); line-height: 1.7; color: var(--text); text-align: left; white-space: pre-wrap; word-break: break-word; text-shadow: 0 0 6px rgba(54,255,134,0.45); }
+    .screen .mock { margin: 0; padding: 22px 20px 30px; font-family: var(--mono); font-size: clamp(12px, 1.6vw, 15px); line-height: 1.7; color: var(--text); text-align: left; white-space: pre-wrap; word-break: break-word; text-shadow: 0 0 6px color-mix(in srgb, var(--accent) 45%, transparent); }
     .screen .mock .p { color: var(--accent); font-weight: 700; }
     .screen .mock .d { color: #6fd0ff; }
     .screen .mock .g { color: #9affc0; }
@@ -116,7 +129,7 @@
     /* ---- feature grid ---- */
     .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; margin-top: 30px; }
     .card { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 20px; }
-    .card h3 { margin: 0 0 6px; font-size: 17px; color: #eafff2; }
+    .card h3 { margin: 0 0 6px; font-size: 17px; color: var(--fgb, #eafff2); }
     .card .ic { font-family: var(--mono); color: var(--accent); font-size: 20px; }
     .card p { margin: 6px 0 0; color: var(--text-dim); font-size: 14.5px; }
 
@@ -130,7 +143,7 @@
     /* ---- lightbox ---- */
     #lightbox { position: fixed; inset: 0; z-index: 50; display: none; background: rgba(2,8,5,0.93); backdrop-filter: blur(7px); }
     #lightbox.open { display: flex; align-items: center; justify-content: center; }
-    #lightbox .lb-img { max-width: 92vw; max-height: 80vh; object-fit: contain; border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 30px 90px -20px rgba(54,255,134,0.35); background: #000; }
+    #lightbox .lb-img { max-width: 92vw; max-height: 80vh; object-fit: contain; border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 30px 90px -20px color-mix(in srgb, var(--accent) 35%, transparent); background: #000; }
     #lightbox .lb-cap { position: absolute; bottom: 20px; left: 0; right: 0; text-align: center; font-family: var(--mono); font-size: 13px; color: var(--text); padding: 0 16px; }
     #lightbox .lb-cap .ct { color: var(--text-dim); margin-left: 12px; }
     #lightbox .lb-btn { position: absolute; background: var(--surface); border: 1px solid var(--line); color: var(--text); font-family: var(--mono); cursor: pointer; display: flex; align-items: center; justify-content: center; transition: 120ms; user-select: none; }
@@ -143,7 +156,7 @@
 
     /* ---- run callout ---- */
     .runcard { border: 1px solid var(--line); border-radius: 14px; background: var(--bg-2); padding: 26px; display: grid; grid-template-columns: 1fr auto; gap: 22px; align-items: center; }
-    .runcard h3 { margin: 0 0 6px; color: #eafff2; }
+    .runcard h3 { margin: 0 0 6px; color: var(--fgb, #eafff2); }
     .runcard p { margin: 0; color: var(--text-dim); font-size: 14.5px; }
     @media (max-width: 640px) { .runcard { grid-template-columns: 1fr; } }
 
@@ -179,12 +192,12 @@
     .pillar > summary::after { content: "＋"; margin-left: auto; color: var(--text-dim); font-family: var(--mono); }
     .pillar[open] > summary::after { content: "－"; }
     .pillar .pic { font-size: 19px; flex: none; width: 26px; text-align: center; }
-    .pillar .pt { font-family: var(--display); font-weight: 700; color: #eafff2; font-size: 16.5px; }
+    .pillar .pt { font-family: var(--display); font-weight: 700; color: var(--fgb, #eafff2); font-size: 16.5px; }
     .pillar .pone { color: var(--text-dim); font-size: 13.5px; flex: 1 1 240px; }
     .pillar[open] > summary { border-bottom: 1px solid var(--line); }
     .pillar .pbody { padding: 14px 18px 18px; color: var(--text-dim); font-size: 14.5px; line-height: 1.62; }
     .pillar .pbody a { white-space: nowrap; }
-    .pillar.hero-pillar { border-color: var(--accent); box-shadow: 0 0 0 1px rgba(54,255,134,.22), 0 0 26px -10px var(--accent); }
+    .pillar.hero-pillar { border-color: var(--accent); box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 22%, transparent), 0 0 26px -10px var(--accent); }
     @media (max-width: 560px) { .pillar .pone { flex-basis: 100%; } }
   </style>
 </head>
@@ -220,8 +233,8 @@
 
       <!-- HERO: lead with the agentic hook. Real capture, staged demo data only. -->
       <div class="screen" id="hero-demo">
-        <div class="bar"><span class="dot"></span> the agent wall — every agent's project · model · effort · live task · token spend</div>
-        <a href="agents.html"><img src="assets/agents-wall.png" alt="the terminal-delight agent wall: a CRT scoreboard of agent cards grouped by project, each card showing the model, effort, what the agent is doing right now, and live token spend, with working/blocked/error/done states colour-coded" /></a>
+        <div class="bar"><span class="dot"></span> the agent wall — every agent's project · live task · CTX WINDOW · FATIGUE · RELEVANCE · the call</div>
+        <a href="agents.html"><img src="assets/agents-wall.png" alt="the terminal-delight agent wall: a CRT scoreboard of agent cards grouped by project, each card showing what the agent is doing right now, live token spend, and three bars read from its own transcript — context window, fatigue and relevance — with working/blocked/error/done states colour-coded" /></a>
         <div class="playnote">▶ The in-app wall, live on the web — <a href="agents.html" style="color:var(--accent)">open the kiosk ↗</a>. Read-only; staged demo data, never real prompts.</div>
       </div>
     </div>
@@ -241,7 +254,7 @@
 
         <details class="pillar">
           <summary><span class="pic">▟</span><span class="pt">The agent dashboard</span><span class="pone">a living scoreboard — grouped cards, live state, needs-you first</span></summary>
-          <div class="pbody">One themed card per agent, grouped by project: model, effort, the live action, Δ/Σ token spend, and a state you scan in a glance (working · blocked · error · done · idle). Blocked and errored agents are surfaced first, so your attention goes where it's needed. <a href="agents.html">Open the live wall ↗</a> · <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/docs/features/02-agent-dashboard.md">full doc ↗</a></div>
+          <div class="pbody">One themed card per agent, grouped by project: the live action, Δ/Σ token spend, a state you scan in a glance (working · blocked · error · done · idle), and three bars read from that agent's own transcript — <b>CTX WINDOW</b>, <b>FATIGUE</b>, <b>RELEVANCE</b> — with the call they add up to. The pair that earns the space is context against relevance: a window full of ballast and a window full of detail still in use look identical on a token counter, and they want opposite things — compact the first, hand the second off. Blocked and errored agents are surfaced first, so your attention goes where it's needed. <a href="agents.html">Open the live wall ↗</a> · <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/docs/features/02-agent-dashboard.md">full doc ↗</a></div>
         </details>
 
         <details class="pillar">
@@ -375,8 +388,8 @@
 
       <p style="margin-top:18px;font-size:1.06em">And it's <b>centred into a scoreboard</b> — the <b>agent wall</b>. Every pane becomes a row: its <b>tab group</b> (colour-banded by project), <b>model</b> &amp; <b>effort</b>, and a one-line read of <b>what that agent is doing right now</b> — with a live turn timer, accruing token spend, and a state you can scan in a glance: <span style="color:var(--accent)">working</span>, <span style="color:var(--warn)">blocked on you</span>, <span style="color:#ff5d52">errored</span>, or done. A rollup header totals the fleet's spend.</p>
       <figure style="margin:14px 0 0">
-        <a href="agents.html"><img loading="lazy" src="assets/agents-wall.png" alt="the terminal-delight agent wall: a green-phosphor CRT scoreboard titled AGENT WALL with a rollup of working/blocked/error/done counts and total token spend, over colour-banded rows — each showing a tab group, the CLAUDE model and effort gauge, and a live one-line summary of what that agent is currently doing, with a turn timer and token totals on the right" style="width:100%;border-radius:12px;display:block"></a>
-        <figcaption style="font-size:.92em;color:var(--text-dim);margin-top:8px">The agent wall — tab group › tab · model · effort · what it's doing <em>now</em> · live tokens. <a href="agents.html">Open the live kiosk ↗</a></figcaption>
+        <a href="agents.html"><img loading="lazy" src="assets/agents-wall.png" alt="the terminal-delight agent wall: a CRT scoreboard titled AGENT WALL with a rollup of working/blocked/error/done counts and total token spend, over colour-banded cards — each showing a tab group, a model-and-effort chip, a live one-line summary of what that agent is doing, and its context, fatigue and relevance bars with the call they add up to" style="width:100%;border-radius:12px;display:block"></a>
+        <figcaption style="font-size:.92em;color:var(--text-dim);margin-top:8px">The agent wall — tab group › tab · what it's doing <em>now</em> · live tokens · and the three bars, with the call. <a href="agents.html">Open the live kiosk ↗</a></figcaption>
       </figure>
       <div class="cta" style="justify-content:flex-start;margin-top:14px">
         <a class="btn primary" href="agents.html">▟ Open the live agent wall ↗</a>
@@ -391,7 +404,7 @@
       <div class="eyebrow">Gallery · click any shot to zoom</div>
       <h2>Real captures — staged with demo content</h2>
       <div class="gallery">
-        <figure><a href="agents.html"><img loading="lazy" src="assets/agents-wall.png" alt="the agent wall scoreboard: colour-banded rows showing each agent's tab group, model, effort and what it is doing right now, with live timers and token spend"></a><figcaption>the <a href="agents.html">agent wall</a> — every agent's model, effort &amp; live task, on CRT glass</figcaption></figure>
+        <figure><a href="agents.html"><img loading="lazy" src="assets/agents-wall.png" alt="the agent wall scoreboard: colour-banded cards showing each agent's tab group, what it is doing right now, live timers and token spend, and its context, fatigue and relevance bars"></a><figcaption>the <a href="agents.html">agent wall</a> — every agent's live task and vitals, on CRT glass</figcaption></figure>
         <figure><img loading="lazy" src="assets/crt-wall.png" alt="a wall of barrel-warped CRT terminal panes, each a different colour"><figcaption>six curved CRTs — each its own colour &amp; size, colour-banded tab groups</figcaption></figure>
         <figure><img loading="lazy" src="assets/showcase-themes.png" alt="three terminal panes in one window: a flat light 'paper' page with the background dimmed and dark ink, a normal flat dark terminal running git below it, and a tall green-phosphor pane gently curved like a CRT on the right"><figcaption>flat paper · plain dark terminal · one curved CRT — your call</figcaption></figure>
         <figure><img loading="lazy" src="assets/terminal-clean.png" alt="a single full terminal pane"><figcaption>one clean pane, hacker theme</figcaption></figure>
@@ -593,6 +606,13 @@ cd app &amp;&amp; cargo run</pre>
        <script src="https://cdn.jsdelivr.net/npm/asciinema-player@3.7.1/dist/bundle/asciinema-player.min.js"></script>
        <script>AsciinemaPlayer.create('assets/demo.cast', document.getElementById('demo-cast'), {autoPlay:true, loop:true, theme:'asciinema'});</script>
      (Or simplest of all: drop an mp4 screen-capture in as a <video autoplay muted loop playsinline>.)
+
+  HEADS UP: steps 2 and 4 are BLOCKED by this page's own Content-Security-Policy
+  as written — script-src and style-src are 'self' only, and cdn.jsdelivr.net is
+  on neither. Follow these instructions verbatim and the player silently does not
+  appear; the only sign is a CSP violation in the console. Vendor the two files
+  into assets/ (which keeps the no-third-party posture every kiosk now shares),
+  or take the mp4 option, which needs no policy change at all.
   ============================================================================== -->
 </body>
 </html>

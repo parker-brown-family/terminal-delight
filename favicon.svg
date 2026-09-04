@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- The site favicon: the app's CRT mark (packaging/terminal-delight.svg)
+     reduced until it survives 16px. The full mark carries a stand, nine
+     scanlines, a glass glint and eight lines of green text — every one of
+     which is a grey smudge at favicon size. What actually reads small is the
+     silhouette and the three phosphor colours, so that is all this keeps:
+     a bulged tube split into one green pane and two stacked right-hand panes,
+     amber over cyan, which is the per-pane theming the mark exists to show. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <defs>
+    <!-- Barrel-bulged tube, the same curve as the full mark, reused as a clip
+         so the panes inside cannot square off the corners. -->
+    <path id="t" d="M 9,12 Q 32,8.5 55,12 Q 59,32 55,52 Q 32,55.5 9,52 Q 5,32 9,12 Z"/>
+    <clipPath id="c"><use href="#t"/></clipPath>
+  </defs>
+
+  <!-- bezel -->
+  <rect width="64" height="64" rx="13" fill="#1a1e24"/>
+  <use href="#t" fill="#05080a"/>
+
+  <g clip-path="url(#c)">
+    <!-- left pane: hacker green, the dominant colour at every size -->
+    <rect x="5" y="6" width="24" height="52" fill="#39ff7a" opacity="0.92"/>
+    <!-- right column, split: tactical amber over quiet cyan -->
+    <rect x="34" y="6" width="25" height="24" fill="#ffb84d" opacity="0.92"/>
+    <rect x="34" y="34" width="25" height="24" fill="#57d6ff" opacity="0.92"/>
+  </g>
+
+  <!-- The splits are drawn as bezel-coloured gutters rather than as gaps, so
+       the three panes stay three panes when a 16px raster blurs the edges. -->
+  <path d="M 31.5,6 Q 33,32 31.5,58" stroke="#1a1e24" stroke-width="5" fill="none" stroke-linecap="round"/>
+  <path d="M 31,32 Q 45,33 60,31.5" stroke="#1a1e24" stroke-width="4.5" fill="none" stroke-linecap="round"/>
+
+  <!-- phosphor spill, the one soft touch that survives downsampling -->
+  <ellipse cx="32" cy="32" rx="26" ry="21" fill="#39ff7a" opacity="0.06"/>
+</svg>
