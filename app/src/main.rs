@@ -7140,6 +7140,45 @@ impl Workspace {
         cx.notify();
     }
 
+    /// Which tab (and pane) currently holds the keyboard, searched across EVERY
+    /// tab — the honest answer to "where did the focus go", including the answer
+    /// "a tab you are not looking at". `None` means no pane holds it at all
+    /// (the workspace root does, or nothing does).
+    fn focused_pane_tab(&self, window: &Window, cx: &App) -> Option<(usize, EntityId)> {
+        self.tabs.iter().enumerate().find_map(|(i, tab)| {
+            let mut leaves = vec![];
+            tab.root.leaves(&mut leaves);
+            leaves
+                .iter()
+                .find(|p| p.focus_handle(cx).is_focused(window))
+                .map(|p| (i, p.entity_id()))
+        })
+    }
+
+    /// True while some overlay legitimately owns the keyboard — a find panel, a
+    /// picker, a rename box, a menu, the reader. Typing belongs to it, not to a
+    /// terminal, so the focus watchdog must keep its hands off.
+    fn overlay_owns_keyboard(&self) -> bool {
+        self.find.is_some()
+            || self.lang_picker.is_some()
+            || self.logo_picker.is_some()
+            || self.renaming.is_some()
+            || self.group_rename.is_some()
+            || self.confirm_close.is_some()
+            || self.theme_menu.is_some()
+            || self.osd_menu.is_some()
+            || self.tab_menu.is_some()
+            || self.group_menu.is_some()
+            || self.focus_read.is_some()
+            || self.help_open
+            || self.scale_menu
+            || self.more_menu
+            || self.mcp_menu
+            || self.dead_menu
+            || self.plugins_menu
+            || self.savings_menu
+    }
+
     fn focus_active(&self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(tab) = self.tabs.get(self.active) {
             let mut leaves = vec![];
@@ -10647,21 +10686,24 @@ impl Render for Workspace {
             );
             cx.notify();
         }
-        // remember which pane currently holds focus in the active tab, so a later
-        // mother-bar click returns to that exact terminal (the "most recent" one)
+        // Remember which pane holds focus, filed against the tab that OWNS it —
+        // not merely the active one. A pane in a background tab can hold the
+        // keyboard (a stale focus after a tab switch, a focus set from an async
+        // jump), and attributing that to the active tab would overwrite the
+        // wrong tab's memory with a pane it doesn't contain.
         let active = self.active;
-        let focused_id = self.tabs.get(active).and_then(|tab| {
-            let mut leaves = vec![];
-            tab.root.leaves(&mut leaves);
-            leaves
-                .iter()
-                .find(|p| p.focus_handle(cx).is_focused(window))
-                .map(|p| p.entity_id())
-        });
-        if let Some(id) = focused_id {
-            if let Some(tab) = self.tabs.get_mut(active) {
+        let plan = plan_focus(
+            active,
+            self.focused_pane_tab(window, cx),
+            self.overlay_owns_keyboard(),
+        );
+        if let Some((ti, id)) = plan.record {
+            if let Some(tab) = self.tabs.get_mut(ti) {
                 tab.focused = Some(id);
             }
+        }
+        if plan.restore {
+            cx.defer_in(window, |ws, window, cx| ws.focus_active(window, cx));
         }
         let scale = theme::outer_choice(cx).grade.scale;
         let bezel = darken(th.surface, 0.55);
@@ -16638,6 +16680,53 @@ mod tests {
         assert_eq!(pick_focus_target::<u32>(None, &[]), None);
     }
 
+    #[test]
+    fn the_selected_tab_always_ends_up_holding_the_keyboard() {
+        // the healthy state: focus is in the selected tab — leave it alone,
+        // and file the pane as that tab's most recent.
+        assert_eq!(
+            plan_focus(1, Some((1, 42u32)), false),
+            FocusPlan {
+                record: Some((1, 42)),
+                restore: false
+            }
+        );
+        // stranded on a BACKGROUND tab's pane: that pane isn't rendered, so
+        // nothing is highlighted and typing lands in a terminal you can't see.
+        // Steal it back — and file it against tab 2, whose pane it is, NOT the
+        // selected tab, which does not contain it.
+        assert_eq!(
+            plan_focus(0, Some((2, 42u32)), false),
+            FocusPlan {
+                record: Some((2, 42)),
+                restore: true
+            }
+        );
+        // no pane holds it at all (a chrome click bubbled to the workspace
+        // root): no pane is lit and the keystroke goes nowhere. Restore.
+        assert_eq!(
+            plan_focus(0, None::<(usize, u32)>, false),
+            FocusPlan {
+                record: None,
+                restore: true
+            }
+        );
+    }
+
+    #[test]
+    fn an_open_overlay_keeps_the_keyboard_it_was_given() {
+        // A find panel / picker / rename box / menu is typed into on PURPOSE:
+        // the focus is off the panes because the user put it there. Every state
+        // that would otherwise be repaired must be left exactly as it is, or
+        // the watchdog yanks the keyboard out of the box mid-word.
+        for home in [None, Some((0usize, 7u32)), Some((2, 7))] {
+            assert!(!plan_focus(0, home, true).restore, "home={home:?}");
+        }
+        // ...and the memory still updates, so closing the overlay lands back on
+        // the pane you were in rather than the first one in the tab.
+        assert_eq!(plan_focus(0, Some((0, 7u32)), true).record, Some((0, 7)));
+    }
+
     fn mods(ctrl: bool, shift: bool) -> gpui::Modifiers {
         gpui::Modifiers {
             control: ctrl,
@@ -17756,6 +17845,38 @@ fn read_nav_target(cur: f32, overflow: f32, page: f32, nav: ReadNav) -> (f32, bo
     };
     let next = next.clamp(0.0, overflow);
     (next, next >= overflow - 0.5)
+}
+
+/// What a frame must do about the keyboard focus, decided from three facts: which
+/// tab is selected, which tab (if any) actually holds the focus right now, and
+/// whether an overlay legitimately owns the keyboard.
+#[derive(Debug, PartialEq, Clone, Copy)]
+struct FocusPlan<T> {
+    /// File "this pane held the focus" against THIS tab — the tab that owns the
+    /// pane, which is not always the selected one.
+    record: Option<(usize, T)>,
+    /// Re-focus the selected tab's remembered pane: the focus is not where the
+    /// user is looking, and nothing else has a claim on it.
+    restore: bool,
+}
+
+/// The focus invariant, as one pure decision.
+///
+/// With no overlay up, the keyboard belongs to a pane of the SELECTED tab —
+/// always. Two states violate that and both lose keystrokes: the focus sitting on
+/// a background tab's pane (which is not rendered, so nothing is highlighted and
+/// typing goes into a terminal you cannot see), and no pane holding it at all
+/// (a chrome click that bubbled to the workspace root). Rather than chase each
+/// producer, every frame re-establishes the invariant from what is always known.
+///
+/// `home` is where the focus actually is — `(tab index, pane id)` — searched
+/// across every tab, so a stray focus is filed against the tab that owns it
+/// rather than overwriting the selected tab's memory with a pane it lacks.
+fn plan_focus<T: Copy>(active: usize, home: Option<(usize, T)>, overlay: bool) -> FocusPlan<T> {
+    FocusPlan {
+        record: home,
+        restore: !overlay && home.map(|(t, _)| t) != Some(active),
+    }
 }
 
 fn pick_focus_target<T: PartialEq + Copy>(remembered: Option<T>, leaves: &[T]) -> Option<T> {
