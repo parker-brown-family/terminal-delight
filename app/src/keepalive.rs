@@ -74,7 +74,17 @@
 //! queried over a socket there is no stale-snapshot question — the answer is
 //! the screen. See `TerminalView::keepalive_step`.
 
+use std::path::{Path, PathBuf};
 use std::time::Duration;
+
+/// The campfire, lit and out. The menu-bar toggle and nothing else.
+///
+/// A fire reads the right way round without a legend: burning means somebody is
+/// tending the camp and the caches stay warm; out means everyone has gone home.
+/// Deliberately NOT 💤, which already means "this one pane is going drowsy" on
+/// the tab bar — one glyph, one meaning.
+pub const GLYPH_TENDING: &str = "🔥";
+pub const GLYPH_AWAY: &str = "🌙";
 
 /// 💤 on the tab. Far enough ahead of the typing to be a warning rather than a
 /// narration of something already done.
@@ -113,6 +123,52 @@ pub const PROBE: &str = "another hour";
 /// message of this length several times over; see the note in [`bytes`] for why
 /// it is a fixed count rather than a loop.
 pub const CLEAR_KILLS: usize = 12;
+
+/// AWAY — the campfire is out, and nothing warms anything.
+///
+/// The keepalive is built for the gap between "stepped away for a coffee" and
+/// "the cache is about to expire". It is exactly wrong for the other kind of
+/// leaving: finishing for the day, or putting six agents in flight and going
+/// out for six hours. Every one of those sessions gets warmed on the hour,
+/// forever, for a return that is not coming — which is the one configuration
+/// where this feature costs money instead of saving it.
+///
+/// A **file** rather than a field, because the flag has two readers in two
+/// processes. TD's menu bar owns the switch, and the sibling herdr plugin
+/// (`herdr-auto-warm-cache`) reads the same path, so one press governs every
+/// agent on the machine rather than only the ones inside this terminal. Its
+/// presence is the whole protocol: no format to agree on, no parse to get
+/// wrong, and a stray file fails safe by warming nothing.
+pub fn away_path(home: &Path) -> PathBuf {
+    std::env::var_os("XDG_STATE_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home.join(".local/state"))
+        .join("cache-keepalive/away")
+}
+
+/// True when the campfire is out. An unreadable path reads as "not away": the
+/// failure mode of a missing state directory should be the feature working, not
+/// the feature silently disabling itself.
+pub fn is_away(home: &Path) -> bool {
+    away_path(home).exists()
+}
+
+/// Put the fire out, or light it. Creating the parent is part of the job — the
+/// first press must not fail because nothing has ever written here before.
+pub fn set_away(home: &Path, away: bool) -> std::io::Result<()> {
+    let p = away_path(home);
+    if away {
+        if let Some(dir) = p.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
+        std::fs::write(&p, b"away\n")
+    } else {
+        match std::fs::remove_file(&p) {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            other => other,
+        }
+    }
+}
 
 /// Where a pane is in the sequence. Reset to `Awake` by any human keystroke.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -263,6 +319,68 @@ mod tests {
     use super::*;
 
     const MIN: u64 = 60;
+
+    /// A private HOME for the away-flag tests. `XDG_STATE_HOME` is consulted
+    /// first by `away_path`, and these tests must not touch the real one — a
+    /// test that put the developer's own machine into AWAY and left it there
+    /// would be a very quiet way to stop the feature working.
+    fn tmp_home(tag: &str) -> PathBuf {
+        let p = std::env::temp_dir().join(format!("td-away-{}-{tag}", std::process::id()));
+        std::fs::create_dir_all(&p).unwrap();
+        p
+    }
+
+    #[test]
+    fn the_campfire_starts_lit() {
+        let home = tmp_home("fresh");
+        std::env::remove_var("XDG_STATE_HOME");
+        assert!(
+            !is_away(&home),
+            "a machine that has never been told is not away"
+        );
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    #[test]
+    fn putting_the_fire_out_and_lighting_it_again_round_trips() {
+        let home = tmp_home("toggle");
+        std::env::remove_var("XDG_STATE_HOME");
+        set_away(&home, true).unwrap();
+        assert!(is_away(&home));
+        set_away(&home, false).unwrap();
+        assert!(!is_away(&home));
+        // ...and lighting an already-lit fire is not an error, because a menu
+        // bar can be clicked twice and a missing file is the desired state.
+        set_away(&home, false).unwrap();
+        assert!(!is_away(&home));
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    #[test]
+    fn the_flag_is_a_path_two_processes_can_agree_on() {
+        // The herdr plugin reads this exact location. If the shape changes here
+        // the two halves silently stop governing each other, and the only
+        // symptom is agents being warmed after somebody pressed away.
+        let home = tmp_home("path");
+        std::env::remove_var("XDG_STATE_HOME");
+        assert!(away_path(&home).ends_with(".local/state/cache-keepalive/away"));
+        std::env::set_var("XDG_STATE_HOME", "/tmp/xdg-state-probe");
+        assert_eq!(
+            away_path(&home),
+            PathBuf::from("/tmp/xdg-state-probe/cache-keepalive/away")
+        );
+        std::env::remove_var("XDG_STATE_HOME");
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    #[test]
+    fn the_two_campfire_glyphs_are_distinct_and_neither_is_the_drowsy_badge() {
+        // 💤 already means "this one pane is going drowsy" on the tab bar, and
+        // one glyph carrying two meanings is how a bar stops being readable.
+        assert_ne!(GLYPH_TENDING, GLYPH_AWAY);
+        assert_ne!(GLYPH_TENDING, "💤");
+        assert_ne!(GLYPH_AWAY, "💤");
+    }
 
     fn at(mins: u64, stage: Stage) -> Pane {
         Pane {
