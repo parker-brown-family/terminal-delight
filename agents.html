@@ -7,12 +7,15 @@
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; script-src 'self' 'unsafe-inline'; frame-src 'none'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta property="og:title" content="terminal-delight — the agent wall">
-<meta property="og:description" content="Mission control for a fleet of coding agents. Every pane is a card carrying three bars read from that agent's own transcript — CTX WINDOW, FATIGUE, RELEVANCE — and the call they add up to. Read-only; it never writes to a terminal.">
+<meta property="og:description" content="Mission control for a fleet of coding agents. A working pane shows the robot holding the tool it is actually holding — at the console, into the cave — over three bars read from that agent's own transcript: CTX WINDOW, FATIGUE, RELEVANCE, and the call they add up to. Read-only; it never writes to a terminal.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://terminal-delight.brownfamilysports.com/agents.html">
 <meta property="og:image" content="https://terminal-delight.brownfamilysports.com/assets/agents-wall.png">
 <meta name="twitter:card" content="summary_large_image">
 <link rel="stylesheet" href="/assets/kiosk-chrome.css">
+<!-- The tool faces the app wears, published out of app/assets by
+     scripts/publish-robot-faces.mjs. One table, two walls. -->
+<script src="/assets/robots/tool-faces.js"></script>
 <script src="/assets/kiosk-theme.js"></script>
 <script src="/assets/kiosk-chrome.js" data-kiosk="agents" data-rail="on" data-paint="root" data-float="on"></script>
 <style>
@@ -162,6 +165,42 @@
     mix-blend-mode:soft-light; }
   .art .arttone{ position:absolute; inset:0; pointer-events:none; mix-blend-mode:overlay;
     background:radial-gradient(120% 100% at 50% 30%, color-mix(in srgb,var(--tc) 40%,#0000), #0000 70%); }
+  /* ---- the robot at work -------------------------------------------------
+     The scene is the playhouse robot, animated: 16 frames on a 1.24s loop,
+     the same WebP the app decodes. It fills the frame rather than sitting
+     inside padding like a logo does, because it is a picture of a room and
+     the room's floor and vignette are part of it.
+
+     The tool's own tint lights the frame, so the card is briefly amber at the
+     console and blue while reading, which is a second, peripheral read on what
+     the fleet is doing — you catch the colour change before you read a word. */
+  .art.robot{ background:radial-gradient(120% 100% at 50% 34%, color-mix(in srgb,var(--tint) 15%, #03100a), #010a06 74%);
+    border-color:color-mix(in srgb,var(--tint) 30%, #000); }
+  /* Contain, like every other logo in this frame — the art box runs from
+     1.71:1 on a wide desktop to 2.22:1 on a phone against a 2.00:1 scene, so
+     cover would crop the antenna at one end and the feet at the other. The
+     scene's own dark room blends into the frame's gradient, so there is no
+     letterbox seam to see. Less padding than a logo gets: this is a picture of
+     a room, not a mark that needs breathing space. */
+  .art.robot img.scene{ padding:2px 2px 10px; object-fit:contain; }
+  .art.robot img.still{ display:none; }
+  /* Lettered on the glass, like the app's plate: what a human calls the thing,
+     not the tool's API name. */
+  .art .verb{ position:absolute; left:0; right:0; bottom:0; z-index:2;
+    padding:9px 8px 5px; text-align:center; pointer-events:none;
+    font-size:8px; letter-spacing:.11em; text-transform:lowercase;
+    color:color-mix(in srgb,var(--tint) 45%, #f2fff8);
+    text-shadow:0 0 7px #000c, 0 1px 0 #000;
+    background:linear-gradient(#0000, #000000b8 62%); }
+
+  /* Six looping animations is a lot of movement for anyone who asked for less.
+     An animated WebP cannot be paused from CSS, so the honest fallback is to
+     swap it for the app's own still prop — the same object, not moving. */
+  @media (prefers-reduced-motion: reduce) {
+    .art.robot img.scene{ display:none; }
+    .art.robot img.still{ display:block; padding:14px 14px 22px; object-fit:contain; }
+  }
+
   .art.gen{ display:flex; align-items:center; justify-content:center;
     background:radial-gradient(120% 100% at 50% 25%, color-mix(in srgb,var(--tc) 34%, #0a140e), #060c08 72%); }
   .art.gen .mono{ font-size:34px; font-weight:800; letter-spacing:.04em; color:color-mix(in srgb,var(--gc) 55%, #cfeede); text-shadow:0 0 18px color-mix(in srgb,var(--gc) 60%,#0000); opacity:.92; }
@@ -438,7 +477,69 @@ const GROUPS = {
   'infra':           {c:'#9fe06a', tc:'#44B064', glyph:'🪵', art:'assets/cards/imt-backroad.png'},
   'workstation':     {c:'#3f6354', tc:'#5A6061', glyph:'○', art:null},
 };
-const GERUNDS = ['Reading files','Editing','Running tests','Searching','Reasoning','Compiling','Reviewing the diff','Thinking'];
+/* ---- what the robot is holding -----------------------------------------
+   The wall in the app shows a pane's logo following the tool its agent is
+   actually holding: the playhouse robot, animated, wearing that tool's face,
+   with the VERB lettered on the glass — "at the console", never `Bash`. This
+   is that, on the web, off the same table (assets/robots/tool-faces.js,
+   published from app/assets), so the two walls cannot disagree about what
+   any tool looks like.
+
+   Each agent works a plausible little run of real tools rather than one
+   abstract gerund, because an agent investigating a WebGL question reaches
+   for different things than one bumping dependencies, and the robot showing
+   that is the entire point. The verb is used BOTH on the glass and as the
+   live-action word in the recap, so there is one string and no way for the
+   picture and the sentence to describe different activities. */
+const DEFAULT_RUN = ['Read', 'Edit', 'Bash', 'Grep'];
+/* The Codex panes hold lowercase tools because that is what a Codex rollout
+   actually names — `exec`, `grep` — and the table carries rows for them. This
+   is the one place Codex is NOT the poor relation: `tail_tool_events` reads
+   both the Claude `tool_use` shape and the Codex `function_call` shape, so a
+   Codex pane wears a face in the app exactly like any other. It is only the
+   VITALS it cannot have, because token accounting is where the two rollout
+   schemas genuinely diverge. Two different subsystems, two different answers,
+   and the wall should show both honestly rather than blanking Codex twice. */
+const TOOL_RUNS = {
+  'render-hotpath': ['exec', 'grep'],
+  'agents-kiosk':   ['Edit', 'Write', 'Bash', 'Read'],
+  'i18n-coverage':  ['Grep', 'Edit', 'Bash'],
+  'crt-webgl':      ['WebSearch', 'WebFetch', 'Read', 'Grep'],
+  'focus-reader':   ['Read', 'Edit', 'Bash'],
+  'cold-start':     ['Bash', 'Read', 'ctx_search'],
+  'auth-tests':     ['Write', 'Bash', 'AskUserQuestion'],
+  'upload-retry':   ['exec', 'grep'],
+  'flaky-ci':       ['Bash', 'Grep', 'TodoWrite'],
+  'checkout-flow':  ['Read', 'Edit', 'ctx_patch'],
+  'api-v2-docs':    ['Read', 'Write', 'Skill'],
+  'onboarding':     ['exec'],
+  'feature-bench':  ['Bash', 'Monitor', 'Read'],
+  'eval-harness':   ['ctx_compose', 'Read', 'AskUserQuestion'],
+  'dep-bump':       ['Bash', 'Edit', 'Glob'],
+  'static-gen':     ['grep', 'exec'],
+};
+
+/* A tool every five ticks, not every one. The robot's gesture loop is 1.24s;
+   swapping the scene each second would mean nobody ever sees him finish
+   reaching for anything. */
+const TOOL_TICKS = 5;
+
+function toolOf(a) {
+  const run = TOOL_RUNS[a.tab] || DEFAULT_RUN;
+  return run[(Math.floor(toolPhase / TOOL_TICKS) + a._id) % run.length];
+}
+/* null when the table has not loaded — the card then keeps the project art it
+   has always had, rather than rendering an empty frame. */
+function faceOf(a) {
+  const F = window.TD_FACES;
+  if (!F || a.state !== 'working') return null;
+  const t = toolOf(a);
+  const row = F.tools[t];
+  if (!row) return null;
+  return { tool: t, art: row.art || F.fallback, verb: row.verb, tint: row.tint, face: row.face };
+}
+/* "at the console" on the glass; "At the console…" opening the recap. */
+const cap = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
 
 // ---- the fleet: a FICTIONAL snapshot — staged demo data only (no real prompts/paths).
 // The terminal-delight rows reference its own already-public, shipped features.
@@ -540,7 +641,7 @@ const wall = document.getElementById('wall');
 const roll = document.getElementById('roll');
 const progEl = document.getElementById('progchips');
 const stateEl = document.getElementById('statechips');
-let gerundPhase = 0;
+let toolPhase = 0;
 let fProg = 'all';
 let fState = 'all';
 
@@ -566,9 +667,19 @@ function cardHTML(a){
   const G = GROUPS[a.g]||GROUPS.workstation;
   const shell = a.state==='shell';
   const pipTxt = {working:'working',blocked:'on you ⏎',error:'error',done:'done',idle:'idle',shell:'shell'}[a.state];
-  const art = G.art
-    ? `<div class="art"><img src="${G.art}" alt="" loading="lazy"><div class="arttone"></div></div>`
-    : `<div class="art gen"><span class="mono">${esc(a.tab.slice(0,2).toUpperCase())}</span><div class="arttone"></div></div>`;
+  /* Precedence, the same as the app's: while an agent is WORKING the frame
+     shows what it is doing; the moment it stops it goes back to showing where
+     it is. That is why a resting card keeps its project art — a busy pane
+     wears the tool, a quiet one wears the place. */
+  const f = faceOf(a);
+  const art = f
+    ? `<div class="art robot" style="--tint:${f.tint}">`
+      + `<img class="scene" src="${TD_FACES.scenes}${f.art}.webp" alt="the agent at work: ${esc(f.verb)}" loading="lazy" decoding="async">`
+      + `<img class="still" src="${TD_FACES.props}${f.art}.png" alt="" loading="lazy" decoding="async">`
+      + `<div class="verb">${esc(f.verb)}</div><div class="arttone"></div></div>`
+    : G.art
+      ? `<div class="art"><img src="${G.art}" alt="" loading="lazy"><div class="arttone"></div></div>`
+      : `<div class="art gen"><span class="mono">${esc(a.tab.slice(0,2).toUpperCase())}</span><div class="arttone"></div></div>`;
   /* One chip, model then effort. It replaced a MODEL box and an EFFORT box in
      #273 — the MODEL box never once showed a model, because parse_model read
      a --model flag nobody passes. */
@@ -576,7 +687,7 @@ function cardHTML(a){
   const model = shell ? `<span class="sbox"><span class="lab">SERVICE</span> <b>SHELL</b></span>`
     : `<span class="mdl"><b>${esc(mdlWord(a.model))}</b><i>·</i>${effWord(a.eff).toUpperCase()}</span>`
       + (v ? `<span class="call t-${v.tone}" title="${esc(v.why)}">${v.call}</span>` : '');
-  const ger = a.state==='working' ? `<span class="ger">${GERUNDS[(gerundPhase+a.t)%GERUNDS.length]}… </span>` : '';
+  const ger = f ? `<span class="ger">${esc(cap(f.verb))}… </span>` : '';
   const recap = shell ? `<span class="g">$</span>${esc(a.prompt)}` : `<span class="g">›</span>${ger}${esc(a.prompt)}`;
   const dT = (a.state==='working' && a.tok) ? `<span class="d">Δ${ktok(a.tok)}</span>` : `<span class="d">Δ0</span>`;
   const sS = a.sess ? `<span class="s">Σ${ktok(a.sess)}</span>` : `<span class="s">Σ0</span>`;
@@ -630,7 +741,7 @@ function render(){
 // ---- live simulation ----
 function tick(){
   for(const a of A){ if(a.state==='working'){ a.t+=1; a.tok+=Math.round(20+Math.random()*180); a.sess+=Math.round(8+Math.random()*40); } }
-  gerundPhase=(gerundPhase+1)%GERUNDS.length;
+  toolPhase=(toolPhase+1)%(TOOL_TICKS*12);
   render();
   if(openId!=null && A[openId] && A[openId].state==='working') refreshModal();
 }
@@ -681,7 +792,7 @@ function claudeTx(a,s){
   L.push(tl('Search',`pattern: "${esc(a.tab.split(/[-·]/)[0])}", path: "${s.dir}"`), rs(`Found ${2+a._id%7} matches`));
   if(a.state==='working'){
     L.push(tl('Edit',s.edit), rs(`Updated with ${2+a._id%5} additions and ${a._id%4} removals`),'');
-    L.push(`<span class="t-s">✻ ${GERUNDS[(gerundPhase+a.t)%GERUNDS.length]}… (${mmss(a.t)} · ↓ ${ktok(a.tok)} tokens · esc to interrupt)</span> ${CUR}`);
+    L.push(`<span class="t-s">✻ ${esc(cap((faceOf(a)||{}).verb || 'working'))}… (${mmss(a.t)} · ↓ ${ktok(a.tok)} tokens · esc to interrupt)</span> ${CUR}`);
   } else if(a.state==='blocked'){
     L.push(bul(`I've drafted the change — this needs your review before I apply it:`), tl('Edit',s.edit),'');
     L.push(`<span class="t-a">Do you want to make this edit to <b>${esc(s.edit)}</b>?</span>`,`<span class="t-optc">❯ 1.</span> <span class="t-opt">Yes</span>`,`  <span class="t-opt">2. Yes, and don't ask again this session</span>`,`  <span class="t-opt">3. No, tell Claude what to do differently</span>`,'');

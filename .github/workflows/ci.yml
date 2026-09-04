@@ -72,6 +72,16 @@ jobs:
           node --check src/js/popout.js
           node --check src/js/detach.js
           node --check src/js/theme-engine.js
+          node --check assets/kiosk-theme.js
+          node --check assets/kiosk-chrome.js
+          node --check assets/robots/tool-faces.js
+      # The website serves a copy of the app's tool faces. A copy with nothing
+      # watching it is how the wall's own screenshot sat two generations stale,
+      # so this fails the build rather than letting the two walls drift apart.
+      - name: Robot faces match the app
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq imagemagick
+          node scripts/publish-robot-faces.mjs --check
 
   supply-chain:
     name: Supply-chain checks
