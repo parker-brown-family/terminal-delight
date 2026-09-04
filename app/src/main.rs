@@ -2868,9 +2868,7 @@ impl Workspace {
                     .await;
                 if clicked
                     && this
-                        .update(cx, |ws: &mut Workspace, _| {
-                            ws.keepalive_click = Some(pid)
-                        })
+                        .update(cx, |ws: &mut Workspace, _| ws.keepalive_click = Some(pid))
                         .is_err()
                 {
                     break;

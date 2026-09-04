@@ -182,9 +182,7 @@ pub fn advance(stage: Stage, done: Act) -> Stage {
 /// the wrapper a multi-word line can be interpreted rather than inserted.
 pub fn bytes(a: Act, bracketed: bool) -> Option<Vec<u8>> {
     match a {
-        Act::Type if bracketed => {
-            Some([b"\x1b[200~", MESSAGE.as_bytes(), b"\x1b[201~"].concat())
-        }
+        Act::Type if bracketed => Some([b"\x1b[200~", MESSAGE.as_bytes(), b"\x1b[201~"].concat()),
         Act::Type => Some(MESSAGE.as_bytes().to_vec()),
         // Carriage return, not newline: this is a pty, and \n on a line-buffered
         // TUI is not the same key.
