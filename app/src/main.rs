@@ -2063,10 +2063,12 @@ struct Workspace {
     agent_vitals: std::collections::HashMap<u32, vitals::Vitals>,
     /// A vitals pass is parsing transcripts on a pool thread.
     vitals_refreshing: bool,
-    /// A keepalive pass is out. Pings take seconds — a whole round trip to the
-    /// API — so the sweep must never be allowed to stack on itself. See
+    /// Somebody clicked the "going cold" notification: send that pane's staged
+    /// message on the next tick. A shell pid rather than an entity so the click
+    /// handler — which runs on a pool thread, minutes later, possibly after the
+    /// pane has closed — carries nothing it has to keep alive. See
     /// [`keepalive`].
-    keepalive_running: bool,
+    keepalive_click: Option<u32>,
     /// 🎨 toggle in the MCP panel: tint each pane row with that pane's own
     /// resolved screen background + text colour. Defaults off (session-scoped).
     mcp_theme_preview: bool,
@@ -2539,7 +2541,7 @@ impl Workspace {
             usage_refreshing: false,
             agent_vitals: std::collections::HashMap::new(),
             vitals_refreshing: false,
-            keepalive_running: false,
+            keepalive_click: None,
             // Headless-capture hook: TD_WALL_THEME=1 arms the "theme · on" wall
             // skin (per-card logo warp) from boot so the curved-glass cards can be
             // screenshotted without a mouse. Leak-safe — only flips the visual
@@ -2777,68 +2779,104 @@ impl Workspace {
             }
         })
         .detach();
-        // cache keepalive: read each idle agent's prompt cache before its
-        // one-hour TTL runs out, so coming back to a parked session costs 0.1x
-        // the conversation instead of 2.0x. Off unless TD_KEEPALIVE is set —
-        // it spends money on a timer, and that does not get a default.
+        // cache keepalive: keep an idle agent's prompt cache alive by typing
+        // into it before the hour is up — 💤 on the tab at 50 minutes, the
+        // message into the prompt at 55, a desktop notification five seconds
+        // later, auto-send at 57. Off unless TD_KEEPALIVE is set: this types
+        // into terminals on a timer, which does not get a default.
         //
-        // Deliberately NOT gated on the wall being open, unlike the vitals
-        // sweep above: the whole point is the sessions nobody is looking at.
-        // The cost of ticking is one directory listing and a transcript tail
-        // per agent pane per minute, and it only spawns anything at all when a
-        // pane crosses 55 minutes idle. Nothing here writes to a terminal —
-        // see [`keepalive`] for why that is the design and not a limitation.
+        // Two seconds, because the notification beat is five and a slower tick
+        // would make it late. It costs one walk of the pane tree and nothing
+        // else — no I/O, no transcript reads — until a pane crosses a
+        // threshold.
+        //
+        // NOTHING HERE FOCUSES, RAISES OR SCROLLS A PANE. TD owns the pty, so
+        // the message goes in the way a keystroke does, minus the keyboard, and
+        // the human keeps working in whatever pane they are already in. That is
+        // the requirement the whole feature exists to satisfy — see
+        // [`keepalive`], including what was built wrong before it.
+        if std::env::var("TD_KEEPALIVE")
+            .is_ok_and(|v| matches!(v.trim(), "1" | "on" | "true" | "yes"))
         {
-            let cfg = keepalive::Config::from_env();
-            if cfg.enabled {
-                cx.spawn(async move |this, cx| loop {
-                    cx.background_executor()
-                        .timer(Duration::from_secs(60))
-                        .await;
-                    let Ok(reqs) = this.update(cx, |ws: &mut Workspace, cx| {
-                        if ws.keepalive_running {
-                            return Vec::new(); // a pass is still out
+            cx.spawn(async move |this, cx| loop {
+                cx.background_executor().timer(Duration::from_secs(2)).await;
+                let Ok(toast) = this.update(cx, |ws: &mut Workspace, cx| {
+                    // A click on the last notification, honoured before the
+                    // clock is consulted: it is the same send, just early.
+                    let clicked = ws.keepalive_click.take();
+                    let mut toast: Option<(String, u32)> = None;
+                    for tab in ws.tabs.iter() {
+                        let mut leaves = Vec::new();
+                        tab.root.leaves(&mut leaves);
+                        let label = tab.name.clone().unwrap_or_default();
+                        for e in leaves {
+                            let (act, pid) = {
+                                let v = e.read(cx);
+                                if !v.mode.is_agent() {
+                                    continue;
+                                }
+                                let pid = v.shell_pid();
+                                let idle = v.idle_since_human();
+                                let act = if clicked == Some(pid) {
+                                    keepalive::Act::Send
+                                } else {
+                                    keepalive::act(&keepalive::Pane {
+                                        idle,
+                                        stage: v.keepalive_stage(),
+                                        busy: v.agent_working(),
+                                        needs_input: v.needs_input(),
+                                        blocked: v.bell_blocked(),
+                                        // Their hand is on the keyboard right
+                                        // now; a staged message must come out
+                                        // before their text lands on it.
+                                        human_active: idle < Duration::from_secs(3),
+                                    })
+                                };
+                                (act, pid)
+                            };
+                            if act == keepalive::Act::Nothing {
+                                continue;
+                            }
+                            if act == keepalive::Act::Notify {
+                                toast = Some((label.clone(), pid));
+                            }
+                            e.update(cx, |v, cx| v.keepalive_step(act, cx));
                         }
-                        let reqs = ws.vitals_requests(cx);
-                        ws.keepalive_running = !reqs.is_empty();
-                        reqs
-                    }) else {
-                        break; // window gone
-                    };
-                    if reqs.is_empty() {
-                        continue;
                     }
-                    let home = session::home_dir();
-                    let cfg = cfg.clone();
-                    let reports = cx
-                        .background_executor()
-                        .spawn(async move { keepalive::sweep(&reqs, &home, &cfg) })
-                        .await;
-                    // Every ping reports its own billing, and three of the four
-                    // failure modes look exactly like success from the outside.
-                    // Say so rather than accumulating a silent tax.
-                    for r in &reports {
-                        match &r.effect {
-                            Some(keepalive::Effect::Warm { read, saved_eq }) => eprintln!(
-                                "keepalive {}: warm, read {read} (saved ~{saved_eq:.0} eq)",
-                                &r.session[..8.min(r.session.len())]
-                            ),
-                            Some(e) => eprintln!(
-                                "keepalive {}: {e:?}",
-                                &r.session[..8.min(r.session.len())]
-                            ),
-                            None => {}
-                        }
-                    }
-                    if this
-                        .update(cx, |ws: &mut Workspace, _| ws.keepalive_running = false)
+                    toast
+                }) else {
+                    break; // window gone
+                };
+                let Some((tab, pid)) = toast else {
+                    continue;
+                };
+                // Clicking must NOT bring the pane forward. The "agent done"
+                // notification raises and jumps on purpose, because it is
+                // asking you to come and look; this one is asking permission to
+                // send a message on your behalf, and yanking focus away from
+                // whatever you are doing to grant it would defeat the point.
+                let clicked = cx
+                    .background_executor()
+                    .spawn(async move {
+                        let (title, body) = keepalive::notification(&tab, "agent");
+                        let out = std::process::Command::new("notify-send")
+                            .args(notify::notify_args(&title, &body))
+                            .output();
+                        matches!(out, Ok(ref o)
+                            if String::from_utf8_lossy(&o.stdout).contains("default"))
+                    })
+                    .await;
+                if clicked
+                    && this
+                        .update(cx, |ws: &mut Workspace, _| {
+                            ws.keepalive_click = Some(pid)
+                        })
                         .is_err()
-                    {
-                        break;
-                    }
-                })
-                .detach();
-            }
+                {
+                    break;
+                }
+            })
+            .detach();
         }
         // session checkpoint: live state (pane cwds, agent sessions, window
         // bounds) changes without structural events, so re-snapshot every 30s —
@@ -3470,6 +3508,20 @@ impl Workspace {
 
     /// One request per live agent pane, carrying the stamp of what the card is
     /// already showing so an unchanged transcript is never re-parsed.
+    /// Any agent in this tab past the keepalive's first warning. Drives the 💤
+    /// on the tab button — see [`keepalive::Stage`].
+    fn tab_has_drowsy(&self, tab: usize, cx: &App) -> bool {
+        let Some(t) = self.tabs.get(tab) else {
+            return false;
+        };
+        let mut leaves = Vec::new();
+        t.root.leaves(&mut leaves);
+        leaves.iter().any(|e| {
+            let v = e.read(cx);
+            v.mode.is_agent() && v.keepalive_stage() != keepalive::Stage::Awake
+        })
+    }
+
     fn vitals_requests(&self, cx: &App) -> Vec<vitals::PaneReq> {
         let mut out = Vec::new();
         for tab in self.tabs.iter() {
@@ -9238,6 +9290,25 @@ impl Workspace {
                         } else {
                             SharedString::from("📌")
                         })
+                        .into_any_element()
+                })
+            })
+            // 💤 — an agent in this tab is going cold. The first of the four
+            // keepalive beats, and the only one that is purely a warning: it
+            // appears at 50 minutes, five ahead of anything being typed, so the
+            // sequence is announced before it acts rather than narrated after.
+            //
+            // ONE per tab, never one per agent. Three sleeping agents behind
+            // the same tab button is one fact — "there is idle work here" — and
+            // three 💤 would read as a severity rather than a count. The pin
+            // above carries a number because pins are things you left for
+            // yourself and you want to know how many; this is a state, and it
+            // is either true of the tab or it is not.
+            .children({
+                self.tab_has_drowsy(i, cx).then(|| {
+                    div()
+                        .text_size(px(11. * ts))
+                        .child(SharedString::from("💤"))
                         .into_any_element()
                 })
             })

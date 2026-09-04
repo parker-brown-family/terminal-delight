@@ -1822,6 +1822,16 @@ pub struct TerminalView {
     /// the selection at this point as the viewport scrolls under it.
     last_mouse: gpui::Point<Pixels>,
     pending_input: Option<Instant>,
+    /// When a *human* last put a keystroke into this pane. Set in [`Self::send`]
+    /// and never cleared, so it is the honest "how long has nobody touched
+    /// this" clock. Deliberately not `pending_input`, which is transient, and
+    /// deliberately not the transcript's last line, which moves whenever the
+    /// agent writes to itself. TD's own keepalive writes bypass `send` and so
+    /// do not reset it — a machine typing into a pane is not human interaction.
+    /// See [`crate::keepalive`].
+    last_human_input: Instant,
+    /// Where this pane is in the cache-keepalive sequence.
+    keepalive: crate::keepalive::Stage,
     latency_log: bool,
     /// Written by the measuring canvas during prepaint; read by sync_size.
     content_bounds: Arc<Mutex<Option<Bounds<Pixels>>>>,
@@ -2676,6 +2686,11 @@ impl TerminalView {
             autoscroll_running: false,
             last_mouse: point(px(0.), px(0.)),
             pending_input: None,
+            // A pane starts its life having just been opened by a person, so
+            // the idle clock starts now rather than at the epoch — otherwise
+            // every pane would be born fifty minutes stale.
+            last_human_input: Instant::now(),
+            keepalive: crate::keepalive::Stage::Awake,
             latency_log: std::env::var("TD_LATENCY").is_ok(),
             content_bounds: Arc::new(Mutex::new(None)),
             spawned: Instant::now(),
@@ -3412,7 +3427,38 @@ impl TerminalView {
         // a real keystroke ends any keyboard selection in progress
         self.kbd_sel = None;
         self.pending_input = Some(Instant::now());
+        self.last_human_input = Instant::now();
         self.session.notifier.notify(bytes);
+        cx.notify();
+    }
+
+    /// How long since a human touched this pane. The keepalive clock.
+    pub fn idle_since_human(&self) -> Duration {
+        self.last_human_input.elapsed()
+    }
+
+    pub fn keepalive_stage(&self) -> crate::keepalive::Stage {
+        self.keepalive
+    }
+
+    /// Carry out one keepalive step. The pty writes go through `notifier`
+    /// directly rather than through [`Self::send`], because `send` is the human
+    /// path: routing through it would reset the idle clock this feature is
+    /// reading, and the pane would never reach the next stage.
+    ///
+    /// Focus is not touched. Nothing here raises, activates or scrolls the pane
+    /// — the human keeps working wherever they are, which is the whole point.
+    pub fn keepalive_step(&mut self, act: crate::keepalive::Act, cx: &mut Context<Self>) {
+        let bracketed = self
+            .session
+            .term
+            .lock()
+            .mode()
+            .contains(TermMode::BRACKETED_PASTE);
+        if let Some(bytes) = crate::keepalive::bytes(act, bracketed) {
+            self.session.notifier.notify(bytes);
+        }
+        self.keepalive = crate::keepalive::advance(self.keepalive, act);
         cx.notify();
     }
 
