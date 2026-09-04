@@ -606,6 +606,13 @@ cd app &amp;&amp; cargo run</pre>
        <script src="https://cdn.jsdelivr.net/npm/asciinema-player@3.7.1/dist/bundle/asciinema-player.min.js"></script>
        <script>AsciinemaPlayer.create('assets/demo.cast', document.getElementById('demo-cast'), {autoPlay:true, loop:true, theme:'asciinema'});</script>
      (Or simplest of all: drop an mp4 screen-capture in as a <video autoplay muted loop playsinline>.)
+
+  HEADS UP: steps 2 and 4 are BLOCKED by this page's own Content-Security-Policy
+  as written — script-src and style-src are 'self' only, and cdn.jsdelivr.net is
+  on neither. Follow these instructions verbatim and the player silently does not
+  appear; the only sign is a CSP violation in the console. Vendor the two files
+  into assets/ (which keeps the no-third-party posture every kiosk now shares),
+  or take the mp4 option, which needs no policy change at all.
   ============================================================================== -->
 </body>
 </html>
