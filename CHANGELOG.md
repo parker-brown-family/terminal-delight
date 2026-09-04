@@ -9,6 +9,28 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ### Added
 
+- **The robots came to the web wall.** A working card on `agents.html` now shows
+  the playhouse robot animated — holding the tool that agent is actually
+  holding, wearing that tool's face, with the verb lettered on the glass: *at
+  the console*, never `Bash`. Stop working and the card goes back to its project
+  art, which is the app's own precedence: a busy pane wears what it is doing, a
+  resting one wears where it is.
+  - The art is **published, not copied by hand**:
+    `scripts/publish-robot-faces.mjs` moves the 19 scenes, their still props and
+    the tool table out of `app/assets/` into `assets/robots/`, and `--check`
+    fails CI on drift in either direction, orphans included. One table, two
+    walls, and no second place to edit.
+  - The verb is used **both** on the glass and as the live-action word in the
+    recap, so the picture and the sentence are the same string and cannot end up
+    describing different activities. A check asserts it.
+  - Codex panes **do** wear a face, unlike the vitals bars they still cannot
+    have — `tail_tool_events` reads the Codex `function_call` shape as well as
+    Claude's `tool_use`, so their cards hold `exec` and `grep` under their own
+    names. Two subsystems, two honest answers, both visible on one card.
+  - Reduced motion swaps the animation for the app's own still prop, because an
+    animated WebP cannot be paused from CSS and six looping robots is a lot of
+    movement for someone who asked for less.
+
 - **The kiosk family is one site.** All seven pages — info · omarchy · agents ·
   tv · global · gamba · start-crawl — now carry the same head furniture and a
   shared strip that names every other kiosk, so `tv`, `global` and `gamba`

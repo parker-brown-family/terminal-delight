@@ -198,6 +198,72 @@ for (const k of KIOSKS) {
   await page.close();
 }
 
+/* ---- 4b. the robot at work --------------------------------------------- */
+{
+  const page = await ctx.newPage();
+  const failed = [];
+  page.on('requestfailed', (rq) => { if (rq.url().startsWith(BASE)) failed.push(rq.url()); });
+  const bad = [];
+  page.on('response', (r) => { if (r.url().includes('/assets/robots/') && r.status() >= 400) bad.push(`${r.status()} ${r.url()}`); });
+
+  await page.goto(BASE + '/agents.html', { waitUntil: 'domcontentloaded' });
+  await page.waitForTimeout(1200);
+
+  const wall = await page.evaluate(() => {
+    const cards = [...document.querySelectorAll('.card')];
+    const working = cards.filter((c) => c.classList.contains('working'));
+    const resting = cards.filter((c) => !c.classList.contains('working') && !c.classList.contains('shell'));
+    return {
+      table: !!window.TD_FACES && Object.keys(window.TD_FACES.tools || {}).length,
+      working: working.length,
+      workingWithRobot: working.filter((c) => c.querySelector('.art.robot img.scene')).length,
+      /* Precedence: a busy card wears the tool, a resting one wears the place. */
+      restingWithRobot: resting.filter((c) => c.querySelector('.art.robot')).length,
+      scenesLoaded: [...document.querySelectorAll('.art.robot img.scene')]
+        .filter((i) => i.complete && i.naturalWidth > 0).length,
+      /* The glass and the sentence are the same string, by construction. If
+         these ever diverge the picture is describing one activity and the text
+         another, which is the exact failure this design exists to prevent. */
+      disagree: working.filter((c) => {
+        const v = c.querySelector('.art .verb');
+        const g = c.querySelector('.recap .ger');
+        if (!v || !g) return false;
+        return g.textContent.trim().toLowerCase().replace(/…$/, '') !== v.textContent.trim().toLowerCase();
+      }).length,
+      verbs: [...new Set([...document.querySelectorAll('.art .verb')].map((e) => e.textContent))],
+    };
+  });
+
+  check('the tool-face table loads', wall.table >= 40, `${wall.table} rows`);
+  check('every working card wears a robot',
+    wall.working > 0 && wall.workingWithRobot === wall.working,
+    `${wall.workingWithRobot}/${wall.working}`);
+  check('resting cards keep their project art', wall.restingWithRobot === 0,
+    `${wall.restingWithRobot} resting cards wear a tool`);
+  check('every scene actually decoded', wall.scenesLoaded === wall.workingWithRobot,
+    `${wall.scenesLoaded}/${wall.workingWithRobot} loaded`);
+  check('the glass and the recap say the same thing', wall.disagree === 0, `${wall.disagree} disagree`);
+  check('no robot asset 404s', bad.length === 0 && failed.length === 0,
+    [...bad, ...failed].slice(0, 2).join(' | '));
+
+  /* Reduced motion: an animated WebP cannot be paused, so the honest answer is
+     the still prop. Assert the swap rather than trusting the media query. */
+  await page.close();
+  const calm = await ctx.browser().newContext({ reducedMotion: 'reduce' });
+  const p2 = await calm.newPage();
+  await p2.goto(BASE + '/agents.html', { waitUntil: 'domcontentloaded' });
+  await p2.waitForTimeout(1200);
+  const rm = await p2.evaluate(() => {
+    const s = document.querySelector('.art.robot img.scene');
+    const st = document.querySelector('.art.robot img.still');
+    if (!s || !st) return null;
+    return { scene: getComputedStyle(s).display, still: getComputedStyle(st).display };
+  });
+  check('reduced motion swaps the animation for the still prop',
+    rm && rm.scene === 'none' && rm.still === 'block', JSON.stringify(rm));
+  await calm.close();
+}
+
 /* ---- 5. no page scrolls sideways, at any width Parker uses ------------- */
 for (const k of KIOSKS) {
   const page = await ctx.newPage();
