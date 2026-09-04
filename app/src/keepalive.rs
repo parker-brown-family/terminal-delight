@@ -56,6 +56,23 @@
 //! **Focus is never taken.** TD owns the pty, so [`Act::Type`] and [`Act::Send`]
 //! are writes to the pty master — the same path a keystroke takes, minus the
 //! keyboard. The human keeps working in whatever pane they are in.
+//!
+//! # Enter is not pressed on a prediction
+//!
+//! `needs_input` and `bell_blocked` are screen-row heuristics, and heuristics
+//! are allowed to be wrong. The sibling herdr plugin — same design, different
+//! runtime — hit the case they miss: its runtime reported a pane as idle and
+//! ready for input while Claude Code sat on its "Do you trust the files in this
+//! folder?" dialog. A status describes the agent PROCESS, not the screen, and
+//! Enter on that screen answers the dialog.
+//!
+//! So [`Act::Send`] is gated on a read-back rather than on a prediction. Before
+//! the carriage return reaches the pty, the pane's own grid is searched for
+//! [`PROBE`]; if the message it was given two minutes ago is not there, the
+//! characters went somewhere that is not a visible text field and the pane goes
+//! to [`Stage::Refused`] instead. TD reads its own grid, so unlike a runtime
+//! queried over a socket there is no stale-snapshot question — the answer is
+//! the screen. See `TerminalView::keepalive_step`.
 
 use std::time::Duration;
 
@@ -80,6 +97,23 @@ pub const MESSAGE: &str = "55 Minutes have elapsed since human interaction. \
 Warming cache to save 20x costs of refreshing cache. Please respond with simple \
 yes - cache is still warm if the cache is still warm for another hour.";
 
+/// A distinctive slice of [`MESSAGE`], searched for on the pane's own grid
+/// before Enter is ever pressed.
+///
+/// The TAIL of the message, not the head, and the difference is not cosmetic.
+/// An input box is a few lines tall and this message does not fit in one: the
+/// box shows the end, where the cursor is, and scrolls the beginning out of
+/// sight. A probe matching "55 Minutes have elapsed" would be looking at the
+/// one region guaranteed to be off-screen, and would refuse every pane that had
+/// received the message perfectly. Measured on live panes 2026-09-04, in the
+/// sibling herdr plugin that shares this design.
+pub const PROBE: &str = "another hour";
+
+/// How many Ctrl+U kills [`Act::Clear`] sends. Enough to empty a wrapped
+/// message of this length several times over; see the note in [`bytes`] for why
+/// it is a fixed count rather than a loop.
+pub const CLEAR_KILLS: usize = 12;
+
 /// Where a pane is in the sequence. Reset to `Awake` by any human keystroke.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Stage {
@@ -93,6 +127,10 @@ pub enum Stage {
     Notified,
     /// Sent. Nothing further until a human comes back.
     Sent,
+    /// The message was typed and could not then be found on this pane's grid,
+    /// so Enter was never pressed. Terminal: something other than a text prompt
+    /// took those characters, and this pane is not ours to keep poking.
+    Refused,
 }
 
 /// What to do to one pane on this tick.
@@ -187,9 +225,23 @@ pub fn bytes(a: Act, bracketed: bool) -> Option<Vec<u8>> {
         // Carriage return, not newline: this is a pty, and \n on a line-buffered
         // TUI is not the same key.
         Act::Send => Some(b"\r".to_vec()),
-        // Ctrl+U — kill to start of line. Readline and every TUI prompt TD hosts
-        // honour it, and it is one byte rather than 190 backspaces.
-        Act::Clear => Some(b"\x15".to_vec()),
+        // Ctrl+U, several times. One press is not enough: Claude Code's input
+        // box is multi-line and Ctrl+U kills a single line, so one byte against
+        // a message this long leaves most of it in the prompt — measured, on a
+        // live pane, where the first press took it from "still warm for another
+        // hour" down to "Please respond with" and no further.
+        //
+        // Bounded rather than repeated-until-clean, and that bound is the
+        // lesson. The sibling herdr plugin tried pressing until a read-back
+        // agreed the box was empty, and no such read-back is trustworthy:
+        // a tail probe reports clear while the middle survives, a list of
+        // slices only proves the slices you thought of are absent, and the
+        // structural "empty box is a bare prompt glyph" test holds right up
+        // until the box IS empty, at which point Claude collapses it and draws
+        // no glyph to match. A fixed, generous number of kills does most of the
+        // work; the human clears any remainder with one keystroke, and nobody
+        // hammers a live pane forever waiting for an oracle that cannot answer.
+        Act::Clear => Some(vec![0x15; CLEAR_KILLS]),
         _ => None,
     }
 }
@@ -338,9 +390,49 @@ mod tests {
     }
 
     #[test]
-    fn send_is_a_carriage_return_and_clear_is_ctrl_u() {
+    fn send_is_a_carriage_return_and_clear_is_repeated_ctrl_u() {
         assert_eq!(bytes(Act::Send, false).unwrap(), b"\r");
-        assert_eq!(bytes(Act::Clear, false).unwrap(), b"\x15");
+        let clear = bytes(Act::Clear, false).unwrap();
+        assert!(
+            clear.len() > 1,
+            "one Ctrl+U kills one line of a multi-line box"
+        );
+        assert!(clear.iter().all(|b| *b == 0x15));
+        assert_eq!(clear.len(), CLEAR_KILLS);
+    }
+
+    #[test]
+    fn the_probe_matches_the_tail_of_the_message_not_the_head() {
+        // An input box shows the end, where the cursor is, and scrolls the
+        // start out of sight. A head probe refuses panes that received the
+        // message perfectly.
+        assert!(MESSAGE.ends_with(&format!("{PROBE}.")) || MESSAGE.contains(PROBE));
+        let head = &MESSAGE[..PROBE.len().min(MESSAGE.len())];
+        assert!(
+            !head.contains(PROBE),
+            "PROBE must not match the opening of MESSAGE"
+        );
+        // ...and it has to be findable at all, or Send is refused every time.
+        assert!(MESSAGE.contains(PROBE));
+    }
+
+    #[test]
+    fn a_refused_pane_is_terminal_and_is_never_typed_at_again() {
+        // Set when the message could not be found on the grid after typing.
+        // Something that is not a text prompt took those characters; poking it
+        // further is how a keepalive answers a dialog.
+        for mins in [56, 58, 90, 600] {
+            assert_eq!(act(&at(mins, Stage::Refused)), Act::Nothing);
+        }
+    }
+
+    #[test]
+    fn a_human_returning_to_a_refused_pane_is_not_sent_a_clear() {
+        // Nothing verifiably staged there, and the pane already declined to
+        // behave like a text box once.
+        let mut p = at(56, Stage::Refused);
+        p.human_active = true;
+        assert_eq!(act(&p), Act::Nothing);
     }
 
     #[test]
