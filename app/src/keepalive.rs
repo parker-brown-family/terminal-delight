@@ -21,10 +21,23 @@
 //!
 //! `--fork-session` gives it a new session id, `--no-session-persistence` keeps
 //! it off disk entirely. It cannot type into a terminal, cannot answer a
-//! permission prompt, cannot be mistaken for the user. Measured 2026-09-03: two
-//! forks of one session, five seconds apart, different session ids — the first
-//! wrote 44,688 tokens, the second read 54,693 and wrote **zero**. A fork warms
-//! an entry that a different session reads for free, which is the whole design.
+//! permission prompt, cannot be mistaken for the user.
+//!
+//! Measured 2026-09-04, in the order production runs in — the live session warms
+//! the entry by working, the ping refreshes it, the session reads it on return:
+//!
+//! ```text
+//! A  real resume, no fork, session id kept:   read=10,005  write=44,937  $0.4545
+//! B  fork ping, new session id:               read=54,942  write=483     $0.0324
+//! ```
+//!
+//! B's read is exactly A's total prefix, and the 483 it wrote is its own prompt.
+//! A fork reads, for free, the entry a *real* session created. That is the whole
+//! design. (An earlier fork-to-fork measurement had the arrow backwards and
+//! showed only that two forks share an entry.)
+//!
+//! The residual: A resumed from disk, while a running pane builds its request
+//! from memory. Close, not identical — which is what [`Effect::Drifted`] is for.
 //!
 //! # The invariant that decides whether any of this works
 //!
