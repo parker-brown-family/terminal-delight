@@ -1,0 +1,532 @@
+<!-- Teardown Summary -->
+<div class="sec xsec" data-open="false">
+  <div class="stitle xhdr" onclick="toggleXSec(this)"><span class="xtrig">&#x25BC;</span> Teardown Summary</div>
+  <div class="xbody">
+  <div class="sgrid">
+    <div class="sc commentable" data-id="summary-subject" data-title="Subject">
+      <span class="hint-tip">&#x1F4AC; comment</span>
+      <div class="lbl">Subject</div>
+      <div><code>Dixie-sketch/Clawdeck</code> &#x2014; "SideCrab". Python companion + iCUE HTML widget, Windows-only, 14&#x2605;, last commit 2026-09-02.</div>
+    </div>
+    <div class="sc commentable" data-id="summary-verdict" data-title="Verdict">
+      <span class="hint-tip">&#x1F4AC; comment</span>
+      <div class="lbl">Verdict</div>
+      <div>Adopt the <strong>hook data plane</strong> and the <strong>contract discipline</strong>. The render half is the half TD already has.</div>
+    </div>
+    <div class="sc commentable" data-id="summary-risk" data-title="Risk Level">
+      <span class="hint-tip">&#x1F4AC; comment</span>
+      <div class="lbl">Risk Level</div>
+      <div><span class="bdg bmd">Medium</span> &#x2014; the highest-value mechanism deliberately <em>blocks a live agent</em> for up to 60&nbsp;s while a human decides.</div>
+    </div>
+  </div>
+  </div>
+</div>
+
+<!-- ELI5 -->
+<div class="sec xsec" data-open="false">
+  <div class="stitle xhdr" onclick="toggleXSec(this)"><span class="xtrig">&#x25BC;</span> ELI5 &#x2014; tl;dr</div>
+  <div class="xbody">
+  <div class="cal ci commentable" data-id="eli5" data-title="ELI5">
+    <span class="hint-tip">&#x1F4AC; comment</span>
+    <div class="ct">&#x1F4A1; Plain English</div>
+    The viral post links the wrong repository. The desk panel in the photo is driven by <strong>Claude Code hooks POSTing to a small local web server</strong> &#x2014; not by scraping a terminal. TD already draws everything that panel draws; what TD does not have is that push-fed data plane, and in particular the one hook that <em>holds the agent still</em> long enough for a human to tap allow or deny somewhere other than the pane. Done looks like: a permission prompt raised in a TD pane can be answered from FleetView, and ignoring it falls through to the normal terminal dialog as though nothing had been added.
+  </div>
+  </div>
+</div>
+
+<!-- 1 — The repo in the post is not the project -->
+<div class="sec xsec" data-open="false">
+  <div class="stitle xhdr" onclick="toggleXSec(this)"><span class="xtrig">&#x25BC;</span> 1 &#x2014; The repo in the post is not the project</div>
+  <div class="xbody">
+  <div class="cal cw commentable" data-id="wrong-repo" data-title="Name collision">
+    <span class="hint-tip">&#x1F4AC; comment</span>
+    <div class="ct">&#x1F6A8; <code>clawdeckio/clawdeck</code> is a different project by a different author</div>
+    It is a <strong>Rails 8.1 kanban board</strong> for OpenClaw agents &#x2014; boards, tasks, GitHub OAuth, Solid Queue, Hotwire. Its own README says the hosted version shuts down 2026-05-30 and that it evolved into <code>lst.so</code>. Nothing in it renders on a panel, reads a transcript, or knows what a GPU is.
+  </div>
+  <div class="cal cn commentable" data-id="wrong-repo-proof" data-title="Proof">
+    <span class="hint-tip">&#x1F4AC; comment</span>
+    <div class="ct">The check that settles it</div>
+    Cloned at depth 1 and grepped the whole tree for <code>xeneon|corsair|touchscreen|gpu|temperature|5-hour|cache_read|transcript|\.claude</code> across <code>*.rb *.md *.js *.erb</code>. <strong>Zero hits.</strong> Single commit on <code>main</code> ("Update shutdown date to May 30, 2026"); every other branch is Dependabot.
+  </div>
+  <div class="cal ci commentable" data-id="right-repo" data-title="The real one">
+    <span class="hint-tip">&#x1F4AC; comment</span>
+    <div class="ct">&#x1F980; The project in the photograph</div>
+    <code>Dixie-sketch/Clawdeck</code> &#x2014; "SideCrab / Claw'deck: an ambient Claude Code status panel for the Corsair Xeneon Edge". Python, 14&#x2605;, found via the <code>xeneon-edge</code> GitHub topic (21 sibling panel projects). Every feature the post lists &#x2014; the 5-hour and weekly bars, cache reads, CPU/GPU/memory temperatures, session cards, the crab &#x2014; belongs to this one.
+  </div>
+  </div>
+</div>
+
+<!-- 2 — What SideCrab actually is -->
+<div class="sec xsec" data-open="false">
+  <div class="stitle xhdr" onclick="toggleXSec(this)"><span class="xtrig">&#x25BC;</span> 2 &#x2014; What SideCrab actually is</div>
+  <div class="xbody">
+  <div class="cal ci commentable" data-id="arch-shape" data-title="Shape">
+    <span class="hint-tip">&#x1F4AC; comment</span>
+    <div class="ct">Four processes around one loopback contract</div>
+    It is not an application. It is a daemon serving a versioned JSON document on <code>127.0.0.1:2722</code>, and three unrelated consumers that each read the same document and never talk to each other. The widget is not privileged; the toaster and the RGB controller are peers of it.
+  </div>
+  <div class="tw">
+    <table>
+      <thead><tr><th>Component</th><th>What it is</th><th>Size</th></tr></thead>
+      <tbody>
+        <tr class="cmtablerow commentable" data-id="comp-crabd" data-title="crabd"><td><code>companion/crabd.py</code></td><td>The daemon. Ingests hooks, builds and serves <code>/v1/state</code></td><td>7,067 lines</td></tr>
+        <tr class="cmtablerow commentable" data-id="comp-widget" data-title="widget"><td><code>widget/</code></td><td>HTML + JS rendered <em>by iCUE</em> on the Edge panel</td><td>8,304 lines JS</td></tr>
+        <tr class="cmtablerow commentable" data-id="comp-notifier" data-title="notifier"><td><code>notifier/</code></td><td>Windows toasts. Read-only consumer of the same feed</td><td>2,541 lines</td></tr>
+        <tr class="cmtablerow commentable" data-id="comp-lighting" data-title="lighting"><td><code>lighting/</code></td><td>iCUE RGB glow. Same feed again</td><td>1,068 lines</td></tr>
+        <tr class="cmtablerow commentable" data-id="comp-hooks" data-title="hooks"><td><code>hooks/</code></td><td>The settings fragment + a status-line script</td><td>1 JSON, 1 script</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="cal cn commentable" data-id="arch-tests" data-title="Test posture">
+    <span class="hint-tip">&#x1F4AC; comment</span>
+    <div class="ct">The test-to-source ratio is the tell</div>
+    <code>companion/tests/test_crabd.py</code> alone is <strong>11,062 lines</strong> against a 7,067-line daemon, plus a separate <code>test_crabd_livefire.py</code>. The notifier has ten test files covering budget, digest, mute, snooze, stale, longrun and approval paths. There is a <code>docs/findings/</code> directory of dated self-audits. This is not a weekend project with a nice screenshot.
+  </div>
+  </div>
+</div>
+
+<!-- 3 — The hook data plane -->
+<div class="sec xsec" data-open="false">
+  <div class="stitle xhdr" onclick="toggleXSec(this)"><span class="xtrig">&#x25BC;</span> 3 &#x2014; The hook data plane (the mechanism worth taking)</div>
+  <div class="xbody">
+  <div class="cal ci commentable" data-id="hooks-core" data-title="Push, not scrape">
+    <span class="hint-tip">&#x1F4AC; comment</span>
+    <div class="ct">The panel is pushed to; it does not look</div>
+    Seven hooks in <code>settings.json</code>. Five are fire-and-forget <code>curl</code> POSTs of the hook payload to a loopback endpoint, each with a 2&nbsp;s timeout and <code>|| exit 0</code> so a dead daemon can never wedge an agent. <strong>Two use the newer <code>"type": "http"</code> hook, where the hook's HTTP response is a return channel back into the agent.</strong>
+  </div>
+
+<pre>
+"Notification":      curl -s -m 2 -X POST --data-binary @- http://127.0.0.1:2722/v1/hook   (timeout 3)
+"SessionStart":      &#x2026; same &#x2026;
+"UserPromptSubmit":  &#x2026; same &#x2026;
+"SubagentStop":      &#x2026; same &#x2026;
+"SessionEnd":        &#x2026; same &#x2026;
+
+"Stop":              { "type": "http", "url": ".../v1/hook/stop",       "timeout": 5  }
+"PermissionRequest": { "type": "http", "url": ".../v1/hook/permission", "timeout": 60 }
+</pre>
+
+  <div class="cal cw commentable" data-id="hooks-sixty" data-title="The 60">
+    <span class="hint-tip">&#x1F4AC; comment</span>
+    <div class="ct">&#x26A0;&#xFE0F; That <code>60</code> is the entire tap-to-answer feature</div>
+    There is no keystroke injection, no PTY write, no window targeting. The <code>PermissionRequest</code> hook <strong>blocks the agent for up to a minute</strong> while the daemon parks the request and waits for a finger on the glass. The decision is returned as the hook's HTTP response. If nobody taps, the hook times out and the hold falls through to the in-pane terminal dialog <em>exactly as if the panel did not exist</em> &#x2014; which is also, deliberately, what an out-of-date widget gets when the server refuses its write.
+  </div>
+  <div class="cal cn commentable" data-id="hooks-reply" data-title="Reply spike">
+    <span class="hint-tip">&#x1F4AC; comment</span>
+    <div class="ct">Waking an idle session &#x2014; measured, not assumed</div>
+    <code>docs/spikes/reply-spike-2.md</code> is a properly run spike against Claude Code v2.1.246: a <strong>disposable</strong> session spawned under a ConPTY in a throwaway directory, driven only through that PTY, killed and verified gone afterwards. Findings: the cross-session message bus delivers to an <strong>idle</strong> session as a new turn (live-tested); it cannot answer a session that is mid-turn (that half of the old finding stands); the CLI has no send subcommand; Remote Control is cloud-relayed and therefore the wrong shape for a same-desk companion.
+  </div>
+  <div class="cal ci commentable" data-id="hooks-agents-json" data-title="claude agents --json">
+    <span class="hint-tip">&#x1F4AC; comment</span>
+    <div class="ct">The read API that fell out of the spike</div>
+    <code>claude agents --json</code> prints live sessions and, per its own help, <em>does not require a TTY</em>. Observed shape: <code>{pid, cwd, kind, startedAt, sessionId, name, status}</code> with <code>status</code> tri-valued (<code>idle</code>, <code>waiting</code>, absent while busy) and <code>waitingFor</code> distinguishing <code>permission prompt</code> from <code>dialog open</code>. Their conclusion: it is not a reply channel, but it is what tells you <em>whether a reply would be accepted right now</em>. Only send to <code>status: idle</code>.
+  </div>
+  </div>
+</div>
+
+<!-- 4 — Contract discipline -->
+<div class="sec xsec" data-open="false">
+  <div class="stitle xhdr" onclick="toggleXSec(this)"><span class="xtrig">&#x25BC;</span> 4 &#x2014; Contract discipline worth stealing</div>
+  <div class="xbody">
+  <div class="cal ci commentable" data-id="doc-quality" data-title="STATE-CONTRACT.md">
+    <span class="hint-tip">&#x1F4AC; comment</span>
+    <div class="ct">The best artifact in either repository</div>
+    <code>docs/STATE-CONTRACT.md</code> is roughly 25k tokens of wire contract written as narrative &#x2014; every field carries the measurement that justified it and the failure that motivated it. It reads like our own commit-message doctrine applied to a JSON schema.
+  </div>
+  <div class="cal cw commentable" data-id="schema-rule" data-title="Schema versioning">
+    <span class="hint-tip">&#x1F4AC; comment</span>
+    <div class="ct">&#x26A0;&#xFE0F; <code>schema</code> marks only the last <em>breaking</em> shape</div>
+    It is pinned at <strong>5</strong> while additive fields are detected by <strong>key presence</strong>, never by version number. The reason is a deploy-coupling failure they actually hit: a strict version whitelist tied every daemon deploy to a console-bound widget import, so schema N+1 <em>bricked the panel until somebody physically stood at the desk</em>. Unknown keys are always ignored; a version above the reader's ceiling is still treated as a dead feed, because that is what a real break looks like.
+  </div>
+  <div class="cal cw commentable" data-id="null-rule" data-title="Null discipline">
+    <span class="hint-tip">&#x1F4AC; comment</span>
+    <div class="ct">&#x26A0;&#xFE0F; <code>null</code> is a reading, not an absence</div>
+    The key is always present; the value carries the knowledge. Consumers must test the value's <em>type</em>, not the key's truthiness. Unknown means <strong>no bar drawn</strong> &#x2014; never a zero, never a default, never last week's number. Their sentence for it: <em>"a wrong bar looks exactly like a right one."</em>
+  </div>
+  <div class="cal ci commentable" data-id="source-ladder" data-title="Source ladder">
+    <span class="hint-tip">&#x1F4AC; comment</span>
+    <div class="ct">Most-specific-first, and the order is load-bearing</div>
+    For the context-window denominator: (1) the status-line document's own <code>context_window.context_window_size</code>, this session, live; (2) the <code>[1m]</code>/<code>[200k]</code> marker in the session's model string; (3) the models catalog's <code>max_input_tokens</code> for that model. Ranks 2 and 3 are ordered that way because the marker is <em>that session's</em> window while the catalog is the model's ceiling &#x2014; preferring the ceiling would gauge a <code>[200k]</code> card at a fifth of its true fill. And <strong>never</strong> the sibling <code>max_tokens</code>, which is the output cap: measured 2026-08-28 as 128000 sitting beside a 1000000 input window. They also deleted the obvious model-name lookup table on the grounds that <em>"opus means 200k" is a number no document said.</em>
+  </div>
+  <div class="cal cw commentable" data-id="invisible-bar" data-title="Shipped invisible">
+    <span class="hint-tip">&#x1F4AC; comment</span>
+    <div class="ct">&#x1F6A8; The feature that shipped and never once rendered</div>
+    The widget derived its context-fill denominator solely from a <code>[1m]</code>/<code>[200k]</code> marker in the model id. The live ids on that host carry none &#x2014; measured 2026-08-28 as <code>claude-fable-5</code> and <code>claude-opus-5</code>. The bar had therefore <strong>never drawn on a real session</strong>. Green build, shipped feature, zero pixels. This is the same failure our own memory records twice over.
+  </div>
+  <div class="cal cn commentable" data-id="panel-log" data-title="panel-log">
+    <span class="hint-tip">&#x1F4AC; comment</span>
+    <div class="ct">A printf channel for a surface no debugger can reach</div>
+    iCUE renders the widget where devtools cannot attach, so <code>console.log</code> has nowhere to go. Their answer: <code>POST /v1/panel-log</code>, the widget describing what it saw, the server timestamping it, a 500-line in-memory ring that is never persisted. Explicitly optional in both directions &#x2014; <strong>the widget must function fully when the endpoint 404s</strong>, no feature may be gated on it, and a failed POST must never surface to the operator. Over-limits are not errors: past 50 lines the first 50 are kept, and a line over 300 characters is trimmed then truncated, because losing the tail of one burst is recoverable and losing the burst is not.
+  </div>
+  </div>
+</div>
+
+<!-- 5 — Interrupt economics -->
+<div class="sec xsec" data-open="false">
+  <div class="stitle xhdr" onclick="toggleXSec(this)"><span class="xtrig">&#x25BC;</span> 5 &#x2014; Interrupt economics (the notifier)</div>
+  <div class="xbody">
+  <div class="cal ci commentable" data-id="notif-shape" data-title="Six toasts">
+    <span class="hint-tip">&#x1F4AC; comment</span>
+    <div class="ct">Six toast kinds, one shared rule</div>
+    Waiting session (a <code>needs_input</code> row aged past 120&nbsp;s) &#x00B7; long run (a turn over 900&nbsp;s) &#x00B7; approval undecided past 20&nbsp;s &#x00B7; daily digest &#x00B7; budget crossed &#x00B7; companion outage. Each carries its own dedupe key. The gate is five conditions deep: state, unacked, aged, not already toasted, not quiet hours.
+  </div>
+  <div class="cal cw commentable" data-id="notif-spell" data-title="Spell dedupe">
+    <span class="hint-tip">&#x1F4AC; comment</span>
+    <div class="ct">&#x26A0;&#xFE0F; One toast per waiting <em>spell</em>, not per poll</div>
+    The ledger key is <code>(sessionId, stateSince)</code> and it is <strong>permanent for the life of the process</strong>. A session waiting an hour toasts once, not thirty times. Only a genuinely new question &#x2014; which moves <code>stateSince</code> &#x2014; re-arms it. A session flapping <code>needs_input &#x2192; working &#x2192; needs_input</code> at the same <code>stateSince</code> is not a new spell. A not-yet-due spell is deliberately not consumed by an early poll, so it still fires when it matures.
+  </div>
+  <div class="cal cw commentable" data-id="notif-quiet" data-title="Quiet hours">
+    <span class="hint-tip">&#x1F4AC; comment</span>
+    <div class="ct">&#x26A0;&#xFE0F; Quiet hours mean silent, not deferred</div>
+    A matured spell inside quiet hours is suppressed <strong>and marked resolved</strong>. It does not queue. Their reasoning, verbatim in shape: without it every question that matured overnight fires the instant quiet hours end &#x2014; a burst of stale toasts on a perfectly healthy morning, <em>"exactly the kind of alert that trains you to ignore the one that matters."</em>
+  </div>
+  <div class="cal cn commentable" data-id="notif-grace" data-title="Prune grace">
+    <span class="hint-tip">&#x1F4AC; comment</span>
+    <div class="ct">The three-absence grace, and why it exists</div>
+    The ledger prunes a session only after 3 consecutive absences from the feed. The specific failure it defends: the daemon restarting and briefly serving an empty <code>sessions</code> array would otherwise clear the ledger mid-spell and toast the same question a second time. Adjacent, in the daemon: two <code>PermissionRequest</code>s in one assistant message (what parallel tool calls produce) are newest-wins, and A's release must not stand the card down while B is still parked, or the card reads <em>working</em> while serving B's live hold.
+  </div>
+  </div>
+</div>
+
+<!-- 6 — TD delta -->
+<div class="sec xsec" data-open="false">
+  <div class="stitle xhdr" onclick="toggleXSec(this)"><span class="xtrig">&#x25BC;</span> 6 &#x2014; TD delta: what we have, what is missing</div>
+  <div class="xbody">
+  <div class="cal ci commentable" data-id="delta-core" data-title="The structural difference">
+    <span class="hint-tip">&#x1F4AC; comment</span>
+    <div class="ct">TD infers from outside; SideCrab is pushed to</div>
+    TD resolves agent identity by walking <code>/proc</code>, reading open file descriptors, and matching transcript JSONL files by cwd and process birth time &#x2014; <code>claude_session_by_start</code>, <code>pick_session_by_birth</code>, <code>open_jsonl_under</code>, <code>claude_session_from_fds</code>. That is clever and it is unverified by any second source. SideCrab is told, by the agent itself, at the moment the thing happens. The render half is not the gap.
+  </div>
+  <div class="tw">
+    <table>
+      <thead><tr><th>TD today</th><th>Lines</th><th>SideCrab equivalent</th><th>Gap</th></tr></thead>
+      <tbody>
+        <tr class="cmtablerow commentable" data-id="d-usage" data-title="usage.rs"><td><code>app/src/usage.rs</code></td><td>869</td><td>burn / limits block in <code>/v1/state</code></td><td>Rough parity. Steal the null discipline and the source ladder</td></tr>
+        <tr class="cmtablerow commentable" data-id="d-session" data-title="session.rs"><td><code>app/src/session.rs</code></td><td>1,173</td><td>hook ingest &#x2192; session rows</td><td><strong>Structural.</strong> Ours is inferred, theirs is told</td></tr>
+        <tr class="cmtablerow commentable" data-id="d-vitals" data-title="vitals.rs"><td><code>app/src/vitals.rs</code></td><td>2,630</td><td>cpuPct / temps in the state doc</td><td>We are ahead. Note their CPU failure table puts a sub-quantum window in the <code>null</code> column, never <code>0.0</code></td></tr>
+        <tr class="cmtablerow commentable" data-id="d-notify" data-title="notify.rs"><td><code>app/src/notify.rs</code> + <code>main.rs</code></td><td>189</td><td><code>notifier/</code> (2,541 + 10 test files)</td><td><strong>Corrected.</strong> <code>notify.rs</code> is argv + recap; policy lives in <code>main.rs</code> and is <em>edge</em>-triggered on the bell. Upstream polls, so its ledger solves a problem TD does not have. The gap is the inverse &#x2014; a missed toast is never re-raised</td></tr>
+        <tr class="cmtablerow commentable" data-id="d-mcptail" data-title="mcp_tail.rs"><td><code>app/src/mcp_tail.rs</code></td><td>319</td><td><code>Notification</code> hook payload</td><td>We keep a tool name and a 120-char gist; the hook hands over the exact question text</td></tr>
+        <tr class="cmtablerow commentable" data-id="d-ctl" data-title="ctl.rs"><td><code>app/src/ctl.rs</code> + <code>keepalive.rs</code></td><td>1,012</td><td><code>POST /v1/action</code></td><td><strong>Corrected.</strong> TD <em>can</em> write to the pty (<code>Act::Type</code>/<code>Act::Send</code>) and deliberately will not at a held pane, because a scraped screen cannot tell it from an idle one. The gap is a weak signal, not a missing channel</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="cal cn commentable" data-id="delta-notmine" data-title="Not transferable">
+    <span class="hint-tip">&#x1F4AC; comment</span>
+    <div class="ct">What does not come across</div>
+    SideCrab is Windows-throughout: <code>curl.exe</code>, <code>.pyw</code> launchers, PowerShell 5.1 toasts, iCUE as the render host, an iCUE widget <em>property</em> as the secret store for the pairing code. The hook contract transfers whole; none of the plumbing does. Their pairing-code design is still worth reading &#x2014; they rejected an origin allowlist because the widget's true origin measured as <code>null</code>, and rejected a served nonce because the same forged-null caller would read it.
+  </div>
+  </div>
+</div>
+
+<!-- 7 — Tickets -->
+<div class="sec xsec" data-open="false">
+  <div class="stitle xhdr" onclick="toggleXSec(this)"><span class="xtrig">&#x25BC;</span> 7 &#x2014; Tickets</div>
+  <div class="xbody">
+  <div class="tbox">
+    <div class="trow commentable" data-id="ticket-epic" data-title="EPIC">
+      <span class="hint-tip">&#x1F4AC; comment</span>
+      <div class="tid">EPIC</div>
+      <div class="ttl"><strong>Give TD a push-fed agent data plane, and a way to answer a hold from outside the pane</strong></div>
+      <span class="bdg bh">high</span>
+    </div>
+
+    <div class="trow expandable commentable" data-id="ticket-1" data-title="T-001 PermissionRequest hook" data-open="false">
+      <span class="hint-tip">&#x1F4AC; comment</span>
+      <div class="trow-hdr">
+        <button class="texp" onclick="toggleTicket(this,event)" title="Expand details">&#x25B6;</button>
+        <div class="tid">T-001</div>
+        <div class="ttl">HOOK: <code>PermissionRequest</code> &#x2192; TD ctl, answerable from FleetView</div>
+        <span class="bdg bh">high</span>
+      </div>
+      <div class="trow-body">
+        <div class="tbfield">
+          <div class="tblabel">Intent</div>
+          The one mechanism TD cannot synthesize by looking harder. A <code>"type": "http"</code> hook pointed at a TD-owned local endpoint turns every TD surface into a place a hold can be answered, and it degrades to today's behaviour on its own timeout.
+        </div>
+        <div class="tbfield">
+          <div class="tblabel">Acceptance Criteria</div>
+          <pre>Given a Claude session in a TD pane raises a permission prompt
+When  the PermissionRequest hook POSTs the hold to TD and FleetView renders it
+Then  a tap on allow or deny returns that decision as the hook's HTTP response
+And   no tap inside the window falls through to the in-pane dialog unchanged
+And   TD being down or slow never wedges the agent past the hook timeout</pre>
+        </div>
+        <div class="tbfield">
+          <div class="tblabel">Gotcha</div>
+          Two holds can be live for one session &#x2014; parallel tool calls in a single assistant message. Newest-wins, and releasing the older one must not stand the card down while the newer is still parked. Start the timeout <strong>below</strong> 60&nbsp;s until we have watched it against a real fleet; a blocked agent is a real cost.
+        </div>
+        <div class="tbfield">
+          <div class="tblabel">Files or systems</div>
+          <div class="tbfiles">app/src/ctl.rs &#x00B7; a new hook-ingest endpoint &#x00B7; FleetView render path &#x00B7; ~/.claude/settings.json fragment</div>
+        </div>
+        <div class="tbfield" style="display:flex;gap:24px">
+          <div><div class="tblabel">Blocks</div>T-002</div>
+          <div><div class="tblabel">Blocked by</div>none</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="trow expandable commentable" data-id="ticket-2" data-title="T-002 Hook-fed state" data-open="false">
+      <span class="hint-tip">&#x1F4AC; comment</span>
+      <div class="trow-hdr">
+        <button class="texp" onclick="toggleTicket(this,event)" title="Expand details">&#x25B6;</button>
+        <div class="tid">T-002</div>
+        <div class="ttl">STATE: hook-fed <code>needs_input</code> and real turn boundaries</div>
+        <span class="bdg bh">high</span>
+      </div>
+      <div class="trow-body">
+        <div class="tbfield">
+          <div class="tblabel">Intent</div>
+          Wire <code>Notification</code>, <code>Stop</code>, <code>SubagentStop</code>, <code>SessionStart</code>, <code>UserPromptSubmit</code>, <code>SessionEnd</code> as fire-and-forget POSTs. <code>Notification</code> carries the question text verbatim; <code>Stop</code> is a real turn boundary rather than one inferred from a quiet transcript. This is what turns a still screen into a live predicate.
+        </div>
+        <div class="tbfield">
+          <div class="tblabel">Acceptance Criteria</div>
+          <pre>Given an agent asks a question and then sits idle
+When  the Notification hook fires
+Then  TD shows the question text itself, not a tool name and a gist
+And   the state carries a stateSince that a consumer can age against
+And   killing the TD endpoint leaves every agent running normally</pre>
+        </div>
+        <div class="tbfield">
+          <div class="tblabel">Gotcha</div>
+          Every fire-and-forget hook needs the <code>|| exit 0</code> and a short timeout, or a slow TD becomes a slow fleet. Their <code>Notification</code> for a permission dialog is word-for-word identical to the permission text, which means hook ordering between the two is unmeasured and must not double-escalate.
+        </div>
+        <div class="tbfield">
+          <div class="tblabel">Files or systems</div>
+          <div class="tbfiles">app/src/session.rs &#x00B7; app/src/mcp_tail.rs &#x00B7; hook ingest endpoint</div>
+        </div>
+        <div class="tbfield" style="display:flex;gap:24px">
+          <div><div class="tblabel">Blocks</div>T-004</div>
+          <div><div class="tblabel">Blocked by</div>T-001</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="trow expandable commentable" data-id="ticket-3" data-title="T-003 agents --json oracle" data-open="false">
+      <span class="hint-tip">&#x1F4AC; comment</span>
+      <div class="trow-hdr">
+        <button class="texp" onclick="toggleTicket(this,event)" title="Expand details">&#x25B6;</button>
+        <div class="tid">T-003</div>
+        <div class="ttl">ORACLE: cross-check <code>session.rs</code> resolution against <code>claude agents --json</code></div>
+        <span class="bdg bmd">medium</span>
+      </div>
+      <div class="trow-body">
+        <div class="tbfield">
+          <div class="tblabel">Intent</div>
+          Session resolution is the fiddliest code in TD and has exactly one implementation. A TTY-free supported command prints <code>pid</code>, <code>cwd</code>, <code>sessionId</code>, <code>status</code> and <code>waitingFor</code> for live sessions. Running both and logging disagreements is the differential oracle pattern that has already earned its keep here.
+        </div>
+        <div class="tbfield">
+          <div class="tblabel">Acceptance Criteria</div>
+          <pre>Given several agents running in TD panes
+When  TD resolves each pane's session and also reads claude agents --json
+Then  every disagreement in sessionId or cwd is recorded with both readings
+And   a run across a real working day produces a countable divergence rate</pre>
+        </div>
+        <div class="tbfield">
+          <div class="tblabel">Gotcha</div>
+          Do not make the CLI authoritative on first contact. Log first, decide after we have numbers &#x2014; and a metric fails by printing a plausible wrong number, so eyeball the first disagreements by hand.
+        </div>
+        <div class="tbfield">
+          <div class="tblabel">Files or systems</div>
+          <div class="tbfiles">app/src/session.rs &#x00B7; a debug-only comparison path</div>
+        </div>
+        <div class="tbfield" style="display:flex;gap:24px">
+          <div><div class="tblabel">Blocks</div>none</div>
+          <div><div class="tblabel">Blocked by</div>none</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="trow expandable commentable" data-id="ticket-4" data-title="T-004 Spell dedupe" data-open="false">
+      <span class="hint-tip">&#x1F4AC; comment</span>
+      <div class="trow-hdr">
+        <button class="texp" onclick="toggleTicket(this,event)" title="Expand details">&#x25B6;</button>
+        <div class="tid">T-004</div>
+        <div class="ttl">NOTIFY: one alert per waiting spell, and quiet hours that suppress rather than defer</div>
+        <span class="bdg bmd">medium</span>
+      </div>
+      <div class="trow-body">
+        <div class="tbfield">
+          <div class="tblabel">Intent</div>
+          <code>notify.rs</code> is 189 lines against their 2,541 plus ten test files. The hard part is not firing a notification; it is the dedupe key, the re-arm condition, and refusing to defer. Port the semantics, not the code.
+        </div>
+        <div class="tbfield">
+          <div class="tblabel">Acceptance Criteria</div>
+          <pre>Given an agent waits on a question for an hour
+When  the notifier polls throughout
+Then  exactly one alert fires
+And   a genuinely new question re-arms it and a flap at the same stateSince does not
+And   a matured alert inside quiet hours is marked resolved, never queued
+And   a TD restart serving an empty fleet does not re-alert a live spell</pre>
+        </div>
+        <div class="tbfield">
+          <div class="tblabel">Gotcha</div>
+          The three-absence prune grace exists for exactly the restart case in the last criterion. Without it the bug is invisible in testing and appears the first time TD is restarted while somebody is mid-question.
+        </div>
+        <div class="tbfield">
+          <div class="tblabel">Files or systems</div>
+          <div class="tbfiles">app/src/notify.rs &#x00B7; app/src/bell.rs</div>
+        </div>
+        <div class="tbfield" style="display:flex;gap:24px">
+          <div><div class="tblabel">Blocks</div>none</div>
+          <div><div class="tblabel">Blocked by</div>T-002</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="trow expandable commentable" data-id="ticket-5" data-title="T-005 Presence detection" data-open="false">
+      <span class="hint-tip">&#x1F4AC; comment</span>
+      <div class="trow-hdr">
+        <button class="texp" onclick="toggleTicket(this,event)" title="Expand details">&#x25B6;</button>
+        <div class="tid">T-005</div>
+        <div class="ttl">WIRE: presence-based feature detection on the TD MCP and ctl surfaces</div>
+        <span class="bdg bmd">medium</span>
+      </div>
+      <div class="trow-body">
+        <div class="tbfield">
+          <div class="tblabel">Intent</div>
+          TD has the identical coupling problem: <code>get_pane_config</code> / <code>set_pane_config</code> / <code>pane_events</code> are consumed by agents and plugins of unknown vintage. Adopt the rule that a version number marks only a break, additive fields are detected by key presence, unknown keys are ignored, and every unknown reading is an explicit null rather than a zero.
+        </div>
+        <div class="tbfield">
+          <div class="tblabel">Acceptance Criteria</div>
+          <pre>Given a TD release adds a field to a pane config document
+When  an older consumer reads it
+Then  the consumer ignores the unknown key and keeps working
+And   no consumer update is required to ship that release
+And   an unknown numeric reading serves null and draws nothing</pre>
+        </div>
+        <div class="tbfield">
+          <div class="tblabel">Gotcha</div>
+          A copied default is an override &#x2014; resolve at read time against a live scope rather than baking today's value into a consumer. That memory and this rule are the same rule seen from two sides.
+        </div>
+        <div class="tbfield">
+          <div class="tblabel">Files or systems</div>
+          <div class="tbfiles">app/src/mcp.rs &#x00B7; app/src/ctl.rs &#x00B7; the plugin contract</div>
+        </div>
+        <div class="tbfield" style="display:flex;gap:24px">
+          <div><div class="tblabel">Blocks</div>none</div>
+          <div><div class="tblabel">Blocked by</div>none</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="trow expandable commentable" data-id="ticket-6" data-title="T-006 Panel log ring" data-open="false">
+      <span class="hint-tip">&#x1F4AC; comment</span>
+      <div class="trow-hdr">
+        <button class="texp" onclick="toggleTicket(this,event)" title="Expand details">&#x25B6;</button>
+        <div class="tid">T-006</div>
+        <div class="ttl">DEBUG: a bounded diagnostic ring for surfaces with no console</div>
+        <span class="bdg bm">low</span>
+      </div>
+      <div class="trow-body">
+        <div class="tbfield">
+          <div class="tblabel">Intent</div>
+          Anything TD renders where no debugger attaches &#x2014; a plugin, the Quickshell <code>td-palette</code> widget, a popout &#x2014; should be able to POST what it saw to a bounded in-memory ring that TD timestamps. Never persisted, optional in both directions, invisible when it fails.
+        </div>
+        <div class="tbfield">
+          <div class="tblabel">Acceptance Criteria</div>
+          <pre>Given a surface with no attachable console posts diagnostic lines
+When  the endpoint is present
+Then  the lines are readable in order with server-applied timestamps
+And   the surface behaves identically when the endpoint returns 404
+And   nothing written there survives a TD restart or reaches disk</pre>
+        </div>
+        <div class="tbfield">
+          <div class="tblabel">Gotcha</div>
+          Over-limit is not an error. Keep the first N lines of an oversized burst rather than rejecting the burst, and trim before truncating so leading whitespace cannot push the useful half off the end.
+        </div>
+        <div class="tbfield">
+          <div class="tblabel">Files or systems</div>
+          <div class="tbfiles">app/src/ctl.rs &#x00B7; app/src/plugins.rs</div>
+        </div>
+        <div class="tbfield" style="display:flex;gap:24px">
+          <div><div class="tblabel">Blocks</div>none</div>
+          <div><div class="tblabel">Blocked by</div>none</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  </div>
+</div>
+
+<!-- 8 — The sibling repo -->
+<div class="sec xsec" data-open="false">
+  <div class="stitle xhdr" onclick="toggleXSec(this)"><span class="xtrig">&#x25BC;</span> 8 &#x2014; The sibling repo that is closer to home</div>
+  <div class="xbody">
+  <div class="cal ci commentable" data-id="sibling" data-title="xeneon-edge-agents">
+    <span class="hint-tip">&#x1F4AC; comment</span>
+    <div class="ct">&#x1F980; <code>spencerbull/xeneon-edge-agents</code> &#x2014; our exact stack</div>
+    Rust workspace plus <strong>Quickshell QML</strong>, a Hyprland lua fragment, four systemd user units and a desktop entry: "Omarchy and Herdr agent command center for the Corsair XENEON EDGE". Where SideCrab is a Windows companion we translate from, this one already runs on our compositor.
+  </div>
+  <div class="tw">
+    <table>
+      <thead><tr><th>File</th><th>Lines</th><th>Why it matters here</th></tr></thead>
+      <tbody>
+        <tr class="cmtablerow commentable" data-id="s-portal" data-title="PortalView"><td><code>components/PortalView.qml</code></td><td>1,179</td><td>The main fleet surface</td></tr>
+        <tr class="cmtablerow commentable" data-id="s-store" data-title="PortalStore"><td><code>state/PortalStore.qml</code></td><td>767</td><td>State store with its own QML test, <code>tst_store.qml</code></td></tr>
+        <tr class="cmtablerow commentable" data-id="s-usage" data-title="AiUsageDock"><td><code>components/AiUsageDock.qml</code></td><td>520</td><td>Usage rendering we can compare against <code>usage.rs</code></td></tr>
+        <tr class="cmtablerow commentable" data-id="s-card" data-title="AgentCard"><td><code>components/AgentCard.qml</code></td><td>518</td><td>Per-session card layout</td></tr>
+        <tr class="cmtablerow commentable" data-id="s-ambient" data-title="Ambient"><td><code>AmbientView / AmbientRing / OrbitTrail</code></td><td>494 / 428 / &#x2014;</td><td>Ambient motion for a fleet at rest</td></tr>
+        <tr class="cmtablerow commentable" data-id="s-tests" data-title="tests"><td><code>tests/tst_*.qml</code> + <code>test_contract.py</code></td><td>&#x2014;</td><td>QML unit tests and a python contract test &#x2014; a pattern we do not have for <code>td-palette</code></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="cal cn commentable" data-id="sibling-crates" data-title="Rust side">
+    <span class="hint-tip">&#x1F4AC; comment</span>
+    <div class="ct">The daemon side, in Rust</div>
+    <code>crates/xeneon-agent-core/</code> carries <code>protocol.rs</code>, <code>usage.rs</code>, <code>herdr.rs</code>, <code>health.rs</code>, <code>runtime.rs</code>, <code>voice.rs</code>, with <code>xeneon-agentd</code> and <code>xeneon-agentctl</code> on top &#x2014; the same daemon-plus-control split TD already has, written against Hyprland and systemd user units rather than iCUE. <code>docs/protocol.md</code> and <code>docs/architecture.md</code> are the two to read.
+  </div>
+  </div>
+</div>
+
+<!-- 9 — Verification boundary -->
+<div class="sec xsec" data-open="false">
+  <div class="stitle xhdr" onclick="toggleXSec(this)"><span class="xtrig">&#x25BC;</span> 9 &#x2014; Verification boundary</div>
+  <div class="xbody">
+  <div class="cal cw commentable" data-id="verify" data-title="What was and was not checked">
+    <span class="hint-tip">&#x1F4AC; comment</span>
+    <div class="ct">&#x26A0;&#xFE0F; Read in full, skimmed, and not run at all</div>
+    <strong>Read in full:</strong> the hook settings fragment, the notifier README, the first ~4k tokens of <code>STATE-CONTRACT.md</code>, the first 120 lines of <code>reply-spike-2.md</code>, the clawdeck README and CLAUDE.md. <strong>Skimmed structurally:</strong> <code>crabd.py</code> (grep over its class and function names and its constants), the file trees of both repositories. <strong>Not read:</strong> the 8,304-line widget JS, the 11,062-line daemon test file, the lighting subsystem, everything in <code>docs/findings/</code>. <strong>Nothing was executed</strong> &#x2014; SideCrab is Windows-only and no part of it was installed or run here. Every number quoted above is from a file in the clone or from that project's own measurement notes, and their measurements are reported as theirs, not reproduced by us.
+  </div>
+  <div class="cal ci commentable" data-id="verify-pins" data-title="Pinned upstream">
+    <span class="hint-tip">&#x1F4AC; comment</span>
+    <div class="ct">The clones were temporary &#x2014; cite the commit, not the path</div>
+    Both repositories were cloned into a session scratchpad that no longer exists. The readings above are reproducible from <code>Dixie-sketch/Clawdeck</code> at <strong>678ab98</strong> (2026-09-02) and <code>spencerbull/xeneon-edge-agents</code> at <strong>0e4fce5</strong> (2026-08-19). <em>Added 2026-09-04.</em>
+  </div>
+  <div class="cal ci commentable" data-id="verify-local" data-title="Confirmed locally">
+    <span class="hint-tip">&#x1F4AC; comment</span>
+    <div class="ct">The platform mechanisms were re-checked here on 2026-09-04</div>
+    Against Claude Code <strong>2.1.251</strong> on this machine: <code>PermissionRequest</code> occurs 74 times in the installed binary and the hook <code>type:"http"</code> 8 times, so the blocking-hook mechanism in section 3 is available locally rather than only upstream. <code>claude agents --json</code> also runs TTY-free here and lists the live fleet &#x2014; and returned readiness under <em>two different keys</em> in one document: <code>status</code> on fourteen interactive rows, <code>state</code> on two background ones. Upstream's spike did not report that split, because it ran against a fleet of one. The behavioural claims in sections 4 and 5 remain that project's measurements.
+  </div>
+  <div class="cal cw commentable" data-id="verify-td" data-title="TD side">
+    <span class="hint-tip">&#x1F4AC; comment</span>
+    <div class="ct">&#x1F6A8; The TD readings were wrong &#x2014; corrected 2026-09-04</div>
+    The "TD does not have X" claims in this report were not what they said they were. The grep behind them ran against a <code>crates/</code> directory this repository does not have; it found nothing because it searched nothing, and the empty result was written up as an absence. Run against <code>app/src</code> it returns 50 hits across 10 files. A second claim &#x2014; that <code>notify.rs</code> lacks dedupe and quiet-hours logic &#x2014; was inferred from its line count without opening the file. <strong>Corrections are folded into the delta table above and carried in full by the decision brief</strong> (<code>reports/2026-09-04-sidecrab-intake-decisions.html</code>, "This brief got four things wrong"). Line counts from <code>wc -l</code> stand; every absence claim here should be re-checked with a positive control before it is trusted.
+  </div>
+  </div>
+</div>
+
+<!-- 10 — Open questions -->
+<div class="sec xsec" data-open="false">
+  <div class="stitle xhdr" onclick="toggleXSec(this)"><span class="xtrig">&#x25BC;</span> 10 &#x2014; Open questions</div>
+  <div class="xbody">
+  <div class="qbox commentable" data-id="q-1" data-title="Q1: How long may TD hold an agent?">
+    <span class="hint-tip">&#x1F4AC; comment</span>
+    <div class="qnum">Q1</div>
+    <div class="qtxt">What is the acceptable ceiling on a <code>PermissionRequest</code> hold in TD &#x2014; their 60&nbsp;s, or something shorter?</div>
+    <div class="qctx">Their panel sits under the monitor and is glanced at constantly, so a minute is cheap. A TD fleet may be running many agents where a blocked one costs real throughput, and the ceiling also decides how badly a TD hang hurts. A short window that always falls through cleanly is the conservative start; the number should come from watching a real fleet rather than from copying theirs.</div>
+  </div>
+  <div class="qbox commentable" data-id="q-2" data-title="Q2: Where does the answer surface live?">
+    <span class="hint-tip">&#x1F4AC; comment</span>
+    <div class="qnum">Q2</div>
+    <div class="qtxt">Does tap-to-answer belong in FleetView, in a popout, on the phone, or in all three &#x2014; and does the same endpoint serve them?</div>
+    <div class="qctx">SideCrab's answer surface is a single panel with a pairing code held as a widget property, which works precisely because there is exactly one of it. TD has several surfaces already and a phone is plausible, so the authentication question that their <code>panelToken</code> answers arrives here in a harder form. Deciding this before T-001 is cheaper than deciding it after.</div>
+  </div>
+  <div class="qbox commentable" data-id="q-3" data-title="Q3: Hook-fed or inferred, or both?">
+    <span class="hint-tip">&#x1F4AC; comment</span>
+    <div class="qnum">Q3</div>
+    <div class="qtxt">Does hook-fed state replace TD's inference, or run beside it as a cross-check?</div>
+    <div class="qctx">Hooks require a settings fragment in every environment TD watches, which is a real deployment cost and fails silently when absent &#x2014; whereas inference works on any session that happens to exist. Keeping both and treating disagreement as a finding is the expensive-but-honest option, and it is the same shape as T-003. The cheap option is to let hooks win where present and fall back to inference, which risks two code paths that are each only half exercised.</div>
+  </div>
+  </div>
+</div>
