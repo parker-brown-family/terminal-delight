@@ -3449,6 +3449,27 @@ impl TerminalView {
     /// Focus is not touched. Nothing here raises, activates or scrolls the pane
     /// — the human keeps working wherever they are, which is the whole point.
     pub fn keepalive_step(&mut self, act: crate::keepalive::Act, cx: &mut Context<Self>) {
+        use crate::keepalive::{Act, Stage};
+
+        // Enter is the one irreversible byte in this whole feature, and until
+        // now it was pressed on the strength of `needs_input` and
+        // `bell_blocked` — screen-row heuristics that are allowed to be wrong.
+        // The sibling herdr plugin hit exactly that: its runtime reported a
+        // pane as idle and ready to receive input while Claude Code was sitting
+        // on its "Do you trust the files in this folder?" dialog, because a
+        // status describes the agent PROCESS, not the screen. Enter there
+        // answers the dialog.
+        //
+        // So do not predict. Look: this pane's own grid must still be showing
+        // the message we typed two minutes ago. If it is not, the characters
+        // went somewhere that is not a visible text field, and pressing Enter
+        // is the one thing we must not do about it.
+        if act == Act::Send && self.grep_grid(crate::keepalive::PROBE, 1).is_empty() {
+            self.keepalive = Stage::Refused;
+            cx.notify();
+            return;
+        }
+
         let bracketed = self
             .session
             .term

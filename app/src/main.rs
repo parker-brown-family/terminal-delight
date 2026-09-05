@@ -9,7 +9,11 @@
 //! (alt+↑/↓ jumps between your messages in a claude/codex pane) ·
 //! alt+s: stick a note to this pane's glass (alt+backspace peels it off; it
 //! survives a restart — see [`sticky`]) ·
-//! ctrl+scroll or the bezel scrubber: menu-bar size.
+//! ctrl+scroll or the bezel scrubber: menu-bar size ·
+//! 🔥/🌙 in the menu bar: the cache keepalive's campfire — lit means idle agents
+//! are kept warm, out means everyone has gone home and nothing is typed into
+//! anything (see [`keepalive`]; F1 still opens help, which is why the ❔ button
+//! gave up its slot).
 //!
 //! One restorable session per compositor workspace: see [`instance`] for how a
 //! window claims one, and [`session`] for what a pane carries into it.
@@ -2800,6 +2804,14 @@ impl Workspace {
         {
             cx.spawn(async move |this, cx| loop {
                 cx.background_executor().timer(Duration::from_secs(2)).await;
+                // The campfire is out: somebody has gone home, and none of
+                // these panes is being come back to on the hour. Checked every
+                // tick rather than latched at startup, because the whole point
+                // of the button is that it takes effect the moment it is
+                // pressed — including on a sweep already counting down.
+                if keepalive::is_away(&session::home_dir()) {
+                    continue;
+                }
                 let Ok(toast) = this.update(cx, |ws: &mut Workspace, cx| {
                     // A click on the last notification, honoured before the
                     // clock is consulted: it is the same send, just early.
@@ -3506,9 +3518,52 @@ impl Workspace {
 
     /// One request per live agent pane, carrying the stamp of what the card is
     /// already showing so an unchanged transcript is never re-parsed.
+    /// Put the campfire out, or light it.
+    ///
+    /// Going away withdraws whatever is already staged. Somebody who presses
+    /// this at 56 minutes means "not that one either", and leaving a message
+    /// sitting in six prompts that will never be sent is exactly the litter the
+    /// button exists to prevent. Coming back does not need a matching pass —
+    /// the sweep picks each pane up again on its own clock.
+    fn toggle_away(&mut self, cx: &mut Context<Self>) {
+        let home = session::home_dir();
+        let away = !keepalive::is_away(&home);
+        if let Err(e) = keepalive::set_away(&home, away) {
+            eprintln!("keepalive: could not write the away flag: {e}");
+            return;
+        }
+        if away {
+            for tab in self.tabs.iter() {
+                let mut leaves = Vec::new();
+                tab.root.leaves(&mut leaves);
+                for e in leaves {
+                    let staged = {
+                        let v = e.read(cx);
+                        v.mode.is_agent()
+                            && matches!(
+                                v.keepalive_stage(),
+                                keepalive::Stage::Loaded | keepalive::Stage::Notified
+                            )
+                    };
+                    if staged {
+                        e.update(cx, |v, cx| v.keepalive_step(keepalive::Act::Clear, cx));
+                    }
+                }
+            }
+        }
+        cx.notify();
+    }
+
     /// Any agent in this tab past the keepalive's first warning. Drives the 💤
     /// on the tab button — see [`keepalive::Stage`].
     fn tab_has_drowsy(&self, tab: usize, cx: &App) -> bool {
+        // Not while the campfire is out. 💤 is a promise that something is
+        // about to happen to that pane, and while away nothing is — a badge
+        // that means "going cold soon" is worse than no badge when the answer
+        // is "going cold, and that is the plan".
+        if keepalive::is_away(&session::home_dir()) {
+            return false;
+        }
         let Some(t) = self.tabs.get(tab) else {
             return false;
         };
@@ -11145,16 +11200,29 @@ impl Render for Workspace {
                     cx.notify();
                 }),
             );
-        let ic_help = Self::hicon_s(&th, self.help_open, scale)
+        // The campfire, where ❔ used to be. Help lost nothing by it: F1 opens
+        // the modal from any pane and from the workspace root, and the ⋯ menu
+        // still lists it — a bar slot spent on a key everybody already knows is
+        // a slot not spent on state only this bar can show.
+        //
+        // Two states, and the glyph IS the readout: 🔥 the caches are being kept
+        // warm, 🌙 everyone has gone home and nothing will be typed into
+        // anything. Lit when tending, so the bar looks alive exactly when the
+        // feature is.
+        let away_now = keepalive::is_away(&session::home_dir());
+        let ic_camp = Self::hicon_s(&th, !away_now, scale)
             .text_size(px(pane::HICON * scale))
             .line_height(px(pane::HICON * scale))
-            .child("❔")
+            .child(if away_now {
+                keepalive::GLYPH_AWAY
+            } else {
+                keepalive::GLYPH_TENDING
+            })
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
                     cx.stop_propagation();
-                    ws.help_open = true;
-                    cx.notify();
+                    ws.toggle_away(cx);
                 }),
             );
         let ic_more = Self::hicon_s(&th, self.more_menu, scale)
@@ -11189,7 +11257,7 @@ impl Render for Workspace {
                         .child(ic_osd)
                         .child(ic_dead)
                         .child(ic_plugins)
-                        .child(ic_help)
+                        .child(ic_camp)
                 }
             });
 
