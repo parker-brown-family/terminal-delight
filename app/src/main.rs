@@ -381,6 +381,7 @@ impl Node {
                 name: view.name.clone(),
                 logo: view.logo.clone(),
                 note: view.saved_note().map(|n| SavedNote {
+                    title: n.title,
                     text: n.text,
                     seed: n.seed,
                     pinned: n.pinned,
@@ -407,6 +408,11 @@ struct LeafState {
 /// read as a different note, and the whole point is recognising the pane by it.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 struct SavedNote {
+    /// The agent-note headline. Defaulted (and omitted when absent) so state
+    /// files from before agents could post notes — and every human note since —
+    /// read back unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    title: Option<String>,
     text: String,
     #[serde(default)]
     seed: u32,
@@ -2413,6 +2419,7 @@ fn build_node(saved: &SavedNode, window: &mut Window, cx: &mut Context<Workspace
                     resume: resume.clone(),
                     logo: logo.clone(),
                     note: note.as_ref().map(|n| sticky::Saved {
+                        title: n.title.clone(),
                         text: n.text.clone(),
                         seed: n.seed,
                         pinned: n.pinned,
@@ -3099,6 +3106,11 @@ impl Workspace {
                     cwd: rt.cwd,
                     session: rt.resume,
                     tool: p.tool_face.as_ref().map(|f| f.tool.clone()),
+                    note: p.saved_note().map(|n| mcp::NoteReport {
+                        title: n.title,
+                        text: n.text,
+                        pinned: n.pinned,
+                    }),
                     exposed: mcp::should_expose(&self.mcp, is_agent),
                     // the look the pane actually renders with (own override else
                     // inherited outer), in the config API's 0..100 percents
@@ -3320,6 +3332,25 @@ impl Workspace {
                                         view.appearance.pin_grade(g, touched);
                                         if let Some(new_logo) = logo_change {
                                             view.logo = new_logo;
+                                        }
+                                        // A note write (the `leave_note` tool)
+                                        // lands through the pane's own
+                                        // post/peel paths, so it emits
+                                        // StickyChanged and persists exactly
+                                        // like a human note.
+                                        match &patch.note {
+                                            None => {}
+                                            Some(mcp::NoteChange::Clear) => {
+                                                view.note_clear(cx);
+                                            }
+                                            Some(mcp::NoteChange::Post { title, text, pin }) => {
+                                                view.note_post(
+                                                    title.clone(),
+                                                    text.clone(),
+                                                    *pin,
+                                                    cx,
+                                                );
+                                            }
                                         }
                                         cx.notify();
                                         Self::grade_report(&g)

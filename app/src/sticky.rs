@@ -54,6 +54,19 @@ fn note_font() -> Font {
     f
 }
 
+/// The headline's hand: the same pen pressed harder. Bold rather than a second
+/// face, so an agent's title reads as the top line of one note, not a label
+/// pasted onto it.
+fn title_font() -> Font {
+    let mut f = font(FONT_FAMILY);
+    f.weight = FontWeight::BOLD;
+    f
+}
+
+/// The headline is drawn a notch bigger than the body, in note-local units so
+/// the ratio survives the shrink ladder.
+const TITLE_SCALE: f32 = 1.12;
+
 /// Longest note we accept. Past this it stops being a note and starts being a
 /// document that wants a file.
 pub const MAX_CHARS: usize = 160;
@@ -64,6 +77,11 @@ const MAX_ROWS: usize = 4;
 /// The note stuck to one pane.
 #[derive(Clone, Debug)]
 pub struct Sticky {
+    /// The headline, when an agent left this note — a few shouty words
+    /// ("GET MILK!") drawn as their own heavier first row. `None` on every
+    /// human-written note: the composer is one unbroken piece of handwriting,
+    /// and a title only enters through the MCP `leave_note` tool.
+    pub title: Option<String>,
     /// What is written on it. While composing this is the live buffer's text.
     pub text: String,
     /// Fixes the tilt. Drawn once and persisted, so the angle survives a
@@ -88,6 +106,8 @@ pub struct Sticky {
 /// four call sites destructured positionally.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Saved {
+    /// The agent-note headline, if this note has one — see [`Sticky::title`].
+    pub title: Option<String>,
     pub text: String,
     pub seed: u32,
     pub pinned: bool,
@@ -108,6 +128,7 @@ impl Sticky {
     /// `alt+backspace`, so the first keystroke still replaces it).
     pub fn composing(prefill: &str, seed: u32) -> Self {
         Self {
+            title: None,
             text: prefill.to_string(),
             seed,
             edit: Some(Edit {
@@ -1045,63 +1066,120 @@ fn paint_writing(note: &Sticky, lay: &Layout, pal: &Paper, window: &mut Window, 
         Some(e) => e.buf.text(),
         None => note.text.clone(),
     };
-    if text.is_empty() && note.edit.is_none() {
+    let title = note
+        .title
+        .as_deref()
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+        .map(str::to_string);
+    if text.is_empty() && title.is_none() && note.edit.is_none() {
         return;
     }
 
     // Shrink a notch before clipping: a note that overflows should get smaller
     // handwriting, not a truncated thought. Past the last notch it clamps, which
-    // is what MAX_CHARS is there to make rare.
+    // is what MAX_CHARS is there to make rare. A titled (agent) note shapes two
+    // blocks per rung — the one-row headline and the body under it — and the
+    // pair climbs down the ladder together, so a long title shrinks the whole
+    // note rather than colliding with its own first line.
     let wrap = lay.text_width();
     let mut chosen = None;
     for scale in [1.0_f32, 0.86, 0.74] {
         let font_size = lay.font_size * scale;
         let line_height = lay.line_height * scale;
-        let run = TextRun {
-            len: text.len(),
-            font: note_font(),
-            color: pal.ink,
-            background_color: None,
-            underline: None,
-            strikethrough: None,
+        let heading = match &title {
+            None => None,
+            Some(t) => {
+                let run = TextRun {
+                    len: t.len(),
+                    font: title_font(),
+                    color: pal.ink,
+                    background_color: None,
+                    underline: None,
+                    strikethrough: None,
+                };
+                let Ok(lines) = window.text_system().shape_text(
+                    t.clone().into(),
+                    font_size * TITLE_SCALE,
+                    &[run],
+                    Some(wrap),
+                    Some(1),
+                ) else {
+                    return;
+                };
+                lines.into_iter().next()
+            }
         };
-        let Ok(lines) = window.text_system().shape_text(
-            text.clone().into(),
-            font_size,
-            &[run],
-            Some(wrap),
-            Some(MAX_ROWS),
-        ) else {
+        let title_rows = usize::from(heading.is_some());
+        let title_height = heading
+            .as_ref()
+            .map(|l| l.size(line_height * TITLE_SCALE).height)
+            .unwrap_or_default();
+        let body = if text.is_empty() {
+            // A title-only note ("GET MILK!") has nothing to shape below the
+            // headline; shaping "" would report no line and abort the paint.
+            None
+        } else {
+            let run = TextRun {
+                len: text.len(),
+                font: note_font(),
+                color: pal.ink,
+                background_color: None,
+                underline: None,
+                strikethrough: None,
+            };
+            let Ok(lines) = window.text_system().shape_text(
+                text.clone().into(),
+                font_size,
+                &[run],
+                Some(wrap),
+                Some(MAX_ROWS - title_rows),
+            ) else {
+                return;
+            };
+            lines.into_iter().next()
+        };
+        if heading.is_none() && body.is_none() {
             return;
-        };
-        let Some(line) = lines.into_iter().next() else {
-            return;
-        };
-        let rows = line.wrap_boundaries().len() + 1;
-        let fits = rows <= MAX_ROWS
-            && f32::from(line.size(line_height).height)
+        }
+        let body_rows = body
+            .as_ref()
+            .map(|l| l.wrap_boundaries().len() + 1)
+            .unwrap_or(0);
+        let body_height = body
+            .as_ref()
+            .map(|l| l.size(line_height).height)
+            .unwrap_or_default();
+        let fits = body_rows + title_rows <= MAX_ROWS
+            && f32::from(body_height) + f32::from(title_height)
                 <= f32::from(lay.size.height - lay.pad * 1.5);
         if fits || scale < 0.75 {
-            chosen = Some((line, line_height));
+            chosen = Some((heading, title_height, body, line_height));
             break;
         }
     }
-    let Some((line, line_height)) = chosen else {
+    let Some((heading, title_height, body, line_height)) = chosen else {
         return;
     };
 
     let origin_local = lay.text_origin();
+    // Where the body's ink starts: directly under the headline, if there is one.
+    let body_origin = point(origin_local.x, origin_local.y + title_height);
+    let body_height = body
+        .as_ref()
+        .map(|l| l.size(line_height).height)
+        .unwrap_or_default();
     // Pin the glyph affine at the middle of the WRITING, not of the sheet.
     let block = point(
         origin_local.x + wrap / 2.0,
-        origin_local.y + line.size(line_height).height / 2.0,
+        origin_local.y + (title_height + body_height) / 2.0,
     );
     let matrix = lay.text_matrix(window.scale_factor(), block);
 
     // Selection first, so the ink sits on top of it. `seeded` selects the whole
     // note when the composer opens, and a selection you cannot see is a
     // selection your next keystroke silently eats.
-    if let Some(edit) = &note.edit {
+    if let (Some(edit), Some(line)) = (&note.edit, &body) {
         let (a, b) = edit.buf.sel_range();
         if a != b {
             let buf_text = edit.buf.text();
@@ -1116,7 +1194,7 @@ fn paint_writing(note: &Sticky, lay: &Layout, pal: &Paper, window: &mut Window, 
                 line.position_for_index(byte(a), line_height),
                 line.position_for_index(byte(b), line_height),
             ) {
-                paint_selection(p0, p1, line_height, wrap, origin_local, lay, pal, window);
+                paint_selection(p0, p1, line_height, wrap, body_origin, lay, pal, window);
             }
         }
     }
@@ -1124,15 +1202,30 @@ fn paint_writing(note: &Sticky, lay: &Layout, pal: &Paper, window: &mut Window, 
     // The glyphs ride the same transform the paper was drawn through, so the
     // writing stays ON the paper whatever the tube is doing.
     window.with_text_transformation(matrix, |window| {
-        let origin = point(lay.center.x + origin_local.x, lay.center.y + origin_local.y);
-        if let Err(e) = line.paint(origin, line_height, TextAlign::Left, None, window, cx) {
-            eprintln!("terminal-delight: sticky note text failed to paint: {e}");
+        if let Some(line) = &heading {
+            let origin = point(lay.center.x + origin_local.x, lay.center.y + origin_local.y);
+            if let Err(e) = line.paint(
+                origin,
+                line_height * TITLE_SCALE,
+                TextAlign::Left,
+                None,
+                window,
+                cx,
+            ) {
+                eprintln!("terminal-delight: sticky note title failed to paint: {e}");
+            }
+        }
+        if let Some(line) = &body {
+            let origin = point(lay.center.x + body_origin.x, lay.center.y + body_origin.y);
+            if let Err(e) = line.paint(origin, line_height, TextAlign::Left, None, window, cx) {
+                eprintln!("terminal-delight: sticky note text failed to paint: {e}");
+            }
         }
     });
 
     // The caret is a pen resting on the paper: a short stroke on the baseline,
     // drawn as a path so it turns with the note like everything else.
-    if let Some(edit) = &note.edit {
+    if let (Some(edit), Some(line)) = (&note.edit, &body) {
         let buf_text = edit.buf.text();
         let caret_byte = buf_text
             .char_indices()
@@ -1140,8 +1233,8 @@ fn paint_writing(note: &Sticky, lay: &Layout, pal: &Paper, window: &mut Window, 
             .map(|(i, _)| i)
             .unwrap_or(text.len());
         if let Some(p) = line.position_for_index(caret_byte, line_height) {
-            let x = f32::from(origin_local.x + p.x);
-            let y = f32::from(origin_local.y + p.y);
+            let x = f32::from(body_origin.x + p.x);
+            let y = f32::from(body_origin.y + p.y);
             let lh = f32::from(line_height);
             fill(
                 lay,
@@ -1276,6 +1369,7 @@ mod tests {
         let (mut left, mut right) = (false, false);
         for seed in 0..64u32 {
             let note = Sticky {
+                title: None,
                 text: String::new(),
                 seed,
                 edit: None,
@@ -1300,12 +1394,14 @@ mod tests {
     #[test]
     fn the_lean_is_stable_for_a_seed() {
         let a = Sticky {
+            title: None,
             text: "x".into(),
             seed: 12345,
             edit: None,
             pinned: false,
         };
         let b = Sticky {
+            title: None,
             text: "different text".into(),
             seed: 12345,
             edit: None,
