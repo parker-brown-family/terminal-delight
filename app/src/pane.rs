@@ -2463,8 +2463,13 @@ impl TerminalView {
         let note = restore
             .note
             .clone()
-            .filter(|n| !n.text.trim().is_empty())
+            .filter(|n| {
+                // A title-only agent note ("GET MILK!") is still a note.
+                !n.text.trim().is_empty()
+                    || n.title.as_deref().is_some_and(|t| !t.trim().is_empty())
+            })
             .map(|n| crate::sticky::Sticky {
+                title: n.title,
                 text: n.text,
                 seed: n.seed,
                 edit: None,
@@ -3678,11 +3683,55 @@ impl TerminalView {
             None => note.text.clone(),
         };
         let text = text.trim().to_string();
-        (!text.is_empty()).then_some(crate::sticky::Saved {
+        let title = note
+            .title
+            .as_deref()
+            .map(str::trim)
+            .filter(|t| !t.is_empty())
+            .map(str::to_string);
+        (!text.is_empty() || title.is_some()).then_some(crate::sticky::Saved {
+            title,
             text,
             seed: note.seed,
             pinned: note.pinned,
         })
+    }
+
+    /// Post (or replace) this pane's note programmatically — the MCP
+    /// `leave_note` landing. The caller has already validated the words; this
+    /// just puts the paper up, POSTED, never composing: the writer is an agent
+    /// that has finished, not a person holding the pen. A replaced note keeps
+    /// its lean — same paper, new words — where a brand-new one rolls a fresh
+    /// seed, so an agent updating its own note doesn't twitch the sheet.
+    pub fn note_post(
+        &mut self,
+        title: Option<String>,
+        text: String,
+        pin: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let seed = self
+            .note
+            .as_ref()
+            .map(|n| n.seed)
+            .unwrap_or_else(crate::sticky::seed);
+        self.note = Some(crate::sticky::Sticky {
+            title,
+            text,
+            seed,
+            edit: None,
+            pinned: pin,
+        });
+        self.note_hover = None;
+        cx.emit(StickyChanged);
+        cx.notify();
+    }
+
+    /// Peel this pane's note programmatically — the MCP `leave_note` clear.
+    /// Shares [`Self::sticky_peel`] so the peeled text stays recoverable by a
+    /// human `alt+s`, exactly as if they had peeled it themselves.
+    pub fn note_clear(&mut self, cx: &mut Context<Self>) -> bool {
+        self.sticky_peel(cx)
     }
 
     /// Is this pane's note pinned? Read every frame by the mother bar to decide

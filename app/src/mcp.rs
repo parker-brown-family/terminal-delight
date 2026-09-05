@@ -110,6 +110,12 @@ pub struct PaneInfo {
     /// photograph of the screen could settle.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool: Option<String>,
+    /// The sticky note on this pane's glass, if one is posted — title, text
+    /// and pin, exactly what a human sees on the paper. Present so an agent can
+    /// READ the fridge door (its own note included) as well as write on it
+    /// with `leave_note`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<NoteReport>,
     /// Whether this pane would be exposed under the current policy.
     pub exposed: bool,
     /// The pane's *effective* grade — what it actually renders with (its own
@@ -173,6 +179,91 @@ pub struct ConfigPatch {
     /// (png/jpg/jpeg/svg/webp). An empty string clears it. Lets an agent brand the
     /// terminal it's working in — shown as the card portrait on the agent wall.
     pub logo: Option<String>,
+    /// Post, replace, or peel the pane's sticky note. Filled in by the
+    /// `leave_note` tool (already validated); rides the config pipeline so a
+    /// note write shares the one writes gate, the one pane lookup, and the one
+    /// GUI-thread apply with every other pane mutation. Pane targets only.
+    pub note: Option<NoteChange>,
+}
+
+/// A validated note write on its way to the GUI thread.
+#[derive(Clone, PartialEq, Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NoteChange {
+    /// Peel the note off (a no-op on a bare pane).
+    Clear,
+    /// Put this paper up, replacing whatever note the pane carries.
+    Post {
+        title: Option<String>,
+        text: String,
+        pin: bool,
+    },
+}
+
+/// A pane's posted note as `list_panes` reports it — so an agent can read the
+/// fridge door as well as write on it.
+#[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
+pub struct NoteReport {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    pub text: String,
+    pub pinned: bool,
+}
+
+/// The `leave_note` contract: at most this many words of body. A note is what
+/// you read from across the room on the way past; past ten words it is a
+/// message that wants the transcript.
+pub const NOTE_MAX_WORDS: usize = 10;
+
+/// And at most this many characters of headline — "GET MILK!" sized, not a
+/// sentence wearing a hat.
+pub const NOTE_TITLE_MAX_CHARS: usize = 40;
+
+/// Validate a `leave_note` request into the change to apply. Pure, so the
+/// tool's contract is unit-tested without a window. Empty title AND empty text
+/// (or `clear`) peel the note; otherwise the body must hold at most
+/// [`NOTE_MAX_WORDS`] words, the title at most [`NOTE_TITLE_MAX_CHARS`]
+/// characters, and the whole note must fit the paper.
+pub fn validate_note(
+    title: Option<&str>,
+    text: Option<&str>,
+    pin: bool,
+    clear: bool,
+) -> Result<NoteChange, String> {
+    let title = title.map(str::trim).filter(|t| !t.is_empty());
+    let text = text.map(str::trim).filter(|t| !t.is_empty());
+    if clear || (title.is_none() && text.is_none()) {
+        return Ok(NoteChange::Clear);
+    }
+    if let Some(t) = title {
+        let chars = t.chars().count();
+        if chars > NOTE_TITLE_MAX_CHARS {
+            return Err(format!(
+                "title is {chars} characters; keep it under {NOTE_TITLE_MAX_CHARS} — \
+                 a headline, not a sentence (\"GET MILK!\")"
+            ));
+        }
+    }
+    let body = text.unwrap_or("");
+    let words = body.split_whitespace().count();
+    if words > NOTE_MAX_WORDS {
+        return Err(format!(
+            "note is {words} words; a sticky holds {NOTE_MAX_WORDS} or fewer — \
+             say what happened or what you need, not how it went"
+        ));
+    }
+    let total = title.map(|t| t.chars().count() + 1).unwrap_or(0) + body.chars().count();
+    if total > crate::sticky::MAX_CHARS {
+        return Err(format!(
+            "note is {total} characters; the paper holds {}",
+            crate::sticky::MAX_CHARS
+        ));
+    }
+    Ok(NoteChange::Post {
+        title: title.map(str::to_string),
+        text: body.to_string(),
+        pin,
+    })
 }
 
 impl ConfigPatch {
@@ -529,6 +620,37 @@ fn tool_defs() -> Value {
             }
         },
         {
+            "name": "leave_note",
+            "description":
+                "Stick a handwritten note on a pane's glass — the fridge-door \
+                 message a returning human reads FIRST, before any transcript. \
+                 A shouty little `title` (\"GET MILK!\", \"NEEDS EYES\", \
+                 \"DONE ✓\") plus at most TEN words of `text` saying what \
+                 happened or what you need (\"home at 7pm\", \"tests green, \
+                 deploy paused, waiting on DNS\"). Leave one when you finish a \
+                 run, hit a wall, or hand work back; post again to change it \
+                 (same paper, new words), and `clear` (or an empty note) peels \
+                 it off. `pin: true` sticks a pushpin through it that surfaces \
+                 on the pane's TAB in the mother bar — use it when the note \
+                 needs attention rather than merely records. The note lands on \
+                 the same paper a human alt+s note uses: they can peel it, edit \
+                 it, or pin it, and it survives a restart. list_panes shows \
+                 each pane's current note. Requires the writes toggle \
+                 (TD_MCP_WRITE).",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "pid": { "type": "integer", "description": "pid of the pane to note, from list_panes — usually your own" },
+                    "title": { "type": "string", "description": "optional headline, up to 40 characters, drawn bigger and bolder (\"GET MILK!\")" },
+                    "text": { "type": "string", "description": "the note itself — TEN words or fewer; what happened, or why this pane needs attention" },
+                    "pin": { "type": "boolean", "description": "stick a pushpin through it (surfaces on the pane's tab); default false" },
+                    "clear": { "type": "boolean", "description": "peel the note off instead of posting one" }
+                },
+                "required": ["pid"],
+                "additionalProperties": false
+            }
+        },
+        {
             "name": "grep",
             "description": "Search the recent scrollback of every EXPOSED pane for an exact, case-insensitive substring. Returns, per matching pane, its identity (pid/tab/title/mode) and the matching lines with the match column. Read-only — it reads on-screen text, never writes. Use it to find where something is across the whole window (an error, a path, a TODO, a value).",
             "inputSchema": {
@@ -572,6 +694,7 @@ where
         "pane_events" => Ok(pane_events(&args, snap, tail)),
         "get_pane_config" => Ok(get_pane_config(&args, snap)),
         "set_pane_config" => Ok(set_pane_config(&args, snap, apply)),
+        "leave_note" => Ok(leave_note(&args, snap, apply)),
         "grep" => Ok(grep(&args, snap, search)),
         other => Err((-32602, format!("unknown tool: {other}"))),
     }
@@ -655,9 +778,19 @@ fn list_panes(snap: &Snapshot) -> Value {
                     .as_deref()
                     .map(|t| format!(" · \u{2692} {t}"))
                     .unwrap_or_default();
+                // The note rides the line too — the fridge door is for reading.
+                let note = p
+                    .note
+                    .as_ref()
+                    .map(|n| match n.title.as_deref() {
+                        Some(t) if !n.text.is_empty() => format!(" · \u{1f4dd} {t} — {}", n.text),
+                        Some(t) => format!(" · \u{1f4dd} {t}"),
+                        None => format!(" · \u{1f4dd} {}", n.text),
+                    })
+                    .unwrap_or_default();
                 format!(
-                    "tab {} · {} · {} · {} · {}{}",
-                    p.tab, p.title, p.mode, cwd, sess, tool
+                    "tab {} · {} · {} · {} · {}{}{}",
+                    p.tab, p.title, p.mode, cwd, sess, tool, note
                 )
             })
             .collect::<Vec<_>>()
@@ -861,6 +994,58 @@ where
         format!("applied {ok} update(s), {failed} failed")
     };
     tool_ok(text, json!({ "results": results }))
+}
+
+/// `leave_note` — write on the fridge door.
+///
+/// The agent-facing half of sticky notes: a headline plus at most ten words,
+/// posted onto a pane's glass exactly where a human `alt+s` note goes, so a
+/// returning operator reads the wall instead of scrolling twenty transcripts.
+/// Validation is [`validate_note`]; the write itself rides the same
+/// gate/lookup/apply pipeline as `set_pane_config`.
+fn leave_note<G>(args: &Value, snap: &Snapshot, apply: &G) -> Value
+where
+    G: Fn(&[ConfigUpdate]) -> Vec<ApplyOutcome>,
+{
+    if !snap.config.enabled {
+        return tool_err("MCP exposure is disabled. Enable it in the MCP CONTROL panel.");
+    }
+    if !snap.config.writable {
+        return tool_err(
+            "MCP writes are disabled. This server is a read-only watch surface \
+             until you opt in: enable \"writes\" in the MCP CONTROL panel (or set \
+             TD_MCP_WRITE=1) to let an agent leave a note.",
+        );
+    }
+    let Some(pid) = args.get("pid").and_then(Value::as_u64) else {
+        return tool_err("leave_note requires a `pid` (an integer, from list_panes).");
+    };
+    let title = args.get("title").and_then(Value::as_str);
+    let text = args.get("text").and_then(Value::as_str);
+    let pin = args.get("pin").and_then(Value::as_bool).unwrap_or(false);
+    let clear = args.get("clear").and_then(Value::as_bool).unwrap_or(false);
+    let change = match validate_note(title, text, pin, clear) {
+        Ok(c) => c,
+        Err(e) => return tool_err(&e),
+    };
+    let cleared = matches!(change, NoteChange::Clear);
+    let patch = ConfigPatch {
+        note: Some(change),
+        ..Default::default()
+    };
+    let outcomes = apply(&[(Target::Pane(pid as u32), patch)]);
+    match outcomes.into_iter().next() {
+        Some((_, Ok(_))) => {
+            let line = if cleared {
+                format!("peeled the note off pane {pid}")
+            } else {
+                format!("posted — the note is on pane {pid}'s glass")
+            };
+            tool_ok(line, json!({ "pid": pid, "posted": !cleared }))
+        }
+        Some((_, Err(e))) => tool_err(&e),
+        None => tool_err("the window did not answer the note write"),
+    }
 }
 
 fn tool_ok(text: String, structured: Value) -> Value {
@@ -1143,6 +1328,7 @@ mod tests {
             cwd: Some("/work/x".into()),
             session: Some("claude --resume abc".into()),
             tool: None,
+            note: None,
             exposed,
             grade: GradeReport::default(),
         }
@@ -1348,6 +1534,127 @@ mod tests {
         .to_string();
         let _ = handle_line_with(&line, &s, no_tail, apply, no_search);
         assert_eq!(seen.lock().unwrap().as_deref(), Some("/tmp/brand.png"));
+    }
+
+    /// THE contract of the fridge door: ten words go on a sticky, eleven go in
+    /// a transcript. The refusal must carry the count, so the agent's retry is
+    /// an edit rather than a guess.
+    #[test]
+    fn a_note_holds_ten_words_and_not_eleven() {
+        let ten = "tests green deploy paused waiting on DNS back at seven";
+        assert!(matches!(
+            validate_note(None, Some(ten), false, false),
+            Ok(NoteChange::Post { .. })
+        ));
+        let eleven = "tests green deploy paused waiting on DNS and back at seven";
+        let err = validate_note(None, Some(eleven), false, false).unwrap_err();
+        assert!(
+            err.contains("11 words"),
+            "the refusal names the count: {err}"
+        );
+    }
+
+    /// A title is "GET MILK!" sized. Forty characters pass; past that the
+    /// refusal points at the headline, not the body.
+    #[test]
+    fn a_title_is_a_headline_not_a_sentence() {
+        let forty = "A".repeat(40);
+        assert!(validate_note(Some(&forty), Some("done"), false, false).is_ok());
+        let long = "A".repeat(41);
+        let err = validate_note(Some(&long), Some("done"), false, false).unwrap_err();
+        assert!(err.contains("title"), "the refusal blames the title: {err}");
+    }
+
+    /// A title alone is a note ("GET MILK!"); nothing at all is a peel, and so
+    /// is `clear` regardless of what else came along.
+    #[test]
+    fn an_empty_note_is_a_peel_and_a_title_alone_is_a_note() {
+        assert_eq!(
+            validate_note(None, None, false, false),
+            Ok(NoteChange::Clear)
+        );
+        assert_eq!(
+            validate_note(Some("  "), Some(" "), true, false),
+            Ok(NoteChange::Clear)
+        );
+        assert_eq!(
+            validate_note(Some("ignored"), Some("ignored"), false, true),
+            Ok(NoteChange::Clear)
+        );
+        assert_eq!(
+            validate_note(Some("GET MILK!"), None, false, false),
+            Ok(NoteChange::Post {
+                title: Some("GET MILK!".into()),
+                text: String::new(),
+                pin: false,
+            })
+        );
+    }
+
+    /// End-to-end: the tool call reaches the apply closure as a validated
+    /// `NoteChange::Post` on the right pane, pin included.
+    #[test]
+    fn leave_note_reaches_the_apply_closure() {
+        let seen: std::sync::Arc<std::sync::Mutex<Option<ConfigUpdate>>> = Default::default();
+        let seen2 = seen.clone();
+        let apply = move |ups: &[ConfigUpdate]| -> Vec<ApplyOutcome> {
+            *seen2.lock().unwrap() = Some(ups[0].clone());
+            vec![(ups[0].0.clone(), Ok(GradeReport::default()))]
+        };
+        let s = snap_writable(vec![agent_pane(100, true)]);
+        let line = json!({ "id": 4, "method": "tools/call", "params": {
+            "name": "leave_note",
+            "arguments": { "pid": 100, "title": "NEEDS EYES", "text": "deploy paused, waiting on DNS", "pin": true }
+        }})
+        .to_string();
+        let reply = handle_line_with(&line, &s, no_tail, apply, no_search).unwrap();
+        assert!(!reply.contains("isError"), "the post succeeds: {reply}");
+        let (target, patch) = seen.lock().unwrap().clone().expect("apply was called");
+        assert_eq!(target, Target::Pane(100));
+        assert_eq!(
+            patch.note,
+            Some(NoteChange::Post {
+                title: Some("NEEDS EYES".into()),
+                text: "deploy paused, waiting on DNS".into(),
+                pin: true,
+            })
+        );
+    }
+
+    /// The same second opt-in as every other write: no TD_MCP_WRITE, no note.
+    #[test]
+    fn leave_note_refused_when_writes_are_off() {
+        let mut s = snap_writable(vec![agent_pane(100, true)]);
+        s.config.writable = false;
+        let line = json!({ "id": 5, "method": "tools/call", "params": {
+            "name": "leave_note",
+            "arguments": { "pid": 100, "text": "hello" }
+        }})
+        .to_string();
+        let reply = handle_line_with(&line, &s, no_tail, no_apply, no_search).unwrap();
+        assert!(reply.contains("isError"), "refused: {reply}");
+        assert!(reply.contains("read-only watch surface"));
+    }
+
+    /// The fridge door is for reading too: a pane's posted note rides
+    /// `list_panes`, title on the line where a passing agent will see it.
+    #[test]
+    fn list_panes_reads_the_fridge_door() {
+        let mut pane = agent_pane(100, true);
+        pane.note = Some(NoteReport {
+            title: Some("GET MILK!".into()),
+            text: "home at 7pm".into(),
+            pinned: false,
+        });
+        let s = snap(true, true, vec![pane]);
+        let line = json!({ "id": 6, "method": "tools/call", "params": { "name": "list_panes" } })
+            .to_string();
+        let reply = handle_line_with(&line, &s, no_tail, no_apply, no_search).unwrap();
+        assert!(
+            reply.contains("GET MILK!"),
+            "the title is on the line: {reply}"
+        );
+        assert!(reply.contains("home at 7pm"), "and so is the note: {reply}");
     }
 
     #[test]
@@ -1757,6 +2064,7 @@ mod tests {
             cwd: None,
             session: None,
             tool: None,
+            note: None,
             exposed: true,
             grade: GradeReport::default(),
         };

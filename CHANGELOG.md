@@ -9,6 +9,19 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ### Added
 
+- **Agents can leave notes on the fridge door.** A new `leave_note` MCP tool
+  posts a sticky note onto a pane's glass — a bold headline plus at most ten
+  words of body ("GET MILK!" / "home at 7pm") — so a returning human reads the
+  wall the way they read a fridge, before opening any transcript. Post again to
+  change the note (same paper, same lean, new words), `clear` peels it,
+  `pin: true` pushes the pin through so the tab flags it from the mother bar.
+  The note lands on exactly the paper a human `alt+s` writes on: peel, edit,
+  pin and restart-survival all behave identically, and `list_panes` now reads
+  the door back — each pane's posted note rides its listing line. Writes stay
+  behind the same `TD_MCP_WRITE` opt-in as every other mutation, and the
+  ten-word limit refuses verbosity by name, with the count, so an agent's retry
+  is an edit rather than a guess.
+
 - **The robots came to the web wall.** A working card on `agents.html` now shows
   the playhouse robot animated — holding the tool that agent is actually
   holding, wearing that tool's face, with the verb lettered on the glass: *at
