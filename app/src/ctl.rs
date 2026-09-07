@@ -524,6 +524,14 @@ enum Scope {
     Workspace(String),
     /// Every control socket present.
     All,
+    /// The window this process is RUNNING INSIDE, found by walking our own
+    /// parent chain — the same resolution the MCP relay uses, and the default
+    /// for `tabs`. A tab edit is always about the caller's own window, so
+    /// asking Hyprland which workspace is on screen answers a question nobody
+    /// asked: an agent in a pane on workspace 1 would fail, or worse succeed
+    /// against a different window, depending on where the human happened to be
+    /// looking. See the note on `owning_td_pid`.
+    Owning,
     /// One process.
     Pid(u32),
 }
@@ -536,10 +544,18 @@ fn parse_cli(args: &[String]) -> Result<(String, Scope), String> {
     let mut cwd: Option<String> = None;
     let mut run: Option<String> = None;
     let mut it = args.iter().map(String::as_str).peekable();
+    // Whether the caller NAMED a scope. `tabs` defaults differently from every
+    // other verb, and "they typed --workspace active" must not be mistaken for
+    // "they typed nothing".
+    let mut scope_given = false;
     while let Some(a) = it.next() {
         match a {
-            "--all" => scope = Scope::All,
+            "--all" => {
+                scope = Scope::All;
+                scope_given = true;
+            }
             "--workspace" => {
+                scope_given = true;
                 let v = it.next().ok_or("--workspace needs a value")?;
                 scope = if v == "active" {
                     Scope::ActiveWorkspace
@@ -550,6 +566,7 @@ fn parse_cli(args: &[String]) -> Result<(String, Scope), String> {
             "--pid" => {
                 let v = it.next().ok_or("--pid needs a value")?;
                 scope = Scope::Pid(v.parse().map_err(|_| format!("bad pid {v:?}"))?);
+                scope_given = true;
             }
             "--cwd" => cwd = Some(it.next().ok_or("--cwd needs a value")?.to_string()),
             "--run" => run = Some(it.next().ok_or("--run needs a value")?.to_string()),
@@ -567,6 +584,25 @@ fn parse_cli(args: &[String]) -> Result<(String, Scope), String> {
         }
         words.join(" ")
     };
+    // The wire protocol is one line, and a hand-written op list is a FILE —
+    // pretty-printed, because that is what a human can read and edit. Passing
+    // one straight through truncated it at the first newline and answered
+    // "EOF while parsing a list at line 1 column 1", which describes the
+    // symptom and hides the cause. Re-serialise compactly here so the readable
+    // form on disk and the one-line form on the wire are the same payload.
+    let line = match line.strip_prefix("tabs ") {
+        Some(rest) => match serde_json::from_str::<serde_json::Value>(rest.trim()) {
+            Ok(v) => format!("tabs {v}"),
+            // Leave it alone and let parse_line produce the real diagnosis.
+            Err(_) => line,
+        },
+        None => line,
+    };
+    // A tab edit is about the caller's own window; only an explicit flag aims
+    // it anywhere else.
+    if line.starts_with("tabs ") && !scope_given {
+        scope = Scope::Owning;
+    }
     // Validate against the same grammar the server enforces, so a typo fails
     // HERE with usage rather than fanning out as N "err unknown command"s.
     parse_line(&line)?;
@@ -694,6 +730,36 @@ pub fn run_cli(args: &[String]) -> i32 {
     let targets: Vec<(u32, PathBuf)> = match &scope {
         Scope::Pid(pid) => vec![(*pid, socket_path(*pid))],
         Scope::All => discover(),
+        // Inside-out resolution, never Hyprland: the window we are running in,
+        // else the only one running, else refuse to guess between several.
+        Scope::Owning => match owning_td_pid().or_else(|| match discover().as_slice() {
+            [(pid, _)] => Some(*pid),
+            _ => None,
+        }) {
+            Some(pid) => vec![(pid, socket_path(pid))],
+            None => {
+                let running = discover();
+                if running.is_empty() {
+                    eprintln!(
+                        "terminal-delight ctl: no terminal-delight control sockets in {:?} \
+                         — is one running?",
+                        ctl_dir()
+                    );
+                } else {
+                    eprintln!(
+                        "terminal-delight ctl: not running inside a terminal-delight window, \
+                         and {} are open — name one with --pid <N> (pids: {})",
+                        running.len(),
+                        running
+                            .iter()
+                            .map(|(p, _)| p.to_string())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    );
+                }
+                return 2;
+            }
+        },
         Scope::ActiveWorkspace | Scope::Workspace(_) => {
             let sel = match &scope {
                 Scope::Workspace(w) => w.clone(),
@@ -907,6 +973,58 @@ mod tests {
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(&d).unwrap();
         d
+    }
+
+    #[test]
+    fn tabs_aims_at_the_window_it_is_running_in_not_the_one_on_screen() {
+        // The bug this replaced: `ctl tabs` resolved through the ACTIVE
+        // Hyprland workspace, so an agent in a pane on workspace 1 got
+        // "no terminal-delight windows on workspace 2" whenever the human
+        // happened to be looking elsewhere. Whether a tab edit lands must not
+        // depend on where somebody's eyes are.
+        let (_, scope) = parse_cli(&[r#"tabs [{"op":"ungroup","tab":1}]"#.into()]).unwrap();
+        assert_eq!(scope, Scope::Owning);
+
+        // Every other verb keeps the on-screen default — a bar click means
+        // "the windows I am looking at".
+        let (_, scope) = parse_cli(&["paint".into(), "toggle".into()]).unwrap();
+        assert_eq!(scope, Scope::ActiveWorkspace);
+    }
+
+    #[test]
+    fn an_explicit_scope_still_overrides_the_tabs_default() {
+        let ops = r#"tabs [{"op":"ungroup","tab":1}]"#;
+        let (_, scope) = parse_cli(&[ops.into(), "--pid".into(), "42".into()]).unwrap();
+        assert_eq!(scope, Scope::Pid(42));
+        let (_, scope) = parse_cli(&[ops.into(), "--all".into()]).unwrap();
+        assert_eq!(scope, Scope::All);
+        // "--workspace active" is a CHOICE, not the absence of one.
+        let (_, scope) =
+            parse_cli(&[ops.into(), "--workspace".into(), "active".into()]).unwrap();
+        assert_eq!(scope, Scope::ActiveWorkspace);
+    }
+
+    #[test]
+    fn a_pretty_printed_op_list_survives_the_one_line_wire() {
+        // A hand-written scheme is a file, and a readable file has newlines.
+        // Passed through verbatim it truncated at the first one and answered
+        // "EOF while parsing a list at line 1 column 1" — a message about the
+        // symptom that says nothing about the cause.
+        let pretty = "tabs [\n  {\"op\":\"name\",\"tab\":9,\"name\":\"AFTERCARE\"},\n  \
+                      {\"op\":\"ungroup\",\"tab\":3}\n]";
+        let (line, _) = parse_cli(&[pretty.into()]).expect("pretty JSON must be accepted");
+        assert!(!line.contains('\n'), "newline reached the wire: {line:?}");
+        let Ok(Cmd::Tabs(ops)) = parse_line(&line) else {
+            panic!("compacted line did not parse: {line:?}")
+        };
+        assert_eq!(ops.len(), 2);
+    }
+
+    #[test]
+    fn a_malformed_op_list_still_reports_its_own_error_not_the_compactors() {
+        // The compaction step must not swallow the diagnosis.
+        let err = parse_cli(&[r#"tabs [{"op":"nope"}]"#.into()]).expect_err("must reject");
+        assert!(err.contains("valid op list"), "{err}");
     }
 
     #[test]
