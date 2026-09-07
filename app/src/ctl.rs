@@ -59,6 +59,7 @@ pub(crate) enum Req {
     Toggle,
     Adopt(AdoptReq),
     McpPolicy(McpPolicy),
+    Tabs(Vec<TabOp>),
 }
 
 /// One field of the MCP control-surface policy — the robot panel's toggles,
@@ -76,7 +77,114 @@ pub(crate) enum McpPolicy {
     ExposeAll(bool),
 }
 
+/// One edit to the mother bar's tab strip, from `ctl tabs '<json>'`.
+///
+/// The strip is what a returning human reads first, and until now the only way
+/// to write it was a right-click and a colour wheel — so a workspace of twenty
+/// tabs stayed half-labelled because relabelling it by hand was never worth the
+/// minutes. These ops make the strip scriptable, which is the whole point: an
+/// agent that has just finished a task can name the tab it worked in.
+///
+/// `tab` is an index into the CURRENT strip, exactly as `list_panes` reports it.
+/// A grouping op REORDERS the strip (members of a group must stay adjacent), so
+/// the applier resolves every index to a stable pane identity before it mutates
+/// anything — a batch means what it said when you wrote it, not what the indices
+/// happened to become halfway through.
+#[derive(Debug, PartialEq, serde::Deserialize)]
+#[serde(tag = "op", rename_all = "snake_case")]
+pub(crate) enum TabOp {
+    /// Set (or with `name: null`, clear) tab `tab`'s label.
+    Name {
+        tab: usize,
+        #[serde(default)]
+        name: Option<String>,
+    },
+    /// Put tab `tab` in the group called `group`, creating it if no group has
+    /// that name. `color` seeds a NEW group only; an existing group keeps its
+    /// colour (use `group_color` to change it).
+    Group {
+        tab: usize,
+        group: String,
+        #[serde(default)]
+        color: Option<String>,
+        #[serde(default)]
+        text_color: Option<String>,
+    },
+    /// Take tab `tab` out of its group (dropping the group if it empties).
+    Ungroup { tab: usize },
+    /// This tab's own colour overrides. `null` clears an override so the tab
+    /// falls back to its group's lead.
+    Color {
+        tab: usize,
+        #[serde(default)]
+        color: Option<String>,
+        #[serde(default)]
+        text_color: Option<String>,
+    },
+    /// Recolour a whole group by name. A group always has a fill, so `color:
+    /// null` is ignored there; `text_color: null` clears the text lead.
+    GroupColor {
+        group: String,
+        #[serde(default)]
+        color: Option<String>,
+        #[serde(default)]
+        text_color: Option<String>,
+    },
+    /// Fold or unfold a group into its counted pill.
+    Collapse { group: String, collapsed: bool },
+}
+
+impl TabOp {
+    /// Every colour string this op carries, for the parse-time hex check.
+    fn colors(&self) -> [Option<&String>; 2] {
+        match self {
+            TabOp::Name { .. } | TabOp::Ungroup { .. } | TabOp::Collapse { .. } => [None, None],
+            TabOp::Group {
+                color, text_color, ..
+            }
+            | TabOp::Color {
+                color, text_color, ..
+            }
+            | TabOp::GroupColor {
+                color, text_color, ..
+            } => [color.as_ref(), text_color.as_ref()],
+        }
+    }
+}
+
+/// The `tabs` payload: a bare array of ops, or `{"ops":[…]}`. Both shapes exist
+/// because a one-op call reads better as an array of one than as a wrapper.
+#[derive(serde::Deserialize)]
+#[serde(untagged)]
+enum TabsPayload {
+    Bare(Vec<TabOp>),
+    Wrapped { ops: Vec<TabOp> },
+}
+
+/// Parse + VALIDATE a `tabs` payload. Application is queued to the UI thread and
+/// so cannot report failure, which makes this the only place a bad colour or an
+/// empty batch can be caught while the caller is still listening — so it is
+/// checked here rather than shrugged at later.
+fn parse_tabs(json: &str) -> Result<Vec<TabOp>, String> {
+    let ops = match serde_json::from_str::<TabsPayload>(json) {
+        Ok(TabsPayload::Bare(v)) | Ok(TabsPayload::Wrapped { ops: v }) => v,
+        Err(e) => return Err(format!("tabs payload is not a valid op list: {e}")),
+    };
+    if ops.is_empty() {
+        return Err("tabs: empty op list".into());
+    }
+    for op in &ops {
+        for c in op.colors().into_iter().flatten() {
+            if theme::parse_hex(c).is_none() {
+                return Err(format!("tabs: {c:?} is not a hex colour (want #rrggbb)"));
+            }
+        }
+    }
+    Ok(ops)
+}
+
 /// One parsed request line.
+#[derive(Debug)]
 enum Cmd {
     Ping,
     PaintStatus,
@@ -86,6 +194,8 @@ enum Cmd {
     McpRpc(String),
     McpStatus,
     McpPolicy(McpPolicy),
+    /// A batch of tab-strip edits, verbatim JSON.
+    Tabs(Vec<TabOp>),
 }
 
 // The `mcp status` mirror, refreshed by the ticker each pass (same pattern as
@@ -146,13 +256,19 @@ pub fn socket_path(pid: u32) -> PathBuf {
 /// unknown-command error both quote it, so they can't drift from the match.
 const USAGE: &str = "ping | paint on|off|toggle|status | \
      mcp status|on|off | mcp writes on|off | mcp expose agents|all | \
-     mcp rpc <json> | adopt {\"cwd\":\"/…\",\"run\":\"…\"}";
+     mcp rpc <json> | adopt {\"cwd\":\"/…\",\"run\":\"…\"} | \
+     tabs [{\"op\":\"name\",\"tab\":3,\"name\":\"DEV\"}, …]";
 
 fn parse_line(s: &str) -> Result<Cmd, String> {
     // `adopt` carries a JSON payload (cwd/run both hold spaces); everything
     // else stays word-shaped.
     if let Some(rest) = s.strip_prefix("adopt ") {
         return parse_adopt(rest.trim()).map(Cmd::Adopt);
+    }
+    // `tabs` carries a JSON op list — tab names hold spaces, so the remainder
+    // is taken verbatim and parsed as JSON rather than split into words.
+    if let Some(rest) = s.strip_prefix("tabs ") {
+        return parse_tabs(rest.trim()).map(Cmd::Tabs);
     }
     // `mcp rpc` carries a whole JSON-RPC line: take the remainder VERBATIM.
     // Splitting it on whitespace would corrupt every string literal in it.
@@ -277,6 +393,14 @@ fn handle_conn(
                 "err ui gone".into()
             }
         }
+        Ok(Cmd::Tabs(ops)) => {
+            let n = ops.len();
+            if tx.send(Req::Tabs(ops)).is_ok() {
+                format!("ok {n}")
+            } else {
+                "err ui gone".into()
+            }
+        }
         Ok(Cmd::Adopt(a)) => {
             if tx.send(Req::Adopt(a)).is_ok() {
                 "ok".into()
@@ -356,6 +480,8 @@ pub fn start(cx: &mut Context<Workspace>) {
                     // Adoption needs a Window to build the pane; this ticker is
                     // window-less, so park it — render() drains next frame.
                     Req::Adopt(a) => ws.queue_adopt(a, cx),
+                    // Tab edits need no Window — the strip is workspace state.
+                    Req::Tabs(ops) => ws.apply_tab_ops(ops, cx),
                     // The same escalation the robot panel performs, and the same
                     // persistence: a grant made from the CLI shows in the panel
                     // and survives a restart.
@@ -600,9 +726,9 @@ pub fn run_cli(args: &[String]) -> i32 {
         }
     };
 
-    // Adoption is a placement, not a broadcast: exactly ONE terminal receives
-    // the session (workspace scope → the lowest-pid window there).
-    let targets: Vec<(u32, PathBuf)> = if line.starts_with("adopt") {
+    // Adoption is a placement and a tab edit is per-WINDOW (indices mean
+    // nothing in another window's strip) — neither is a broadcast.
+    let targets: Vec<(u32, PathBuf)> = if line.starts_with("adopt") || line.starts_with("tabs ") {
         targets.into_iter().take(1).collect()
     } else {
         targets
@@ -781,6 +907,67 @@ mod tests {
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(&d).unwrap();
         d
+    }
+
+    #[test]
+    fn tabs_parses_a_bare_array_and_the_wrapped_form() {
+        let bare = r#"tabs [{"op":"name","tab":3,"name":"DEV"}]"#;
+        let wrapped = r#"tabs {"ops":[{"op":"name","tab":3,"name":"DEV"}]}"#;
+        for line in [bare, wrapped] {
+            match parse_line(line) {
+                Ok(Cmd::Tabs(ops)) => assert_eq!(
+                    ops,
+                    vec![TabOp::Name {
+                        tab: 3,
+                        name: Some("DEV".into())
+                    }]
+                ),
+                other => panic!("{line} parsed as {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn tabs_keeps_spaces_in_a_name_instead_of_word_splitting_it() {
+        // The whole reason `tabs` takes the remainder verbatim: a label like
+        // "BFS MARKETING" would be shredded by the word-shaped grammar.
+        let line = r#"tabs [{"op":"name","tab":7,"name":"BFS MARKETING"}]"#;
+        let Ok(Cmd::Tabs(ops)) = parse_line(line) else {
+            panic!("did not parse")
+        };
+        assert_eq!(
+            ops,
+            vec![TabOp::Name {
+                tab: 7,
+                name: Some("BFS MARKETING".into())
+            }]
+        );
+    }
+
+    #[test]
+    fn tabs_rejects_a_bad_colour_while_the_caller_is_still_listening() {
+        // Application is queued and cannot answer, so a typo has to fail HERE
+        // or it fails silently and invisibly a tick later.
+        let err = parse_line(r##"tabs [{"op":"group","tab":1,"group":"JOB","color":"blue"}]"##)
+            .expect_err("a non-hex colour must not reach the queue");
+        assert!(err.contains("hex colour"), "{err}");
+
+        parse_line(r##"tabs [{"op":"group","tab":1,"group":"JOB","color":"#136eec"}]"##)
+            .expect("a real hex colour is fine");
+    }
+
+    #[test]
+    fn tabs_rejects_an_empty_batch_and_an_unknown_op() {
+        assert!(parse_line("tabs []").is_err());
+        assert!(parse_line(r#"tabs [{"op":"detonate","tab":1}]"#).is_err());
+    }
+
+    #[test]
+    fn tabs_is_addressed_to_one_window_not_broadcast() {
+        // Indices mean nothing in another window's strip, so a tab edit must
+        // narrow to a single target the way `adopt` does.
+        let line = r#"tabs [{"op":"ungroup","tab":2}]"#;
+        assert!(line.starts_with("tabs "));
     }
 
     #[test]

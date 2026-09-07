@@ -5045,6 +5045,164 @@ impl Workspace {
         }
     }
 
+    // ---- ctl `tabs`: the tab strip, scripted ---------------------------------
+
+    /// A stable identity for tab `i` that survives a reorder: the entity id of
+    /// its first terminal leaf. Tab INDICES are what a caller can see (they are
+    /// what `list_panes` reports) but they are not what a batch can be applied
+    /// against, because grouping slides tabs around — so every index in a batch
+    /// is resolved to one of these BEFORE the first mutation, and back to a live
+    /// index at the moment each op runs.
+    fn tab_key(&self, i: usize) -> Option<EntityId> {
+        let mut leaves = vec![];
+        self.tabs.get(i)?.root.leaves(&mut leaves);
+        leaves.first().map(|p| p.entity_id())
+    }
+
+    /// Where the tab identified by `key` sits right now.
+    fn tab_index_of(&self, key: EntityId) -> Option<usize> {
+        self.tabs.iter().position(|t| {
+            let mut leaves = vec![];
+            t.root.leaves(&mut leaves);
+            leaves.first().is_some_and(|p| p.entity_id() == key)
+        })
+    }
+
+    /// The group called `name`, or a fresh one seeded with `color`. Groups are
+    /// addressed by NAME over ctl rather than by id: an id is a catalogue number
+    /// a script would have to look up first, and the name is the thing already
+    /// painted on the bar.
+    fn ensure_group_named(&mut self, name: &str, color: Option<Hsla>) -> u32 {
+        let want = name.trim();
+        if let Some(g) = self
+            .groups
+            .iter()
+            .find(|g| g.name.as_deref().map(str::trim) == Some(want))
+        {
+            return g.id;
+        }
+        let id = self.next_group_id;
+        self.next_group_id += 1;
+        self.groups.push(TabGroup {
+            id,
+            name: (!want.is_empty()).then(|| want.to_string()),
+            color: color.unwrap_or_else(|| hsla(0.47, 0.5, 0.5, 1.0)),
+            text_color: None,
+            collapsed: false,
+        });
+        id
+    }
+
+    /// Apply one batch of [`ctl::TabOp`]s. Colours were validated at parse time
+    /// (the caller is still listening there); what can still go wrong here is an
+    /// index that names no tab, which is skipped rather than aborting the batch —
+    /// a strip that is nine-tenths labelled beats one rolled back to nothing.
+    pub(crate) fn apply_tab_ops(&mut self, ops: Vec<crate::ctl::TabOp>, cx: &mut Context<Self>) {
+        use crate::ctl::TabOp;
+        // Grouping calls move_tab, which reorders the strip AND repoints
+        // `tab_menu` at the moved tab — that field drives the open tab-config
+        // popup, so a ctl call would pop a menu on the user's screen. Snapshot
+        // both bits of live UI state and put them back when the batch is done.
+        let saved_menu = self.tab_menu;
+        let saved_scope = self.tab_scope;
+
+        // Freeze identities first — see `tab_key`.
+        let keyed: Vec<(Option<EntityId>, TabOp)> = ops
+            .into_iter()
+            .map(|op| {
+                let idx = match &op {
+                    TabOp::Name { tab, .. }
+                    | TabOp::Group { tab, .. }
+                    | TabOp::Ungroup { tab }
+                    | TabOp::Color { tab, .. } => Some(*tab),
+                    TabOp::GroupColor { .. } | TabOp::Collapse { .. } => None,
+                };
+                (idx.and_then(|i| self.tab_key(i)), op)
+            })
+            .collect();
+
+        let hex = |c: &Option<String>| c.as_deref().and_then(theme::parse_hex);
+
+        for (key, op) in keyed {
+            // Ops that name a tab need it to still exist; ops that name a group
+            // carry no key and always run.
+            let live = key.and_then(|k| self.tab_index_of(k));
+            match op {
+                TabOp::Name { name, .. } => {
+                    let Some(i) = live else { continue };
+                    if let Some(t) = self.tabs.get_mut(i) {
+                        t.name = name.map(|n| n.trim().to_string()).filter(|n| !n.is_empty());
+                    }
+                }
+                TabOp::Color {
+                    color, text_color, ..
+                } => {
+                    let Some(i) = live else { continue };
+                    let (c, tc) = (hex(&color), hex(&text_color));
+                    if let Some(t) = self.tabs.get_mut(i) {
+                        t.color = c;
+                        t.text_color = tc;
+                    }
+                }
+                TabOp::Group {
+                    group,
+                    color,
+                    text_color,
+                    ..
+                } => {
+                    let Some(i) = live else { continue };
+                    let gid = self.ensure_group_named(&group, hex(&color));
+                    if let Some(tc) = hex(&text_color) {
+                        if let Some(g) = self.groups.iter_mut().find(|g| g.id == gid) {
+                            g.text_color = Some(tc);
+                        }
+                    }
+                    self.add_tab_to_group(i, gid, cx);
+                }
+                TabOp::Ungroup { .. } => {
+                    let Some(i) = live else { continue };
+                    self.remove_from_group(i, cx);
+                }
+                TabOp::GroupColor {
+                    group,
+                    color,
+                    text_color,
+                } => {
+                    let want = group.trim().to_string();
+                    let (c, tc) = (hex(&color), hex(&text_color));
+                    if let Some(g) = self
+                        .groups
+                        .iter_mut()
+                        .find(|g| g.name.as_deref().map(str::trim) == Some(want.as_str()))
+                    {
+                        // A group is never colourless, so a null fill is a no-op
+                        // here; a null text lead genuinely clears the lead.
+                        if let Some(c) = c {
+                            g.color = c;
+                        }
+                        g.text_color = tc;
+                    }
+                }
+                TabOp::Collapse { group, collapsed } => {
+                    let want = group.trim().to_string();
+                    if let Some(g) = self
+                        .groups
+                        .iter_mut()
+                        .find(|g| g.name.as_deref().map(str::trim) == Some(want.as_str()))
+                    {
+                        g.collapsed = collapsed;
+                    }
+                }
+            }
+        }
+
+        self.prune_groups();
+        self.tab_menu = saved_menu;
+        self.tab_scope = saved_scope;
+        self.save(cx);
+        cx.notify();
+    }
+
     /// Open the FOCUS reading modal on `pane`: flag it read (so Esc closes the
     /// modal), and focus it so every keystroke still lands in the real terminal
     /// while you read it blown up. Replaces any previously-read pane.
