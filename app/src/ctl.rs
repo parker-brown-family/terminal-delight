@@ -999,8 +999,7 @@ mod tests {
         let (_, scope) = parse_cli(&[ops.into(), "--all".into()]).unwrap();
         assert_eq!(scope, Scope::All);
         // "--workspace active" is a CHOICE, not the absence of one.
-        let (_, scope) =
-            parse_cli(&[ops.into(), "--workspace".into(), "active".into()]).unwrap();
+        let (_, scope) = parse_cli(&[ops.into(), "--workspace".into(), "active".into()]).unwrap();
         assert_eq!(scope, Scope::ActiveWorkspace);
     }
 
