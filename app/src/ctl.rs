@@ -77,45 +77,57 @@ pub(crate) enum McpPolicy {
     ExposeAll(bool),
 }
 
-/// One edit to the mother bar's tab strip, from `ctl tabs '<json>'`.
+/// WHICH tab an op acts on.
 ///
-/// The strip is what a returning human reads first, and until now the only way
-/// to write it was a right-click and a colour wheel — so a workspace of twenty
-/// tabs stayed half-labelled because relabelling it by hand was never worth the
-/// minutes. These ops make the strip scriptable, which is the whole point: an
-/// agent that has just finished a task can name the tab it worked in.
+/// Two ways to say it, and the difference matters more than it looks. An INDEX
+/// is what you read off `list_panes`, and it is convenient for a one-off — but
+/// a grouping op slides tabs around to keep a group's members adjacent, so the
+/// indices an op list was written against stop being true the moment that list
+/// is applied. Re-running an index-addressed list therefore writes its names
+/// onto whatever tabs have since moved into those slots. That is not a
+/// hypothetical: it happened here, and it put one name on three different tabs.
 ///
-/// `tab` is an index into the CURRENT strip, exactly as `list_panes` reports it.
-/// A grouping op REORDERS the strip (members of a group must stay adjacent), so
-/// the applier resolves every index to a stable pane identity before it mutates
-/// anything — a batch means what it said when you wrote it, not what the indices
-/// happened to become halfway through.
+/// A PANE reference does not move. The pane's shell pid identifies a terminal,
+/// the terminal identifies the tab holding it, and neither changes when the
+/// strip reorders — so an op list addressed this way means the same thing every
+/// time it is applied. Scripts and agents should use it; `tab` is for a human
+/// reading positions off a listing.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub(crate) enum TabRef {
+    /// Position in the strip, as `list_panes` reports it. Not durable.
+    Index(usize),
+    /// The tab holding the pane whose shell has this pid. Survives a reorder.
+    Pane(u32),
+}
+
+/// What an op DOES, with no opinion about which tab it does it to.
+///
+/// Split from the target on purpose: the four tab-scoped actions all needed the
+/// same "exactly one of `tab` or `pane`" check, and four copies of a validation
+/// rule is four chances for them to drift. Now there is one.
 #[derive(Debug, PartialEq, serde::Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
-pub(crate) enum TabOp {
-    /// Set (or with `name: null`, clear) tab `tab`'s label.
+pub(crate) enum TabAction {
+    /// Set (or with `name: null`, clear) the tab's label.
     Name {
-        tab: usize,
         #[serde(default)]
         name: Option<String>,
     },
-    /// Put tab `tab` in the group called `group`, creating it if no group has
-    /// that name. `color` seeds a NEW group only; an existing group keeps its
-    /// colour (use `group_color` to change it).
+    /// Put the tab in the group called `group`, creating it if no group has that
+    /// name. `color` seeds a NEW group only; an existing group keeps its colour
+    /// (use `group_color` to change it).
     Group {
-        tab: usize,
         group: String,
         #[serde(default)]
         color: Option<String>,
         #[serde(default)]
         text_color: Option<String>,
     },
-    /// Take tab `tab` out of its group (dropping the group if it empties).
-    Ungroup { tab: usize },
-    /// This tab's own colour overrides. `null` clears an override so the tab
+    /// Take the tab out of its group (dropping the group if it empties).
+    Ungroup,
+    /// The tab's own colour overrides. `null` clears an override so the tab
     /// falls back to its group's lead.
     Color {
-        tab: usize,
         #[serde(default)]
         color: Option<String>,
         #[serde(default)]
@@ -134,20 +146,73 @@ pub(crate) enum TabOp {
     Collapse { group: String, collapsed: bool },
 }
 
-impl TabOp {
-    /// Every colour string this op carries, for the parse-time hex check.
+impl TabAction {
+    /// Does this action act on ONE tab (and therefore need a target), or on a
+    /// group as a whole (and therefore refuse one)?
+    fn needs_a_tab(&self) -> bool {
+        !matches!(
+            self,
+            TabAction::GroupColor { .. } | TabAction::Collapse { .. }
+        )
+    }
+
+    /// Every colour string this action carries, for the parse-time hex check.
     fn colors(&self) -> [Option<&String>; 2] {
         match self {
-            TabOp::Name { .. } | TabOp::Ungroup { .. } | TabOp::Collapse { .. } => [None, None],
-            TabOp::Group {
+            TabAction::Name { .. } | TabAction::Ungroup | TabAction::Collapse { .. } => {
+                [None, None]
+            }
+            TabAction::Group {
                 color, text_color, ..
             }
-            | TabOp::Color {
-                color, text_color, ..
-            }
-            | TabOp::GroupColor {
+            | TabAction::Color { color, text_color }
+            | TabAction::GroupColor {
                 color, text_color, ..
             } => [color.as_ref(), text_color.as_ref()],
+        }
+    }
+}
+
+/// One edit to the mother bar's tab strip, from `ctl tabs '<json>'`.
+///
+/// The strip is what a returning human reads first, and until this existed the
+/// only way to write it was a right-click and a colour wheel — so a workspace of
+/// twenty tabs stayed half-labelled, because relabelling it by hand was never
+/// worth the minutes. An agent that has just finished a task is the thing that
+/// knows what the tab it worked in should be called; this is how it says so.
+#[derive(Debug, PartialEq, serde::Deserialize)]
+pub(crate) struct TabOp {
+    #[serde(flatten)]
+    pub(crate) action: TabAction,
+    #[serde(default)]
+    tab: Option<usize>,
+    #[serde(default)]
+    pane: Option<u32>,
+}
+
+impl TabOp {
+    /// The tab this op names, validated: exactly one of `tab`/`pane` for a
+    /// tab-scoped action, neither for a group-scoped one.
+    ///
+    /// Checked here, at parse time, rather than when the op is applied — the
+    /// applier runs on the UI thread behind a queue and cannot answer the
+    /// caller, so a mistake caught there is a mistake nobody hears about.
+    pub(crate) fn target(&self) -> Result<Option<TabRef>, String> {
+        match (self.action.needs_a_tab(), self.tab, self.pane) {
+            (true, Some(_), Some(_)) => Err(
+                "give either `tab` (a position) or `pane` (a pid), not both —                  they can name different tabs"
+                    .into(),
+            ),
+            (true, Some(i), None) => Ok(Some(TabRef::Index(i))),
+            (true, None, Some(p)) => Ok(Some(TabRef::Pane(p))),
+            (true, None, None) => Err(
+                "this op needs a tab: `pane` (a pid from list_panes — preferred,                  it survives a reorder) or `tab` (a position)"
+                    .into(),
+            ),
+            (false, None, None) => Ok(None),
+            (false, _, _) => Err(
+                "a group-wide op acts on the whole group by name — drop `tab`/`pane`".into(),
+            ),
         }
     }
 }
@@ -173,10 +238,15 @@ fn parse_tabs(json: &str) -> Result<Vec<TabOp>, String> {
     if ops.is_empty() {
         return Err("tabs: empty op list".into());
     }
-    for op in &ops {
-        for c in op.colors().into_iter().flatten() {
+    for (i, op) in ops.iter().enumerate() {
+        // Position the complaint: in a batch of twenty, "op 13" is the
+        // difference between a fix and a hunt.
+        op.target().map_err(|e| format!("tabs: op {i}: {e}"))?;
+        for c in op.action.colors().into_iter().flatten() {
             if theme::parse_hex(c).is_none() {
-                return Err(format!("tabs: {c:?} is not a hex colour (want #rrggbb)"));
+                return Err(format!(
+                    "tabs: op {i}: {c:?} is not a hex colour (want #rrggbb)"
+                ));
             }
         }
     }
@@ -257,7 +327,8 @@ pub fn socket_path(pid: u32) -> PathBuf {
 const USAGE: &str = "ping | paint on|off|toggle|status | \
      mcp status|on|off | mcp writes on|off | mcp expose agents|all | \
      mcp rpc <json> | adopt {\"cwd\":\"/…\",\"run\":\"…\"} | \
-     tabs [{\"op\":\"name\",\"tab\":3,\"name\":\"DEV\"}, …]";
+     tabs [{\"op\":\"name\",\"pane\":1234,\"name\":\"DEV\"}, …] | \
+     tab name <text> | tab group <name> | tab ungroup";
 
 fn parse_line(s: &str) -> Result<Cmd, String> {
     // `adopt` carries a JSON payload (cwd/run both hold spaces); everything
@@ -538,6 +609,75 @@ enum Scope {
 
 /// Parse `ctl` argv (everything after the `ctl` token) into the request line
 /// and the scope. Kept pure for tests.
+/// `ctl tab …` — the tab strip for the ONE caller who is not reorganising it.
+///
+/// The bulk form (`ctl tabs '<json>'`) came first and was the wrong thing to
+/// build first: reorganising a whole strip is something a person does rarely,
+/// while "label the tab I am working in" is something every agent wants at the
+/// end of every task. That common case should cost no arguments, and here it
+/// costs none — no index to look up, no pid to pass, no JSON to assemble:
+///
+/// ```text
+/// terminal-delight ctl tab name WEBSITE BUILD LEADS
+/// terminal-delight ctl tab group BFS
+/// terminal-delight ctl tab ungroup
+/// ```
+///
+/// It desugars to a single pane-addressed op, so it cannot name the wrong tab
+/// even while the strip is moving underneath it.
+/// What `ctl tab <words>` asked for, before we know whether it can be done.
+///
+/// Split from the pane lookup deliberately. Resolving which pane we are in is an
+/// environment question — it reads `/proc` and the socket directory — and asking
+/// it in order to reject a typo is both backwards and untestable: the answer
+/// depends on where the process happens to be running, so a CI box with no
+/// terminal-delight anywhere reports "you are not inside a pane" when the real
+/// complaint is "there is no such verb". Parse first, resolve second.
+#[derive(Debug, PartialEq)]
+enum SelfTab {
+    /// `None` clears the label — the same "empty means none" the JSON form gets
+    /// from `name: null`.
+    Name(Option<String>),
+    Group(String),
+    Ungroup,
+}
+
+/// Pure: the `ctl tab` grammar and nothing else.
+fn self_tab_verb(words: &[&str]) -> Result<SelfTab, String> {
+    match words {
+        ["name"] => Ok(SelfTab::Name(None)),
+        ["name", rest @ ..] => Ok(SelfTab::Name(Some(rest.join(" ")))),
+        ["group"] => Err("`ctl tab group` needs a group name".into()),
+        ["group", rest @ ..] => Ok(SelfTab::Group(rest.join(" "))),
+        ["ungroup"] => Ok(SelfTab::Ungroup),
+        [] => Err("`ctl tab` needs one of: name <text> | group <name> | ungroup".into()),
+        [other, ..] => Err(format!(
+            "unknown `ctl tab` verb {other:?} — try: name <text> | group <name> | ungroup"
+        )),
+    }
+}
+
+/// `ctl tab …` desugared to a single pane-addressed op.
+fn self_tab_line(words: &[&str]) -> Result<String, String> {
+    let verb = self_tab_verb(words)?;
+    let Some(pane) = owning_td().and_then(|(_, pane)| pane) else {
+        return Err(
+            "`ctl tab` acts on the tab you are running in, and this process is not \
+             inside a terminal-delight pane. Use `ctl tabs '<json>'` with an explicit \
+             `pane` or `tab`, and `--pid` to say which window."
+                .into(),
+        );
+    };
+    let op = match verb {
+        SelfTab::Name(name) => serde_json::json!({ "op": "name", "pane": pane, "name": name }),
+        SelfTab::Group(group) => {
+            serde_json::json!({ "op": "group", "pane": pane, "group": group })
+        }
+        SelfTab::Ungroup => serde_json::json!({ "op": "ungroup", "pane": pane }),
+    };
+    Ok(format!("tabs [{op}]"))
+}
+
 fn parse_cli(args: &[String]) -> Result<(String, Scope), String> {
     let mut words: Vec<&str> = Vec::new();
     let mut scope = Scope::ActiveWorkspace;
@@ -576,6 +716,23 @@ fn parse_cli(args: &[String]) -> Result<(String, Scope), String> {
     }
     // `adopt` is flag-shaped on the CLI (cwd/run carry spaces) and becomes the
     // one-line JSON form on the wire; everything else is the words themselves.
+    // `ctl tab` is defined as "my own tab", so a scope flag is not a refinement
+    // of it, it is a contradiction — and one that would otherwise fail SILENTLY,
+    // since a pane pid from this window matches nothing in another one and the
+    // applier skips what it cannot find.
+    if words.first() == Some(&"tab") && scope_given {
+        return Err("`ctl tab` always means the tab you are running in — drop \
+             --pid/--all/--workspace, or use `ctl tabs '<json>'` to aim elsewhere"
+            .into());
+    }
+    if words.first() == Some(&"tab") {
+        if cwd.is_some() || run.is_some() {
+            return Err("--cwd/--run only apply to adopt".into());
+        }
+        let line = self_tab_line(&words[1..])?;
+        parse_line(&line)?;
+        return Ok((line, Scope::Owning));
+    }
     let line = if words == ["adopt"] {
         format!("adopt {}", serde_json::json!({ "cwd": cwd, "run": run }))
     } else {
@@ -857,7 +1014,23 @@ fn ppid_of(pid: u32) -> Option<u32> {
 /// ancestor that owns a socket is, unambiguously, the window it is looking at.
 /// The socket's own existence is the test — no class matching, no name guessing.
 fn owning_td_pid() -> Option<u32> {
+    owning_td().map(|(window, _)| window)
+}
+
+/// One walk, two answers: the window hosting us, and the PANE inside it we are
+/// running in — which is simply the last ancestor before the window, because
+/// that is the shell terminal-delight spawned for the pane.
+///
+/// Worth stating plainly, because it is what makes `ctl tab` need no arguments
+/// at all: an agent's chain is `td → shell → agent → …`, so the shell whose
+/// child we are IS our pane, already sitting in the walk that finds the window.
+/// No environment variable to set, no pid to pass, no index to look up, and no
+/// way to name the wrong tab. The pane is `None` only when the caller is itself
+/// the window (terminal-delight poking its own socket), which no pane-scoped
+/// command should reach.
+fn owning_td() -> Option<(u32, Option<u32>)> {
     let mut pid = std::process::id();
+    let mut prev: Option<u32> = None;
     // Deep enough for td → shell → agent → server with room to spare; bounded so
     // a malformed /proc chain can never spin.
     for _ in 0..64 {
@@ -865,8 +1038,9 @@ fn owning_td_pid() -> Option<u32> {
             return None;
         }
         if socket_path(pid).exists() {
-            return Some(pid);
+            return Some((pid, prev));
         }
+        prev = Some(pid);
         pid = ppid_of(pid)?;
     }
     None
@@ -976,6 +1150,87 @@ mod tests {
     }
 
     #[test]
+    fn a_pane_addressed_op_list_means_the_same_thing_twice() {
+        // The defect this addressing exists to remove: an INDEX is read against
+        // the strip the caller was looking at, and a grouping op reorders that
+        // strip — so re-applying an index-addressed list writes its names onto
+        // whatever has since moved into those slots. Observed in the wild: one
+        // name ended up on three different tabs. A pane pid does not move.
+        let by_pane = r#"tabs [{"op":"name","pane":258041,"name":"AFTERCARE"}]"#;
+        let Ok(Cmd::Tabs(ops)) = parse_line(by_pane) else {
+            panic!("did not parse")
+        };
+        assert_eq!(ops[0].target(), Ok(Some(TabRef::Pane(258041))));
+    }
+
+    #[test]
+    fn an_op_must_name_its_tab_exactly_one_way() {
+        // Both is ambiguous — they can denote different tabs, and silently
+        // preferring one would make the other a lie.
+        let err = parse_line(r#"tabs [{"op":"name","tab":3,"pane":99,"name":"X"}]"#)
+            .expect_err("both must be refused");
+        assert!(err.contains("not both"), "{err}");
+
+        // Neither leaves the applier nothing to act on.
+        let err = parse_line(r#"tabs [{"op":"name","name":"X"}]"#).expect_err("neither");
+        assert!(err.contains("needs a tab"), "{err}");
+
+        // A group-wide op acts by group NAME and must not carry a tab at all.
+        let err = parse_line(r#"tabs [{"op":"collapse","group":"BFS","collapsed":true,"tab":1}]"#)
+            .expect_err("group-wide op with a tab");
+        assert!(err.contains("group-wide"), "{err}");
+
+        parse_line(r#"tabs [{"op":"collapse","group":"BFS","collapsed":true}]"#)
+            .expect("group-wide op with no tab is fine");
+    }
+
+    #[test]
+    fn a_batch_error_says_which_op_it_is_about() {
+        // In a list of twenty, "op 13" is the difference between a fix and a hunt.
+        let err = parse_line(
+            r#"tabs [{"op":"name","tab":0,"name":"A"},{"op":"name","tab":1,"name":"B"},{"op":"ungroup"}]"#,
+        )
+        .expect_err("third op has no target");
+        assert!(err.contains("op 2"), "{err}");
+    }
+
+    #[test]
+    fn ctl_tab_refuses_a_scope_flag_instead_of_silently_doing_nothing() {
+        // `ctl tab` is DEFINED as "my own tab", so --pid is not a refinement of
+        // it but a contradiction — and one that would fail silently, because a
+        // pane pid from this window matches nothing in another and the applier
+        // skips what it cannot find.
+        let err = parse_cli(&["tab".into(), "name".into(), "X".into(), "--all".into()])
+            .expect_err("a scope flag must be refused, not ignored");
+        assert!(
+            err.contains("always means the tab you are running in"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn ctl_tab_rejects_an_unknown_verb_rather_than_guessing() {
+        // Against the PURE grammar, not parse_cli: routing a typo through the
+        // pane lookup makes the answer depend on where the test is running, and
+        // this suite runs on a CI box with no terminal-delight in sight. It
+        // passed locally for exactly that wrong reason.
+        let err = self_tab_verb(&["recolour", "red"]).unwrap_err();
+        assert!(err.contains("unknown `ctl tab` verb"), "{err}");
+        let err = self_tab_verb(&[]).unwrap_err();
+        assert!(err.contains("name <text>"), "{err}");
+        let err = self_tab_verb(&["group"]).unwrap_err();
+        assert!(err.contains("needs a group name"), "{err}");
+
+        // And the shapes it does accept.
+        assert_eq!(
+            self_tab_verb(&["name", "WEBSITE", "BUILD", "LEADS"]),
+            Ok(SelfTab::Name(Some("WEBSITE BUILD LEADS".into())))
+        );
+        assert_eq!(self_tab_verb(&["name"]), Ok(SelfTab::Name(None)));
+        assert_eq!(self_tab_verb(&["ungroup"]), Ok(SelfTab::Ungroup));
+    }
+
+    #[test]
     fn tabs_aims_at_the_window_it_is_running_in_not_the_one_on_screen() {
         // The bug this replaced: `ctl tabs` resolved through the ACTIVE
         // Hyprland workspace, so an agent in a pane on workspace 1 got
@@ -1032,13 +1287,16 @@ mod tests {
         let wrapped = r#"tabs {"ops":[{"op":"name","tab":3,"name":"DEV"}]}"#;
         for line in [bare, wrapped] {
             match parse_line(line) {
-                Ok(Cmd::Tabs(ops)) => assert_eq!(
-                    ops,
-                    vec![TabOp::Name {
-                        tab: 3,
-                        name: Some("DEV".into())
-                    }]
-                ),
+                Ok(Cmd::Tabs(ops)) => {
+                    assert_eq!(ops.len(), 1);
+                    assert_eq!(ops[0].target(), Ok(Some(TabRef::Index(3))));
+                    assert_eq!(
+                        ops[0].action,
+                        TabAction::Name {
+                            name: Some("DEV".into())
+                        }
+                    );
+                }
                 other => panic!("{line} parsed as {other:?}"),
             }
         }
@@ -1052,12 +1310,12 @@ mod tests {
         let Ok(Cmd::Tabs(ops)) = parse_line(line) else {
             panic!("did not parse")
         };
+        assert_eq!(ops.len(), 1);
         assert_eq!(
-            ops,
-            vec![TabOp::Name {
-                tab: 7,
+            ops[0].action,
+            TabAction::Name {
                 name: Some("BFS MARKETING".into())
-            }]
+            }
         );
     }
 

@@ -5059,6 +5059,19 @@ impl Workspace {
         leaves.first().map(|p| p.entity_id())
     }
 
+    /// Which tab holds the pane whose shell has this pid — the durable way to
+    /// name a tab, and the one a caller can actually know about itself. The
+    /// pane's shell pid is what `list_panes` reports and what an agent finds by
+    /// walking its own parent chain, and unlike an index it does not move when
+    /// a grouping op reorders the strip.
+    fn tab_holding_pane(&self, shell_pid: u32, cx: &App) -> Option<usize> {
+        self.tabs.iter().position(|t| {
+            let mut leaves = vec![];
+            t.root.leaves(&mut leaves);
+            leaves.iter().any(|p| p.read(cx).shell_pid() == shell_pid)
+        })
+    }
+
     /// Where the tab identified by `key` sits right now.
     fn tab_index_of(&self, key: EntityId) -> Option<usize> {
         self.tabs.iter().position(|t| {
@@ -5093,12 +5106,13 @@ impl Workspace {
         id
     }
 
-    /// Apply one batch of [`ctl::TabOp`]s. Colours were validated at parse time
-    /// (the caller is still listening there); what can still go wrong here is an
-    /// index that names no tab, which is skipped rather than aborting the batch —
-    /// a strip that is nine-tenths labelled beats one rolled back to nothing.
+    /// Apply one batch of [`ctl::TabOp`]s. Shape and colours were validated at
+    /// parse time, while the caller was still listening; what can still go wrong
+    /// here is a target that names no live tab — a stale index, or a pane that
+    /// has since closed — which is skipped rather than aborting the batch. A
+    /// strip that is nine-tenths labelled beats one rolled back to nothing.
     pub(crate) fn apply_tab_ops(&mut self, ops: Vec<crate::ctl::TabOp>, cx: &mut Context<Self>) {
-        use crate::ctl::TabOp;
+        use crate::ctl::{TabAction, TabRef};
         // Grouping calls move_tab, which reorders the strip AND repoints
         // `tab_menu` at the moved tab — that field drives the open tab-config
         // popup, so a ctl call would pop a menu on the user's screen. Snapshot
@@ -5106,37 +5120,41 @@ impl Workspace {
         let saved_menu = self.tab_menu;
         let saved_scope = self.tab_scope;
 
-        // Freeze identities first — see `tab_key`.
-        let keyed: Vec<(Option<EntityId>, TabOp)> = ops
+        // Resolve every target to a stable identity BEFORE mutating anything.
+        // Both address forms collapse to the same thing here, which is the point:
+        // an index is read once, against the strip the caller was looking at, and
+        // never consulted again — so the reorder a grouping op causes cannot make
+        // a later op in the same batch land on a stranger.
+        let keyed: Vec<(Option<EntityId>, TabAction)> = ops
             .into_iter()
             .map(|op| {
-                let idx = match &op {
-                    TabOp::Name { tab, .. }
-                    | TabOp::Group { tab, .. }
-                    | TabOp::Ungroup { tab }
-                    | TabOp::Color { tab, .. } => Some(*tab),
-                    TabOp::GroupColor { .. } | TabOp::Collapse { .. } => None,
+                // Shape was validated at parse time; a target error here would
+                // already have been reported, so treat it as "no tab".
+                let key = match op.target() {
+                    Ok(Some(TabRef::Index(i))) => self.tab_key(i),
+                    Ok(Some(TabRef::Pane(pid))) => {
+                        self.tab_holding_pane(pid, cx).and_then(|i| self.tab_key(i))
+                    }
+                    Ok(None) | Err(_) => None,
                 };
-                (idx.and_then(|i| self.tab_key(i)), op)
+                (key, op.action)
             })
             .collect();
 
         let hex = |c: &Option<String>| c.as_deref().and_then(theme::parse_hex);
 
-        for (key, op) in keyed {
+        for (key, action) in keyed {
             // Ops that name a tab need it to still exist; ops that name a group
             // carry no key and always run.
             let live = key.and_then(|k| self.tab_index_of(k));
-            match op {
-                TabOp::Name { name, .. } => {
+            match action {
+                TabAction::Name { name } => {
                     let Some(i) = live else { continue };
                     if let Some(t) = self.tabs.get_mut(i) {
                         t.name = name.map(|n| n.trim().to_string()).filter(|n| !n.is_empty());
                     }
                 }
-                TabOp::Color {
-                    color, text_color, ..
-                } => {
+                TabAction::Color { color, text_color } => {
                     let Some(i) = live else { continue };
                     let (c, tc) = (hex(&color), hex(&text_color));
                     if let Some(t) = self.tabs.get_mut(i) {
@@ -5144,11 +5162,10 @@ impl Workspace {
                         t.text_color = tc;
                     }
                 }
-                TabOp::Group {
+                TabAction::Group {
                     group,
                     color,
                     text_color,
-                    ..
                 } => {
                     let Some(i) = live else { continue };
                     let gid = self.ensure_group_named(&group, hex(&color));
@@ -5159,11 +5176,11 @@ impl Workspace {
                     }
                     self.add_tab_to_group(i, gid, cx);
                 }
-                TabOp::Ungroup { .. } => {
+                TabAction::Ungroup => {
                     let Some(i) = live else { continue };
                     self.remove_from_group(i, cx);
                 }
-                TabOp::GroupColor {
+                TabAction::GroupColor {
                     group,
                     color,
                     text_color,
@@ -5183,7 +5200,7 @@ impl Workspace {
                         g.text_color = tc;
                     }
                 }
-                TabOp::Collapse { group, collapsed } => {
+                TabAction::Collapse { group, collapsed } => {
                     let want = group.trim().to_string();
                     if let Some(g) = self
                         .groups
