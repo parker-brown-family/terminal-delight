@@ -625,7 +625,41 @@ enum Scope {
 ///
 /// It desugars to a single pane-addressed op, so it cannot name the wrong tab
 /// even while the strip is moving underneath it.
+/// What `ctl tab <words>` asked for, before we know whether it can be done.
+///
+/// Split from the pane lookup deliberately. Resolving which pane we are in is an
+/// environment question — it reads `/proc` and the socket directory — and asking
+/// it in order to reject a typo is both backwards and untestable: the answer
+/// depends on where the process happens to be running, so a CI box with no
+/// terminal-delight anywhere reports "you are not inside a pane" when the real
+/// complaint is "there is no such verb". Parse first, resolve second.
+#[derive(Debug, PartialEq)]
+enum SelfTab {
+    /// `None` clears the label — the same "empty means none" the JSON form gets
+    /// from `name: null`.
+    Name(Option<String>),
+    Group(String),
+    Ungroup,
+}
+
+/// Pure: the `ctl tab` grammar and nothing else.
+fn self_tab_verb(words: &[&str]) -> Result<SelfTab, String> {
+    match words {
+        ["name"] => Ok(SelfTab::Name(None)),
+        ["name", rest @ ..] => Ok(SelfTab::Name(Some(rest.join(" ")))),
+        ["group"] => Err("`ctl tab group` needs a group name".into()),
+        ["group", rest @ ..] => Ok(SelfTab::Group(rest.join(" "))),
+        ["ungroup"] => Ok(SelfTab::Ungroup),
+        [] => Err("`ctl tab` needs one of: name <text> | group <name> | ungroup".into()),
+        [other, ..] => Err(format!(
+            "unknown `ctl tab` verb {other:?} — try: name <text> | group <name> | ungroup"
+        )),
+    }
+}
+
+/// `ctl tab …` desugared to a single pane-addressed op.
 fn self_tab_line(words: &[&str]) -> Result<String, String> {
+    let verb = self_tab_verb(words)?;
     let Some(pane) = owning_td().and_then(|(_, pane)| pane) else {
         return Err(
             "`ctl tab` acts on the tab you are running in, and this process is not \
@@ -634,24 +668,12 @@ fn self_tab_line(words: &[&str]) -> Result<String, String> {
                 .into(),
         );
     };
-    let op = match words {
-        // A bare `name` clears the label — the same "empty means none" the JSON
-        // form gets from `name: null`.
-        ["name"] => serde_json::json!({ "op": "name", "pane": pane, "name": null }),
-        ["name", rest @ ..] => {
-            serde_json::json!({ "op": "name", "pane": pane, "name": rest.join(" ") })
+    let op = match verb {
+        SelfTab::Name(name) => serde_json::json!({ "op": "name", "pane": pane, "name": name }),
+        SelfTab::Group(group) => {
+            serde_json::json!({ "op": "group", "pane": pane, "group": group })
         }
-        ["group"] => return Err("`ctl tab group` needs a group name".into()),
-        ["group", rest @ ..] => {
-            serde_json::json!({ "op": "group", "pane": pane, "group": rest.join(" ") })
-        }
-        ["ungroup"] => serde_json::json!({ "op": "ungroup", "pane": pane }),
-        [] => return Err("`ctl tab` needs one of: name <text> | group <name> | ungroup".into()),
-        [other, ..] => {
-            return Err(format!(
-                "unknown `ctl tab` verb {other:?} — try: name <text> | group <name> | ungroup"
-            ))
-        }
+        SelfTab::Ungroup => serde_json::json!({ "op": "ungroup", "pane": pane }),
     };
     Ok(format!("tabs [{op}]"))
 }
@@ -1188,12 +1210,24 @@ mod tests {
 
     #[test]
     fn ctl_tab_rejects_an_unknown_verb_rather_than_guessing() {
-        let err = parse_cli(&["tab".into(), "recolour".into(), "red".into()]).unwrap_err();
+        // Against the PURE grammar, not parse_cli: routing a typo through the
+        // pane lookup makes the answer depend on where the test is running, and
+        // this suite runs on a CI box with no terminal-delight in sight. It
+        // passed locally for exactly that wrong reason.
+        let err = self_tab_verb(&["recolour", "red"]).unwrap_err();
         assert!(err.contains("unknown `ctl tab` verb"), "{err}");
-        let err = parse_cli(&["tab".into()]).unwrap_err();
+        let err = self_tab_verb(&[]).unwrap_err();
         assert!(err.contains("name <text>"), "{err}");
-        let err = parse_cli(&["tab".into(), "group".into()]).unwrap_err();
+        let err = self_tab_verb(&["group"]).unwrap_err();
         assert!(err.contains("needs a group name"), "{err}");
+
+        // And the shapes it does accept.
+        assert_eq!(
+            self_tab_verb(&["name", "WEBSITE", "BUILD", "LEADS"]),
+            Ok(SelfTab::Name(Some("WEBSITE BUILD LEADS".into())))
+        );
+        assert_eq!(self_tab_verb(&["name"]), Ok(SelfTab::Name(None)));
+        assert_eq!(self_tab_verb(&["ungroup"]), Ok(SelfTab::Ungroup));
     }
 
     #[test]
