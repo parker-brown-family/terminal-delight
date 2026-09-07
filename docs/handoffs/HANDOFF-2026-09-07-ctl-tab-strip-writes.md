@@ -188,3 +188,68 @@ Consequences for you:
 - Two unrelated lean-ctx defects were filed tonight and are unresolved: `parker-brown-family/lean-ctx#9` (the pipe check treats `&&` and `;` as pipes; the computed pipe positions are discarded at `mod.rs:211`) and `#10` (every block advises `lean-ctx allow <cmd>`, including blocks no allowlist can lift). #10 carries a correction comment retracting an unverified claim — read it before acting.
 - `python3 -c` and interpreter heredocs are blocked through `ctx_shell`. Write a script file and run it.
 - CI takes ~4 minutes on Rust checks. Use `gh pr checks <n> --watch --interval 30` in the background; do not poll.
+- `ctx_search` **silently skips `app/src/main.rs`** — it is 18,753 lines and over the 512KB cap, so a symbol that lives there returns *zero matches* rather than an error. `ensure_group_named` looks nonexistent that way. Grep `main.rs` directly. Always run a positive control before concluding something is absent.
+- The shell allowlist matches the **literal command word**, so `TD=…; $TD ctl …` is rejected while a bare `terminal-delight ctl …` runs. Do not put the binary in a variable.
+
+---
+
+## 8. Picked up 2026-09-07 (second agent)
+
+### Done
+
+**#307 is merged and deployed.** CI was already fully green (five checks) when I arrived; the handoff commit was in. Squashed to `7c28af7`, built from `app/` (**note: the cargo workspace is `app/`, not the repo root** — building from the root fails with "could not find Cargo.toml"), deployed to `~/.local/lib/terminal-delight/td-7c28af7-ctl-tab-self` and symlinked.
+
+Deploy verified against the race-its-own-build failure: new binary hashes differently from the live one, and the discriminating string `unknown \`ctl tab\` verb` counts **0 on the old binary and 1 on the new**.
+
+**The CI fix is confirmed correct, by the test that actually discriminates.** Running `ctl tab bogus` *inside a pane* proves nothing — the old ordering bug would have passed there too, exactly as §5 warns. Run detached, so `owning_td()` finds no ancestor:
+
+```
+setsid --wait terminal-delight ctl tab bogus
+```
+
+The new binary still answers `unknown \`ctl tab\` verb "bogus"`, so the verb check is genuinely environment-independent. (The pre-#307 binary has no `tab` verb at all, so no deployed binary ever exhibited the ordering bug — the CI failure was its only witness.)
+
+**Version skew is loud, not silent — a good finding.** A new client against the old running server:
+
+```
+terminal-delight ctl tab name ANYTHING
+255871	err tabs payload is not a valid op list: data did not match any variant of untagged enum TabsPayload
+```
+
+Old `TabOp` has `tab: usize` **required**, so a pane-addressed op fails deserialization rather than defaulting to index 0 and renaming a stranger. Safe by luck of the type, but safe.
+
+### Blocked, and it is Parker's call
+
+**`ctl tab name` has still never run end to end.** It needs the server side, so it needs a TD restart — and this window holds **18 tabs and ~20 live agent sessions**. Restarting destroys all of it. Not an autonomous decision. Everything testable without a restart is tested.
+
+### A correction to the record
+
+The #307 commit subject says an op list "survives being run twice". **That is true only for pane-addressed ops.** `apply_tab_ops` (`main.rs:5128`) resolves every target to an `EntityId` *before* mutating, which fixes reordering **within one batch**, including for indices. Across two separate invocations, `tab: 1` still means "whatever sits at position 1 now", which the first batch's reorder has changed. Re-running an index-addressed batch remains unsafe.
+
+### D3 and D5 are one fix, not two
+
+The strongest new evidence, and it changes the decision. `mcp_transport.rs:55`:
+
+```rust
+Apply(Vec<mcp::ConfigUpdate>, mpsc::Sender<Vec<mcp::ApplyOutcome>>),
+```
+
+The MCP write path is already a **real round-trip onto the gpui thread returning a per-target outcome** (`ApplyOutcome`, `mcp.rs:318`), shipped and proven — `leave_note` reports its error (`mcp.rs:1036`), and `set_pane_config_partial_batch_reports_per_target` (`mcp.rs:1749`) asserts per-target reporting in a partial batch.
+
+So routing tab writes through MCP (D3) gets truthful per-op outcomes (D5) **for free, from a mechanism already in production**, instead of inventing a second reporting path on the ctl socket. That is a much stronger argument for the MCP tool than discoverability alone, and it is why I did not build a reporting channel into `ctl`.
+
+I did **not** implement it: it changes a public MCP surface and threads a new capability closure through `handle_line_with` → `dispatch` → `tools_call` and every test call site. That is an open architecture question this document exists to keep open, not one to settle unwatched.
+
+### Filed as falsifiable issues
+
+The open questions are now tracked where they can be assigned, rather than only in this document. Each carries an invalidation criterion, and I ran them before filing:
+
+| Issue | Covers | Invalidation actually run |
+|---|---|---|
+| **#308** | D3 + D5 — ctl-only surface, silent skips | Six MCP tools advertised, none touching tabs; `ctl tabs '[{"op":"name","tab":99,…}]'` returned **`ok 1`** live for a tab that does not exist |
+| **#309** | D2 + D4 — scheme file neither durable nor idempotent | Confirmed `list_panes` carries `session: claude --resume <uuid>` per pane, so a key that outlives a restart exists today |
+| **#310** | D6 — group name collisions | Read `ensure_group_named` (`main.rs:5088`): `.find()` first match, then unconditionally pushes a new group |
+
+**#309 carries the criterion most likely to fire:** if a durable scheme file is *not* actually wanted, neither D2 nor D4 is a defect and the deliverable is a docs change saying so. Check that before writing code.
+
+D8 (no write gate on ctl) is folded into #308 as a scope note rather than filed separately — it only becomes a real inconsistency once an MCP tab tool exists.
