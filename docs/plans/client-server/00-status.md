@@ -5,7 +5,14 @@
   flags ingested into 01-product.md same day
   (out-of-scope section expanded 2026-09-08 on Parker's note: the two refusals now
   carry why-now, cost-to-reverse, and the constraint each puts on Gate 2)
-- Gate 2 — Architecture: pending
+- Gate 2 — Architecture: APPROVED 2026-09-08 — via annotated brief (5 notes,
+  reports/2026-09-08-client-server-gate2.html). Trunk: per-session PTY host +
+  client-side replica Term, one binary. All five decision-round answers
+  recorded in 02-architecture.md; the one amendment: per-window pane cap
+  drops to 4 ("8 is nonsense for one task"), legacy over-cap layouts must
+  still load without losing running panes. COORDINATION: the main session
+  owns these docs — check for a newer note here before editing from another
+  session.
 - Gate 3 — Program Design: pending
 - Gate 4 — Slice plan: pending
 
