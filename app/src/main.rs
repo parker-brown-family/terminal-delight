@@ -3529,11 +3529,14 @@ impl Workspace {
     /// machine, what its ceilings are and how close today got to them.
     ///
     /// Records come straight off disk — a handful of small JSON files — so the
-    /// panel is up on the same frame as the click. A refresh happens only when
-    /// what is on disk has gone stale, and it happens BEHIND the open card:
-    /// asking Anthropic's usage endpoint takes seconds, and a panel that waits on
-    /// the network before drawing numbers it already has is one nobody opens
-    /// twice.
+    /// panel is up on the same frame as the click. A refresh runs on EVERY
+    /// open, and it happens BEHIND the open card: asking Anthropic's usage
+    /// endpoint takes seconds, and a panel that waits on the network before
+    /// drawing numbers it already has is one nobody opens twice. There used to
+    /// be a five-minute freshness gate here; it meant "check my usage" could
+    /// answer with numbers minutes old, which is exactly the lag that decides
+    /// a model-strength call wrong near a reset window. Opening the card IS
+    /// the question "where am I right now" — so it always asks.
     fn open_usage(&mut self, cx: &mut Context<Self>) {
         let home = session::home_dir();
         self.usage_records = usage::read_all(&home);
@@ -3542,9 +3545,7 @@ impl Workspace {
         self.savings_tab = OverlayTab::Usage;
         self.savings_menu = true;
         cx.notify();
-        if self.usage_stale() {
-            self.refresh_usage(cx);
-        }
+        self.refresh_usage(cx);
     }
 
     /// One request per live agent pane, carrying the stamp of what the card is
@@ -3677,22 +3678,6 @@ impl Workspace {
             .count();
         if self.usage_pick >= n {
             self.usage_pick = 0;
-        }
-    }
-
-    /// Is what we hold older than the collectors' own cadence? Omarchy's widget
-    /// regenerates every fifteen minutes; anything inside five is fresh enough
-    /// that asking the vendors again is rude to them and slow for us.
-    fn usage_stale(&self) -> bool {
-        const FRESH_SECS: i64 = 300;
-        match self
-            .usage_records
-            .iter()
-            .filter_map(|r| usage::parse_epoch(&r.updated_at))
-            .max()
-        {
-            Some(newest) => usage::now_epoch() - newest > FRESH_SECS,
-            None => true,
         }
     }
 
