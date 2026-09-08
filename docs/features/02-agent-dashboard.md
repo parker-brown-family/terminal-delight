@@ -42,6 +42,16 @@ All public demo wall data is **fictional** — no real prompts, paths, or busine
 ever ship in demo media. Demo logos/art are gated behind `TD_DEMO_LOGOS` /
 `TD_WALL_DEMO` / `TD_DEMO`. See [ENV-FLAGS](ENV-FLAGS.md).
 
+## Added since the first catalog pass (2026-09)
+
+| Feature | What it does | Evidence | Status |
+|---|---|---|---|
+| **The robot holds the tool** | Each card's portrait is a robot that breathes, blinks and works *the tool the agent is actually holding* — the structured tool stream `mcp_tail` already reads out of the transcript, turned into a face | `app/src/toolprop.rs`, `art.rs`; #291 | Shipped |
+| **Three vitals bars + the call** | RUN · WATCH · COMPACT · HAND OFF, per card — see [usage & vitals](11-usage-vitals-keepalive.md) | `vitals.rs`; #273 | Shipped |
+| **One site, seven kiosks** | The seven separate kiosk pages became one site, and the web wall now shows what the app shows | #290; `scripts/verify-kiosks.mjs` | Shipped |
+| **Initials overlay dropped** | The robot made the card's initials redundant; the frame is cleaner without them | wall card paint | Shipped |
+| **Notes on the wall** | A pane's [sticky note](10-sticky-notes.md) travels with its `list_panes` row, so the wall carries intent, not only state | `mcp.rs` list_panes | Shipped |
+
 ## Status
 
 **Shipped.** The HUD is a read-only scoreboard — it never drives agents.

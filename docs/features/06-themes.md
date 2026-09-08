@@ -35,6 +35,16 @@ Appearance = **Texture × Colour-set × global Warp toggle**, with a 3-marker HS
 wheel and a two-axis text-colour stack (SOURCE × SYNTAX). The MCP `set_pane_config`
 can remote-drive any grade channel (appearance only — never a PTY).
 
+## Added since the first catalog pass (2026-09)
+
+| Feature | What it does | Evidence | Control |
+|---|---|---|---|
+| **INVERT dimension** | Photo-negates the whole resolved palette (1 − each RGB channel) as the **last** colour op, so it flips whatever set you picked rather than fighting it | `theme.rs` Layer 4 — the INVERT dimension; `main.rs` INVERT bar | tray, above the picker |
+| **Ten more colour sets** | Cyberpunk · Galaxy · Coffee · Badger · Retro Sunset · Retro Surf · Ocean · Ember · Toxic · Sakura; three sets culled, snowflake and badger neutralised | colour-set table in `theme.rs` | tray |
+| **ROYGBIV ordering** | The tray orders sets by hue rather than by when they were written, so the picker reads as a spectrum | tray layout | tray |
+| **Seed-based input colour** | Your own turns take their colour from the pane's seed, so human input stays distinguishable in every set | `Theme::human` | automatic |
+| **Tray layout** | Matches the display-menu width, fills columns vertically, thin 85% separators | tray layout | — |
+
 ## Status
 
 **Shipped.** The default house config is a warm amber outer cabinet + green inner
