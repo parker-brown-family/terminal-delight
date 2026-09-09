@@ -422,6 +422,13 @@ pub struct Host {
     state_file: Mutex<Option<std::path::PathBuf>>,
     /// The last layout a client handed over, and the shape it said it was.
     layout: Mutex<Option<(u32, toml::Value)>>,
+    /// The file's contents as this host last left them, so a write it did not
+    /// make can be told from one it did.
+    ///
+    /// The text rather than a timestamp: exact, and it cannot be defeated by
+    /// two writes landing inside one tick of whatever resolution the filesystem
+    /// keeps. A session file is a few kilobytes.
+    last_written: Mutex<Option<String>>,
     /// Control connections that asked to be told when something changes.
     watchers: Mutex<Vec<Arc<Conn>>>,
     next_conn: AtomicU64,
@@ -459,6 +466,7 @@ impl Host {
             upkeep: Arc::new(Upkeep::new()),
             state_file: Mutex::new(None),
             layout: Mutex::new(None),
+            last_written: Mutex::new(None),
             watchers: Mutex::new(Vec::new()),
             next_conn: AtomicU64::new(1),
             watches: AtomicU64::new(0),
@@ -784,9 +792,11 @@ impl Host {
     /// was there when it started, rather than having nothing to merge into and
     /// writing nothing for as long as nobody saves.
     pub fn persist_to(&self, path: std::path::PathBuf) {
-        let seed = std::fs::read_to_string(&path)
-            .ok()
+        let found = std::fs::read_to_string(&path).ok();
+        let seed = found
+            .as_deref()
             .and_then(|body| body.parse::<toml::Value>().ok());
+        *self.last_written.lock().expect("last written") = found;
         if let Some(body) = seed {
             // Assumed to be this build's shape, because it is what this build
             // and its predecessors wrote. A newer client will say otherwise on
@@ -860,13 +870,54 @@ impl Host {
         };
         crate::rotate_state_backup(&path);
         match crate::session::write_atomic(&path, &text) {
-            Ok(()) => Outcome::Ok(Persisted::Written {
-                leaves,
-                tabs,
-                merged,
-            }),
+            Ok(()) => {
+                *self.last_written.lock().expect("last written") = Some(text);
+                Outcome::Ok(Persisted::Written {
+                    leaves,
+                    tabs,
+                    merged,
+                })
+            }
             Err(err) => Outcome::Err(format!("could not write {}: {err}", path.display())),
         }
+    }
+
+    /// Take a write this host did not make as the new starting point.
+    ///
+    /// Holding the pen does not mean nothing else may ever write. The session
+    /// file is a plain document in a directory a person can open, and the
+    /// documented way to recover a bad save is to copy a backup over it — which
+    /// a host that never looks again silently undoes on its next checkpoint,
+    /// because the copy it seeded at boot outlives everything.
+    ///
+    /// So when the file has changed underneath, the later write is the one that
+    /// stands, and the host carries on from there. A client's own `save` still
+    /// wins over this: the window is showing the live tree, and that is a
+    /// better account of the session than anything on disk.
+    ///
+    /// A file that will not parse is left for the next tick and this host keeps
+    /// what it has — half a write is not a layout.
+    fn adopt_a_foreign_write(&self) {
+        let Some(path) = self.state_file.lock().expect("state file").clone() else {
+            return;
+        };
+        let found = std::fs::read_to_string(&path).ok();
+        if *self.last_written.lock().expect("last written") == found {
+            return;
+        }
+        let Some(body) = found
+            .as_deref()
+            .and_then(|text| text.parse::<toml::Value>().ok())
+        else {
+            return;
+        };
+        eprintln!(
+            "terminal-delight serve: {} changed underneath this host — carrying on \
+             from what is there rather than writing over it",
+            path.display()
+        );
+        *self.layout.lock().expect("layout") = Some((LAYOUT_SCHEMA, body));
+        *self.last_written.lock().expect("last written") = found;
     }
 
     /// What the last checkpoint read from each pane.
@@ -1017,6 +1068,10 @@ impl Host {
                 held.resume = fresh.resume;
             }
         }
+        // Before writing, look. Something else may have written this file since
+        // the last time, and a checkpoint that does not check is what makes a
+        // host's copy permanent.
+        self.adopt_a_foreign_write();
         // And then the point of having read them. A host with nowhere to write
         // or nothing to write says so and is ignored here: a checkpoint is a
         // clock, not a request, and there is nobody to tell.
@@ -2804,7 +2859,12 @@ cwd = "/somebody-elses-terminal"
 
     fn a_state_file(tag: &str) -> std::path::PathBuf {
         let (config, _) = private_paths(tag);
-        config.join("sessions").join("under-test.toml")
+        let sessions = config.join("sessions");
+        // Created here, because a test that writes the file itself — standing
+        // in for a person restoring a backup — arrives before anything has
+        // made the directory.
+        std::fs::create_dir_all(&sessions).expect("a sessions directory");
+        sessions.join("under-test.toml")
     }
 
     #[test]
@@ -2987,6 +3047,133 @@ cwd = "/somebody-elses-terminal"
         assert!(
             written.contains(here.to_str().expect("a path")),
             "the checkpoint wrote a directory the pane is not in: {written}"
+        );
+    }
+
+    #[test]
+    fn a_write_this_host_did_not_make_is_carried_on_from_rather_than_undone() {
+        // The session file is a plain document in a directory a person can open,
+        // and the documented recovery for a bad save is to copy a backup over
+        // it. A host that seeded a copy at boot and never looked again undoes
+        // that on its next checkpoint — silently, within thirty seconds, so the
+        // person concludes the backup was no good.
+        let path = a_state_file("foreign");
+        let host = Host::with_shell("test", None);
+        host.persist_to(path.clone());
+        assert!(host
+            .save(
+                LAYOUT_SCHEMA,
+                "active = 0\n\n[[tabs]]\nname = \"WHAT THE HOST HAD\"\n\n[tabs.node.Leaf]\ncwd = \"/tmp\"\n",
+                false,
+            )
+            .is_ok());
+
+        // Somebody restores a backup over it.
+        std::fs::write(
+            &path,
+            "active = 0\n\n[[tabs]]\nname = \"WHAT WAS RESTORED\"\n\n[tabs.node.Leaf]\ncwd = \"/etc\"\n\n[[tabs]]\nname = \"AND ITS SECOND TAB\"\n\n[tabs.node.Leaf]\ncwd = \"/var\"\n",
+        )
+        .expect("restore a backup");
+
+        host.checkpoint_once();
+
+        let written = std::fs::read_to_string(&path).expect("read back");
+        assert!(
+            written.contains("WHAT WAS RESTORED"),
+            "the host wrote its own copy over what somebody had just restored: {written}"
+        );
+        assert!(
+            written.contains("AND ITS SECOND TAB"),
+            "the restored session lost the tab the host's copy never had: {written}"
+        );
+        assert!(
+            !written.contains("WHAT THE HOST HAD"),
+            "the host's boot copy survived a later write: {written}"
+        );
+    }
+
+    #[test]
+    fn a_host_knows_its_own_writing_when_it_sees_it() {
+        // The field the rule above rests on. Without it the host cannot tell a
+        // write it made from one it did not, so every checkpoint reads the file
+        // back as though a stranger had touched it — which today only means a
+        // misleading line in the log, and is the wrong ground for anything that
+        // ever acts on the difference more strongly than this does.
+        let path = a_state_file("ownwriting");
+        let host = Host::with_shell("test", None);
+        host.persist_to(path.clone());
+        assert!(host
+            .save(
+                LAYOUT_SCHEMA,
+                "active = 0\n\n[[tabs]]\n\n[tabs.node.Leaf]\ncwd = \"/tmp\"\n",
+                false,
+            )
+            .is_ok());
+
+        assert_eq!(
+            host.last_written.lock().expect("last written").as_deref(),
+            std::fs::read_to_string(&path).ok().as_deref(),
+            "the host does not recognise the file it just wrote"
+        );
+    }
+
+    #[test]
+    fn a_client_saving_still_wins_over_what_is_on_disk() {
+        // The other side of the same rule. A window is showing the live tree,
+        // which is a better account of the session than any file — so `save` is
+        // not a merge with whatever happens to be on disk, it replaces it.
+        let path = a_state_file("livewins");
+        let host = Host::with_shell("test", None);
+        host.persist_to(path.clone());
+        std::fs::write(
+            &path,
+            "active = 0\n\n[[tabs]]\nname = \"STALE\"\n\n[tabs.node.Leaf]\ncwd = \"/etc\"\n",
+        )
+        .expect("something else writes");
+
+        assert!(host
+            .save(
+                LAYOUT_SCHEMA,
+                "active = 0\n\n[[tabs]]\nname = \"WHAT THE WINDOW IS SHOWING\"\n\n[tabs.node.Leaf]\ncwd = \"/tmp\"\n",
+                false,
+            )
+            .is_ok());
+        let written = std::fs::read_to_string(&path).expect("read back");
+        assert!(
+            written.contains("WHAT THE WINDOW IS SHOWING") && !written.contains("STALE"),
+            "a live window's own layout lost to a file: {written}"
+        );
+    }
+
+    #[test]
+    fn half_a_write_is_not_a_layout() {
+        // A file caught mid-write parses as nothing, and adopting nothing would
+        // throw away a session to a race with somebody's editor.
+        let path = a_state_file("halfwritten");
+        let host = Host::with_shell("test", None);
+        host.persist_to(path.clone());
+        assert!(host
+            .save(
+                LAYOUT_SCHEMA,
+                "active = 0\n\n[[tabs]]\nname = \"THE REAL ONE\"\n\n[tabs.node.Leaf]\ncwd = \"/tmp\"\n",
+                false,
+            )
+            .is_ok());
+
+        std::fs::write(&path, "active = 0\n\n[[tabs]\nname = \"trunc").expect("a partial write");
+        host.adopt_a_foreign_write();
+
+        let (_, layout) = host
+            .layout
+            .lock()
+            .expect("layout")
+            .clone()
+            .expect("a layout");
+        assert!(
+            toml::to_string(&layout)
+                .expect("serialise")
+                .contains("THE REAL ONE"),
+            "the host took an unparseable file as its session"
         );
     }
 

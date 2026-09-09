@@ -342,6 +342,15 @@ cost recency rather than the layout. It seeds that layout from the file on disk
 when it starts, so a host nobody has spoken to yet still has something truthful
 to write.
 
+**Single writer does not mean sole writer.** The file is a plain document in a
+directory a person can open, and the documented way to recover a bad save is to
+copy a backup over it. So before each checkpoint the host looks: if the file has
+changed since it last left it, the host carries on from what is there instead of
+writing its own copy over it. A file that will not parse is left for the next
+tick — half a write is not a layout — and a `save` from a window still wins over
+whatever is on disk, because a window is showing the live tree and that is a
+better account of the session than any file.
+
 ## Being told, instead of asking
 
 A window that has sent `watch` is told when a pane changes what it is running,
