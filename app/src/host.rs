@@ -188,7 +188,12 @@ impl EventedReadWrite for TeePty {
         unsafe { self.inner.register(poll, interest, mode) }
     }
 
-    fn reregister(&mut self, poll: &Arc<Poller>, interest: Event, mode: PollMode) -> io::Result<()> {
+    fn reregister(
+        &mut self,
+        poll: &Arc<Poller>,
+        interest: Event,
+        mode: PollMode,
+    ) -> io::Result<()> {
         self.inner.reregister(poll, interest, mode)
     }
 
@@ -426,7 +431,10 @@ impl Host {
         };
 
         let mut options = tty::Options {
-            working_directory: cwd.as_ref().map(std::path::PathBuf::from).filter(|d| d.is_dir()),
+            working_directory: cwd
+                .as_ref()
+                .map(std::path::PathBuf::from)
+                .filter(|d| d.is_dir()),
             ..Default::default()
         };
         // Anything running in this pane can now find out where it is without
@@ -704,8 +712,8 @@ impl Host {
         for pane in self.pane_list() {
             let detected = classify_foreground(&pane.master, pane.shell_pid);
             // Only worth a terminal's lock when there is a demotion to weigh.
-            let on_alt = detected.is_some()
-                && pane.term.lock().mode().contains(TermMode::ALT_SCREEN);
+            let on_alt =
+                detected.is_some() && pane.term.lock().mode().contains(TermMode::ALT_SCREEN);
             let mut held = pane.mode.lock().expect("mode lock");
             *held = next_mode(held.as_ref(), detected, on_alt);
         }
@@ -1052,7 +1060,10 @@ pub fn run_cli(args: &[String]) -> i32 {
     let path = host_socket_path(&key);
     if let Some(dir) = path.parent() {
         if let Err(err) = std::fs::create_dir_all(dir) {
-            eprintln!("terminal-delight serve: cannot create {}: {err}", dir.display());
+            eprintln!(
+                "terminal-delight serve: cannot create {}: {err}",
+                dir.display()
+            );
             return 1;
         }
         // The directory is the authorisation model; make it say so.
@@ -1154,10 +1165,7 @@ fn take_session(
     let _ = std::fs::remove_file(socket);
     match UnixListener::bind(socket) {
         Ok(listener) => Ok((listener, claim)),
-        Err(err) => Err((
-            format!("cannot listen on {}: {err}", socket.display()),
-            1,
-        )),
+        Err(err) => Err((format!("cannot listen on {}: {err}", socket.display()), 1)),
     }
 }
 
@@ -1401,7 +1409,10 @@ mod owning {
                 }
             }
         }
-        assert!(closed, "the superseded client was left holding a live stream");
+        assert!(
+            closed,
+            "the superseded client was left holding a live stream"
+        );
         assert!(host.list_panes()[0].attached, "the new client holds it");
     }
 
@@ -1511,11 +1522,18 @@ mod owning {
             })
             .unwrap(),
         );
-        assert!(matches!(resized, Reply::Resized { outcome: Outcome::Ok(()), .. }));
+        assert!(matches!(
+            resized,
+            Reply::Resized {
+                outcome: Outcome::Ok(()),
+                ..
+            }
+        ));
         assert_eq!(host.list_panes()[0].geom.cols, 100);
 
         // A version we cannot speak is refused by name, not ignored.
-        let mismatched = handle_control_line(&host, r#"{"verb":"hello","proto":99,"kind":"window"}"#);
+        let mismatched =
+            handle_control_line(&host, r#"{"verb":"hello","proto":99,"kind":"window"}"#);
         match mismatched {
             Reply::Error { msg } => assert!(msg.contains("99"), "{msg}"),
             other => panic!("a bad version was accepted: {other:?}"),
@@ -1534,7 +1552,13 @@ mod owning {
         // A verb naming a pane that does not exist says so.
         let closed = handle_control_line(&host, r#"{"verb":"close-pane","pane":9999}"#);
         assert!(
-            matches!(closed, Reply::Closed { outcome: Outcome::Err(_), .. }),
+            matches!(
+                closed,
+                Reply::Closed {
+                    outcome: Outcome::Err(_),
+                    ..
+                }
+            ),
             "{closed:?}"
         );
     }
@@ -1756,7 +1780,10 @@ mod owning {
             Outcome::Err(err) => panic!("{err}"),
         };
         assert_eq!(check.pane, pane);
-        assert!(check.stream_offset > 0, "a snapshot alone is not zero bytes");
+        assert!(
+            check.stream_offset > 0,
+            "a snapshot alone is not zero bytes"
+        );
 
         // What the host says it wrote is what the client can read: no more, and
         // no fewer.
@@ -1818,7 +1845,13 @@ mod owning {
         // Over the wire the same, with an answer rather than a silence.
         let checked = handle_control_line(&host, r#"{"verb":"grid-check","pane":9999}"#);
         assert!(
-            matches!(checked, Reply::GridChecked { outcome: Outcome::Err(_), .. }),
+            matches!(
+                checked,
+                Reply::GridChecked {
+                    outcome: Outcome::Err(_),
+                    ..
+                }
+            ),
             "{checked:?}"
         );
     }
@@ -1844,7 +1877,9 @@ mod owning {
             "a pane that had just appeared waited for the clock instead of waking it"
         );
         assert!(
-            within(Duration::from_secs(5), || host.list_panes()[0].cwd.is_some()),
+            within(Duration::from_secs(5), || host.list_panes()[0]
+                .cwd
+                .is_some()),
             "and nothing had read where it was"
         );
     }
@@ -1885,8 +1920,8 @@ mod owning {
         let _guard = crate::testsync::forks_and_locks();
         let (config, socket) = private_paths("clash");
 
-        let (first, _claim) =
-            take_session(&config, &socket, "clash", SOON).expect("the first host takes the session");
+        let (first, _claim) = take_session(&config, &socket, "clash", SOON)
+            .expect("the first host takes the session");
         let front_door = inode_of(&socket);
         assert!(
             UnixStream::connect(&socket).is_ok(),
@@ -1926,7 +1961,10 @@ mod owning {
             drop(listener);
             drop(claim);
         }
-        assert!(socket.exists(), "the corpse socket is what this test is about");
+        assert!(
+            socket.exists(),
+            "the corpse socket is what this test is about"
+        );
         assert!(
             UnixStream::connect(&socket).is_err(),
             "nothing should be listening on a corpse"

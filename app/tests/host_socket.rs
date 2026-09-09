@@ -46,7 +46,9 @@ fn start_host(name: &str) -> Session {
         .spawn()
         .expect("spawn the host");
 
-    let socket = runtime.join("terminal-delight").join(format!("session-{name}.sock"));
+    let socket = runtime
+        .join("terminal-delight")
+        .join(format!("session-{name}.sock"));
     let deadline = Instant::now() + Duration::from_secs(10);
     while Instant::now() < deadline && !socket.exists() {
         std::thread::sleep(Duration::from_millis(10));

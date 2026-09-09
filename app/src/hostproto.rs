@@ -88,7 +88,10 @@ pub enum ClientKind {
 #[serde(tag = "verb", rename_all = "kebab-case")]
 pub enum Request {
     /// First line of every control connection.
-    Hello { proto: u32, kind: ClientKind },
+    Hello {
+        proto: u32,
+        kind: ClientKind,
+    },
     ListPanes,
     SpawnPane {
         #[serde(default)]
@@ -97,15 +100,25 @@ pub enum Request {
     },
     /// Declare intent to attach and set the size. The pane's bytes then flow
     /// on a second connection, which is where the actual handover happens.
-    AttachPane { pane: PaneId, geom: PaneGeom },
+    AttachPane {
+        pane: PaneId,
+        geom: PaneGeom,
+    },
     /// Never sent on the byte stream: a size is a fact, not part of the
     /// terminal's output, and mixing them means guessing where one ends.
-    Resize { pane: PaneId, geom: PaneGeom },
+    Resize {
+        pane: PaneId,
+        geom: PaneGeom,
+    },
     /// Intent, and the only thing that kills: hang up the pane's process tree.
-    ClosePane { pane: PaneId },
+    ClosePane {
+        pane: PaneId,
+    },
     /// Ask what the authoritative grid hashes to, so a client can check its own
     /// copy against it.
-    GridCheck { pane: PaneId },
+    GridCheck {
+        pane: PaneId,
+    },
     Shutdown,
 }
 
@@ -301,7 +314,9 @@ fn runtime_dir() -> PathBuf {
     }
     // Matches ctl.rs's fallback: a uid-scoped directory under /tmp, created
     // 0700 by whoever binds the socket.
-    PathBuf::from(format!("/tmp/terminal-delight-{}", unsafe { libc::getuid() }))
+    PathBuf::from(format!("/tmp/terminal-delight-{}", unsafe {
+        libc::getuid()
+    }))
 }
 
 /// One of every request the host can be sent.
@@ -446,7 +461,10 @@ mod wire {
     fn a_version_mismatch_names_both_sides() {
         assert!(version_check(PROTO_VERSION).is_ok());
         let complaint = version_check(PROTO_VERSION + 7).expect_err("must refuse");
-        assert!(complaint.contains(&PROTO_VERSION.to_string()), "{complaint}");
+        assert!(
+            complaint.contains(&PROTO_VERSION.to_string()),
+            "{complaint}"
+        );
         assert!(
             complaint.contains(&(PROTO_VERSION + 7).to_string()),
             "{complaint}"
@@ -653,9 +671,9 @@ mod contract {
                     unwritten(value, back, &format!("{path}[{n}]"), out);
                 }
             }
-            (written, emitted) if written != emitted => {
-                out.push(format!("{path} (the page says {written}, the host says {emitted})"))
-            }
+            (written, emitted) if written != emitted => out.push(format!(
+                "{path} (the page says {written}, the host says {emitted})"
+            )),
             _ => {}
         }
     }
@@ -686,9 +704,9 @@ mod contract {
             .err()
             .expect("a nonsense tag must be refused")
             .to_string();
-        let (_, listed) = complaint
-            .split_once("expected one of ")
-            .unwrap_or_else(|| panic!("serde no longer names the variants it expects: {complaint}"));
+        let (_, listed) = complaint.split_once("expected one of ").unwrap_or_else(|| {
+            panic!("serde no longer names the variants it expects: {complaint}")
+        });
         // `a`, `b`, `c` at line 1 column 9 — the names are the odd fields
         // between backticks, and the trailing position is not one of them.
         let names: Vec<String> = listed
@@ -748,12 +766,18 @@ mod contract {
         // names are taken from are themselves proven complete against serde.
         let sampled: BTreeSet<String> = every_request()
             .iter()
-            .map(|r| serde_json::to_value(r).unwrap()["verb"].as_str().unwrap().to_string())
-            .chain(
-                every_reply()
-                    .iter()
-                    .map(|r| serde_json::to_value(r).unwrap()["reply"].as_str().unwrap().to_string()),
-            )
+            .map(|r| {
+                serde_json::to_value(r).unwrap()["verb"]
+                    .as_str()
+                    .unwrap()
+                    .to_string()
+            })
+            .chain(every_reply().iter().map(|r| {
+                serde_json::to_value(r).unwrap()["reply"]
+                    .as_str()
+                    .unwrap()
+                    .to_string()
+            }))
             .collect();
         for variant in variants_of::<Request>("verb")
             .into_iter()
