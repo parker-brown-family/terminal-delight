@@ -163,7 +163,20 @@ async function list() {
         p.attached ? "attached" : "nobody watching"
       }${p.ended ? "  (ended)" : ""}  ${p.geom.cols}x${p.geom.rows}`,
     );
+    // What the host's own clocks have learned. A dash is not a default: it is
+    // the host saying it has not looked yet, which for a fresh pane it has not.
+    console.log(
+      `  running ${name(p.mode)}   in ${p.cwd ?? "—"}${
+        p.resume ? `   resume: ${p.resume}` : ""
+      }`,
+    );
   }
+}
+
+/// A mode as the wire spells it: a plain name, or a program's own.
+function name(mode) {
+  if (mode === null || mode === undefined) return "—";
+  return typeof mode === "string" ? mode : Object.values(mode)[0];
 }
 
 /// Type into a terminal that belongs to another process.

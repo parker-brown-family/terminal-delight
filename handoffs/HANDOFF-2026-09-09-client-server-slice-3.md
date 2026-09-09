@@ -129,6 +129,27 @@ risky seam before wiring anything around it:
    have worked — the event loop skips a descriptor with the interrupt flag set.
    Hangup is established by peeking a second registration instead.
 
+## In flight, as of 2026-09-09
+
+Two agents are working from this document right now, in their own worktrees so
+they do not share a git index or a cargo build lock:
+
+| Agent | Branch | Worktree | Owns |
+|---|---|---|---|
+| A | `cs/slice-3` | `~/Work/td-cs-slice3` | the client side — `instance.rs`, `term.rs`, `pane.rs`, `main.rs`, `scripts/td-survival-test.sh` |
+| B | `cs/host-debts` | `~/Work/td-cs-hostdebts` | the host side — `host.rs`, `hostproto.rs`, `docs/protocol/session-host-v1.md` |
+
+Both branched from `client-server-split` at `51f44cf` and **merge back into it**
+— there is one pull request for this task (#328), so a rollback stays one
+revert. Neither opens a second PR.
+
+Their scopes are disjoint except for one edge: **`main.rs`** is touched by slice
+3 and was already touched by slice 2's dispatch work. A collision there will be
+textual rather than semantic.
+
+Whoever reads this next: check `git log --oneline client-server-split..cs/slice-3`
+and `..cs/host-debts` before assuming either is unstarted.
+
 ## Where it's recorded
 
 - Gate docs (the source of truth): `docs/plans/client-server/` — 00-status,
