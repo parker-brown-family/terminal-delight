@@ -49,8 +49,12 @@ directory. The bench opens no window.
   client-side `type_line`. **One commit**: sending while still typing lands the
   line twice. The host half is in; `resume: None` at the call site preserves
   today's behaviour until then.
-- **#341** — the suite leaves its temp dirs behind; 13,530 in `/tmp`, 62MB,
-  since Aug 31.
+- ~~#341 — the suite leaves its temp dirs behind~~ **fixed and closed.** One
+  guard in `testsync.rs` removing on drop (a failing test panics, so cleanup
+  after the assertions is skipped exactly when there is most to skip); the
+  accumulated 11,863 dead-pid directories swept. If you add a test helper that
+  makes a directory, use that guard — and bind it to a name, because
+  `tmp("x").join("f")` drops it at the end of the statement.
 - **The eyeball half of the flip gate** — "no visible lag at eight panes" is
   Parker's judgement and nobody has sat in front of it.
 - Slice 6 (tie-off issues) untouched.
@@ -67,6 +71,8 @@ directory. The bench opens no window.
   the closed #340 first.
 - `client-server-split` is checked out in `~/Work/td-client-server`, so it
   cannot be checked out here; pushes go `git push origin HEAD:client-server-split`.
+- `/tmp/td-review-target` is a 7.0GB cargo target directory belonging to some
+  other session. Not ours, left alone, and worth knowing is there.
 
 ## Where it's recorded
 
