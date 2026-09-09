@@ -96,6 +96,19 @@ pub enum Request {
     SpawnPane {
         #[serde(default)]
         cwd: Option<String>,
+        /// The line that puts an agent back in a conversation, if this pane is
+        /// being started to hold one.
+        ///
+        /// The host types it, and the host is also the only thing that can
+        /// refuse to type it twice: it holds the pane table and performs the
+        /// spawn, so it is the one place the check and the creation happen
+        /// without a gap. A client checking a list it took a moment earlier
+        /// cannot be exact, and the cost of being wrong is two agents on one
+        /// conversation, both billing and both writing the same transcript.
+        ///
+        /// Absent means an ordinary terminal, deduplicated against nothing.
+        #[serde(default)]
+        resume: Option<String>,
         geom: PaneGeom,
     },
     /// Declare intent to attach and set the size. The pane's bytes then flow
@@ -244,6 +257,15 @@ pub enum Reply {
     },
     Spawned {
         outcome: Outcome<PaneInfo>,
+        /// Whether a terminal was actually started.
+        ///
+        /// `false` says this session was already running the recipe that was
+        /// asked for, and the pane in the outcome is the one running it — bind
+        /// to that rather than to something new. Defaults to `true` when
+        /// absent, which is what a host built before this could only have
+        /// meant.
+        #[serde(default = "a_pane_was_started")]
+        started: bool,
     },
     Attached {
         pane: PaneId,
@@ -290,6 +312,12 @@ pub struct GridCheck {
     /// from the socket, and these count the same things.
     pub stream_offset: u64,
     pub hash: u64,
+}
+
+/// A reply with no word on the matter came from a host that only ever started
+/// panes.
+fn a_pane_was_started() -> bool {
+    true
 }
 
 /// The layout shape this build knows how to read.
@@ -413,6 +441,7 @@ fn every_request() -> Vec<Request> {
         Request::ListPanes,
         Request::SpawnPane {
             cwd: Some("/home/me".into()),
+            resume: Some("claude --resume 4a1c".into()),
             geom,
         },
         Request::AttachPane {
@@ -467,6 +496,11 @@ fn every_reply() -> Vec<Reply> {
         },
         Reply::Spawned {
             outcome: Outcome::Ok(info.clone()),
+            started: true,
+        },
+        Reply::Spawned {
+            outcome: Outcome::Ok(info.clone()),
+            started: false,
         },
         Reply::Attached {
             pane: PaneId(1),

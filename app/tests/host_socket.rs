@@ -430,6 +430,50 @@ fn the_host_writes_the_session_file_and_fills_in_where_the_panes_are() {
     );
 }
 
+#[test]
+fn a_session_asked_twice_for_one_agent_runs_it_once() {
+    // #339, over a real socket. Two windows naming one session both plan
+    // against a layout that names no panes, and both ask for the same
+    // conversation — which without this is two agents on one transcript, both
+    // billing. The check has to happen where the spawning does.
+    let session = start_host("oneagent");
+    let mut control = Control::open(&session);
+    control.ask(r#"{"verb":"hello","proto":1,"kind":"window"}"#);
+
+    let recipe = "claude --resume 48be90b8";
+    let spawn = format!(
+        r#"{{"verb":"spawn-pane","cwd":"/tmp","resume":"{recipe}","geom":{{"cols":40,"rows":8,"cell_width":8,"cell_height":16}}}}"#
+    );
+
+    let first = control.ask(&spawn);
+    assert_eq!(
+        first["started"], true,
+        "the first ask starts a terminal: {first}"
+    );
+    let pane = first["outcome"]["ok"]["pane"].as_u64().expect("pane");
+
+    // A second window, arriving before the first has saved anything.
+    let mut other = Control::open(&session);
+    other.ask(r#"{"verb":"hello","proto":1,"kind":"window"}"#);
+    let second = other.ask(&spawn);
+    assert_eq!(
+        second["started"], false,
+        "a second terminal was started for a conversation already running in one: {second}"
+    );
+    assert_eq!(
+        second["outcome"]["ok"]["pane"].as_u64(),
+        Some(pane),
+        "the refusal must name the pane already running it: {second}"
+    );
+
+    let listed = control.ask(r#"{"verb":"list-panes"}"#);
+    assert_eq!(
+        listed["panes"].as_array().map(|panes| panes.len()),
+        Some(1),
+        "the session is running the same agent twice: {listed}"
+    );
+}
+
 /// Split what a client received into the snapshot and everything after it.
 ///
 /// A snapshot ends by restoring the modes, and line wrap is the last one

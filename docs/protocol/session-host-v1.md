@@ -116,11 +116,30 @@ whole feature started with.
 ```
 
 ```json request
-{"verb":"spawn-pane","cwd":"/home/parker/Work","geom":{"cols":100,"rows":30,"cell_width":8,"cell_height":16}}
+{"verb":"spawn-pane","cwd":"/home/parker/Work","resume":"claude --resume 48be90b8","geom":{"cols":100,"rows":30,"cell_width":8,"cell_height":16}}
 ```
 
 `cwd` may be absent, and a directory that does not exist is ignored rather than
 failing the pane.
+
+`resume` is the line that puts an agent back in a conversation. **The host types
+it, and the host will not type it twice.** Ask for a recipe this session is
+already running and no terminal is started: the reply carries `started: false`
+and the pane that is running it, to bind to instead.
+
+That check belongs here and nowhere else. A client decides what to start by
+comparing a saved layout against a list of panes it took a moment earlier, so an
+agent can begin in a pane that list never showed — and the client starts a
+second copy of it. Two agents on one conversation, both billing, both writing
+the same transcript. Only the process that holds the pane table and performs the
+spawn can check without a gap, which is why the recipe is sent here rather than
+typed afterwards.
+
+A pane's recipe is recorded the moment it is asked for, before its agent has
+started, or a second ask arriving in that gap would find nothing. A pane whose
+child has gone is not running anything, whatever it was started to run, and
+asking for its recipe again starts a fresh terminal. A pane with no recipe is
+deduplicated against nothing: two ordinary terminals are two terminals.
 
 ```json request
 {"verb":"attach-pane","pane":1,"geom":{"cols":100,"rows":30,"cell_width":8,"cell_height":16}}
@@ -155,7 +174,11 @@ Every verb that changes something answers with an outcome — `{"ok":…}` or
 accepted, which is a different claim from anything having happened.
 
 ```json reply
-{"reply":"spawned","outcome":{"ok":{"pane":1,"shell_pid":40871,"cwd":"/home/parker/Work","resume":null,"mode":"shell","attached":false,"ended":false,"geom":{"cols":100,"rows":30,"cell_width":8,"cell_height":16}}}}
+{"reply":"spawned","started":true,"outcome":{"ok":{"pane":1,"shell_pid":40871,"cwd":"/home/parker/Work","resume":null,"mode":"shell","attached":false,"ended":false,"geom":{"cols":100,"rows":30,"cell_width":8,"cell_height":16}}}}
+```
+
+```json reply
+{"reply":"spawned","started":false,"outcome":{"ok":{"pane":1,"shell_pid":40871,"cwd":"/home/parker/Work","resume":"claude --resume 48be90b8","mode":"claude","attached":true,"ended":false,"geom":{"cols":100,"rows":30,"cell_width":8,"cell_height":16}}}}
 ```
 
 ```json reply

@@ -265,7 +265,25 @@ struct HostPane {
     on_alt: AtomicBool,
 }
 
+/// What a spawn did.
+pub struct Spawn {
+    pub info: PaneInfo,
+    /// Whether a terminal was actually started, or this session was already
+    /// running the recipe it was asked for.
+    pub started: bool,
+}
+
 impl HostPane {
+    /// Whether this pane is the one already running `recipe`.
+    ///
+    /// A pane whose child has gone is not running anything, whatever it was
+    /// started to run — its leaf wants a fresh terminal, not a binding to a
+    /// corpse.
+    fn runs(&self, recipe: &str) -> bool {
+        !self.ended.load(Ordering::SeqCst)
+            && self.runtime.lock().expect("runtime lock").resume.as_deref() == Some(recipe)
+    }
+
     fn info(&self, pane: PaneId) -> PaneInfo {
         let runtime = self.runtime.lock().expect("runtime lock");
         PaneInfo {
@@ -476,7 +494,29 @@ impl Host {
 
     /// Start a terminal: a real pseudoterminal, a real child, and an emulator
     /// whose grid is the truth every client will be shown.
-    pub fn spawn_pane(&self, cwd: Option<String>, geom: PaneGeom) -> io::Result<PaneInfo> {
+    pub fn spawn_pane(
+        &self,
+        cwd: Option<String>,
+        resume: Option<String>,
+        geom: PaneGeom,
+    ) -> io::Result<Spawn> {
+        // The pane table is held from the check to the insert, and that is the
+        // whole of the fix rather than an implementation detail. A client
+        // deciding what to start compares a saved layout against a list it took
+        // a moment earlier, so an agent can begin in a pane the list never
+        // showed and the client starts a second copy of it. Two agents on one
+        // conversation, both billing, both writing the same transcript. Only
+        // the process that holds the table and does the spawning can check
+        // without a gap.
+        let mut panes = self.panes.lock().expect("panes");
+        if let Some(recipe) = resume.as_deref() {
+            if let Some((id, running)) = panes.iter().find(|(_, pane)| pane.runs(recipe)) {
+                return Ok(Spawn {
+                    info: running.info(*id),
+                    started: false,
+                });
+            }
+        }
         let pane = PaneId(self.next_pane.fetch_add(1, Ordering::SeqCst));
         let size = GridSize {
             cols: geom.cols as usize,
@@ -585,18 +625,41 @@ impl Host {
             // The directory it was asked for is a claim, and the first
             // checkpoint replaces it with a reading. Nothing is claimed about
             // the agent inside it until something has looked.
-            runtime: Mutex::new(PaneRuntime { cwd, resume: None }),
+            // Both seeded with what this pane was asked to be, and both
+            // replaced by readings once there is something to read. The recipe
+            // has to be here before the agent has started, or a second spawn
+            // arriving in that gap would find nothing and start it again.
+            runtime: Mutex::new(PaneRuntime {
+                cwd,
+                resume: resume.clone(),
+            }),
             mode: Mutex::new(None),
             on_alt: AtomicBool::new(false),
         });
+        // Typed here rather than by the window, because the host is what
+        // decided not to type it a second time. It goes into the same input
+        // queue a person's keystrokes do and waits for the shell's first read.
+        // Whether a recipe is safe to resume is settled where it is recorded —
+        // `session::safe_resume_id` — and a client that wanted to type this
+        // itself could always open a byte stream and do so.
+        if let Some(recipe) = resume {
+            let _ = host_pane
+                .input
+                .0
+                .send(Msg::Input(format!("{recipe}\n").into_bytes().into()));
+        }
         let info = host_pane.info(pane);
-        self.panes.lock().expect("panes").insert(pane, host_pane);
+        panes.insert(pane, host_pane);
+        drop(panes);
         // New work for both clocks. A host nobody is watching sleeps five
         // minutes between checkpoints, and a pane that has just appeared must
         // not spend them unread — a restore starting four of them would leave a
         // whole layout unknown for as long.
         self.upkeep.ring();
-        Ok(info)
+        Ok(Spawn {
+            info,
+            started: true,
+        })
     }
 
     pub fn list_panes(&self) -> Vec<PaneInfo> {
@@ -1458,10 +1521,14 @@ fn handle_control_line(host: &Arc<Host>, line: &str, conn: Option<&Arc<Conn>>) -
         Request::ListPanes => Reply::Panes {
             panes: host.list_panes(),
         },
-        Request::SpawnPane { cwd, geom } => Reply::Spawned {
-            outcome: match host.spawn_pane(cwd, geom) {
-                Ok(info) => Outcome::Ok(info),
-                Err(err) => Outcome::Err(format!("could not start a terminal: {err}")),
+        Request::SpawnPane { cwd, resume, geom } => match host.spawn_pane(cwd, resume, geom) {
+            Ok(spawn) => Reply::Spawned {
+                outcome: Outcome::Ok(spawn.info),
+                started: spawn.started,
+            },
+            Err(err) => Reply::Spawned {
+                outcome: Outcome::Err(format!("could not start a terminal: {err}")),
+                started: false,
             },
         },
         Request::AttachPane { pane, geom } => {
@@ -1797,8 +1864,9 @@ mod owning {
     /// middle of asserting about. See `testsync`.
     fn spawn_guarded(host: &Arc<Host>) -> PaneInfo {
         let _guard = crate::testsync::forks_and_locks();
-        host.spawn_pane(None, PaneGeom::default())
+        host.spawn_pane(None, None, PaneGeom::default())
             .expect("start a pane")
+            .info
     }
 
     #[test]
@@ -2234,6 +2302,89 @@ mod owning {
             std::fs::canonicalize(&read).expect("the reported directory exists"),
             std::fs::canonicalize(std::env::current_dir().unwrap()).unwrap(),
             "the checkpoint reported a directory the pane is not in"
+        );
+    }
+
+    /// Start a pane holding a named conversation, under the fork guard.
+    fn spawn_agent(host: &Arc<Host>, recipe: &str) -> Spawn {
+        let _guard = crate::testsync::forks_and_locks();
+        host.spawn_pane(None, Some(recipe.into()), PaneGeom::default())
+            .expect("start a pane")
+    }
+
+    #[test]
+    fn a_session_will_not_run_the_same_agent_twice() {
+        // #339. A window decides what to start by comparing a saved layout
+        // against a list of panes taken a moment earlier, so an agent can begin
+        // in a pane that list never showed and the window starts a second copy.
+        // Two agents on one conversation, both billing, both writing the same
+        // transcript. The check has to happen where the spawning does.
+        let host = Host::with_shell("test", Some("/bin/cat".into()));
+        let first = spawn_agent(&host, "claude --resume 48be90b8");
+        assert!(first.started, "the first one is a real terminal");
+
+        let second = spawn_agent(&host, "claude --resume 48be90b8");
+        assert!(
+            !second.started,
+            "a second terminal was started for a conversation already running in one"
+        );
+        assert_eq!(
+            second.info.pane, first.info.pane,
+            "the answer must name the pane already running it"
+        );
+        assert_eq!(host.pane_count(), 1, "two terminals exist for one agent");
+
+        // A different conversation is a different terminal.
+        let other = spawn_agent(&host, "claude --resume 0000ffff");
+        assert!(other.started);
+        assert_eq!(host.pane_count(), 2);
+    }
+
+    #[test]
+    fn a_pane_with_no_recipe_is_deduplicated_against_nothing() {
+        // An ordinary terminal has no identity to be the same as. Two of them
+        // are two of them, which is what asking for a second one means.
+        let host = Host::with_shell("test", Some("/bin/cat".into()));
+        spawn_guarded(&host);
+        spawn_guarded(&host);
+        assert_eq!(host.pane_count(), 2);
+    }
+
+    #[test]
+    fn a_conversation_whose_terminal_has_ended_is_started_again() {
+        // A pane whose child has gone is not running anything, whatever it was
+        // started to run. Binding a leaf to a corpse would show somebody a dead
+        // screen where their agent should be.
+        let host = Host::with_shell("test", Some("/bin/cat".into()));
+        let first = spawn_agent(&host, "claude --resume 48be90b8");
+        let pid = first.info.shell_pid;
+        assert_eq!(unsafe { libc::kill(pid as i32, libc::SIGTERM) }, 0);
+        assert!(
+            within(Duration::from_secs(5), || host.list_panes()[0].ended),
+            "the pane never registered that its child had gone"
+        );
+
+        let again = spawn_agent(&host, "claude --resume 48be90b8");
+        assert!(
+            again.started,
+            "a conversation whose terminal had ended was refused a new one"
+        );
+        assert_ne!(again.info.pane, first.info.pane);
+    }
+
+    #[test]
+    fn the_host_types_the_recipe_it_was_handed() {
+        // It types it because it is the thing that decided not to type it a
+        // second time. Split between the two and the refusal means nothing —
+        // the window would go on typing into a pane it did not start.
+        let host = Host::with_shell("test", Some("/bin/cat".into()));
+        let spawn = spawn_agent(&host, "marco");
+        assert!(
+            within(Duration::from_secs(5), || {
+                host.row_text(spawn.info.pane, 0).as_deref() == Some("marco")
+            }),
+            "the host never typed what it was handed: {:?}",
+            host.row_text(spawn.info.pane, 0)
         );
     }
 

@@ -315,10 +315,24 @@ impl HostLink {
     }
 
     pub fn spawn_pane(&self, cwd: Option<String>, geom: PaneGeom) -> std::io::Result<PaneInfo> {
-        self.exchange(Request::SpawnPane { cwd, geom }, |reply| match reply {
-            Reply::Spawned { outcome } => Ok(outcome),
-            other => Err(other),
-        })
+        // `resume: None` keeps this window's own behaviour exactly as it was:
+        // it goes on typing the recipe itself after the spawn, and the host
+        // deduplicates nothing. Sending the recipe here — and dropping the
+        // typing that follows — is the client half of #339, and has to happen
+        // in one change or the line lands twice.
+        self.exchange(
+            Request::SpawnPane {
+                cwd,
+                resume: None,
+                geom,
+            },
+            |reply| match reply {
+                // `..` rather than the exact shape, so a field added to a reply
+                // is never again a compile error in this file.
+                Reply::Spawned { outcome, .. } => Ok(outcome),
+                other => Err(other),
+            },
+        )
         .and_then(unwrap_outcome)
     }
 
