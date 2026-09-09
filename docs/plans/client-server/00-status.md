@@ -72,14 +72,21 @@
       `Option<u32>` — with the ripple absorbed honestly at each call site
       rather than by a zero — and `SavedNode.pane_id` came a slice early
       because the bind path is what first reads it.
-      **The metric, measured rather than argued:** `gui-kill --cycles 20`
-      twice, losses 0/20 both times — same shell pids, same neovim, same btop,
-      same agent pane, first and last line of three thousand still in the
-      scrollback, the sticky note still in the layout. `floor-control
+      **The metric, measured rather than argued:** `gui-kill --cycles 20`, four
+      separate runs, losses 0/20 every time — same shell pids, same neovim, same
+      btop, same agent pane, first and last line of three thousand still in the
+      scrollback, the sticky note still in the layout, and (from the fourth run
+      on) the editor's own screen in what a client arriving cold is sent, which
+      is the alt-screen case 03 called its least-proven. `floor-control
       --cycles 20` reads 20 losses of 20, so the instrument can see the loss it
-      is looking for. `host-kill --cycles 3` recovers to exactly today's floor:
-      new pids, the layout read back from the file, every program started
-      again. Suite 664 green over five consecutive runs.
+      is looking for; the alt-screen assertion was likewise broken on purpose
+      and reported its loss before being trusted. `host-kill --cycles 3`
+      recovers to exactly today's floor: new pids, the layout read back from the
+      file, every program started again. The last two runs were against the
+      merged host — the socket-race fix, then the watch verb and the alt-screen
+      heal. Suite 673 green (664 unit, 4 dispatch, 5 host socket), with the
+      five-consecutive-run stability check taken at 664 before those merges;
+      `cargo fmt --check` and `clippy -D warnings` both clean.
 - [ ] Slice 4 — persistence redirect (orphan adoption landed in slice 3, where
       the bind path needed it).
 - [ ] Slice 5 — flip the default, gated on the harness numbers Parker signs.

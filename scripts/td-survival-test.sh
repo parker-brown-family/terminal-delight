@@ -423,8 +423,9 @@ run_gui_kill() {
     # Scrollback: attach to the pane that printed three thousand lines and read
     # what the host hands a client arriving cold. The first line and the last
     # must both be in it.
-    local pane_one
-    pane_one="$(echo "$before_panes" | tr ' ' '\n' | head -1 | cut -d: -f1)"
+    local pane_one pane_two
+    pane_one="$(echo "$before_panes" | tr ' ' '\n' | sed -n 1p | cut -d: -f1)"
+    pane_two="$(echo "$before_panes" | tr ' ' '\n' | sed -n 2p | cut -d: -f1)"
     if [ -n "$pane_one" ]; then
       local seen
       seen="$(timeout 10 node "$RUN/peek.mjs" "$SOCKET" "$pane_one" 1500 2>/dev/null | tr -dc '[:print:]\n')"
@@ -432,6 +433,20 @@ run_gui_kill() {
       echo "$seen" | grep -q "003000" || { lose "$cycle" "the last line of scrollback was gone"; lost=1; }
     else
       lose "$cycle" "no pane to read scrollback from"
+      lost=1
+    fi
+    # The pane sitting inside a full-screen editor: what a client arriving cold
+    # is shown must be the editor's screen, not the shell behind it. This is the
+    # case the design was least sure of — an alternate screen has no scrollback
+    # of its own, and the grid beneath it cannot be read without disturbing the
+    # program on top — so it is asserted rather than assumed.
+    if [ -n "$pane_two" ]; then
+      local editor_screen
+      editor_screen="$(timeout 10 node "$RUN/peek.mjs" "$SOCKET" "$pane_two" 1500 2>/dev/null | tr -dc '[:print:]\n')"
+      echo "$editor_screen" | grep -q "sentinel file for" ||
+        { lose "$cycle" "the editor's own screen was not in what a fresh client is sent"; lost=1; }
+    else
+      lose "$cycle" "no editor pane to read"
       lost=1
     fi
 
