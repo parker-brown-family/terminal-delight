@@ -98,6 +98,20 @@ pub fn capture(master: Option<&File>, shell_pid: u32) -> PaneRuntime {
 
 /// Crash-safe write: tmp file + rename, so a crash mid-write never truncates
 /// the last good state.
+///
+/// **Atomic against a crash, not against another writer.** The temporary file
+/// is named from the destination, so two callers writing the same path at the
+/// same time share one temp path: the first rename takes it away from the
+/// second, which fails with a bare "No such file or directory" naming the
+/// destination it never got to. Serialise the callers — the read-decide-write
+/// around any guard needs it anyway, since a write landing between the reading
+/// and the decision makes the decision stale.
+///
+/// Written here because the knowledge was two files away from the danger. The
+/// session host hit it with a client save and a checkpoint overlapping; it
+/// failed twice in forty suite runs and took a captured soak to name. Its lock
+/// is `Host::writing`, and `two_things_writing_at_once_still_leave_one_good_file`
+/// fails five times out of five without it.
 pub fn write_atomic(path: &Path, body: &str) -> io::Result<()> {
     if let Some(dir) = path.parent() {
         // 0700 dir: the state it holds (cwd history + agent session ids) is the
