@@ -2454,9 +2454,11 @@ fn build_node(saved: &SavedNode, window: &mut Window, cx: &mut Context<Workspace
 
 impl Workspace {
     /// The window that owns this workspace's session: restore its saved layout
-    /// (or open a single fresh tab) and persist changes back to disk.
-    fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        Self::build(false, false, None, window, cx)
+    /// (or open a single fresh tab) and persist changes back to disk. `seed` is
+    /// the `terminal-delight <dir>` directory, honoured only when there is no
+    /// saved layout — a restore's own panes carry their cwds.
+    fn new(seed: Option<session::PaneRestore>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        Self::build(false, false, seed, window, cx)
     }
 
     /// A demo window: restores the cloned layout from `TD_DEMO_STATE` but never
@@ -2638,7 +2640,17 @@ impl Workspace {
             ws.active = 0;
             ws.focus_active(window, cx);
         } else if saved.tabs.is_empty() {
-            ws.new_tab(window, cx);
+            // Nothing to restore, so a `terminal-delight <dir>` seed lands here
+            // and nowhere else: the sole terminal opens in that directory.
+            match seed {
+                Some(restore) => {
+                    let pane = make_pane_restored(restore, window, cx);
+                    ws.tabs.push(Tab::new(Node::Leaf(pane), None));
+                    ws.active = 0;
+                    ws.focus_active(window, cx);
+                }
+                None => ws.new_tab(window, cx),
+            }
             // Fresh window: seed the rename hint onto the first tab + its sole
             // sub-terminal (and only those — later tabs/splits stay default).
             let mut leaves: Vec<&Entity<TerminalView>> = vec![];
@@ -17155,13 +17167,81 @@ mod tests {
     }
 
     #[test]
-    fn subcommands_and_bare_arguments_still_reach_the_window() {
-        // `ctl` / `probe` are dispatched before the gate; a positional is left
-        // alone for a future "open here" argument rather than refused now.
-        assert_eq!(flag_reply(Some("ctl")), None);
-        assert_eq!(flag_reply(Some("probe")), None);
-        assert_eq!(flag_reply(Some("/home/me/src")), None);
-        assert_eq!(flag_reply(None), None);
+    fn known_verbs_dispatch_before_the_gui() {
+        // `is_dir` is never consulted for a verb: a directory called `ctl` in
+        // the cwd cannot turn the control client into a window.
+        let never = |_: &str| -> bool { panic!("is_dir consulted for a known verb") };
+        for (word, verb) in [
+            ("--td-emit-demo", Verb::EmitDemo),
+            ("ctl", Verb::Ctl),
+            ("mcp", Verb::Mcp),
+            ("agent-usage", Verb::AgentUsage),
+            ("agent-vitals", Verb::AgentVitals),
+            ("probe", Verb::Probe),
+        ] {
+            assert_eq!(dispatch(Some(word), never), Launch::Verb(verb), "{word}");
+        }
+    }
+
+    #[test]
+    fn a_flag_is_answered_before_the_directory_arm() {
+        // Ordering: a leading `-` reaches `flag_reply` and stops there, so a
+        // path named `--help` could never be mistaken for a directory to open.
+        match dispatch(Some("--help"), |_| -> bool {
+            panic!("is_dir consulted for a flag")
+        }) {
+            Launch::Reply { text, code } => {
+                assert_eq!(code, 0);
+                assert!(text.contains("Usage:"), "{text}");
+            }
+            other => panic!("--help reached {other:?}"),
+        }
+    }
+
+    #[test]
+    fn an_existing_directory_positional_reaches_the_window() {
+        // The one positional that means something, and the window is told
+        // where: its first terminal starts there.
+        assert_eq!(
+            dispatch(Some("/home/me/src"), |_| true),
+            Launch::Window {
+                open_here: Some(PathBuf::from("/home/me/src")),
+            }
+        );
+        // no argument at all is the ordinary launch it always was
+        assert_eq!(dispatch(None, |_| true), Launch::Window { open_here: None });
+    }
+
+    #[test]
+    fn an_unknown_positional_is_refused_rather_than_opening_a_window() {
+        // This replaces the test that pinned the opposite. A bare word used to
+        // be left alone on the way to the window, which meant a typo'd verb —
+        // or any verb the running build did not carry — opened a window that
+        // claimed a session and wrote a layout to disk on its way past.
+        for word in ["sevre", "clt", "serve", "open-sesame", "/does/not/exist"] {
+            match dispatch(Some(word), |_| false) {
+                Launch::Reply { text, code } => {
+                    assert_eq!(code, 2, "{word}");
+                    assert!(
+                        text.contains(&format!("unknown command `{word}`")),
+                        "refusal does not name the word: {text}"
+                    );
+                    assert!(text.contains("Usage:"), "{text}");
+                }
+                other => panic!("`{word}` reached {other:?} instead of a refusal"),
+            }
+        }
+    }
+
+    #[test]
+    fn every_verb_a_caller_can_type_is_listed_in_the_usage_text() {
+        // The refusal prints USAGE, so a verb missing from it is a verb the
+        // caller is told does not exist while it quietly works. `--td-emit-demo`
+        // is internal — spawned by a demo pane, never typed — and stays out.
+        for word in ["ctl", "mcp", "agent-usage", "agent-vitals", "probe"] {
+            assert!(Verb::parse(word).is_some(), "`{word}` is not dispatched");
+            assert!(USAGE.contains(word), "USAGE omits `{word}`");
+        }
     }
 
     #[test]
@@ -18268,16 +18348,21 @@ fn probe_cli(args: &[String]) -> i32 {
     }
 }
 
-/// What `--help` prints. Deliberately short: TD is a GUI terminal, and its whole
-/// CLI surface is the two verbs the desktop shells out to plus the flags every
-/// binary owes a caller.
+/// What `--help` prints, and what a refused word is printed beside. Every verb
+/// this binary carries is listed: the refusal arm in [`dispatch`] shows this
+/// text, so a build missing a verb tells the caller exactly which words it
+/// knows instead of opening a window and pretending.
 const USAGE: &str = "\
 terminal-delight — a CRT terminal built for agent work
 
 Usage:
   terminal-delight               open a window, restoring this workspace's saved layout
+  terminal-delight <dir>         open a window whose first terminal starts in <dir>
   terminal-delight ctl <cmd>     drive a RUNNING instance over its control socket
+  terminal-delight mcp           relay MCP over stdio into a RUNNING instance
   terminal-delight probe <pid>   report a terminal's cwd + resumable agent session, as JSON
+  terminal-delight agent-usage   refresh this machine's AI subscription usage records
+  terminal-delight agent-vitals  the three attention bars for one transcript, as JSON
 
 Options:
   -h, --help                     show this
@@ -18315,72 +18400,128 @@ fn flag_reply(first: Option<&str>) -> Option<(String, i32)> {
         _ => None,
     }
 }
+
+/// The subcommands that run headless: no window, no gpui, a plain process exit.
+/// Each one's handler takes `argv[2..]`.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+enum Verb {
+    /// This process was spawned as a demo pane's program (see `term::spawn_in`
+    /// under TD_DEMO): print a screenful of agentic lorem-ipsum sized to the
+    /// PTY and block. Never returns.
+    EmitDemo,
+    /// The command-line client for a RUNNING instance's control socket, so the
+    /// Omarchy bar widget or a keybind can shell out to the binary on PATH.
+    Ctl,
+    /// The stdio JSON-RPC relay an agent registers as an MCP server: it
+    /// forwards each line to a running window's control socket, the only way
+    /// in for a terminal the desktop launched (the in-process stdio transport
+    /// needs the MCP client to be our parent, and it never is).
+    Mcp,
+    /// Run the collectors this binary carries and publish one record per AI
+    /// coding subscription — what the wall's usage face reads. Slow on
+    /// purpose: it talks to vendor endpoints.
+    AgentUsage,
+    /// The three attention bars for one transcript, so the Rust can be diffed
+    /// against `scripts/td-agent-vitals.mjs` on real transcripts. These
+    /// metrics fail by printing a plausible WRONG number, and two independent
+    /// implementations agreeing is the cheapest guard there is.
+    AgentVitals,
+    /// Read-only forensics on someone ELSE's terminal: given a shell pid,
+    /// report the foreground process, its cwd, and the resume line TD would
+    /// use. `td-send` runs this before deciding whether a tile migrates.
+    Probe,
+}
+
+impl Verb {
+    fn parse(word: &str) -> Option<Self> {
+        Some(match word {
+            "--td-emit-demo" => Self::EmitDemo,
+            "ctl" => Self::Ctl,
+            "mcp" => Self::Mcp,
+            "agent-usage" => Self::AgentUsage,
+            "agent-vitals" => Self::AgentVitals,
+            "probe" => Self::Probe,
+            _ => return None,
+        })
+    }
+}
+
+/// Everything `main` may do with `argv[1]`.
+#[derive(Debug, PartialEq)]
+enum Launch {
+    /// Run a headless verb and exit.
+    Verb(Verb),
+    /// Print and exit: code 0 goes to stdout, anything else to stderr.
+    Reply { text: String, code: i32 },
+    /// Open a window. `open_here` is `Some` only for a positional naming a
+    /// directory that exists.
+    Window { open_here: Option<PathBuf> },
+}
+
+/// Classify `argv[1]`: a known verb, then the flag gate, then a positional
+/// naming an existing directory, then refusal.
+///
+/// The refusal is the point. A word this binary does not know used to fall
+/// past every check into the GUI, where it adopted or minted a session and
+/// wrote a layout to disk — so a typo, or any caller invoking a verb the
+/// running build does not carry, left a window on the desktop and a session
+/// file behind it. That is not hypothetical: an install missing the headless
+/// verbs turned every automation call into an unknown word, and the desktop
+/// filled with windows that each claimed a session on their way out.
+///
+/// A directory is the one positional that means something, and it is checked
+/// rather than assumed: `is_dir` is injected so the arm is exercised without
+/// touching a filesystem.
+fn dispatch(first: Option<&str>, is_dir: impl Fn(&str) -> bool) -> Launch {
+    let Some(word) = first else {
+        return Launch::Window { open_here: None };
+    };
+    if let Some(verb) = Verb::parse(word) {
+        return Launch::Verb(verb);
+    }
+    if let Some((text, code)) = flag_reply(Some(word)) {
+        return Launch::Reply { text, code };
+    }
+    if is_dir(word) {
+        return Launch::Window {
+            open_here: Some(PathBuf::from(word)),
+        };
+    }
+    Launch::Reply {
+        text: format!("terminal-delight: unknown command `{word}`\n\n{USAGE}"),
+        code: 2,
+    }
+}
+
 fn main() {
-    // `--td-emit-demo`: this process was spawned as a demo pane's program (see
-    // `term::spawn_in` under TD_DEMO). Print a screenful of agentic lorem-ipsum
-    // sized to the PTY and block — no window, no shell. Must run before any gpui.
-    if std::env::args().nth(1).as_deref() == Some("--td-emit-demo") {
-        demo::emit_and_block();
-    }
-
-    // `ctl`: the command-line client for a RUNNING instance's control socket
-    // (paint mode, ping). A plain subprocess exit — no window, no gpui — so the
-    // Omarchy bar widget / a keybind can shell out to the same binary that is
-    // already on PATH. Must run before any gpui or env mutation.
+    // What this process is, decided before anything else runs: the headless
+    // verbs are plain subprocesses the desktop and agents shell out to, so they
+    // must land ahead of any gpui and any env mutation.
     let argv: Vec<String> = std::env::args().collect();
-    if argv.get(1).map(String::as_str) == Some("ctl") {
-        std::process::exit(ctl::run_cli(&argv[2..]));
-    }
-
-    // `mcp`: the stdio JSON-RPC relay an agent registers as an MCP server. It
-    // forwards each line to a RUNNING window's control socket, which is the only
-    // way in for a terminal the desktop launched — the in-process stdio
-    // transport needs the MCP client to be our parent, and it never is. Like
-    // `ctl`, a plain subprocess: no window, no gpui.
-    if argv.get(1).map(String::as_str) == Some("mcp") {
-        std::process::exit(ctl::run_mcp_cli(&argv[2..]));
-    }
-
-    // `agent-usage`: run the collectors this binary CARRIES and publish one
-    // record per AI coding subscription — what the wall's Σ usage face reads.
-    // Compiled in, so the feature needs no Omarchy, no plugin and no install
-    // step; see [`usage`] and `src/vendor/README.md`. Like `ctl`, a plain
-    // subprocess: no window, no gpui. Slow on purpose — it talks to vendor
-    // endpoints — which is why the panel only ever runs it off the frame.
-    if argv.get(1).map(String::as_str) == Some("agent-usage") {
-        std::process::exit(usage::run_cli(&argv[2..]));
-    }
-
-    // `agent-vitals`: the three bars for one transcript, as JSON. The wall
-    // computes these in-process; this exists so the Rust can be diffed against
-    // `scripts/td-agent-vitals.mjs`, the reference implementation, on real
-    // transcripts. The metrics' failure mode is a plausible WRONG number —
-    // nothing crashes, a bar draws, the call is wrong — and two independent
-    // implementations agreeing is the cheapest guard there is against it.
-    if argv.get(1).map(String::as_str) == Some("agent-vitals") {
-        std::process::exit(vitals::run_cli(&argv[2..]));
-    }
-
-    // `probe`: read-only forensics on someone ELSE's terminal — given a tile's
-    // shell (or direct-child) pid, report the foreground process, its cwd, and
-    // the resume line TD would use for it. td-send runs this before deciding
-    // whether an Omarchy tile migrates faithfully. Plain JSON on stdout, no
-    // window, no gpui.
-    if argv.get(1).map(String::as_str) == Some("probe") {
-        std::process::exit(probe_cli(&argv[2..]));
-    }
-
-    // Every other leading `-` is answered here, before gpui: `--version` and
-    // `--help` get a reply, anything else gets a refusal. See [`flag_reply`]
-    // for why letting them fall through was expensive.
-    if let Some((text, code)) = flag_reply(argv.get(1).map(String::as_str)) {
-        if code == 0 {
-            println!("{text}");
-        } else {
-            eprintln!("{text}");
+    let open_here = match dispatch(argv.get(1).map(String::as_str), |p| {
+        std::path::Path::new(p).is_dir()
+    }) {
+        Launch::Verb(verb) => {
+            let code = match verb {
+                Verb::EmitDemo => demo::emit_and_block(),
+                Verb::Ctl => ctl::run_cli(&argv[2..]),
+                Verb::Mcp => ctl::run_mcp_cli(&argv[2..]),
+                Verb::AgentUsage => usage::run_cli(&argv[2..]),
+                Verb::AgentVitals => vitals::run_cli(&argv[2..]),
+                Verb::Probe => probe_cli(&argv[2..]),
+            };
+            std::process::exit(code);
         }
-        std::process::exit(code);
-    }
+        Launch::Reply { text, code } => {
+            if code == 0 {
+                println!("{text}");
+            } else {
+                eprintln!("{text}");
+            }
+            std::process::exit(code);
+        }
+        Launch::Window { open_here } => open_here,
+    };
 
     // Give every shell we spawn a real terminal type. gpui launches us from the
     // desktop/WM with TERM unset, and alacritty_terminal's `tty::new` does NOT
@@ -18440,6 +18581,15 @@ fn main() {
         instance::adopt_legacy(&instance::legacy_state_path(), &instance::state_path());
     }
     let (scratch, seed) = scratch_decision(force, owns_session, seed_cwd, seed_resume);
+    // `terminal-delight <dir>`: a real, session-owning window whose FIRST
+    // terminal starts in that directory. Deliberately not routed through
+    // `scratch_decision` — a seeded tear-off is a throwaway, but asking for a
+    // directory is asking for an ordinary window. A window with a saved layout
+    // to restore ignores it: those panes carry their own cwds.
+    let open_seed = open_here.map(|dir| session::PaneRestore {
+        cwd: Some(dir.to_string_lossy().into_owned()),
+        ..Default::default()
+    });
     // A demo window keeps the plain name: it is a faithful twin for screen
     // sharing, not a workspace's scratch terminal.
     let title = if demo {
@@ -18562,7 +18712,7 @@ fn main() {
                 } else if scratch {
                     cx.new(|cx| Workspace::new_scratch(seed.clone(), window, cx))
                 } else {
-                    cx.new(|cx| Workspace::new(window, cx))
+                    cx.new(|cx| Workspace::new(open_seed.clone(), window, cx))
                 }
             },
         )
