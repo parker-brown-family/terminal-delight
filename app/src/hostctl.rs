@@ -437,6 +437,14 @@ pub fn spawn_host(key: &str, budget: Duration) -> std::io::Result<Arc<HostLink>>
             return HostLink::attach(key);
         }
         if let Ok(Some(status)) = child.try_wait() {
+            // A host that exits is not necessarily a host that failed. `serve`
+            // refuses to start a second host for a session somebody else is
+            // already serving, and says so by exiting 0 — which is an answer
+            // ("one exists, go and connect to it"), not an error. So the socket
+            // is asked before the exit code is believed.
+            if probe_host(key).is_live() {
+                return HostLink::attach(key);
+            }
             return Err(std::io::Error::other(format!(
                 "the session host exited before it was ready ({status}) — see {}",
                 host_log_path(key).display()
