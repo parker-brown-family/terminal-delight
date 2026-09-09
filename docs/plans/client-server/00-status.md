@@ -94,8 +94,17 @@
       green (670 unit, 4 dispatch, 5 host socket), with the five-consecutive-run
       stability check taken at 664 before the merges; `cargo fmt --check` and
       `clippy -D warnings` both clean.
-- [ ] Slice 4 — persistence redirect (orphan adoption landed in slice 3, where
-      the bind path needed it).
+- [~] Slice 4 — the persistence redirect is IN, ahead of the rest of the slice.
+      The host became the session file's single writer host-side, and for a
+      while the branch had two processes writing one file: measured, a window
+      that adopted a running terminal wrote three tabs and the host's own
+      checkpoint put back the two-tab copy it seeded at boot — without pane ids,
+      so the next window started fresh terminals for both leaves and then
+      adopted the three already running. Five terminals where three existed; the
+      session duplicating itself through the file rather than through a pid. An
+      attached window now hands its layout to the host and writes nothing; a
+      serverless one is untouched. Still to come in this slice: the vestigial
+      hosted-path flock (#337) and the pane cap.
 - [ ] Slice 5 — flip the default, gated on the harness numbers Parker signs.
 - [ ] Slice 6 — tie-off: the follow-up issues 03 commits to.
 

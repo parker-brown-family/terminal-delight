@@ -29,7 +29,7 @@ use std::time::{Duration, Instant};
 
 use crate::hostproto::{
     host_socket_path, stream_greeting, ClientKind, ClosedPane, Outcome, PaneGeom, PaneId, PaneInfo,
-    Reply, Request, PROTO_VERSION,
+    Persisted, Reply, Request, PROTO_VERSION,
 };
 
 /// How long any single control exchange may take before the window gives up on
@@ -364,6 +364,37 @@ impl HostLink {
         let mut stream = UnixStream::connect(&self.socket)?;
         stream.write_all(stream_greeting(pane).as_bytes())?;
         Ok(stream)
+    }
+
+    /// Hand the host this window's layout to write.
+    ///
+    /// The window stops writing the session file when it is attached, and this
+    /// is where its saves go instead. Two processes with different ideas of the
+    /// tree taking turns overwriting one file is not a race that can be tuned
+    /// away — it is one where the loser's work disappears — so there is one
+    /// writer, and it is the one holding the terminals, because only it can say
+    /// where a pane is or what would resume the agent inside it.
+    ///
+    /// A refusal comes back as an outcome rather than an error: the verb
+    /// worked, and its answer was no.
+    pub fn save(
+        &self,
+        schema: u32,
+        body: String,
+        allow_shrink: bool,
+    ) -> std::io::Result<Persisted> {
+        self.exchange(
+            Request::Save {
+                schema,
+                body,
+                allow_shrink,
+            },
+            |reply| match reply {
+                Reply::Saved { outcome } => Ok(outcome),
+                other => Err(other),
+            },
+        )
+        .and_then(unwrap_outcome)
     }
 
     /// Ask the host what its own copy of a pane looks like right now.

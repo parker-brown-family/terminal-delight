@@ -2602,6 +2602,14 @@ fn collect_saved_leaves<'a>(node: &'a SavedNode, out: &mut Vec<&'a SavedNode>) {
 /// against its own correctness.
 const GUARD_PERIOD_SECS: u64 = 30;
 
+/// Which shape of layout this build writes.
+///
+/// Sent with every save so a host can tell whether it understands the tree well
+/// enough to merge live readings into it, or should write it through untouched.
+/// A host that guessed would either drop fields it did not recognise or fill in
+/// the wrong ones, and both of those lose somebody's session quietly.
+const LAYOUT_SCHEMA: u32 = 1;
+
 /// The size a pane is born at, before the first layout pass tells it the truth.
 /// Same numbers a locally-spawned pane uses (`TerminalView::new_restored`), so
 /// an attached pane and a spawned one start identically.
@@ -3766,8 +3774,41 @@ impl Workspace {
         let allow_shrink = self.permit_shrink.replace(false);
         let mut state = self.build_state(cx);
         dedupe_resumes(&mut state.tabs);
-        if let Ok(body) = toml::to_string(&state) {
-            persist_primary_state(&body, self.pane_count(), self.tabs.len(), allow_shrink);
+        let Ok(body) = toml::to_string(&state) else {
+            return;
+        };
+        match &self.attach {
+            // Attached: the host writes. It is holding the terminals, so it is
+            // the only process that can fill in where each pane actually is and
+            // what would resume the agent in it — and being the only writer is
+            // what stops two processes with different ideas of the tree taking
+            // turns overwriting each other. Measured before it was believed: a
+            // window and a host both writing left the window's tab rename gone
+            // thirty seconds later.
+            Some(ctx) => match ctx.link.save(LAYOUT_SCHEMA, body, allow_shrink) {
+                Ok(hostproto::Persisted::RefusedShrink {
+                    had_leaves,
+                    had_tabs,
+                    offered_leaves,
+                    offered_tabs,
+                }) => {
+                    // Said out loud in the same words the local guard uses,
+                    // because it means the same thing: what you just did to
+                    // this session did not stick.
+                    eprintln!(
+                        "terminal-delight: REFUSED a session shrink \
+                         ({had_leaves}->{offered_leaves} panes, {had_tabs}->{offered_tabs} tabs) \
+                         — the session host kept what was on disk"
+                    );
+                }
+                Ok(hostproto::Persisted::Written { .. }) => {}
+                Err(err) => {
+                    eprintln!("terminal-delight: the session host would not save: {err}");
+                }
+            },
+            None => {
+                persist_primary_state(&body, self.pane_count(), self.tabs.len(), allow_shrink);
+            }
         }
     }
 
