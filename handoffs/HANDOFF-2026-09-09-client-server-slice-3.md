@@ -102,9 +102,20 @@ terminal runs, even behind `TD_SESSIOND=1`, so the risk profile changes here.
   host records rather than persists; the Save verb that hands the layout over
   belongs to the attaching client. Inventing a second TOML writer with no merge
   rule is what decision 15 of the program design warns about.
-- **#335, found doing this:** `serve` unlinks and rebinds a live session's
-  socket, stranding the host that still holds its panes. Reproduced; slice 3
-  has a client-side flock standing in for the fix.
+- **#335, found doing this and since fixed** (`4677b6e`): `serve` unlinked and
+  rebound a live session's socket, stranding the host that still held its
+  panes. It now claims the session with an flock beside the session files
+  (`sessions/<key>.host.lock`) before touching the path, and only the holder of
+  that claim ever removes or binds it. A second `serve` on a served session
+  prints who is serving it and exits 0; on a held-but-silent one it names the
+  holding process and exits 1, touching nothing. **The second refuses rather
+  than taking over** — a host's value is pseudoterminals, which cannot move
+  between processes, so a takeover would have to kill the work it exists to
+  protect. Deliberately not `instance::claim_in`'s lock: that answers who may
+  write the session file, which today is the window, and a host taking it would
+  refuse to start for the window that asked for it. Slice 3's client-side
+  `hostspawn.lock` was standing in for this and can go whenever its author
+  wants.
 
 **Open issues (all `follow-up` labelled, so they appear in `~/FOLLOWUPS.md`).**
 - **#331** — a forked pane can hold a session lock its parent just released. The
