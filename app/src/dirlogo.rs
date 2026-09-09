@@ -33,10 +33,21 @@ fn load_from(path: &Path) -> HashMap<String, String> {
         .unwrap_or_default()
 }
 
-/// Map `dir` (and its subtree) to `logo`. Read-modify-write of the whole file:
-/// re-reading first means two windows setting DIFFERENT dirs don't clobber
-/// each other; same-dir writes are last-write-wins, which is what a user
-/// changing their mind means anyway.
+/// Map `dir` (and its subtree) to `logo`. Read-modify-write of the whole file.
+///
+/// Re-reading first **narrows** the window in which two windows setting
+/// different directories clobber each other; it does not close it. Both can
+/// still load, edit their own copy and write, and the second write wins whole —
+/// a check on a snapshot with the write happening afterwards, which is only
+/// ever exact in the process that does both. Same-dir writes are
+/// last-write-wins, which is what a user changing their mind means anyway.
+///
+/// Every window on the machine shares this one path, and `write_atomic` is not
+/// atomic against another writer (see its own note), so two simultaneous
+/// changes can also lose one to a failed rename — swallowed by the `let _ =`
+/// below, because a logo that will not save is not worth failing a window over.
+/// The consequence either way is a setting that silently does not stick. See
+/// #342; nothing here is worth a lock until somebody has actually lost a logo.
 pub fn set(dir: &str, logo: &str) {
     mutate(|m| {
         m.insert(norm(dir), logo.to_string());
