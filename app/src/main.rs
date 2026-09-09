@@ -2558,6 +2558,32 @@ fn plan_attach(saved: &[SavedTab], live: &[hostproto::PaneInfo]) -> AttachPlan {
     }
 }
 
+/// What a pane's stream ending actually meant, once the host has been asked.
+#[derive(Debug, PartialEq, Clone, Copy)]
+enum Ending {
+    /// The program inside the terminal finished. The pane is over.
+    Exited,
+    /// The terminal is still running and another window is being shown it.
+    Superseded,
+}
+
+/// Decide which of the two a stream ending was.
+///
+/// The byte stream cannot say. It closes when the program exits and it closes
+/// when a newer window takes the pane, and a client that guessed would be
+/// wrong half the time in a way that costs something either way: reaping a
+/// pane that is still running throws away its place, its name and its note,
+/// while keeping one whose shell has gone leaves a dead terminal on screen.
+///
+/// A pane the host no longer lists has ended by any reading — the host forgets
+/// a pane only when it is gone.
+fn ending_of(pane: u64, live: &[hostproto::PaneInfo]) -> Ending {
+    match live.iter().find(|p| p.pane.0 == pane) {
+        Some(info) if !info.ended => Ending::Superseded,
+        _ => Ending::Exited,
+    }
+}
+
 /// Every leaf of a saved tree, in the order [`build_node`] builds them.
 fn collect_saved_leaves<'a>(node: &'a SavedNode, out: &mut Vec<&'a SavedNode>) {
     match node {
@@ -3425,6 +3451,11 @@ impl Workspace {
             tab.root.leaves(&mut leaves);
             for leaf in leaves {
                 let view = leaf.read(cx);
+                if view.superseded() {
+                    // Its terminal is somebody else's now; there is nothing for
+                    // this window's copy to agree or disagree with.
+                    continue;
+                }
                 if let Some(pane) = view.pane_id() {
                     out.push((
                         hostproto::PaneId(pane),
@@ -3587,6 +3618,48 @@ impl Workspace {
             })
             .collect();
         self.next_group_id = self.groups.iter().map(|g| g.id + 1).max().unwrap_or(1);
+    }
+
+    /// Find out what an attached pane's ending actually was.
+    ///
+    /// Costs one question, asked only when a pane has stopped, and worth it
+    /// because the two answers call for opposite actions. If the host cannot be
+    /// reached at all then it has gone, every pane really is over, and the
+    /// ending stands as reported.
+    fn explain_endings(&mut self, cx: &mut Context<Self>) {
+        let Some(ctx) = self.attach.clone() else {
+            return;
+        };
+        let mut unexplained: Vec<(Entity<TerminalView>, u64)> = vec![];
+        for tab in &self.tabs {
+            let mut leaves = vec![];
+            tab.root.leaves(&mut leaves);
+            for leaf in leaves {
+                let view = leaf.read(cx);
+                if view.ended_unexplained() {
+                    if let Some(pane) = view.pane_id() {
+                        unexplained.push(((*leaf).clone(), pane));
+                    }
+                }
+            }
+        }
+        if unexplained.is_empty() {
+            return;
+        }
+        let Ok(live) = ctx.link.list_panes() else {
+            // The host is gone. Everything it was holding is gone with it, and
+            // the endings already reported are the truth.
+            return;
+        };
+        for (leaf, pane) in unexplained {
+            if ending_of(pane, &live) == Ending::Superseded {
+                eprintln!(
+                    "terminal-delight: pane {pane} is being shown by another window; \
+                     this one keeps what it last drew and stops there"
+                );
+                leaf.update(cx, |view, cx| view.mark_superseded(cx));
+            }
+        }
     }
 
     /// Tell the host to hang up the terminals behind these panes.
@@ -9215,6 +9288,10 @@ impl Workspace {
     }
 
     fn reap(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // An attached pane that reports an ending has not said which ending.
+        // Ask before acting on it — this runs every frame, but only speaks to
+        // the host on the frames where a pane has actually stopped.
+        self.explain_endings(cx);
         // drop a menu whose pane is gone
         if let Some(MenuScope::Pane(p)) = &self.theme_menu {
             if p.read(cx).exited {
@@ -17286,6 +17363,31 @@ mod tests {
             })
             .collect();
         assert_eq!(bound, vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn a_stream_that_ends_while_its_terminal_runs_is_a_steal_not_an_ending() {
+        // The distinction this whole function exists for. A window that read a
+        // closed stream as an ending would delete a pane whose shell is still
+        // running — losing its place in the layout, its name and its note — and
+        // if it lost every pane that way it would quit, which is a window
+        // disappearing because somebody else opened one.
+        let live = vec![running(4, false)];
+        assert_eq!(ending_of(4, &live), Ending::Superseded);
+    }
+
+    #[test]
+    fn a_stream_that_ends_when_the_program_did_is_an_ending() {
+        let live = vec![running(4, true)];
+        assert_eq!(ending_of(4, &live), Ending::Exited);
+    }
+
+    #[test]
+    fn a_pane_the_host_no_longer_lists_has_ended_by_any_reading() {
+        // The host forgets a pane when it is closed. Nothing is left to be
+        // shown somewhere else, so there is nothing to hesitate about.
+        assert_eq!(ending_of(4, &[]), Ending::Exited);
+        assert_eq!(ending_of(4, &[running(9, false)]), Ending::Exited);
     }
 
     #[test]

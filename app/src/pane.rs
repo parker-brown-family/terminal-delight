@@ -1827,6 +1827,13 @@ pub struct TerminalView {
     /// The divergence guard, on an attached pane only — the thing that can
     /// answer "is what I am drawing still what the host has?".
     guard: Option<crate::gridwire::ReplicaGuard>,
+    /// Set when another window took this pane's terminal away.
+    ///
+    /// The terminal did not end — it is still running, one process over, with
+    /// somebody else watching it. This window keeps the last grid it was sent
+    /// and stops changing, which is what losing a steal is supposed to look
+    /// like, and is emphatically not what a pane whose shell exited looks like.
+    superseded: bool,
     /// What this pane was built from: the directory and the command that would
     /// put it back. Kept because on an attached pane it is the only copy — the
     /// window is a process away from the terminal, and a reading that comes
@@ -2523,6 +2530,29 @@ impl TerminalView {
         self.pane_id
     }
 
+    /// Whether this pane has reported an ending that has not been explained yet.
+    ///
+    /// A replica learns that its stream stopped, and nothing more: the byte
+    /// stream has no way to say whether the program inside the terminal exited
+    /// or whether another window took the terminal away. Both arrive here as
+    /// the same flag, which is why something has to ask.
+    pub fn ended_unexplained(&self) -> bool {
+        self.exited && self.pane_id.is_some() && !self.superseded
+    }
+
+    /// Whether this pane is frozen because its terminal is being shown
+    /// somewhere else.
+    pub fn superseded(&self) -> bool {
+        self.superseded
+    }
+
+    /// Another window took this pane's terminal. Not an ending.
+    pub fn mark_superseded(&mut self, cx: &mut Context<Self>) {
+        self.exited = false;
+        self.superseded = true;
+        cx.notify();
+    }
+
     /// The mode a session host reported, replacing the answer a pane with a PTY
     /// of its own reads from the kernel. Nothing calls this until the host has
     /// a way to say so; it is the receiving half of that sentence.
@@ -2843,6 +2873,7 @@ impl TerminalView {
             session,
             pane_id,
             guard,
+            superseded: false,
             staged: restore.clone(),
             title: "shell".into(),
             name: None,
