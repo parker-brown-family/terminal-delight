@@ -190,20 +190,55 @@ async function attach(id) {
   const socket = net.connect(SOCKET);
   socket.on("error", (e) => die(`${e.message}`));
   await new Promise((r) => socket.on("connect", r));
+
+  const tty = process.stdin.isTTY;
+  // Borrow the alternate screen for the duration.
+  //
+  // A snapshot begins by clearing the screen and the scrollback, which is
+  // exactly right for a window that owns its terminal and exactly wrong here,
+  // where the terminal is yours and full of your work. On the alternate screen
+  // the snapshot lands on a scratch page, and detaching hands back the screen
+  // you had, unscrolled and unerased.
+  if (tty) process.stdout.write("\x1b[?1049h");
+  if (tty) process.stdin.setRawMode(true);
   socket.write(`stream ${pane}\n`);
 
-  const raw = process.stdin.isTTY;
-  if (raw) process.stdin.setRawMode(true);
-  process.stderr.write(
-    `\x1b[2m— attached to pane ${pane}. ctrl-] detaches; the terminal keeps running —\x1b[0m\r\n`,
-  );
+  // Said once the snapshot has landed, because the snapshot would have wiped
+  // it. A working thing that shows no sign of working reads as a broken one —
+  // which is what a bare shell prompt on an otherwise blank screen looks like.
+  const banner = () => {
+    if (!tty) return;
+    const rows = process.stdout.rows || 30;
+    process.stdout.write(
+      `\x1b7\x1b[${rows};1H\x1b[2K\x1b[7m pane ${pane} · this terminal belongs to the host · ctrl-] detaches, it keeps running \x1b[0m\x1b8`,
+    );
+  };
+  setTimeout(banner, 250);
+
+  // Give the terminal back, however this ends. Borrowing the alternate screen
+  // and raw mode means a client that dies without tidying up leaves a person
+  // with a terminal that does not echo and does not show their work — so the
+  // restore hangs off exit itself, not off the paths that expect to be taken.
+  let restored = false;
+  const restore = () => {
+    if (restored || !tty) return;
+    restored = true;
+    try {
+      process.stdin.setRawMode(false);
+    } catch {}
+    process.stdout.write("\x1b[?1049l");
+  };
+  process.on("exit", restore);
 
   const leave = (why) => {
-    if (raw) process.stdin.setRawMode(false);
+    restore();
     socket.destroy();
-    process.stderr.write(`\r\n\x1b[2m— ${why} —\x1b[0m\n`);
+    process.stderr.write(`\x1b[2m— ${why} —\x1b[0m\n`);
     process.exit(0);
   };
+  for (const signal of ["SIGTERM", "SIGHUP", "SIGINT"]) {
+    process.on(signal, () => leave(`stopped by ${signal}; the terminal keeps running`));
+  }
 
   socket.on("data", (chunk) => process.stdout.write(chunk));
   socket.on("close", () => leave("the host closed this stream"));
@@ -225,6 +260,7 @@ async function attach(id) {
         },
       }),
     ]).catch(() => {});
+    setTimeout(banner, 100);
   });
 }
 
