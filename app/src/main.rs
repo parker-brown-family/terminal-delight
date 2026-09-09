@@ -29,6 +29,7 @@ mod demo;
 mod dirlogo;
 mod doc;
 mod gamba;
+mod gridwire;
 mod hud;
 mod instance;
 mod keepalive;
