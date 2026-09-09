@@ -30,7 +30,12 @@ unless you'd prefer to stay anonymous.
 
 terminal-delight runs your real shell on a real PTY and renders untrusted
 program output (ANSI/OSC byte streams). Parser-level issues — escape sequences
-that crash, hang, or read/write outside the grid — are in scope. So are theme
+that crash, hang, or read/write outside the grid — are in scope.
+
+**What can write to a pty is enumerated in
+[`docs/security/terminal-input.md`](docs/security/terminal-input.md)** — every call site, what
+initiates it, and the greps that check the list is still complete. Read that first if you are
+looking at input synthesis; a write path missing from that table is a finding on its own. So are theme
 files that can read or execute beyond the documented schema. The vendored
 Zed/gpui graph is upstream's; please report renderer/framework issues to
 [zed-industries/zed](https://github.com/zed-industries/zed) directly, but feel
