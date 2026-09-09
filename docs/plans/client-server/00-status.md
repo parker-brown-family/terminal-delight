@@ -13,12 +13,39 @@
   still load without losing running panes. COORDINATION: the main session
   owns these docs — check for a newer note here before editing from another
   session.
-- Gate 3 — Program Design: pending
-- Gate 4 — Slice plan: pending
+- Gate 3 — Program Design: APPROVED 2026-09-08 — "Fully concur all in the
+  doc" (chat). 4 domain authors → integrator → 2 adversarial verifiers, 45
+  checks; all 6 not-ok findings folded in before approval, notably the
+  alt-screen encoder redesign — the original mechanism would have erased
+  vim's live grid, caught by source verification before any code existed.
+  Decision round recorded in 03-program-design.md. Panel record:
+  research-gate3-panel.md.
+- Gate 4 — Slice plan: APPROVED 2026-09-08 — Parker: "Go full send", building
+  authorised while he is away. Plan in 04-slices.md.
 
 ## Slices
 
-(defined at Gate 4)
+- [x] Slice 0 — tracer/independent: the dispatch allowlist. An unknown verb
+      exits 2 instead of opening a window and mutating session state (#314);
+      an existing-directory positional claims the reserved open-here slot.
+      Ships alone, before any host exists.
+- [ ] Slice 1 — seam prep, zero behaviour change: SocketPty + `attach_in`,
+      gridwire encoder + round-trip property tests, `SavedNode.pane_id`.
+- [ ] Slice 2 — the host: `serve` verb, pane table, socket, verbs,
+      lease-fenced snapshot-then-tee, headless integration test, contract doc.
+- [ ] Slice 3 — GUI attach behind `TD_SESSIOND=1`; the survival harness is
+      built here and the flip-gate numbers are measured here.
+- [ ] Slice 4 — persistence redirect + orphan adoption.
+- [ ] Slice 5 — flip the default, gated on the harness numbers Parker signs.
+- [ ] Slice 6 — tie-off: the follow-up issues 03 commits to.
+
+## Where the work happens
+
+Implementation runs in a git worktree at `~/Work/td-client-server` on branch
+`client-server-split`, cut from `main`. The live tree `~/Work/terminal-delight`
+is NOT used for this: another agent holds uncommitted work there (the paint
+favourites shelf) and its build is the one currently installed. One task, one
+branch, one pull request — losing attempts stay out of the review surface.
 
 ## Notes for a fresh session
 
