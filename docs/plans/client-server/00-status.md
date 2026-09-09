@@ -25,12 +25,30 @@
 
 ## Slices
 
-- [x] Slice 0 — tracer/independent: the dispatch allowlist. An unknown verb
-      exits 2 instead of opening a window and mutating session state (#314);
-      an existing-directory positional claims the reserved open-here slot.
-      Ships alone, before any host exists.
-- [ ] Slice 1 — seam prep, zero behaviour change: SocketPty + `attach_in`,
-      gridwire encoder + round-trip property tests, `SavedNode.pane_id`.
+- [x] Slice 0 — DONE 2026-09-08 (`3d50f96`). The dispatch allowlist: an
+      unknown verb exits 2 instead of opening a window and mutating session
+      state (#314); an existing-directory positional claims the reserved
+      open-here slot. Five unit tests plus three that run the real binary
+      against a throwaway HOME; two of the three fail against the parent
+      commit, where `sevre` reaches `open window` at main.rs:18569. Evidence
+      posted to #314; not closed, because nothing is merged or installed.
+- [~] Slice 1 — mostly done, zero behaviour change so far:
+      - [x] `gridwire` (`884faaf`): snapshot encoder + cross-process grid
+            hash, 12 round-trip tests. Mutation-tested — seven deliberate
+            breakages, six caught (two only after the tests were strengthened),
+            the seventh provably equivalent.
+      - [x] `socketpty` (`227ddf3`): a socket driven by alacritty's own event
+            loop, 4 tests over a socket pair. Resolves the design's
+            least-confident #10. Two design errors found and fixed here — the
+            dispatch tokens are crate-private (filed as #325) and a hung-up
+            socket is never read at all, so the planned EOF detection could
+            not have worked.
+      - [ ] `attach_in` building a `Session` from a socket — deliberately held
+            for slice 3: a `Session` has a `shell_pid`, and an attached pane
+            has no local pid. Making that field honest (`Option<u32>`, since
+            unknown is not zero) ripples into pane.rs, which belongs with the
+            attach work rather than ahead of it.
+      - [ ] `SavedNode.pane_id` — held for slice 4, where it is first read.
 - [ ] Slice 2 — the host: `serve` verb, pane table, socket, verbs,
       lease-fenced snapshot-then-tee, headless integration test, contract doc.
 - [ ] Slice 3 — GUI attach behind `TD_SESSIOND=1`; the survival harness is
@@ -38,6 +56,16 @@
 - [ ] Slice 4 — persistence redirect + orphan adoption.
 - [ ] Slice 5 — flip the default, gated on the harness numbers Parker signs.
 - [ ] Slice 6 — tie-off: the follow-up issues 03 commits to.
+
+## Where it stands, 2026-09-08 evening
+
+Four commits on `client-server-split`, suite green at 593 (baseline was 570).
+Nothing is installed and nothing is merged: the binary currently on the symlink
+is another agent's favourites-shelf build, and installing over it would drop
+their work.
+
+Next session starts at slice 2 (the host) with the seam already proven, or
+finishes slice 1's two held items if the ripple into pane.rs is wanted first.
 
 ## Where the work happens
 
