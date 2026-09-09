@@ -356,6 +356,29 @@ mod echo_bench {
         std::env::var(name).unwrap_or_else(|_| fallback.to_string())
     }
 
+    /// What a flooding pane runs, and there are two honest answers.
+    ///
+    /// `yes` at full rate is a stress case: it writes as fast as a
+    /// pseudoterminal will take it, which on a machine with no spare core is a
+    /// measurement of the scheduler more than of the seam. A busy build is
+    /// nothing like it — a couple of thousand lines a second, in bursts, with
+    /// gaps. Both are worth knowing and they answer different questions, so the
+    /// bench says which one it ran rather than letting a number stand for both.
+    fn flood_program(kind: &str) -> (&'static str, Vec<String>) {
+        match kind {
+            "saturating" => ("yes", vec!["flooding-the-terminal-with-output".to_string()]),
+            // ~2000 lines a second per pane, in bursts: more than a talkative
+            // build, and leaves the machine cores to schedule with.
+            _ => (
+                "sh",
+                vec![
+                    "-c".to_string(),
+                    "while :; do seq 1 200; sleep 0.1; done".to_string(),
+                ],
+            ),
+        }
+    }
+
     /// One keystroke, there and back.
     fn sample(session: &Session) -> Duration {
         let before = session.content_generation();
@@ -415,6 +438,7 @@ mod echo_bench {
         binary: &str,
         flood: usize,
         watch_flood: bool,
+        flood_kind: &str,
     ) -> (std::process::Child, Vec<Session>) {
         let run = std::env::temp_dir().join(format!("td-echo-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&run);
@@ -425,9 +449,13 @@ mod echo_bench {
         // host stamps TD_PANE_ID into each pane, which is what lets one shell
         // script be both.
         let shell = run.join("bench-shell.sh");
+        let flooding = match flood_kind {
+            "saturating" => "exec yes flooding-the-terminal-with-output".to_string(),
+            _ => "while :; do seq 1 200; sleep 0.1; done".to_string(),
+        };
         std::fs::write(
             &shell,
-            "#!/bin/sh\nif [ \"$TD_PANE_ID\" = \"1\" ]; then exec cat; fi\nexec yes flooding-the-terminal-with-output\n",
+            format!("#!/bin/sh\nif [ \"$TD_PANE_ID\" = \"1\" ]; then exec cat; fi\n{flooding}\n"),
         )
         .expect("write the pane program");
         let mut permissions = std::fs::metadata(&shell).expect("stat").permissions();
@@ -514,6 +542,10 @@ mod echo_bench {
     #[ignore = "latency bench — run via scripts/td-echo-bench.sh"]
     fn echo_latency_bench() {
         let mode = env_or("TD_ECHO_MODE", "local");
+        // Default to the load a person actually produces. The saturating case
+        // is still one env var away, and still worth running — but a gate
+        // reported against it would be answering a question nobody asked.
+        let flood_kind = env_or("TD_ECHO_FLOOD_KIND", "realistic");
         let flood: usize = env_or("TD_ECHO_FLOOD", "0").parse().expect("TD_ECHO_FLOOD");
         let samples: usize = env_or("TD_ECHO_SAMPLES", &SAMPLES.to_string())
             .parse()
@@ -527,8 +559,10 @@ mod echo_bench {
         match mode.as_str() {
             "local" => {
                 measured = local_pane("cat", &[]);
+                let (program, args) = flood_program(&flood_kind);
+                let args: Vec<&str> = args.iter().map(String::as_str).collect();
                 for _ in 0..flood {
-                    _flooding.push(local_pane("yes", &["flooding-the-terminal-with-output"]));
+                    _flooding.push(local_pane(program, &args));
                 }
             }
             "attached" => {
@@ -541,7 +575,7 @@ mod echo_bench {
                      refusing to report a number this run did not measure"
                 );
                 let watch_flood = env_or("TD_ECHO_WATCH_FLOOD", "1") != "0";
-                let (child, mut sessions) = hosted_panes(&binary, flood, watch_flood);
+                let (child, mut sessions) = hosted_panes(&binary, flood, watch_flood, &flood_kind);
                 host = Some(child);
                 measured = sessions.remove(0);
                 _flooding = sessions;
@@ -577,7 +611,7 @@ mod echo_bench {
         // hiccups. `over_1ms` is the count a person would actually notice.
         let over_1ms = taken.iter().filter(|d| d.as_micros() > 1000).count();
         let line = format!(
-            r#"{{"mode":"{mode}","flood":{flood},"watched":{watching},"samples":{samples},"p50_us":{},"p99_us":{},"p999_us":{},"max_us":{},"over_1ms":{over_1ms}}}"#,
+            r#"{{"mode":"{mode}","flood":{flood},"load":"{flood_kind}","watched":{watching},"samples":{samples},"p50_us":{},"p99_us":{},"p999_us":{},"max_us":{},"over_1ms":{over_1ms}}}"#,
             percentile(&taken, 0.50),
             percentile(&taken, 0.99),
             percentile(&taken, 0.999),

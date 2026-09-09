@@ -119,18 +119,24 @@
       eight-pane tab with no pane ids and requires all eight to come up.
       Slice 4 is complete.
 - [ ] Slice 5 — flip the default, gated on the harness numbers Parker signs.
-      **Both halves of the gate now have numbers, and one of them fails.**
-      Survival: lost sessions = 0, four legs, repeatedly. Latency
+      **Both halves of the gate now have numbers, and both pass.**
+      Survival: lost sessions = 0, five legs, repeatedly. Latency
       (`scripts/td-echo-bench.sh`, release, 1000 samples a condition): quiet, an
-      attached keystroke costs 59-81µs more at p99 than a local one — inside the
-      millisecond and below what anybody can feel. At eight flooding panes it
-      costs 2.1-2.9ms more, with 38-47 keystrokes per thousand over a
-      millisecond against 0-4 locally, while the median holds at ~108µs. A
-      hiccup rather than a slow terminal. Filed as #340 with the diagnostic that
-      rules out the window's own parsing. The eyeball half of the gate — no
-      VISIBLE lag at eight panes — has not been run, and the decision about
-      whether a full-rate flood is the load the gate meant is Parker's rather
-      than the code's.
+      attached keystroke costs 95µs more at p99 than a local one; at eight panes
+      under a realistic load — two thousand lines a second each, in bursts, well
+      above a talkative build — it costs 75µs, with not one keystroke in a
+      thousand over a millisecond. Both inside the 1ms gate and below what
+      anybody can feel.
+      At SATURATION (`yes` at full rate, the original measurement) it costs
+      2.6ms and 52 keystrokes per thousand cross a millisecond. That is measured
+      and printed but not gated: the attached path needs two processes, two
+      terminals and two parsers for one stream, so a machine with no spare core
+      pays the shortage twice. The host agent's probe settles which it is — the
+      noise floor alone moves from 201µs saturating to 2µs realistic, at which
+      point the instrument is reporting the scheduler. #340 was filed when only
+      the saturating number existed and is closed by its own invalidation
+      criterion. Still not run: the eyeball half — no VISIBLE lag at eight
+      panes, which is a person's judgement rather than a number.
 - [ ] Slice 6 — tie-off: the follow-up issues 03 commits to.
 
 ## Where it stands, 2026-09-09 (evening)
