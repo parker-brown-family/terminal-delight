@@ -103,6 +103,9 @@ pub enum Request {
     Resize { pane: PaneId, geom: PaneGeom },
     /// Intent, and the only thing that kills: hang up the pane's process tree.
     ClosePane { pane: PaneId },
+    /// Ask what the authoritative grid hashes to, so a client can check its own
+    /// copy against it.
+    GridCheck { pane: PaneId },
     Shutdown,
 }
 
@@ -202,6 +205,10 @@ pub enum Reply {
         pane: PaneId,
         outcome: Outcome<ClosedPane>,
     },
+    GridChecked {
+        pane: PaneId,
+        outcome: Outcome<GridCheck>,
+    },
     ShuttingDown,
     /// An unreadable line, an unknown verb, or a version that cannot be
     /// spoken. Always an answer — never a silent fall-through, which is the
@@ -209,6 +216,23 @@ pub enum Reply {
     Error {
         msg: String,
     },
+}
+
+/// One integrity probe: what the host's own copy of a terminal hashes to, and
+/// how far down this client's stream that reading was taken.
+///
+/// The offset is what makes the comparison mean anything. A client that has not
+/// yet read as far as the host had written is *behind*, which is a different
+/// finding from being *wrong* — and without a stated offset the two are
+/// indistinguishable, so a guard would call for a repair on every busy pane.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GridCheck {
+    pub pane: PaneId,
+    /// Bytes written to this client's stream, the opening snapshot included, at
+    /// the moment the hash was taken. The client's own clock is bytes consumed
+    /// from the socket, and these count the same things.
+    pub stream_offset: u64,
+    pub hash: u64,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -308,6 +332,7 @@ fn every_request() -> Vec<Request> {
             geom,
         },
         Request::ClosePane { pane: PaneId(3) },
+        Request::GridCheck { pane: PaneId(3) },
         Request::Shutdown,
     ]
 }
@@ -358,6 +383,14 @@ fn every_reply() -> Vec<Reply> {
             outcome: Outcome::Ok(ClosedPane {
                 shell_pid: 4242,
                 signalled: true,
+            }),
+        },
+        Reply::GridChecked {
+            pane: PaneId(1),
+            outcome: Outcome::Ok(GridCheck {
+                pane: PaneId(1),
+                stream_offset: 8192,
+                hash: 0xcbf2_9ce4_8422_2325,
             }),
         },
         Reply::ShuttingDown,

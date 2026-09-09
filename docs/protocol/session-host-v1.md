@@ -94,6 +94,7 @@ name, so nobody has to read a changelog to work out which side is old:
 | `attach-pane` | set the size and declare intent to attach | `attached` |
 | `resize` | tell a pane its new size | `resized` |
 | `close-pane` | hang up a pane's process tree | `closed` |
+| `grid-check` | what the host's own copy of a terminal hashes to | `grid-checked` |
 | `shutdown` | stop the host | `shutting-down` |
 
 Anything unreadable, any unknown verb, and any version that cannot be spoken get
@@ -124,6 +125,10 @@ failing the pane.
 ```
 
 ```json request
+{"verb":"grid-check","pane":1}
+```
+
+```json request
 {"verb":"shutdown"}
 ```
 
@@ -145,6 +150,10 @@ accepted, which is a different claim from anything having happened.
 
 ```json reply
 {"reply":"closed","outcome":{"ok":{"shell_pid":40871,"signalled":true}},"pane":1}
+```
+
+```json reply
+{"reply":"grid-checked","outcome":{"ok":{"pane":1,"stream_offset":14680,"hash":9257062766351139868}},"pane":1}
 ```
 
 ```json reply
@@ -250,6 +259,30 @@ tab names and a theme, none of which a host has ever seen. What moved here is
 the half that stopped being answerable from a window at all; the verb that hands
 the layout over for the host to merge and write arrives with the attaching
 client.
+
+## Checking that a client's copy is still the same terminal
+
+A client draws from its own copy of the terminal, fed by the byte stream. Copies
+drift — a dropped chunk, a resize applied at a different byte position — and a
+drifted copy shows a person something their terminal does not contain. So the
+host will state what its own grid hashes to:
+
+- `hash` is over every scrollback and screen cell, the cursor, and the modes a
+  snapshot restores. It deliberately excludes the scroll position and the
+  selection, which belong to the viewer: a client may be scrolled back or
+  holding a selection and still be a faithful copy.
+- `stream_offset` is how many bytes had been written to *this client's* stream,
+  the opening snapshot included, when that hash was taken. Both numbers come
+  from inside the same fence the handover uses, so they describe one moment.
+
+The offset is what makes the comparison mean anything. A client whose own read
+count is behind the stated offset has not caught up yet, which is a different
+finding from disagreeing, and a guard that could not tell them apart would call
+for a repair on every busy pane.
+
+A pane nobody is reading answers `err`. There is no stream, so there is no
+offset into one, and a zero would be a number a client could compare against and
+be confidently wrong about.
 
 ## Invariants, and the tripwires that hold them
 

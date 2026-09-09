@@ -46,8 +46,8 @@ use polling::{Event, PollMode, Poller};
 
 use crate::gridwire;
 use crate::hostproto::{
-    host_socket_path, parse_stream_greeting, ClosedPane, Outcome, PaneGeom, PaneId, PaneInfo, Reply,
-    Request, WireMode, ENV_PANE_ID, ENV_SESSION, PROTO_VERSION,
+    host_socket_path, parse_stream_greeting, ClosedPane, GridCheck, Outcome, PaneGeom, PaneId,
+    PaneInfo, Reply, Request, WireMode, ENV_PANE_ID, ENV_SESSION, PROTO_VERSION,
 };
 use crate::session::PaneRuntime;
 use crate::term::GridSize;
@@ -67,6 +67,14 @@ const SINK_DEPTH: usize = 512;
 /// limit — a socket write that blocks would block the emulator.
 struct Sink {
     chunks: SyncSender<Vec<u8>>,
+    /// Bytes handed to this client, the opening snapshot included.
+    ///
+    /// The client counts what it reads off the socket; this counts what was
+    /// written to it, and a divergence check is meaningless unless the two are
+    /// counting the same bytes. Incremented only after the queue accepts a
+    /// chunk, so a chunk dropped for a client that fell behind is never
+    /// claimed as sent.
+    enqueued: AtomicU64,
     /// Which attachment this is.
     ///
     /// A superseded client is still reading its socket when its successor
@@ -92,13 +100,27 @@ impl Sink {
             // that it is no longer attached.
             let _ = stream.shutdown(std::net::Shutdown::Both);
         });
-        Self { chunks, serial }
+        Self {
+            chunks,
+            enqueued: AtomicU64::new(0),
+            serial,
+        }
     }
 
     /// Queue bytes. `false` means this client is gone or too far behind, and
     /// the caller should drop it.
     fn send(&self, bytes: &[u8]) -> bool {
-        self.chunks.try_send(bytes.to_vec()).is_ok()
+        if self.chunks.try_send(bytes.to_vec()).is_err() {
+            return false;
+        }
+        self.enqueued
+            .fetch_add(bytes.len() as u64, Ordering::SeqCst);
+        true
+    }
+
+    /// How far down this client's stream we are.
+    fn enqueued(&self) -> u64 {
+        self.enqueued.load(Ordering::SeqCst)
     }
 }
 
@@ -589,6 +611,41 @@ impl Host {
         }
     }
 
+    /// What this pane's authoritative grid hashes to, and how far down the
+    /// attached client's stream that reading was taken.
+    ///
+    /// Under the same fence as the handover, and for the same reason. Alacritty's
+    /// reader holds a lease across read-and-parse, so a lease taken here cannot
+    /// overlap one: the hash and the byte count therefore describe the same
+    /// moment. Taken outside it they would describe two, and the gap between
+    /// them is precisely the quantity the guard measures — a guard fed a hash
+    /// and an offset from different instants would report divergence for
+    /// nothing, which is worse than no guard, because a loud repair costs a
+    /// full snapshot every time it fires.
+    ///
+    /// The unfair lock again: the fair one takes the lease we are already
+    /// holding, against ourselves, forever.
+    pub fn grid_check(&self, pane: PaneId) -> Outcome<GridCheck> {
+        let panes = self.panes.lock().expect("panes");
+        let Some(p) = panes.get(&pane) else {
+            return Outcome::Err(format!("no pane {pane}"));
+        };
+        let _lease = p.term.lease();
+        let term = p.term.lock_unfair();
+        let held = p.sink.lock().expect("sink lock");
+        let Some(sink) = held.as_ref() else {
+            // Nobody is reading this pane, so there is no stream and no offset
+            // into one. Answering zero would hand a client a number it could
+            // compare against and be confidently wrong about.
+            return Outcome::Err(format!("pane {pane} has no attached client"));
+        };
+        Outcome::Ok(GridCheck {
+            pane,
+            stream_offset: sink.enqueued(),
+            hash: gridwire::grid_hash(&*term),
+        })
+    }
+
     /// Close a pane: hang up its process tree, the way a terminal window
     /// closing always has.
     ///
@@ -963,6 +1020,10 @@ fn handle_control_line(host: &Arc<Host>, line: &str) -> Reply {
         Request::ClosePane { pane } => Reply::Closed {
             pane,
             outcome: host.close_pane(pane),
+        },
+        Request::GridCheck { pane } => Reply::GridChecked {
+            pane,
+            outcome: host.grid_check(pane),
         },
         Request::Shutdown => Reply::ShuttingDown,
     }
@@ -1522,6 +1583,90 @@ mod owning {
                 now_watches >= watches + 3 && now_checkpoints >= checkpoints + 3
             }),
             "attaching did not restore the attached cadence"
+        );
+    }
+
+    #[test]
+    fn a_grid_check_states_a_hash_and_the_offset_it_was_taken_at() {
+        // The two ends have to be counting the same bytes, or the guard cannot
+        // tell a client that is behind from one that is wrong.
+        let (host, pane) = host_with_cat_pane();
+        let (client, server) = UnixStream::pair().expect("pair");
+        assert!(host.attach(pane, server).is_ok());
+        host.write_to(pane, b"something to hash\n".to_vec());
+        assert!(within(Duration::from_secs(5), || {
+            host.row_text(pane, 0).as_deref() == Some("something to hash")
+        }));
+
+        let check = match host.grid_check(pane) {
+            Outcome::Ok(check) => check,
+            Outcome::Err(err) => panic!("{err}"),
+        };
+        assert_eq!(check.pane, pane);
+        assert!(check.stream_offset > 0, "a snapshot alone is not zero bytes");
+
+        // What the host says it wrote is what the client can read: no more, and
+        // no fewer.
+        let mut client = client;
+        client
+            .set_read_timeout(Some(Duration::from_millis(200)))
+            .unwrap();
+        let mut read = 0u64;
+        let mut buf = [0u8; 8192];
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while Instant::now() < deadline && read < check.stream_offset {
+            match client.read(&mut buf) {
+                Ok(0) => break,
+                Ok(n) => read += n as u64,
+                Err(_) => {}
+            }
+        }
+        assert_eq!(
+            read, check.stream_offset,
+            "the host's count of what it wrote is not what the client received"
+        );
+    }
+
+    #[test]
+    fn the_hash_is_the_grid_and_moves_only_when_the_grid_does() {
+        let (host, pane) = host_with_cat_pane();
+        let (_client, server) = UnixStream::pair().expect("pair");
+        assert!(host.attach(pane, server).is_ok());
+        host.write_to(pane, b"first\n".to_vec());
+        assert!(within(Duration::from_secs(5), || {
+            host.row_text(pane, 0).as_deref() == Some("first")
+        }));
+
+        let hash_of = |host: &Arc<Host>| match host.grid_check(pane) {
+            Outcome::Ok(check) => check.hash,
+            Outcome::Err(err) => panic!("{err}"),
+        };
+        let settled = hash_of(&host);
+        assert_eq!(settled, hash_of(&host), "a still terminal changed its hash");
+
+        host.write_to(pane, b"second\n".to_vec());
+        assert!(
+            within(Duration::from_secs(5), || hash_of(&host) != settled),
+            "the grid changed and the hash did not"
+        );
+    }
+
+    #[test]
+    fn a_pane_nobody_is_reading_has_no_offset_to_state() {
+        // Unknown is not zero, on the wire most of all: a client handed 0 here
+        // would compare its own offset against a number that means nothing.
+        let (host, pane) = host_with_cat_pane();
+        assert!(
+            matches!(host.grid_check(pane), Outcome::Err(_)),
+            "an unwatched pane claimed a stream offset"
+        );
+        assert!(matches!(host.grid_check(PaneId(9999)), Outcome::Err(_)));
+
+        // Over the wire the same, with an answer rather than a silence.
+        let checked = handle_control_line(&host, r#"{"verb":"grid-check","pane":9999}"#);
+        assert!(
+            matches!(checked, Reply::GridChecked { outcome: Outcome::Err(_), .. }),
+            "{checked:?}"
         );
     }
 
