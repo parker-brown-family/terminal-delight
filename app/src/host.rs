@@ -3750,6 +3750,110 @@ cwd = "/somebody-elses-terminal"
         );
     }
 
+    /// Where does a keystroke wait, inside the host, under load?
+    ///
+    /// The echo bench says an attached keystroke costs 2-3 ms more at p99 with
+    /// eight panes flooding, while the median holds — a terminal that hiccups
+    /// rather than a slow one — and it has already ruled out the window drawing
+    /// eight copies of somebody else's output. Two of the remaining hypotheses
+    /// are host-side, and this settles the first of them: a keystroke takes the
+    /// global pane table (`write_to` does), which every other reader takes too.
+    ///
+    /// Measured here rather than reasoned about, because the honest answer to
+    /// "which of three things is it" is a number.
+    ///
+    /// ```text
+    /// cd app && TD_PROBE_FLOOD=8 cargo test --release --bin terminal-delight \
+    ///     where_a_keystroke_waits -- --ignored --nocapture
+    /// ```
+    #[test]
+    #[ignore = "latency probe — run by hand, see the doc comment"]
+    fn where_a_keystroke_waits_inside_the_host() {
+        let flood: usize = std::env::var("TD_PROBE_FLOOD")
+            .ok()
+            .and_then(|n| n.parse().ok())
+            .unwrap_or(8);
+        let samples: usize = std::env::var("TD_PROBE_SAMPLES")
+            .ok()
+            .and_then(|n| n.parse().ok())
+            .unwrap_or(2000);
+
+        // One quiet pane to type into, and `flood` panes saturating the host's
+        // reader thread beside it — the bench's stress case, host side only.
+        let host = Host::with_shell("probe", Some("/bin/cat".into()));
+        let quiet = spawn_guarded(&host).pane;
+        let flooding = Host::with_shell("probe", Some("/bin/sh".into()));
+        let mut flood_panes = Vec::new();
+        for _ in 0..flood {
+            flood_panes.push(spawn_guarded(&flooding).pane);
+        }
+        // Saturating by default, because that is the stress case the gate
+        // names. `TD_PROBE_REALISTIC` swaps it for a busy-but-ordinary load — a
+        // couple of thousand lines a second per pane, roughly a talkative build
+        // — because a saturating writer and a real workload are not the same
+        // question, and the gate is written about the second one.
+        let realistic = std::env::var_os("TD_PROBE_REALISTIC").is_some();
+        let program: &[u8] = if realistic {
+            b"while :; do seq 1 200; sleep 0.1; done\n"
+        } else {
+            b"yes flooding-the-terminal-with-output\n"
+        };
+        for pane in &flood_panes {
+            flooding.write_to(*pane, program.to_vec());
+        }
+        // Let the flood get going before anything is timed.
+        std::thread::sleep(Duration::from_millis(750));
+
+        let mut waited = Vec::with_capacity(samples);
+        let mut sent = Vec::with_capacity(samples);
+        // The control, and the point of the whole probe: an interval that does
+        // nothing at all, taken in the same loop under the same load. Whatever
+        // shows up here is this thread waiting for a core rather than waiting
+        // for anything in this program, and it has to be subtracted by eye from
+        // everything else before any of it means work.
+        let mut nothing = Vec::with_capacity(samples);
+        for _ in 0..samples {
+            let idle_start = Instant::now();
+            let idle_end = Instant::now();
+            nothing.push(idle_end.duration_since(idle_start).as_micros() as u64);
+
+            let before = Instant::now();
+            let panes = host.panes.lock().expect("panes");
+            let held = Instant::now();
+            let pane = panes.get(&quiet).expect("the quiet pane");
+            let _ = pane.input.0.send(Msg::Input(b"x".to_vec().into()));
+            drop(panes);
+            waited.push(held.duration_since(before).as_micros() as u64);
+            sent.push(held.elapsed().as_micros() as u64);
+            std::thread::sleep(Duration::from_micros(200));
+        }
+
+        waited.sort_unstable();
+        sent.sort_unstable();
+        nothing.sort_unstable();
+        let at = |v: &[u64], q: f64| v[((v.len() as f64 * q) as usize).min(v.len() - 1)];
+        println!(
+            "{{\"probe\":\"keystroke\",\"flood\":{flood},\"realistic\":{realistic},\
+             \"samples\":{samples},\
+             \"lock_p50_us\":{},\"lock_p99_us\":{},\"lock_max_us\":{},\
+             \"send_p50_us\":{},\"send_p99_us\":{},\"send_max_us\":{},\
+             \"nothing_p50_us\":{},\"nothing_p99_us\":{},\"nothing_max_us\":{}}}",
+            at(&waited, 0.50),
+            at(&waited, 0.99),
+            waited[waited.len() - 1],
+            at(&sent, 0.50),
+            at(&sent, 0.99),
+            sent[sent.len() - 1],
+            at(&nothing, 0.50),
+            at(&nothing, 0.99),
+            nothing[nothing.len() - 1],
+        );
+
+        for pane in flood_panes {
+            let _ = flooding.close_pane(pane);
+        }
+    }
+
     #[test]
     fn the_upkeep_does_not_keep_a_dropped_host_alive() {
         // Every test here makes a host and drops it. Two threads holding a
