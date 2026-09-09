@@ -3462,6 +3462,67 @@ impl Workspace {
         // failure adoption exists to prevent, arriving thirty seconds early.
         self.save(cx);
         Self::watch_for_divergence(ctx.clone(), window, cx);
+        self.listen_to_the_host(ctx.clone(), cx);
+    }
+
+    /// Take the host's word for what its panes are running.
+    ///
+    /// The host watches the pseudoterminals it owns, so it knows what is in the
+    /// foreground of each one before this window could work it out from
+    /// outside. It says so when it changes rather than on a clock, which is
+    /// also the only time the answer is new — so a window that has heard
+    /// nothing has not fallen behind, it has nothing to hear.
+    ///
+    /// The current mode of every pane arrives with the pane itself, from
+    /// `list-panes` at attach. This is only the changes after that.
+    fn listen_to_the_host(&mut self, ctx: AttachCtx, cx: &mut Context<Self>) {
+        let news = match hostctl::watch(ctx.link.socket()) {
+            Ok(news) => news,
+            Err(err) => {
+                // Worth saying: a window that cannot hear about changes will
+                // show a pane's mode as whatever it was when it attached, and
+                // silently. Better a line in the log than a wall of panes that
+                // all claim to be shells.
+                eprintln!(
+                    "terminal-delight: cannot listen to the session host ({err});                      pane modes will not follow what the terminals are running"
+                );
+                return;
+            }
+        };
+        cx.spawn(async move |this, cx| {
+            use futures::StreamExt;
+            let mut news = news;
+            while let Some(push) = news.next().await {
+                let carried_on = this
+                    .update(cx, |ws: &mut Workspace, cx| {
+                        ws.apply_host_push(push, cx);
+                    })
+                    .is_ok();
+                if !carried_on {
+                    break; // the window has gone
+                }
+            }
+        })
+        .detach();
+    }
+
+    /// One piece of the host's news, applied to the pane it is about.
+    fn apply_host_push(&mut self, push: hostproto::Push, cx: &mut Context<Self>) {
+        match push {
+            hostproto::Push::Mode { pane, mode } => {
+                let mode = pane::PaneMode::from_wire(&mode);
+                for tab in &self.tabs {
+                    let mut leaves = vec![];
+                    tab.root.leaves(&mut leaves);
+                    for leaf in leaves {
+                        if leaf.read(cx).pane_id() == Some(pane.0) {
+                            leaf.update(cx, |view, cx| view.set_host_mode(mode.clone(), cx));
+                        }
+                    }
+                }
+                cx.notify();
+            }
+        }
     }
 
     /// Every attached pane, with the terminal generation it is sitting at.

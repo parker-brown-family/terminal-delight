@@ -233,21 +233,6 @@ fn foreground_mode(master: &std::fs::File, shell_pid: u32) -> PaneMode {
     PaneMode::classify(&comm, &cmdline)
 }
 
-/// The same question asked of /proc, for a terminal this process does not own.
-///
-/// `None` means the answer could not be had — the process is gone, or has no
-/// controlling terminal — and the caller leaves the pane's mode alone. A guess
-/// here would be worse than silence: a pane showing SHELL because nothing could
-/// be read looks exactly like a pane at a prompt, and the agent wall is built
-/// on that distinction.
-fn foreground_mode_via_proc(shell_pid: u32) -> Option<PaneMode> {
-    let report = crate::session::probe_external(shell_pid, &crate::session::home_dir()).ok()?;
-    if report.fg_pid == shell_pid {
-        return Some(PaneMode::Shell);
-    }
-    Some(PaneMode::classify(&report.comm, &report.cmdline))
-}
-
 /// The consistent header icon size (≈2× the old glyphs).
 pub const HICON: f32 = 28.0;
 
@@ -2682,13 +2667,13 @@ impl TerminalView {
 
         // foreground-process watcher: what is this tube showing?
         //
-        // Two ways to ask, and the pane takes whichever it is entitled to. With
-        // a pseudoterminal of its own it asks the kernel through that
-        // descriptor. Attached, it has no descriptor, so it reads the same fact
-        // out of /proc — the foreground group is recorded there too, and a
-        // terminal somebody else owns is still a terminal this machine can see.
-        // With neither, it asks nothing and says nothing, rather than reporting
-        // a shell it has not looked at.
+        // Only for a terminal this window owns. An attached pane is told by the
+        // host, which is holding the pseudoterminal and therefore knows first —
+        // and knows properly, through the descriptor, rather than by reading
+        // /proc from outside. Two watchers on one terminal was work done twice
+        // for an answer that already existed in the right process (#336), and
+        // the reason it was here at all is that the host had no way to say it.
+        // It has one now: `set_host_mode`, fed by the push feed.
         cx.spawn(async move |this, cx| loop {
             cx.background_executor()
                 .timer(std::time::Duration::from_millis(800))
@@ -2697,8 +2682,9 @@ impl TerminalView {
                 .update(cx, |view: &mut TerminalView, cx| {
                     let detected = match (view.session.master.as_ref(), view.session.shell_pid) {
                         (Some(master), Some(pid)) => Some(foreground_mode(master, pid)),
-                        (None, Some(pid)) => foreground_mode_via_proc(pid),
-                        (_, None) => None,
+                        // Somebody else's terminal, or nobody's: not this
+                        // window's question to answer.
+                        _ => None,
                     };
                     if let Some(detected) = detected {
                         // Sticky agent detection (spec §4): an agent runs child

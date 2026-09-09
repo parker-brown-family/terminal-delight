@@ -29,7 +29,7 @@ use std::time::{Duration, Instant};
 
 use crate::hostproto::{
     host_socket_path, stream_greeting, ClientKind, ClosedPane, Outcome, PaneGeom, PaneId, PaneInfo,
-    Persisted, Reply, Request, PROTO_VERSION,
+    Persisted, Push, Reply, Request, PROTO_VERSION,
 };
 
 /// How long any single control exchange may take before the window gives up on
@@ -286,6 +286,11 @@ impl HostLink {
         &self.session
     }
 
+    /// Where this host listens, so a second connection can be opened to it.
+    pub fn socket(&self) -> &Path {
+        &self.socket
+    }
+
     /// Whether this window has lost the host it was talking to.
     pub fn lost(&self) -> bool {
         self.lost.load(Ordering::SeqCst)
@@ -441,7 +446,69 @@ fn unwrap_outcome<T>(outcome: Outcome<T>) -> std::io::Result<T> {
     }
 }
 
-/// Start a session host for `key`, and wait for it to be ready to talk.
+/// Listen to a host for as long as the window lives.
+///
+/// **Its own connection, deliberately.** [`HostLink`] is synchronous — every
+/// call writes a line and reads until the answer it asked for arrives — and a
+/// host talking unasked on that connection would land its news in the middle of
+/// somebody's reply. Rather than teach the request path to route, the window
+/// opens a second connection whose entire job is to listen, which also means a
+/// host that never speaks costs a blocked thread and nothing else.
+///
+/// Announced as a tool: this connection attaches no panes and must never take
+/// one from the window that is using them.
+pub fn watch(socket: &Path) -> std::io::Result<futures::channel::mpsc::UnboundedReceiver<Push>> {
+    let stream = UnixStream::connect(socket)?;
+    // No read timeout: waiting is the point. A watcher that gave up after five
+    // seconds of quiet would report a healthy host as gone every time nothing
+    // happened, which on a terminal is most of the time.
+    let mut conn = Conn::over(stream, EXCHANGE_TIMEOUT)?;
+    match conn.hello(ClientKind::Tool)? {
+        Reply::Hello { proto, .. } => {
+            if let Err(msg) = crate::hostproto::version_check(proto) {
+                return Err(std::io::Error::other(msg));
+            }
+        }
+        other => return Err(std::io::Error::other(format!("odd greeting: {other:?}"))),
+    }
+    conn.send(&Request::Watch)?;
+    conn.expect(|reply| match reply {
+        Reply::Watching => Ok(()),
+        other => Err(other),
+    })?;
+    let _ = conn.reader.get_ref().set_read_timeout(None);
+
+    let (tx, rx) = futures::channel::mpsc::unbounded();
+    std::thread::spawn(move || {
+        let mut line = String::new();
+        loop {
+            line.clear();
+            match conn.reader.read_line(&mut line) {
+                Ok(0) | Err(_) => break,
+                Ok(_) => {}
+            }
+            // Read as a document first and dispatched on which key it carries.
+            // A reply and a push are different kinds of sentence and neither
+            // parses as the other, so trying one type and then the next would
+            // make an ordinary message look like a broken one.
+            let Ok(value) = serde_json::from_str::<serde_json::Value>(line.trim()) else {
+                continue;
+            };
+            if value.get("push").is_none() {
+                continue;
+            }
+            let Ok(push) = serde_json::from_value::<Push>(value) else {
+                continue;
+            };
+            if tx.unbounded_send(push).is_err() {
+                break; // the window has gone
+            }
+        }
+    });
+    Ok(rx)
+}
+
+/// Start a session host for `key`, and wait for it to be ready to talk./// Start a session host for `key`, and wait for it to be ready to talk.
 ///
 /// Two windows launching at the same moment both find no host and both try to
 /// start one — and the second would unlink the first's socket and bind its own,
@@ -671,6 +738,111 @@ mod talking {
         assert!(!link.lost(), "not lost until something actually fails");
         assert!(link.list_panes().is_err(), "the host is gone");
         assert!(link.lost(), "and the window knows it");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_watching_connection_hears_changes_and_is_not_confused_by_replies() {
+        // The listening half, against a host that says all the things a host
+        // says: a greeting, an acknowledgement, and then news — with an
+        // ordinary reply in the middle of the news, because a connection that
+        // asked one question still gets its answer on the same wire, and a
+        // watcher that mistook a reply for a change would either drop it as
+        // broken or, worse, treat it as one.
+        let dir = tmp("watching");
+        let path = dir.join("session-watching.sock");
+        let listener = std::os::unix::net::UnixListener::bind(&path).expect("bind");
+        let heard = std::thread::spawn(move || {
+            let (stream, _) = listener.accept().expect("accept");
+            let mut reader = BufReader::new(stream.try_clone().expect("clone"));
+            let mut writer = stream;
+            let mut hello = String::new();
+            reader.read_line(&mut hello).expect("the greeting");
+            let _ = writer.write_all(
+                b"{\"reply\":\"hello\",\"proto\":1,\"session\":\"watching\",\"panes\":1,\"attended\":false}\n",
+            );
+            let mut asked = String::new();
+            reader.read_line(&mut asked).expect("the watch verb");
+            let _ = writer.write_all(b"{\"reply\":\"watching\"}\n");
+            let _ = writer.write_all(
+                b"{\"push\":\"mode\",\"pane\":1,\"mode\":\"claude\"}\n\
+                  {\"reply\":\"panes\",\"panes\":[]}\n\
+                  {\"push\":\"mode\",\"pane\":2,\"mode\":{\"other\":\"vim\"}}\n",
+            );
+            std::thread::sleep(Duration::from_millis(400));
+            (hello, asked)
+        });
+
+        let mut news = watch(&path).expect("start watching");
+        let first =
+            futures::executor::block_on(futures::StreamExt::next(&mut news)).expect("a change");
+        assert_eq!(
+            first,
+            Push::Mode {
+                pane: PaneId(1),
+                mode: crate::hostproto::WireMode::Claude
+            }
+        );
+        let second = futures::executor::block_on(futures::StreamExt::next(&mut news))
+            .expect("the change after the reply");
+        assert_eq!(
+            second,
+            Push::Mode {
+                pane: PaneId(2),
+                mode: crate::hostproto::WireMode::Other("vim".into())
+            },
+            "a reply in the middle must be stepped over, not mistaken for news"
+        );
+
+        let (hello, asked) = heard.join().expect("the host thread");
+        assert!(
+            hello.contains(r#""kind":"tool""#),
+            "a listening connection attaches nothing and must say so: {hello}"
+        );
+        assert!(asked.contains(r#""verb":"watch""#), "{asked}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_watcher_outlives_a_long_silence() {
+        // Silence is the normal state of a terminal nobody is typing into, and
+        // it lasts longer than any exchange timeout. A watcher that gave up on
+        // quiet would leave the window showing whatever the modes were when it
+        // attached, with nothing to say it had stopped listening — so what is
+        // asserted here is not that nothing arrives during the silence, but
+        // that something still arrives AFTER it.
+        let dir = tmp("quiet");
+        let path = dir.join("session-quiet.sock");
+        let listener = std::os::unix::net::UnixListener::bind(&path).expect("bind");
+        std::thread::spawn(move || {
+            let (stream, _) = listener.accept().expect("accept");
+            let mut reader = BufReader::new(stream.try_clone().expect("clone"));
+            let mut writer = stream;
+            let mut line = String::new();
+            reader.read_line(&mut line).expect("hello");
+            let _ = writer.write_all(
+                b"{\"reply\":\"hello\",\"proto\":1,\"session\":\"quiet\",\"panes\":0,\"attended\":false}\n",
+            );
+            line.clear();
+            reader.read_line(&mut line).expect("watch");
+            let _ = writer.write_all(b"{\"reply\":\"watching\"}\n");
+            // Longer than EXCHANGE_TIMEOUT, which is the point.
+            std::thread::sleep(EXCHANGE_TIMEOUT + Duration::from_secs(2));
+            let _ = writer.write_all(b"{\"push\":\"mode\",\"pane\":4,\"mode\":\"shell\"}\n");
+            std::thread::sleep(Duration::from_millis(200));
+        });
+
+        let mut news = watch(&path).expect("start watching");
+        let after_the_quiet = futures::executor::block_on(futures::StreamExt::next(&mut news));
+        assert_eq!(
+            after_the_quiet,
+            Some(Push::Mode {
+                pane: PaneId(4),
+                mode: crate::hostproto::WireMode::Shell
+            }),
+            "a watcher that survived the silence should still be listening; \
+             None here means it hung up on a healthy host"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 

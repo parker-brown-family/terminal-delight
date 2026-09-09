@@ -147,10 +147,10 @@ Three things worth carrying forward. The divergence guard is live, not wired for
 later: every thirty seconds an attached window asks the host what its own grid
 hashes to at a stated point in the stream and compares under the replica's own
 fence — and `TD_GUARD_FORCE_MISMATCH=1` proves the repair by running it on a
-pane that agrees. The client still runs its own 800ms foreground watcher,
-reading /proc instead of a descriptor it does not have, because there is no push
-channel yet to carry the host's answer; that duplication should go when there
-is, and is filed falsifiably as #336. And a hosted window still claims the
+pane that agrees. The client's own 800ms foreground watcher is gone (#336):
+the host says what changed on a listening connection the window opens beside its
+control one, and a pane with its own pseudoterminal still asks the kernel
+directly. And a hosted window still claims the
 session flock, which is the host's job in 02 — the host does not claim it yet,
 and until it does the flock is what keeps two windows from writing one session
 file; filed as #337, and invalid the moment the Save verb makes the host the
