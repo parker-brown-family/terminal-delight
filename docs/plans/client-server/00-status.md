@@ -84,9 +84,16 @@
       recovers to exactly today's floor: new pids, the layout read back from the
       file, every program started again. The last two runs were against the
       merged host — the socket-race fix, then the watch verb and the alt-screen
-      heal. Suite 673 green (664 unit, 4 dispatch, 5 host socket), with the
-      five-consecutive-run stability check taken at 664 before those merges;
-      `cargo fmt --check` and `clippy -D warnings` both clean.
+      heal. A fourth leg, `pane-exit`, closes the gap every other leg shared:
+      they all measure work SURVIVING, so a window that had stopped hearing
+      about endings would have passed all of them while showing dead terminals
+      forever. It ends one terminal and requires the window to outlive it, then
+      ends the rest and requires the window to close; 0 losses over 3 cycles,
+      and proven by breaking it — a window deafened to its replicas' exits
+      reports "still up after every one of its terminals had ended". Suite 679
+      green (670 unit, 4 dispatch, 5 host socket), with the five-consecutive-run
+      stability check taken at 664 before the merges; `cargo fmt --check` and
+      `clippy -D warnings` both clean.
 - [ ] Slice 4 — persistence redirect (orphan adoption landed in slice 3, where
       the bind path needed it).
 - [ ] Slice 5 — flip the default, gated on the harness numbers Parker signs.
@@ -98,6 +105,15 @@ Slice 3 is in. A window attaches to a session host behind `TD_SESSIOND=1`, and
 the thing the feature exists for is now a number rather than a claim: twenty
 kills, nothing lost, twice — against a control leg that loses everything twenty
 times out of twenty on today's path.
+
+Two defects were found after the slice was measured, both by pulling on the
+host agent's question about exit events, and both are fixed rather than filed. A
+superseded window did not freeze — it deleted the panes it lost and quit when it
+had lost them all, because a stolen stream and a dead shell arrive as the same
+EOF; the window now asks the host which one happened. And the host now closes a
+pane's stream when its child exits, which is what makes that question worth
+asking for the case that matters. Neither was in the metric, which is why
+`pane-exit` exists.
 
 Three things worth carrying forward. The divergence guard is live, not wired for
 later: every thirty seconds an attached window asks the host what its own grid

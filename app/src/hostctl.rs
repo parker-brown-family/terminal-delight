@@ -630,6 +630,96 @@ mod talking {
     }
 
     #[test]
+    fn a_signal_arriving_mid_answer_is_not_the_host_hanging_up() {
+        // A read interrupted by a signal fails with EINTR, and to anything that
+        // treats an error as an ending it is indistinguishable from the far end
+        // closing. That confusion is expensive here in both directions: a
+        // window that read a stray signal as a lost host would stop writing its
+        // session file while the host sat there perfectly healthy, and — since
+        // a window now asks the host to explain an ending — a spurious hangup
+        // on a pane stream would have it conclude the pane was stolen and
+        // freeze a terminal that is running fine.
+        //
+        // std retries on `Interrupted` inside `read_until`, which is what makes
+        // this safe. That is a documented behaviour of somebody else's code,
+        // which is exactly the kind of thing worth a test rather than a
+        // comment: it is load-bearing here, and nothing in this file would
+        // notice if it changed.
+        // Counted, because a test that never actually got interrupted would
+        // pass for the wrong reason and keep passing if the retry disappeared.
+        static ARRIVED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        extern "C" fn nothing(_: libc::c_int) {
+            ARRIVED.fetch_add(1, Ordering::Relaxed);
+        }
+
+        let dir = tmp("signals");
+        let path = dir.join("session-signals.sock");
+        let listener = std::os::unix::net::UnixListener::bind(&path).expect("bind");
+        std::thread::spawn(move || {
+            let (stream, _) = listener.accept().expect("accept");
+            let mut reader = BufReader::new(stream.try_clone().expect("clone"));
+            let mut writer = stream;
+            let mut line = String::new();
+            reader.read_line(&mut line).expect("hello");
+            let _ = writer.write_all(
+                b"{\"reply\":\"hello\",\"proto\":1,\"session\":\"signals\",\"panes\":0,\"attended\":false}\n",
+            );
+            line.clear();
+            reader.read_line(&mut line).expect("list");
+            // Answer late, so the reader is genuinely blocked while the signals
+            // land rather than racing them.
+            std::thread::sleep(Duration::from_millis(400));
+            let _ = writer.write_all(b"{\"reply\":\"panes\",\"panes\":[]}\n");
+        });
+
+        let link = HostLink::attach_at(&path).expect("attach");
+
+        // A handler with no SA_RESTART, so the signal interrupts the read
+        // instead of the kernel quietly restarting it — the hostile case.
+        let previous = unsafe {
+            let mut action: libc::sigaction = std::mem::zeroed();
+            let mut old: libc::sigaction = std::mem::zeroed();
+            action.sa_sigaction = nothing as *const () as usize;
+            action.sa_flags = 0;
+            libc::sigaction(libc::SIGUSR1, &action, &mut old);
+            old
+        };
+        // Signal THIS thread only: every other test in the process is running
+        // beside this one and none of them asked to be interrupted.
+        let waiting = unsafe { libc::syscall(libc::SYS_gettid) } as libc::pid_t;
+        let stop = Arc::new(AtomicBool::new(false));
+        let flag = stop.clone();
+        let storm = std::thread::spawn(move || {
+            for _ in 0..40 {
+                if flag.load(Ordering::SeqCst) {
+                    break;
+                }
+                unsafe {
+                    libc::syscall(libc::SYS_tgkill, libc::getpid(), waiting, libc::SIGUSR1);
+                }
+                std::thread::sleep(Duration::from_millis(15));
+            }
+        });
+
+        let answer = link.list_panes();
+        stop.store(true, Ordering::SeqCst);
+        storm.join().expect("the signaller");
+        unsafe { libc::sigaction(libc::SIGUSR1, &previous, std::ptr::null_mut()) };
+
+        assert!(
+            ARRIVED.load(Ordering::Relaxed) > 0,
+            "no signal ever reached the waiting thread, so this proved nothing"
+        );
+        assert!(
+            answer.is_ok(),
+            "a signal was read as the host going away: {:?}",
+            answer.err()
+        );
+        assert!(!link.lost(), "and the window wrote itself off over it");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn a_version_it_cannot_speak_is_refused_rather_than_half_understood() {
         let dir = tmp("version");
         let path = dir.join("session-version.sock");

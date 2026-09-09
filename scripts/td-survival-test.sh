@@ -9,6 +9,7 @@
 #   ./scripts/td-survival-test.sh gui-kill --cycles 20
 #   ./scripts/td-survival-test.sh floor-control --cycles 20
 #   ./scripts/td-survival-test.sh host-kill --cycles 3
+#   ./scripts/td-survival-test.sh pane-exit --cycles 3
 #
 # THE FLOOR CONTROL IS NOT OPTIONAL. A harness that reports zero losses against
 # a build without session hosts is not measuring anything, and would report zero
@@ -21,6 +22,14 @@
 # must be exactly today's — the layout restored from the file, the shells
 # started again, the scrollback gone. Losses there are compared against the
 # floor, not against zero.
+#
+# `pane-exit` is the opposite question, and the one this harness was missing:
+# when a terminal genuinely ENDS, does the window notice? Everything else here
+# measures work surviving, so a window that had quietly stopped hearing about
+# endings would have passed every leg while leaving dead terminals on screen
+# forever. It ends one terminal and requires the window to outlive it, then ends
+# the rest and requires the window to close — which is what a terminal emulator
+# has always done when its last shell exits.
 #
 # Isolation, because this runs on the machine Terminal Delight is developed on:
 #
@@ -49,9 +58,9 @@ while [ $# -gt 0 ]; do
 done
 
 case "$LEG" in
-  gui-kill|floor-control|host-kill) ;;
+  gui-kill|floor-control|host-kill|pane-exit) ;;
   *)
-    echo "usage: td-survival-test.sh {gui-kill|floor-control|host-kill} [--cycles N] [--keep]" >&2
+    echo "usage: td-survival-test.sh {gui-kill|floor-control|host-kill|pane-exit} [--cycles N] [--keep]" >&2
     exit 2
     ;;
 esac
@@ -560,10 +569,80 @@ run_host_kill() {
   done
 }
 
+run_pane_exit() {
+  # A terminal ending is not a terminal being taken away, and for a while this
+  # window could not tell the difference — it had no way to hear about either.
+  # So: end one terminal and require the window to survive it, then end them all
+  # and require the window to go, which it can only do by having noticed.
+  for cycle in $(seq 1 "$CYCLES"); do
+    launch_gui hosted
+    if ! wait_for 30 test -S "$SOCKET"; then
+      lose "$cycle" "no session host ever appeared"
+      losses=$((losses + 1)); cycles_run=$((cycles_run + 1)); kill_gui; continue
+    fi
+    if ! wait_for 40 scene_is_up; then
+      lose "$cycle" "the scene never came up; see $(diagnose "$cycle")"
+      losses=$((losses + 1)); cycles_run=$((cycles_run + 1)); kill_gui; continue
+    fi
+    sleep 2
+
+    local lost=0
+    local panes idle_pid rest
+    panes="$(host_pane_pids)"
+    # The idle shell: the fourth pane in the staged layout, and the one whose
+    # ending costs nothing to arrange — no editor to quit, no monitor to stop.
+    idle_pid="$(echo "$panes" | tr ' ' '\n' | sed -n 4p | cut -d: -f2)"
+    if [ -z "$idle_pid" ]; then
+      lose "$cycle" "could not find the idle pane's process"
+      losses=$((losses + 1)); cycles_run=$((cycles_run + 1)); kill_gui; continue
+    fi
+
+    # End ONE terminal by hanging up on its shell — which is what a closing
+    # terminal has always done, and what an interactive shell actually honours.
+    # (SIGTERM does not end one: a shell with job control ignores it, which this
+    # harness learned by trying.) Nothing here touches the window or its stream,
+    # so what the window learns, it learns from the host.
+    kill -HUP "$idle_pid" 2>/dev/null
+    if ! wait_for 15 bash -c "! kill -0 $idle_pid 2>/dev/null"; then
+      lose "$cycle" "the idle shell would not end"
+      lost=1
+    fi
+    sleep 3
+    if [ -z "${GUI_PID:-}" ] || ! alive "$GUI_PID"; then
+      lose "$cycle" "the window closed when a single terminal ended"
+      lost=1
+      losses=$((losses + lost)); cycles_run=$((cycles_run + 1)); continue
+    fi
+
+    # Now end the rest. A window that heard none of this would sit there
+    # forever showing five dead terminals; a window that heard it closes, which
+    # is what every terminal emulator does when its last shell exits.
+    rest="$(echo "$panes" | tr ' ' '\n' | cut -d: -f2)"
+    for pid in $rest; do
+      kill -HUP "$pid" 2>/dev/null
+    done
+    kill_scene
+    if wait_for 25 bash -c "! kill -0 ${GUI_PID:-0} 2>/dev/null"; then
+      GUI_PID=""
+    else
+      lose "$cycle" "the window was still up after every one of its terminals had ended"
+      lost=1
+    fi
+
+    kill_gui
+    pkill -9 -f "serve --session $SESSION" 2>/dev/null
+    losses=$((losses + lost))
+    cycles_run=$((cycles_run + 1))
+    note "cycle $cycle: $([ "$lost" = 0 ] && echo "the window noticed" || echo "AN ENDING WENT UNNOTICED")"
+    sleep 1
+  done
+}
+
 case "$LEG" in
   gui-kill) run_gui_kill ;;
   floor-control) run_floor_control ;;
   host-kill) run_host_kill ;;
+  pane-exit) run_pane_exit ;;
 esac
 
 # --------------------------------------------------------------- the verdict --
@@ -572,6 +651,7 @@ case "$LEG" in
   gui-kill) expected=0 ;;
   floor-control) expected="$cycles_run" ;;
   host-kill) expected=0 ;;
+  pane-exit) expected=0 ;;
 esac
 
 printf '{"leg":"%s","cycles":%s,"losses":%s,"expected_losses":%s,"editor":"%s","monitor":"%s","failures":[' \
