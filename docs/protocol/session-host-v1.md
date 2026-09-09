@@ -238,6 +238,22 @@ pane's whole process tree, the way a terminal window closing always has. A
 client disconnecting, crashing or being superseded kills nothing. That
 distinction is the entire product.
 
+**A pane's byte stream is open only while its child is alive.** When the program
+inside a pane exits, the host sets `ended` and then closes the stream — in that
+order, and the order is load-bearing. A client attaching to a pane whose child
+has already gone is sent the final screen and then hung up on, by the same rule
+arrived at through the other door.
+
+A closed stream means one of two things, and a client must not guess between
+them: the program ended, or another window took the pane. **Ask.** `list-panes`
+answers it — a pane still listed and not `ended` was taken, and a pane that is
+`ended` or gone from the table has really finished. Because `ended` is set
+before the hangup, and the hangup is what closes the stream, a client can never
+see the close and then be told the pane is fine.
+
+The exit *status* is not on the wire. A hangup cannot carry one, and the push
+that would is not in this version.
+
 ## What the host does with nobody watching
 
 Two questions can only be answered by the process holding a pseudoterminal, so

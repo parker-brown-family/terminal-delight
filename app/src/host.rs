@@ -512,6 +512,7 @@ impl Host {
 
         let ended = Arc::new(AtomicBool::new(false));
         let exit_flag = ended.clone();
+        let exit_sink = sink.clone();
         std::thread::spawn(move || {
             for event in incoming {
                 match event {
@@ -532,7 +533,23 @@ impl Host {
                         });
                         let _ = answers.0.send(Msg::Input(reply.into_bytes().into()));
                     }
-                    TermEvent::ChildExit(_) => exit_flag.store(true, Ordering::SeqCst),
+                    // The program in this terminal is gone, so the stream
+                    // watching it is over. Nothing else tells a window: the
+                    // socket stays open on its own, and a window drawing a
+                    // terminal whose shell exited has no way to find out.
+                    //
+                    // **The flag first, then the hangup, and the order is
+                    // load-bearing.** A window that sees its stream close asks
+                    // whether the pane is still running, because a stream also
+                    // closes when somebody takes the pane away, and `ended` is
+                    // the difference between the two. The close is *caused by*
+                    // dropping the sink, which happens after the store, so any
+                    // observation of the close happens after it — the window
+                    // cannot see the hangup and then be told the pane is fine.
+                    TermEvent::ChildExit(_) => {
+                        exit_flag.store(true, Ordering::SeqCst);
+                        *exit_sink.lock().expect("sink lock") = None;
+                    }
                     _ => {}
                 }
             }
@@ -640,6 +657,19 @@ impl Host {
 
         drop(term);
         drop(_lease);
+        // The same rule, through the other door: a client can attach to a pane
+        // whose child went while nobody was watching, and a stream that never
+        // closes would leave it drawing a dead terminal for as long as the
+        // window is open. It is shown the final screen — the snapshot is
+        // already queued — and then the stream ends, which is the truth.
+        //
+        // Read after installing, never before. An exit landing between the two
+        // would otherwise be missed by both: the exit thread would clear a sink
+        // that was not there yet, and this would install one over a pane whose
+        // child had already gone.
+        if p.ended.load(Ordering::SeqCst) {
+            *p.sink.lock().expect("sink lock") = None;
+        }
         // Somebody is watching again. Both clocks are sleeping through a
         // detached period, and waiting one out before serving a window that has
         // already arrived is the sort of lag nobody can attribute later.
@@ -2380,6 +2410,108 @@ mod owning {
             }
         }
         String::from_utf8_lossy(&seen).into_owned()
+    }
+
+    /// Wait for a client's stream to end, and say what it saw first.
+    fn read_to_hangup(client: &mut UnixStream, patience: Duration) -> Option<String> {
+        // Short timeout, long deadline. A quiet stretch is what waiting looks
+        // like — the program has to be signalled, notice, and exit — so a read
+        // that times out means keep waiting, and only an end or a real error
+        // stops this.
+        client
+            .set_read_timeout(Some(Duration::from_millis(50)))
+            .unwrap();
+        let mut seen = Vec::new();
+        let mut buf = [0u8; 8192];
+        let deadline = Instant::now() + patience;
+        while Instant::now() < deadline {
+            match client.read(&mut buf) {
+                // The stream ended, which is the thing being waited for.
+                Ok(0) => return Some(String::from_utf8_lossy(&seen).into_owned()),
+                Ok(read) => seen.extend_from_slice(&buf[..read]),
+                // Waiting, not failing. A read times out because nothing has
+                // happened yet, and it is interrupted because a signal arrived
+                // — this test sends one, and the child's death sends another —
+                // and neither says anything about the stream. A reader that
+                // treated `Interrupted` as an ending would report a hangup that
+                // never happened, which under the client's rule means asking
+                // the host and being told the pane is fine: a live pane read as
+                // a steal.
+                Err(e)
+                    if matches!(
+                        e.kind(),
+                        std::io::ErrorKind::WouldBlock
+                            | std::io::ErrorKind::TimedOut
+                            | std::io::ErrorKind::Interrupted
+                    ) => {}
+                Err(_) => break,
+            }
+        }
+        None
+    }
+
+    #[test]
+    fn a_pane_whose_child_exits_hangs_up_the_stream_watching_it() {
+        // #338. The host recorded the exit and kept it: the socket stayed open,
+        // `attached` stayed true, and a window went on drawing a terminal whose
+        // shell had gone, with no way to find out. Before panes moved out of the
+        // window this arrived locally, as the pseudoterminal's own hangup.
+        let (host, pane) = host_with_cat_pane();
+        let (mut window, server) = UnixStream::pair().expect("pair");
+        assert!(host.attach(pane, server).is_ok());
+        host.write_to(pane, b"the last thing it said\n".to_vec());
+        assert!(within(Duration::from_secs(5), || {
+            host.row_text(pane, 0).as_deref() == Some("the last thing it said")
+        }));
+
+        // The program ends the ordinary way, of its own accord.
+        let pid = host.list_panes()[0].shell_pid;
+        assert_eq!(unsafe { libc::kill(pid as i32, libc::SIGTERM) }, 0);
+
+        let final_screen = read_to_hangup(&mut window, Duration::from_secs(10))
+            .expect("the stream to a terminal whose program has gone never ended");
+        assert!(
+            final_screen.contains("the last thing it said"),
+            "the window lost the pane's last screen on the way out: {final_screen:?}"
+        );
+
+        // And the order the client depends on: by the time it can see the
+        // hangup, the host already says the pane ended. A window reads a closed
+        // stream as a steal unless the host says otherwise, so a hangup that
+        // arrived first would make a dead pane look like a stolen one.
+        assert!(
+            host.list_panes()[0].ended,
+            "the stream closed before the host would admit the pane had ended"
+        );
+    }
+
+    #[test]
+    fn attaching_to_a_pane_whose_child_has_gone_shows_it_and_then_ends() {
+        // The same rule through the other door. A pane can end while nobody is
+        // watching, and a client arriving afterwards would otherwise hold a
+        // stream that never closes — the same dead terminal, drawn just as
+        // convincingly, reached by a different route.
+        let (host, pane) = host_with_cat_pane();
+        host.write_to(pane, b"what it was doing when it stopped\n".to_vec());
+        assert!(within(Duration::from_secs(5), || {
+            host.row_text(pane, 0).as_deref() == Some("what it was doing when it stopped")
+        }));
+        let pid = host.list_panes()[0].shell_pid;
+        assert_eq!(unsafe { libc::kill(pid as i32, libc::SIGTERM) }, 0);
+        assert!(
+            within(Duration::from_secs(5), || host.list_panes()[0].ended),
+            "the pane never registered that its child had gone"
+        );
+
+        let (mut latecomer, server) = UnixStream::pair().expect("pair");
+        assert!(host.attach(pane, server).is_ok());
+
+        let final_screen = read_to_hangup(&mut latecomer, Duration::from_secs(10))
+            .expect("a client attaching to a pane whose child has gone was left holding it");
+        assert!(
+            final_screen.contains("what it was doing when it stopped"),
+            "the latecomer was hung up on before it was shown anything: {final_screen:?}"
+        );
     }
 
     #[test]
