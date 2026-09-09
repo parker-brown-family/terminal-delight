@@ -440,6 +440,20 @@ pub struct Host {
     state_file: Mutex<Option<std::path::PathBuf>>,
     /// The last layout a client handed over, and the shape it said it was.
     layout: Mutex<Option<(u32, toml::Value)>>,
+    /// Held for the whole of a write, so only one happens at a time.
+    ///
+    /// Two things in this process write the session file — a client's `save`
+    /// on its own connection, and the checkpoint on the upkeep thread — and
+    /// without this they overlap. `session::write_atomic` builds its temporary
+    /// file from the destination's name, so two writers share one temp path and
+    /// the first rename takes it away from the second, which then fails with a
+    /// puzzling "no such file". Worse than the error: the shrink guard reads
+    /// what is on disk and then writes, and another write landing between those
+    /// two makes the reading it decided on stale.
+    ///
+    /// Being the session's single writer is a claim about processes; this is
+    /// what makes it true inside one.
+    writing: Mutex<()>,
     /// The file's contents as this host last left them, so a write it did not
     /// make can be told from one it did.
     ///
@@ -483,6 +497,7 @@ impl Host {
             shutdown: AtomicBool::new(false),
             upkeep: Arc::new(Upkeep::new()),
             state_file: Mutex::new(None),
+            writing: Mutex::new(()),
             layout: Mutex::new(None),
             last_written: Mutex::new(None),
             watchers: Mutex::new(Vec::new()),
@@ -887,6 +902,8 @@ impl Host {
     /// in it; and being the only writer is what stops two processes with
     /// different ideas of the tree taking turns overwriting each other.
     pub fn persist_now(&self, allow_shrink: bool) -> Outcome<Persisted> {
+        // One writer at a time, for the whole read-decide-write. See `writing`.
+        let _writing = self.writing.lock().expect("writing");
         let Some(path) = self.state_file.lock().expect("state file").clone() else {
             return Outcome::Err("this host was never told where to write".into());
         };
@@ -3344,6 +3361,59 @@ cwd = "/somebody-elses-terminal"
         assert!(
             !written.contains("WHAT THE HOST HAD"),
             "the host's boot copy survived a later write: {written}"
+        );
+    }
+
+    #[test]
+    fn two_things_writing_at_once_still_leave_one_good_file() {
+        // Two things in this process write the session file: a client's `save`
+        // on its own connection, and the checkpoint on the upkeep thread. They
+        // overlapped, and `write_atomic` builds its temporary file from the
+        // destination's name — so both used one temp path, the first rename
+        // took it away from the second, and the second failed with a puzzling
+        // "no such file". Found by a soak, at two runs in forty.
+        let path = a_state_file("onewriter");
+        let host = Host::with_shell("test", None);
+        host.persist_to(path.clone());
+        assert!(host
+            .save(
+                LAYOUT_SCHEMA,
+                "active = 0\n\n[[tabs]]\n\n[tabs.node.Leaf]\ncwd = \"/tmp\"\n",
+                false,
+            )
+            .is_ok());
+
+        let mut writers = Vec::new();
+        for n in 0..8 {
+            let host = host.clone();
+            let body = format!(
+                "active = 0\n\n[[tabs]]\nname = \"writer {n}\"\n\n[tabs.node.Leaf]\ncwd = \"/tmp\"\n"
+            );
+            writers.push(std::thread::spawn(move || {
+                let mut outcomes = Vec::new();
+                for _ in 0..8 {
+                    outcomes.push(host.save(LAYOUT_SCHEMA, &body, true));
+                    outcomes.push(host.persist_now(true));
+                }
+                outcomes
+            }));
+        }
+        let outcomes: Vec<Outcome<Persisted>> = writers
+            .into_iter()
+            .flat_map(|writer| writer.join().expect("a writer thread"))
+            .collect();
+
+        for outcome in &outcomes {
+            assert!(
+                !matches!(outcome, Outcome::Err(_)),
+                "a write failed while another was in flight: {outcome:?}"
+            );
+        }
+        // And what is on disk is one of the things somebody wrote, whole.
+        let written = std::fs::read_to_string(&path).expect("read back");
+        assert!(
+            written.parse::<toml::Value>().is_ok(),
+            "the file left behind is not readable TOML: {written}"
         );
     }
 
