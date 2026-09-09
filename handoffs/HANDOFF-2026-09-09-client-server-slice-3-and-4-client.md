@@ -15,7 +15,7 @@ decision, not an engineering task.
 
 | Slice | What landed | Verified by |
 |---|---|---|
-| 3 | Live-host tier in session resolution; `term::attach_in` over a socket; `Session.shell_pid` → `Option<u32>` with the ripple absorbed at each call site; orphan adoption; divergence guard against the host's `grid-check` | `td-survival-test.sh gui-kill --cycles 20` × 4 runs, **0 losses**; `floor-control` **20/20 lost**; 8 unit tests over a real socket pair |
+| 3 | Live-host tier in session resolution; `term::attach_in` over a socket; `Session.shell_pid` → `Option<u32>` with the ripple absorbed at each call site; orphan adoption; divergence guard against the host's `grid-check` | `td-survival-test.sh gui-kill --cycles 20` × 7 runs, **0 losses**; `floor-control` **20/20 lost**; 8 unit tests over a real socket pair |
 | 4 (client) | Saves routed to the host (single writer); hosted path claims no flock (#337); new splits cap at 4, tabs still hold 8; host's push feed replaces the window's /proc watcher (#336) | `writer-probe` (adopted tab survives a host checkpoint); lock probe (3 states); `legacy-load` leg (8-pane file opens in full); connection count 13 vs 11 |
 | — | `scripts/td-echo-bench.sh` — the flip gate's latency instrument | **95µs** quiet, **75µs** at 8 panes realistic, 0/1000 keystrokes over 1ms |
 
