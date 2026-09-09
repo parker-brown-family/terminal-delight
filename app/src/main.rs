@@ -31,6 +31,7 @@ mod doc;
 mod gamba;
 mod gridwire;
 mod host;
+mod hostctl;
 mod hostproto;
 mod hud;
 mod instance;
@@ -355,6 +356,7 @@ impl<L: Clone> Tree<L> {
                     name: s.name,
                     logo: s.logo,
                     note: s.note,
+                    pane_id: s.pane_id,
                 }
             }
             Tree::Split {
@@ -392,6 +394,7 @@ impl Node {
                     seed: n.seed,
                     pinned: n.pinned,
                 }),
+                pane_id: view.pane_id(),
             }
         })
     }
@@ -407,6 +410,7 @@ struct LeafState {
     name: Option<String>,
     logo: Option<String>,
     note: Option<SavedNote>,
+    pane_id: Option<u64>,
 }
 
 /// A sticky note on its way into the state file. The seed travels with the text
@@ -448,6 +452,15 @@ enum SavedNode {
         logo: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         note: Option<SavedNote>,
+        /// The host pane this leaf was showing.
+        ///
+        /// Absent in every file written before session hosts existed, and in
+        /// every file written by a window that owns its own terminals — which
+        /// is why it is an absent field rather than a zero. On restore it is
+        /// the difference between binding to a terminal that is still running
+        /// and starting a second one beside it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pane_id: Option<u64>,
     },
     Split {
         dir: SplitDir,
@@ -479,6 +492,8 @@ impl<'de> Deserialize<'de> for SavedNode {
             logo: Option<String>,
             #[serde(default)]
             note: Option<SavedNote>,
+            #[serde(default)]
+            pane_id: Option<u64>,
         }
         // A leaf's appearance: the new per-group form if present, else migrate a
         // legacy `theme` override, else pristine (follows outer for everything).
@@ -511,6 +526,7 @@ impl<'de> Deserialize<'de> for SavedNode {
                         name: None,
                         logo: None,
                         note: None,
+                        pane_id: None,
                     }),
                     other => Err(E::custom(format!("unknown node: {other}"))),
                 }
@@ -533,6 +549,7 @@ impl<'de> Deserialize<'de> for SavedNode {
                             name: f.name.take(),
                             logo: f.logo.take(),
                             note: f.note.take(),
+                            pane_id: f.pane_id.take(),
                         })
                     }
                     "Split" => {
@@ -2246,6 +2263,11 @@ struct Workspace {
     /// state — so it can't clobber the layout of the window that owns the
     /// workspace.
     scratch: bool,
+    /// The session host this window is showing, if it is showing one.
+    ///
+    /// `None` is the ordinary window that owns its own terminals — still the
+    /// default, and untouched by any of this until the numbers say otherwise.
+    attach: Option<AttachCtx>,
     /// Frameless drag latch: a mousedown on the mother bar arms it; the first
     /// mouse-move while armed hands off to the compositor's window-move (so a
     /// plain click on the bar doesn't get eaten). Cleared on mouse-up.
@@ -2287,8 +2309,27 @@ fn make_pane_restored(
     // (build_node) is the sole exception and re-applies the pane's SAVED
     // appearance right after — which may legitimately be pristine/follow-outer.
     pane.update(cx, |view, _| view.appearance = PaneTheme::house());
-    cx.observe(&pane, |_, _, cx| cx.notify()).detach();
-    cx.subscribe(&pane, |ws, pane, ev: &OpenThemeMenu, cx| {
+    wire_pane(&pane, window, cx);
+    pane
+}
+
+/// Everything a pane is to the workspace around it: what it notifies, what it
+/// asks for, and where its keystrokes go.
+///
+/// Shared by every way a pane comes into being — spawned here, restored from
+/// disk, or taken over from a session host — because a pane that arrived by a
+/// different route is still a pane, and the moment one creation site knows a
+/// subscription another does not, some window somewhere stops answering its ×
+/// button.
+fn wire_pane(
+    pane: &Entity<TerminalView>,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    let pane = pane.clone();
+    let pane = &pane;
+    cx.observe(pane, |_, _, cx| cx.notify()).detach();
+    cx.subscribe(pane, |ws, pane, ev: &OpenThemeMenu, cx| {
         ws.theme_menu = Some(MenuScope::Pane(pane));
         ws.menu_at = Some(ev.at);
         cx.notify();
@@ -2296,7 +2337,7 @@ fn make_pane_restored(
     .detach();
     // the header logo / `＋ logo` placeholder → open the image picker for this pane
     cx.subscribe_in(
-        &pane,
+        pane,
         window,
         |ws, pane, _ev: &OpenLogoPicker, window, cx| {
             ws.open_logo_picker(pane.entity_id(), window, cx);
@@ -2304,7 +2345,7 @@ fn make_pane_restored(
     )
     .detach();
     // the header display icon → open this pane's monitor-OSD tray at the click
-    cx.subscribe(&pane, |ws, pane, ev: &OpenDisplayMenu, cx| {
+    cx.subscribe(pane, |ws, pane, ev: &OpenDisplayMenu, cx| {
         ws.osd_menu = Some(MenuScope::Pane(pane));
         ws.osd_at = Some(ev.at);
         cx.notify();
@@ -2313,7 +2354,7 @@ fn make_pane_restored(
     // the header 👓 → open the FOCUS reading modal mirroring this pane (and keep
     // typing into it: we focus the pane so keystrokes still land in the original)
     cx.subscribe_in(
-        &pane,
+        pane,
         window,
         |ws, pane, _ev: &OpenFocusRead, window, cx| {
             ws.open_focus_read(pane.clone(), window, cx);
@@ -2321,53 +2362,53 @@ fn make_pane_restored(
     )
     .detach();
     // Esc inside the modal (routed up from the mirrored pane) → close it
-    cx.subscribe(&pane, |ws, _pane, _ev: &CloseFocusRead, cx| {
+    cx.subscribe(pane, |ws, _pane, _ev: &CloseFocusRead, cx| {
         ws.close_focus_read(cx);
     })
     .detach();
     // Paging keys inside the modal (same routing) → move the reader's view.
-    cx.subscribe(&pane, |ws, _pane, ev: &FocusReadNav, cx| {
+    cx.subscribe(pane, |ws, _pane, ev: &FocusReadNav, cx| {
         ws.focus_read_nav(ev.0, cx);
     })
     .detach();
     // An agent finished in this pane → maybe a system notification (with a
     // click-to-jump), unless Parker was already looking at it.
-    cx.subscribe_in(&pane, window, |ws, pane, _ev: &AgentDone, window, cx| {
+    cx.subscribe_in(pane, window, |ws, pane, _ev: &AgentDone, window, cx| {
         ws.agent_done(pane.clone(), window, cx);
     })
     .detach();
     // The pane's working state flipped → repaint the mother bar so the tab's
     // 🤖 pulse starts/stops on the real edge.
-    cx.subscribe(&pane, |_ws, _pane, _ev: &AgentWorkingChanged, cx| {
+    cx.subscribe(pane, |_ws, _pane, _ev: &AgentWorkingChanged, cx| {
         cx.notify();
     })
     .detach();
     // F1 in any pane toggles the help modal
-    cx.subscribe(&pane, |ws, _pane, _ev: &OpenHelp, cx| {
+    cx.subscribe(pane, |ws, _pane, _ev: &OpenHelp, cx| {
         ws.help_open = !ws.help_open;
         cx.notify();
     })
     .detach();
     // Ctrl+Shift+A in any pane opens the agent-watch (MCP) panel — same surface
     // the header robot icon toggles on.
-    cx.subscribe(&pane, |ws, _pane, _ev: &OpenUsagePanel, cx| {
+    cx.subscribe(pane, |ws, _pane, _ev: &OpenUsagePanel, cx| {
         ws.open_usage(cx);
     })
     .detach();
     // Ctrl+Shift+A in any pane opens the agent-watch (MCP) panel — same surface
     // the header robot icon toggles on.
-    cx.subscribe(&pane, |ws, _pane, _ev: &OpenAgentPanel, cx| {
+    cx.subscribe(pane, |ws, _pane, _ev: &OpenAgentPanel, cx| {
         ws.mcp_menu = true;
         cx.notify();
     })
     .detach();
     // Ctrl+F / Ctrl+Shift+F in a pane → open the find panel (this pane, or global)
-    cx.subscribe_in(&pane, window, |ws, pane, ev: &OpenFind, window, cx| {
+    cx.subscribe_in(pane, window, |ws, pane, ev: &OpenFind, window, cx| {
         ws.open_find(pane.entity_id(), ev.global, window, cx);
     })
     .detach();
     // grab the header → begin a sub-tab drag (the workspace drives it from here)
-    cx.subscribe(&pane, |ws, pane, ev: &DragPaneStart, cx| {
+    cx.subscribe(pane, |ws, pane, ev: &DragPaneStart, cx| {
         let start = ev.at;
         ws.drag_pane = Some(PaneDrag {
             id: pane.entity_id(),
@@ -2381,32 +2422,318 @@ fn make_pane_restored(
     })
     .detach();
     // the header × → close just this pane (window-aware: refocuses what's left)
-    cx.subscribe_in(&pane, window, |ws, pane, _ev: &ClosePane, window, cx| {
+    cx.subscribe_in(pane, window, |ws, pane, _ev: &ClosePane, window, cx| {
         ws.close_pane(pane.entity_id(), window, cx);
     })
     .detach();
     // Ctrl+W in a pane → close the whole active tab, always via the confirm dialog
-    cx.subscribe(&pane, |ws, _pane, _ev: &RequestCloseTab, cx| {
+    cx.subscribe(pane, |ws, _pane, _ev: &RequestCloseTab, cx| {
         ws.confirm_close_active_tab(cx);
     })
     .detach();
     // a committed rename → persist so the custom name survives a restart
     // a note went up or came down — persist it like a rename
-    cx.subscribe(&pane, |ws, _pane, _ev: &pane::StickyChanged, cx| {
+    cx.subscribe(pane, |ws, _pane, _ev: &pane::StickyChanged, cx| {
         ws.save(cx);
     })
     .detach();
-    cx.subscribe(&pane, |ws, _pane, _ev: &PaneRenamed, cx| {
+    cx.subscribe(pane, |ws, _pane, _ev: &PaneRenamed, cx| {
         ws.save(cx);
     })
     .detach();
     // a paint-overlay pick recoloured this pane — persist it like a rename
-    cx.subscribe(&pane, |ws, _pane, _ev: &PaintApplied, cx| {
+    cx.subscribe(pane, |ws, _pane, _ev: &PaintApplied, cx| {
         ws.save(cx);
     })
     .detach();
     window.focus(&pane.focus_handle(cx), cx);
-    pane
+}
+
+/// Everything a window needs while it is attached to a session host.
+///
+/// One connection, shared: the panes' resize announcements come off the
+/// terminal event loop's own threads.
+#[derive(Clone)]
+struct AttachCtx {
+    link: Arc<hostctl::HostLink>,
+}
+
+/// What to do with one saved leaf when a host is holding the terminals.
+#[derive(Debug, PartialEq)]
+enum LeafPlan {
+    /// The terminal this leaf was showing is still running. Take it back —
+    /// scrollback, running program and all.
+    Bind { pane: hostproto::PaneId },
+    /// Nothing of it is left. Start one the way a restore always has: the
+    /// recipe on disk, cwd and resume command included.
+    Respawn { restore: session::PaneRestore },
+}
+
+/// The whole of a hosted restore, decided before a single pane is built.
+#[derive(Debug, PartialEq)]
+struct AttachPlan {
+    /// Per tab, per leaf, in the order the tree is walked.
+    tabs: Vec<Vec<LeafPlan>>,
+    /// Live host panes the saved layout did not claim.
+    ///
+    /// These get a tab each. It is the pinned invariant of the whole feature:
+    /// **the host's list of running terminals beats the file on disk.** A
+    /// layout written thirty seconds before a crash does not know about the
+    /// pane opened twenty seconds later, and a restore that trusted the file
+    /// would leave that terminal running with nothing showing it — which is
+    /// exactly the loss the split exists to prevent, arriving by a different
+    /// door.
+    orphans: Vec<hostproto::PaneInfo>,
+}
+
+/// Match a saved layout against what is actually running.
+///
+/// Pure, and deliberately so: this is the decision that a restore either gets
+/// right or silently loses somebody's work over, and it must be answerable
+/// without a host, a window, or a terminal anywhere.
+fn plan_attach(saved: &[SavedTab], live: &[hostproto::PaneInfo]) -> AttachPlan {
+    // A pane whose process has ended is not a terminal to bind to. Its id may
+    // still be sitting in the saved layout; binding to it would show a window
+    // full of nothing where a shell used to be.
+    let mut unclaimed: Vec<&hostproto::PaneInfo> = live.iter().filter(|p| !p.ended).collect();
+    let mut tabs = Vec::with_capacity(saved.len());
+    for tab in saved {
+        let mut leaves = vec![];
+        collect_saved_leaves(&tab.node, &mut leaves);
+        let mut plans = Vec::with_capacity(leaves.len());
+        for leaf in leaves {
+            let SavedNode::Leaf {
+                cwd,
+                resume,
+                logo,
+                note,
+                pane_id,
+                ..
+            } = leaf
+            else {
+                continue;
+            };
+            // Claimed by id, and claimed once: two leaves naming the same pane
+            // is a layout that was written wrong or edited by hand, and the
+            // second one must not be handed the same terminal — it gets its
+            // own, which is the only reading that loses nothing.
+            let bound = pane_id.and_then(|want| {
+                unclaimed
+                    .iter()
+                    .position(|p| p.pane.0 == want)
+                    .map(|at| unclaimed.remove(at).pane)
+            });
+            plans.push(match bound {
+                Some(pane) => LeafPlan::Bind { pane },
+                None => LeafPlan::Respawn {
+                    restore: session::PaneRestore {
+                        cwd: cwd.clone(),
+                        resume: resume.clone(),
+                        logo: logo.clone(),
+                        note: note.as_ref().map(|n| sticky::Saved {
+                            title: n.title.clone(),
+                            text: n.text.clone(),
+                            seed: n.seed,
+                            pinned: n.pinned,
+                        }),
+                    },
+                },
+            });
+        }
+        tabs.push(plans);
+    }
+    AttachPlan {
+        tabs,
+        orphans: unclaimed.into_iter().cloned().collect(),
+    }
+}
+
+/// Every leaf of a saved tree, in the order [`build_node`] builds them.
+fn collect_saved_leaves<'a>(node: &'a SavedNode, out: &mut Vec<&'a SavedNode>) {
+    match node {
+        SavedNode::Leaf { .. } => out.push(node),
+        SavedNode::Split { a, b, .. } => {
+            collect_saved_leaves(a, out);
+            collect_saved_leaves(b, out);
+        }
+    }
+}
+
+/// The size a pane is born at, before the first layout pass tells it the truth.
+/// Same numbers a locally-spawned pane uses (`TerminalView::new_restored`), so
+/// an attached pane and a spawned one start identically.
+const BORN_GRID: term::GridSize = term::GridSize {
+    cols: 100,
+    rows: 28,
+};
+
+fn born_geom() -> hostproto::PaneGeom {
+    hostproto::PaneGeom {
+        cols: BORN_GRID.cols as u16,
+        rows: BORN_GRID.rows as u16,
+        cell_width: 8,
+        cell_height: 20,
+    }
+}
+
+/// Take over a terminal the host is holding, and show it in a pane.
+///
+/// The order is the contract: say what size the pane will be, *then* open the
+/// byte stream. The host snapshots at the moment the stream connects, so a size
+/// declared afterwards would arrive against a snapshot taken at the old one.
+fn make_pane_attached(
+    info: &hostproto::PaneInfo,
+    restore: session::PaneRestore,
+    ctx: &AttachCtx,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) -> std::io::Result<Entity<TerminalView>> {
+    let geom = born_geom();
+    ctx.link.attach_pane(info.pane, geom)?;
+    let stream = ctx.link.open_pane_stream(info.pane)?;
+    let link = ctx.link.clone();
+    let pane_id = info.pane;
+    let streams = term::AttachStreams {
+        bytes: stream,
+        announce_resize: Box::new(move |size: alacritty_terminal::event::WindowSize| {
+            link.announce_resize(
+                pane_id,
+                hostproto::PaneGeom {
+                    cols: size.num_cols,
+                    rows: size.num_lines,
+                    cell_width: size.cell_width,
+                    cell_height: size.cell_height,
+                },
+            );
+        }),
+    };
+    // The pid is the host's, and only an attribute: this window did not start
+    // that process and will never signal it.
+    let (session, guard) = term::attach_in(BORN_GRID, streams, Some(info.shell_pid))?;
+    let pane = cx.new(|cx| {
+        TerminalView::new_attached(session, guard, pane_id.0, restore, BORN_GRID, cx)
+    });
+    pane.update(cx, |view, _| view.appearance = PaneTheme::house());
+    wire_pane(&pane, window, cx);
+    Ok(pane)
+}
+
+/// Start a terminal on the host and show it — the restore recipe, executed one
+/// process over.
+///
+/// The resume line is typed by this window rather than by the host, which is
+/// where it will eventually live: the host has no verb for it yet. Typed
+/// either way it lands in the same pseudoterminal's input queue and waits for
+/// the shell's first read, exactly as a locally-spawned restore does.
+fn make_pane_host_spawned(
+    restore: session::PaneRestore,
+    ctx: &AttachCtx,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) -> std::io::Result<Entity<TerminalView>> {
+    let info = ctx.link.spawn_pane(restore.cwd.clone(), born_geom())?;
+    let resume = restore.resume.clone();
+    let pane = make_pane_attached(&info, restore, ctx, window, cx)?;
+    if let Some(command) = resume {
+        pane.update(cx, |view, _| view.type_line(&format!("{command}\n")));
+    }
+    Ok(pane)
+}
+
+/// A pane for a host terminal, falling back rather than leaving a hole.
+///
+/// A window that cannot reach the host still has to open. It says so on stderr
+/// and opens an ordinary local terminal — which will not survive this window,
+/// and is still better than a tab with a blank rectangle where a shell was.
+fn make_pane_hosted_or_local(
+    plan_result: std::io::Result<Entity<TerminalView>>,
+    restore: session::PaneRestore,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) -> Entity<TerminalView> {
+    match plan_result {
+        Ok(pane) => pane,
+        Err(err) => {
+            eprintln!(
+                "terminal-delight: could not reach the session host for a pane ({err}); \
+                 opening a local terminal instead — it will not survive this window"
+            );
+            make_pane_restored(restore, window, cx)
+        }
+    }
+}
+
+/// [`build_node`], with a session host holding the terminals.
+///
+/// Walks the saved tree in the same order [`plan_attach`] did, taking one
+/// decision per leaf from the plan. The tree, the appearance and the names are
+/// still the file's; only what is *inside* each leaf comes from somewhere else.
+fn build_node_attached(
+    saved: &SavedNode,
+    plans: &mut std::vec::IntoIter<LeafPlan>,
+    live: &std::collections::HashMap<u64, hostproto::PaneInfo>,
+    ctx: &AttachCtx,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) -> Node {
+    match saved {
+        SavedNode::Leaf {
+            appearance,
+            cwd,
+            resume,
+            name,
+            logo,
+            note,
+            ..
+        } => {
+            let restore = session::PaneRestore {
+                cwd: cwd.clone(),
+                resume: resume.clone(),
+                logo: logo.clone(),
+                note: note.as_ref().map(|n| sticky::Saved {
+                    title: n.title.clone(),
+                    text: n.text.clone(),
+                    seed: n.seed,
+                    pinned: n.pinned,
+                }),
+            };
+            let built = match plans.next() {
+                // The terminal is still running. Take it, and do NOT type the
+                // resume line: the agent it would start is already in there.
+                Some(LeafPlan::Bind { pane }) => match live.get(&pane.0) {
+                    Some(info) => make_pane_attached(info, restore.clone(), ctx, window, cx),
+                    // The plan named a pane the list does not hold, which can
+                    // only happen if the two disagreed within one call. Start
+                    // the recipe rather than drop the leaf.
+                    None => make_pane_host_spawned(restore.clone(), ctx, window, cx),
+                },
+                Some(LeafPlan::Respawn { restore }) => {
+                    make_pane_host_spawned(restore, ctx, window, cx)
+                }
+                None => make_pane_host_spawned(restore.clone(), ctx, window, cx),
+            };
+            let pane = make_pane_hosted_or_local(built, restore, window, cx);
+            // Exactly as the serverless restore does: the pane's saved
+            // appearance wins over the house default, including a saved
+            // pristine one, which means "follow the outer cabinet".
+            let appearance = appearance.clone();
+            let name = name.clone();
+            pane.update(cx, |view, _| {
+                view.appearance = appearance;
+                if name.is_some() {
+                    view.name = name;
+                }
+            });
+            Node::Leaf(pane)
+        }
+        SavedNode::Split { dir, ratio, a, b } => Node::Split {
+            id: next_split_id(),
+            dir: *dir,
+            ratio: (*ratio).clamp(0.15, 0.85),
+            a: Box::new(build_node_attached(a, plans, live, ctx, window, cx)),
+            b: Box::new(build_node_attached(b, plans, live, ctx, window, cx)),
+        },
+    }
 }
 
 fn build_node(saved: &SavedNode, window: &mut Window, cx: &mut Context<Workspace>) -> Node {
@@ -2418,6 +2745,9 @@ fn build_node(saved: &SavedNode, window: &mut Window, cx: &mut Context<Workspace
             name,
             logo,
             note,
+            // A serverless window builds its own terminals, so whichever host
+            // pane this leaf used to show is not this window's business.
+            pane_id: _,
         } => {
             let pane = make_pane_restored(
                 session::PaneRestore {
@@ -2464,14 +2794,20 @@ impl Workspace {
     /// the `terminal-delight <dir>` directory, honoured only when there is no
     /// saved layout — a restore's own panes carry their cwds.
     fn new(seed: Option<session::PaneRestore>, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        Self::build(false, false, seed, window, cx)
+        Self::build(false, false, seed, None, window, cx)
+    }
+
+    /// The window that shows a session host's terminals: same restore, one
+    /// process removed. Its panes outlive it, which is the entire point.
+    fn new_attached(ctx: AttachCtx, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        Self::build(false, false, None, Some(ctx), window, cx)
     }
 
     /// A demo window: restores the cloned layout from `TD_DEMO_STATE` but never
     /// persists (treated as scratch for saving). Every pane runs the frozen
     /// lorem-ipsum emitter — see [`Self::share_demo`] and `term::spawn_in`.
     fn new_demo(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        Self::build(false, true, None, window, cx)
+        Self::build(false, true, None, None, window, cx)
     }
 
     /// A scratch window: one fresh terminal (optionally seeded with a cwd/agent
@@ -2483,13 +2819,14 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        Self::build(true, false, seed, window, cx)
+        Self::build(true, false, seed, None, window, cx)
     }
 
     fn build(
         scratch: bool,
         demo: bool,
         seed: Option<session::PaneRestore>,
+        attach: Option<AttachCtx>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -2630,13 +2967,21 @@ impl Workspace {
             // a demo window restores a layout (so `scratch` is false to take the
             // restore branch below) yet must never overwrite the real state
             scratch: scratch || demo,
+            attach,
             should_move: false,
             ghosts: Vec::new(),
             next_ghost_id: 0,
             permit_shrink: std::cell::Cell::new(false),
             degraded: std::cell::Cell::new(false),
         };
-        if scratch {
+        if let Some(ctx) = ws.attach.clone() {
+            // A host is holding the terminals: what is running beats what was
+            // written down. Everything else in this function is untouched by
+            // that — the theme, the groups, the window bounds are all still
+            // read from the file, because the host has never had an opinion
+            // about any of them.
+            ws.build_attached(&saved, &ctx, window, cx);
+        } else if scratch {
             // one terminal, seeded if this is a torn-off pane
             let pane = match seed {
                 Some(restore) => make_pane_restored(restore, window, cx),
@@ -2671,25 +3016,7 @@ impl Workspace {
                 pane.update(cx, |v, _| v.name = Some(FIRST_RUN_HINT.into()));
             }
         } else {
-            ws.groups = saved
-                .groups
-                .iter()
-                .map(|g| {
-                    TabGroup {
-                        id: g.id,
-                        name: g.name.clone(),
-                        // NEVER drop a group on a colour-parse failure — that would
-                        // remove its id from `live` below and silently scatter every
-                        // member tab into Ungrouped on the next restore. Fall back to
-                        // a hue derived from the id so the group simply keeps a colour.
-                        color: theme::parse_hex(&g.color)
-                            .unwrap_or_else(|| hsla((g.id as f32 * 0.137).fract(), 0.55, 0.6, 1.0)),
-                        text_color: g.text_color.as_deref().and_then(theme::parse_hex),
-                        collapsed: g.collapsed,
-                    }
-                })
-                .collect();
-            ws.next_group_id = ws.groups.iter().map(|g| g.id + 1).max().unwrap_or(1);
+            ws.restore_groups(&saved);
             let live: std::collections::HashSet<u32> = ws.groups.iter().map(|g| g.id).collect();
             for t in &saved.tabs {
                 let root = build_node(&t.node, window, cx);
@@ -2852,7 +3179,11 @@ impl Workspace {
                                 if !v.mode.is_agent() {
                                     continue;
                                 }
-                                let pid = v.shell_pid();
+                                // The ledger is keyed by pid; a pane whose
+                                // host named no process cannot be tracked in
+                                // it, and inventing a key would file its
+                                // history under somebody else's.
+                                let Some(pid) = v.shell_pid() else { continue };
                                 let idle = v.idle_since_human();
                                 let act = if clicked == Some(pid) {
                                     keepalive::Act::Send
@@ -2969,6 +3300,118 @@ impl Workspace {
         ws
     }
 
+    /// Restore a layout whose terminals are somebody else's.
+    ///
+    /// Two sources, and the order between them is the invariant: the file says
+    /// what the window looked like, the host says what is actually running, and
+    /// where they disagree the host wins. A leaf whose terminal is still alive
+    /// is bound to it; a leaf whose terminal is gone is started again from the
+    /// recipe on disk; and a terminal the file never mentioned gets a tab of
+    /// its own rather than being left running where nobody can see it.
+    fn build_attached(
+        &mut self,
+        saved: &StateFile,
+        ctx: &AttachCtx,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let live = match ctx.link.list_panes() {
+            Ok(panes) => panes,
+            Err(err) => {
+                // The host answered the greeting and then would not say what it
+                // is running. Restoring from the file alone would start a
+                // second set of shells beside the ones it holds, so this window
+                // restores nothing and says why.
+                eprintln!(
+                    "terminal-delight: the session host would not list its panes ({err}); \
+                     opening without restoring, rather than starting a second copy of your work"
+                );
+                vec![]
+            }
+        };
+        let plan = plan_attach(&saved.tabs, &live);
+        self.restore_groups(saved);
+        let live_by_id: std::collections::HashMap<u64, hostproto::PaneInfo> =
+            live.iter().map(|p| (p.pane.0, p.clone())).collect();
+        let live_groups: std::collections::HashSet<u32> = self.groups.iter().map(|g| g.id).collect();
+
+        for (tab, plans) in saved.tabs.iter().zip(plan.tabs) {
+            let mut plans = plans.into_iter();
+            let root = build_node_attached(&tab.node, &mut plans, &live_by_id, ctx, window, cx);
+            let mut built = Tab::new(root, tab.name.clone());
+            built.color = tab.color.as_deref().and_then(theme::parse_hex);
+            built.text_color = tab.text_color.as_deref().and_then(theme::parse_hex);
+            built.group = tab.group.filter(|g| live_groups.contains(g));
+            self.tabs.push(built);
+        }
+
+        // Adoption. A terminal running with nothing showing it is the failure
+        // this whole feature exists to end, and a stale layout is just another
+        // way of arriving at it.
+        for orphan in &plan.orphans {
+            let restore = session::PaneRestore {
+                cwd: orphan.cwd.clone(),
+                ..Default::default()
+            };
+            let built = make_pane_attached(orphan, restore.clone(), ctx, window, cx);
+            let pane = make_pane_hosted_or_local(built, restore, window, cx);
+            self.tabs.push(Tab::new(Node::Leaf(pane), None));
+        }
+
+        if self.tabs.is_empty() {
+            // Nothing saved and nothing running: an ordinary first window,
+            // except that its terminal belongs to the host and will therefore
+            // outlive it.
+            let restore = session::PaneRestore::default();
+            let built = make_pane_host_spawned(restore.clone(), ctx, window, cx);
+            let pane = make_pane_hosted_or_local(built, restore, window, cx);
+            self.tabs.push(Tab::new(Node::Leaf(pane), None));
+        }
+        self.prune_groups();
+        self.active = saved.active.min(self.tabs.len().saturating_sub(1));
+        self.focus_active(window, cx);
+    }
+
+    /// The saved tab groups, rebuilt. Shared by both restore paths so a hosted
+    /// window and a serverless one cannot drift into two ideas of a group.
+    fn restore_groups(&mut self, saved: &StateFile) {
+        self.groups = saved
+            .groups
+            .iter()
+            .map(|g| TabGroup {
+                id: g.id,
+                name: g.name.clone(),
+                // NEVER drop a group on a colour-parse failure — that would
+                // remove its id from the live set and silently scatter its
+                // member tabs into Ungrouped on the next restore. Fall back to
+                // a hue derived from the id so the group simply keeps a colour.
+                color: theme::parse_hex(&g.color)
+                    .unwrap_or_else(|| hsla((g.id as f32 * 0.137).fract(), 0.55, 0.6, 1.0)),
+                text_color: g.text_color.as_deref().and_then(theme::parse_hex),
+                collapsed: g.collapsed,
+            })
+            .collect();
+        self.next_group_id = self.groups.iter().map(|g| g.id + 1).max().unwrap_or(1);
+    }
+
+    /// Tell the host to hang up the terminals behind these panes.
+    ///
+    /// Closing is intent, and it is the only thing that kills: a window that
+    /// merely stops watching a pane leaves it running on purpose. So this is
+    /// called from the two places a person means it — closing a pane, closing a
+    /// tab — and from nowhere that is merely tidying up.
+    fn hangup(&self, leaves: &[Entity<TerminalView>], cx: &App) {
+        let Some(ctx) = &self.attach else { return };
+        for leaf in leaves {
+            let Some(pane) = leaf.read(cx).pane_id() else {
+                continue;
+            };
+            if let Err(err) = ctx.link.close_pane(hostproto::PaneId(pane)) {
+                eprintln!("terminal-delight: the session host would not close pane {pane}: {err}");
+            }
+        }
+    }
+
     fn pane_count(&self) -> usize {
         let mut n = 0;
         for t in &self.tabs {
@@ -3033,6 +3476,13 @@ impl Workspace {
     fn save(&self, cx: &App) {
         // a scratch / torn-off window must never overwrite a workspace's layout
         if self.scratch {
+            return;
+        }
+        // A window whose host has gone knows nothing about the session any
+        // more: its panes are replicas of terminals that no longer exist, and
+        // the layout it would write is a picture of a corpse. Yesterday's file
+        // describes work that once ran, which is strictly more true.
+        if self.attach.as_ref().is_some_and(|ctx| ctx.link.lost()) {
             return;
         }
         // Quit-start has already handed this session back (`instance::release`),
@@ -3115,12 +3565,16 @@ impl Workspace {
                     .filter(|n| !n.is_empty())
                     .or_else(|| (!p.title.is_empty()).then(|| p.title.clone()))
                     .unwrap_or_else(|| p.mode.label().to_string());
+                // This surface addresses panes by pid. A pane that has none is
+                // not offered under an invented number — an agent that could
+                // read it but not reach it is worse than one it cannot see.
+                let Some(pid) = p.shell_pid() else { continue };
                 out.push(mcp::PaneInfo {
                     tab: ti,
                     title,
                     mode: p.mode.label().to_string(),
                     is_agent,
-                    pid: p.shell_pid(),
+                    pid,
                     cwd: rt.cwd,
                     session: rt.resume,
                     tool: p.tool_face.as_ref().map(|f| f.tool.clone()),
@@ -3168,8 +3622,9 @@ impl Workspace {
                     .filter(|n| !n.is_empty())
                     .or_else(|| (!p.title.is_empty()).then(|| p.title.clone()))
                     .unwrap_or_else(|| p.mode.label().to_string());
+                let Some(pid) = p.shell_pid() else { continue };
                 out.push(mcp::PaneMatches {
-                    pid: p.shell_pid(),
+                    pid,
                     tab: ti,
                     title,
                     mode: p.mode.label().to_string(),
@@ -3301,7 +3756,7 @@ impl Workspace {
                         tab.root.leaves(&mut leaves);
                         for leaf in leaves {
                             let p = leaf.read(cx);
-                            if p.shell_pid() == *pid {
+                            if p.shell_pid() == Some(*pid) {
                                 let exposed = mcp::should_expose(&self.mcp, p.mode.is_agent());
                                 hit = Some((leaf.clone(), exposed));
                                 break 'find;
@@ -3636,7 +4091,7 @@ impl Workspace {
                     continue;
                 }
                 let rt = view.runtime();
-                let pid = view.shell_pid();
+                let Some(pid) = view.shell_pid() else { continue };
                 out.push(vitals::PaneReq {
                     shell_pid: pid,
                     cwd: rt.cwd,
@@ -5071,7 +5526,7 @@ impl Workspace {
         self.tabs.iter().position(|t| {
             let mut leaves = vec![];
             t.root.leaves(&mut leaves);
-            leaves.iter().any(|p| p.read(cx).shell_pid() == shell_pid)
+            leaves.iter().any(|p| p.read(cx).shell_pid() == Some(shell_pid))
         })
     }
 
@@ -7378,6 +7833,12 @@ impl Workspace {
         }
         self.confirm_close = None;
         self.tab_menu = None;
+        {
+            let mut leaves = vec![];
+            self.tabs[i].root.leaves(&mut leaves);
+            let leaves: Vec<_> = leaves.into_iter().cloned().collect();
+            self.hangup(&leaves, cx);
+        }
         // Every tube in the tab goes dark at once — but only if this tab is the
         // one on screen; a background tab's panes hold stale bounds (see
         // `ghost_of`), and there is no point animating a screen nobody saw.
@@ -8332,6 +8793,20 @@ impl Workspace {
         // Take the dying tube's stage before it goes. `remove_leaf` below drops
         // the Entity, which SIGHUPs the shell — after that there is no pane left
         // to ask where it was or how bent it was.
+        // A pane the host owns does not die when this window stops watching it,
+        // so closing one has to be said out loud. Said here, before the entity
+        // is dropped: after that there is no pane left to ask which terminal it
+        // was showing.
+        {
+            let mut leaves = vec![];
+            self.tabs[from].root.leaves(&mut leaves);
+            let dying: Vec<_> = leaves
+                .into_iter()
+                .filter(|e| e.entity_id() == id)
+                .cloned()
+                .collect();
+            self.hangup(&dying, cx);
+        }
         if from == self.active {
             let mut leaves = vec![];
             self.tabs[from].root.leaves(&mut leaves);
@@ -13136,7 +13611,7 @@ impl Render for Workspace {
                                     .child(val),
                             )
                     };
-                    let vit = self.agent_vitals.get(&p.shell_pid());
+                    let vit = p.shell_pid().and_then(|pid| self.agent_vitals.get(&pid));
                     // ONE BAR. The length is the number; the colour is only
                     // which direction is bad.
                     //
@@ -16433,6 +16908,214 @@ impl Render for Workspace {
 mod tests {
     use super::*;
 
+    // ---- restoring a layout whose terminals belong to a session host -------
+
+    fn leaf_with(pane_id: Option<u64>, cwd: &str, resume: Option<&str>) -> SavedNode {
+        SavedNode::Leaf {
+            appearance: PaneTheme::default(),
+            cwd: Some(cwd.into()),
+            resume: resume.map(str::to_string),
+            name: None,
+            logo: None,
+            note: None,
+            pane_id,
+        }
+    }
+
+    fn tab_of(node: SavedNode) -> SavedTab {
+        SavedTab {
+            name: None,
+            color: None,
+            text_color: None,
+            group: None,
+            node,
+        }
+    }
+
+    fn running(id: u64, ended: bool) -> hostproto::PaneInfo {
+        hostproto::PaneInfo {
+            pane: hostproto::PaneId(id),
+            shell_pid: 1000 + id as u32,
+            cwd: Some("/tmp".into()),
+            attached: false,
+            ended,
+            geom: hostproto::PaneGeom::default(),
+        }
+    }
+
+    #[test]
+    fn a_leaf_whose_terminal_is_still_running_is_bound_to_it() {
+        let saved = vec![tab_of(leaf_with(Some(4), "/work", Some("claude --resume x")))];
+        let plan = plan_attach(&saved, &[running(4, false)]);
+        assert_eq!(
+            plan.tabs,
+            vec![vec![LeafPlan::Bind {
+                pane: hostproto::PaneId(4)
+            }]]
+        );
+        assert!(plan.orphans.is_empty());
+    }
+
+    #[test]
+    fn a_terminal_the_layout_never_mentioned_gets_a_tab_of_its_own() {
+        // The pinned invariant: the host's list of running terminals beats the
+        // file. A checkpoint written thirty seconds before a crash does not
+        // know about the pane opened twenty seconds later, and a restore that
+        // trusted the file would leave that terminal running with nothing
+        // showing it — the exact loss this feature exists to prevent, arriving
+        // through a different door.
+        let saved = vec![tab_of(leaf_with(Some(1), "/work", None))];
+        let plan = plan_attach(&saved, &[running(1, false), running(2, false)]);
+        assert_eq!(
+            plan.tabs,
+            vec![vec![LeafPlan::Bind {
+                pane: hostproto::PaneId(1)
+            }]]
+        );
+        assert_eq!(
+            plan.orphans.iter().map(|p| p.pane.0).collect::<Vec<_>>(),
+            vec![2],
+            "the unclaimed terminal must be adopted, not abandoned"
+        );
+    }
+
+    #[test]
+    fn a_pane_id_that_no_longer_exists_falls_back_to_the_saved_recipe() {
+        // Never a dropped leaf, and never a bind to a terminal that has gone.
+        let saved = vec![tab_of(leaf_with(
+            Some(7),
+            "/work",
+            Some("codex resume abc"),
+        ))];
+        let plan = plan_attach(&saved, &[]);
+        assert_eq!(
+            plan.tabs,
+            vec![vec![LeafPlan::Respawn {
+                restore: session::PaneRestore {
+                    cwd: Some("/work".into()),
+                    resume: Some("codex resume abc".into()),
+                    logo: None,
+                    note: None,
+                }
+            }]]
+        );
+    }
+
+    #[test]
+    fn a_pane_whose_process_has_ended_is_neither_bound_nor_adopted() {
+        // Its id may still be in the layout. Binding would show a window full
+        // of nothing where a shell used to be; adopting would open a tab for a
+        // terminal that has already finished.
+        let saved = vec![tab_of(leaf_with(Some(3), "/work", None))];
+        let plan = plan_attach(&saved, &[running(3, true)]);
+        assert!(
+            matches!(plan.tabs[0][0], LeafPlan::Respawn { .. }),
+            "an ended pane must not be bound: {:?}",
+            plan.tabs[0][0]
+        );
+        assert!(plan.orphans.is_empty(), "nor adopted into a tab of its own");
+    }
+
+    #[test]
+    fn two_leaves_claiming_one_terminal_bind_it_once() {
+        // A layout edited by hand, or written wrong. The first leaf gets the
+        // terminal; the second gets its own rather than a second view of the
+        // same one, which is the only reading that loses nothing.
+        let saved = vec![tab_of(SavedNode::Split {
+            dir: SplitDir::Row,
+            ratio: 0.5,
+            a: Box::new(leaf_with(Some(5), "/a", None)),
+            b: Box::new(leaf_with(Some(5), "/b", None)),
+        })];
+        let plan = plan_attach(&saved, &[running(5, false)]);
+        assert_eq!(
+            plan.tabs[0][0],
+            LeafPlan::Bind {
+                pane: hostproto::PaneId(5)
+            }
+        );
+        assert!(matches!(plan.tabs[0][1], LeafPlan::Respawn { .. }));
+        assert!(plan.orphans.is_empty(), "5 was claimed, once");
+    }
+
+    #[test]
+    fn a_layout_written_before_session_hosts_existed_respawns_everything() {
+        // No pane_id anywhere is not "pane zero": it is a file written by a
+        // window that owned its own terminals, and every leaf of it is a recipe.
+        let saved = vec![tab_of(leaf_with(None, "/work", Some("claude --resume x")))];
+        let plan = plan_attach(&saved, &[running(1, false)]);
+        assert!(matches!(plan.tabs[0][0], LeafPlan::Respawn { .. }));
+        assert_eq!(
+            plan.orphans.iter().map(|p| p.pane.0).collect::<Vec<_>>(),
+            vec![1],
+            "and the running terminal is still adopted"
+        );
+    }
+
+    #[test]
+    fn the_plan_walks_leaves_in_the_order_the_tree_is_built() {
+        // build_node_attached takes one decision per leaf from an iterator, so
+        // a plan in a different order would hand pane 1's terminal to the leaf
+        // that was showing pane 2 — a silent, total scramble of somebody's
+        // window.
+        let saved = vec![tab_of(SavedNode::Split {
+            dir: SplitDir::Col,
+            ratio: 0.5,
+            a: Box::new(leaf_with(Some(1), "/a", None)),
+            b: Box::new(SavedNode::Split {
+                dir: SplitDir::Row,
+                ratio: 0.5,
+                a: Box::new(leaf_with(Some(2), "/b", None)),
+                b: Box::new(leaf_with(Some(3), "/c", None)),
+            }),
+        })];
+        let plan = plan_attach(
+            &saved,
+            &[running(1, false), running(2, false), running(3, false)],
+        );
+        let bound: Vec<u64> = plan.tabs[0]
+            .iter()
+            .map(|p| match p {
+                LeafPlan::Bind { pane } => pane.0,
+                LeafPlan::Respawn { .. } => 0,
+            })
+            .collect();
+        assert_eq!(bound, vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn a_leafs_pane_id_survives_a_round_trip_and_an_old_file_reads_absent() {
+        let with_id = SavedTab {
+            name: None,
+            color: None,
+            text_color: None,
+            group: None,
+            node: leaf_with(Some(12), "/work", None),
+        };
+        let body = toml::to_string(&StateFile {
+            tabs: vec![with_id],
+            ..Default::default()
+        })
+        .expect("serialise");
+        assert!(body.contains("pane_id = 12"), "{body}");
+        let back: StateFile = toml::from_str(&body).expect("read back");
+        let SavedNode::Leaf { pane_id, .. } = &back.tabs[0].node else {
+            panic!("not a leaf");
+        };
+        assert_eq!(*pane_id, Some(12));
+
+        // A file written before the field existed reads as absent — never as
+        // pane zero, which is a real pane id somebody's host could mint.
+        let old: StateFile = toml::from_str(
+            "active = 0\npanes = 1\n[[tabs]]\n[tabs.node.Leaf]\ncwd = \"/work\"\n",
+        )
+        .expect("read an old file");
+        let SavedNode::Leaf { pane_id, .. } = &old.tabs[0].node else {
+            panic!("not a leaf");
+        };
+        assert_eq!(*pane_id, None);
+    }
+
     /// The HEY blinker is a square wave, not a fade: hard ON through the first
     /// 55% of the cycle, hard OFF after — nothing in between, ever.
     #[test]
@@ -17262,6 +17945,7 @@ mod tests {
             name: None,
             logo: None,
             note: None,
+            pane_id: None,
         };
         let resumes = |tabs: &mut [SavedTab]| {
             let mut out = vec![];
@@ -17338,6 +18022,7 @@ mod tests {
             name: None,
             logo: None,
             note: None,
+            pane_id: None,
         };
         assert_eq!(count_saved_leaves(&leaf()), 1);
         let split = SavedNode::Split {
@@ -17646,6 +18331,7 @@ id = "hacker"
                     name: None,
                     logo: None,
                     note: None,
+                    pane_id: None,
                 },
             }],
             groups: vec![],
@@ -17688,6 +18374,7 @@ id = "hacker"
                     name: None,
                     logo: None,
                     note: None,
+                    pane_id: None,
                 },
             }],
             groups: vec![],
@@ -17719,6 +18406,7 @@ id = "hacker"
             name: None,
             logo: None,
             note: None,
+            pane_id: None,
         };
         let state = StateFile {
             panes: 0,
@@ -17962,6 +18650,7 @@ node = "Leaf"
             name: None,
             logo: Some("/home/u/Pictures/acme.png".to_string()),
             note: None,
+            pane_id: None,
         };
         let toml = toml::to_string(&node).expect("serialize leaf");
         assert!(
@@ -18043,6 +18732,7 @@ node = "Leaf"
             name: None,
             logo: None,
             note: None,
+            pane_id: None,
         };
         let node = SavedNode::Split {
             dir: SplitDir::Row,
@@ -18574,16 +19264,61 @@ fn main() {
     // A scratch window never writes, so it only borrows a key to read the local
     // theme. A real one ADOPTS: the most-recently-saved session nobody holds,
     // preferring the one last saved on this workspace.
-    let (key, claim) = if explicit_scratch {
-        (
-            instance::resolve_key(),
-            instance::Claim {
-                owned: false,
-                lock: None,
-            },
-        )
+    // Behind a flag, and only behind a flag: a window that shows terminals a
+    // session host owns, so that closing it — or losing it — stops being the
+    // same thing as ending the work inside it. Everything else on this path is
+    // byte-for-byte what it was, because the day this becomes the default is a
+    // day decided by measurements, not by this line.
+    let hosted = std::env::var("TD_SESSIOND").is_ok_and(|v| v == "1");
+    let (key, claim, host) = if explicit_scratch || !hosted {
+        let (key, claim) = if explicit_scratch {
+            (
+                instance::resolve_key(),
+                instance::Claim {
+                    owned: false,
+                    lock: None,
+                },
+            )
+        } else {
+            instance::resolve_session()
+        };
+        (key, claim, None)
     } else {
-        instance::resolve_session()
+        let resolved = instance::resolve_session_hosted();
+        // Only the window that owns the session file talks to its host. A
+        // window that could not claim it is a scratch window, exactly as it has
+        // always been, and attaching anyway would put two windows on one set of
+        // terminals with neither of them owning the layout.
+        let link = if resolved.claim.owned {
+            let reached = match resolved.route {
+                instance::Route::AttachLive => hostctl::HostLink::attach(&resolved.id),
+                instance::Route::SpawnHost => {
+                    hostctl::spawn_host(&resolved.id, hostctl::SPAWN_BUDGET)
+                }
+            };
+            match reached {
+                Ok(link) => {
+                    eprintln!(
+                        "terminal-delight: attached to the session host for session '{}'",
+                        link.session()
+                    );
+                    Some(link)
+                }
+                Err(err) => {
+                    // Say it plainly and open anyway. A terminal that opens
+                    // without its host is a bad day; a terminal that refuses to
+                    // open is a worse one.
+                    eprintln!(
+                        "terminal-delight: could not reach a session host for session                          '{}' ({err}); opening a window that owns its own terminals",
+                        resolved.id
+                    );
+                    None
+                }
+            }
+        } else {
+            None
+        };
+        (resolved.id, resolved.claim, link)
     };
     let owns_session = claim.owned;
     // Bind the key either way: a scratch window still reads the workspace's
@@ -18616,6 +19351,7 @@ fn main() {
     };
 
     application().run(move |cx: &mut App| {
+        let host = host.clone();
         theme::init(cx);
         // The desktop's own colour schemes, scanned once. Must follow theme::init
         // (a state restore resolves panes against both) and precede any window.
@@ -18728,6 +19464,8 @@ fn main() {
                     cx.new(|cx| Workspace::new_demo(window, cx))
                 } else if scratch {
                     cx.new(|cx| Workspace::new_scratch(seed.clone(), window, cx))
+                } else if let Some(link) = host.clone() {
+                    cx.new(|cx| Workspace::new_attached(AttachCtx { link }, window, cx))
                 } else {
                     cx.new(|cx| Workspace::new(open_seed.clone(), window, cx))
                 }

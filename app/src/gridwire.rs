@@ -402,6 +402,139 @@ fn hash_color(color: Color) -> u32 {
 /// combining marks, adding a newline after the final row, and forcing line-wrap
 /// off before the paint were all caught — two of them only after the tests were
 /// strengthened, because the first versions passed against a broken encoder.
+// ---------------------------------------------------------------------------
+// The divergence guard
+// ---------------------------------------------------------------------------
+
+/// One integrity probe: what the authoritative terminal looked like, and how
+/// far into a client's stream that moment was.
+///
+/// Both numbers are required and neither is sufficient. A hash alone cannot be
+/// acted on, because a client that is merely behind would look exactly like a
+/// client that is wrong; an offset alone says nothing about content. Together
+/// they say: *when you have taken this many bytes, your grid must hash to
+/// this*, which is a claim a client can check by itself and either satisfy,
+/// not-yet-satisfy, or fail.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
+pub struct GridCheck {
+    /// Which pane, in the host's own numbering.
+    pub pane: u64,
+    /// The host's count of bytes enqueued to this client's stream at the moment
+    /// the hash was taken. The socket is ordered, so it is the same clock the
+    /// client's [`crate::socketpty::CountingReader`] ticks.
+    pub stream_offset: u64,
+    pub hash: u64,
+}
+
+/// What a client concludes about a probe.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum GuardVerdict {
+    /// Nothing can be concluded from this probe, for a stated reason.
+    ///
+    /// **Not a mismatch.** Unknown is not wrong, and a guard that reported
+    /// divergence whenever the two ends were merely at different points in the
+    /// stream would fire constantly and then be switched off — which is how a
+    /// check becomes decoration.
+    NotYet(Unsettled),
+    Match,
+    /// The two terminals have genuinely disagreed. The repair is loud: throw
+    /// the replica away and ask for a fresh snapshot, because a client that has
+    /// diverged cannot reason its way back.
+    Mismatch { host: u64, replica: u64 },
+}
+
+/// Why a probe could not be turned into an answer. Each of these is a fact
+/// worth having: a guard that keeps landing on `Ahead` is being probed too
+/// slowly, and one that keeps landing on `Moving` is being probed during a
+/// flood rather than at rest.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Unsettled {
+    /// The replica has not yet taken every byte the probe describes.
+    Behind { consumed: u64, expected: u64 },
+    /// The replica has taken bytes the probe does not describe. The probe is
+    /// stale — the pane printed more after the host read its grid — and the
+    /// next one will be comparable.
+    Ahead { consumed: u64, expected: u64 },
+    /// An event landed while the grid was being read, so the grid that was
+    /// hashed is not the one the probe describes.
+    Moving,
+}
+
+/// A client's side of the guard: everything needed to answer a probe, and
+/// nothing else.
+///
+/// Deliberately not part of [`crate::term::Session`]. The pane never sees this
+/// type, so a replica stays byte-for-byte the same shape as a locally-spawned
+/// terminal and no rendering path can accidentally start depending on being
+/// attached.
+pub struct ReplicaGuard {
+    term: std::sync::Arc<alacritty_terminal::sync::FairMutex<Term<crate::term::EventProxy>>>,
+    generation: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    consumed: std::sync::Arc<std::sync::atomic::AtomicU64>,
+}
+
+impl ReplicaGuard {
+    pub fn new(
+        term: std::sync::Arc<alacritty_terminal::sync::FairMutex<Term<crate::term::EventProxy>>>,
+        generation: std::sync::Arc<std::sync::atomic::AtomicU64>,
+        consumed: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    ) -> Self {
+        Self {
+            term,
+            generation,
+            consumed,
+        }
+    }
+
+    /// Bytes this replica's parser has taken off the socket.
+    pub fn consumed(&self) -> u64 {
+        self.consumed
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Answer a probe.
+    ///
+    /// The fence is the same one the host takes and for the same reason: the
+    /// reader thread holds alacritty's *lease* for a whole read-and-parse cycle
+    /// (`event_loop.rs:117`), so a lease taken here cannot land inside one, and
+    /// the grid read under it contains exactly the bytes counted so far. The
+    /// unfair lock is the one to pair with a lease — the fair `lock` would try
+    /// to take the lease this thread is already holding.
+    pub fn check(&self, probe: &GridCheck) -> GuardVerdict {
+        use std::sync::atomic::Ordering;
+        // Read the counters under the fence, not before it: sampling first and
+        // hashing after would compare a grid to a byte count taken at a
+        // different moment, which is the very confusion this exists to avoid.
+        let _lease = self.term.lease();
+        let term = self.term.lock_unfair();
+        let consumed = self.consumed.load(Ordering::Relaxed);
+        let before = self.generation.load(Ordering::Relaxed);
+        if consumed != probe.stream_offset {
+            let (consumed, expected) = (consumed, probe.stream_offset);
+            return GuardVerdict::NotYet(if consumed < expected {
+                Unsettled::Behind { consumed, expected }
+            } else {
+                Unsettled::Ahead { consumed, expected }
+            });
+        }
+        let replica = grid_hash(&*term);
+        // A generation that moved while we held the fence would mean an event
+        // landed mid-read; the grid we hashed is then not the grid the probe
+        // describes. Say nothing rather than something wrong.
+        if self.generation.load(Ordering::Relaxed) != before {
+            return GuardVerdict::NotYet(Unsettled::Moving);
+        }
+        if replica == probe.hash {
+            GuardVerdict::Match
+        } else {
+            GuardVerdict::Mismatch {
+                host: probe.hash,
+                replica,
+            }
+        }
+    }
+}
+
 /// The seventh, turning on insert mode before the paint, survives and is
 /// expected to: inserting into blank cells and overwriting them leave the same
 /// grid, so nothing observable changed.

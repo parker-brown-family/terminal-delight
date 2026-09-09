@@ -28,8 +28,9 @@
 // works.
 #![allow(dead_code)]
 
-use std::io;
+use std::io::{self, Read};
 use std::os::unix::net::UnixStream;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use alacritty_terminal::event::{OnResize, WindowSize};
@@ -81,9 +82,34 @@ fn hung_up(stream: &UnixStream) -> bool {
     }
 }
 
+/// Every byte handed to the emulator's parser, counted.
+///
+/// The count is the client's half of a shared clock. The host counts what it
+/// has put into this pane's stream; a socket delivers in order and drops
+/// nothing, so when the two numbers agree, the two terminals have seen exactly
+/// the same bytes — which is what makes comparing their grids meaningful
+/// rather than a race. Compare grids without it and a replica that is merely
+/// *behind* is indistinguishable from one that is *wrong*.
+pub struct CountingReader {
+    inner: UnixStream,
+    consumed: Arc<AtomicU64>,
+}
+
+impl Read for CountingReader {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let read = self.inner.read(buf)?;
+        // Counted here rather than after parsing, because this is the only
+        // place the event loop takes bytes from: everything read is parsed
+        // before the loop releases its lease (`event_loop.rs:117`), so by the
+        // time anything can ask, the count and the grid describe one moment.
+        self.consumed.fetch_add(read as u64, Ordering::Relaxed);
+        Ok(read)
+    }
+}
+
 /// A byte stream dressed as the pseudoterminal alacritty's event loop expects.
 pub struct SocketPty {
-    reader: UnixStream,
+    reader: CountingReader,
     writer: UnixStream,
     /// A second descriptor onto the same stream, registered under the child
     /// key. See [`SocketPty::next_child_event`] for why a socket needs one.
@@ -120,12 +146,21 @@ impl SocketPty {
         let writer = stream.try_clone()?;
         let hangup_watch = stream.try_clone()?;
         Ok(Self {
-            reader: stream,
+            reader: CountingReader {
+                inner: stream,
+                consumed: Arc::new(AtomicU64::new(0)),
+            },
             writer,
             hangup_watch,
             reported: false,
             announce_resize: Box::new(announce_resize),
         })
+    }
+
+    /// The running count of bytes this terminal has taken off the socket,
+    /// shared with whoever wants to know how far along it is.
+    pub fn consumed(&self) -> Arc<AtomicU64> {
+        self.reader.consumed.clone()
     }
 
     /// Whether the far end has hung up. The host closing a pane's stream is
@@ -136,7 +171,7 @@ impl SocketPty {
 }
 
 impl EventedReadWrite for SocketPty {
-    type Reader = UnixStream;
+    type Reader = CountingReader;
     type Writer = UnixStream;
 
     unsafe fn register(
@@ -150,7 +185,7 @@ impl EventedReadWrite for SocketPty {
         // loop owns for as long as it polls them — the lifetime requirement
         // the trait states.
         unsafe {
-            poll.add_with_mode(&self.reader, interest, mode)?;
+            poll.add_with_mode(&self.reader.inner, interest, mode)?;
             poll.add_with_mode(
                 &self.hangup_watch,
                 Event::readable(PTY_CHILD_EVENT_TOKEN),
@@ -166,7 +201,7 @@ impl EventedReadWrite for SocketPty {
         mode: PollMode,
     ) -> io::Result<()> {
         interest.key = PTY_READ_WRITE_TOKEN;
-        poll.modify_with_mode(&self.reader, interest, mode)?;
+        poll.modify_with_mode(&self.reader.inner, interest, mode)?;
         poll.modify_with_mode(
             &self.hangup_watch,
             Event::readable(PTY_CHILD_EVENT_TOKEN),
@@ -175,7 +210,7 @@ impl EventedReadWrite for SocketPty {
     }
 
     fn deregister(&mut self, poll: &Arc<Poller>) -> io::Result<()> {
-        poll.delete(&self.reader)?;
+        poll.delete(&self.reader.inner)?;
         poll.delete(&self.hangup_watch)
     }
 

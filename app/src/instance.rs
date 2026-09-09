@@ -625,6 +625,168 @@ fn json_string(src: &str, key: &str) -> Option<String> {
     None
 }
 
+// ---- hosted resolution (TD_SESSIOND) ----
+
+/// How the resolved session is reached when a session host owns the terminals.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum Route {
+    /// A host is already running this session and no window is holding its
+    /// panes. Attach to it: the work is still there, and the window that used
+    /// to be watching it is not.
+    AttachLive,
+    /// Nothing is running this session. Start a host, then attach.
+    SpawnHost,
+}
+
+/// A resolved hosted session: which one, how it is reached, and the ownership
+/// claim that decides whether this window may write the session file.
+pub struct Resolved {
+    pub id: String,
+    pub route: Route,
+    pub claim: Claim,
+}
+
+/// Which session a hosted window opens.
+///
+/// The ordering differs from [`resolve_session`] in exactly one way, and it is
+/// the point of the whole feature: **a live host with nobody watching it
+/// outranks the newest file on disk.** A file describes work that has stopped;
+/// a host is work that is still running. After a window is killed, its host is
+/// the thing that should be found — not a saved layout that would respawn
+/// shells beside the ones already going.
+///
+///  1. `$TD_SESSION` — an explicit name still wins everything, as everywhere
+///     else. Live host → attach to it; no host → start one.
+///  2. any session whose host answers and reports nobody attached, best-ranked
+///     first. THE kill-and-relaunch case.
+///  3. the most-recently-saved session with no live host → start a host for it.
+///  4. a fresh id → start a host for it.
+pub fn resolve_session_hosted() -> Resolved {
+    resolve_hosted_in(
+        &config_dir(),
+        explicit_session().as_deref(),
+        current_workspace().as_deref(),
+        &crate::hostctl::sockets_present,
+        &crate::hostctl::probe_host,
+    )
+}
+
+/// The injectable core, like [`resolve_session_in`]: `hosts` lists the session
+/// names with sockets and `probe` says what each one really is, so every tier
+/// is reachable from a test without a host process anywhere.
+pub fn resolve_hosted_in(
+    config: &Path,
+    explicit: Option<&str>,
+    here: Option<&str>,
+    hosts: &dyn Fn() -> Vec<String>,
+    probe: &dyn Fn(&str) -> crate::hostctl::HostProbe,
+) -> Resolved {
+    if let Some(id) = explicit {
+        let claim = claim_in(config, id);
+        let route = if probe(id).is_live() {
+            Route::AttachLive
+        } else {
+            Route::SpawnHost
+        };
+        return Resolved {
+            id: id.to_string(),
+            route,
+            claim,
+        };
+    }
+
+    // Tier 2: a running host nobody is watching, best-ranked first. Sessions
+    // with a saved file rank by the same rules a cold launch has always used;
+    // a host with no file yet is still a candidate, just not a preferred one —
+    // it has no recorded work to prefer.
+    let ranked = rank(scan_sessions(config), here);
+    let live = hosts();
+    let ordered = ranked
+        .iter()
+        .filter(|id| live.contains(id))
+        .cloned()
+        .chain(live.iter().filter(|id| !ranked.contains(id)).cloned())
+        .collect::<Vec<_>>();
+    for id in ordered {
+        if !probe(&id).is_free() {
+            continue;
+        }
+        let claim = claim_in(config, &id);
+        if claim.owned {
+            return Resolved {
+                id,
+                route: Route::AttachLive,
+                claim,
+            };
+        }
+        // Somebody else's window owns this session's file. Its host may well
+        // be unattended for a moment — mid-relaunch — and taking it would put
+        // two windows on one session. Leave it.
+    }
+
+    // Tier 3: a saved session with nothing running it at all. Start one.
+    //
+    // "Nothing at all" is stricter than "not attachable": a host that answers
+    // nothing is not an empty session, and starting a second host over its
+    // socket would strand whatever it is holding. A session in that state is
+    // left entirely alone until somebody looks at it.
+    for id in ranked {
+        if !probe(&id).is_absent() {
+            continue;
+        }
+        let claim = claim_in(config, &id);
+        if claim.owned {
+            return Resolved {
+                id,
+                route: Route::SpawnHost,
+                claim,
+            };
+        }
+    }
+
+    // Tier 4: nothing to adopt at all.
+    let (id, claim) = fresh_session(config);
+    Resolved {
+        id,
+        route: Route::SpawnHost,
+        claim,
+    }
+}
+
+/// The lock two windows contend on when both decide, at the same instant, that
+/// a session needs a host.
+///
+/// Held across probe-spawn-wait, so the loser finds the winner's host rather
+/// than starting a second one over its socket. `None` when the lock cannot be
+/// arbitrated at all — a machine where the config directory is unwritable is
+/// already broken in louder ways, and refusing to start a terminal over it
+/// would be the wrong trade.
+pub fn lock_host_spawn(key: &str) -> Option<File> {
+    lock_host_spawn_in(&config_dir(), key)
+}
+
+fn lock_host_spawn_in(config: &Path, key: &str) -> Option<File> {
+    DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(sessions_dir_in(config))
+        .ok()?;
+    let file = OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .mode(0o600)
+        .open(sessions_dir_in(config).join(format!("{key}.hostspawn.lock")))
+        .ok()?;
+    // Blocking, unlike the ownership claim: the winner holds this only for as
+    // long as it takes a host to answer, and the right thing for the loser to
+    // do is wait and then find it.
+    if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) } != 0 {
+        return None;
+    }
+    Some(file)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -634,6 +796,226 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    /// A saved session on disk, aged so that "most recent" is decided rather
+    /// than raced.
+    fn saved(config: &Path, id: &str, panes: usize, ago: Duration) {
+        let dir = sessions_dir_in(config);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = state_file_in(config, id);
+        std::fs::write(&path, format!("panes = {panes}\nactive = 0\n")).unwrap();
+        let when = std::time::SystemTime::now() - ago;
+        let stamp = filetime(when);
+        let times = [stamp, stamp];
+        let path_c = std::ffi::CString::new(path.to_str().unwrap()).unwrap();
+        unsafe { libc::utimes(path_c.as_ptr(), times.as_ptr()) };
+    }
+
+    fn filetime(when: std::time::SystemTime) -> libc::timeval {
+        let secs = when
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as libc::time_t;
+        libc::timeval {
+            tv_sec: secs,
+            tv_usec: 0,
+        }
+    }
+
+    fn live(session: &str, attended: bool) -> crate::hostctl::HostProbe {
+        crate::hostctl::HostProbe::Live {
+            proto: 1,
+            session: session.to_string(),
+            panes: 2,
+            attended,
+        }
+    }
+
+    #[test]
+    fn a_running_host_nobody_is_watching_beats_the_newest_file() {
+        // THE kill-and-relaunch case, and the one line of ordering that the
+        // whole feature turns on. Session 3 was saved most recently, so today's
+        // launch would take it — but session 2's terminals are still running
+        // with nobody looking at them, and a file describes work that stopped.
+        let _guard = crate::testsync::forks_and_locks();
+        let config = tmp("hosted-adopt");
+        saved(&config, "2", 3, Duration::from_secs(600));
+        saved(&config, "3", 3, Duration::from_secs(10));
+
+        let resolved = resolve_hosted_in(
+            &config,
+            None,
+            None,
+            &|| vec!["2".to_string()],
+            &|id| {
+                if id == "2" {
+                    live("2", false)
+                } else {
+                    crate::hostctl::HostProbe::NoSocket
+                }
+            },
+        );
+        assert_eq!(resolved.id, "2");
+        assert_eq!(resolved.route, Route::AttachLive);
+        assert!(resolved.claim.owned, "and it is this window's to write");
+    }
+
+    #[test]
+    fn a_host_somebody_is_already_watching_is_left_alone() {
+        // Opening a second window must not take the panes off the first one.
+        let _guard = crate::testsync::forks_and_locks();
+        let config = tmp("hosted-attended");
+        saved(&config, "2", 3, Duration::from_secs(600));
+
+        let resolved = resolve_hosted_in(
+            &config,
+            None,
+            None,
+            &|| vec!["2".to_string()],
+            &|_| live("2", true),
+        );
+        assert_ne!(resolved.id, "2", "the attended session was adopted anyway");
+        assert_eq!(resolved.route, Route::SpawnHost);
+    }
+
+    #[test]
+    fn a_saved_session_with_no_host_gets_one_started_for_it() {
+        let _guard = crate::testsync::forks_and_locks();
+        let config = tmp("hosted-spawn");
+        saved(&config, "4", 5, Duration::from_secs(30));
+        let resolved = resolve_hosted_in(
+            &config,
+            None,
+            None,
+            &|| vec![],
+            &|_| crate::hostctl::HostProbe::NoSocket,
+        );
+        assert_eq!(resolved.id, "4");
+        assert_eq!(resolved.route, Route::SpawnHost);
+    }
+
+    #[test]
+    fn nothing_saved_and_nothing_running_is_a_fresh_session() {
+        let _guard = crate::testsync::forks_and_locks();
+        let config = tmp("hosted-fresh");
+        let resolved = resolve_hosted_in(
+            &config,
+            None,
+            None,
+            &|| vec![],
+            &|_| crate::hostctl::HostProbe::NoSocket,
+        );
+        assert_eq!(resolved.id, "1");
+        assert_eq!(resolved.route, Route::SpawnHost);
+    }
+
+    #[test]
+    fn an_explicit_session_wins_every_tier_and_is_honoured_either_way() {
+        // `$TD_SESSION` is the escape hatch everywhere else in this file, and
+        // hosting does not change that: naming a session reaches it whether or
+        // not anything is running it, and whether or not a better candidate
+        // exists.
+        let _guard = crate::testsync::forks_and_locks();
+        let config = tmp("hosted-explicit");
+        saved(&config, "9", 8, Duration::from_secs(5));
+
+        let attaching = resolve_hosted_in(
+            &config,
+            Some("work"),
+            None,
+            &|| vec!["9".to_string()],
+            &|id| {
+                if id == "work" {
+                    live("work", false)
+                } else {
+                    live("9", false)
+                }
+            },
+        );
+        assert_eq!(attaching.id, "work");
+        assert_eq!(attaching.route, Route::AttachLive);
+
+        let starting = resolve_hosted_in(
+            &config,
+            Some("work"),
+            None,
+            &|| vec![],
+            &|_| crate::hostctl::HostProbe::NoSocket,
+        );
+        assert_eq!(starting.id, "work");
+        assert_eq!(starting.route, Route::SpawnHost);
+    }
+
+    #[test]
+    fn a_socket_that_will_not_answer_is_not_adopted() {
+        // Unknown is not free. A host in a state nobody can talk to must not be
+        // treated as an empty session and taken over — and must not be treated
+        // as absent either, which is what would start a second host beside it.
+        let _guard = crate::testsync::forks_and_locks();
+        let config = tmp("hosted-wedged");
+        saved(&config, "2", 4, Duration::from_secs(60));
+        let resolved = resolve_hosted_in(
+            &config,
+            None,
+            None,
+            &|| vec!["2".to_string()],
+            &|_| crate::hostctl::HostProbe::Unresponsive,
+        );
+        assert_ne!(
+            resolved.id, "2",
+            "a session whose host will not speak was adopted"
+        );
+        // and no second host is started over the wedged one either
+        assert_eq!(resolved.route, Route::SpawnHost);
+        assert_eq!(resolved.id, "1", "a fresh session, not the wedged one");
+    }
+
+    #[test]
+    fn a_host_with_no_saved_file_is_still_a_candidate() {
+        // A session started and never saved is still running terminals. It
+        // ranks below sessions with recorded work, and above nothing.
+        let _guard = crate::testsync::forks_and_locks();
+        let config = tmp("hosted-unsaved");
+        let resolved = resolve_hosted_in(
+            &config,
+            None,
+            None,
+            &|| vec!["7".to_string()],
+            &|_| live("7", false),
+        );
+        assert_eq!(resolved.id, "7");
+        assert_eq!(resolved.route, Route::AttachLive);
+    }
+
+    #[test]
+    fn two_windows_cannot_both_be_in_the_host_spawn_gate() {
+        // The gate exists because `serve` unlinks a live socket and rebinds:
+        // two windows starting a host for one session at the same moment would
+        // leave one of them running terminals nothing can reach.
+        let _guard = crate::testsync::forks_and_locks();
+        let config = tmp("hosted-gate");
+        let held = lock_host_spawn_in(&config, "2").expect("first window takes the gate");
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        let racing = {
+            let config = config.clone();
+            std::thread::spawn(move || {
+                let second = lock_host_spawn_in(&config, "2");
+                tx.send(second.is_some()).ok();
+            })
+        };
+        assert!(
+            rx.recv_timeout(Duration::from_millis(300)).is_err(),
+            "the second window walked straight into the gate"
+        );
+        drop(held);
+        assert_eq!(
+            rx.recv_timeout(Duration::from_secs(5)),
+            Ok(true),
+            "and could not get in once the first let go"
+        );
+        racing.join().unwrap();
     }
 
     #[test]

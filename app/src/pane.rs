@@ -216,6 +216,21 @@ fn foreground_mode(master: &std::fs::File, shell_pid: u32) -> PaneMode {
     PaneMode::classify(&comm, &cmdline)
 }
 
+/// The same question asked of /proc, for a terminal this process does not own.
+///
+/// `None` means the answer could not be had — the process is gone, or has no
+/// controlling terminal — and the caller leaves the pane's mode alone. A guess
+/// here would be worse than silence: a pane showing SHELL because nothing could
+/// be read looks exactly like a pane at a prompt, and the agent wall is built
+/// on that distinction.
+fn foreground_mode_via_proc(shell_pid: u32) -> Option<PaneMode> {
+    let report = crate::session::probe_external(shell_pid, &crate::session::home_dir()).ok()?;
+    if report.fg_pid == shell_pid {
+        return Some(PaneMode::Shell);
+    }
+    Some(PaneMode::classify(&report.comm, &report.cmdline))
+}
+
 /// The consistent header icon size (≈2× the old glyphs).
 pub const HICON: f32 = 28.0;
 
@@ -1786,6 +1801,15 @@ struct MirrorDocKey {
 pub struct TerminalView {
     focus_handle: FocusHandle,
     session: term::Session,
+    /// The session host's durable name for this pane, when the terminal in it
+    /// belongs to a host rather than to this window. `None` is not a missing
+    /// value to be filled in later: it says this pane's terminal is this
+    /// process's own child, which is a different kind of pane, not an
+    /// unidentified one.
+    pane_id: Option<u64>,
+    /// The divergence guard, on an attached pane only — the thing that can
+    /// answer "is what I am drawing still what the host has?".
+    guard: Option<crate::gridwire::ReplicaGuard>,
     /// The OSC-driven shell title (apps overwrite it via the title sequence).
     pub title: String,
     /// A user-set name (right-click the header to rename). Wins over `title`
@@ -2414,20 +2438,65 @@ impl TerminalView {
     /// What this pane is doing right now — cwd + resumable agent session —
     /// captured from the kernel for the workspace snapshot.
     pub fn runtime(&self) -> crate::session::PaneRuntime {
-        crate::session::capture(self.session.master.as_ref(), self.session.shell_pid)
+        match (self.session.master.as_ref(), self.session.shell_pid) {
+            // Our own terminal: ask the kernel through the descriptor we hold.
+            (Some(master), Some(pid)) => crate::session::capture(Some(master), pid),
+            // Somebody else's: the descriptor is theirs, so the same questions
+            // are asked of /proc instead. Same answers, one hop further away.
+            (None, Some(pid)) => crate::session::capture_via_proc(pid),
+            // No terminal we can name. Nothing is known, and nothing is the
+            // honest thing to report — a pane with no process is not a pane in
+            // the root directory running nothing.
+            (_, None) => crate::session::PaneRuntime::default(),
+        }
     }
 
     /// The pane's live cwd, cheaply (no agent-session scan) — polled by the
     /// workspace's dir-logo sweep and read at picker-open / pick time.
     pub fn current_cwd(&self) -> Option<String> {
-        crate::session::capture_cwd(self.session.master.as_ref(), self.session.shell_pid)
+        let pid = self.session.shell_pid?;
+        crate::session::capture_cwd(self.session.master.as_ref(), pid)
     }
 
     /// This pane's shell pid — the kernel handle behind its identity. Ephemeral
     /// (recycles across a resume); the durable key is the agent session. Read by
     /// the read-only MCP snapshot.
-    pub fn shell_pid(&self) -> u32 {
+    ///
+    /// `None` when nobody has said what runs here: an attached pane whose host
+    /// named no process. Callers that use a pid as an address have to decide
+    /// what to do about that, which is the point — the old signature let them
+    /// address a pane by a number that had been invented for them.
+    pub fn shell_pid(&self) -> Option<u32> {
         self.session.shell_pid
+    }
+
+    /// The host's durable name for this pane, if it has one.
+    pub fn pane_id(&self) -> Option<u64> {
+        self.pane_id
+    }
+
+    /// The mode a session host reported, replacing the answer a pane with a PTY
+    /// of its own reads from the kernel. Nothing calls this until the host has
+    /// a way to say so; it is the receiving half of that sentence.
+    #[allow(dead_code)]
+    pub fn set_host_mode(&mut self, mode: PaneMode, cx: &mut Context<Self>) {
+        if self.mode != mode {
+            self.mode = mode;
+            cx.notify();
+        }
+    }
+
+    /// Answer a host's integrity probe about this pane.
+    ///
+    /// A mismatch is not repaired here: the repair is to take the pane again,
+    /// which is a workspace-level act (a fresh stream, a fresh snapshot), and a
+    /// pane cannot re-attach itself.
+    #[allow(dead_code)]
+    pub fn check_divergence(
+        &self,
+        probe: &crate::gridwire::GridCheck,
+    ) -> Option<crate::gridwire::GuardVerdict> {
+        self.guard.as_ref().map(|guard| guard.check(probe))
     }
 
     /// Whether this pane is floating a click-target popup of its OWN over the
@@ -2457,6 +2526,43 @@ impl TerminalView {
             cols: 100,
             rows: 28,
         };
+        let cwd = restore.cwd.clone().map(std::path::PathBuf::from);
+        let session = term::spawn_in(grid, 8, 20, cwd).expect("spawn shell");
+        if let Some(cmd) = restore.resume.as_deref() {
+            session.notifier.notify(format!("{cmd}\n").into_bytes());
+        }
+        Self::around(session, None, None, &restore, grid, cx)
+    }
+
+    /// A pane showing a terminal this window does not own.
+    ///
+    /// Everything below the seam is identical to a pane with its own shell —
+    /// the same event pump, the same grid reads, the same selection and scroll,
+    /// which stay client state because they were never anywhere else. What
+    /// differs is what the pane may assume about the process at the far end:
+    /// there is no descriptor to ask the kernel through, and the pid it has is
+    /// somebody else's child.
+    pub fn new_attached(
+        session: term::Session,
+        guard: crate::gridwire::ReplicaGuard,
+        pane_id: u64,
+        restore: crate::session::PaneRestore,
+        grid: term::GridSize,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        Self::around(session, Some(guard), Some(pane_id), &restore, grid, cx)
+    }
+
+    /// Everything a pane is once its terminal exists, whichever kind it is.
+    fn around(
+        session: term::Session,
+        guard: Option<crate::gridwire::ReplicaGuard>,
+        pane_id: Option<u64>,
+        restore: &crate::session::PaneRestore,
+        grid: term::GridSize,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let mut session = session;
         let logo = restore.logo.clone();
         // A restored note comes back POSTED, never composing: the window just
         // opened and the cursor belongs to the shell, not to a piece of paper.
@@ -2475,12 +2581,6 @@ impl TerminalView {
                 edit: None,
                 pinned: n.pinned,
             });
-        let cwd = restore.cwd.clone().map(std::path::PathBuf::from);
-        let mut session = term::spawn_in(grid, 8, 20, cwd).expect("spawn shell");
-        if let Some(cmd) = restore.resume.as_deref() {
-            session.notifier.notify(format!("{cmd}\n").into_bytes());
-        }
-
         let mut events = session.events.take().expect("events taken once");
         cx.spawn(async move |this, cx| {
             while let Some(event) = events.next().await {
@@ -2497,14 +2597,26 @@ impl TerminalView {
         .detach();
 
         // foreground-process watcher: what is this tube showing?
+        //
+        // Two ways to ask, and the pane takes whichever it is entitled to. With
+        // a pseudoterminal of its own it asks the kernel through that
+        // descriptor. Attached, it has no descriptor, so it reads the same fact
+        // out of /proc — the foreground group is recorded there too, and a
+        // terminal somebody else owns is still a terminal this machine can see.
+        // With neither, it asks nothing and says nothing, rather than reporting
+        // a shell it has not looked at.
         cx.spawn(async move |this, cx| loop {
             cx.background_executor()
                 .timer(std::time::Duration::from_millis(800))
                 .await;
             let alive = this
                 .update(cx, |view: &mut TerminalView, cx| {
-                    if let Some(master) = view.session.master.as_ref() {
-                        let detected = foreground_mode(master, view.session.shell_pid);
+                    let detected = match (view.session.master.as_ref(), view.session.shell_pid) {
+                        (Some(master), Some(pid)) => Some(foreground_mode(master, pid)),
+                        (None, Some(pid)) => foreground_mode_via_proc(pid),
+                        (_, None) => None,
+                    };
+                    if let Some(detected) = detected {
                         // Sticky agent detection (spec §4): an agent runs child
                         // processes (bash/node/rg) as the terminal's foreground group
                         // while working, momentarily reclassifying the pane as Shell —
@@ -2675,6 +2787,8 @@ impl TerminalView {
         Self {
             focus_handle: cx.focus_handle(),
             session,
+            pane_id,
+            guard,
             title: "shell".into(),
             name: None,
             logo,
@@ -3435,6 +3549,15 @@ impl TerminalView {
         self.last_human_input = Instant::now();
         self.session.notifier.notify(bytes);
         cx.notify();
+    }
+
+    /// Type a line into this pane's terminal without pretending a person did.
+    ///
+    /// The restore recipe goes in this way — a resumed agent has not been
+    /// touched by anybody, and the keepalive clock reading it as a human
+    /// keystroke would leave a pane looking attended that nobody has seen.
+    pub fn type_line(&self, line: &str) {
+        self.session.notifier.notify(line.as_bytes().to_vec());
     }
 
     /// How long since a human touched this pane. The keepalive clock.
