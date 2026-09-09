@@ -49,23 +49,45 @@
             unknown is not zero) ripples into pane.rs, which belongs with the
             attach work rather than ahead of it.
       - [ ] `SavedNode.pane_id` — held for slice 4, where it is first read.
-- [ ] Slice 2 — the host: `serve` verb, pane table, socket, verbs,
-      lease-fenced snapshot-then-tee, headless integration test, contract doc.
+- [x] Slice 2 — DONE 2026-09-09 (`a3f1227`). `serve` verb (joining the
+      allowlist in the commit that gave it a handler), pane table with durable
+      ids, session-keyed socket with a peer-uid check, seven control verbs with
+      truthful outcomes, per-pane byte streams, the lease-fenced
+      snapshot-then-tee handover, SIGHUP close, and env stamping. Eight unit
+      tests over real pseudoterminals plus four driving the shipped binary over
+      a real socket — including a terminal outliving the window watching it.
+      Three things measured rather than reasoned: the plan's lease+lock pairing
+      deadlocks (the unfair lock is the one to pair with a lease); a superseded
+      client used to tidy away its successor's stream, found only by the
+      end-to-end test; and forking tests made unrelated lock tests flake, which
+      is filed as #331 because the mechanism also exists in production.
+      Still to come here: the protocol contract doc under `docs/protocol/`, the
+      relocated mode watcher and checkpoint, and the detached backoff.
 - [ ] Slice 3 — GUI attach behind `TD_SESSIOND=1`; the survival harness is
       built here and the flip-gate numbers are measured here.
 - [ ] Slice 4 — persistence redirect + orphan adoption.
 - [ ] Slice 5 — flip the default, gated on the harness numbers Parker signs.
 - [ ] Slice 6 — tie-off: the follow-up issues 03 commits to.
 
-## Where it stands, 2026-09-08 evening
+## Where it stands, 2026-09-09
 
-Four commits on `client-server-split`, suite green at 593 (baseline was 570).
-Nothing is installed and nothing is merged: the binary currently on the symlink
-is another agent's favourites-shelf build, and installing over it would drop
-their work.
+Seven commits on `client-server-split`, open as one draft pull request (#328 —
+one PR for the task, so a rollback is one revert). Suite green at 614, from a
+570 baseline, and verified stable over sixteen consecutive runs after a flake
+was tracked down rather than retried.
 
-Next session starts at slice 2 (the host) with the seam already proven, or
-finishes slice 1's two held items if the ripple into pane.rs is wanted first.
+The host runs. A terminal can be started without a window, attached to,
+detached from, and re-attached to, and it survives the window that was
+watching it — proven against the shipped binary over a real socket.
+
+Nothing is installed and nothing is merged: the symlink holds another agent's
+favourites-shelf build, and installing over it would drop their work (#327,
+filed as possibly-nothing with the conditions that would make it real).
+
+Next: slice 3, the GUI attaching behind `TD_SESSIOND=1`, where the two
+unmeasured bets finally get measured. Slice 1's two held items belong there
+too — an attached pane has no local process id, and making that field honest
+ripples into pane.rs.
 
 ## Where the work happens
 
