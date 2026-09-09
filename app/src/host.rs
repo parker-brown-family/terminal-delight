@@ -48,7 +48,8 @@ use polling::{Event, PollMode, Poller};
 use crate::gridwire;
 use crate::hostproto::{
     host_socket_path, parse_stream_greeting, ClosedPane, GridCheck, Outcome, PaneGeom, PaneId,
-    PaneInfo, Push, Reply, Request, WireMode, ENV_PANE_ID, ENV_SESSION, PROTO_VERSION,
+    PaneInfo, Persisted, Push, Reply, Request, WireMode, ENV_PANE_ID, ENV_SESSION, LAYOUT_SCHEMA,
+    PROTO_VERSION,
 };
 use crate::session::PaneRuntime;
 use crate::term::GridSize;
@@ -413,6 +414,14 @@ pub struct Host {
     next_serial: AtomicU64,
     shutdown: AtomicBool,
     upkeep: Arc<Upkeep>,
+    /// Where this session's saved state lives, and what to write into it.
+    ///
+    /// `None` in a host nobody has told, which is every host in this file's
+    /// tests. A checkpoint with nowhere to write writes nothing, rather than
+    /// working out a path and writing over somebody's real session.
+    state_file: Mutex<Option<std::path::PathBuf>>,
+    /// The last layout a client handed over, and the shape it said it was.
+    layout: Mutex<Option<(u32, toml::Value)>>,
     /// Control connections that asked to be told when something changes.
     watchers: Mutex<Vec<Arc<Conn>>>,
     next_conn: AtomicU64,
@@ -448,6 +457,8 @@ impl Host {
             next_serial: AtomicU64::new(1),
             shutdown: AtomicBool::new(false),
             upkeep: Arc::new(Upkeep::new()),
+            state_file: Mutex::new(None),
+            layout: Mutex::new(None),
             watchers: Mutex::new(Vec::new()),
             next_conn: AtomicU64::new(1),
             watches: AtomicU64::new(0),
@@ -765,6 +776,107 @@ impl Host {
             .collect()
     }
 
+    /// Take over writing this session's saved state, seeding from whatever is
+    /// already on disk.
+    ///
+    /// The seed is what makes a host useful before any window has spoken to it:
+    /// a checkpoint can merge fresh working directories into the layout that
+    /// was there when it started, rather than having nothing to merge into and
+    /// writing nothing for as long as nobody saves.
+    pub fn persist_to(&self, path: std::path::PathBuf) {
+        let seed = std::fs::read_to_string(&path)
+            .ok()
+            .and_then(|body| body.parse::<toml::Value>().ok());
+        if let Some(body) = seed {
+            // Assumed to be this build's shape, because it is what this build
+            // and its predecessors wrote. A newer client will say otherwise on
+            // its first save and the assumption is replaced.
+            *self.layout.lock().expect("layout") = Some((LAYOUT_SCHEMA, body));
+        }
+        *self.state_file.lock().expect("state file") = Some(path);
+    }
+
+    /// Take a client's layout and write it.
+    pub fn save(&self, schema: u32, body: &str, allow_shrink: bool) -> Outcome<Persisted> {
+        let parsed = match body.parse::<toml::Value>() {
+            Ok(parsed) => parsed,
+            Err(err) => return Outcome::Err(format!("the layout is not readable TOML: {err}")),
+        };
+        *self.layout.lock().expect("layout") = Some((schema, parsed));
+        self.persist_now(allow_shrink)
+    }
+
+    /// Write the session's state: the client's layout, with what only this
+    /// process can know filled in.
+    ///
+    /// The host is the single writer. It has the pseudoterminals, so it is the
+    /// only thing that can say where a pane is or what would resume the agent
+    /// in it; and being the only writer is what stops two processes with
+    /// different ideas of the tree taking turns overwriting each other.
+    pub fn persist_now(&self, allow_shrink: bool) -> Outcome<Persisted> {
+        let Some(path) = self.state_file.lock().expect("state file").clone() else {
+            return Outcome::Err("this host was never told where to write".into());
+        };
+        let Some((schema, layout)) = self.layout.lock().expect("layout").clone() else {
+            return Outcome::Err("no layout has been handed over yet".into());
+        };
+
+        let merged = schema == LAYOUT_SCHEMA;
+        let body = if merged {
+            merge_capture_into_layout(&layout, &self.runtimes())
+        } else {
+            layout
+        };
+        let (leaves, tabs) = count_layout(&body);
+
+        // The guard reads what is actually on disk, and counts it the same way
+        // it counts what is offered. A client's own idea of how many panes it
+        // has is not evidence — that number is written by whoever is saving,
+        // and a save that has lost track of the tree has lost track of the
+        // count with it.
+        let (had_leaves, had_tabs) = std::fs::read_to_string(&path)
+            .ok()
+            .and_then(|disk| disk.parse::<toml::Value>().ok())
+            .map(|disk| count_layout(&disk))
+            .unwrap_or((0, 0));
+        if crate::is_catastrophic_shrink(had_leaves, had_tabs, leaves, tabs, allow_shrink) {
+            return Outcome::Ok(Persisted::RefusedShrink {
+                had_leaves,
+                had_tabs,
+                offered_leaves: leaves,
+                offered_tabs: tabs,
+            });
+        }
+
+        let mut body = body;
+        // The count the file carries is the one the host walked. Session
+        // ranking reads it without parsing the tree, so a stale or invented
+        // number there decides which session a cold launch reopens.
+        if let Some(table) = body.as_table_mut() {
+            table.insert("panes".into(), toml::Value::Integer(leaves as i64));
+        }
+        let Ok(text) = toml::to_string(&body) else {
+            return Outcome::Err("the layout could not be written back as TOML".into());
+        };
+        crate::rotate_state_backup(&path);
+        match crate::session::write_atomic(&path, &text) {
+            Ok(()) => Outcome::Ok(Persisted::Written {
+                leaves,
+                tabs,
+                merged,
+            }),
+            Err(err) => Outcome::Err(format!("could not write {}: {err}", path.display())),
+        }
+    }
+
+    /// What the last checkpoint read from each pane.
+    fn runtimes(&self) -> std::collections::BTreeMap<u64, PaneRuntime> {
+        self.pane_list()
+            .into_iter()
+            .map(|(id, pane)| (id.0, pane.runtime.lock().expect("runtime lock").clone()))
+            .collect()
+    }
+
     /// Start telling this connection about changes.
     fn watch(&self, conn: &Arc<Conn>) {
         let mut watchers = self.watchers.lock().expect("watchers");
@@ -905,6 +1017,10 @@ impl Host {
                 held.resume = fresh.resume;
             }
         }
+        // And then the point of having read them. A host with nowhere to write
+        // or nothing to write says so and is ignored here: a checkpoint is a
+        // clock, not a request, and there is nobody to tell.
+        let _ = self.persist_now(false);
     }
 
     /// How many times each clock has come round.
@@ -962,6 +1078,96 @@ fn upkeep_loop(
             upkeep.listen(&mut heard, sleep_for);
         }
     });
+}
+
+/// Fill a saved layout's leaves in with what the panes are actually doing.
+///
+/// Over `toml::Value`, never through the layout's own Rust types, and that is
+/// the whole design rather than an implementation detail. A window one version
+/// newer than this host writes fields this host has never heard of; parsing the
+/// body into a type here would drop every one of them on the way back out, and
+/// the loss would surface much later as somebody's settings quietly reverting.
+/// So the host walks for the two things it alone can know, edits those, and
+/// leaves the document otherwise exactly as it arrived.
+///
+/// A leaf without a `pane_id` is a pane this host is not running — a legacy
+/// file, or a window that owns its own terminals — and is not touched. A leaf
+/// whose pane the host has no reading for keeps what it had: a checkpoint that
+/// could not read a directory must not erase the last one that could.
+fn merge_capture_into_layout(
+    layout: &toml::Value,
+    live: &std::collections::BTreeMap<u64, PaneRuntime>,
+) -> toml::Value {
+    let mut merged = layout.clone();
+    let Some(tabs) = merged.get_mut("tabs").and_then(|tabs| tabs.as_array_mut()) else {
+        return merged;
+    };
+    for tab in tabs.iter_mut() {
+        if let Some(node) = tab.get_mut("node") {
+            fill_leaves(node, live);
+        }
+    }
+    merged
+}
+
+/// The recursive half: a node is a `Leaf` table or a `Split` holding two more.
+fn fill_leaves(node: &mut toml::Value, live: &std::collections::BTreeMap<u64, PaneRuntime>) {
+    if let Some(leaf) = node.get_mut("Leaf").and_then(|leaf| leaf.as_table_mut()) {
+        let Some(runtime) = leaf
+            .get("pane_id")
+            .and_then(toml::Value::as_integer)
+            .and_then(|id| u64::try_from(id).ok())
+            .and_then(|id| live.get(&id))
+        else {
+            return;
+        };
+        if let Some(cwd) = &runtime.cwd {
+            leaf.insert("cwd".into(), toml::Value::String(cwd.clone()));
+        }
+        if let Some(resume) = &runtime.resume {
+            leaf.insert("resume".into(), toml::Value::String(resume.clone()));
+        }
+        return;
+    }
+    if let Some(split) = node.get_mut("Split") {
+        for side in ["a", "b"] {
+            if let Some(child) = split.get_mut(side) {
+                fill_leaves(child, live);
+            }
+        }
+    }
+}
+
+/// Count a saved layout's panes and tabs by walking it.
+///
+/// The same walk that does the merging, so the number that feeds the shrink
+/// guard is the host's own reading of the tree rather than a field somebody
+/// wrote into it. An envelope whose top-level `panes` says six while its tree
+/// holds one must not be able to talk its way past the guard.
+fn count_layout(layout: &toml::Value) -> (usize, usize) {
+    let Some(tabs) = layout.get("tabs").and_then(toml::Value::as_array) else {
+        return (0, 0);
+    };
+    let leaves = tabs
+        .iter()
+        .filter_map(|tab| tab.get("node"))
+        .map(count_leaves)
+        .sum();
+    (leaves, tabs.len())
+}
+
+fn count_leaves(node: &toml::Value) -> usize {
+    if node.get("Leaf").is_some() {
+        return 1;
+    }
+    match node.get("Split") {
+        Some(split) => ["a", "b"]
+            .iter()
+            .filter_map(|side| split.get(side))
+            .map(count_leaves)
+            .sum(),
+        None => 0,
+    }
 }
 
 /// What is in the foreground of this pane, by the kernel's own account.
@@ -1214,6 +1420,13 @@ fn handle_control_line(host: &Arc<Host>, line: &str, conn: Option<&Arc<Conn>>) -
             pane,
             outcome: host.grid_check(pane),
         },
+        Request::Save {
+            schema,
+            body,
+            allow_shrink,
+        } => Reply::Saved {
+            outcome: host.save(schema, &body, allow_shrink),
+        },
         Request::Watch => match conn {
             Some(conn) => {
                 host.watch(conn);
@@ -1277,7 +1490,11 @@ pub fn run_cli(args: &[String]) -> i32 {
         }
     };
 
-    let host = Host::new(key);
+    let host = Host::new(&key);
+    // The host is this session's writer from here on. Told where before the
+    // first client can ask for anything, so a save arriving in the first
+    // moments has somewhere to go.
+    host.persist_to(state_file_for(&crate::instance::config_dir(), &key));
     // The clocks start with the host, not with a window: a session nobody is
     // looking at still has to know where its panes are.
     host.start_upkeep(Cadence::default());
@@ -1360,6 +1577,16 @@ fn take_session(
         Ok(listener) => Ok((listener, claim)),
         Err(err) => Err((format!("cannot listen on {}: {err}", socket.display()), 1)),
     }
+}
+
+/// Where a session's saved layout lives.
+///
+/// The layout under `sessions/` belongs to instance.rs, which puts every one of
+/// a session's files there; this spells it out rather than calling in, because
+/// the accessor there resolves the key from the environment and a host knows
+/// its own key without asking.
+fn state_file_for(config: &Path, key: &str) -> std::path::PathBuf {
+    config.join("sessions").join(format!("{key}.toml"))
 }
 
 /// Take this session's host lock, or say who holds it.
@@ -2511,6 +2738,255 @@ mod owning {
         assert!(
             final_screen.contains("what it was doing when it stopped"),
             "the latecomer was hung up on before it was shown anything: {final_screen:?}"
+        );
+    }
+
+    /// A layout with everything awkward in it: a split, a leaf this host runs,
+    /// a leaf it does not, and three fields no version of this build has ever
+    /// heard of.
+    const A_REAL_ENOUGH_LAYOUT: &str = r#"
+active = 0
+panes = 99
+a_field_from_a_later_build = "kept"
+
+[[tabs]]
+name = "one"
+another_later_field = true
+
+[tabs.node.Leaf]
+pane_id = 1
+cwd = "/where-it-was-an-hour-ago"
+a_leaf_field_from_a_later_build = "kept"
+
+[[tabs]]
+
+[tabs.node.Split]
+dir = "H"
+ratio = 0.5
+
+[tabs.node.Split.a.Leaf]
+pane_id = 2
+
+[tabs.node.Split.b.Leaf]
+cwd = "/somebody-elses-terminal"
+"#;
+
+    fn live_panes() -> std::collections::BTreeMap<u64, PaneRuntime> {
+        std::collections::BTreeMap::from([
+            (
+                1,
+                PaneRuntime {
+                    cwd: Some("/where-it-is-now".into()),
+                    resume: Some("claude --resume 4a1c".into()),
+                },
+            ),
+            (
+                2,
+                PaneRuntime {
+                    cwd: Some("/the-other-one".into()),
+                    resume: None,
+                },
+            ),
+        ])
+    }
+
+    /// A state file of this test's own, with `n` tabs of one pane each.
+    fn a_saved_session(path: &std::path::Path, tabs: usize) {
+        let mut body = String::from("active = 0\n");
+        for tab in 0..tabs {
+            body.push_str(&format!(
+                "\n[[tabs]]\nname = \"tab{tab}\"\n\n[tabs.node.Leaf]\ncwd = \"/somewhere\"\n"
+            ));
+        }
+        std::fs::create_dir_all(path.parent().expect("a parent")).expect("dir");
+        std::fs::write(path, body).expect("write a session");
+    }
+
+    fn a_state_file(tag: &str) -> std::path::PathBuf {
+        let (config, _) = private_paths(tag);
+        config.join("sessions").join("under-test.toml")
+    }
+
+    #[test]
+    fn a_save_keeps_every_field_this_build_has_never_heard_of() {
+        // The opaque envelope, which is the whole reason the host walks TOML
+        // rather than parsing the layout into a type of its own. A window one
+        // version newer writes fields this host does not know; parsing would
+        // drop every one of them on the way back out, and it would surface much
+        // later as somebody's settings quietly reverting.
+        let layout: toml::Value = A_REAL_ENOUGH_LAYOUT.parse().expect("a layout");
+        let merged = merge_capture_into_layout(&layout, &live_panes());
+
+        assert_eq!(merged["a_field_from_a_later_build"].as_str(), Some("kept"));
+        assert_eq!(
+            merged["tabs"][0]["another_later_field"].as_bool(),
+            Some(true)
+        );
+        let leaf = &merged["tabs"][0]["node"]["Leaf"];
+        assert_eq!(
+            leaf["a_leaf_field_from_a_later_build"].as_str(),
+            Some("kept")
+        );
+
+        // And the two things the host alone can know are filled in.
+        assert_eq!(leaf["cwd"].as_str(), Some("/where-it-is-now"));
+        assert_eq!(leaf["resume"].as_str(), Some("claude --resume 4a1c"));
+        assert_eq!(
+            merged["tabs"][1]["node"]["Split"]["a"]["Leaf"]["cwd"].as_str(),
+            Some("/the-other-one"),
+            "a leaf inside a split was not reached"
+        );
+
+        // A leaf with no pane id is a terminal this host is not running — a
+        // legacy file, or a window that owns its own — and is left alone.
+        assert_eq!(
+            merged["tabs"][1]["node"]["Split"]["b"]["Leaf"]["cwd"].as_str(),
+            Some("/somebody-elses-terminal"),
+            "the host edited a pane it does not run"
+        );
+    }
+
+    #[test]
+    fn the_tree_is_counted_rather_than_believed() {
+        // `panes = 99` sits at the top of that layout, and the tree holds
+        // three. The number that feeds the shrink guard has to be the walk.
+        let layout: toml::Value = A_REAL_ENOUGH_LAYOUT.parse().expect("a layout");
+        assert_eq!(count_layout(&layout), (3, 2));
+    }
+
+    #[test]
+    fn a_save_that_would_lose_most_of_a_session_is_refused_and_the_file_stands() {
+        let path = a_state_file("shrink");
+        a_saved_session(&path, 6);
+        let before = std::fs::read_to_string(&path).expect("read back");
+
+        let host = Host::with_shell("test", None);
+        host.persist_to(path.clone());
+
+        // One pane offered over six on disk, and the envelope claims otherwise.
+        let outcome = host.save(
+            LAYOUT_SCHEMA,
+            "panes = 6\n\n[[tabs]]\n\n[tabs.node.Leaf]\ncwd = \"/x\"\n",
+            false,
+        );
+        match outcome {
+            Outcome::Ok(Persisted::RefusedShrink {
+                had_leaves,
+                offered_leaves,
+                ..
+            }) => {
+                assert_eq!((had_leaves, offered_leaves), (6, 1));
+            }
+            other => panic!("a session that lost five of six panes was written: {other:?}"),
+        }
+        assert_eq!(
+            std::fs::read_to_string(&path).expect("read back"),
+            before,
+            "the file changed under a refused save"
+        );
+
+        // And a shrink somebody asked for goes through.
+        let outcome = host.save(
+            LAYOUT_SCHEMA,
+            "panes = 6\n\n[[tabs]]\n\n[tabs.node.Leaf]\ncwd = \"/x\"\n",
+            true,
+        );
+        assert!(
+            matches!(outcome, Outcome::Ok(Persisted::Written { leaves: 1, .. })),
+            "a deliberate close was refused: {outcome:?}"
+        );
+    }
+
+    #[test]
+    fn the_count_the_file_carries_is_the_one_the_host_walked() {
+        // `instance::scan_sessions` reads that integer without parsing the
+        // tree, so it decides which session a cold launch reopens. A client
+        // claim written straight through would rank sessions by a number
+        // nobody checked.
+        let path = a_state_file("recount");
+        let host = Host::with_shell("test", None);
+        host.persist_to(path.clone());
+
+        assert!(host
+            .save(LAYOUT_SCHEMA, A_REAL_ENOUGH_LAYOUT, false)
+            .is_ok());
+        let written: toml::Value = std::fs::read_to_string(&path)
+            .expect("read back")
+            .parse()
+            .expect("valid TOML");
+        assert_eq!(
+            written["panes"].as_integer(),
+            Some(3),
+            "the file kept the claim of 99 the client sent"
+        );
+    }
+
+    #[test]
+    fn a_layout_in_a_shape_this_build_does_not_know_is_written_through_untouched() {
+        // Refusing would lose the whole save; writing it through loses only the
+        // freshness of two fields, and the reply says which happened.
+        let path = a_state_file("schema");
+        let host = Host::with_shell("test", None);
+        host.persist_to(path.clone());
+
+        let outcome = host.save(LAYOUT_SCHEMA + 98, A_REAL_ENOUGH_LAYOUT, false);
+        assert!(
+            matches!(
+                outcome,
+                Outcome::Ok(Persisted::Written { merged: false, .. })
+            ),
+            "a shape this build cannot walk was silently treated as one it can: {outcome:?}"
+        );
+        let written = std::fs::read_to_string(&path).expect("read back");
+        assert!(
+            written.contains("/where-it-was-an-hour-ago"),
+            "an unreadable shape was edited anyway: {written}"
+        );
+    }
+
+    #[test]
+    fn a_host_nobody_told_where_to_write_writes_nowhere() {
+        // Every other test in this file makes a host and never mentions a file.
+        // If a checkpoint worked a path out for itself, they would all be
+        // writing over somebody's real session.
+        let host = Host::with_shell("test", None);
+        assert!(matches!(host.persist_now(false), Outcome::Err(_)));
+        host.checkpoint_once();
+    }
+
+    #[test]
+    fn the_checkpoint_writes_with_nobody_watching() {
+        // The point of the host holding the pen: a session with no window still
+        // records where its panes are, so a crash loses recency and never the
+        // layout.
+        let path = a_state_file("checkpoint");
+        let host = Host::with_shell("test", Some("/bin/cat".into()));
+        host.persist_to(path.clone());
+        let info = spawn_guarded(&host);
+
+        // A layout naming that pane, saved with a directory that is already
+        // wrong.
+        let body = format!(
+            "active = 0\n\n[[tabs]]\n\n[tabs.node.Leaf]\npane_id = {}\ncwd = \"/nowhere-in-particular\"\n",
+            info.pane
+        );
+        assert!(host.save(LAYOUT_SCHEMA, &body, false).is_ok());
+
+        assert!(
+            within(Duration::from_secs(5), || {
+                host.checkpoint_once();
+                std::fs::read_to_string(&path)
+                    .map(|written| !written.contains("/nowhere-in-particular"))
+                    .unwrap_or(false)
+            }),
+            "the checkpoint never replaced the saved directory with a reading: {:?}",
+            std::fs::read_to_string(&path)
+        );
+        let written = std::fs::read_to_string(&path).expect("read back");
+        let here = std::fs::canonicalize(std::env::current_dir().unwrap()).unwrap();
+        assert!(
+            written.contains(here.to_str().expect("a path")),
+            "the checkpoint wrote a directory the pane is not in: {written}"
         );
     }
 

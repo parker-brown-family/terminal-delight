@@ -103,6 +103,7 @@ name, so nobody has to read a changelog to work out which side is old:
 | `resize` | tell a pane its new size | `resized` |
 | `close-pane` | hang up a pane's process tree | `closed` |
 | `grid-check` | what the host's own copy of a terminal hashes to | `grid-checked` |
+| `save` | hand over the session's layout for the host to write | `saved` |
 | `watch` | be told when something changes, on this connection | `watching` |
 | `shutdown` | stop the host | `shutting-down` |
 
@@ -138,6 +139,10 @@ failing the pane.
 ```
 
 ```json request
+{"verb":"save","schema":1,"body":"active = 0\n\n[[tabs]]\n\n[tabs.node.Leaf]\npane_id = 1\n","allow_shrink":false}
+```
+
+```json request
 {"verb":"watch"}
 ```
 
@@ -167,6 +172,14 @@ accepted, which is a different claim from anything having happened.
 
 ```json reply
 {"reply":"grid-checked","outcome":{"ok":{"pane":1,"stream_offset":14680,"hash":9257062766351139868}},"pane":1}
+```
+
+```json reply
+{"reply":"saved","outcome":{"ok":{"written":{"leaves":3,"tabs":2,"merged":true}}}}
+```
+
+```json reply
+{"reply":"saved","outcome":{"ok":{"refused-shrink":{"had_leaves":6,"had_tabs":3,"offered_leaves":1,"offered_tabs":1}}}}
 ```
 
 ```json reply
@@ -292,6 +305,42 @@ tab names and a theme, none of which a host has ever seen. What moved here is
 the half that stopped being answerable from a window at all; the verb that hands
 the layout over for the host to merge and write arrives with the attaching
 client.
+
+## Who writes the session file
+
+**The host does, and nothing else.** It holds the pseudoterminals, so it is the
+only process that can say where a pane actually is or what would resume the
+agent inside it — and one writer is what stops two processes with different
+ideas of the tree taking turns overwriting each other.
+
+A window hands its layout over with `save` and the host writes it:
+
+- `body` is TOML and **the host does not read most of it.** It fills in `cwd`
+  and `resume` on the leaves carrying a `pane_id` it is running, and writes
+  everything else back exactly as it arrived. A host that parsed the body into a
+  type of its own would drop every field written by a client newer than itself,
+  and the loss would surface later as settings quietly reverting. A leaf with no
+  `pane_id`, or one naming a pane this host does not run, is left alone.
+- `schema` says what shape the body is. A shape this build does not know is
+  written through untouched rather than refused — a save that lands without
+  fresh directories loses a little, one refused loses the lot — and the reply
+  says which happened, in `merged`.
+- `leaves` and `tabs` in the reply are what the **host counted by walking the
+  tree**, never a number the body claimed. The count it writes back into the
+  file is the same one, because session ranking reads that integer without
+  parsing the tree and a stale value there decides which session a cold launch
+  reopens.
+- `allow_shrink` is the client saying a tree that lost most of its panes lost
+  them on purpose. Absent means no. A save that would halve a session of any
+  size is refused, the file on disk stands, and the reply says what was on disk
+  and what was offered. The saves that shrink a session by accident are the ones
+  nobody asked for.
+
+The host also writes on its own, every 30 s, with or without a window: the
+layout it holds, with fresh directories merged in. That is what makes a crash
+cost recency rather than the layout. It seeds that layout from the file on disk
+when it starts, so a host nobody has spoken to yet still has something truthful
+to write.
 
 ## Being told, instead of asking
 

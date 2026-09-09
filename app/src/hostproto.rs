@@ -119,6 +119,24 @@ pub enum Request {
     GridCheck {
         pane: PaneId,
     },
+    /// Hand the session's layout to the host, which writes it.
+    ///
+    /// `body` is TOML and the host does not read most of it. It fills in the
+    /// two things only the process holding the pseudoterminals can know — where
+    /// each pane is and what would resume the agent in it — and writes the rest
+    /// back exactly as it arrived. A host that parsed this into a type of its
+    /// own would silently drop every field written by a client newer than
+    /// itself, and the loss would surface as settings that quietly reset.
+    ///
+    /// `allow_shrink` is the client saying a tree that lost most of its panes
+    /// lost them on purpose. Absent means no, which is the safe reading: the
+    /// saves that shrink a session by accident are the ones nobody asked for.
+    Save {
+        schema: u32,
+        body: String,
+        #[serde(default)]
+        allow_shrink: bool,
+    },
     /// Ask to be told when something changes, instead of asking repeatedly.
     ///
     /// Opt-in, and deliberately a verb rather than a property of `hello`: a
@@ -243,6 +261,9 @@ pub enum Reply {
         pane: PaneId,
         outcome: Outcome<GridCheck>,
     },
+    Saved {
+        outcome: Outcome<Persisted>,
+    },
     /// This connection will now be told when something changes.
     Watching,
     ShuttingDown,
@@ -269,6 +290,39 @@ pub struct GridCheck {
     /// from the socket, and these count the same things.
     pub stream_offset: u64,
     pub hash: u64,
+}
+
+/// The layout shape this build knows how to read.
+///
+/// Bumped when the saved tree changes shape enough that walking it for panes
+/// would be wrong — not when a field is added, which is every other week. A
+/// body carrying a schema this build does not know is written through
+/// untouched rather than refused: a save that lands without fresh working
+/// directories loses a little, and a save refused loses the lot.
+pub const LAYOUT_SCHEMA: u32 = 1;
+
+/// What became of a save, said truthfully.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "kebab-case")]
+pub enum Persisted {
+    Written {
+        /// What the host counted in the tree it wrote — its own walk, never the
+        /// client's claim.
+        leaves: usize,
+        tabs: usize,
+        /// Whether the host filled in live working directories and resume
+        /// lines. `false` means the body's schema is one this build does not
+        /// know how to walk, so it was written through as it arrived.
+        merged: bool,
+    },
+    /// The tree offered would have lost most of the session, and nobody said
+    /// that was deliberate. Nothing was written; what is on disk still stands.
+    RefusedShrink {
+        had_leaves: usize,
+        had_tabs: usize,
+        offered_leaves: usize,
+        offered_tabs: usize,
+    },
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -371,6 +425,11 @@ fn every_request() -> Vec<Request> {
         },
         Request::ClosePane { pane: PaneId(3) },
         Request::GridCheck { pane: PaneId(3) },
+        Request::Save {
+            schema: LAYOUT_SCHEMA,
+            body: "panes = 1\n".into(),
+            allow_shrink: false,
+        },
         Request::Watch,
         Request::Shutdown,
     ]
@@ -430,6 +489,21 @@ fn every_reply() -> Vec<Reply> {
                 pane: PaneId(1),
                 stream_offset: 8192,
                 hash: 0xcbf2_9ce4_8422_2325,
+            }),
+        },
+        Reply::Saved {
+            outcome: Outcome::Ok(Persisted::Written {
+                leaves: 3,
+                tabs: 2,
+                merged: true,
+            }),
+        },
+        Reply::Saved {
+            outcome: Outcome::Ok(Persisted::RefusedShrink {
+                had_leaves: 6,
+                had_tabs: 3,
+                offered_leaves: 1,
+                offered_tabs: 1,
             }),
         },
         Reply::Watching,

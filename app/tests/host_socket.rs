@@ -373,6 +373,63 @@ fn inode_of(path: &PathBuf) -> u64 {
         .ino()
 }
 
+#[test]
+fn the_host_writes_the_session_file_and_fills_in_where_the_panes_are() {
+    // Slice 4's half of #337: the host is the single writer of the session
+    // file. It holds the pseudoterminals, so it is the only process that can
+    // say where a pane actually is — a window saving a layout can only write
+    // down what it was told at spawn.
+    let session = start_host("writer");
+    let sessions = session
+        .runtime
+        .join("config")
+        .join("terminal-delight")
+        .join("sessions");
+    let state = sessions.join("writer.toml");
+    assert!(!state.exists(), "nothing has been saved yet");
+
+    let mut control = Control::open(&session);
+    control.ask(r#"{"verb":"hello","proto":1,"kind":"window"}"#);
+    let spawned = control.ask(
+        r#"{"verb":"spawn-pane","cwd":"/usr/share","geom":{"cols":40,"rows":8,"cell_width":8,"cell_height":16}}"#,
+    );
+    let pane = spawned["outcome"]["ok"]["pane"].as_u64().expect("pane");
+
+    // A layout naming that pane, carrying a directory that is already wrong —
+    // which is what an attached window writes, since it has no pseudoterminal
+    // to read one from.
+    let body = format!(
+        "active = 0\n\n[[tabs]]\nname = \"the tab\"\n\n[tabs.node.Leaf]\npane_id = {pane}\ncwd = \"/nowhere-in-particular\"\n"
+    );
+    let save = serde_json::json!({
+        "verb": "save",
+        "schema": 1,
+        "body": body,
+        "allow_shrink": false,
+    });
+    let saved = control.ask(&save.to_string());
+    assert_eq!(
+        saved["outcome"]["ok"]["written"]["leaves"], 1,
+        "the host did not write the layout it was handed: {saved}"
+    );
+
+    let written = std::fs::read_to_string(&state)
+        .unwrap_or_else(|e| panic!("the host wrote no session file at {}: {e}", state.display()));
+    assert!(
+        written.contains("/usr/share"),
+        "the host wrote the client's stale directory instead of reading the pane's: {written}"
+    );
+    assert!(
+        !written.contains("/nowhere-in-particular"),
+        "the stale directory survived the merge: {written}"
+    );
+    // And the parts the host does not understand came through untouched.
+    assert!(
+        written.contains("the tab"),
+        "the host dropped a field it does not read: {written}"
+    );
+}
+
 /// Split what a client received into the snapshot and everything after it.
 ///
 /// A snapshot ends by restoring the modes, and line wrap is the last one
