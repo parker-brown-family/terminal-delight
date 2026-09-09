@@ -1007,6 +1007,19 @@ impl Host {
             // On the change, never on the clock. A window that wanted the
             // current state of everything asked `list-panes` for it.
             if let Some(mode) = next {
+                // The moment what a pane is running changes is the moment its
+                // directory and its resume recipe may have changed with it, so
+                // read them now rather than at the next checkpoint.
+                //
+                // This is not tidiness. A window planning an attach reads
+                // `list-panes` before anything it does rings this host's clock,
+                // and it binds a leaf whose pane is gone to a live pane running
+                // exactly its resume line. On the checkpoint's clock alone that
+                // line is up to five minutes late on a host nobody is watching,
+                // so a pane whose agent had just started would look like no
+                // agent at all — and the leaf would type `claude --resume <id>`
+                // into a second terminal: two agents on one conversation.
+                record_reading(&pane);
                 self.broadcast(&Push::Mode { pane: id, mode });
             }
 
@@ -1057,16 +1070,7 @@ impl Host {
     pub fn checkpoint_once(&self) {
         self.checkpoints.fetch_add(1, Ordering::SeqCst);
         for (_, pane) in self.pane_list() {
-            let fresh = crate::session::capture(Some(&pane.master), pane.shell_pid);
-            let mut held = pane.runtime.lock().expect("runtime lock");
-            // A reading that failed is not a pane in no directory running
-            // nothing: only an answer replaces an answer.
-            if fresh.cwd.is_some() {
-                held.cwd = fresh.cwd;
-            }
-            if fresh.resume.is_some() {
-                held.resume = fresh.resume;
-            }
+            record_reading(&pane);
         }
         // Before writing, look. Something else may have written this file since
         // the last time, and a checkpoint that does not check is what makes a
@@ -1133,6 +1137,22 @@ fn upkeep_loop(
             upkeep.listen(&mut heard, sleep_for);
         }
     });
+}
+
+/// Read from a pane the two things only the process holding its pseudoterminal
+/// can read, and keep whichever of them answered.
+///
+/// A reading that failed is not a pane in no directory running nothing: only an
+/// answer replaces an answer.
+fn record_reading(pane: &HostPane) {
+    let fresh = crate::session::capture(Some(&pane.master), pane.shell_pid);
+    let mut held = pane.runtime.lock().expect("runtime lock");
+    if fresh.cwd.is_some() {
+        held.cwd = fresh.cwd;
+    }
+    if fresh.resume.is_some() {
+        held.resume = fresh.resume;
+    }
 }
 
 /// Fill a saved layout's leaves in with what the panes are actually doing.
@@ -2218,6 +2238,48 @@ mod owning {
     }
 
     #[test]
+    fn a_pane_whose_child_has_gone_keeps_the_last_directory_it_was_in() {
+        // Only an answer replaces an answer. The reading fails the moment the
+        // child does — `/proc` goes with it — and a reading that could not be
+        // taken is not a pane in no directory: it is a pane nobody could ask.
+        //
+        // This is the pane a saved layout most needs to be right about. An
+        // ended pane's leaf is what a restore reads to decide where to start
+        // its replacement, and erasing the directory here would start it in the
+        // wrong one.
+        let (host, pane) = host_with_cat_pane();
+        assert!(
+            within(Duration::from_secs(5), || {
+                host.checkpoint_once();
+                host.list_panes()[0].cwd.is_some()
+            }),
+            "the pane was never read while it was alive"
+        );
+        let while_it_lived = host.list_panes()[0].cwd.clone().expect("a directory");
+
+        let pid = host.list_panes()[0].shell_pid;
+        assert_eq!(unsafe { libc::kill(pid as i32, libc::SIGTERM) }, 0);
+        assert!(
+            within(Duration::from_secs(5), || host.list_panes()[0].ended),
+            "the pane never registered that its child had gone"
+        );
+        assert!(
+            within(Duration::from_secs(5), || {
+                std::fs::read_link(format!("/proc/{pid}/cwd")).is_err()
+            }),
+            "the child's /proc entry is still readable, so this proves nothing"
+        );
+
+        host.checkpoint_once();
+        assert_eq!(
+            host.list_panes()[0].cwd.as_deref(),
+            Some(while_it_lived.as_str()),
+            "a reading that could not be taken erased one that had been"
+        );
+        let _ = pane;
+    }
+
+    #[test]
     fn a_host_nobody_is_watching_stops_polling_like_one_that_is() {
         // Hosts now outlive the windows watching them, so an idle one keeping
         // window cadence is a cost that scales with how well the feature works.
@@ -2557,6 +2619,48 @@ mod owning {
             one_line(&mut window, Duration::from_millis(200)),
             None,
             "the watcher pushed a change that did not happen"
+        );
+    }
+
+    #[test]
+    fn a_pane_that_changed_what_it_runs_is_read_without_waiting_for_the_checkpoint() {
+        // What a pane is running changing is what makes its directory and its
+        // resume recipe worth reading again — and something asks for them long
+        // before the checkpoint comes round.
+        //
+        // A window planning an attach reads `list-panes` before anything it
+        // does rings this host's clock, and binds a leaf whose pane is gone to
+        // a live pane running exactly its resume line. On the checkpoint alone
+        // that line is up to five minutes stale on a host nobody is watching,
+        // so a pane whose agent had just started would read as no agent, and
+        // the leaf would start `claude --resume <id>` in a second terminal.
+        let (host, pane) = host_with_cat_pane();
+        assert_eq!(host.list_panes()[0].cwd, None, "nothing has been read yet");
+
+        // Prime it as an agent so the next tick is a change rather than a
+        // repeat: this pane's own program is `cat`, which reads as the shell it
+        // stands in for.
+        *host.panes.lock().expect("panes")[&pane]
+            .mode
+            .lock()
+            .expect("mode") = Some(WireMode::Claude);
+
+        assert!(
+            within(Duration::from_secs(5), || {
+                host.watch_once();
+                host.list_panes()[0].mode == Some(WireMode::Shell)
+            }),
+            "the watcher never saw the pane change"
+        );
+
+        let read = host.list_panes()[0]
+            .cwd
+            .clone()
+            .expect("a pane that changed what it runs was never read");
+        assert_eq!(
+            std::fs::canonicalize(&read).expect("the reported directory exists"),
+            std::fs::canonicalize(std::env::current_dir().unwrap()).unwrap(),
+            "the watcher recorded a directory the pane is not in"
         );
     }
 

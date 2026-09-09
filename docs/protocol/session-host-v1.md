@@ -280,7 +280,12 @@ both are the host's now:
   the demotion is real.
 - **The checkpoint** reads each pane's live working directory and its agent
   resume recipe and keeps them, so `cwd` and `resume` are readings rather than
-  whatever was requested at spawn.
+  whatever was requested at spawn. It also reads a pane the moment the watcher
+  sees it change what it is running, because that is when those two facts change
+  and something may ask for them before the clock comes round — a window
+  planning an attach reads `list-panes` before anything it does wakes the host.
+  A reading that could not be taken never replaces one that was: only an answer
+  replaces an answer.
 
 Both back off when nobody is watching. A host outliving its window is the point
 of this feature, so a fleet of headless hosts polling at window speed would be
