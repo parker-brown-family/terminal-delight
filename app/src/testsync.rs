@@ -28,3 +28,66 @@ pub fn forks_and_locks() -> MutexGuard<'static, ()> {
         // still needs the guard, and the panic has already been reported.
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
+
+/// A directory of this test's own, taken away when the test ends.
+///
+/// Removed on **drop**, not at the end of a test body, and that is the whole
+/// point: a test that fails leaves by panicking, so tidying written after the
+/// assertions is skipped exactly when there is most to skip. Every copy of this
+/// helper in the suite tidied at the end of the body, or not at all, and `/tmp`
+/// held thirteen thousand of their leftovers before anybody counted.
+///
+/// Named per process AND per thread, because the suite runs tests in parallel
+/// and two of them sharing a tag would otherwise share a directory.
+///
+/// Derefs to `Path`, so a call site reads exactly as it did when this returned
+/// a `PathBuf` — with one trap that is worth knowing about, because four tests
+/// hit it the moment this landed. A guard used inline,
+/// `Scratch::new("x").join("f")`, is dropped at the end of that statement and
+/// takes the directory with it before the next line runs. Bind it to a name
+/// first. The failure is loud when the test touches the directory afterwards
+/// and silent when it does not, which is the only reason this note exists.
+#[cfg(test)]
+pub struct Scratch {
+    root: std::path::PathBuf,
+}
+
+#[cfg(test)]
+impl Scratch {
+    pub fn new(tag: &str) -> Self {
+        let root = std::env::temp_dir().join(format!(
+            "td-{tag}-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("a scratch directory");
+        Self { root }
+    }
+
+    pub fn path(&self) -> &std::path::Path {
+        &self.root
+    }
+}
+
+#[cfg(test)]
+impl std::ops::Deref for Scratch {
+    type Target = std::path::Path;
+    fn deref(&self) -> &std::path::Path {
+        &self.root
+    }
+}
+
+#[cfg(test)]
+impl AsRef<std::path::Path> for Scratch {
+    fn as_ref(&self) -> &std::path::Path {
+        &self.root
+    }
+}
+
+#[cfg(test)]
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.root);
+    }
+}

@@ -1142,11 +1142,8 @@ pub fn run_mcp_cli(args: &[String]) -> i32 {
 mod tests {
     use super::*;
 
-    fn tmp(tag: &str) -> PathBuf {
-        let d = std::env::temp_dir().join(format!("td-ctl-test-{}-{tag}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&d);
-        std::fs::create_dir_all(&d).unwrap();
-        d
+    fn tmp(tag: &str) -> crate::testsync::Scratch {
+        crate::testsync::Scratch::new(&format!("ctl-{tag}"))
     }
 
     #[test]
@@ -1449,7 +1446,8 @@ mod tests {
 
     #[test]
     fn a_round_trip_answers_and_queues_and_status_reads_the_mirror() {
-        let sock = tmp("rt").join("ctl-1.sock");
+        let dir = tmp("rt");
+        let sock = dir.join("ctl-1.sock");
         let listener = UnixListener::bind(&sock).unwrap();
         let (tx, rx) = mpsc::channel::<Req>();
         let mirror = Arc::new(AtomicBool::new(false));
@@ -1485,7 +1483,8 @@ mod tests {
 
     #[test]
     fn junk_gets_an_error_line_not_a_hang() {
-        let sock = tmp("junk").join("ctl-2.sock");
+        let dir = tmp("junk");
+        let sock = dir.join("ctl-2.sock");
         let listener = UnixListener::bind(&sock).unwrap();
         let (tx, _rx) = mpsc::channel::<Req>();
         let mirror = AtomicBool::new(false);
@@ -1502,7 +1501,8 @@ mod tests {
 
     #[test]
     fn mcp_policy_verbs_queue_and_status_reads_the_mirror() {
-        let sock = tmp("mcp").join("ctl-4.sock");
+        let dir = tmp("mcp");
+        let sock = dir.join("ctl-4.sock");
         let listener = UnixListener::bind(&sock).unwrap();
         let (tx, rx) = mpsc::channel::<Req>();
         let mirror = Arc::new(AtomicBool::new(false));
@@ -1566,7 +1566,8 @@ mod tests {
 
     #[test]
     fn a_dead_socket_file_reads_as_unreachable() {
-        let sock = tmp("stale").join("ctl-3.sock");
+        let dir = tmp("stale");
+        let sock = dir.join("ctl-3.sock");
         drop(UnixListener::bind(&sock).unwrap()); // file survives the listener
         assert!(sock.exists());
         assert!(send(&sock, "ping").is_err());

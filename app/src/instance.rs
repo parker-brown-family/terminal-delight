@@ -809,11 +809,8 @@ fn lock_host_spawn_in(config: &Path, key: &str) -> Option<File> {
 mod tests {
     use super::*;
 
-    fn tmp(tag: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("td-inst-{tag}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        dir
+    fn tmp(tag: &str) -> crate::testsync::Scratch {
+        crate::testsync::Scratch::new(&format!("inst-{tag}"))
     }
 
     /// A saved session on disk, aged so that "most recent" is decided rather
@@ -1038,7 +1035,7 @@ mod tests {
 
         let (tx, rx) = std::sync::mpsc::channel();
         let racing = {
-            let config = config.clone();
+            let config = config.to_path_buf();
             std::thread::spawn(move || {
                 let second = lock_host_spawn_in(&config, "2");
                 tx.send(second.is_some()).ok();
@@ -1486,7 +1483,7 @@ mod tests {
         let _guard = env_lock();
         let base = tmp("xdg");
         // SAFETY: serialised by `env_lock`; restored before the guard drops.
-        unsafe { std::env::set_var("XDG_CONFIG_HOME", &base) };
+        unsafe { std::env::set_var("XDG_CONFIG_HOME", base.path()) };
         let got = config_dir();
         unsafe { std::env::remove_var("XDG_CONFIG_HOME") };
         assert_eq!(got, base.join("terminal-delight"));

@@ -762,9 +762,8 @@ mod tests {
         std::fs::remove_dir_all(&tmp).unwrap();
     }
 
-    fn tmp_home(tag: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("td-sess-{tag}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
+    fn tmp_home(tag: &str) -> crate::testsync::Scratch {
+        let dir = crate::testsync::Scratch::new(&format!("sess-{tag}"));
         std::fs::create_dir_all(dir.join(".claude")).unwrap();
         dir
     }
@@ -1121,11 +1120,8 @@ mod probe_tests {
 mod ledger_tests {
     use super::*;
 
-    fn tmp_home(tag: &str) -> PathBuf {
-        let d = std::env::temp_dir().join(format!("td-ledger-{}-{tag}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&d);
-        std::fs::create_dir_all(&d).unwrap();
-        d
+    fn tmp_home(tag: &str) -> crate::testsync::Scratch {
+        crate::testsync::Scratch::new(&format!("ledger-{tag}"))
     }
 
     fn write_ledger(home: &Path, pid: u32, sid: &str) {
