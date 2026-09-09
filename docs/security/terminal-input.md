@@ -157,7 +157,7 @@ check whose expectation is wrong on the day it ships is a check somebody switche
 ```
 rg -c 'self\.send\(' app/src/pane.rs        # expect: 1  — pane.rs:4099, inside on_key
 rg -c 'notifier\.notify\(' app/src/pane.rs  # expect: 9  — the eight rows above, #4 twice
-rg -c 'keepalive' app/src/main.rs           # expect: 1  — the module doc recording why it is gone
+rg -c 'keepalive' app/src/main.rs           # expect: 2  — the module doc, and the header-glyph count comment
 rg -n 'Msg::Input|notifier\.0|notifier:' app/src   # expect: nothing outside term.rs
 ```
 
