@@ -43,6 +43,7 @@ mod pane;
 mod plugins;
 mod recover;
 mod session;
+mod socketpty;
 mod sticky;
 mod term;
 mod theme;

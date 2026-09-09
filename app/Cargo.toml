@@ -18,6 +18,10 @@ zed_rev = "abbe85a3321bf6cb7f5b241e623d9c2e16c29187"
 [dependencies]
 alacritty_terminal = "0.26"
 futures = "0.3"
+# The same poller alacritty_terminal registers its PTY with. Named directly
+# because `EventedReadWrite` is spelled in these types and the crate does not
+# re-export them; cargo unifies it with alacritty's own copy.
+polling = "3.8"
 gpui = { path = "../../zed-upstream/crates/gpui" }
 gpui_platform = { path = "../../zed-upstream/crates/gpui_platform", features = ["x11", "wayland"] }
 libc = "0.2.186"
