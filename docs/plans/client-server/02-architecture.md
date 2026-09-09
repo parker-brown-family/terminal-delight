@@ -168,6 +168,55 @@ exit while a client is attached**, whatever the panes are printing — an
 attached window is proof the session is wanted; and **checkpoint before
 exiting**, so what remains on disk is fresh rather than hours stale.
 
+## Flip gate — measured 2026-09-09
+
+**The input-echo gate is met.** An attached keystroke costs **41–136µs** more at
+p99 than a local one, against the 1000µs Gate 2 asked for. Three runs of
+`scripts/td-echo-bench.sh`, release build, 1000 samples per condition:
+
+| Run | Machine load | Quiet | 8 panes, realistic | 8 panes, saturating |
+|---|---|---|---|---|
+| 1 | 10.4 | 108µs | 134µs | 6537µs |
+| 2 | 14.1 | 41µs | 81µs | 1180µs |
+| 3 | 15.8 | 136µs | 53µs | 5422µs |
+
+Keystrokes over a millisecond, per thousand: **0–6 realistic, 23–189
+saturating.** The instrument is identical across every condition, so the figure
+is the cost of the seam and nothing else.
+
+**The realistic load is the gate**, and it is eight panes each printing about
+two thousand lines a second in bursts — `while :; do seq 1 200; sleep 0.1; done`
+— which is heavier than a talkative build.
+
+**The saturating column is not a gate and must not be read as one.** It is
+`yes` at full rate on eight panes, which leaves a sixteen-core machine with no
+spare core, and the attached path pays the shortage twice: two processes, two
+terminals and two parsers for one stream. **It swung 5.5× across three runs of
+identical code** — 1180µs to 6537µs — with nothing changing but background load,
+which is what a scheduler-bound number does. The realistic column stayed inside
+a narrow band across the same three runs, which is what a work-bound number
+does. That contrast is the evidence that the tail belongs to the machine rather
+than to the design.
+
+It was measured from the other side too, and agrees: a host-side probe
+(`where_a_keystroke_waits_inside_the_host`) timed an interval containing
+**nothing at all** at 201µs p99 under the saturating flood and 2µs under the
+realistic one. Taking the global pane table — the hypothesis that a lock sat on
+the keystroke path — cost 147µs, less than the noise floor. It cannot be what
+costs milliseconds.
+
+**What these numbers do not cover**, stated so they are not read for more than
+they are:
+
+- The realistic load is a **stand-in chosen for being obviously heavier than a
+  build, not a recording of one.** Nothing here measures where a real workload
+  sits, only that one well above a build's output is comfortably inside.
+- **One machine**, sixteen cores, under substantial external load (10–16) from
+  other work. A smaller machine has less headroom, and the realistic case could
+  approach saturation there — the run to repeat before shipping to one.
+- **Keystroke to grid, not to pixels.** The bench waits on the replica's content
+  generation, so rendering is outside it.
+
 ## Decision round — answered by Parker, 2026-09-08 (annotated brief)
 
 1. Second attach: **steal, tmux-style** — the new attach wins, the host drops
