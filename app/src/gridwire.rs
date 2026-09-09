@@ -318,10 +318,16 @@ fn is_blank(cell: &Cell) -> bool {
 /// cell's character, colours, SGR flags, combining marks and wide-character
 /// structure, plus the cursor and the modes a snapshot restores.
 ///
+/// Its caller is the divergence guard, which compares a host's grid against a
+/// client's and forces a fresh snapshot when they disagree — so it arrives
+/// with the client, in the attach slice. It is written and tested here because
+/// a guard whose comparison is wrong is worse than no guard at all.
+///
 /// Deliberately **excludes** the scroll position and the selection. Those are
 /// the viewer's, not the terminal's — a client may be scrolled back or holding
 /// a selection and still be a faithful copy — and a hash that moved when a
 /// reader scrolled would report divergence for looking.
+#[allow(dead_code)]
 pub fn grid_hash<T>(term: &Term<T>) -> u64 {
     const OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
     const PRIME: u64 = 0x0000_0100_0000_01b3;
@@ -369,6 +375,7 @@ pub fn grid_hash<T>(term: &Term<T>) -> u64 {
 
 /// A colour as one number, with the three kinds kept apart so an indexed 4 and
 /// a named 4 cannot collide.
+#[allow(dead_code)]
 fn hash_color(color: Color) -> u32 {
     match color {
         Color::Named(n) => 0x0100_0000 | n as u32,

@@ -100,9 +100,27 @@ fn a_typoed_verb_costs_an_exit_code_and_nothing_else() {
 }
 
 #[test]
-fn an_unknown_verb_that_looks_like_a_path_is_still_refused() {
+fn a_verb_this_build_does_not_carry_is_still_refused() {
     // The stale-install failure in miniature: a caller invoking a verb this
-    // build does not carry. It must be told, not quietly given a window.
+    // build does not have. It must be told, not quietly given a window. (When
+    // `serve` was that verb, this test named it; it is a real verb now, which
+    // is why the allowlist and this test move together.)
+    let (status, stderr, written) = run_in_a_throwaway_home(&["attach"]);
+
+    assert_eq!(
+        status.expect("must exit").code(),
+        Some(2),
+        "stderr was: {stderr}"
+    );
+    assert!(stderr.contains("unknown command `attach`"), "{stderr}");
+    assert!(written.is_empty(), "wrote to disk: {written:?}");
+}
+
+#[test]
+fn serve_without_a_session_is_refused_by_its_own_handler() {
+    // Distinct from the unknown-word refusal, and that distinction is the
+    // proof that dispatch reached the handler rather than the allowlist: this
+    // one names the missing argument, not the word.
     let (status, stderr, written) = run_in_a_throwaway_home(&["serve"]);
 
     assert_eq!(
@@ -110,7 +128,11 @@ fn an_unknown_verb_that_looks_like_a_path_is_still_refused() {
         Some(2),
         "stderr was: {stderr}"
     );
-    assert!(stderr.contains("unknown command `serve`"), "{stderr}");
+    assert!(stderr.contains("--session"), "{stderr}");
+    assert!(
+        !stderr.contains("unknown command"),
+        "serve was refused by the allowlist instead of its handler: {stderr}"
+    );
     assert!(written.is_empty(), "wrote to disk: {written:?}");
 }
 

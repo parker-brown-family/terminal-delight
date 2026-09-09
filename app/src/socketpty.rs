@@ -20,6 +20,14 @@
 //! is manufactured. Both are named in the constants' own documentation because
 //! both are the kind of thing an upgrade breaks silently.
 
+// Nothing in the shipped binary constructs one of these yet: the window that
+// attaches over a socket arrives in the next slice. It is built and proven
+// first because it is the seam the whole split turns on, and a seam discovered
+// to be wrong while a window is being rewired around it is discovered too late.
+// The tests below are its only callers today, and they are enough to know it
+// works.
+#![allow(dead_code)]
+
 use std::io;
 use std::os::unix::net::UnixStream;
 use std::sync::Arc;

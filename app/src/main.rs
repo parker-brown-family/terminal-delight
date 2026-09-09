@@ -30,6 +30,8 @@ mod dirlogo;
 mod doc;
 mod gamba;
 mod gridwire;
+mod host;
+mod hostproto;
 mod hud;
 mod instance;
 mod keepalive;
@@ -46,6 +48,8 @@ mod session;
 mod socketpty;
 mod sticky;
 mod term;
+#[cfg(test)]
+mod testsync;
 mod theme;
 mod toolprop;
 mod usage;
@@ -17180,6 +17184,7 @@ mod tests {
             ("agent-usage", Verb::AgentUsage),
             ("agent-vitals", Verb::AgentVitals),
             ("probe", Verb::Probe),
+            ("serve", Verb::Serve),
         ] {
             assert_eq!(dispatch(Some(word), never), Launch::Verb(verb), "{word}");
         }
@@ -17220,7 +17225,9 @@ mod tests {
         // be left alone on the way to the window, which meant a typo'd verb —
         // or any verb the running build did not carry — opened a window that
         // claimed a session and wrote a layout to disk on its way past.
-        for word in ["sevre", "clt", "serve", "open-sesame", "/does/not/exist"] {
+        // `serve` is deliberately absent: it was refused here until the commit
+        // that gave it a handler, which is the rule this allowlist exists for.
+        for word in ["sevre", "clt", "srve", "open-sesame", "/does/not/exist"] {
             match dispatch(Some(word), |_| false) {
                 Launch::Reply { text, code } => {
                     assert_eq!(code, 2, "{word}");
@@ -17240,7 +17247,7 @@ mod tests {
         // The refusal prints USAGE, so a verb missing from it is a verb the
         // caller is told does not exist while it quietly works. `--td-emit-demo`
         // is internal — spawned by a demo pane, never typed — and stays out.
-        for word in ["ctl", "mcp", "agent-usage", "agent-vitals", "probe"] {
+        for word in ["ctl", "mcp", "agent-usage", "agent-vitals", "probe", "serve"] {
             assert!(Verb::parse(word).is_some(), "`{word}` is not dispatched");
             assert!(USAGE.contains(word), "USAGE omits `{word}`");
         }
@@ -18365,6 +18372,8 @@ Usage:
   terminal-delight probe <pid>   report a terminal's cwd + resumable agent session, as JSON
   terminal-delight agent-usage   refresh this machine's AI subscription usage records
   terminal-delight agent-vitals  the three attention bars for one transcript, as JSON
+  terminal-delight serve --session <key>
+                                 run the session host that owns this session's terminals
 
 Options:
   -h, --help                     show this
@@ -18432,6 +18441,10 @@ enum Verb {
     /// report the foreground process, its cwd, and the resume line TD would
     /// use. `td-send` runs this before deciding whether a tile migrates.
     Probe,
+    /// Run a session host: own the pseudoterminals for one session and serve
+    /// them to whichever window is attached. This is the process that outlives
+    /// windows, and the reason a crash costs a window rather than a day.
+    Serve,
 }
 
 impl Verb {
@@ -18443,6 +18456,7 @@ impl Verb {
             "agent-usage" => Self::AgentUsage,
             "agent-vitals" => Self::AgentVitals,
             "probe" => Self::Probe,
+            "serve" => Self::Serve,
             _ => return None,
         })
     }
@@ -18511,6 +18525,7 @@ fn main() {
                 Verb::AgentUsage => usage::run_cli(&argv[2..]),
                 Verb::AgentVitals => vitals::run_cli(&argv[2..]),
                 Verb::Probe => probe_cli(&argv[2..]),
+                Verb::Serve => host::run_cli(&argv[2..]),
             };
             std::process::exit(code);
         }

@@ -671,6 +671,10 @@ mod tests {
 
     #[test]
     fn one_window_per_key_and_the_lock_dies_with_it() {
+        // Asserts who owns a lock, so it must not overlap a test that forks:
+        // a forked child holds its parent's descriptors until it execs, which
+        // makes a just-released lock read as still held. See `testsync`.
+        let _guard = crate::testsync::forks_and_locks();
         let config = tmp("claim");
         let first = claim_in(&config, "2");
         assert!(
@@ -691,6 +695,7 @@ mod tests {
 
     #[test]
     fn the_old_single_session_file_is_adopted_exactly_once() {
+        let _guard = crate::testsync::forks_and_locks();
         let config = tmp("adopt");
         let legacy = config.join("state.toml");
         std::fs::write(&legacy, "active = 0").unwrap();
@@ -709,6 +714,7 @@ mod tests {
 
     #[test]
     fn a_live_pre_upgrade_master_defers_the_legacy_adoption() {
+        let _guard = crate::testsync::forks_and_locks();
         let config = tmp("legacy-live");
         let lock = config.join("master.lock");
         // no lock file at all: no pre-upgrade window ever ran → adopt freely
@@ -906,6 +912,7 @@ mod tests {
 
     #[test]
     fn a_cold_launch_reopens_the_session_you_last_used() {
+        let _guard = crate::testsync::forks_and_locks();
         // The regression this whole change exists for. The real work opened on
         // workspace 2, was dragged to workspace 1, and was closed there — so it
         // is filed under the id `2` while its last save records workspace `1`.

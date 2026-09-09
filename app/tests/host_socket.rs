@@ -1,0 +1,343 @@
+//! The host as a real process, spoken to over a real socket.
+//!
+//! The unit tests drive the host's own types directly, which proves the logic
+//! and skips the layer a client actually meets: a binary that binds a socket,
+//! decides what each connection is from its first line, and answers. This runs
+//! the shipped binary and talks to it the way a window will.
+
+use std::io::{BufRead, BufReader, Read, Write};
+use std::os::unix::net::UnixStream;
+use std::path::PathBuf;
+use std::process::{Child, Command, Stdio};
+use std::time::{Duration, Instant};
+
+struct Session {
+    child: Child,
+    socket: PathBuf,
+    #[allow(dead_code)]
+    runtime: PathBuf,
+}
+
+impl Drop for Session {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+        let _ = std::fs::remove_dir_all(&self.runtime);
+    }
+}
+
+/// Start a real session host in its own runtime directory, running `cat` in
+/// every pane so the child is instant, silent and echoes exactly what it gets.
+fn start_host(name: &str) -> Session {
+    let runtime = std::env::temp_dir().join(format!("td-host-{}-{name}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&runtime);
+    std::fs::create_dir_all(&runtime).expect("runtime dir");
+
+    let child = Command::new(env!("CARGO_BIN_EXE_terminal-delight"))
+        .args(["serve", "--session", name])
+        .env("XDG_RUNTIME_DIR", &runtime)
+        .env("TD_HOST_SHELL", "/bin/cat")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn the host");
+
+    let socket = runtime.join("terminal-delight").join(format!("session-{name}.sock"));
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while Instant::now() < deadline && !socket.exists() {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(socket.exists(), "the host never bound {}", socket.display());
+    Session {
+        child,
+        socket,
+        runtime,
+    }
+}
+
+/// A control connection: one line of JSON out, one line of JSON back.
+struct Control {
+    reader: BufReader<UnixStream>,
+    writer: UnixStream,
+}
+
+impl Control {
+    fn open(session: &Session) -> Self {
+        let writer = UnixStream::connect(&session.socket).expect("connect");
+        writer
+            .set_read_timeout(Some(Duration::from_secs(10)))
+            .unwrap();
+        let reader = BufReader::new(writer.try_clone().unwrap());
+        Self { reader, writer }
+    }
+
+    fn ask(&mut self, line: &str) -> serde_json::Value {
+        self.writer.write_all(line.as_bytes()).expect("write");
+        self.writer.write_all(b"\n").expect("newline");
+        let mut back = String::new();
+        self.reader.read_line(&mut back).expect("read a reply");
+        serde_json::from_str(&back).unwrap_or_else(|e| panic!("unreadable reply {back:?}: {e}"))
+    }
+}
+
+#[test]
+fn a_window_can_start_a_terminal_take_it_over_and_type_into_it() {
+    // The whole slice, end to end, as a client experiences it.
+    let session = start_host("takeover");
+    let mut control = Control::open(&session);
+
+    let hello = control.ask(r#"{"verb":"hello","proto":1,"kind":"window"}"#);
+    assert_eq!(hello["reply"], "hello", "{hello}");
+    assert_eq!(hello["session"], "takeover");
+    assert_eq!(hello["panes"], 0);
+    assert_eq!(hello["attended"], false, "nobody is watching a fresh host");
+
+    let spawned = control.ask(
+        r#"{"verb":"spawn-pane","geom":{"cols":40,"rows":8,"cell_width":8,"cell_height":16}}"#,
+    );
+    let pane = spawned["outcome"]["ok"]["pane"]
+        .as_u64()
+        .unwrap_or_else(|| panic!("no pane in {spawned}"));
+    let shell_pid = spawned["outcome"]["ok"]["shell_pid"].as_u64().expect("pid");
+    assert!(shell_pid > 1, "a pane is a real process: {spawned}");
+
+    // Type into it before anyone is attached — the work starts without a
+    // window, which is the point of the whole feature.
+    let mut early = UnixStream::connect(&session.socket).expect("stream connect");
+    early
+        .write_all(format!("stream {pane}\n").as_bytes())
+        .expect("greet");
+    early
+        .set_read_timeout(Some(Duration::from_secs(10)))
+        .unwrap();
+    early.write_all(b"printed before\n").expect("type");
+
+    // Wait until that line has actually come back, rather than until the
+    // attachment exists — the two are seconds apart and only the first means
+    // the terminal has the content.
+    //
+    // It is also the exact moment the fence's promise becomes testable: bytes
+    // are copied to a client and parsed into the grid inside one reader cycle,
+    // and an attach cannot interleave with a cycle. So once any client has
+    // seen a byte, every later snapshot must contain it.
+    let first_saw = read_until(&mut early, Duration::from_secs(10), |text| {
+        text.contains("printed before")
+    });
+    assert!(
+        first_saw.contains("printed before"),
+        "the first window never saw its own echo: {first_saw:?}"
+    );
+
+    // A second window arrives. It missed everything, and must not stay behind.
+    let mut window = UnixStream::connect(&session.socket).expect("stream connect");
+    window
+        .write_all(format!("stream {pane}\n").as_bytes())
+        .expect("greet");
+    window
+        .set_read_timeout(Some(Duration::from_secs(10)))
+        .unwrap();
+
+    let seen = read_until(&mut window, Duration::from_secs(10), |text| {
+        text.contains("printed before")
+    });
+    let (snapshot, live) = split_snapshot(&seen);
+    assert!(
+        snapshot.contains("printed before"),
+        "the snapshot did not carry what the second window missed: {snapshot:?}"
+    );
+    assert!(
+        !live.contains("printed before"),
+        "output already in the snapshot was sent live as well: {live:?}"
+    );
+
+    // And it is live: what it types comes back to it.
+    window.write_all(b"typed after\n").expect("type");
+    let echoed = read_until(&mut window, Duration::from_secs(10), |text| {
+        text.contains("typed after")
+    });
+    assert!(
+        echoed.contains("typed after"),
+        "the attached window is not live: {echoed:?}"
+    );
+
+    // Closing is a verb, and it kills.
+    let mut control = Control::open(&session);
+    let closed = control.ask(&format!(r#"{{"verb":"close-pane","pane":{pane}}}"#));
+    assert_eq!(closed["outcome"]["ok"]["signalled"], true, "{closed}");
+    assert!(
+        wait_for(Duration::from_secs(10), || {
+            !PathBuf::from(format!("/proc/{shell_pid}")).exists()
+        }),
+        "the child outlived the close"
+    );
+
+    // And the host stops when told to, rather than when someone next knocks —
+    // which is why shutdown knocks on its own door on the way out.
+    //
+    // Asked of the child directly rather than of /proc: a process that has
+    // exited but not yet been waited for is a zombie, and its /proc entry is
+    // still there. "Still listed" and "still running" are not the same
+    // question, and only one of them is this one.
+    let mut control = Control::open(&session);
+    let bye = control.ask(r#"{"verb":"shutdown"}"#);
+    assert_eq!(bye["reply"], "shutting-down", "{bye}");
+    let mut session = session;
+    assert!(
+        wait_for(Duration::from_secs(10), || {
+            matches!(session.child.try_wait(), Ok(Some(_)))
+        }),
+        "the host ignored shutdown and is still running"
+    );
+}
+
+#[test]
+fn a_terminal_outlives_the_window_that_was_watching_it() {
+    // The product promise, over a real socket: the window goes, the work does
+    // not, and the next window that attaches is shown what it missed.
+    let session = start_host("outlives");
+    let mut control = Control::open(&session);
+    control.ask(r#"{"verb":"hello","proto":1,"kind":"window"}"#);
+    let spawned = control.ask(
+        r#"{"verb":"spawn-pane","geom":{"cols":40,"rows":8,"cell_width":8,"cell_height":16}}"#,
+    );
+    let pane = spawned["outcome"]["ok"]["pane"].as_u64().expect("pane");
+    let shell_pid = spawned["outcome"]["ok"]["shell_pid"].as_u64().expect("pid");
+
+    {
+        let mut window = UnixStream::connect(&session.socket).expect("connect");
+        window
+            .write_all(format!("stream {pane}\n").as_bytes())
+            .expect("greet");
+        window
+            .set_read_timeout(Some(Duration::from_secs(10)))
+            .unwrap();
+        window.write_all(b"work in progress\n").expect("type");
+        read_until(&mut window, Duration::from_secs(10), |t| {
+            t.contains("work in progress")
+        });
+        // The window dies here, abruptly, exactly as a crash would.
+    }
+
+    assert!(
+        PathBuf::from(format!("/proc/{shell_pid}")).exists(),
+        "the terminal died with its window — this is the bug the feature exists for"
+    );
+
+    // A new window attaches and is shown the work it never saw.
+    let mut reopened = UnixStream::connect(&session.socket).expect("connect");
+    reopened
+        .write_all(format!("stream {pane}\n").as_bytes())
+        .expect("greet");
+    reopened
+        .set_read_timeout(Some(Duration::from_secs(10)))
+        .unwrap();
+    let restored = read_until(&mut reopened, Duration::from_secs(10), |t| {
+        t.contains("work in progress")
+    });
+    assert!(
+        restored.contains("work in progress"),
+        "the relaunched window was not shown what survived: {restored:?}"
+    );
+}
+
+#[test]
+fn asking_the_host_questions_never_takes_a_pane_away_from_a_window() {
+    // Resolving a session probes every candidate host. If asking could steal,
+    // every launch would detach the window already running.
+    let session = start_host("probing");
+    let mut control = Control::open(&session);
+    control.ask(r#"{"verb":"hello","proto":1,"kind":"window"}"#);
+    let spawned = control.ask(
+        r#"{"verb":"spawn-pane","geom":{"cols":40,"rows":8,"cell_width":8,"cell_height":16}}"#,
+    );
+    let pane = spawned["outcome"]["ok"]["pane"].as_u64().expect("pane");
+
+    let mut window = UnixStream::connect(&session.socket).expect("connect");
+    window
+        .write_all(format!("stream {pane}\n").as_bytes())
+        .expect("greet");
+    window
+        .set_read_timeout(Some(Duration::from_secs(10)))
+        .unwrap();
+    window.write_all(b"mine\n").expect("type");
+    read_until(&mut window, Duration::from_secs(10), |t| t.contains("mine"));
+
+    for _ in 0..5 {
+        let mut probe = Control::open(&session);
+        probe.ask(r#"{"verb":"hello","proto":1,"kind":"tool"}"#);
+        probe.ask(r#"{"verb":"list-panes"}"#);
+    }
+
+    window.write_all(b"still mine\n").expect("type again");
+    let after = read_until(&mut window, Duration::from_secs(10), |t| {
+        t.contains("still mine")
+    });
+    assert!(
+        after.contains("still mine"),
+        "a probe cost the window its pane: {after:?}"
+    );
+}
+
+#[test]
+fn a_version_it_cannot_speak_is_refused_by_name() {
+    let session = start_host("versions");
+    let mut control = Control::open(&session);
+    let refused = control.ask(r#"{"verb":"hello","proto":99,"kind":"window"}"#);
+    assert_eq!(refused["reply"], "error", "{refused}");
+    let msg = refused["msg"].as_str().unwrap_or_default();
+    assert!(msg.contains("99") && msg.contains('1'), "{msg}");
+
+    // And nonsense gets an answer rather than silence, which is the failure
+    // this whole feature started from.
+    let mut control = Control::open(&session);
+    assert_eq!(control.ask("{not json}")["reply"], "error");
+}
+
+/// Split what a client received into the snapshot and everything after it.
+///
+/// A snapshot ends by restoring the modes, and line wrap is the last one
+/// written, so its final bytes are that mode change. Ordinary terminal output
+/// does not contain it.
+fn split_snapshot(text: &str) -> (&str, &str) {
+    const TAIL: &str = "\x1b[?7";
+    match text.rfind(TAIL) {
+        Some(at) => text.split_at((at + TAIL.len() + 1).min(text.len())),
+        None => ("", text),
+    }
+}
+
+fn wait_for(limit: Duration, mut done: impl FnMut() -> bool) -> bool {
+    let deadline = Instant::now() + limit;
+    while Instant::now() < deadline {
+        if done() {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    done()
+}
+
+/// Read from a stream until the accumulated text satisfies `done`, or time is
+/// up. Returns everything read either way, so a failure can show what arrived.
+fn read_until(
+    stream: &mut UnixStream,
+    limit: Duration,
+    mut done: impl FnMut(&str) -> bool,
+) -> String {
+    let deadline = Instant::now() + limit;
+    let mut seen = Vec::new();
+    let mut buf = [0u8; 8192];
+    while Instant::now() < deadline {
+        match stream.read(&mut buf) {
+            Ok(0) => break,
+            Ok(read) => {
+                seen.extend_from_slice(&buf[..read]);
+                if done(&String::from_utf8_lossy(&seen)) {
+                    break;
+                }
+            }
+            Err(_) => break,
+        }
+    }
+    String::from_utf8_lossy(&seen).into_owned()
+}
