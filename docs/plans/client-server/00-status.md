@@ -5,6 +5,14 @@
   flags ingested into 01-product.md same day
   (out-of-scope section expanded 2026-09-08 on Parker's note: the two refusals now
   carry why-now, cost-to-reverse, and the constraint each puts on Gate 2)
+  **AMENDED 2026-09-09 — close semantics.** A close is now deferred rather than
+  immediate: one pane held an hour, two or more held four hours, counted in
+  panes rather than verbs, capped at the ten most recent, with the processes
+  still running throughout and ctrl+shift+z to reopen. Approved in chat
+  ("Concur - good work. Send it!") after the fresh-agent review found the final
+  close never reaching its save. The amendment is in 01-product.md under "What
+  closing means"; Gates 2 and 3 do not yet carry it, and the slice below is
+  where it lands.
 - Gate 2 — Architecture: APPROVED 2026-09-08 — via annotated brief (5 notes,
   reports/2026-09-08-client-server-gate2.html). Trunk: per-session PTY host +
   client-side replica Term, one binary. All five decision-round answers
@@ -118,6 +126,35 @@
       terminals missing — and a `legacy-load` harness leg hand-writes an
       eight-pane tab with no pane ids and requires all eight to come up.
       Slice 4 is complete.
+- [ ] Slice 4.5 — the close undo window, and the review's three contract
+      breaches. Added 2026-09-09 after the fresh-agent review
+      (`reports/2026-09-09-client-server-review.html`) and Parker's amendment to
+      Gate 1. Ordered before the flip because two of the four items decide what
+      a close and a version bump mean, and flipping the default first would ship
+      those meanings to everyone.
+      - [ ] The held-close state: a third state in the saved layout carrying a
+            deadline, the retention cap at ten, and `close_pane` growing a timer
+            the host owns. **The tracer slice** — everything else here hangs off
+            the state existing, and the branch's current bug is squatting on the
+            spot where it goes.
+      - [ ] Reopen: first candidate at relaunch, ctrl+shift+z mid-session,
+            most-recent-first, plus the F1 line and the first-close hint.
+      - [ ] `hello` becomes a state machine: a control connection that has not
+            negotiated cannot spawn, close, save or shut down. Every real client
+            path already says hello first — `probe_at`, `attach_at` and `watch`
+            all negotiate — so the only thing this breaks is the integration
+            test at `app/tests/host_socket.rs:169-188`, which opens fresh
+            sockets and issues verbs cold. Needs a carve-out decision first: a
+            peer refused for version skew still has to be able to say
+            "checkpoint and stand down", or the item below cannot work.
+      - [ ] The version-break handoff: a protocol mismatch asks the old host to
+            checkpoint and exit rather than falling into a serverless window
+            beside a live host, which is two writers on one session file.
+      - [ ] Exited panes leave the host table bounded, and a pane held for a
+            person is distinguishable from one whose child exited on its own.
+      - [ ] Regressions for all of it, each proven against its parent commit.
+            No test today covers a live pane going to a deliberately empty saved
+            layout, and none asserts that an un-negotiated verb is refused.
 - [ ] Slice 5 — flip the default, gated on the harness numbers Parker signs.
       **Both halves of the gate now have numbers, and both pass.**
       Survival: lost sessions = 0, five legs, repeatedly. Latency
@@ -209,7 +246,10 @@ branch, one pull request — losing attempts stay out of the review surface.
   non-resumable foreground programs (vim/htop) count in the metric; close
   semantics decided (pane/tab close kills — intent; app close preserves —
   server keeps everything); server-crash fallback is today's TOML recovery,
-  recovery follows the agent session.
+  recovery follows the agent session. **Close semantics were amended
+  2026-09-09** — the kill is deferred behind a one-hour / four-hour undo
+  window; read 01-product.md's "What closing means" before implementing
+  anything in the close path.
 - Spun off, highest priority, NOT in this feature: the left-bar / workspace
   overhaul (vertical tabs+groups bar, tabs-as-tasks, project→epic hierarchy)
   — issue #319. v1 must not make it harder.

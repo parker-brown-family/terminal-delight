@@ -50,6 +50,76 @@ Granularity decided at approval (Parker, 2026-09-08):
   every session keeps running on the server, and the next window comes back
   attached.
 
+### Amendment, 2026-09-09: a close is deferred, not immediate
+
+The three lines above still describe what a close *means*. What changed is
+when it takes effect. Parker, reviewing the close path after the fresh-agent
+review found that a final close never reached its save: *"maybe I accidentally
+closed the tab and actually didn't mean to close it."* A manual close is still
+intent, and intent is still what distinguishes it from the app going away — but
+a person who meant to keep something gets a window in which to say so.
+
+**How long depends on how much was closed, counted in panes rather than in
+verbs.** Closing one pane holds it for **one hour**. Closing two or more panes
+at once — which in practice means closing a tab, since a tab holding two panes
+cannot be emptied by a single pane close — holds them for **four hours**. The
+verb that did it does not matter: a one-pane tab closed as a tab is one pane
+gone, and gets the one-hour window. Closing the app or the window expires
+nothing at all, which is the feature this whole document exists for.
+
+**The processes keep running for that whole window.** An agent mid-task whose
+pane is closed is still working an hour later, and reopening the pane puts the
+person back in front of it with its scrollback intact. Stopping an agent before
+closing its pane is the person's job and stays a deliberate act; the terminal
+does not decide that a close meant "and kill whatever that was doing." The cost
+is real — held panes hold CPU, memory, and in an agent's case tokens — and it is
+accepted here in exchange for the recovery.
+
+**Retention is capped as well as timed.** The ten most recently closed panes are
+held; an eleventh evicts the oldest immediately, whether or not its window has
+run out. Without the cap an afternoon of ordinary churn holds a hundred process
+groups, which is the same unbounded growth the host's own idle exit exists to
+prevent.
+
+**Two things are being retained, and they die at different times.** The live
+process belongs to the host and goes when the host goes — a crash, a reboot, an
+explicit shutdown, and it is not recoverable by any amount of bookkeeping. The
+layout entry belongs to the session file and carries an expiry timestamp, so a
+relaunch after the host has died still offers the closed pane back, restarted
+from its resume line. Reopening must say which of the two the person is getting.
+"Your pane is back, still running" and "your pane is back, started again" are
+different facts, and a person who believes the first when the second is true
+believes an agent kept working through the night when it stopped at midnight.
+
+**Getting it back.** At relaunch, a held pane is the first candidate for a leaf
+in the tree it was closed from — ahead of spawning anything fresh. Inside a live
+session it takes an explicit key, most-recently-closed first, on repeat.
+
+That key is **ctrl+shift+z**, and not the browser's ctrl+shift+t, which is
+already Terminal Delight's own binding for a new tab (`app/src/main.rs:4`) and
+every other Linux terminal's as well. Plain ctrl+t is not available to take
+instead: inside a pane it belongs to whatever is running there — `transpose-chars`
+in readline, the tag stack in vim — and a terminal emulator that claims an
+unshifted control chord takes it away from every program in every pane with no
+way for them to ask for it back. Undo semantics fit what this is anyway, since
+the whole feature is an undo window on a close.
+
+Nobody guesses ctrl+shift+z, so it needs to be told: a line in the F1 help, and
+a one-time hint the first time a close is held. An undo nobody knows about is an
+undo nobody uses.
+
+**What this constrains downstream.** A closed-but-held leaf is a third state in
+the saved layout, alongside live and gone, and it carries its deadline. It must
+not be encoded as an absence, and it must not be encoded as an ordinary live
+leaf — the second of those is what the branch does by accident today, and it is
+why a closed pane gets replanned as a respawn on the next launch. Deferral rides
+on `close_pane`, which is where the SIGHUP is and which the host owns; the
+host's twelve-hour idle exit is longer than both retention windows, so the host
+can hold the timer without the two rules fighting. And a pane the host is
+holding for a person is not the same thing as a pane whose child exited on its
+own — both leave an entry behind, and only one of them is waiting to be asked
+for again.
+
 ## Announcement — the blog post before the feature
 
 Terminal Delight now keeps your sessions alive even when the window isn't.
