@@ -103,8 +103,15 @@
       adopted the three already running. Five terminals where three existed; the
       session duplicating itself through the file rather than through a pid. An
       attached window now hands its layout to the host and writes nothing; a
-      serverless one is untouched. Still to come in this slice: the vestigial
-      hosted-path flock (#337) and the pane cap.
+      serverless one is untouched. The hosted flock went with it (#337): while a
+      hosted window runs, the session lock is free and the host's own is held, a
+      second window is no longer refused and takes the panes while the first is
+      told it lost them and stays up, and after both windows are killed the
+      session is still owned — by the host, which still has the terminals. And a
+      leaf that would respawn now binds an unclaimed pane running exactly its
+      resume line, so a layout that has fallen behind cannot start a second copy
+      of an agent that is already running. Still to come in this slice: the pane
+      cap.
 - [ ] Slice 5 — flip the default, gated on the harness numbers Parker signs.
 - [ ] Slice 6 — tie-off: the follow-up issues 03 commits to.
 

@@ -2527,12 +2527,31 @@ fn plan_attach(saved: &[SavedTab], live: &[hostproto::PaneInfo]) -> AttachPlan {
             // is a layout that was written wrong or edited by hand, and the
             // second one must not be handed the same terminal — it gets its
             // own, which is the only reading that loses nothing.
-            let bound = pane_id.and_then(|want| {
-                unclaimed
+            let by_id = pane_id.and_then(|want| unclaimed.iter().position(|p| p.pane.0 == want));
+            // Failing that, by the work itself.
+            //
+            // A leaf whose pane id names nothing starts its recipe again — and
+            // if that recipe is `claude --resume <id>`, and the agent it names
+            // is ALREADY RUNNING in a pane this layout does not mention, then
+            // starting it again puts two agents on one conversation, both
+            // billing, both writing. That is the cross-wiring class this feature
+            // replaced pids to avoid, reached through the file instead: a
+            // restored backup, or any layout that has fallen behind the panes it
+            // describes.
+            //
+            // Matched on the resume line and nothing else. It is an exact key
+            // and a meaningful one — the agent session is what the rest of this
+            // codebase already treats as a pane's durable identity — where a
+            // working directory would be a guess that binds the wrong terminal
+            // sooner or later. A leaf with no recipe is simply started again,
+            // which costs a shell.
+            let by_work = match (by_id, resume.as_deref()) {
+                (None, Some(want)) => unclaimed
                     .iter()
-                    .position(|p| p.pane.0 == want)
-                    .map(|at| unclaimed.remove(at).pane)
-            });
+                    .position(|p| p.resume.as_deref() == Some(want)),
+                _ => None,
+            };
+            let bound = by_id.or(by_work).map(|at| unclaimed.remove(at).pane);
             plans.push(match bound {
                 Some(pane) => LeafPlan::Bind { pane },
                 None => LeafPlan::Respawn {
@@ -17249,6 +17268,13 @@ mod tests {
         }
     }
 
+    fn running_agent(id: u64, resume: &str) -> hostproto::PaneInfo {
+        hostproto::PaneInfo {
+            resume: Some(resume.into()),
+            ..running(id, false)
+        }
+    }
+
     fn running(id: u64, ended: bool) -> hostproto::PaneInfo {
         hostproto::PaneInfo {
             pane: hostproto::PaneId(id),
@@ -17359,6 +17385,93 @@ mod tests {
         );
         assert!(matches!(plan.tabs[0][1], LeafPlan::Respawn { .. }));
         assert!(plan.orphans.is_empty(), "5 was claimed, once");
+    }
+
+    #[test]
+    fn a_leaf_binds_the_agent_it_names_rather_than_starting_a_second_one() {
+        // The expensive duplicate. A restored backup names a pane that no
+        // longer exists, while the agent that leaf describes is running right
+        // now in a pane the layout never heard of. Starting the recipe again
+        // would put two agents on one conversation — both billing, both writing
+        // to the same transcript — which is precisely the cross-wiring this
+        // feature replaced pids to prevent, arriving through the file instead.
+        let saved = vec![tab_of(leaf_with(
+            Some(41),
+            "/work",
+            Some("claude --resume 48be90b8"),
+        ))];
+        let live = vec![running_agent(7, "claude --resume 48be90b8")];
+        let plan = plan_attach(&saved, &live);
+        assert_eq!(
+            plan.tabs,
+            vec![vec![LeafPlan::Bind {
+                pane: hostproto::PaneId(7)
+            }]],
+            "the running agent should have been taken over, not started again"
+        );
+        assert!(
+            plan.orphans.is_empty(),
+            "and it is not also adopted into a tab of its own"
+        );
+    }
+
+    #[test]
+    fn a_leaf_naming_no_agent_is_simply_started_again() {
+        // The match is on the recipe and nothing else. A leaf with no recipe
+        // has nothing to match on, and a shell is cheap to start; binding it to
+        // whatever else happened to be running would be a guess, and guessing
+        // which terminal is which is the whole class of bug being avoided.
+        let saved = vec![tab_of(leaf_with(Some(41), "/work", None))];
+        let live = vec![running(7, false)];
+        let plan = plan_attach(&saved, &live);
+        assert!(matches!(plan.tabs[0][0], LeafPlan::Respawn { .. }));
+        assert_eq!(
+            plan.orphans.iter().map(|p| p.pane.0).collect::<Vec<_>>(),
+            vec![7],
+            "the unrelated terminal is still adopted"
+        );
+    }
+
+    #[test]
+    fn a_different_agent_is_not_close_enough_to_bind() {
+        // Two agents in two panes are two conversations. Binding a leaf to the
+        // wrong one would show somebody the wrong transcript and type into it.
+        let saved = vec![tab_of(leaf_with(
+            Some(41),
+            "/work",
+            Some("claude --resume aaa"),
+        ))];
+        let live = vec![running_agent(7, "claude --resume bbb")];
+        let plan = plan_attach(&saved, &live);
+        assert!(matches!(plan.tabs[0][0], LeafPlan::Respawn { .. }));
+        assert_eq!(plan.orphans.len(), 1);
+    }
+
+    #[test]
+    fn the_pane_id_still_wins_when_it_names_something_live() {
+        // The id is the durable name and stays the first key: matching on the
+        // recipe is the fallback for a layout that has fallen behind, never a
+        // second opinion about a leaf whose pane is right there.
+        let saved = vec![tab_of(leaf_with(
+            Some(7),
+            "/work",
+            Some("claude --resume x"),
+        ))];
+        let live = vec![
+            running_agent(9, "claude --resume x"),
+            running_agent(7, "claude --resume x"),
+        ];
+        let plan = plan_attach(&saved, &live);
+        assert_eq!(
+            plan.tabs[0][0],
+            LeafPlan::Bind {
+                pane: hostproto::PaneId(7)
+            }
+        );
+        assert_eq!(
+            plan.orphans.iter().map(|p| p.pane.0).collect::<Vec<_>>(),
+            vec![9]
+        );
     }
 
     #[test]
@@ -19639,11 +19752,12 @@ fn main() {
         (key, claim, None)
     } else {
         let resolved = instance::resolve_session_hosted();
-        // Only the window that owns the session file talks to its host. A
-        // window that could not claim it is a scratch window, exactly as it has
-        // always been, and attaching anyway would put two windows on one set of
-        // terminals with neither of them owning the layout.
-        let link = if resolved.claim.owned {
+        // No lock is consulted here any more. A hosted window writes nothing —
+        // it hands its layout to the host — so the claim that decides who may
+        // write a session file has no bearing on whether this window may show
+        // one. What arbitrates is the host: a second window attaching takes the
+        // panes, which is the behaviour the product gate asked for.
+        let link = {
             let reached = match resolved.route {
                 instance::Route::AttachLive => hostctl::HostLink::attach(&resolved.id),
                 instance::Route::SpawnHost => {
@@ -19669,10 +19783,18 @@ fn main() {
                     None
                 }
             }
-        } else {
-            None
         };
-        (resolved.id, resolved.claim, link)
+        // A hosted window still binds a key, because everything else in the
+        // process reads one — the theme, the window title, the ctl socket's
+        // name — but it holds no lock behind it.
+        (
+            resolved.id,
+            instance::Claim {
+                owned: true,
+                lock: None,
+            },
+            link,
+        )
     };
     let owns_session = claim.owned;
     // Bind the key either way: a scratch window still reads the workspace's

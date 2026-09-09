@@ -638,12 +638,22 @@ pub enum Route {
     SpawnHost,
 }
 
-/// A resolved hosted session: which one, how it is reached, and the ownership
-/// claim that decides whether this window may write the session file.
+/// A resolved hosted session: which one, and how it is reached.
+///
+/// No ownership claim, unlike [`resolve_session`], and that absence is the
+/// point. A hosted window writes nothing — it hands its layout to the host,
+/// which is the only writer — so the lock that arbitrates "who may write this
+/// session's file" is not the window's to hold. The host holds its own, which
+/// answers the question that does apply to it: who is serving these terminals.
+///
+/// The practical difference shows up when a window is killed: the kernel drops
+/// whatever the window held, so a window-held lock left the session momentarily
+/// unowned between the kill and the next launch, with the terminals still
+/// running. Now nothing changes hands, because nothing was in the window's
+/// hands.
 pub struct Resolved {
     pub id: String,
     pub route: Route,
-    pub claim: Claim,
 }
 
 /// Which session a hosted window opens.
@@ -682,7 +692,6 @@ pub fn resolve_hosted_in(
     probe: &dyn Fn(&str) -> crate::hostctl::HostProbe,
 ) -> Resolved {
     if let Some(id) = explicit {
-        let claim = claim_in(config, id);
         let route = if probe(id).is_live() {
             Route::AttachLive
         } else {
@@ -691,7 +700,6 @@ pub fn resolve_hosted_in(
         return Resolved {
             id: id.to_string(),
             route,
-            claim,
         };
     }
 
@@ -711,17 +719,15 @@ pub fn resolve_hosted_in(
         if !probe(&id).is_free() {
             continue;
         }
-        let claim = claim_in(config, &id);
-        if claim.owned {
-            return Resolved {
-                id,
-                route: Route::AttachLive,
-                claim,
-            };
-        }
-        // Somebody else's window owns this session's file. Its host may well
-        // be unattended for a moment — mid-relaunch — and taking it would put
-        // two windows on one session. Leave it.
+        // No claim, and no second gate: the host said nobody is watching these
+        // terminals, and that is the whole question. A window that also had to
+        // win a file lock would refuse to adopt a session whose lock a dead
+        // window had not finished dropping — refusing to show somebody their
+        // work because of a formality about a file it is not going to write.
+        return Resolved {
+            id,
+            route: Route::AttachLive,
+        };
     }
 
     // Tier 3: a saved session with nothing running it at all. Start one.
@@ -734,23 +740,35 @@ pub fn resolve_hosted_in(
         if !probe(&id).is_absent() {
             continue;
         }
-        let claim = claim_in(config, &id);
-        if claim.owned {
-            return Resolved {
-                id,
-                route: Route::SpawnHost,
-                claim,
-            };
-        }
+        return Resolved {
+            id,
+            route: Route::SpawnHost,
+        };
     }
 
-    // Tier 4: nothing to adopt at all.
-    let (id, claim) = fresh_session(config);
+    // Tier 4: nothing to adopt at all. The id has to be one nothing else is
+    // using, and on this path the only claim that means anything is the host's
+    // own, taken when it binds the socket — so a name that no session file uses
+    // is the whole of what is needed here.
     Resolved {
-        id,
+        id: fresh_hosted_id(config),
         route: Route::SpawnHost,
-        claim,
     }
+}
+
+/// The lowest ordinal no saved session is using.
+///
+/// Deliberately not [`fresh_session`], which claims as it goes: on the hosted
+/// path there is nothing for a window to claim, and the arbitration that
+/// matters happens when a host binds its socket.
+fn fresh_hosted_id(config: &Path) -> String {
+    for n in 1..=MAX_SESSIONS {
+        let id = n.to_string();
+        if !state_file_in(config, &id).exists() {
+            return id;
+        }
+    }
+    DEFAULT_KEY.to_string()
 }
 
 /// The lock two windows contend on when both decide, at the same instant, that
@@ -852,7 +870,58 @@ mod tests {
         });
         assert_eq!(resolved.id, "2");
         assert_eq!(resolved.route, Route::AttachLive);
-        assert!(resolved.claim.owned, "and it is this window's to write");
+        // and nothing was locked to do it: the terminals are the host's, the
+        // file is the host's, and this window is only being shown them.
+        assert!(
+            !lock_file_in(&config, "2").exists() || claim_in(&config, "2").owned,
+            "a hosted window must not be holding this session's lock"
+        );
+    }
+
+    #[test]
+    fn a_hosted_window_leaves_the_session_lock_alone_entirely() {
+        // The property #337 asked for. A window killed with -9 has the kernel
+        // drop everything it held, so a window-held session lock left the
+        // session momentarily unowned with its terminals still running. Nothing
+        // changes hands now, because nothing was in the window's hands — and
+        // the proof is that the lock is still free to take afterwards, from
+        // here, without contending with anybody.
+        let _guard = crate::testsync::forks_and_locks();
+        let config = tmp("hosted-no-claim");
+        saved(&config, "2", 4, Duration::from_secs(60));
+
+        let resolved = resolve_hosted_in(&config, None, None, &|| vec!["2".to_string()], &|_| {
+            live("2", false)
+        });
+        assert_eq!(resolved.id, "2");
+        assert_eq!(resolved.route, Route::AttachLive);
+
+        let after = claim_in(&config, "2");
+        assert!(
+            after.owned,
+            "resolving a hosted session must leave its lock free"
+        );
+    }
+
+    #[test]
+    fn a_session_whose_lock_is_held_is_still_adoptable_when_a_host_offers_it() {
+        // A dead window's lock can outlive it by a moment, and a serverless
+        // window elsewhere may legitimately hold one. Neither is a reason to
+        // refuse somebody the terminals a host says nobody is watching: the
+        // window is not going to write that file, so the lock is not its
+        // business.
+        let _guard = crate::testsync::forks_and_locks();
+        let config = tmp("hosted-locked");
+        saved(&config, "3", 4, Duration::from_secs(60));
+        let held = claim_in(&config, "3");
+        assert!(held.owned, "the test needs to hold the lock");
+
+        let resolved = resolve_hosted_in(&config, None, None, &|| vec!["3".to_string()], &|_| {
+            live("3", false)
+        });
+        assert_eq!(resolved.id, "3", "a held lock must not hide a live host");
+        assert_eq!(resolved.route, Route::AttachLive);
+        drop(held);
     }
 
     #[test]
