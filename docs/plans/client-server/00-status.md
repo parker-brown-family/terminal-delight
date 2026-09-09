@@ -183,8 +183,8 @@ Nothing is installed and nothing is merged: the symlink holds another agent's
 favourites-shelf build, and installing over it would drop their work (#327,
 filed as possibly-nothing with the conditions that would make it real).
 
-Next: slice 3, the GUI attaching behind `TD_SESSIOND=1`, where the two
-unmeasured bets finally get measured. Slice 1's two held items belong there
+Next: slice 5 — the flip, which is now a decision rather than an engineering
+task: both halves of the gate have numbers and both pass. Slice 1's two held items belong there
 too — an attached pane has no local process id, and making that field honest
 ripples into pane.rs.
 

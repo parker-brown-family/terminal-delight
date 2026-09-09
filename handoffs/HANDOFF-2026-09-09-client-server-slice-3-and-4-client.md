@@ -45,10 +45,15 @@ directory. The bench opens no window.
 
 ## Not done / next
 
-- **#339 client half** — send the resume recipe with `spawn-pane` and delete the
-  client-side `type_line`. **One commit**: sending while still typing lands the
-  line twice. The host half is in; `resume: None` at the call site preserves
-  today's behaviour until then.
+**Everything filed this session is closed** (#336, #337, #339, #340, #341). What
+is left is a decision and a look, not code:
+
+- ~~#339 client half~~ **done and closed.** The recipe goes with `spawn-pane`,
+  the host types it, `type_line` is gone. Two layers now stop a session running
+  one agent twice — the window binds an unclaimed pane already running a leaf's
+  recipe, and under that the host refuses to type one it is already running.
+  Measured with each disabled in turn, because an end-to-end probe only
+  exercises whichever fires first.
 - ~~#341 — the suite leaves its temp dirs behind~~ **fixed and closed.** One
   guard in `testsync.rs` removing on drop (a failing test panics, so cleanup
   after the assertions is skipped exactly when there is most to skip); the
