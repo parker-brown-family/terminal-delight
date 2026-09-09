@@ -36,6 +36,10 @@ fn start_host(name: &str) -> Session {
     let child = Command::new(env!("CARGO_BIN_EXE_terminal-delight"))
         .args(["serve", "--session", name])
         .env("XDG_RUNTIME_DIR", &runtime)
+        // A host now claims its session with a lock kept beside the session
+        // files, so a test that did not say where those live would arbitrate
+        // against — and litter — the real one.
+        .env("XDG_CONFIG_HOME", runtime.join("config"))
         .env("TD_HOST_SHELL", "/bin/cat")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -291,6 +295,80 @@ fn a_version_it_cannot_speak_is_refused_by_name() {
     // this whole feature started from.
     let mut control = Control::open(&session);
     assert_eq!(control.ask("{not json}")["reply"], "error");
+}
+
+#[test]
+fn a_second_host_for_a_live_session_refuses_instead_of_taking_its_socket() {
+    // #335, over two real processes. `serve` used to unlink whatever socket
+    // file it found and bind its own; a socket file left by a dead host and one
+    // belonging to a live host look identical, so the second host took the
+    // first's front door and the first was left running — holding its
+    // terminals, with no name by which anything could reach them again.
+    let session = start_host("clash");
+    let mut control = Control::open(&session);
+    control.ask(r#"{"verb":"hello","proto":1,"kind":"window"}"#);
+    let spawned = control.ask(
+        r#"{"verb":"spawn-pane","geom":{"cols":40,"rows":8,"cell_width":8,"cell_height":16}}"#,
+    );
+    let pane = spawned["outcome"]["ok"]["pane"].as_u64().expect("pane");
+    let shell_pid = spawned["outcome"]["ok"]["shell_pid"].as_u64().expect("pid");
+    let front_door = inode_of(&session.socket);
+
+    // A second `serve`, exactly as a second window launching at the same moment
+    // would start one.
+    let mut second = Command::new(env!("CARGO_BIN_EXE_terminal-delight"))
+        .args(["serve", "--session", "clash"])
+        .env("XDG_RUNTIME_DIR", &session.runtime)
+        .env("XDG_CONFIG_HOME", session.runtime.join("config"))
+        .env("TD_HOST_SHELL", "/bin/cat")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn a second host");
+
+    // It must decline and go, rather than settle in. Asserted before anything
+    // else, because a second host that keeps running is the bug itself and
+    // every assertion after this one would be measuring its aftermath.
+    let left = wait_for(Duration::from_secs(10), || {
+        matches!(second.try_wait(), Ok(Some(_)))
+    });
+    if !left {
+        let _ = second.kill();
+        let _ = second.wait();
+        panic!("a second host for a live session started and stayed running");
+    }
+    let status = second.wait().expect("the second host's exit");
+    assert_eq!(
+        status.code(),
+        Some(0),
+        "a caller that wanted a host for this session has one, so this is success"
+    );
+
+    assert_eq!(
+        inode_of(&session.socket),
+        front_door,
+        "the second host replaced the first host's socket"
+    );
+
+    // The first host is still there, still owns its pane, and still answers to
+    // the name it was reachable by.
+    let mut control = Control::open(&session);
+    let listed = control.ask(r#"{"verb":"list-panes"}"#);
+    assert_eq!(
+        listed["panes"][0]["pane"], pane,
+        "the session socket no longer reaches the host holding the work: {listed}"
+    );
+    assert!(
+        PathBuf::from(format!("/proc/{shell_pid}")).exists(),
+        "the pane the first host was holding is gone"
+    );
+}
+
+fn inode_of(path: &PathBuf) -> u64 {
+    use std::os::unix::fs::MetadataExt;
+    std::fs::metadata(path)
+        .unwrap_or_else(|e| panic!("no {}: {e}", path.display()))
+        .ino()
 }
 
 /// Split what a client received into the snapshot and everything after it.
