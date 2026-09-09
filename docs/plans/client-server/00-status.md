@@ -94,7 +94,7 @@
       green (670 unit, 4 dispatch, 5 host socket), with the five-consecutive-run
       stability check taken at 664 before the merges; `cargo fmt --check` and
       `clippy -D warnings` both clean.
-- [~] Slice 4 — the persistence redirect is IN, ahead of the rest of the slice.
+- [x] Slice 4 — DONE. The persistence redirect landed first, ahead of the rest.
       The host became the session file's single writer host-side, and for a
       while the branch had two processes writing one file: measured, a window
       that adopted a running terminal wrote three tabs and the host's own
@@ -110,8 +110,14 @@
       session is still owned — by the host, which still has the terminals. And a
       leaf that would respawn now binds an unclaimed pane running exactly its
       resume line, so a layout that has fallen behind cannot start a second copy
-      of an agent that is already running. Still to come in this slice: the pane
-      cap.
+      of an agent that is already running. The pane cap is in too: a new split
+      stops at four (`MAX_PANES`), while what a tab may HOLD stays at eight
+      (`LEGACY_PANE_CEILING`) because layouts written under the old number
+      exist and the warp draws eight tubes. Nothing in the load path consults
+      either — a loader enforcing the new cap would open a saved session with
+      terminals missing — and a `legacy-load` harness leg hand-writes an
+      eight-pane tab with no pane ids and requires all eight to come up.
+      Slice 4 is complete.
 - [ ] Slice 5 — flip the default, gated on the harness numbers Parker signs.
       **Both halves of the gate now have numbers, and one of them fails.**
       Survival: lost sessions = 0, four legs, repeatedly. Latency

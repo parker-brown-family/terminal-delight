@@ -79,7 +79,34 @@ use pane::{
 use serde::{Deserialize, Serialize};
 use theme::{PaneTheme, ThemeChoice};
 
-const MAX_PANES: usize = 8;
+/// How many panes a NEW split may make in one tab.
+///
+/// Four, because eight is not a number of terminals anybody arranges on purpose
+/// — it is a number somebody arrives at by splitting once too often, and then
+/// reads none of them. Enforced only where a person asks for another pane;
+/// nothing that LOADS a layout consults it, which is the whole point of the
+/// distinction below.
+const MAX_PANES: usize = 4;
+
+/// How many panes a tab may still HOLD.
+///
+/// Layouts written before the cap dropped hold up to eight, and the CRT warp
+/// draws that many tubes. A loader that enforced the new cap would open such a
+/// file with panes missing — terminals silently not restored, which is the one
+/// thing this feature exists to stop happening. So the loader tolerates what is
+/// already there and only new splits are refused.
+const LEGACY_PANE_CEILING: usize = 8;
+const _: () = assert!(MAX_PANES <= LEGACY_PANE_CEILING);
+
+/// Whether a tab already showing `leaves` panes may be split again.
+///
+/// The whole of the cap, in one place, because the two numbers above are easy
+/// to confuse at a call site: a tab that already holds more than the new cap is
+/// not broken and is not corrected — it simply cannot grow. Somebody who
+/// arranged six panes before the cap dropped keeps all six.
+fn may_split(leaves: usize) -> bool {
+    leaves < MAX_PANES
+}
 
 /// A tube that has been switched off. A closing pane is dropped immediately —
 /// that drop IS the close, it releases the PTY — so the shutdown cannot be
@@ -5524,11 +5551,12 @@ impl Workspace {
         };
         let mut leaves = vec![];
         tab.root.leaves(&mut leaves);
-        // The cap matches the CRT warp's 8-tube shader limit, which only ever
-        // applies to the VISIBLE (active-tab) panes — so it's per active tab, not
-        // global. (A global count silently blocked splits once enough panes were
-        // open across *other* tabs.)
-        if leaves.len() >= MAX_PANES {
+        // Per active tab rather than global: a global count silently blocked
+        // splits once enough panes were open across OTHER tabs. And this is the
+        // new-split cap, not the ceiling a loaded tab may already sit above —
+        // somebody who arranged six panes before the cap dropped keeps all six
+        // and simply cannot add a seventh.
+        if !may_split(leaves.len()) {
             return;
         }
         let target_pane = leaves
@@ -17449,6 +17477,57 @@ mod tests {
     }
 
     #[test]
+    fn a_new_split_stops_at_four_and_a_legacy_tab_keeps_what_it_has() {
+        // Four is what a person can read at once. Eight is what somebody
+        // arrives at by splitting once too often — which is why the number
+        // came down, and why the layouts already holding eight must not be
+        // "corrected" on load: correcting them means opening somebody's session
+        // with terminals missing, which is the one failure this whole feature
+        // exists to prevent.
+        assert!(may_split(0), "an empty tab can be split");
+        assert!(may_split(3), "three panes can become four");
+        assert!(!may_split(MAX_PANES), "four is the end of it");
+        assert!(
+            !may_split(6),
+            "a tab that already holds six cannot grow to seven"
+        );
+        // ...and the ceiling is what a tab may HOLD, which is a different
+        // question from what a split may make. Checked where the compiler can
+        // see it, since both are constants: the relationship between them is
+        // the invariant, not the values.
+        const _: () = assert!(MAX_PANES < LEGACY_PANE_CEILING);
+        const _: () = assert!(LEGACY_PANE_CEILING == 8, "the CRT warp draws eight tubes");
+    }
+
+    #[test]
+    fn nothing_in_the_load_path_consults_the_split_cap() {
+        // The loader's job is to open what is there. A legacy tree of eight
+        // leaves plans eight panes — every one of them, in order — and the cap
+        // is not mentioned anywhere in that decision.
+        let mut node = leaf_with(Some(1), "/work", None);
+        for id in 2..=8u64 {
+            node = SavedNode::Split {
+                dir: SplitDir::Row,
+                ratio: 0.5,
+                a: Box::new(node),
+                b: Box::new(leaf_with(Some(id), "/work", None)),
+            };
+        }
+        let saved = vec![tab_of(node)];
+        let live: Vec<hostproto::PaneInfo> = (1..=8).map(|id| running(id, false)).collect();
+        let plan = plan_attach(&saved, &live);
+        assert_eq!(plan.tabs[0].len(), 8, "all eight leaves are planned");
+        assert!(
+            plan.tabs[0]
+                .iter()
+                .all(|p| matches!(p, LeafPlan::Bind { .. })),
+            "and every one of them binds the terminal it names"
+        );
+        assert!(plan.orphans.is_empty());
+        assert_eq!(count_saved_leaves(&saved[0].node), 8);
+    }
+
+    #[test]
     fn a_leaf_binds_the_agent_it_names_rather_than_starting_a_second_one() {
         // The expensive duplicate. A restored backup names a pane that no
         // longer exists, while the agent that leaf describes is running right
@@ -17699,13 +17778,16 @@ mod tests {
 
     /// The strip is capped so a tab full of agents can't crowd out its own
     /// name, and the overflow keeps the COUNT the glyphs had to drop. A tab
-    /// holds at most MAX_PANES agents, so the chip never has to say more.
+    /// holds at most LEGACY_PANE_CEILING agents, so the chip never has to say more.
     #[test]
     fn the_badge_strip_caps_and_the_rest_become_a_count() {
         assert_eq!(badge_overflow(0), 0);
         assert_eq!(badge_overflow(MAX_TAB_BADGES), 0);
         assert_eq!(badge_overflow(MAX_TAB_BADGES + 1), 1);
-        assert_eq!(badge_overflow(MAX_PANES), MAX_PANES - MAX_TAB_BADGES);
+        assert_eq!(
+            badge_overflow(LEGACY_PANE_CEILING),
+            LEGACY_PANE_CEILING - MAX_TAB_BADGES
+        );
     }
 
     /// PageDown from the bottom stays at the bottom (and stays armed); PageUp
@@ -19386,12 +19468,12 @@ pub fn agent_badge(
 }
 
 /// How many badges a tab actually paints, and what the overflow chip says.
-/// A tab can hold [`MAX_PANES`] agents and the mother bar is already crowded,
+/// A tab can hold [`LEGACY_PANE_CEILING`] agents and the mother bar is already crowded,
 /// so the strip is capped and the rest collapse into a `+N` — the count still
 /// survives even when the glyphs don't fit. Pure for the arithmetic.
 const MAX_TAB_BADGES: usize = 4;
 /// A cap above the pane limit could never be reached — catch that at compile time.
-const _: () = assert!(MAX_TAB_BADGES <= MAX_PANES);
+const _: () = assert!(MAX_TAB_BADGES <= LEGACY_PANE_CEILING);
 fn badge_overflow(total: usize) -> usize {
     total.saturating_sub(MAX_TAB_BADGES)
 }

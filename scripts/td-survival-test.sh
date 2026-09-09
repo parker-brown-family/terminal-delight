@@ -10,6 +10,7 @@
 #   ./scripts/td-survival-test.sh floor-control --cycles 20
 #   ./scripts/td-survival-test.sh host-kill --cycles 3
 #   ./scripts/td-survival-test.sh pane-exit --cycles 3
+#   ./scripts/td-survival-test.sh legacy-load
 #
 # THE FLOOR CONTROL IS NOT OPTIONAL. A harness that reports zero losses against
 # a build without session hosts is not measuring anything, and would report zero
@@ -22,6 +23,12 @@
 # must be exactly today's — the layout restored from the file, the shells
 # started again, the scrollback gone. Losses there are compared against the
 # floor, not against zero.
+#
+# `legacy-load` is about a number that changed under people. A new split stops
+# at four panes now, but layouts written before that hold up to eight, and a
+# loader that enforced the new cap would open one of them with terminals
+# missing. So it hand-writes an eight-pane tab and requires every one of them to
+# come up.
 #
 # `pane-exit` is the opposite question, and the one this harness was missing:
 # when a terminal genuinely ENDS, does the window notice? Everything else here
@@ -58,9 +65,9 @@ while [ $# -gt 0 ]; do
 done
 
 case "$LEG" in
-  gui-kill|floor-control|host-kill|pane-exit) ;;
+  gui-kill|floor-control|host-kill|pane-exit|legacy-load) ;;
   *)
-    echo "usage: td-survival-test.sh {gui-kill|floor-control|host-kill|pane-exit} [--cycles N] [--keep]" >&2
+    echo "usage: td-survival-test.sh {gui-kill|floor-control|host-kill|pane-exit|legacy-load} [--cycles N] [--keep]" >&2
     exit 2
     ;;
 esac
@@ -638,11 +645,56 @@ run_pane_exit() {
   done
 }
 
+run_legacy_load() {
+  # Eight panes in one tab, nested the way splitting produces them, with no
+  # pane ids — a file written before session hosts existed and before the cap
+  # came down. Every one of them must come up.
+  for cycle in $(seq 1 "$CYCLES"); do
+    python3 - "$STATE" "$RUN" <<'PY'
+import sys
+
+state, run = sys.argv[1], sys.argv[2]
+# a right-leaning spine of eight leaves, which is what splitting one tab
+# repeatedly leaves behind
+leaves = [f'{{ Leaf = {{ cwd = "{run}", resume = "echo legacy-pane-{n}-ready" }} }}' for n in range(1, 9)]
+node = leaves[-1]
+for leaf in reversed(leaves[:-1]):
+    node = f'{{ Split = {{ dir = "Row", ratio = 0.5, a = {leaf}, b = {node} }} }}'
+with open(state, "w") as f:
+    f.write("active = 0\npanes = 8\nwin = [40.0, 60.0, 900.0, 560.0]\n\n")
+    f.write("[[tabs]]\nname = \"eight\"\n")
+    f.write(f"node = {node}\n")
+PY
+    launch_gui hosted
+    if ! wait_for 30 test -S "$SOCKET"; then
+      lose "$cycle" "no session host ever appeared"
+      losses=$((losses + 1)); cycles_run=$((cycles_run + 1)); kill_gui; continue
+    fi
+    # Give every pane time to be started and typed into.
+    sleep 8
+    local held
+    held="$(host_pane_pids | tr ' ' '\n' | grep -c ':')"
+    if [ "$held" != "8" ]; then
+      lose "$cycle" "a legacy eight-pane tab opened with $held terminals; see $(diagnose "$cycle")"
+      losses=$((losses + 1))
+    fi
+    if [ -z "${GUI_PID:-}" ] || ! alive "$GUI_PID"; then
+      lose "$cycle" "the window did not survive opening an over-cap layout"
+    fi
+    note "cycle $cycle: the legacy tab opened with $held terminals"
+    kill_gui
+    pkill -9 -f "serve --session $SESSION" 2>/dev/null
+    cycles_run=$((cycles_run + 1))
+    sleep 1
+  done
+}
+
 case "$LEG" in
   gui-kill) run_gui_kill ;;
   floor-control) run_floor_control ;;
   host-kill) run_host_kill ;;
   pane-exit) run_pane_exit ;;
+  legacy-load) run_legacy_load ;;
 esac
 
 # --------------------------------------------------------------- the verdict --
@@ -652,6 +704,7 @@ case "$LEG" in
   floor-control) expected="$cycles_run" ;;
   host-kill) expected=0 ;;
   pane-exit) expected=0 ;;
+  legacy-load) expected=0 ;;
 esac
 
 printf '{"leg":"%s","cycles":%s,"losses":%s,"expected_losses":%s,"editor":"%s","monitor":"%s","failures":[' \
