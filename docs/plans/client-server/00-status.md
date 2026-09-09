@@ -63,13 +63,47 @@
       is filed as #331 because the mechanism also exists in production.
       Still to come here: the protocol contract doc under `docs/protocol/`, the
       relocated mode watcher and checkpoint, and the detached backoff.
-- [ ] Slice 3 — GUI attach behind `TD_SESSIOND=1`; the survival harness is
-      built here and the flip-gate numbers are measured here.
-- [ ] Slice 4 — persistence redirect + orphan adoption.
+- [x] Slice 3 — DONE 2026-09-09. GUI attach behind `TD_SESSIOND=1`: the
+      first-ranked live-host tier in session resolution (a running host nobody
+      is watching outranks the newest file on disk), `term::attach_in` building
+      a `Session` from a socket, orphan adoption, the divergence guard running
+      against the host's `grid-check`, and `scripts/td-survival-test.sh`.
+      Slice 1's two held items landed here as designed: `Session.shell_pid` is
+      `Option<u32>` — with the ripple absorbed honestly at each call site
+      rather than by a zero — and `SavedNode.pane_id` came a slice early
+      because the bind path is what first reads it.
+      **The metric, measured rather than argued:** `gui-kill --cycles 20`
+      twice, losses 0/20 both times — same shell pids, same neovim, same btop,
+      same agent pane, first and last line of three thousand still in the
+      scrollback, the sticky note still in the layout. `floor-control
+      --cycles 20` reads 20 losses of 20, so the instrument can see the loss it
+      is looking for. `host-kill --cycles 3` recovers to exactly today's floor:
+      new pids, the layout read back from the file, every program started
+      again. Suite 664 green over five consecutive runs.
+- [ ] Slice 4 — persistence redirect (orphan adoption landed in slice 3, where
+      the bind path needed it).
 - [ ] Slice 5 — flip the default, gated on the harness numbers Parker signs.
 - [ ] Slice 6 — tie-off: the follow-up issues 03 commits to.
 
-## Where it stands, 2026-09-09
+## Where it stands, 2026-09-09 (evening)
+
+Slice 3 is in. A window attaches to a session host behind `TD_SESSIOND=1`, and
+the thing the feature exists for is now a number rather than a claim: twenty
+kills, nothing lost, twice — against a control leg that loses everything twenty
+times out of twenty on today's path.
+
+Three things worth carrying forward. The divergence guard is live, not wired for
+later: every thirty seconds an attached window asks the host what its own grid
+hashes to at a stated point in the stream and compares under the replica's own
+fence — and `TD_GUARD_FORCE_MISMATCH=1` proves the repair by running it on a
+pane that agrees. The client still runs its own 800ms foreground watcher,
+reading /proc instead of a descriptor it does not have, because there is no push
+channel yet to carry the host's answer; that duplication should go when there
+is. And a hosted window still claims the session flock, which is the host's job
+in 02 — the host does not claim it yet, and until it does the flock is what
+keeps two windows from writing one session file.
+
+## Where it stood, 2026-09-09 (morning)
 
 Seven commits on `client-server-split`, open as one draft pull request (#328 —
 one PR for the task, so a rollback is one revert). Suite green at 614, from a

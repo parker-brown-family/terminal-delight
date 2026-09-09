@@ -1827,6 +1827,11 @@ pub struct TerminalView {
     /// The divergence guard, on an attached pane only — the thing that can
     /// answer "is what I am drawing still what the host has?".
     guard: Option<crate::gridwire::ReplicaGuard>,
+    /// What this pane was built from: the directory and the command that would
+    /// put it back. Kept because on an attached pane it is the only copy — the
+    /// window is a process away from the terminal, and a reading that comes
+    /// back empty is not evidence that the recipe was wrong.
+    staged: crate::session::PaneRestore,
     /// The OSC-driven shell title (apps overwrite it via the title sequence).
     pub title: String,
     /// A user-set name (right-click the header to rename). Wins over `title`
@@ -2455,6 +2460,25 @@ impl TerminalView {
     /// What this pane is doing right now — cwd + resumable agent session —
     /// captured from the kernel for the workspace snapshot.
     pub fn runtime(&self) -> crate::session::PaneRuntime {
+        let live = self.live_runtime();
+        if self.pane_id.is_none() {
+            // A terminal of our own: today's answer, unchanged. A recipe that
+            // has stopped being true here stops being written, which is what
+            // the dead-agent reaping downstream expects.
+            return live;
+        }
+        // A terminal a host owns. The reading is taken through /proc from
+        // outside, and "I could not see an agent" is not the same claim as
+        // "there is no agent" — so what the pane was built from is kept where
+        // the reading came back with nothing. Losing it would thin the file
+        // that a host crash falls back to.
+        crate::session::PaneRuntime {
+            cwd: live.cwd.or_else(|| self.staged.cwd.clone()),
+            resume: live.resume.or_else(|| self.staged.resume.clone()),
+        }
+    }
+
+    fn live_runtime(&self) -> crate::session::PaneRuntime {
         match (self.session.master.as_ref(), self.session.shell_pid) {
             // Our own terminal: ask the kernel through the descriptor we hold.
             (Some(master), Some(pid)) => crate::session::capture(Some(master), pid),
@@ -2819,6 +2843,7 @@ impl TerminalView {
             session,
             pane_id,
             guard,
+            staged: restore.clone(),
             title: "shell".into(),
             name: None,
             logo,

@@ -3404,6 +3404,14 @@ impl Workspace {
         self.prune_groups();
         self.active = saved.active.min(self.tabs.len().saturating_sub(1));
         self.focus_active(window, cx);
+        // Write the layout down now, while what it says is true.
+        //
+        // This window has just decided which terminal each leaf is showing, and
+        // that mapping exists nowhere else. A crash before the next checkpoint
+        // would leave a file that names no panes, and the launch after it would
+        // start a second set of shells beside the ones still running — the
+        // failure adoption exists to prevent, arriving thirty seconds early.
+        self.save(cx);
         Self::watch_for_divergence(ctx.clone(), window, cx);
     }
 
