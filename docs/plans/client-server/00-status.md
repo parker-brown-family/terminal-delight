@@ -90,8 +90,8 @@
       forever. It ends one terminal and requires the window to outlive it, then
       ends the rest and requires the window to close; 0 losses over 3 cycles,
       and proven by breaking it — a window deafened to its replicas' exits
-      reports "still up after every one of its terminals had ended". Suite 679
-      green (670 unit, 4 dispatch, 5 host socket), with the five-consecutive-run
+      reports "still up after every one of its terminals had ended". Suite 714
+      green (703 unit, 4 dispatch, 7 host socket), with the five-consecutive-run
       stability check taken at 664 before the merges; `cargo fmt --check` and
       `clippy -D warnings` both clean.
 - [x] Slice 4 — DONE. The persistence redirect landed first, ahead of the rest.

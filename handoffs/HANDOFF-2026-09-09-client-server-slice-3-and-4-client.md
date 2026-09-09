@@ -4,8 +4,9 @@
 
 Landed and pushed. Branch `cs/slice-3`, merged into `client-server-split`
 (one PR, **#328**), working tree clean, HEAD level with origin. **Nothing is
-installed** — the symlink still holds another agent's build (#327). 707 tests,
-`cargo fmt --check` and `clippy -D warnings` clean.
+installed** — the symlink still holds another agent's build (#327). 714 tests
+(703 unit, 4 dispatch, 7 host socket, re-derived from the run rather than
+carried), `cargo fmt --check` and `clippy -D warnings` clean.
 
 Both halves of the flip gate now have numbers and **both pass**. Slice 5 is a
 decision, not an engineering task.
