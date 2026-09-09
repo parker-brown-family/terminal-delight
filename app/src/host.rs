@@ -2713,52 +2713,42 @@ mod owning {
     /// Passed in rather than set in the environment, for the reason the shell
     /// is: tests share one process, and `set_var` mutates a table every other
     /// thread may be reading.
-    /// A directory of this test's own, taken away when the test ends.
+    /// The paths a host test needs, inside a scratch directory that takes
+    /// itself away.
     ///
-    /// Removed on drop rather than at the end of a test body, because a test
-    /// that fails leaves by panicking and would skip any tidying written after
-    /// the assertions. Without it the suite left one of these behind per test
-    /// per run — two thousand of them in `/tmp` before anybody looked.
-    struct Scratch {
-        root: std::path::PathBuf,
+    /// The guard is `testsync::Scratch`, shared with every other test helper in
+    /// the suite — this file had its own copy of the same idea, and a rule with
+    /// two implementations is a rule that drifts. The tag keeps the `claim-`
+    /// prefix so a stray directory can still be attributed to these tests at a
+    /// glance.
+    ///
+    /// **Bind the scratch to a name before using these.** `scratch_of(&Scratch::new("x"))`
+    /// drops the guard at the end of that statement and takes the directory
+    /// with it, which fails loudly if the test touches it afterwards and
+    /// silently if it does not.
+    fn scratch(tag: &str) -> crate::testsync::Scratch {
+        crate::testsync::Scratch::new(&format!("claim-{tag}"))
     }
 
-    impl Scratch {
-        fn new(tag: &str) -> Self {
-            let root = std::env::temp_dir().join(format!(
-                "td-claim-{tag}-{}-{:?}",
-                std::process::id(),
-                std::thread::current().id()
-            ));
-            let _ = std::fs::remove_dir_all(&root);
-            std::fs::create_dir_all(root.join("run")).expect("a private runtime dir");
-            Self { root }
-        }
-
-        /// Where this test's session files live.
-        fn config(&self) -> std::path::PathBuf {
-            self.root.join("config")
-        }
-
-        /// A socket path of its own, in a runtime directory of its own.
-        fn socket(&self) -> std::path::PathBuf {
-            self.root.join("run").join("session.sock")
-        }
-
-        /// The saved state file, with its directory already made — a test
-        /// standing in for a person restoring a backup writes it before
-        /// anything else has.
-        fn state_file(&self) -> std::path::PathBuf {
-            let sessions = self.config().join("sessions");
-            std::fs::create_dir_all(&sessions).expect("a sessions directory");
-            sessions.join("under-test.toml")
-        }
+    /// Where this test's session files live.
+    fn config_in(scratch: &crate::testsync::Scratch) -> std::path::PathBuf {
+        scratch.join("config")
     }
 
-    impl Drop for Scratch {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.root);
-        }
+    /// A socket path of its own, with the runtime directory made — a host binds
+    /// into it, and `bind` will not create the parent.
+    fn socket_in(scratch: &crate::testsync::Scratch) -> std::path::PathBuf {
+        let run = scratch.join("run");
+        std::fs::create_dir_all(&run).expect("a private runtime dir");
+        run.join("session.sock")
+    }
+
+    /// The saved state file, with its directory already made — a test standing
+    /// in for a person restoring a backup writes it before anything else has.
+    fn state_file_in(scratch: &crate::testsync::Scratch) -> std::path::PathBuf {
+        let sessions = config_in(scratch).join("sessions");
+        std::fs::create_dir_all(&sessions).expect("a sessions directory");
+        sessions.join("under-test.toml")
     }
 
     fn inode_of(path: &std::path::Path) -> u64 {
@@ -2779,8 +2769,8 @@ mod owning {
         // a second host took the first's front door and left it running, with
         // its terminals, and no name by which anything could reach them again.
         let _guard = crate::testsync::forks_and_locks();
-        let scratch = Scratch::new("clash");
-        let (config, socket) = (scratch.config(), scratch.socket());
+        let scratch = scratch("clash");
+        let (config, socket) = (config_in(&scratch), socket_in(&scratch));
 
         let (first, _claim) = take_session(&config, &socket, "clash", SOON)
             .expect("the first host takes the session");
@@ -2816,8 +2806,8 @@ mod owning {
         // session must still be startable. A fix that refused here would trade
         // one unreachable session for a permanently unstartable one.
         let _guard = crate::testsync::forks_and_locks();
-        let scratch = Scratch::new("corpse");
-        let (config, socket) = (scratch.config(), scratch.socket());
+        let scratch = scratch("corpse");
+        let (config, socket) = (config_in(&scratch), socket_in(&scratch));
         {
             let (listener, claim) =
                 take_session(&config, &socket, "corpse", SOON).expect("the first host");
@@ -2845,8 +2835,8 @@ mod owning {
         // alternative, taking the session anyway, is killing terminals to fix a
         // terminal that might still be fine.
         let _guard = crate::testsync::forks_and_locks();
-        let scratch = Scratch::new("silent");
-        let (config, socket) = (scratch.config(), scratch.socket());
+        let scratch = scratch("silent");
+        let (config, socket) = (config_in(&scratch), socket_in(&scratch));
         let held = claim_host(&config, "silent").expect("hold the session");
         std::fs::write(&socket, b"whatever was here before").expect("something at the path");
 
@@ -3323,8 +3313,8 @@ cwd = "/somebody-elses-terminal"
 
     #[test]
     fn a_save_that_would_lose_most_of_a_session_is_refused_and_the_file_stands() {
-        let scratch = Scratch::new("shrink");
-        let path = scratch.state_file();
+        let scratch = scratch("shrink");
+        let path = state_file_in(&scratch);
         a_saved_session(&path, 6);
         let before = std::fs::read_to_string(&path).expect("read back");
 
@@ -3371,8 +3361,8 @@ cwd = "/somebody-elses-terminal"
         // tree, so it decides which session a cold launch reopens. A client
         // claim written straight through would rank sessions by a number
         // nobody checked.
-        let scratch = Scratch::new("recount");
-        let path = scratch.state_file();
+        let scratch = scratch("recount");
+        let path = state_file_in(&scratch);
         let host = Host::with_shell("test", None);
         host.persist_to(path.clone());
 
@@ -3394,8 +3384,8 @@ cwd = "/somebody-elses-terminal"
     fn a_layout_in_a_shape_this_build_does_not_know_is_written_through_untouched() {
         // Refusing would lose the whole save; writing it through loses only the
         // freshness of two fields, and the reply says which happened.
-        let scratch = Scratch::new("schema");
-        let path = scratch.state_file();
+        let scratch = scratch("schema");
+        let path = state_file_in(&scratch);
         let host = Host::with_shell("test", None);
         host.persist_to(path.clone());
 
@@ -3429,8 +3419,8 @@ cwd = "/somebody-elses-terminal"
         // The point of the host holding the pen: a session with no window still
         // records where its panes are, so a crash loses recency and never the
         // layout.
-        let scratch = Scratch::new("checkpoint");
-        let path = scratch.state_file();
+        let scratch = scratch("checkpoint");
+        let path = state_file_in(&scratch);
         let host = Host::with_shell("test", Some("/bin/cat".into()));
         host.persist_to(path.clone());
         let info = spawn_guarded(&host);
@@ -3468,8 +3458,8 @@ cwd = "/somebody-elses-terminal"
         // it. A host that seeded a copy at boot and never looked again undoes
         // that on its next checkpoint — silently, within thirty seconds, so the
         // person concludes the backup was no good.
-        let scratch = Scratch::new("foreign");
-        let path = scratch.state_file();
+        let scratch = scratch("foreign");
+        let path = state_file_in(&scratch);
         let host = Host::with_shell("test", None);
         host.persist_to(path.clone());
         assert!(host
@@ -3512,8 +3502,8 @@ cwd = "/somebody-elses-terminal"
         // destination's name — so both used one temp path, the first rename
         // took it away from the second, and the second failed with a puzzling
         // "no such file". Found by a soak, at two runs in forty.
-        let scratch = Scratch::new("onewriter");
-        let path = scratch.state_file();
+        let scratch = scratch("onewriter");
+        let path = state_file_in(&scratch);
         let host = Host::with_shell("test", None);
         host.persist_to(path.clone());
         assert!(host
@@ -3565,8 +3555,8 @@ cwd = "/somebody-elses-terminal"
         // back as though a stranger had touched it — which today only means a
         // misleading line in the log, and is the wrong ground for anything that
         // ever acts on the difference more strongly than this does.
-        let scratch = Scratch::new("ownwriting");
-        let path = scratch.state_file();
+        let scratch = scratch("ownwriting");
+        let path = state_file_in(&scratch);
         let host = Host::with_shell("test", None);
         host.persist_to(path.clone());
         assert!(host
@@ -3589,8 +3579,8 @@ cwd = "/somebody-elses-terminal"
         // The other side of the same rule. A window is showing the live tree,
         // which is a better account of the session than any file — so `save` is
         // not a merge with whatever happens to be on disk, it replaces it.
-        let scratch = Scratch::new("livewins");
-        let path = scratch.state_file();
+        let scratch = scratch("livewins");
+        let path = state_file_in(&scratch);
         let host = Host::with_shell("test", None);
         host.persist_to(path.clone());
         std::fs::write(
@@ -3617,8 +3607,8 @@ cwd = "/somebody-elses-terminal"
     fn half_a_write_is_not_a_layout() {
         // A file caught mid-write parses as nothing, and adopting nothing would
         // throw away a session to a race with somebody's editor.
-        let scratch = Scratch::new("halfwritten");
-        let path = scratch.state_file();
+        let scratch = scratch("halfwritten");
+        let path = state_file_in(&scratch);
         let host = Host::with_shell("test", None);
         host.persist_to(path.clone());
         assert!(host
@@ -3679,8 +3669,8 @@ cwd = "/somebody-elses-terminal"
         // Nothing ended a host, and that was never a choice anybody made: an
         // empty one sat at fifteen megabytes until a reboot. Hosted by default,
         // that is one per session, forever.
-        let scratch = Scratch::new("idle");
-        let path = scratch.state_file();
+        let scratch = scratch("idle");
+        let path = state_file_in(&scratch);
         let host = Host::with_shell("test", None);
         host.persist_to(path.clone());
         assert!(host
@@ -3717,8 +3707,8 @@ cwd = "/somebody-elses-terminal"
         // through `start_upkeep` instead, the checkpoint's own first tick
         // writes the file and the assertion proves nothing — which is how the
         // first version of this passed with the checkpoint removed.
-        let scratch = Scratch::new("idlewrite");
-        let path = scratch.state_file();
+        let scratch = scratch("idlewrite");
+        let path = state_file_in(&scratch);
         let host = Host::with_shell("test", None);
         host.persist_to(path.clone());
         assert!(host
