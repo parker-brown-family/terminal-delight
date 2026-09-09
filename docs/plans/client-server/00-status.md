@@ -99,9 +99,11 @@ fence — and `TD_GUARD_FORCE_MISMATCH=1` proves the repair by running it on a
 pane that agrees. The client still runs its own 800ms foreground watcher,
 reading /proc instead of a descriptor it does not have, because there is no push
 channel yet to carry the host's answer; that duplication should go when there
-is. And a hosted window still claims the session flock, which is the host's job
-in 02 — the host does not claim it yet, and until it does the flock is what
-keeps two windows from writing one session file.
+is, and is filed falsifiably as #336. And a hosted window still claims the
+session flock, which is the host's job in 02 — the host does not claim it yet,
+and until it does the flock is what keeps two windows from writing one session
+file; filed as #337, and invalid the moment the Save verb makes the host the
+file's writer.
 
 ## Where it stood, 2026-09-09 (morning)
 
