@@ -134,6 +134,40 @@ is built at the opt-in stage; the flip is gated on its numbers, not on a
 promise. The `grid.frame` structured-read door stays open post-v1 on the
 authoritative Term without re-cutting the seam.
 
+## Host lifetime — decided by Parker, 2026-09-09
+
+**A host exits after a long idle: no client attached and no pane output for
+~12 hours. It checkpoints before it goes, and says so in the log.** This gates
+slice 5: the default does not flip until the policy is in.
+
+Approved from the brief `reports/2026-09-09-what-ends-a-host.html` (three
+questions, "concur" to each).
+
+Why this rather than the alternatives, so it is not relitigated:
+
+- **Nothing ends a host** was the behaviour, not a choice — the Gate 2 record
+  asserted "exits when its last pane closes" and only the `shutdown` verb was
+  ever built. Measured 2026-09-09: an empty host is 15 MB and immortal, cleared
+  only by a reboot. Untenable once every window is hosted.
+- **Exit on last pane** is what the design assumed, and it carries the
+  restore trap flagged at Gate 3: a window that closes panes before it opens
+  them takes its own host down mid-restore. It also makes a session
+  unreattachable one second after you close its last pane, which is sometimes
+  exactly what you wanted.
+- **Bounded by the login session** trades away logout survival, which Gate 1
+  named as a problem worth solving.
+- **Prior art is unanimous and inapplicable.** tmux, screen and zellij never
+  exit — but you *opt into* tmux, so a server that lives forever matches a
+  promise the user made deliberately. Hosted-by-default is the opposite: the
+  mechanism transfers, the policy does not.
+
+**Generous on purpose.** Twelve hours needs no heuristic about whether a silent
+agent is thinking, and a heuristic is what would eventually kill something
+irreplaceable in a way nobody could reproduce. Two hard rules follow: **never
+exit while a client is attached**, whatever the panes are printing — an
+attached window is proof the session is wanted; and **checkpoint before
+exiting**, so what remains on disk is fresh rather than hours stale.
+
 ## Decision round — answered by Parker, 2026-09-08 (annotated brief)
 
 1. Second attach: **steal, tmux-style** — the new attach wins, the host drops
