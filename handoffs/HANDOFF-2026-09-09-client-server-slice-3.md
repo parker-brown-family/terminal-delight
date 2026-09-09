@@ -75,14 +75,36 @@ terminal runs, even behind `TD_SESSIOND=1`, so the risk profile changes here.
   Build its floor-control leg too: run against today's path it must report
   losses == cycles, or the harness itself is broken.
 
-**Slice 2's debts (separable — a second agent can take these without colliding;
-they live in `host.rs`, slice 3 is client-side).**
-- The protocol contract page under `docs/protocol/session-host-v1.md`, with a
-  test that parses its own examples, so the host is conformance-tested against
-  the document rather than against itself.
-- Relocate the 800 ms foreground-mode watcher and the 30 s checkpoint into the
-  host, where the PTYs are.
-- Detached backoff — a host nobody is watching should not poll like one that is.
+**Slice 2's debts — DONE** (`cb51542`, `f99d338`, `6347cd3` on
+`client-server-split`; 631 tests green over eleven runs).
+- `docs/protocol/session-host-v1.md` is the contract, and nine tests in
+  hostproto.rs read it: every `json` example deserialises into the type its
+  fence declares, no example may name a field the host would not write back,
+  every verb and reply serde knows must appear on the page, every field the
+  host emits must appear on it, and the version number and mismatch wording are
+  the code's own words. It has already caught a real change — adding
+  `grid-check` failed the suite until the page described it.
+- The 800 ms watcher and the 30 s checkpoint now run in the host. Their answers
+  ride `list-panes` as `mode`, `resume`, and a `cwd` that is a live reading
+  rather than the spawn argument. All three are `None` until the host has
+  looked: `classify_foreground` answers `Option` where pane.rs answers `Shell`,
+  and a failed reading never overwrites a real one.
+- Detached backoff: 5 s and 5 min with nobody watching; an attach or a spawn
+  rings a bell both clocks sleep on, so cadence is restored at once rather than
+  at the end of a five-minute sleep.
+- Added beyond the three, at the slice-3 agent's request: `grid-check`, which
+  answers with the authoritative grid's hash and the byte offset into the
+  asking client's stream that it was taken at — both under the attach fence, so
+  they describe one moment. It makes `gridwire::grid_hash` live rather than
+  `#[allow(dead_code)]`.
+- **Not moved, deliberately:** the session file is still written by the window.
+  It carries window bounds, tab names and a theme no host has ever seen, so the
+  host records rather than persists; the Save verb that hands the layout over
+  belongs to the attaching client. Inventing a second TOML writer with no merge
+  rule is what decision 15 of the program design warns about.
+- **#335, found doing this:** `serve` unlinks and rebinds a live session's
+  socket, stranding the host that still holds its panes. Reproduced; slice 3
+  has a client-side flock standing in for the fix.
 
 **Open issues (all `follow-up` labelled, so they appear in `~/FOLLOWUPS.md`).**
 - **#331** — a forked pane can hold a session lock its parent just released. The
