@@ -48,7 +48,7 @@ use polling::{Event, PollMode, Poller};
 use crate::gridwire;
 use crate::hostproto::{
     host_socket_path, parse_stream_greeting, ClosedPane, GridCheck, Outcome, PaneGeom, PaneId,
-    PaneInfo, Reply, Request, WireMode, ENV_PANE_ID, ENV_SESSION, PROTO_VERSION,
+    PaneInfo, Push, Reply, Request, WireMode, ENV_PANE_ID, ENV_SESSION, PROTO_VERSION,
 };
 use crate::session::PaneRuntime;
 use crate::term::GridSize;
@@ -254,6 +254,14 @@ struct HostPane {
     /// What the last watcher tick saw in the foreground, and `None` until one
     /// has.
     mode: Mutex<Option<WireMode>>,
+    /// Whether the last watcher tick found the alternate screen up.
+    ///
+    /// Kept because the interesting thing is the *transition*. A client that
+    /// attached while a full-screen program was running was sent that program's
+    /// screen and nothing else — the alternate grid is the only one a snapshot
+    /// can read — so its scrollback starts empty behind it, and the moment the
+    /// program exits is the moment that has to be repaired.
+    on_alt: AtomicBool,
 }
 
 impl HostPane {
@@ -317,6 +325,33 @@ impl Cadence {
     }
 }
 
+/// A control connection's write half, shared by the two things that write to
+/// it: the answer to a verb, and a push, which answers nothing.
+///
+/// One mutex, so two lines can never interleave into one. It is held only for
+/// as long as a single small write, and the socket carries a send timeout, so a
+/// client that has stopped reading holds up nobody but itself.
+struct Conn {
+    id: u64,
+    write: Mutex<UnixStream>,
+}
+
+impl Conn {
+    /// Write one line. `false` means this connection is finished.
+    fn say(&self, line: &str) -> bool {
+        let mut out = self.write.lock().expect("conn write");
+        out.write_all(line.as_bytes()).is_ok()
+    }
+}
+
+/// How long a write to a client may take before that client is written off.
+///
+/// A push is a hundred-odd bytes into a socket somebody is reading; taking a
+/// quarter of a second over it means nobody is. The number matters because this
+/// write happens on the watcher's thread, and a clock that can be stopped by
+/// one wedged window is not a clock.
+const WRITE_WITHIN: Duration = Duration::from_millis(250);
+
 /// The clock the upkeep threads sleep on, and the bell that cuts a sleep short.
 ///
 /// A detached checkpoint sleeps five minutes, and a window arriving must not
@@ -378,6 +413,9 @@ pub struct Host {
     next_serial: AtomicU64,
     shutdown: AtomicBool,
     upkeep: Arc<Upkeep>,
+    /// Control connections that asked to be told when something changes.
+    watchers: Mutex<Vec<Arc<Conn>>>,
+    next_conn: AtomicU64,
     /// How many times each clock has come round. Nothing in production reads
     /// them; they are how a test tells a host that has backed off from one that
     /// has stopped.
@@ -410,6 +448,8 @@ impl Host {
             next_serial: AtomicU64::new(1),
             shutdown: AtomicBool::new(false),
             upkeep: Arc::new(Upkeep::new()),
+            watchers: Mutex::new(Vec::new()),
+            next_conn: AtomicU64::new(1),
             watches: AtomicU64::new(0),
             checkpoints: AtomicU64::new(0),
         })
@@ -511,6 +551,7 @@ impl Host {
             // the agent inside it until something has looked.
             runtime: Mutex::new(PaneRuntime { cwd, resume: None }),
             mode: Mutex::new(None),
+            on_alt: AtomicBool::new(false),
         });
         let info = host_pane.info(pane);
         self.panes.lock().expect("panes").insert(pane, host_pane);
@@ -685,13 +726,59 @@ impl Host {
     /// The upkeep reads `/proc` and takes each terminal's own lock, and doing
     /// either while holding the pane table would stall every verb behind a
     /// process that happens to be stopped.
-    fn pane_list(&self) -> Vec<Arc<HostPane>> {
+    fn pane_list(&self) -> Vec<(PaneId, Arc<HostPane>)> {
         self.panes
             .lock()
             .expect("panes")
-            .values()
-            .cloned()
+            .iter()
+            .map(|(id, pane)| (*id, pane.clone()))
             .collect()
+    }
+
+    /// Start telling this connection about changes.
+    fn watch(&self, conn: &Arc<Conn>) {
+        let mut watchers = self.watchers.lock().expect("watchers");
+        if !watchers.iter().any(|w| w.id == conn.id) {
+            watchers.push(conn.clone());
+        }
+    }
+
+    /// Stop. Called when a connection ends, however it ends — a subscription
+    /// that outlived its socket would be a write to a closed descriptor on
+    /// every tick, for the life of the host.
+    fn unwatch(&self, id: u64) {
+        self.watchers
+            .lock()
+            .expect("watchers")
+            .retain(|w| w.id != id);
+    }
+
+    /// Tell every watching connection about something that happened.
+    ///
+    /// The handles come out from under the lock before a byte is written, so a
+    /// window that has stopped reading delays only itself, and a write that
+    /// fails costs that connection its subscription rather than costing the
+    /// host its clock.
+    fn broadcast(&self, push: &Push) {
+        let watching: Vec<Arc<Conn>> = self.watchers.lock().expect("watchers").clone();
+        if watching.is_empty() {
+            return;
+        }
+        let Ok(mut line) = serde_json::to_string(push) else {
+            return;
+        };
+        line.push('\n');
+        let gone: Vec<u64> = watching
+            .iter()
+            .filter(|conn| !conn.say(&line))
+            .map(|conn| conn.id)
+            .collect();
+        if !gone.is_empty() {
+            self.watchers
+                .lock()
+                .expect("watchers")
+                .retain(|w| !gone.contains(&w.id));
+        }
     }
 
     /// Start the two clocks: the foreground watcher, and the checkpoint.
@@ -709,13 +796,58 @@ impl Host {
     /// is running in it, and keep the answer.
     pub fn watch_once(&self) {
         self.watches.fetch_add(1, Ordering::SeqCst);
-        for pane in self.pane_list() {
+        for (id, pane) in self.pane_list() {
             let detected = classify_foreground(&pane.master, pane.shell_pid);
-            // Only worth a terminal's lock when there is a demotion to weigh.
-            let on_alt =
-                detected.is_some() && pane.term.lock().mode().contains(TermMode::ALT_SCREEN);
-            let mut held = pane.mode.lock().expect("mode lock");
-            *held = next_mode(held.as_ref(), detected, on_alt);
+            // Read every tick, not only when there is a demotion to weigh: the
+            // sticky rule wants to know whether the alternate screen is up, and
+            // the heal below wants to know whether it has just come down.
+            let on_alt = pane.term.lock().mode().contains(TermMode::ALT_SCREEN);
+            let was_on_alt = pane.on_alt.swap(on_alt, Ordering::SeqCst);
+
+            let next = {
+                let mut held = pane.mode.lock().expect("mode lock");
+                let next = next_mode(held.as_ref(), detected, on_alt);
+                let changed = *held != next;
+                *held = next.clone();
+                changed.then_some(next).flatten()
+            };
+            // On the change, never on the clock. A window that wanted the
+            // current state of everything asked `list-panes` for it.
+            if let Some(mode) = next {
+                self.broadcast(&Push::Mode { pane: id, mode });
+            }
+
+            if was_on_alt && !on_alt {
+                self.heal_after_the_alternate_screen(&pane);
+            }
+        }
+    }
+
+    /// Send an attached client the history a full-screen program was hiding.
+    ///
+    /// A snapshot can only read the grid that is active, so a client that
+    /// attached to a pane running `vim` was sent the alternate screen and
+    /// nothing behind it. Its scrollback is empty and its primary grid is
+    /// blank, and no amount of live output will fill them in, because that
+    /// history was written before it arrived. The moment the program exits is
+    /// the moment to hand it over.
+    ///
+    /// The bytes are exactly what an attach sends, under exactly the same
+    /// fence, which is the argument that this is correct: a snapshot already
+    /// lands the terminal in a known state and clears the screen and the
+    /// scrollback before painting, so the replica ends up where a fresh attach
+    /// would have put it. The real `?1049l` reached it earlier through the byte
+    /// stream — that is how the watcher noticed at all — so it is on its
+    /// primary screen by now and the paint lands on the right grid.
+    fn heal_after_the_alternate_screen(&self, pane: &HostPane) {
+        let _lease = pane.term.lease();
+        let term = pane.term.lock_unfair();
+        let mut held = pane.sink.lock().expect("sink lock");
+        let Some(sink) = held.as_ref() else {
+            return;
+        };
+        if !sink.send(&gridwire::encode_snapshot(&*term)) {
+            *held = None;
         }
     }
 
@@ -731,7 +863,7 @@ impl Host {
     /// attaching client.
     pub fn checkpoint_once(&self) {
         self.checkpoints.fetch_add(1, Ordering::SeqCst);
-        for pane in self.pane_list() {
+        for (_, pane) in self.pane_list() {
             let fresh = crate::session::capture(Some(&pane.master), pane.shell_pid);
             let mut held = pane.runtime.lock().expect("runtime lock");
             // A reading that failed is not a pane in no directory running
@@ -923,16 +1055,34 @@ fn serve_connection(host: &Arc<Host>, stream: UnixStream) {
         return;
     }
 
-    let mut writer = stream;
+    // A client that has stopped reading must not be able to hold the watcher's
+    // thread, which writes to this same socket.
+    let _ = stream.set_write_timeout(Some(WRITE_WITHIN));
+    let conn = Arc::new(Conn {
+        id: host.next_conn.fetch_add(1, Ordering::SeqCst),
+        write: Mutex::new(stream),
+    });
+    control_loop(host, &conn, first, reader);
+    // However this connection ended, it is no longer anybody to push to.
+    host.unwatch(conn.id);
+}
+
+/// One control conversation: a verb in, a line out, until somebody hangs up.
+fn control_loop(
+    host: &Arc<Host>,
+    conn: &Arc<Conn>,
+    first: String,
+    mut reader: BufReader<UnixStream>,
+) {
     let mut line = first;
     loop {
-        let reply = handle_control_line(host, &line);
+        let reply = handle_control_line(host, &line, Some(conn));
         let shutting = matches!(reply, Reply::ShuttingDown);
         let mut out = serde_json::to_string(&reply).unwrap_or_else(|e| {
             format!(r#"{{"reply":"error","msg":"could not encode a reply: {e}"}}"#)
         });
         out.push('\n');
-        if writer.write_all(out.as_bytes()).is_err() {
+        if !conn.say(&out) {
             return;
         }
         if shutting {
@@ -972,7 +1122,7 @@ fn keep_typing(host: &Arc<Host>, pane: PaneId, serial: u64, mut reader: BufReade
     host.detach(pane, serial);
 }
 
-fn handle_control_line(host: &Arc<Host>, line: &str) -> Reply {
+fn handle_control_line(host: &Arc<Host>, line: &str, conn: Option<&Arc<Conn>>) -> Reply {
     let request: Request = match serde_json::from_str(line.trim()) {
         Ok(request) => request,
         Err(err) => {
@@ -1033,6 +1183,19 @@ fn handle_control_line(host: &Arc<Host>, line: &str) -> Reply {
         Request::GridCheck { pane } => Reply::GridChecked {
             pane,
             outcome: host.grid_check(pane),
+        },
+        Request::Watch => match conn {
+            Some(conn) => {
+                host.watch(conn);
+                Reply::Watching
+            }
+            // Unreachable from a socket — every control line arrives on one.
+            // The shape exists so the verb table can be exercised without a
+            // connection, and answering rather than pretending is the rule
+            // everywhere else here.
+            None => Reply::Error {
+                msg: "watching is a property of a connection, and this line arrived on none".into(),
+            },
         },
         Request::Shutdown => Reply::ShuttingDown,
     }
@@ -1280,6 +1443,21 @@ mod owning {
         (host, info.pane)
     }
 
+    /// Say one verb over a connection of this test's own and take the answer.
+    ///
+    /// Over a real socket pair rather than with no connection at all, because
+    /// that is how every control line reaches the host, and a verb whose answer
+    /// depends on which connection asked would otherwise be tested against a
+    /// shape a client cannot produce.
+    fn answer(host: &Arc<Host>, line: &str) -> Reply {
+        let (_client, server) = UnixStream::pair().expect("pair");
+        let conn = Arc::new(Conn {
+            id: host.next_conn.fetch_add(1, Ordering::SeqCst),
+            write: Mutex::new(server),
+        });
+        handle_control_line(host, line, Some(&conn))
+    }
+
     /// Start a pane while holding the fork guard.
     ///
     /// Starting a terminal forks, and a fork briefly hands the child every
@@ -1496,7 +1674,7 @@ mod owning {
     fn the_wire_answers_every_verb_and_refuses_nonsense() {
         let (host, pane) = host_with_cat_pane();
 
-        let hello = handle_control_line(
+        let hello = answer(
             &host,
             &serde_json::to_string(&Request::Hello {
                 proto: PROTO_VERSION,
@@ -1506,10 +1684,10 @@ mod owning {
         );
         assert!(matches!(hello, Reply::Hello { panes: 1, .. }), "{hello:?}");
 
-        let listed = handle_control_line(&host, r#"{"verb":"list-panes"}"#);
+        let listed = answer(&host, r#"{"verb":"list-panes"}"#);
         assert!(matches!(listed, Reply::Panes { ref panes } if panes.len() == 1));
 
-        let resized = handle_control_line(
+        let resized = answer(
             &host,
             &serde_json::to_string(&Request::Resize {
                 pane,
@@ -1532,8 +1710,7 @@ mod owning {
         assert_eq!(host.list_panes()[0].geom.cols, 100);
 
         // A version we cannot speak is refused by name, not ignored.
-        let mismatched =
-            handle_control_line(&host, r#"{"verb":"hello","proto":99,"kind":"window"}"#);
+        let mismatched = answer(&host, r#"{"verb":"hello","proto":99,"kind":"window"}"#);
         match mismatched {
             Reply::Error { msg } => assert!(msg.contains("99"), "{msg}"),
             other => panic!("a bad version was accepted: {other:?}"),
@@ -1541,16 +1718,16 @@ mod owning {
 
         // Garbage gets an answer too. Silence is what started all of this.
         assert!(matches!(
-            handle_control_line(&host, "{not json at all"),
+            answer(&host, "{not json at all"),
             Reply::Error { .. }
         ));
         assert!(matches!(
-            handle_control_line(&host, r#"{"verb":"teleport"}"#),
+            answer(&host, r#"{"verb":"teleport"}"#),
             Reply::Error { .. }
         ));
 
         // A verb naming a pane that does not exist says so.
-        let closed = handle_control_line(&host, r#"{"verb":"close-pane","pane":9999}"#);
+        let closed = answer(&host, r#"{"verb":"close-pane","pane":9999}"#);
         assert!(
             matches!(
                 closed,
@@ -1583,7 +1760,7 @@ mod owning {
             .unwrap(),
             r#"{"verb":"list-panes"}"#.to_string(),
         ] {
-            handle_control_line(&host, &line);
+            answer(&host, &line);
         }
         assert!(
             host.list_panes()[0].attached,
@@ -1843,7 +2020,7 @@ mod owning {
         assert!(matches!(host.grid_check(PaneId(9999)), Outcome::Err(_)));
 
         // Over the wire the same, with an answer rather than a silence.
-        let checked = handle_control_line(&host, r#"{"verb":"grid-check","pane":9999}"#);
+        let checked = answer(&host, r#"{"verb":"grid-check","pane":9999}"#);
         assert!(
             matches!(
                 checked,
@@ -2001,6 +2178,208 @@ mod owning {
             "the second host removed a file that was not its to remove"
         );
         drop(held);
+    }
+
+    /// Read one line from a client, or say what arrived instead.
+    fn one_line(client: &mut UnixStream, within: Duration) -> Option<String> {
+        client.set_read_timeout(Some(within)).unwrap();
+        let mut buf = [0u8; 4096];
+        match client.read(&mut buf) {
+            Ok(0) | Err(_) => None,
+            Ok(read) => Some(String::from_utf8_lossy(&buf[..read]).into_owned()),
+        }
+    }
+
+    /// A control connection of this test's own, registered to be told things.
+    fn watching(host: &Arc<Host>) -> UnixStream {
+        let (client, server) = UnixStream::pair().expect("pair");
+        let conn = Arc::new(Conn {
+            id: host.next_conn.fetch_add(1, Ordering::SeqCst),
+            write: Mutex::new(server),
+        });
+        host.watch(&conn);
+        client
+    }
+
+    #[test]
+    fn a_connection_that_asked_is_told_when_a_pane_changes_what_it_runs() {
+        // The relocation's other half. Until this existed the window ran its
+        // own 800ms walk of /proc for every pane it was drawing, against panes
+        // it no longer owns, duplicating the host's answer to the same
+        // question.
+        let (host, pane) = host_with_cat_pane();
+        let mut window = watching(&host);
+
+        // Prime it as an agent, so the tick has a real change to report: this
+        // pane's program is `cat`, which reads as the shell it stands in for.
+        *host.panes.lock().expect("panes")[&pane]
+            .mode
+            .lock()
+            .expect("mode") = Some(WireMode::Claude);
+
+        assert!(
+            within(Duration::from_secs(5), || {
+                host.watch_once();
+                host.list_panes()[0].mode == Some(WireMode::Shell)
+            }),
+            "the watcher never saw the pane for what it is"
+        );
+
+        let line = one_line(&mut window, Duration::from_secs(5))
+            .expect("a window that asked to be told was told nothing");
+        let push: Push = serde_json::from_str(line.trim())
+            .unwrap_or_else(|e| panic!("unreadable push {line:?}: {e}"));
+        assert_eq!(
+            push,
+            Push::Mode {
+                pane,
+                mode: WireMode::Shell
+            }
+        );
+
+        // And on the tick after, when nothing has changed, nothing is said. A
+        // push per tick would be the polling it replaces, moved one process
+        // over.
+        host.watch_once();
+        assert_eq!(
+            one_line(&mut window, Duration::from_millis(200)),
+            None,
+            "the watcher pushed a change that did not happen"
+        );
+    }
+
+    #[test]
+    fn a_connection_that_never_asked_is_never_pushed_to() {
+        // What makes this additive rather than a break: a client written before
+        // pushes existed reads one line per verb it sent, and a line it did not
+        // ask for is an error to it.
+        let (host, pane) = host_with_cat_pane();
+        let (mut quiet, server) = UnixStream::pair().expect("pair");
+        let older = Arc::new(Conn {
+            id: host.next_conn.fetch_add(1, Ordering::SeqCst),
+            write: Mutex::new(server),
+        });
+        // Everything such a client does say, said: a hello and a question. It
+        // is saying hello that must not sign it up for anything, which is the
+        // easy mistake and the one that would break every client at once.
+        for line in [
+            r#"{"verb":"hello","proto":1,"kind":"window"}"#,
+            r#"{"verb":"list-panes"}"#,
+        ] {
+            handle_control_line(&host, line, Some(&older));
+        }
+        let mut window = watching(&host);
+
+        host.broadcast(&Push::Mode {
+            pane,
+            mode: WireMode::Codex,
+        });
+
+        assert!(
+            one_line(&mut window, Duration::from_secs(5)).is_some(),
+            "the connection that asked was told nothing"
+        );
+        assert_eq!(
+            one_line(&mut quiet, Duration::from_millis(200)),
+            None,
+            "a connection that never asked to watch was pushed to anyway"
+        );
+    }
+
+    #[test]
+    fn a_connection_that_has_gone_stops_being_pushed_to() {
+        // A subscription that outlived its socket would be a failed write on
+        // every tick for the life of the host.
+        let (host, pane) = host_with_cat_pane();
+        let window = watching(&host);
+        assert_eq!(host.watchers.lock().expect("watchers").len(), 1);
+
+        drop(window);
+        // The first push after it went is what discovers it.
+        for _ in 0..4 {
+            host.broadcast(&Push::Mode {
+                pane,
+                mode: WireMode::Shell,
+            });
+        }
+        assert!(
+            host.watchers.lock().expect("watchers").is_empty(),
+            "a dead connection is still on the list"
+        );
+    }
+
+    #[test]
+    fn leaving_a_full_screen_program_hands_over_the_history_it_was_hiding() {
+        // A snapshot reads the grid that is active, so a client attaching to a
+        // pane running vim is sent the alternate screen and nothing behind it.
+        // Its scrollback starts empty and live output will never fill it, since
+        // that history was written before it arrived.
+        let (host, pane) = host_with_cat_pane();
+        host.write_to(
+            pane,
+            b"history written before anyone was watching\n".to_vec(),
+        );
+        assert!(within(Duration::from_secs(5), || {
+            host.row_text(pane, 0).as_deref() == Some("history written before anyone was watching")
+        }));
+
+        // Into the alternate screen, the way a full-screen program goes. The
+        // newline matters: the line discipline holds a line until one arrives,
+        // so without it the escape sits in the kernel's buffer and `cat` never
+        // writes it back for the emulator to read.
+        host.write_to(pane, b"\x1b[?1049h\n".to_vec());
+        assert!(
+            within(Duration::from_secs(5), || on_alt(&host, pane)),
+            "the pane never entered the alternate screen"
+        );
+
+        let (mut client, server) = UnixStream::pair().expect("pair");
+        assert!(host.attach(pane, server).is_ok());
+        let arrived = drain(&mut client, Duration::from_millis(400));
+        assert!(
+            !arrived.contains("history written before anyone was watching"),
+            "this test proves nothing unless the client really did miss it: {arrived:?}"
+        );
+
+        // The watcher has to have seen it up, to notice it come down.
+        host.watch_once();
+
+        host.write_to(pane, b"\x1b[?1049l\n".to_vec());
+        assert!(
+            within(Duration::from_secs(5), || !on_alt(&host, pane)),
+            "the pane never left the alternate screen"
+        );
+        host.watch_once();
+
+        let healed = drain(&mut client, Duration::from_secs(2));
+        assert!(
+            healed.contains("history written before anyone was watching"),
+            "the client was left with an empty scrollback behind the screen it \
+             had been watching: {healed:?}"
+        );
+    }
+
+    fn on_alt(host: &Arc<Host>, pane: PaneId) -> bool {
+        host.panes.lock().expect("panes")[&pane]
+            .term
+            .lock()
+            .mode()
+            .contains(TermMode::ALT_SCREEN)
+    }
+
+    /// Everything a client can be given inside `patience`.
+    fn drain(client: &mut UnixStream, patience: Duration) -> String {
+        client.set_read_timeout(Some(patience)).unwrap();
+        let mut seen = Vec::new();
+        let mut buf = [0u8; 8192];
+        let deadline = Instant::now() + patience;
+        while Instant::now() < deadline {
+            match client.read(&mut buf) {
+                Ok(0) | Err(_) => break,
+                Ok(read) => seen.extend_from_slice(&buf[..read]),
+            }
+        }
+        String::from_utf8_lossy(&seen).into_owned()
     }
 
     #[test]

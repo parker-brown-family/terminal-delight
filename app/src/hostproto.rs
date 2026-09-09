@@ -119,7 +119,28 @@ pub enum Request {
     GridCheck {
         pane: PaneId,
     },
+    /// Ask to be told when something changes, instead of asking repeatedly.
+    ///
+    /// Opt-in, and deliberately a verb rather than a property of `hello`: a
+    /// client written before pushes existed reads one line per verb it sent,
+    /// and a line it did not ask for is an error to it. Nothing is pushed to a
+    /// connection that has not said this.
+    Watch,
     Shutdown,
+}
+
+/// Something the host says without being asked.
+///
+/// A separate word from [`Reply`] because it answers no verb, and calling it a
+/// reply would make "one reply per request" false for every client reading the
+/// connection. Tagged `push`, so a client can tell the two apart on the key
+/// before it knows anything else about the line.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(tag = "push", rename_all = "kebab-case")]
+pub enum Push {
+    /// What a pane is running has changed. Sent on the change, not on a clock:
+    /// the current mode of every pane is what `list-panes` is for.
+    Mode { pane: PaneId, mode: WireMode },
 }
 
 /// The answer to a write, per target, said truthfully.
@@ -222,6 +243,8 @@ pub enum Reply {
         pane: PaneId,
         outcome: Outcome<GridCheck>,
     },
+    /// This connection will now be told when something changes.
+    Watching,
     ShuttingDown,
     /// An unreadable line, an unknown verb, or a version that cannot be
     /// spoken. Always an answer — never a silent fall-through, which is the
@@ -348,6 +371,7 @@ fn every_request() -> Vec<Request> {
         },
         Request::ClosePane { pane: PaneId(3) },
         Request::GridCheck { pane: PaneId(3) },
+        Request::Watch,
         Request::Shutdown,
     ]
 }
@@ -408,9 +432,19 @@ fn every_reply() -> Vec<Reply> {
                 hash: 0xcbf2_9ce4_8422_2325,
             }),
         },
+        Reply::Watching,
         Reply::ShuttingDown,
         Reply::Error { msg: "nope".into() },
     ]
+}
+
+/// One of every push the host can send unasked.
+#[cfg(test)]
+fn every_push() -> Vec<Push> {
+    vec![Push::Mode {
+        pane: PaneId(1),
+        mode: WireMode::Claude,
+    }]
 }
 
 #[cfg(test)]
@@ -624,9 +658,10 @@ mod contract {
             let emitted = match kind.trim() {
                 "request" => reserialise::<Request>(&block),
                 "reply" => reserialise::<Reply>(&block),
+                "push" => reserialise::<Push>(&block),
                 "" => panic!(
                     "the example at line {} does not say what it is — open it \
-                     with ```json request or ```json reply",
+                     with ```json request, ```json reply or ```json push",
                     block.line
                 ),
                 other => panic!(
@@ -638,6 +673,7 @@ mod contract {
             let tag = written
                 .get("verb")
                 .or_else(|| written.get("reply"))
+                .or_else(|| written.get("push"))
                 .and_then(Value::as_str)
                 .map(str::to_string);
             out.push(Checked {
@@ -704,7 +740,11 @@ mod contract {
             .err()
             .expect("a nonsense tag must be refused")
             .to_string();
-        let (_, listed) = complaint.split_once("expected one of ").unwrap_or_else(|| {
+        // Two spellings, because serde has two: `expected one of `a`, `b`` when
+        // there are several and `expected `a`` when there is one. An enum with a
+        // single variant is a normal thing to have — Push began as one — and
+        // matching only the plural made this fail the moment it did.
+        let (_, listed) = complaint.split_once("expected ").unwrap_or_else(|| {
             panic!("serde no longer names the variants it expects: {complaint}")
         });
         // `a`, `b`, `c` at line 1 column 9 — the names are the odd fields
@@ -715,7 +755,7 @@ mod contract {
             .step_by(2)
             .map(str::to_string)
             .collect();
-        assert!(names.len() > 1, "no variants read out of: {complaint}");
+        assert!(!names.is_empty(), "no variants read out of: {complaint}");
         names
     }
 
@@ -728,6 +768,26 @@ mod contract {
         // Parsing each one as the type its fence names IS the assertion.
         let found = examples(&page()).len();
         assert!(found >= 12, "only {found} examples — the page has thinned");
+    }
+
+    #[test]
+    fn a_push_is_not_spelled_like_a_reply() {
+        // The distinction the separate enum exists for: a client reads one line
+        // per verb it sent, so it has to be able to tell an answer from
+        // something that answers nothing, on the key, before it parses further.
+        for push in every_push() {
+            let line = serde_json::to_string(&push).expect("serialise");
+            let value: Value = serde_json::from_str(&line).expect("parse");
+            assert!(value.get("push").is_some(), "a push must be tagged: {line}");
+            assert!(
+                value.get("reply").is_none(),
+                "a push claimed to be a reply: {line}"
+            );
+            assert!(
+                serde_json::from_str::<Reply>(&line).is_err(),
+                "a push deserialised as a reply, so nothing distinguishes them: {line}"
+            );
+        }
     }
 
     #[test]
@@ -758,6 +818,12 @@ mod contract {
                 "the host answers `{reply}` and the protocol page does not mention it"
             );
         }
+        for push in variants_of::<Push>("push") {
+            assert!(
+                documented.contains(&push),
+                "the host pushes `{push}` and the protocol page does not mention it"
+            );
+        }
     }
 
     #[test]
@@ -778,10 +844,17 @@ mod contract {
                     .unwrap()
                     .to_string()
             }))
+            .chain(every_push().iter().map(|p| {
+                serde_json::to_value(p).unwrap()["push"]
+                    .as_str()
+                    .unwrap()
+                    .to_string()
+            }))
             .collect();
         for variant in variants_of::<Request>("verb")
             .into_iter()
             .chain(variants_of::<Reply>("reply"))
+            .chain(variants_of::<Push>("push"))
         {
             assert!(
                 sampled.contains(&variant),
@@ -802,6 +875,9 @@ mod contract {
         }
         for reply in every_reply() {
             keys(&serde_json::to_value(&reply).unwrap(), &mut emitted);
+        }
+        for push in every_push() {
+            keys(&serde_json::to_value(&push).unwrap(), &mut emitted);
         }
         let undocumented: Vec<&String> = emitted.difference(&documented).collect();
         assert!(

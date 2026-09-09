@@ -46,6 +46,14 @@ in order, on the same connection. Newline framing because every other seam in
 this codebase already uses it, and JSON because the alternative is a binary
 format nobody can read in a log at three in the morning.
 
+A connection that has sent `watch` also receives lines that answer no request,
+tagged `push` where a reply is tagged `reply`. Nothing is pushed to a connection
+that has not asked, so a client written before pushes existed still reads
+exactly one line per verb it sends. A client that does ask has to tell the two
+apart on that key before it parses any further — a push is not a reply, and a
+reader that treats it as one will read one answer behind for the rest of the
+session.
+
 **Byte stream** — one greeting line naming a pane, then the terminal's own bytes
 in both directions, unframed, FIFO. Nothing else is ever sent on it; a size is a
 fact, not part of a terminal's output, and mixing the two means guessing where
@@ -95,6 +103,7 @@ name, so nobody has to read a changelog to work out which side is old:
 | `resize` | tell a pane its new size | `resized` |
 | `close-pane` | hang up a pane's process tree | `closed` |
 | `grid-check` | what the host's own copy of a terminal hashes to | `grid-checked` |
+| `watch` | be told when something changes, on this connection | `watching` |
 | `shutdown` | stop the host | `shutting-down` |
 
 Anything unreadable, any unknown verb, and any version that cannot be spoken get
@@ -129,6 +138,10 @@ failing the pane.
 ```
 
 ```json request
+{"verb":"watch"}
+```
+
+```json request
 {"verb":"shutdown"}
 ```
 
@@ -154,6 +167,10 @@ accepted, which is a different claim from anything having happened.
 
 ```json reply
 {"reply":"grid-checked","outcome":{"ok":{"pane":1,"stream_offset":14680,"hash":9257062766351139868}},"pane":1}
+```
+
+```json reply
+{"reply":"watching"}
 ```
 
 ```json reply
@@ -226,8 +243,8 @@ distinction is the entire product.
 Two questions can only be answered by the process holding a pseudoterminal, so
 both are the host's now:
 
-- **The foreground watcher** asks `tcgetpgrp` what is running in each pane and
-  publishes it as `mode`. An agent keeps its name through the child processes it
+- **The foreground watcher** asks `tcgetpgrp` what is running in each pane,
+  publishes it as `mode`, and pushes the change to any connection that asked. An agent keeps its name through the child processes it
   runs — bash, node, rg — for as long as the alternate screen is up, because a
   pane that renames itself twice a second is worse than one that is a beat
   behind. When the agent exits and the plain shell returns on the normal screen,
@@ -259,6 +276,47 @@ tab names and a theme, none of which a host has ever seen. What moved here is
 the half that stopped being answerable from a window at all; the verb that hands
 the layout over for the host to merge and write arrives with the attaching
 client.
+
+## Being told, instead of asking
+
+A window that has sent `watch` is told when a pane changes what it is running,
+rather than asking every 800 ms for an answer that is usually the same:
+
+```json push
+{"push":"mode","pane":1,"mode":"claude"}
+```
+
+On the change, never on a clock. The current mode of every pane is what
+`list-panes` is for, and a window that has just attached should read it there
+once rather than wait for something to move.
+
+`watch` is a verb rather than a field on `hello` because a client written before
+pushes existed reads one line for each verb it sends, and a line it did not ask
+for is an error to it. A connection that has not sent `watch` is never pushed
+to, so adding this broke nothing and enabling it is a decision a client makes.
+
+A push is written with the same care as a reply and then forgotten about. It is
+never retried, and a connection that cannot take one within a quarter of a
+second loses its subscription — the writing happens on the host's own watcher
+thread, and a clock that one wedged window can stop is not a clock. A client
+that suspects it has missed something asks `list-panes`, which is always the
+truth.
+
+## Leaving a full-screen program
+
+A snapshot can only read the grid that is active. So a client attaching to a
+pane that is running `vim` or `htop` is sent the alternate screen and nothing
+behind it: its scrollback starts empty, its primary grid blank, and no amount of
+live output will fill them, because that history was written before it arrived.
+
+When the program exits, the host sends that client a fresh snapshot — the same
+bytes an attach sends, under the same fence — and the history it never saw
+appears behind the screen it was watching. Nothing is asked for and nothing is
+lost; the pane's own `?1049l` has already reached the client through the byte
+stream, so the paint lands on the primary grid where it belongs.
+
+The divergence check below is the backstop if this is ever missed. This is the
+part that makes it not need one.
 
 ## Checking that a client's copy is still the same terminal
 
