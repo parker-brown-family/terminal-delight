@@ -2339,11 +2339,7 @@ fn make_pane_restored(
 /// different route is still a pane, and the moment one creation site knows a
 /// subscription another does not, some window somewhere stops answering its ×
 /// button.
-fn wire_pane(
-    pane: &Entity<TerminalView>,
-    window: &mut Window,
-    cx: &mut Context<Workspace>,
-) {
+fn wire_pane(pane: &Entity<TerminalView>, window: &mut Window, cx: &mut Context<Workspace>) {
     let pane = pane.clone();
     let pane = &pane;
     cx.observe(pane, |_, _, cx| cx.notify()).detach();
@@ -2371,13 +2367,9 @@ fn wire_pane(
     .detach();
     // the header 👓 → open the FOCUS reading modal mirroring this pane (and keep
     // typing into it: we focus the pane so keystrokes still land in the original)
-    cx.subscribe_in(
-        pane,
-        window,
-        |ws, pane, _ev: &OpenFocusRead, window, cx| {
-            ws.open_focus_read(pane.clone(), window, cx);
-        },
-    )
+    cx.subscribe_in(pane, window, |ws, pane, _ev: &OpenFocusRead, window, cx| {
+        ws.open_focus_read(pane.clone(), window, cx);
+    })
     .detach();
     // Esc inside the modal (routed up from the mirrored pane) → close it
     cx.subscribe(pane, |ws, _pane, _ev: &CloseFocusRead, cx| {
@@ -2635,9 +2627,8 @@ fn make_pane_attached(
     // The pid is the host's, and only an attribute: this window did not start
     // that process and will never signal it.
     let (session, guard) = term::attach_in(BORN_GRID, streams, Some(info.shell_pid))?;
-    let pane = cx.new(|cx| {
-        TerminalView::new_attached(session, guard, pane_id.0, restore, BORN_GRID, cx)
-    });
+    let pane =
+        cx.new(|cx| TerminalView::new_attached(session, guard, pane_id.0, restore, BORN_GRID, cx));
     pane.update(cx, |view, cx| {
         view.appearance = PaneTheme::house();
         // The host has been watching this terminal; a window that has just
@@ -2827,7 +2818,11 @@ impl Workspace {
     /// (or open a single fresh tab) and persist changes back to disk. `seed` is
     /// the `terminal-delight <dir>` directory, honoured only when there is no
     /// saved layout — a restore's own panes carry their cwds.
-    fn new(seed: Option<session::PaneRestore>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    fn new(
+        seed: Option<session::PaneRestore>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         Self::build(false, false, seed, None, window, cx)
     }
 
@@ -3367,7 +3362,8 @@ impl Workspace {
         self.restore_groups(saved);
         let live_by_id: std::collections::HashMap<u64, hostproto::PaneInfo> =
             live.iter().map(|p| (p.pane.0, p.clone())).collect();
-        let live_groups: std::collections::HashSet<u32> = self.groups.iter().map(|g| g.id).collect();
+        let live_groups: std::collections::HashSet<u32> =
+            self.groups.iter().map(|g| g.id).collect();
 
         for (tab, plans) in saved.tabs.iter().zip(plan.tabs) {
             let mut plans = plans.into_iter();
@@ -3456,8 +3452,12 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(ctx) = self.attach.clone() else { return };
-        let Ok(live) = ctx.link.list_panes() else { return };
+        let Some(ctx) = self.attach.clone() else {
+            return;
+        };
+        let Ok(live) = ctx.link.list_panes() else {
+            return;
+        };
         let Some(info) = live.into_iter().find(|p| p.pane == pane) else {
             return;
         };
@@ -3474,10 +3474,10 @@ impl Workspace {
         };
         let old_id = old.entity_id();
         for tab in &mut self.tabs {
-            if tab
-                .root
-                .replace_leaf(&|e: &Entity<TerminalView>| e.entity_id() == old_id, fresh.clone())
-            {
+            if tab.root.replace_leaf(
+                &|e: &Entity<TerminalView>| e.entity_id() == old_id,
+                fresh.clone(),
+            ) {
                 break;
             }
         }
@@ -4286,7 +4286,9 @@ impl Workspace {
                     continue;
                 }
                 let rt = view.runtime();
-                let Some(pid) = view.shell_pid() else { continue };
+                let Some(pid) = view.shell_pid() else {
+                    continue;
+                };
                 out.push(vitals::PaneReq {
                     shell_pid: pid,
                     cwd: rt.cwd,
@@ -5721,7 +5723,9 @@ impl Workspace {
         self.tabs.iter().position(|t| {
             let mut leaves = vec![];
             t.root.leaves(&mut leaves);
-            leaves.iter().any(|p| p.read(cx).shell_pid() == Some(shell_pid))
+            leaves
+                .iter()
+                .any(|p| p.read(cx).shell_pid() == Some(shell_pid))
         })
     }
 
@@ -17142,7 +17146,11 @@ mod tests {
 
     #[test]
     fn a_leaf_whose_terminal_is_still_running_is_bound_to_it() {
-        let saved = vec![tab_of(leaf_with(Some(4), "/work", Some("claude --resume x")))];
+        let saved = vec![tab_of(leaf_with(
+            Some(4),
+            "/work",
+            Some("claude --resume x"),
+        ))];
         let plan = plan_attach(&saved, &[running(4, false)]);
         assert_eq!(
             plan.tabs,
@@ -17303,10 +17311,9 @@ mod tests {
 
         // A file written before the field existed reads as absent — never as
         // pane zero, which is a real pane id somebody's host could mint.
-        let old: StateFile = toml::from_str(
-            "active = 0\npanes = 1\n[[tabs]]\n[tabs.node.Leaf]\ncwd = \"/work\"\n",
-        )
-        .expect("read an old file");
+        let old: StateFile =
+            toml::from_str("active = 0\npanes = 1\n[[tabs]]\n[tabs.node.Leaf]\ncwd = \"/work\"\n")
+                .expect("read an old file");
         let SavedNode::Leaf { pane_id, .. } = &old.tabs[0].node else {
             panic!("not a leaf");
         };
@@ -18127,7 +18134,14 @@ mod tests {
         // The refusal prints USAGE, so a verb missing from it is a verb the
         // caller is told does not exist while it quietly works. `--td-emit-demo`
         // is internal — spawned by a demo pane, never typed — and stays out.
-        for word in ["ctl", "mcp", "agent-usage", "agent-vitals", "probe", "serve"] {
+        for word in [
+            "ctl",
+            "mcp",
+            "agent-usage",
+            "agent-vitals",
+            "probe",
+            "serve",
+        ] {
             assert!(Verb::parse(word).is_some(), "`{word}` is not dispatched");
             assert!(USAGE.contains(word), "USAGE omits `{word}`");
         }

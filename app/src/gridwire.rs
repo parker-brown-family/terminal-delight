@@ -385,23 +385,6 @@ fn hash_color(color: Color) -> u32 {
         }
     }
 }
-
-/// The round trip, driven the way the real reader thread drives the emulator:
-/// build a terminal by feeding it bytes, encode it, feed the encoding to a
-/// second terminal of the same size, and require the two to be indistinguishable
-/// cell by cell.
-///
-/// This is where the encoder earns the right to run against a live session. It
-/// is the piece of the split with no second chance — a snapshot that quietly
-/// drops an attribute produces a client that looks right and is wrong, which is
-/// the failure this whole design is built to avoid.
-///
-/// These tests were themselves tested, by breaking the encoder seven ways on
-/// purpose and checking the suite noticed: dropping the wide-character spacer
-/// skip, trimming wrapped rows, dropping the underline colour, dropping
-/// combining marks, adding a newline after the final row, and forcing line-wrap
-/// off before the paint were all caught — two of them only after the tests were
-/// strengthened, because the first versions passed against a broken encoder.
 // ---------------------------------------------------------------------------
 // The divergence guard
 // ---------------------------------------------------------------------------
@@ -424,7 +407,10 @@ pub enum GuardVerdict {
     /// The two terminals have genuinely disagreed. The repair is loud: throw
     /// the replica away and ask for a fresh snapshot, because a client that has
     /// diverged cannot reason its way back.
-    Mismatch { host: u64, replica: u64 },
+    Mismatch {
+        host: u64,
+        replica: u64,
+    },
 }
 
 /// Why a probe could not be turned into an answer. Each of these is a fact
@@ -472,8 +458,7 @@ impl ReplicaGuard {
 
     /// Bytes this replica's parser has taken off the socket.
     pub fn consumed(&self) -> u64 {
-        self.consumed
-            .load(std::sync::atomic::Ordering::Relaxed)
+        self.consumed.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// Answer a probe.
@@ -519,6 +504,22 @@ impl ReplicaGuard {
     }
 }
 
+/// The round trip, driven the way the real reader thread drives the emulator:
+/// build a terminal by feeding it bytes, encode it, feed the encoding to a
+/// second terminal of the same size, and require the two to be indistinguishable
+/// cell by cell.
+///
+/// This is where the encoder earns the right to run against a live session. It
+/// is the piece of the split with no second chance — a snapshot that quietly
+/// drops an attribute produces a client that looks right and is wrong, which is
+/// the failure this whole design is built to avoid.
+///
+/// These tests were themselves tested, by breaking the encoder seven ways on
+/// purpose and checking the suite noticed: dropping the wide-character spacer
+/// skip, trimming wrapped rows, dropping the underline colour, dropping
+/// combining marks, adding a newline after the final row, and forcing line-wrap
+/// off before the paint were all caught — two of them only after the tests were
+/// strengthened, because the first versions passed against a broken encoder.
 /// The seventh, turning on insert mode before the paint, survives and is
 /// expected to: inserting into blank cells and overwriting them leave the same
 /// grid, so nothing observable changed.
@@ -614,7 +615,10 @@ mod roundtrip {
             bytes.push_str(&format!("line {i:04}\r\n"));
         }
         let source = term_fed(20, 5, bytes.as_bytes());
-        assert!(source.grid().history_size() > 250, "test needs real history");
+        assert!(
+            source.grid().history_size() > 250,
+            "test needs real history"
+        );
         assert_same(&source, &replay(&source), "plain scrollback");
     }
 

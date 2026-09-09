@@ -16,7 +16,10 @@ use std::time::{Duration, Instant};
 fn wait_or_kill(child: &mut Child, limit: Duration) -> Option<ExitStatus> {
     let deadline = Instant::now() + limit;
     loop {
-        match child.try_wait().expect("wait on the terminal-delight child") {
+        match child
+            .try_wait()
+            .expect("wait on the terminal-delight child")
+        {
             Some(status) => return Some(status),
             None if Instant::now() >= deadline => {
                 let _ = child.kill();

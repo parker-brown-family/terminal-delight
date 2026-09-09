@@ -420,9 +420,7 @@ mod attached {
         pair.host.write_all(b"\x1b[c").expect("device attributes");
 
         assert!(
-            within(Duration::from_secs(5), || pair
-                .session
-                .content_generation()
+            within(Duration::from_secs(5), || pair.session.content_generation()
                 > before),
             "the replica's generation must move even for an event it swallows"
         );
@@ -452,7 +450,7 @@ mod attached {
         let local = EventProxy::new(tx, generation, Answers::Here);
         local.send_event(TermEvent::PtyWrite("\x1b[?6c".into()));
         assert!(
-            matches!(rx.try_next(), Ok(Some(TermEvent::PtyWrite(_)))),
+            matches!(rx.try_recv(), Ok(TermEvent::PtyWrite(_))),
             "a terminal we own must still forward its own answers"
         );
     }

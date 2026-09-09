@@ -843,19 +843,13 @@ mod tests {
         saved(&config, "2", 3, Duration::from_secs(600));
         saved(&config, "3", 3, Duration::from_secs(10));
 
-        let resolved = resolve_hosted_in(
-            &config,
-            None,
-            None,
-            &|| vec!["2".to_string()],
-            &|id| {
-                if id == "2" {
-                    live("2", false)
-                } else {
-                    crate::hostctl::HostProbe::NoSocket
-                }
-            },
-        );
+        let resolved = resolve_hosted_in(&config, None, None, &|| vec!["2".to_string()], &|id| {
+            if id == "2" {
+                live("2", false)
+            } else {
+                crate::hostctl::HostProbe::NoSocket
+            }
+        });
         assert_eq!(resolved.id, "2");
         assert_eq!(resolved.route, Route::AttachLive);
         assert!(resolved.claim.owned, "and it is this window's to write");
@@ -868,13 +862,9 @@ mod tests {
         let config = tmp("hosted-attended");
         saved(&config, "2", 3, Duration::from_secs(600));
 
-        let resolved = resolve_hosted_in(
-            &config,
-            None,
-            None,
-            &|| vec!["2".to_string()],
-            &|_| live("2", true),
-        );
+        let resolved = resolve_hosted_in(&config, None, None, &|| vec!["2".to_string()], &|_| {
+            live("2", true)
+        });
         assert_ne!(resolved.id, "2", "the attended session was adopted anyway");
         assert_eq!(resolved.route, Route::SpawnHost);
     }
@@ -884,13 +874,9 @@ mod tests {
         let _guard = crate::testsync::forks_and_locks();
         let config = tmp("hosted-spawn");
         saved(&config, "4", 5, Duration::from_secs(30));
-        let resolved = resolve_hosted_in(
-            &config,
-            None,
-            None,
-            &|| vec![],
-            &|_| crate::hostctl::HostProbe::NoSocket,
-        );
+        let resolved = resolve_hosted_in(&config, None, None, &|| vec![], &|_| {
+            crate::hostctl::HostProbe::NoSocket
+        });
         assert_eq!(resolved.id, "4");
         assert_eq!(resolved.route, Route::SpawnHost);
     }
@@ -899,13 +885,9 @@ mod tests {
     fn nothing_saved_and_nothing_running_is_a_fresh_session() {
         let _guard = crate::testsync::forks_and_locks();
         let config = tmp("hosted-fresh");
-        let resolved = resolve_hosted_in(
-            &config,
-            None,
-            None,
-            &|| vec![],
-            &|_| crate::hostctl::HostProbe::NoSocket,
-        );
+        let resolved = resolve_hosted_in(&config, None, None, &|| vec![], &|_| {
+            crate::hostctl::HostProbe::NoSocket
+        });
         assert_eq!(resolved.id, "1");
         assert_eq!(resolved.route, Route::SpawnHost);
     }
@@ -936,13 +918,9 @@ mod tests {
         assert_eq!(attaching.id, "work");
         assert_eq!(attaching.route, Route::AttachLive);
 
-        let starting = resolve_hosted_in(
-            &config,
-            Some("work"),
-            None,
-            &|| vec![],
-            &|_| crate::hostctl::HostProbe::NoSocket,
-        );
+        let starting = resolve_hosted_in(&config, Some("work"), None, &|| vec![], &|_| {
+            crate::hostctl::HostProbe::NoSocket
+        });
         assert_eq!(starting.id, "work");
         assert_eq!(starting.route, Route::SpawnHost);
     }
@@ -955,13 +933,9 @@ mod tests {
         let _guard = crate::testsync::forks_and_locks();
         let config = tmp("hosted-wedged");
         saved(&config, "2", 4, Duration::from_secs(60));
-        let resolved = resolve_hosted_in(
-            &config,
-            None,
-            None,
-            &|| vec!["2".to_string()],
-            &|_| crate::hostctl::HostProbe::Unresponsive,
-        );
+        let resolved = resolve_hosted_in(&config, None, None, &|| vec!["2".to_string()], &|_| {
+            crate::hostctl::HostProbe::Unresponsive
+        });
         assert_ne!(
             resolved.id, "2",
             "a session whose host will not speak was adopted"
@@ -977,13 +951,9 @@ mod tests {
         // ranks below sessions with recorded work, and above nothing.
         let _guard = crate::testsync::forks_and_locks();
         let config = tmp("hosted-unsaved");
-        let resolved = resolve_hosted_in(
-            &config,
-            None,
-            None,
-            &|| vec!["7".to_string()],
-            &|_| live("7", false),
-        );
+        let resolved = resolve_hosted_in(&config, None, None, &|| vec!["7".to_string()], &|_| {
+            live("7", false)
+        });
         assert_eq!(resolved.id, "7");
         assert_eq!(resolved.route, Route::AttachLive);
     }

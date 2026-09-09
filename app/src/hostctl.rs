@@ -74,7 +74,13 @@ impl HostProbe {
     /// A host whose panes no window is holding — the kill-and-relaunch case,
     /// and the only one a launch adopts without being told to.
     pub fn is_free(&self) -> bool {
-        matches!(self, HostProbe::Live { attended: false, .. })
+        matches!(
+            self,
+            HostProbe::Live {
+                attended: false,
+                ..
+            }
+        )
     }
 
     /// Nothing is there — the only state in which it is safe to start a host.
@@ -199,7 +205,9 @@ impl Conn {
             let reply: Reply = serde_json::from_str(line.trim())
                 .map_err(|e| std::io::Error::other(format!("unreadable reply: {e} ({line})")))?;
             if let Reply::Error { msg } = &reply {
-                return Err(std::io::Error::other(format!("session host refused: {msg}")));
+                return Err(std::io::Error::other(format!(
+                    "session host refused: {msg}"
+                )));
             }
             match want(reply) {
                 Ok(value) => return Ok(value),
