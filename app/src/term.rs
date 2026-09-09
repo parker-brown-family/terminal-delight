@@ -495,7 +495,9 @@ mod echo_bench {
         };
         let mut sessions = vec![];
         for index in 0..=flood {
-            let info = link.spawn_pane(None, geom).expect("start a pane");
+            // No recipe: the bench measures a terminal echoing, and an agent in
+            // the pane would be measuring the agent.
+            let (info, _) = link.spawn_pane(None, None, geom).expect("start a pane");
             // A flooding pane the client does not attach still floods the HOST:
             // its pseudoterminal is read and parsed there either way. Leaving it
             // unattached is how the bench tells the two costs apart — what the

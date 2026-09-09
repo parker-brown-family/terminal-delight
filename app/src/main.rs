@@ -2726,23 +2726,31 @@ fn make_pane_attached(
 /// Start a terminal on the host and show it — the restore recipe, executed one
 /// process over.
 ///
-/// The resume line is typed by this window rather than by the host, which is
-/// where it will eventually live: the host has no verb for it yet. Typed
-/// either way it lands in the same pseudoterminal's input queue and waits for
-/// the shell's first read, exactly as a locally-spawned restore does.
+/// The recipe goes WITH the request and the host types it. This window does
+/// not, and those two are one change rather than two: the host refuses to type
+/// a recipe the session is already running, and a window that went on typing it
+/// anyway would hand-deliver the second agent the refusal exists to prevent.
+///
+/// So a recipe already running comes back as `Started::Already`, carrying the
+/// pane that is running it, and this shows that pane. Which is what the leaf
+/// wanted in the first place: its conversation, not a second copy of it.
 fn make_pane_host_spawned(
     restore: session::PaneRestore,
     ctx: &AttachCtx,
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) -> std::io::Result<Entity<TerminalView>> {
-    let info = ctx.link.spawn_pane(restore.cwd.clone(), born_geom())?;
-    let resume = restore.resume.clone();
-    let pane = make_pane_attached(&info, restore, ctx, window, cx)?;
-    if let Some(command) = resume {
-        pane.update(cx, |view, _| view.type_line(&format!("{command}\n")));
+    let (info, started) =
+        ctx.link
+            .spawn_pane(restore.cwd.clone(), restore.resume.clone(), born_geom())?;
+    if started == hostctl::Started::Already {
+        eprintln!(
+            "terminal-delight: pane {} is already running that agent; showing it \
+             rather than starting a second one",
+            info.pane
+        );
     }
-    Ok(pane)
+    make_pane_attached(&info, restore, ctx, window, cx)
 }
 
 /// A pane for a host terminal, falling back rather than leaving a hole.

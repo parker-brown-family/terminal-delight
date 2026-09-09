@@ -3623,15 +3623,6 @@ impl TerminalView {
         cx.notify();
     }
 
-    /// Type a line into this pane's terminal without pretending a person did.
-    ///
-    /// The restore recipe goes in this way — a resumed agent has not been
-    /// touched by anybody, and the keepalive clock reading it as a human
-    /// keystroke would leave a pane looking attended that nobody has seen.
-    pub fn type_line(&self, line: &str) {
-        self.session.notifier.notify(line.as_bytes().to_vec());
-    }
-
     /// How long since a human touched this pane. The keepalive clock.
     pub fn idle_since_human(&self) -> Duration {
         self.last_human_input.elapsed()

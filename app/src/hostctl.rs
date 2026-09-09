@@ -45,6 +45,18 @@ pub const PROBE_BUDGET: Duration = Duration::from_millis(250);
 /// How long to wait for a host we just started to answer its first hello.
 pub const SPAWN_BUDGET: Duration = Duration::from_secs(10);
 
+/// Whether asking for a terminal produced one.
+///
+/// Not a bare bool at the call site: the two cases call for different things,
+/// and a `false` read at a distance looks like failure, which this is the
+/// opposite of. `Already` means the session was doing what you asked for
+/// before you asked.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Started {
+    Freshly,
+    Already,
+}
+
 /// What a probe found.
 ///
 /// Three states, because a socket that exists but will not answer is not the
@@ -319,26 +331,41 @@ impl HostLink {
         })
     }
 
-    pub fn spawn_pane(&self, cwd: Option<String>, geom: PaneGeom) -> std::io::Result<PaneInfo> {
-        // `resume: None` keeps this window's own behaviour exactly as it was:
-        // it goes on typing the recipe itself after the spawn, and the host
-        // deduplicates nothing. Sending the recipe here — and dropping the
-        // typing that follows — is the client half of #339, and has to happen
-        // in one change or the line lands twice.
+    /// Start a terminal, and have the host type the recipe that puts an agent
+    /// back in its conversation.
+    ///
+    /// The recipe travels WITH the request rather than being typed afterwards
+    /// by this window, and the two are one change: the host refuses to type a
+    /// recipe this session is already running, and a window that went on typing
+    /// it anyway would hand-deliver the second agent the refusal exists to
+    /// prevent.
+    ///
+    /// `Started::Already` means the session was doing what was asked for before
+    /// it was asked, and the pane in the reply is the one doing it.
+    pub fn spawn_pane(
+        &self,
+        cwd: Option<String>,
+        resume: Option<String>,
+        geom: PaneGeom,
+    ) -> std::io::Result<(PaneInfo, Started)> {
         self.exchange(
-            Request::SpawnPane {
-                cwd,
-                resume: None,
-                geom,
-            },
+            Request::SpawnPane { cwd, resume, geom },
             |reply| match reply {
-                // `..` rather than the exact shape, so a field added to a reply
-                // is never again a compile error in this file.
-                Reply::Spawned { outcome, .. } => Ok(outcome),
+                Reply::Spawned { outcome, started } => Ok((outcome, started)),
                 other => Err(other),
             },
         )
-        .and_then(unwrap_outcome)
+        .and_then(|(outcome, started)| {
+            let info = unwrap_outcome(outcome)?;
+            Ok((
+                info,
+                if started {
+                    Started::Freshly
+                } else {
+                    Started::Already
+                },
+            ))
+        })
     }
 
     /// Declare intent to take a pane, and tell the host the size it will be
