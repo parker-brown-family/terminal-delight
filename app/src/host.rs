@@ -36,7 +36,7 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{sync_channel, Sender, SyncSender};
 use std::sync::{Arc, Condvar, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use alacritty_terminal::event::{Event as TermEvent, EventListener, OnResize, WindowSize};
 use alacritty_terminal::event_loop::{EventLoop, Msg, Notifier};
@@ -134,12 +134,21 @@ impl Sink {
 struct TeeReader {
     master: File,
     sink: Arc<Mutex<Option<Sink>>>,
+    /// Set whenever this pane produces anything, and cleared by whoever asks.
+    ///
+    /// A flag rather than a timestamp, and deliberately: this runs on the
+    /// reader thread for every chunk of every pane, and asking the clock there
+    /// would put a syscall in the path a keystroke's echo takes. Whether
+    /// anything was said since the last look is all a twelve-hour idle needs to
+    /// know.
+    spoke: Arc<AtomicBool>,
 }
 
 impl Read for TeeReader {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         let read = self.master.read(buf)?;
         if read > 0 {
+            self.spoke.store(true, Ordering::Relaxed);
             let mut held = self.sink.lock().expect("sink lock");
             if let Some(sink) = held.as_ref() {
                 if !sink.send(&buf[..read]) {
@@ -164,14 +173,18 @@ struct TeePty {
 }
 
 impl TeePty {
-    fn new(inner: Pty, sink: Arc<Mutex<Option<Sink>>>) -> io::Result<Self> {
+    fn new(inner: Pty, sink: Arc<Mutex<Option<Sink>>>, spoke: Arc<AtomicBool>) -> io::Result<Self> {
         // A second descriptor onto the same open file: readiness is reported
         // on the one the poller holds, reads happen on this one, and because
         // they share a description the two always agree.
         let master = inner.file().try_clone()?;
         Ok(Self {
             inner,
-            reader: TeeReader { master, sink },
+            reader: TeeReader {
+                master,
+                sink,
+                spoke,
+            },
         })
     }
 }
@@ -313,6 +326,10 @@ pub struct Cadence {
     pub watch_detached: Duration,
     pub checkpoint_attached: Duration,
     pub checkpoint_detached: Duration,
+    /// How long a host nobody is using waits before it stops.
+    pub idle_exit: Duration,
+    /// How often it looks to see whether that has happened.
+    pub idle_check: Duration,
 }
 
 impl Default for Cadence {
@@ -322,6 +339,13 @@ impl Default for Cadence {
             watch_detached: Duration::from_secs(5),
             checkpoint_attached: Duration::from_secs(30),
             checkpoint_detached: Duration::from_secs(5 * 60),
+            // Twelve hours, decided at Gate 2 and recorded under "Host
+            // lifetime". Generous on purpose: it needs no heuristic about
+            // whether a silent agent is thinking, and a heuristic is what would
+            // eventually kill something irreplaceable in a way nobody could
+            // reproduce.
+            idle_exit: Duration::from_secs(12 * 60 * 60),
+            idle_check: Duration::from_secs(5 * 60),
         }
     }
 }
@@ -432,6 +456,10 @@ pub struct Host {
     next_serial: AtomicU64,
     shutdown: AtomicBool,
     upkeep: Arc<Upkeep>,
+    /// Whether any pane has produced output since this was last asked.
+    spoke: Arc<AtomicBool>,
+    /// When this host was first found doing nothing, or `None` if it is not.
+    idle_since: Mutex<Option<Instant>>,
     /// Where this session's saved state lives, and what to write into it.
     ///
     /// `None` in a host nobody has told, which is every host in this file's
@@ -496,6 +524,8 @@ impl Host {
             next_serial: AtomicU64::new(1),
             shutdown: AtomicBool::new(false),
             upkeep: Arc::new(Upkeep::new()),
+            spoke: Arc::new(AtomicBool::new(false)),
+            idle_since: Mutex::new(None),
             state_file: Mutex::new(None),
             writing: Mutex::new(()),
             layout: Mutex::new(None),
@@ -570,7 +600,7 @@ impl Host {
         // reason the foreground watcher can live here at all.
         let master = pty.file().try_clone()?;
         let sink: Arc<Mutex<Option<Sink>>> = Arc::new(Mutex::new(None));
-        let tee = TeePty::new(pty, sink.clone())?;
+        let tee = TeePty::new(pty, sink.clone(), self.spoke.clone())?;
 
         let (events, incoming) = std::sync::mpsc::channel();
         let proxy = HostProxy(events);
@@ -1063,6 +1093,62 @@ impl Host {
     pub fn start_upkeep(self: &Arc<Self>, cadence: Cadence) {
         upkeep_loop(self, cadence, Cadence::watch, Host::watch_once);
         upkeep_loop(self, cadence, Cadence::checkpoint, Host::checkpoint_once);
+        lifetime_loop(self, cadence);
+    }
+
+    /// Whether anything is using this session right now.
+    ///
+    /// Read generously, and on purpose. A window holding a pane's byte stream
+    /// is the plain case; a connection that asked to be told about changes is
+    /// also a client, and a host that stopped underneath one would be ending a
+    /// session somebody has open. The cost of being too generous is a process
+    /// that lingers; the cost of being too eager is somebody's work.
+    fn being_used(&self) -> bool {
+        self.attended() || !self.watchers.lock().expect("watchers").is_empty()
+    }
+
+    /// One look at whether this host is still wanted, and the end of it if not.
+    ///
+    /// Two rules from the decision, and neither is a heuristic. **Never while a
+    /// client is attached**, whatever the panes are printing — an attached
+    /// window is proof the session is wanted. And **checkpoint before going**,
+    /// so what is left on disk is fresh rather than hours stale.
+    pub fn idle_once(&self, budget: Duration) {
+        // Cleared whether or not it is needed: this is the only reader, and a
+        // flag left set would make the next look think somebody had spoken.
+        let spoke = self.spoke.swap(false, Ordering::Relaxed);
+        let mut since = self.idle_since.lock().expect("idle");
+        if self.being_used() || spoke {
+            *since = None;
+            return;
+        }
+        let waiting = *since.get_or_insert_with(Instant::now);
+        if waiting.elapsed() < budget {
+            return;
+        }
+        drop(since);
+
+        eprintln!(
+            "terminal-delight serve: session '{}' has had nobody attached and \
+             nothing to say for {} hours — checkpointing and stopping",
+            self.key,
+            budget.as_secs() / 3600
+        );
+        let _ = self.persist_now(false);
+        self.stop();
+    }
+
+    /// Bring this host to a stop, by the one door it has.
+    ///
+    /// The accept loop is asleep waiting for a connection, so it is given one.
+    /// Without that a host would keep running until somebody happened to knock,
+    /// which is a stop that depends on a stranger arriving — and going out this
+    /// way means the socket is removed and the session released in the order
+    /// that has already been got right, rather than in a second copy of it.
+    fn stop(&self) {
+        self.shutdown.store(true, Ordering::SeqCst);
+        self.upkeep.ring();
+        let _ = UnixStream::connect(host_socket_path(&self.key));
     }
 
     /// One pass of the foreground watcher: ask each pane's pseudoterminal what
@@ -1189,6 +1275,29 @@ impl Host {
                 .to_string(),
         )
     }
+}
+
+/// The clock that ends a host nobody is using.
+///
+/// Its own loop rather than a third job on the checkpoint's, because it is the
+/// only one whose answer is "stop", and because the period it looks on has
+/// nothing to do with whether anybody is watching — a host with nobody
+/// attached is exactly the one this is counting.
+fn lifetime_loop(host: &Arc<Host>, cadence: Cadence) {
+    let ghost = Arc::downgrade(host);
+    let upkeep = host.upkeep.clone();
+    std::thread::spawn(move || {
+        let mut heard = 0;
+        loop {
+            let Some(host) = ghost.upgrade() else { return };
+            if host.shutdown.load(Ordering::SeqCst) {
+                return;
+            }
+            host.idle_once(cadence.idle_exit);
+            drop(host);
+            upkeep.listen(&mut heard, cadence.idle_check);
+        }
+    });
 }
 
 /// One upkeep clock: do the work, then sleep for as long as being watched or
@@ -1477,13 +1586,7 @@ fn control_loop(
             return;
         }
         if shutting {
-            host.shutdown.store(true, Ordering::SeqCst);
-            host.upkeep.ring();
-            // The accept loop is asleep waiting for a connection, so give it
-            // one. Without this the host would keep running until somebody
-            // happened to knock, which is a shutdown that depends on a
-            // stranger arriving.
-            let _ = UnixStream::connect(host_socket_path(&host.key));
+            host.stop();
             return;
         }
         line.clear();
@@ -2458,6 +2561,7 @@ mod owning {
             watch_detached: Duration::from_secs(30),
             checkpoint_attached: Duration::from_millis(20),
             checkpoint_detached: Duration::from_secs(30),
+            ..never_idles()
         });
 
         // Detached: one pass each, and then a long sleep. Twenty milliseconds
@@ -2585,6 +2689,7 @@ mod owning {
             watch_detached: Duration::from_secs(30),
             checkpoint_attached: Duration::from_secs(30),
             checkpoint_detached: Duration::from_secs(30),
+            ..never_idles()
         });
         std::thread::sleep(Duration::from_millis(100));
         let (_, before) = host.upkeep_counts();
@@ -3499,6 +3604,149 @@ cwd = "/somebody-elses-terminal"
                 .expect("serialise")
                 .contains("THE REAL ONE"),
             "the host took an unparseable file as its session"
+        );
+    }
+
+    /// A cadence whose idle clock will not fire inside a test.
+    ///
+    /// The real budget is twelve hours and is never shortened for convenience —
+    /// tests that care about the idle clock name their own, and every other
+    /// test says plainly that it is not the subject.
+    fn never_idles() -> Cadence {
+        Cadence {
+            idle_exit: Duration::from_secs(60 * 60),
+            idle_check: Duration::from_secs(60 * 60),
+            ..Cadence::default()
+        }
+    }
+
+    #[test]
+    fn the_idle_budget_that_ships_is_the_one_that_was_approved() {
+        // The branch that actually runs is the default one, and a policy that
+        // exists only in a test's own cadence is a policy nothing enforces.
+        assert_eq!(
+            Cadence::default().idle_exit,
+            Duration::from_secs(12 * 60 * 60),
+            "the shipped idle budget is not the twelve hours that was decided"
+        );
+        assert!(
+            Cadence::default().idle_check < Cadence::default().idle_exit,
+            "a host that looks less often than it waits can never notice"
+        );
+    }
+
+    #[test]
+    fn a_host_nobody_has_used_for_long_enough_checkpoints_and_stops() {
+        // Nothing ended a host, and that was never a choice anybody made: an
+        // empty one sat at fifteen megabytes until a reboot. Hosted by default,
+        // that is one per session, forever.
+        let path = a_state_file("idle");
+        let host = Host::with_shell("test", None);
+        host.persist_to(path.clone());
+        assert!(host
+            .save(
+                LAYOUT_SCHEMA,
+                "active = 0\n\n[[tabs]]\n\n[tabs.node.Leaf]\ncwd = \"/tmp\"\n",
+                false,
+            )
+            .is_ok());
+        // Taken away rather than replaced with something shorter: a shorter
+        // file is a *foreign write*, which this host rightly carries on from,
+        // and the test would then be measuring that rule instead of this one.
+        std::fs::remove_file(&path).expect("take the file away");
+
+        host.start_upkeep(Cadence {
+            idle_exit: Duration::from_millis(50),
+            idle_check: Duration::from_millis(20),
+            ..never_idles()
+        });
+
+        assert!(
+            within(Duration::from_secs(5), || host
+                .shutdown
+                .load(Ordering::SeqCst)),
+            "a host nobody has touched went on running"
+        );
+    }
+
+    #[test]
+    fn the_idle_stop_writes_before_it_goes() {
+        // What is left on disk should be fresh rather than hours stale, and
+        // this is the only thing that can have written it: no clock is started,
+        // the budget is nothing, and `idle_once` is called by hand. Started
+        // through `start_upkeep` instead, the checkpoint's own first tick
+        // writes the file and the assertion proves nothing — which is how the
+        // first version of this passed with the checkpoint removed.
+        let path = a_state_file("idlewrite");
+        let host = Host::with_shell("test", None);
+        host.persist_to(path.clone());
+        assert!(host
+            .save(
+                LAYOUT_SCHEMA,
+                "active = 0\n\n[[tabs]]\n\n[tabs.node.Leaf]\ncwd = \"/tmp\"\n",
+                false,
+            )
+            .is_ok());
+        std::fs::remove_file(&path).expect("take the file away");
+
+        host.idle_once(Duration::ZERO);
+
+        assert!(
+            host.shutdown.load(Ordering::SeqCst),
+            "a host past its budget with nobody using it did not stop"
+        );
+        assert!(
+            std::fs::read_to_string(&path)
+                .expect("the host stopped without writing anything")
+                .contains("tabs"),
+            "the host stopped without checkpointing first"
+        );
+    }
+
+    #[test]
+    fn a_host_with_a_window_attached_never_stops() {
+        // The hard rule: whatever the panes are printing, an attached window is
+        // proof the session is wanted.
+        let (host, pane) = host_with_cat_pane();
+        let (_client, server) = UnixStream::pair().expect("pair");
+        assert!(host.attach(pane, server).is_ok());
+
+        host.start_upkeep(Cadence {
+            idle_exit: Duration::from_millis(20),
+            idle_check: Duration::from_millis(10),
+            ..never_idles()
+        });
+        std::thread::sleep(Duration::from_millis(400));
+
+        assert!(
+            !host.shutdown.load(Ordering::SeqCst),
+            "a host stopped underneath the window watching it"
+        );
+    }
+
+    #[test]
+    fn a_host_whose_panes_are_still_talking_never_stops() {
+        // The other half of idle: nobody is attached, but the work is going on
+        // without them, which is the whole product.
+        let (host, pane) = host_with_cat_pane();
+        assert!(!host.attended(), "nobody is watching this one");
+
+        host.start_upkeep(Cadence {
+            idle_exit: Duration::from_millis(50),
+            idle_check: Duration::from_millis(20),
+            ..never_idles()
+        });
+        for _ in 0..20 {
+            host.write_to(pane, b"still working\n".to_vec());
+            std::thread::sleep(Duration::from_millis(20));
+            if host.shutdown.load(Ordering::SeqCst) {
+                break;
+            }
+        }
+
+        assert!(
+            !host.shutdown.load(Ordering::SeqCst),
+            "a host stopped while its terminals were still producing output"
         );
     }
 
