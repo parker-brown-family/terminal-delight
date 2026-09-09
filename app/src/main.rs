@@ -31,6 +31,7 @@ mod ctl;
 mod demo;
 mod dirlogo;
 mod doc;
+mod fav;
 mod gamba;
 mod hud;
 mod instance;
@@ -18242,6 +18243,9 @@ fn main() {
         // The desktop's own colour schemes, scanned once. Must follow theme::init
         // (a state restore resolves panes against both) and precede any window.
         palette::init(cx);
+        // …and the user's own shortlist across both vocabularies, which the
+        // paint overlay shows as its first shelf. Seeded on first run.
+        fav::init(cx);
         // Release the workspace claim at the very start of shutdown — `on_app_quit`
         // handlers run BEFORE windows/PTYs tear down (App::shutdown), so this
         // frees the lock seconds ahead of actual process exit. That is what lets

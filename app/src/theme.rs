@@ -2223,59 +2223,109 @@ pub fn paint_mode(cx: &App) -> bool {
 }
 
 /// Raise/dismiss the paint overlay; repaints every window on a real change.
+///
+/// Raising it re-reads the favourites file. That is the one moment the list is
+/// looked at, so it is the only moment worth paying a stat for — and it means a
+/// hand-edit, or a star made in another window, is live without a restart.
 pub fn set_paint_mode(cx: &mut App, on: bool) {
     if paint_mode(cx) != on {
+        if on {
+            crate::fav::reload(cx);
+        }
         cx.set_global(PaintMode(on));
         cx.refresh_windows();
     }
 }
 
-/// Which SHELF the paint overlay is showing: 0 = Terminal Delight's own colour
-/// sets, 1 = the desktop's palettes ([`crate::palette`]). App-global for the same
-/// reason [`PaintMode`] is — you flip the shelf once and every pane's overlay
-/// turns with you, so a wall can be painted from one vocabulary in one pass.
-#[derive(Default)]
-pub struct PaintShelf(pub u8);
-impl Global for PaintShelf {}
-
-/// Shelf names, in cycle order. Index 1 is skipped when no palettes were found.
-pub const PAINT_SHELVES: [&str; 2] = ["COLOUR SETS", "DESKTOP PALETTES"];
-
-/// The shelf the paint overlay is on, clamped to what this desktop can show.
-pub fn paint_shelf(cx: &App) -> u8 {
-    let n = shelf_count(cx);
-    cx.try_global::<PaintShelf>()
-        .map(|s| s.0)
-        .unwrap_or(0)
-        .min(n - 1)
+/// Which SHELF the paint overlay is showing. App-global for the same reason
+/// [`PaintMode`] is — you flip the shelf once and every pane's overlay turns
+/// with you, so a wall can be painted from one vocabulary in one pass.
+///
+/// Held as a NAME, never an index. Two of the three shelves can be absent (no
+/// Omarchy, no favourites), so the visible shelves are not a contiguous prefix
+/// of anything, and an index would have to mean "the second one that exists" —
+/// a number that is silently wrong the moment a theme is installed.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum Shelf {
+    /// The user's own shortlist, mixing both vocabularies ([`crate::fav`]).
+    /// First, and the default, because it is the shelf that gets worn.
+    #[default]
+    Favourites,
+    /// Terminal Delight's own colour sets ([`Dynamic::NAMED`]). Always present:
+    /// they are compiled in, so there is always somewhere to stand.
+    Sets,
+    /// The desktop's palettes ([`crate::palette`]).
+    Palettes,
 }
 
-/// How many shelves are worth cycling through. The palette shelf disappears
-/// rather than showing an empty grid when Omarchy isn't installed — an empty
-/// shelf you can still land on reads as a bug.
-pub fn shelf_count(cx: &App) -> u8 {
-    if crate::palette::all(cx).is_empty() {
-        1
+impl Shelf {
+    /// The pill's text.
+    pub fn label(self) -> &'static str {
+        match self {
+            Shelf::Favourites => "FAVOURITES",
+            Shelf::Sets => "COLOUR SETS",
+            Shelf::Palettes => "DESKTOP PALETTES",
+        }
+    }
+}
+
+#[derive(Default)]
+pub struct PaintShelf(pub Shelf);
+impl Global for PaintShelf {}
+
+/// The shelves this desktop can actually show, in cycle order.
+///
+/// A shelf with nothing on it is OMITTED rather than shown empty — an empty
+/// shelf you can still land on reads as a bug. `Sets` is unconditional, so the
+/// result is never empty and callers may index `[0]`.
+pub fn shelves(cx: &App) -> Vec<Shelf> {
+    let mut v = Vec::with_capacity(3);
+    if crate::fav::any_visible(cx) {
+        v.push(Shelf::Favourites);
+    }
+    v.push(Shelf::Sets);
+    if !crate::palette::all(cx).is_empty() {
+        v.push(Shelf::Palettes);
+    }
+    v
+}
+
+/// The shelf the paint overlay is on. A stored shelf that has since gone away —
+/// the last favourite unstarred while the overlay was up — falls back to the
+/// first visible one rather than to a clamped number.
+pub fn paint_shelf(cx: &App) -> Shelf {
+    let visible = shelves(cx);
+    let current = cx
+        .try_global::<PaintShelf>()
+        .map(|s| s.0)
+        .unwrap_or_default();
+    if visible.contains(&current) {
+        current
     } else {
-        PAINT_SHELVES.len() as u8
+        visible[0]
     }
 }
 
 /// Step the paint shelf by `delta`, wrapping. A no-op when there is only one.
 pub fn cycle_paint_shelf(cx: &mut App, delta: i8) {
-    let n = i16::from(shelf_count(cx));
-    if n < 2 {
+    let visible = shelves(cx);
+    if visible.len() < 2 {
         return;
     }
-    let next = (i16::from(paint_shelf(cx)) + i16::from(delta)).rem_euclid(n) as u8;
-    set_paint_shelf(cx, next);
+    let at = visible
+        .iter()
+        .position(|s| *s == paint_shelf(cx))
+        .unwrap_or(0) as i16;
+    let next = (at + i16::from(delta)).rem_euclid(visible.len() as i16) as usize;
+    set_paint_shelf(cx, visible[next]);
 }
 
-/// Show shelf `n` (a click on its pill); out-of-range asks are ignored rather
-/// than clamped, so a stale click can't silently land on the wrong shelf.
-pub fn set_paint_shelf(cx: &mut App, n: u8) {
-    if n < shelf_count(cx) && n != paint_shelf(cx) {
-        cx.set_global(PaintShelf(n));
+/// Show a shelf (a click on its pill, or `f`); an ask for one this desktop
+/// isn't showing is ignored rather than redirected, so a stale click can't
+/// silently land on the wrong shelf.
+pub fn set_paint_shelf(cx: &mut App, s: Shelf) {
+    if shelves(cx).contains(&s) && s != paint_shelf(cx) {
+        cx.set_global(PaintShelf(s));
         cx.refresh_windows();
     }
 }
