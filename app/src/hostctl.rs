@@ -358,6 +358,18 @@ impl HostLink {
         Ok(stream)
     }
 
+    /// Ask the host what its own copy of a pane looks like right now.
+    ///
+    /// Refused for a pane nobody is attached to, which is right: the offset is
+    /// per-attachment and a pane with no stream has no place in it to point at.
+    pub fn grid_check(&self, pane: PaneId) -> std::io::Result<crate::hostproto::GridCheck> {
+        self.exchange(Request::GridCheck { pane }, |reply| match reply {
+            Reply::GridChecked { outcome, .. } => Ok(outcome),
+            other => Err(other),
+        })
+        .and_then(unwrap_outcome)
+    }
+
     /// Ask the host to exit. Used by a client that cannot speak its protocol
     /// version, and by anything tidying up after a test.
     #[allow(dead_code)]

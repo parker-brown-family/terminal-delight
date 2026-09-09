@@ -406,25 +406,9 @@ fn hash_color(color: Color) -> u32 {
 // The divergence guard
 // ---------------------------------------------------------------------------
 
-/// One integrity probe: what the authoritative terminal looked like, and how
-/// far into a client's stream that moment was.
-///
-/// Both numbers are required and neither is sufficient. A hash alone cannot be
-/// acted on, because a client that is merely behind would look exactly like a
-/// client that is wrong; an offset alone says nothing about content. Together
-/// they say: *when you have taken this many bytes, your grid must hash to
-/// this*, which is a claim a client can check by itself and either satisfy,
-/// not-yet-satisfy, or fail.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
-pub struct GridCheck {
-    /// Which pane, in the host's own numbering.
-    pub pane: u64,
-    /// The host's count of bytes enqueued to this client's stream at the moment
-    /// the hash was taken. The socket is ordered, so it is the same clock the
-    /// client's [`crate::socketpty::CountingReader`] ticks.
-    pub stream_offset: u64,
-    pub hash: u64,
-}
+/// The probe a client answers is the one the host sends, spelled once, on the
+/// wire, where both ends can see it: [`crate::hostproto::GridCheck`].
+pub use crate::hostproto::GridCheck;
 
 /// What a client concludes about a probe.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

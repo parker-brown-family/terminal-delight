@@ -528,7 +528,7 @@ mod attached {
 
         let host_term = authoritative(20, 5, bytes);
         let probe = GridCheck {
-            pane: 1,
+            pane: crate::hostproto::PaneId(1),
             stream_offset: bytes.len() as u64,
             hash: grid_hash(&host_term),
         };
@@ -578,7 +578,7 @@ mod attached {
 
         let host_term = authoritative(20, 5, b"the quick brown FOX");
         let verdict = pair.guard.check(&GridCheck {
-            pane: 1,
+            pane: crate::hostproto::PaneId(1),
             stream_offset: bytes.len() as u64,
             hash: grid_hash(&host_term),
         });
@@ -599,7 +599,7 @@ mod attached {
         assert!(within(Duration::from_secs(5), || pair.guard.consumed()
             == bytes.len() as u64));
         let probe = GridCheck {
-            pane: 1,
+            pane: crate::hostproto::PaneId(1),
             stream_offset: bytes.len() as u64,
             hash: grid_hash(&authoritative(20, 3, bytes)),
         };

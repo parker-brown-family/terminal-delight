@@ -54,6 +54,23 @@ impl PaneMode {
         }
     }
 
+    /// The same classification, made by a session host instead of by us.
+    ///
+    /// A host watching its own pseudoterminals is in a better position to say
+    /// what is running than a window that has to read /proc from outside, so
+    /// where it has an answer that answer wins. Where it has none — a pane it
+    /// has not classified yet — there is nothing to convert, and a pane keeps
+    /// whatever it already believed rather than being told it is a shell.
+    pub fn from_wire(mode: &crate::hostproto::WireMode) -> PaneMode {
+        match mode {
+            crate::hostproto::WireMode::Shell => PaneMode::Shell,
+            crate::hostproto::WireMode::Claude => PaneMode::Claude,
+            crate::hostproto::WireMode::Codex => PaneMode::Codex,
+            crate::hostproto::WireMode::Remote => PaneMode::Remote,
+            crate::hostproto::WireMode::Other(name) => PaneMode::Other(name.clone()),
+        }
+    }
+
     pub fn label(&self) -> &str {
         match self {
             PaneMode::Shell => "SHELL",
@@ -2470,6 +2487,13 @@ impl TerminalView {
         self.session.shell_pid
     }
 
+    /// The terminal's content generation — the token every cached view of this
+    /// pane is invalidated against, and the way a caller tells a pane that is
+    /// sitting still from one that is printing.
+    pub fn content_generation(&self) -> u64 {
+        self.session.content_generation()
+    }
+
     /// The host's durable name for this pane, if it has one.
     pub fn pane_id(&self) -> Option<u64> {
         self.pane_id
@@ -2484,6 +2508,12 @@ impl TerminalView {
             self.mode = mode;
             cx.notify();
         }
+    }
+
+    /// How many bytes of the host's stream this pane has taken. `None` on a
+    /// pane whose terminal is its own — there is no stream to be at a point in.
+    pub fn stream_consumed(&self) -> Option<u64> {
+        self.guard.as_ref().map(|guard| guard.consumed())
     }
 
     /// Answer a host's integrity probe about this pane.

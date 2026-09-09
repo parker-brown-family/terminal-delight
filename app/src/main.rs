@@ -134,6 +134,24 @@ impl<L: Clone> Tree<L> {
         }
     }
 
+    /// Replace the leaf matching `target` with `new`, in place — same position,
+    /// same split ratios, a different terminal inside it.
+    fn replace_leaf(&mut self, target: &impl Fn(&L) -> bool, new: L) -> bool {
+        match self {
+            Tree::Leaf(e) => {
+                if target(e) {
+                    *e = new;
+                    true
+                } else {
+                    false
+                }
+            }
+            Tree::Split { a, b, .. } => {
+                a.replace_leaf(target, new.clone()) || b.replace_leaf(target, new)
+            }
+        }
+    }
+
     /// Replace the leaf matching `target` with a split of (old, new).
     fn split_leaf(&mut self, target: &impl Fn(&L) -> bool, dir: SplitDir, new: L) -> bool {
         match self {
@@ -2559,6 +2577,13 @@ fn collect_saved_leaves<'a>(node: &'a SavedNode, out: &mut Vec<&'a SavedNode>) {
     }
 }
 
+/// How often an attached window asks the host whether it is still drawing the
+/// truth. Rare on purpose: the answer costs a fence on the host and a hash of
+/// every row of scrollback, and the thing it looks for is a bug, not a
+/// condition. A window that checked constantly would be paying for a guard
+/// against its own correctness.
+const GUARD_PERIOD_SECS: u64 = 30;
+
 /// The size a pane is born at, before the first layout pass tells it the truth.
 /// Same numbers a locally-spawned pane uses (`TerminalView::new_restored`), so
 /// an attached pane and a spawned one start identically.
@@ -2613,7 +2638,16 @@ fn make_pane_attached(
     let pane = cx.new(|cx| {
         TerminalView::new_attached(session, guard, pane_id.0, restore, BORN_GRID, cx)
     });
-    pane.update(cx, |view, _| view.appearance = PaneTheme::house());
+    pane.update(cx, |view, cx| {
+        view.appearance = PaneTheme::house();
+        // The host has been watching this terminal; a window that has just
+        // arrived has not. Where it has classified the pane, that is the better
+        // answer — and where it has not, the pane is left alone rather than
+        // told it is a shell.
+        if let Some(mode) = &info.mode {
+            view.set_host_mode(pane::PaneMode::from_wire(mode), cx);
+        }
+    });
     wire_pane(&pane, window, cx);
     Ok(pane)
 }
@@ -3370,9 +3404,162 @@ impl Workspace {
         self.prune_groups();
         self.active = saved.active.min(self.tabs.len().saturating_sub(1));
         self.focus_active(window, cx);
+        Self::watch_for_divergence(ctx.clone(), window, cx);
     }
 
-    /// The saved tab groups, rebuilt. Shared by both restore paths so a hosted
+    /// Every attached pane, with the terminal generation it is sitting at.
+    ///
+    /// Paired with a second reading a moment later, this is how a quiet pane is
+    /// told from a busy one: the host's answer describes a point in the stream,
+    /// and a pane that is still printing will have moved past it before the
+    /// answer arrives. Checking those is not wrong, it is just never
+    /// conclusive, so the sweep does not spend a round trip on them.
+    fn attached_panes(&self, cx: &App) -> Vec<(hostproto::PaneId, Entity<TerminalView>, u64)> {
+        let mut out = vec![];
+        for tab in &self.tabs {
+            let mut leaves = vec![];
+            tab.root.leaves(&mut leaves);
+            for leaf in leaves {
+                let view = leaf.read(cx);
+                if let Some(pane) = view.pane_id() {
+                    out.push((
+                        hostproto::PaneId(pane),
+                        (*leaf).clone(),
+                        view.content_generation(),
+                    ));
+                }
+            }
+        }
+        out
+    }
+
+    /// Take a pane again, from scratch, because what this window is drawing has
+    /// stopped matching what the host holds.
+    ///
+    /// The repair is deliberately total. A replica that has diverged cannot
+    /// reason its way back — it does not know which of its cells is the wrong
+    /// one — so it is thrown away and replaced by a fresh attachment, which
+    /// begins with a snapshot and is therefore right by construction. The cost
+    /// is this pane's scroll position and selection, and it is paid loudly.
+    fn reattach_pane(
+        &mut self,
+        pane: hostproto::PaneId,
+        old: &Entity<TerminalView>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(ctx) = self.attach.clone() else { return };
+        let Ok(live) = ctx.link.list_panes() else { return };
+        let Some(info) = live.into_iter().find(|p| p.pane == pane) else {
+            return;
+        };
+        let restore = session::PaneRestore {
+            cwd: info.cwd.clone(),
+            ..Default::default()
+        };
+        let fresh = match make_pane_attached(&info, restore, &ctx, window, cx) {
+            Ok(fresh) => fresh,
+            Err(err) => {
+                eprintln!("terminal-delight: could not take pane {pane} again: {err}");
+                return;
+            }
+        };
+        let old_id = old.entity_id();
+        for tab in &mut self.tabs {
+            if tab
+                .root
+                .replace_leaf(&|e: &Entity<TerminalView>| e.entity_id() == old_id, fresh.clone())
+            {
+                break;
+            }
+        }
+        cx.notify();
+    }
+
+    /// The divergence guard, running.
+    ///
+    /// Asks the host, every so often and only about panes that are sitting
+    /// still, what its own copy of the terminal hashes to. Three answers are
+    /// possible and only one of them is a problem: agreement, "cannot say yet",
+    /// and a genuine disagreement — which is loud, and repaired by taking the
+    /// pane again.
+    ///
+    /// `TD_GUARD_FORCE_MISMATCH=1` makes every answer a disagreement. The
+    /// repair path is the one nobody exercises by accident, and a repair nobody
+    /// has ever run is a repair nobody knows works.
+    fn watch_for_divergence(ctx: AttachCtx, window: &Window, cx: &mut Context<Self>) {
+        let forced = std::env::var("TD_GUARD_FORCE_MISMATCH").is_ok_and(|v| v == "1");
+        cx.spawn_in(window, async move |this, cx| loop {
+            cx.background_executor()
+                .timer(Duration::from_secs(GUARD_PERIOD_SECS))
+                .await;
+            let Ok(first) = this.update(cx, |ws: &mut Workspace, cx| ws.attached_panes(cx)) else {
+                break;
+            };
+            if first.is_empty() {
+                continue;
+            }
+            // A second reading, a moment later: what has not moved is quiet.
+            cx.background_executor()
+                .timer(Duration::from_millis(750))
+                .await;
+            let Ok(again) = this.update(cx, |ws: &mut Workspace, cx| ws.attached_panes(cx)) else {
+                break;
+            };
+            for (pane, view, generation) in again {
+                let was = first
+                    .iter()
+                    .find(|(id, _, _)| *id == pane)
+                    .map(|(_, _, g)| *g);
+                if was != Some(generation) {
+                    continue;
+                }
+                let link = ctx.link.clone();
+                let probe = cx
+                    .background_executor()
+                    .spawn(async move { link.grid_check(pane) })
+                    .await;
+                let Ok(probe) = probe else { continue };
+                let checked = this
+                    .update(cx, |_ws: &mut Workspace, cx| {
+                        let view = view.read(cx);
+                        (view.check_divergence(&probe), view.stream_consumed())
+                    })
+                    .ok();
+                let Some((verdict, consumed)) = checked else {
+                    break;
+                };
+                let diverged = match verdict {
+                    Some(gridwire::GuardVerdict::Mismatch { host, replica }) => {
+                        eprintln!(
+                            "terminal-delight: pane {pane} has diverged from the session host \
+                             at offset {} of {} consumed (host {host:x}, window {replica:x}); \
+                             taking it again",
+                            probe.stream_offset,
+                            consumed.map_or_else(|| "unknown".to_string(), |n| n.to_string())
+                        );
+                        true
+                    }
+                    Some(gridwire::GuardVerdict::Match) if forced => {
+                        eprintln!(
+                            "terminal-delight: TD_GUARD_FORCE_MISMATCH — pane {pane} agrees with \
+                             the host and is being taken again anyway"
+                        );
+                        true
+                    }
+                    _ => false,
+                };
+                if diverged {
+                    let _ = this.update_in(cx, |ws: &mut Workspace, window, cx| {
+                        ws.reattach_pane(pane, &view, window, cx);
+                    });
+                }
+            }
+        })
+        .detach();
+    }
+
+    /// The saved tab groups, rebuilt.    /// The saved tab groups, rebuilt. Shared by both restore paths so a hosted
     /// window and a serverless one cannot drift into two ideas of a group.
     fn restore_groups(&mut self, saved: &StateFile) {
         self.groups = saved
@@ -16937,6 +17124,8 @@ mod tests {
             pane: hostproto::PaneId(id),
             shell_pid: 1000 + id as u32,
             cwd: Some("/tmp".into()),
+            resume: None,
+            mode: None,
             attached: false,
             ended,
             geom: hostproto::PaneGeom::default(),
