@@ -309,6 +309,295 @@ pub fn attach_in(
     Ok((session, guard))
 }
 
+/// How long a keystroke takes to come back, with and without the seam.
+///
+/// This is the instrument behind the flip gate: the split becomes the default
+/// only if typing into an attached window feels like typing into today's, and
+/// "feels like" is not a thing anybody can settle by discussion. So the same
+/// measurement runs against both — a terminal this process owns, and one a
+/// session host owns two socket hops away — and the difference between them is
+/// the cost of the seam.
+///
+/// **The signal is the content generation**, which alacritty's own reader bumps
+/// once per parse cycle (`event_loop.rs:167`) after the bytes it read are in the
+/// grid. So a sample is exactly: write a byte the way the GUI writes one, and
+/// wait until the terminal has drawn what came back. Not a proxy for that, and
+/// not a sleep.
+///
+/// **The instrument is identical in both modes** — same program in the pane
+/// (`cat`, so the echo comes from the line discipline and nothing else is
+/// running), same number of flooding panes beside it, same loop. That is the
+/// whole design: any overhead the harness itself carries is carried twice and
+/// cancels in the difference.
+///
+/// Driven by `scripts/td-echo-bench.sh`, which runs it four times over
+/// mode × flood and applies the gate. Ignored by default because it takes
+/// seconds, spawns processes, and answers a question the suite is not asking.
+#[cfg(test)]
+mod echo_bench {
+    use std::io::Write;
+    use std::time::{Duration, Instant};
+
+    use alacritty_terminal::event::Notify;
+
+    use super::*;
+
+    /// Samples taken per run, after the warm-up. A thousand is enough for a p99
+    /// to mean something and quick enough that four runs are a coffee.
+    const SAMPLES: usize = 1000;
+    /// Discarded: the first keystrokes into a fresh terminal pay for pages the
+    /// process has not touched yet, and a flip gate is about the steady state.
+    const WARM_UP: usize = 100;
+    /// A sample that takes this long has not measured latency, it has measured
+    /// something being broken.
+    const PATIENCE: Duration = Duration::from_secs(5);
+
+    fn env_or(name: &str, fallback: &str) -> String {
+        std::env::var(name).unwrap_or_else(|_| fallback.to_string())
+    }
+
+    /// One keystroke, there and back.
+    fn sample(session: &Session) -> Duration {
+        let before = session.content_generation();
+        let started = Instant::now();
+        session.notifier.notify(b"x".to_vec());
+        loop {
+            if session.content_generation() != before {
+                return started.elapsed();
+            }
+            if started.elapsed() > PATIENCE {
+                panic!("a keystroke never came back — the terminal is not echoing");
+            }
+            std::hint::spin_loop();
+        }
+    }
+
+    fn percentile(sorted: &[Duration], p: f64) -> u128 {
+        let at = ((sorted.len() as f64 - 1.0) * p).round() as usize;
+        sorted[at].as_micros()
+    }
+
+    /// A terminal this process owns, running `prog`.
+    ///
+    /// Built here rather than through `spawn_in` because the bench needs to
+    /// choose the program, and `spawn_in` deliberately runs the user's shell.
+    /// Everything below the program — the event loop, the parser, the Term — is
+    /// the same code the pane uses.
+    fn local_pane(prog: &str, args: &[&str]) -> Session {
+        let size = GridSize {
+            cols: 100,
+            rows: 28,
+        };
+        let window_size = WindowSize {
+            num_lines: size.rows as u16,
+            num_cols: size.cols as u16,
+            cell_width: 8,
+            cell_height: 20,
+        };
+        let options = tty::Options {
+            shell: Some(tty::Shell::new(
+                prog.to_string(),
+                args.iter().map(|a| a.to_string()).collect(),
+            )),
+            ..Default::default()
+        };
+        let pty = tty::new(&options, window_size, 0).expect("a pseudoterminal");
+        let master = pty.file().try_clone().ok();
+        let shell_pid = pty.child().id();
+        wire_event_loop(pty, size, master, Some(shell_pid), Answers::Here)
+            .expect("wire the event loop")
+    }
+
+    /// The same shape, two socket hops away: a real session host in its own
+    /// runtime directory, with the panes attached exactly as a window attaches
+    /// them.
+    fn hosted_panes(
+        binary: &str,
+        flood: usize,
+        watch_flood: bool,
+    ) -> (std::process::Child, Vec<Session>) {
+        let run = std::env::temp_dir().join(format!("td-echo-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&run);
+        std::fs::create_dir_all(&run).expect("a place to run");
+
+        // One host, two programs: the pane being measured runs `cat` so its echo
+        // comes from the line discipline alone, and every other pane floods. The
+        // host stamps TD_PANE_ID into each pane, which is what lets one shell
+        // script be both.
+        let shell = run.join("bench-shell.sh");
+        std::fs::write(
+            &shell,
+            "#!/bin/sh\nif [ \"$TD_PANE_ID\" = \"1\" ]; then exec cat; fi\nexec yes flooding-the-terminal-with-output\n",
+        )
+        .expect("write the pane program");
+        let mut permissions = std::fs::metadata(&shell).expect("stat").permissions();
+        use std::os::unix::fs::PermissionsExt;
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&shell, permissions).expect("make it runnable");
+
+        let session = "echo-bench";
+        let host = std::process::Command::new(binary)
+            .args(["serve", "--session", session])
+            // Child-only environment: the bench never touches its own, so it
+            // cannot disturb anything else running in this process.
+            .env("XDG_RUNTIME_DIR", &run)
+            .env("XDG_CONFIG_HOME", run.join("config"))
+            .env("TD_HOST_SHELL", &shell)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("start a session host");
+
+        let socket = run
+            .join("terminal-delight")
+            .join(format!("session-{session}.sock"));
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while Instant::now() < deadline && !socket.exists() {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(socket.exists(), "the host never bound {}", socket.display());
+
+        let link = crate::hostctl::HostLink::attach_at(&socket).expect("attach to the host");
+        let geom = crate::hostproto::PaneGeom {
+            cols: 100,
+            rows: 28,
+            cell_width: 8,
+            cell_height: 20,
+        };
+        let mut sessions = vec![];
+        for index in 0..=flood {
+            let info = link.spawn_pane(None, geom).expect("start a pane");
+            // A flooding pane the client does not attach still floods the HOST:
+            // its pseudoterminal is read and parsed there either way. Leaving it
+            // unattached is how the bench tells the two costs apart — what the
+            // host pays to keep the truth, and what the window pays to draw a
+            // copy of it.
+            if index > 0 && !watch_flood {
+                continue;
+            }
+            link.attach_pane(info.pane, geom)
+                .expect("declare the attach");
+            let stream = link.open_pane_stream(info.pane).expect("the pane's bytes");
+            let announce = link.clone();
+            let pane = info.pane;
+            let (session, _guard) = attach_in(
+                GridSize {
+                    cols: 100,
+                    rows: 28,
+                },
+                AttachStreams {
+                    bytes: stream,
+                    announce_resize: Box::new(move |size: WindowSize| {
+                        announce.announce_resize(
+                            pane,
+                            crate::hostproto::PaneGeom {
+                                cols: size.num_cols,
+                                rows: size.num_lines,
+                                cell_width: size.cell_width,
+                                cell_height: size.cell_height,
+                            },
+                        );
+                    }),
+                },
+                Some(info.shell_pid),
+            )
+            .expect("attach the pane");
+            // The guard is dropped: this bench measures latency, and divergence
+            // is somebody else's test.
+            sessions.push(session);
+        }
+        (host, sessions)
+    }
+
+    #[test]
+    #[ignore = "latency bench — run via scripts/td-echo-bench.sh"]
+    fn echo_latency_bench() {
+        let mode = env_or("TD_ECHO_MODE", "local");
+        let flood: usize = env_or("TD_ECHO_FLOOD", "0").parse().expect("TD_ECHO_FLOOD");
+        let samples: usize = env_or("TD_ECHO_SAMPLES", &SAMPLES.to_string())
+            .parse()
+            .expect("TD_ECHO_SAMPLES");
+
+        let _guard = crate::testsync::forks_and_locks();
+        let mut host = None;
+        let measured: Session;
+        let mut _flooding: Vec<Session> = vec![];
+
+        match mode.as_str() {
+            "local" => {
+                measured = local_pane("cat", &[]);
+                for _ in 0..flood {
+                    _flooding.push(local_pane("yes", &["flooding-the-terminal-with-output"]));
+                }
+            }
+            "attached" => {
+                // Never a number that was not measured: a bench that quietly
+                // fell back to the local path would report the seam as free.
+                let binary = env_or("TD_BIN", "");
+                assert!(
+                    !binary.is_empty() && std::path::Path::new(&binary).exists(),
+                    "attached mode needs TD_BIN pointing at a built terminal-delight; \
+                     refusing to report a number this run did not measure"
+                );
+                let watch_flood = env_or("TD_ECHO_WATCH_FLOOD", "1") != "0";
+                let (child, mut sessions) = hosted_panes(&binary, flood, watch_flood);
+                host = Some(child);
+                measured = sessions.remove(0);
+                _flooding = sessions;
+            }
+            other => panic!("TD_ECHO_MODE must be local or attached, not {other:?}"),
+        }
+
+        // Wait for the pane to be a terminal before timing anything: a shell
+        // that has not finished starting is not a latency measurement.
+        let ready = Instant::now();
+        while measured.content_generation() == 0 {
+            sample(&measured);
+            assert!(
+                ready.elapsed() < Duration::from_secs(20),
+                "the measured pane never echoed anything"
+            );
+        }
+        for _ in 0..WARM_UP {
+            sample(&measured);
+        }
+
+        let mut taken: Vec<Duration> = Vec::with_capacity(samples);
+        for _ in 0..samples {
+            taken.push(sample(&measured));
+        }
+        taken.sort();
+
+        let watching = env_or("TD_ECHO_WATCH_FLOOD", "1") != "0";
+        // The tail is reported with its shape, not just its edge. A p99 alone
+        // cannot tell "every keystroke is slightly slow" from "one keystroke in
+        // a hundred stalls", and those are different experiences to sit in front
+        // of — the first is a slow terminal, the second is a terminal that
+        // hiccups. `over_1ms` is the count a person would actually notice.
+        let over_1ms = taken.iter().filter(|d| d.as_micros() > 1000).count();
+        let line = format!(
+            r#"{{"mode":"{mode}","flood":{flood},"watched":{watching},"samples":{samples},"p50_us":{},"p99_us":{},"p999_us":{},"max_us":{},"over_1ms":{over_1ms}}}"#,
+            percentile(&taken, 0.50),
+            percentile(&taken, 0.99),
+            percentile(&taken, 0.999),
+            taken.last().expect("samples").as_micros(),
+        );
+        println!("{line}");
+        let _ = std::io::stdout().flush();
+
+        drop(measured);
+        drop(std::mem::take(&mut _flooding));
+        if let Some(mut host) = host.take() {
+            let _ = host.kill();
+            let _ = host.wait();
+            let _ = std::fs::remove_dir_all(
+                std::env::temp_dir().join(format!("td-echo-{}", std::process::id())),
+            );
+        }
+    }
+}
+
 /// The client seam, driven for real.
 ///
 /// A socket pair stands in for the host: one end is handed to [`attach_in`] and

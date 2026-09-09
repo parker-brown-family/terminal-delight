@@ -113,6 +113,18 @@
       of an agent that is already running. Still to come in this slice: the pane
       cap.
 - [ ] Slice 5 — flip the default, gated on the harness numbers Parker signs.
+      **Both halves of the gate now have numbers, and one of them fails.**
+      Survival: lost sessions = 0, four legs, repeatedly. Latency
+      (`scripts/td-echo-bench.sh`, release, 1000 samples a condition): quiet, an
+      attached keystroke costs 59-81µs more at p99 than a local one — inside the
+      millisecond and below what anybody can feel. At eight flooding panes it
+      costs 2.1-2.9ms more, with 38-47 keystrokes per thousand over a
+      millisecond against 0-4 locally, while the median holds at ~108µs. A
+      hiccup rather than a slow terminal. Filed as #340 with the diagnostic that
+      rules out the window's own parsing. The eyeball half of the gate — no
+      VISIBLE lag at eight panes — has not been run, and the decision about
+      whether a full-rate flood is the load the gate meant is Parker's rather
+      than the code's.
 - [ ] Slice 6 — tie-off: the follow-up issues 03 commits to.
 
 ## Where it stands, 2026-09-09 (evening)
