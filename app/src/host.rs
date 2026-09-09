@@ -32,6 +32,7 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{sync_channel, Sender, SyncSender};
 use std::sync::{Arc, Condvar, Mutex};
@@ -1058,13 +1059,17 @@ pub fn run_cli(args: &[String]) -> i32 {
         use std::os::unix::fs::PermissionsExt;
         let _ = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700));
     }
-    // A socket file left by a dead host is not a running host.
-    let _ = std::fs::remove_file(&path);
-    let listener = match UnixListener::bind(&path) {
-        Ok(listener) => listener,
-        Err(err) => {
-            eprintln!("terminal-delight serve: cannot listen on {}: {err}", path.display());
-            return 1;
+
+    let (listener, claim) = match take_session(
+        &crate::instance::config_dir(),
+        &path,
+        &key,
+        SOCKET_APPEARS_WITHIN,
+    ) {
+        Ok(taken) => taken,
+        Err((why, code)) => {
+            eprintln!("terminal-delight serve: {why}");
+            return code;
         }
     };
 
@@ -1080,8 +1085,156 @@ pub fn run_cli(args: &[String]) -> i32 {
         let serving = host.clone();
         std::thread::spawn(move || serve_connection(&serving, stream));
     }
+    // Order, and it is the whole of the reason this is written out rather than
+    // left to the end of the scope: the socket goes while the session is still
+    // held. Let go first and a new host could take the session and bind this
+    // path between the two statements, and the file removed would be its front
+    // door rather than ours.
     let _ = std::fs::remove_file(&path);
+    drop(claim);
     0
+}
+
+/// How long a host that lost the race waits for the winner's socket to appear.
+///
+/// The winner takes the session and then binds, so the two are microseconds
+/// apart and this is generous. It exists because losing gracefully means
+/// telling the caller that a host exists, and a probe run a moment too early
+/// would report one that does not — which is the two-windows-at-once case, the
+/// commonest way to get here at all.
+const SOCKET_APPEARS_WITHIN: Duration = Duration::from_secs(2);
+
+/// Become this session's host, or explain why not.
+///
+/// `Ok` is the listener together with the lock file whose open descriptor *is*
+/// the claim — hold it for the life of the process. `Err` is what to print and
+/// what to exit with.
+///
+/// The order is the fix. A socket file is not proof of a live host: one is left
+/// behind by a host that was killed, and one belongs to a host that is running,
+/// and nothing about the file tells the two apart. Removing it to find out is
+/// how a second host took a first host's front door and left it running with
+/// terminals nobody could reach any more (#335). So the session is claimed
+/// first, with a lock the kernel releases when its holder dies, and only the
+/// holder of that claim ever touches the path.
+fn take_session(
+    config: &Path,
+    socket: &Path,
+    key: &str,
+    budget: Duration,
+) -> Result<(UnixListener, File), (String, i32)> {
+    let claim = match claim_host(config, key) {
+        Ok(claim) => claim,
+        Err(holder) => {
+            // Somebody else is this session's host. Whatever is at that path is
+            // their front door, and this process will not touch it.
+            let by = match holder {
+                Some(pid) => format!(" by process {pid}"),
+                None => String::new(),
+            };
+            return Err(if socket_answers_within(socket, budget) {
+                // The caller wanted a host for this session and there is one.
+                (format!("session '{key}' is already served{by}"), 0)
+            } else {
+                (
+                    format!(
+                        "session '{key}' is held{by}, but nothing is answering on {}.                          Refusing to start a second host over it — that would strand                          whatever the first one is holding.",
+                        socket.display()
+                    ),
+                    1,
+                )
+            });
+        }
+    };
+    // The claim is held, so no live host can be listening here: the only
+    // process allowed to bind this path is the one holding it, and that is now
+    // us. Anything at the path is therefore a corpse — a host that was killed
+    // without getting to tidy up — and this is the first moment at which
+    // clearing it is safe rather than a guess.
+    let _ = std::fs::remove_file(socket);
+    match UnixListener::bind(socket) {
+        Ok(listener) => Ok((listener, claim)),
+        Err(err) => Err((
+            format!("cannot listen on {}: {err}", socket.display()),
+            1,
+        )),
+    }
+}
+
+/// Take this session's host lock, or say who holds it.
+///
+/// `flock`, for the reason `instance::claim_in` gives for the window's own
+/// lock: the kernel releases it when the last descriptor on the open file
+/// description closes, so a crash, an OOM kill or a compositor restart can
+/// never strand a session. A pid file can go stale and a socket file can go
+/// stale; this cannot.
+///
+/// Deliberately **not** `instance::claim_in`'s lock, though it sits beside it.
+/// That one answers *who may write this session's saved state*, and today that
+/// is the window — a hosted window claims the session and then starts a host
+/// for it, so a host taking the window's lock would refuse to start for the
+/// very window that asked for it. This one answers *who is serving this
+/// session's terminals*. The two become one question when the host becomes the
+/// file's writer, and not before.
+fn claim_host(config: &Path, key: &str) -> Result<File, Option<u32>> {
+    use std::io::Write as _;
+    use std::os::fd::AsRawFd;
+    use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
+
+    // The layout belongs to instance.rs, which keeps every session's files
+    // under `sessions/`; the host's lock lives with them so that one directory
+    // answers everything about a session.
+    let sessions = config.join("sessions");
+    if std::fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(&sessions)
+        .is_err()
+        && !sessions.is_dir()
+    {
+        // Nowhere to arbitrate. Refusing is the fail-closed answer: an
+        // unarbitrated host is indistinguishable from an arbitrated one, and
+        // two of those is the bug.
+        return Err(None);
+    }
+    let lock = sessions.join(format!("{key}.host.lock"));
+    let Ok(mut file) = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .mode(0o600)
+        .open(&lock)
+    else {
+        return Err(None);
+    };
+    if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
+        // Held. Read who by — the holder writes its pid in, so a person looking
+        // at a session that will not start is told which process to look at
+        // rather than left to guess.
+        return Err(std::fs::read_to_string(&lock)
+            .ok()
+            .and_then(|body| body.trim().parse().ok()));
+    }
+    let _ = file.set_len(0);
+    let _ = writeln!(file, "{}", std::process::id());
+    Ok(file)
+}
+
+/// Whether something is listening on `socket` within `budget`.
+///
+/// A connection that is accepted is proof of a live listener, which a file at
+/// the path is not.
+fn socket_answers_within(socket: &Path, budget: Duration) -> bool {
+    let deadline = std::time::Instant::now() + budget;
+    loop {
+        if UnixStream::connect(socket).is_ok() {
+            return true;
+        }
+        if std::time::Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
 }
 
 /// A host with real pseudoterminals and real children, driven the way a client
@@ -1694,6 +1847,122 @@ mod owning {
             within(Duration::from_secs(5), || host.list_panes()[0].cwd.is_some()),
             "and nothing had read where it was"
         );
+    }
+
+    /// A config directory and a socket path of this test's own.
+    ///
+    /// Passed in rather than set in the environment, for the reason the shell
+    /// is: tests share one process, and `set_var` mutates a table every other
+    /// thread may be reading.
+    fn private_paths(tag: &str) -> (std::path::PathBuf, std::path::PathBuf) {
+        let root = std::env::temp_dir().join(format!(
+            "td-claim-{tag}-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("run")).expect("a private runtime dir");
+        (root.join("config"), root.join("run").join("session.sock"))
+    }
+
+    fn inode_of(path: &std::path::Path) -> u64 {
+        use std::os::unix::fs::MetadataExt;
+        std::fs::metadata(path)
+            .unwrap_or_else(|e| panic!("no {}: {e}", path.display()))
+            .ino()
+    }
+
+    /// Short, because these tests all arrange for the answer to be immediate.
+    const SOON: Duration = Duration::from_millis(200);
+
+    #[test]
+    fn a_second_host_never_takes_a_live_session_socket() {
+        // #335. `serve` used to unlink whatever socket file it found and bind
+        // its own, on the reasoning that a file left by a dead host is not a
+        // running host. True, and it cannot tell that case from a live one — so
+        // a second host took the first's front door and left it running, with
+        // its terminals, and no name by which anything could reach them again.
+        let _guard = crate::testsync::forks_and_locks();
+        let (config, socket) = private_paths("clash");
+
+        let (first, _claim) =
+            take_session(&config, &socket, "clash", SOON).expect("the first host takes the session");
+        let front_door = inode_of(&socket);
+        assert!(
+            UnixStream::connect(&socket).is_ok(),
+            "the first host is not listening, so this proves nothing"
+        );
+
+        let (why, code) = take_session(&config, &socket, "clash", SOON)
+            .expect_err("a second host took a session that was already served");
+        assert_eq!(
+            code, 0,
+            "a caller that wanted a host for this session has one: {why}"
+        );
+
+        assert_eq!(
+            inode_of(&socket),
+            front_door,
+            "the second host replaced the first host's socket"
+        );
+        assert!(
+            UnixStream::connect(&socket).is_ok(),
+            "the first host was left running and unreachable"
+        );
+        drop(first);
+    }
+
+    #[test]
+    fn a_socket_left_by_a_host_that_died_is_cleared_rather_than_honoured() {
+        // The case the unconditional remove was written for, which has to keep
+        // working: a host killed outright leaves its socket behind, and the
+        // session must still be startable. A fix that refused here would trade
+        // one unreachable session for a permanently unstartable one.
+        let _guard = crate::testsync::forks_and_locks();
+        let (config, socket) = private_paths("corpse");
+        {
+            let (listener, claim) =
+                take_session(&config, &socket, "corpse", SOON).expect("the first host");
+            drop(listener);
+            drop(claim);
+        }
+        assert!(socket.exists(), "the corpse socket is what this test is about");
+        assert!(
+            UnixStream::connect(&socket).is_err(),
+            "nothing should be listening on a corpse"
+        );
+
+        let (_listener, _claim) = take_session(&config, &socket, "corpse", SOON)
+            .expect("a socket left by a dead host blocked a fresh one");
+    }
+
+    #[test]
+    fn a_session_held_by_something_that_never_answers_is_left_alone() {
+        // The deliberate cost of refusing rather than taking over: a host that
+        // holds its session and stops answering makes that session unstartable
+        // until somebody looks. Loudly, and naming the process — because the
+        // alternative, taking the session anyway, is killing terminals to fix a
+        // terminal that might still be fine.
+        let _guard = crate::testsync::forks_and_locks();
+        let (config, socket) = private_paths("silent");
+        let held = claim_host(&config, "silent").expect("hold the session");
+        std::fs::write(&socket, b"whatever was here before").expect("something at the path");
+
+        let (why, code) = take_session(&config, &socket, "silent", SOON)
+            .expect_err("a second host started over a held session");
+        assert_eq!(code, 1, "{why}");
+        // The phrase, not the number: this test's own temp path carries the
+        // process id too, so a looser assertion passed a version of the code
+        // that named nothing at all.
+        assert!(
+            why.contains(&format!("process {}", std::process::id())),
+            "a session that will not start must name what is holding it: {why}"
+        );
+        assert!(
+            socket.exists(),
+            "the second host removed a file that was not its to remove"
+        );
+        drop(held);
     }
 
     #[test]
