@@ -34,20 +34,22 @@ use std::io::{self, BufRead, BufReader, Read, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{sync_channel, Sender, SyncSender};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
+use std::time::Duration;
 
 use alacritty_terminal::event::{Event as TermEvent, EventListener, OnResize, WindowSize};
 use alacritty_terminal::event_loop::{EventLoop, Msg, Notifier};
 use alacritty_terminal::sync::FairMutex;
-use alacritty_terminal::term::{Config, Term};
+use alacritty_terminal::term::{Config, Term, TermMode};
 use alacritty_terminal::tty::{self, ChildEvent, EventedPty, EventedReadWrite, Pty};
 use polling::{Event, PollMode, Poller};
 
 use crate::gridwire;
 use crate::hostproto::{
     host_socket_path, parse_stream_greeting, ClosedPane, Outcome, PaneGeom, PaneId, PaneInfo, Reply,
-    Request, ENV_PANE_ID, ENV_SESSION, PROTO_VERSION,
+    Request, WireMode, ENV_PANE_ID, ENV_SESSION, PROTO_VERSION,
 };
+use crate::session::PaneRuntime;
 use crate::term::GridSize;
 
 /// How many chunks may queue for a client before it is considered gone.
@@ -210,21 +212,116 @@ struct HostPane {
     input: Notifier,
     sink: Arc<Mutex<Option<Sink>>>,
     shell_pid: u32,
+    /// Our own handle on the pseudoterminal master, never read from and never
+    /// written to. It exists for the one question only the process holding a
+    /// master may ask — which process group is in the foreground — which is
+    /// why the watcher and the checkpoint had to move here with the terminals.
+    master: File,
     geom: Mutex<PaneGeom>,
     ended: Arc<AtomicBool>,
-    cwd: Option<String>,
+    /// What the last checkpoint read: where the pane is, and what would put
+    /// its agent back. Seeded with the spawn request, then replaced by
+    /// readings.
+    runtime: Mutex<PaneRuntime>,
+    /// What the last watcher tick saw in the foreground, and `None` until one
+    /// has.
+    mode: Mutex<Option<WireMode>>,
 }
 
 impl HostPane {
     fn info(&self, pane: PaneId) -> PaneInfo {
+        let runtime = self.runtime.lock().expect("runtime lock");
         PaneInfo {
             pane,
             shell_pid: self.shell_pid,
-            cwd: self.cwd.clone(),
+            cwd: runtime.cwd.clone(),
+            resume: runtime.resume.clone(),
+            mode: self.mode.lock().expect("mode lock").clone(),
             attached: self.sink.lock().expect("sink lock").is_some(),
             ended: self.ended.load(Ordering::SeqCst),
             geom: *self.geom.lock().expect("geom lock"),
         }
+    }
+}
+
+/// How often a host looks at its own panes.
+///
+/// Two clocks, each with two speeds. The attached numbers are the ones a window
+/// has always run: 800 ms to notice what a pane is running, 30 s to write down
+/// where it is. The detached ones are the bill for the whole feature — hosts
+/// now outlive the windows watching them, so a fleet of headless hosts polling
+/// at window speed would be a battery drain nobody asked for and nobody can
+/// see.
+#[derive(Clone, Copy, Debug)]
+pub struct Cadence {
+    pub watch_attached: Duration,
+    pub watch_detached: Duration,
+    pub checkpoint_attached: Duration,
+    pub checkpoint_detached: Duration,
+}
+
+impl Default for Cadence {
+    fn default() -> Self {
+        Self {
+            watch_attached: Duration::from_millis(800),
+            watch_detached: Duration::from_secs(5),
+            checkpoint_attached: Duration::from_secs(30),
+            checkpoint_detached: Duration::from_secs(5 * 60),
+        }
+    }
+}
+
+impl Cadence {
+    fn watch(&self, attended: bool) -> Duration {
+        if attended {
+            self.watch_attached
+        } else {
+            self.watch_detached
+        }
+    }
+
+    fn checkpoint(&self, attended: bool) -> Duration {
+        if attended {
+            self.checkpoint_attached
+        } else {
+            self.checkpoint_detached
+        }
+    }
+}
+
+/// The clock the upkeep threads sleep on, and the bell that cuts a sleep short.
+///
+/// A detached checkpoint sleeps five minutes, and a window arriving must not
+/// have to wait out the rest of it to be served — so attaching rings this, both
+/// loops wake, and the next tick is at attached speed. It counts rings rather
+/// than raising a flag because two loops are listening, and a flag one of them
+/// clears is a wake the other never hears.
+struct Upkeep {
+    rung: Mutex<u64>,
+    bell: Condvar,
+}
+
+impl Upkeep {
+    fn new() -> Self {
+        Self {
+            rung: Mutex::new(0),
+            bell: Condvar::new(),
+        }
+    }
+
+    fn ring(&self) {
+        *self.rung.lock().expect("upkeep") += 1;
+        self.bell.notify_all();
+    }
+
+    /// Sleep until the bell rings or `period` is up, whichever comes first.
+    fn listen(&self, heard: &mut u64, period: Duration) {
+        let rung = self.rung.lock().expect("upkeep");
+        let (rung, _) = self
+            .bell
+            .wait_timeout_while(rung, period, |rung| *rung == *heard)
+            .expect("upkeep");
+        *heard = *rung;
     }
 }
 
@@ -248,10 +345,24 @@ pub struct Host {
     /// host process, and reading the environment repeatedly from threads that
     /// serve connections is how a program acquires a race it cannot see.
     shell: Option<String>,
-    panes: Mutex<HashMap<PaneId, HostPane>>,
+    panes: Mutex<HashMap<PaneId, Arc<HostPane>>>,
     next_pane: AtomicU64,
     next_serial: AtomicU64,
     shutdown: AtomicBool,
+    upkeep: Arc<Upkeep>,
+    /// How many times each clock has come round. Nothing in production reads
+    /// them; they are how a test tells a host that has backed off from one that
+    /// has stopped.
+    watches: AtomicU64,
+    checkpoints: AtomicU64,
+}
+
+impl Drop for Host {
+    /// Cut short whatever the upkeep threads are sleeping through, so a dropped
+    /// host's threads notice within a wake rather than within five minutes.
+    fn drop(&mut self) {
+        self.upkeep.ring();
+    }
 }
 
 impl Host {
@@ -270,6 +381,9 @@ impl Host {
             next_pane: AtomicU64::new(1),
             next_serial: AtomicU64::new(1),
             shutdown: AtomicBool::new(false),
+            upkeep: Arc::new(Upkeep::new()),
+            watches: AtomicU64::new(0),
+            checkpoints: AtomicU64::new(0),
         })
     }
 
@@ -307,6 +421,9 @@ impl Host {
 
         let pty = tty::new(&options, window_size, 0)?;
         let shell_pid = pty.child().id();
+        // Taken before the pseudoterminal is handed to the event loop, and the
+        // reason the foreground watcher can live here at all.
+        let master = pty.file().try_clone()?;
         let sink: Arc<Mutex<Option<Sink>>> = Arc::new(Mutex::new(None));
         let tee = TeePty::new(pty, sink.clone())?;
 
@@ -350,17 +467,27 @@ impl Host {
             }
         });
 
-        let host_pane = HostPane {
+        let host_pane = Arc::new(HostPane {
             term,
             input,
             sink,
             shell_pid,
+            master,
             geom: Mutex::new(geom),
             ended,
-            cwd,
-        };
+            // The directory it was asked for is a claim, and the first
+            // checkpoint replaces it with a reading. Nothing is claimed about
+            // the agent inside it until something has looked.
+            runtime: Mutex::new(PaneRuntime { cwd, resume: None }),
+            mode: Mutex::new(None),
+        });
         let info = host_pane.info(pane);
         self.panes.lock().expect("panes").insert(pane, host_pane);
+        // New work for both clocks. A host nobody is watching sleeps five
+        // minutes between checkpoints, and a pane that has just appeared must
+        // not spend them unread — a restore starting four of them would leave a
+        // whole layout unknown for as long.
+        self.upkeep.ring();
         Ok(info)
     }
 
@@ -441,6 +568,10 @@ impl Host {
 
         drop(term);
         drop(_lease);
+        // Somebody is watching again. Both clocks are sleeping through a
+        // detached period, and waiting one out before serving a window that has
+        // already arrived is the sort of lag nobody can attribute later.
+        self.upkeep.ring();
         Outcome::Ok(Attachment {
             info: p.info(pane),
             serial,
@@ -483,6 +614,80 @@ impl Host {
         self.panes.lock().expect("panes").len()
     }
 
+    /// Every pane, out from under the table's lock.
+    ///
+    /// The upkeep reads `/proc` and takes each terminal's own lock, and doing
+    /// either while holding the pane table would stall every verb behind a
+    /// process that happens to be stopped.
+    fn pane_list(&self) -> Vec<Arc<HostPane>> {
+        self.panes
+            .lock()
+            .expect("panes")
+            .values()
+            .cloned()
+            .collect()
+    }
+
+    /// Start the two clocks: the foreground watcher, and the checkpoint.
+    ///
+    /// Both hold a weak reference. A host that is dropped — which in tests is
+    /// every host, at the end of every test — must not be kept alive by its own
+    /// upkeep, and a pair of threads per host that never exit is the kind of
+    /// leak that shows up as a suite getting slower and never as a failure.
+    pub fn start_upkeep(self: &Arc<Self>, cadence: Cadence) {
+        upkeep_loop(self, cadence, Cadence::watch, Host::watch_once);
+        upkeep_loop(self, cadence, Cadence::checkpoint, Host::checkpoint_once);
+    }
+
+    /// One pass of the foreground watcher: ask each pane's pseudoterminal what
+    /// is running in it, and keep the answer.
+    pub fn watch_once(&self) {
+        self.watches.fetch_add(1, Ordering::SeqCst);
+        for pane in self.pane_list() {
+            let detected = classify_foreground(&pane.master, pane.shell_pid);
+            // Only worth a terminal's lock when there is a demotion to weigh.
+            let on_alt = detected.is_some()
+                && pane.term.lock().mode().contains(TermMode::ALT_SCREEN);
+            let mut held = pane.mode.lock().expect("mode lock");
+            *held = next_mode(held.as_ref(), detected, on_alt);
+        }
+    }
+
+    /// One checkpoint: read from each pane the two things only the process
+    /// holding its pseudoterminal can read — where it actually is, and what
+    /// would put its agent back in the conversation it was having.
+    ///
+    /// It records rather than writes. The session file also carries window
+    /// bounds, tab names and a theme, none of which a host has ever seen, so
+    /// the window stays the one that writes it; what moved here is the half
+    /// that stopped being answerable from a window at all. The verb that hands
+    /// the layout over for the host to merge and write arrives with the
+    /// attaching client.
+    pub fn checkpoint_once(&self) {
+        self.checkpoints.fetch_add(1, Ordering::SeqCst);
+        for pane in self.pane_list() {
+            let fresh = crate::session::capture(Some(&pane.master), pane.shell_pid);
+            let mut held = pane.runtime.lock().expect("runtime lock");
+            // A reading that failed is not a pane in no directory running
+            // nothing: only an answer replaces an answer.
+            if fresh.cwd.is_some() {
+                held.cwd = fresh.cwd;
+            }
+            if fresh.resume.is_some() {
+                held.resume = fresh.resume;
+            }
+        }
+    }
+
+    /// How many times each clock has come round.
+    #[cfg(test)]
+    fn upkeep_counts(&self) -> (u64, u64) {
+        (
+            self.watches.load(Ordering::SeqCst),
+            self.checkpoints.load(Ordering::SeqCst),
+        )
+    }
+
     /// Read a pane's grid as text. Used by tests and by anything that wants to
     /// know what a terminal is showing without drawing it.
     #[cfg(test)]
@@ -501,6 +706,106 @@ impl Host {
                 .to_string(),
         )
     }
+}
+
+/// One upkeep clock: do the work, then sleep for as long as being watched or
+/// not says to.
+///
+/// The host is upgraded from a weak reference for the work and let go of before
+/// the sleep, so the sleep never keeps it alive.
+fn upkeep_loop(
+    host: &Arc<Host>,
+    cadence: Cadence,
+    period: fn(&Cadence, bool) -> Duration,
+    tick: fn(&Host),
+) {
+    let ghost = Arc::downgrade(host);
+    let upkeep = host.upkeep.clone();
+    std::thread::spawn(move || {
+        let mut heard = 0;
+        loop {
+            let Some(host) = ghost.upgrade() else { return };
+            if host.shutdown.load(Ordering::SeqCst) {
+                return;
+            }
+            tick(&host);
+            let sleep_for = period(&cadence, host.attended());
+            drop(host);
+            upkeep.listen(&mut heard, sleep_for);
+        }
+    });
+}
+
+/// What is in the foreground of this pane, by the kernel's own account.
+///
+/// Relocated from the window (pane.rs's `foreground_mode`), because the
+/// question is `tcgetpgrp` on a pseudoterminal master and the host is what
+/// holds one now.
+///
+/// `None` means the kernel would not say — a pane whose child has gone, most
+/// often — and it is deliberately not `Shell`. The window could collapse those
+/// two because it was looking at its own terminal and could see for itself; a
+/// value that travels to another process cannot, because nothing on the far end
+/// can tell a reading from a stand-in.
+fn classify_foreground(master: &File, shell_pid: u32) -> Option<WireMode> {
+    use std::os::fd::AsRawFd;
+    let pgid = unsafe { libc::tcgetpgrp(master.as_raw_fd()) };
+    if pgid <= 0 {
+        return None;
+    }
+    if pgid as u32 == shell_pid {
+        return Some(WireMode::Shell);
+    }
+    let comm = std::fs::read_to_string(format!("/proc/{pgid}/comm")).unwrap_or_default();
+    let cmdline = std::fs::read_to_string(format!("/proc/{pgid}/cmdline"))
+        .unwrap_or_default()
+        .replace('\0', " ");
+    Some(classify(&comm, &cmdline))
+}
+
+/// The naming rule, kept pure so it can be tested without a terminal. The same
+/// vocabulary the window has always used (pane.rs's `PaneMode::classify`).
+fn classify(comm: &str, cmdline: &str) -> WireMode {
+    let comm = comm.trim();
+    if comm == "claude" || cmdline.contains("/claude") {
+        WireMode::Claude
+    } else if comm == "codex" || cmdline.contains("/codex") {
+        WireMode::Codex
+    } else if matches!(comm, "ssh" | "mosh-client" | "et" | "telnet") {
+        WireMode::Remote
+    } else if matches!(comm, "bash" | "zsh" | "fish" | "sh" | "dash" | "nu") {
+        WireMode::Shell
+    } else {
+        WireMode::Other(comm.to_string())
+    }
+}
+
+/// What a pane's mode becomes, given what it was and what was just seen.
+///
+/// Two rules live here, and both are about refusing to write down a guess.
+///
+/// An agent spends much of its time with something else in the foreground —
+/// bash, node, rg — which reads as an ordinary shell for as long as that child
+/// runs, and a pane that renames itself twice a second is worse than one that is
+/// a beat behind. So while the alternate screen is up, which is where an agent's
+/// own interface lives, an agent stays an agent. When it exits and the plain
+/// shell comes back on the normal screen, the demotion is real and it happens.
+///
+/// And a reading the kernel would not give never overwrites one it did.
+fn next_mode(
+    current: Option<&WireMode>,
+    detected: Option<WireMode>,
+    on_alt: bool,
+) -> Option<WireMode> {
+    let Some(detected) = detected else {
+        return current.cloned();
+    };
+    let was_agent = matches!(current, Some(WireMode::Claude | WireMode::Codex));
+    let still_agent = matches!(detected, WireMode::Claude | WireMode::Codex);
+    if was_agent && !still_agent && on_alt {
+        return current.cloned();
+    }
+    Some(detected)
 }
 
 /// Whether the peer on this socket is the same user we are.
@@ -566,6 +871,7 @@ fn serve_connection(host: &Arc<Host>, stream: UnixStream) {
         }
         if shutting {
             host.shutdown.store(true, Ordering::SeqCst);
+            host.upkeep.ring();
             // The accept loop is asleep waiting for a connection, so give it
             // one. Without this the host would keep running until somebody
             // happened to knock, which is a shutdown that depends on a
@@ -702,6 +1008,9 @@ pub fn run_cli(args: &[String]) -> i32 {
     };
 
     let host = Host::new(key);
+    // The clocks start with the host, not with a window: a session nobody is
+    // looking at still has to know where its panes are.
+    host.start_upkeep(Cadence::default());
     for stream in listener.incoming() {
         if host.shutdown.load(Ordering::SeqCst) {
             break;
@@ -1061,6 +1370,200 @@ mod owning {
         assert!(
             environ.contains(&format!("TD_PANE_ID={}", info.pane)),
             "the child was not told its pane"
+        );
+    }
+
+    #[test]
+    fn the_watcher_names_what_is_running_in_a_real_pane() {
+        // The relocated question, asked where it can now be answered: only the
+        // process holding the pseudoterminal can call tcgetpgrp on it.
+        let (host, _pane) = host_with_cat_pane();
+        assert_eq!(
+            host.list_panes()[0].mode,
+            None,
+            "a pane nobody has looked at claims to be nothing"
+        );
+
+        // A child that has been forked but has not yet taken the terminal has
+        // no foreground group, so the first tick may legitimately learn
+        // nothing. Polling is the honest way to wait for that.
+        assert!(
+            within(Duration::from_secs(5), || {
+                host.watch_once();
+                host.list_panes()[0].mode.is_some()
+            }),
+            "the watcher never classified a live pane"
+        );
+        assert_eq!(
+            host.list_panes()[0].mode,
+            Some(WireMode::Shell),
+            "this pane's own program is what is in front of it"
+        );
+    }
+
+    #[test]
+    fn the_naming_rule_is_the_one_the_window_has_always_used() {
+        assert_eq!(classify("claude", "claude"), WireMode::Claude);
+        assert_eq!(
+            classify("node", "/home/me/.local/bin/claude --resume 4a1c"),
+            WireMode::Claude,
+            "an agent run through a launcher is still the agent"
+        );
+        assert_eq!(classify("codex", "codex"), WireMode::Codex);
+        assert_eq!(classify("ssh", "ssh box"), WireMode::Remote);
+        assert_eq!(classify("bash", "-bash"), WireMode::Shell);
+        assert_eq!(
+            classify("vim", "vim src/host.rs"),
+            WireMode::Other("vim".into()),
+            "anything else is reported by name rather than lumped in"
+        );
+    }
+
+    #[test]
+    fn an_agent_keeps_its_name_through_the_children_it_runs() {
+        // An agent shells out constantly; each child is the foreground group
+        // for as long as it runs. Renaming the pane every time flickers the
+        // header, so the agent's own screen holds its identity.
+        let claude = WireMode::Claude;
+        assert_eq!(
+            next_mode(Some(&claude), Some(WireMode::Shell), true),
+            Some(WireMode::Claude),
+            "a child process renamed the pane out from under the agent"
+        );
+        // And when the agent has actually gone, the demotion is real.
+        assert_eq!(
+            next_mode(Some(&claude), Some(WireMode::Shell), false),
+            Some(WireMode::Shell),
+            "the pane stayed an agent after the agent exited"
+        );
+        // A promotion is never held back by the rule.
+        assert_eq!(
+            next_mode(Some(&WireMode::Shell), Some(WireMode::Codex), true),
+            Some(WireMode::Codex)
+        );
+    }
+
+    #[test]
+    fn a_mode_the_kernel_would_not_give_never_overwrites_one_it_did() {
+        // The whole reason classify_foreground answers with an Option. A window
+        // could collapse "cannot say" into "shell" because it was looking at
+        // its own terminal; this value travels to a process that cannot tell
+        // the two apart.
+        assert_eq!(
+            next_mode(Some(&WireMode::Claude), None, false),
+            Some(WireMode::Claude),
+            "a failed reading erased a real one"
+        );
+        assert_eq!(next_mode(None, None, false), None);
+
+        // And the failure is real: a file that is not a terminal has no
+        // foreground process group.
+        let not_a_terminal = File::open("/dev/null").expect("/dev/null");
+        assert_eq!(classify_foreground(&not_a_terminal, 1), None);
+    }
+
+    #[test]
+    fn the_checkpoint_reads_where_a_pane_actually_is() {
+        // The other half of the relocation. `cwd` on the wire is a reading
+        // taken through the pseudoterminal, not the directory the pane was
+        // asked to start in — the two stop being the same thing the moment
+        // somebody types `cd`.
+        let host = Host::with_shell("test", Some("/bin/cat".into()));
+        let info = spawn_guarded(&host);
+        assert_eq!(
+            info.cwd, None,
+            "nothing was asked for, so nothing is claimed"
+        );
+
+        assert!(
+            within(Duration::from_secs(5), || {
+                host.checkpoint_once();
+                host.list_panes()[0].cwd.is_some()
+            }),
+            "the checkpoint never read the pane's directory"
+        );
+        let read = host.list_panes()[0].cwd.clone().expect("a directory");
+        assert_eq!(
+            std::fs::canonicalize(&read).expect("the reported directory exists"),
+            std::fs::canonicalize(std::env::current_dir().unwrap()).unwrap(),
+            "the checkpoint reported a directory the pane is not in"
+        );
+    }
+
+    #[test]
+    fn a_host_nobody_is_watching_stops_polling_like_one_that_is() {
+        // Hosts now outlive the windows watching them, so an idle one keeping
+        // window cadence is a cost that scales with how well the feature works.
+        let host = Host::with_shell("test", Some("/bin/cat".into()));
+        let info = spawn_guarded(&host);
+        host.start_upkeep(Cadence {
+            watch_attached: Duration::from_millis(20),
+            watch_detached: Duration::from_secs(30),
+            checkpoint_attached: Duration::from_millis(20),
+            checkpoint_detached: Duration::from_secs(30),
+        });
+
+        // Detached: one pass each, and then a long sleep. Twenty milliseconds
+        // of cadence over this long would be dozens.
+        std::thread::sleep(Duration::from_millis(400));
+        let (watches, checkpoints) = host.upkeep_counts();
+        assert!(
+            watches <= 2 && checkpoints <= 2,
+            "a host nobody is watching kept polling: {watches} watches, {checkpoints} checkpoints"
+        );
+
+        // A window arrives, and must not wait out the rest of a detached sleep
+        // to be served.
+        let (_client, server) = UnixStream::pair().expect("pair");
+        assert!(host.attach(info.pane, server).is_ok());
+        assert!(
+            within(Duration::from_secs(5), || {
+                let (now_watches, now_checkpoints) = host.upkeep_counts();
+                now_watches >= watches + 3 && now_checkpoints >= checkpoints + 3
+            }),
+            "attaching did not restore the attached cadence"
+        );
+    }
+
+    #[test]
+    fn a_pane_that_has_just_appeared_is_read_without_waiting_for_the_clock() {
+        // Every period here is thirty seconds, so the only thing that can move
+        // the count within the test is the spawn itself waking the clocks.
+        let host = Host::with_shell("test", Some("/bin/cat".into()));
+        host.start_upkeep(Cadence {
+            watch_attached: Duration::from_secs(30),
+            watch_detached: Duration::from_secs(30),
+            checkpoint_attached: Duration::from_secs(30),
+            checkpoint_detached: Duration::from_secs(30),
+        });
+        std::thread::sleep(Duration::from_millis(100));
+        let (_, before) = host.upkeep_counts();
+
+        spawn_guarded(&host);
+
+        assert!(
+            within(Duration::from_secs(5), || host.upkeep_counts().1 > before),
+            "a pane that had just appeared waited for the clock instead of waking it"
+        );
+        assert!(
+            within(Duration::from_secs(5), || host.list_panes()[0].cwd.is_some()),
+            "and nothing had read where it was"
+        );
+    }
+
+    #[test]
+    fn the_upkeep_does_not_keep_a_dropped_host_alive() {
+        // Every test here makes a host and drops it. Two threads holding a
+        // strong reference would leave a pair behind per host for the life of
+        // the suite, which shows up as a suite that gets slower and never as a
+        // failure.
+        let host = Host::with_shell("test", None);
+        host.start_upkeep(Cadence::default());
+        let ghost = Arc::downgrade(&host);
+        drop(host);
+        assert!(
+            within(Duration::from_secs(5), || ghost.upgrade().is_none()),
+            "the upkeep threads outlived the host they serve"
         );
     }
 }

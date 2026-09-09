@@ -127,15 +127,45 @@ impl<T> Outcome<T> {
     }
 }
 
+/// What a pane is running, as far as the kernel will say.
+///
+/// The host is what answers this now. `tcgetpgrp` answers whoever holds the
+/// pseudoterminal, and a window that has stopped owning terminals cannot ask
+/// the question at all.
+#[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug)]
+#[serde(rename_all = "kebab-case")]
+pub enum WireMode {
+    Shell,
+    Claude,
+    Codex,
+    Remote,
+    /// Anything else, named: `vim`, `htop`, whatever is in front.
+    Other(String),
+}
+
 /// What the host knows about a pane. Everything absent is `None` rather than a
 /// stand-in value: a pane whose working directory has not been read yet is not
-/// a pane in the root directory.
+/// a pane in the root directory, and a pane nobody has classified yet is not a
+/// pane running a shell.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct PaneInfo {
     pub pane: PaneId,
     pub shell_pid: u32,
+    /// Where the pane actually is, as of the last checkpoint. Seeded with the
+    /// directory it was asked to start in, and replaced by a live reading once
+    /// the host has managed to take one — those stop being the same thing the
+    /// moment somebody types `cd`.
     #[serde(default)]
     pub cwd: Option<String>,
+    /// The line that would put an agent back in the conversation this pane was
+    /// having. `None` for a pane running no agent, and equally for one nobody
+    /// has looked at yet, which is why a checkpoint never overwrites a known
+    /// recipe with a reading it failed to take.
+    #[serde(default)]
+    pub resume: Option<String>,
+    /// What is in the foreground. `None` until the watcher has classified it.
+    #[serde(default)]
+    pub mode: Option<WireMode>,
     /// Whether a window currently holds this pane's byte stream.
     pub attached: bool,
     /// Whether the process inside it has gone.
@@ -250,6 +280,91 @@ fn runtime_dir() -> PathBuf {
     PathBuf::from(format!("/tmp/terminal-delight-{}", unsafe { libc::getuid() }))
 }
 
+/// One of every request the host can be sent.
+///
+/// Kept beside one of every reply, and used three times over: the round-trip
+/// tests read them, the conformance tests take the field names the host emits
+/// from them, and a separate test proves against serde's own variant list that
+/// nothing has been left out of them.
+#[cfg(test)]
+fn every_request() -> Vec<Request> {
+    let geom = PaneGeom::default();
+    vec![
+        Request::Hello {
+            proto: PROTO_VERSION,
+            kind: ClientKind::Window,
+        },
+        Request::ListPanes,
+        Request::SpawnPane {
+            cwd: Some("/home/me".into()),
+            geom,
+        },
+        Request::AttachPane {
+            pane: PaneId(3),
+            geom,
+        },
+        Request::Resize {
+            pane: PaneId(3),
+            geom,
+        },
+        Request::ClosePane { pane: PaneId(3) },
+        Request::Shutdown,
+    ]
+}
+
+/// One of every reply the host can send, and every shape inside them: an
+/// outcome that succeeded and one that failed, a mode that is a plain name and
+/// one that carries a program's.
+#[cfg(test)]
+fn every_reply() -> Vec<Reply> {
+    let info = PaneInfo {
+        pane: PaneId(1),
+        shell_pid: 4242,
+        cwd: Some("/home/me".into()),
+        resume: Some("claude --resume 4a1c".into()),
+        mode: Some(WireMode::Claude),
+        attached: true,
+        ended: false,
+        geom: PaneGeom::default(),
+    };
+    let other = PaneInfo {
+        pane: PaneId(2),
+        mode: Some(WireMode::Other("vim".into())),
+        ..info.clone()
+    };
+    vec![
+        Reply::Hello {
+            proto: PROTO_VERSION,
+            session: "2".into(),
+            panes: 2,
+            attended: false,
+        },
+        Reply::Panes {
+            panes: vec![info.clone(), other],
+        },
+        Reply::Spawned {
+            outcome: Outcome::Ok(info.clone()),
+        },
+        Reply::Attached {
+            pane: PaneId(1),
+            outcome: Outcome::Err("no such pane".into()),
+        },
+        Reply::Resized {
+            pane: PaneId(1),
+            outcome: Outcome::Ok(()),
+        },
+        Reply::Closed {
+            pane: PaneId(1),
+            outcome: Outcome::Ok(ClosedPane {
+                shell_pid: 4242,
+                signalled: true,
+            }),
+        },
+        Reply::ShuttingDown,
+        Reply::Error { msg: "nope".into() },
+    ]
+}
+
 #[cfg(test)]
 mod wire {
     use super::*;
@@ -258,29 +373,7 @@ mod wire {
     /// reading the same bytes the same way.
     #[test]
     fn every_message_survives_one_line_of_json() {
-        let geom = PaneGeom::default();
-        let requests = vec![
-            Request::Hello {
-                proto: PROTO_VERSION,
-                kind: ClientKind::Window,
-            },
-            Request::ListPanes,
-            Request::SpawnPane {
-                cwd: Some("/home/me".into()),
-                geom,
-            },
-            Request::AttachPane {
-                pane: PaneId(3),
-                geom,
-            },
-            Request::Resize {
-                pane: PaneId(3),
-                geom,
-            },
-            Request::ClosePane { pane: PaneId(3) },
-            Request::Shutdown,
-        ];
-        for request in requests {
+        for request in every_request() {
             let line = serde_json::to_string(&request).expect("serialise");
             assert!(!line.contains('\n'), "a message must be one line: {line}");
             let back: Request = serde_json::from_str(&line).expect("deserialise");
@@ -294,46 +387,7 @@ mod wire {
 
     #[test]
     fn replies_survive_one_line_of_json() {
-        let info = PaneInfo {
-            pane: PaneId(1),
-            shell_pid: 4242,
-            cwd: None,
-            attached: true,
-            ended: false,
-            geom: PaneGeom::default(),
-        };
-        let replies = vec![
-            Reply::Hello {
-                proto: 1,
-                session: "2".into(),
-                panes: 1,
-                attended: false,
-            },
-            Reply::Panes {
-                panes: vec![info.clone()],
-            },
-            Reply::Spawned {
-                outcome: Outcome::Ok(info.clone()),
-            },
-            Reply::Attached {
-                pane: PaneId(1),
-                outcome: Outcome::Err("no such pane".into()),
-            },
-            Reply::Resized {
-                pane: PaneId(1),
-                outcome: Outcome::Ok(()),
-            },
-            Reply::Closed {
-                pane: PaneId(1),
-                outcome: Outcome::Ok(ClosedPane {
-                    shell_pid: 4242,
-                    signalled: true,
-                }),
-            },
-            Reply::ShuttingDown,
-            Reply::Error { msg: "nope".into() },
-        ];
-        for reply in replies {
+        for reply in every_reply() {
             let line = serde_json::to_string(&reply).expect("serialise");
             assert!(!line.contains('\n'), "a reply must be one line: {line}");
             serde_json::from_str::<Reply>(&line).expect("deserialise");
