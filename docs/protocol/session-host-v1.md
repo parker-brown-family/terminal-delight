@@ -267,6 +267,28 @@ A client that stops reading is dropped rather than allowed to stall the
 emulator — its socket closes, and it re-attaches, which costs a snapshot and is
 always correct, because a snapshot is the truth.
 
+## How long a host lives
+
+A host stops on its own after **twelve hours in which nobody was attached and no
+pane produced any output.** It checkpoints before it goes and says so in the
+log. Two rules hold whatever else is true:
+
+- **Never while a client is attached**, whatever the panes are printing. An
+  attached window is proof the session is wanted. A connection that asked to
+  `watch` counts too — it is a client, and a host that stopped underneath one
+  would be ending a session somebody has open.
+- **Checkpoint before going**, so what is left on disk is fresh rather than
+  hours stale.
+
+Twelve hours is generous on purpose. It needs no heuristic about whether a
+silent agent is thinking, and a heuristic is what would eventually kill
+something irreplaceable in a way nobody could reproduce. Before this, nothing
+ended a host at all — which was never a decision anybody made.
+
+Nothing on the wire announces it. A client finds out the way it finds out about
+any host that has gone: its connection closes, and the socket is no longer
+there.
+
 ## Closing, and what does not close
 
 `close-pane` is intent, and intent is the only thing that kills: it hangs up the
