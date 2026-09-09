@@ -174,6 +174,20 @@ NODE
 # Attach to a pane, read what the host sends (the snapshot of everything it has
 # printed, then live output), and print it. This is how the harness reads a
 # terminal's scrollback without a window: the same handover a window gets.
+#
+# COUNTING WHAT COMES BACK: a line that was TYPED into a pane appears TWICE in
+# what this returns, and neither copy is a bug. The line discipline echoes a
+# keystroke as it arrives, and then the program in the pane writes it out again
+# — `cat` most obviously, a shell as part of its prompt redraw. So "it appears
+# twice, therefore it was sent twice" is wrong, and it is wrong in the direction
+# of reporting a duplicate that is not there.
+#
+# The way to count a typing is to move one variable and compare: run the same
+# measurement with one ask and with two, and see whether the number changes. It
+# did not, which is how the recipe-dedupe was verified end to end. This note is
+# here rather than in a test comment because this is the file somebody reaches
+# for when they want to count something in a pane — the trap was already
+# written down two slices ago, in a place nobody had a reason to look.
 cat >"$RUN/peek.mjs" <<'NODE'
 import net from "node:net";
 const [, , path, pane, millis] = process.argv;
