@@ -205,7 +205,7 @@
             the first-close hint). The anchor check recommends an in-memory v1
             first — held panes in the host's table only, persistence into the
             layout as the follow-up.
-- [ ] Slice 5 — flip the default, gated on the harness numbers Parker signs.
+- [x] Slice 5 — flip the default, gated on the harness numbers Parker signs.
       **Both halves of the gate now have numbers, and both pass.**
       Survival: lost sessions = 0, five legs, repeatedly. Latency
       (`scripts/td-echo-bench.sh`, release, 1000 samples a condition): quiet, an
@@ -224,6 +224,13 @@
       the saturating number existed and is closed by its own invalidation
       criterion. Still not run: the eyeball half — no VISIBLE lag at eight
       panes, which is a person's judgement rather than a number.
+      **FLIPPED 2026-09-10.** The default cold launch now resolves hosted (the
+      `hosted` decision in `main.rs`): a normal window attaches to or spawns a
+      session host, and its terminals outlive it. Opt back out to the legacy
+      serverless path with `TD_NO_SESSIOND=1`; scratch, seeded tear-off, and
+      demo windows never host either way. Landed as one revertable commit on top
+      of the main merge, with the numbers above as its signed basis. The eyeball
+      half stays a person's judgement and is still unrun.
 - [ ] Slice 6 — tie-off: the follow-up issues 03 commits to.
 
 ## Where it stands, 2026-09-09 (evening)

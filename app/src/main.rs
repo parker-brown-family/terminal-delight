@@ -19668,12 +19668,17 @@ fn main() {
     // A scratch window never writes, so it only borrows a key to read the local
     // theme. A real one ADOPTS: the most-recently-saved session nobody holds,
     // preferring the one last saved on this workspace.
-    // Behind a flag, and only behind a flag: a window that shows terminals a
-    // session host owns, so that closing it — or losing it — stops being the
-    // same thing as ending the work inside it. Everything else on this path is
-    // byte-for-byte what it was, because the day this becomes the default is a
-    // day decided by measurements, not by this line.
-    let hosted = std::env::var("TD_SESSIOND").is_ok_and(|v| v == "1");
+    // The default, as of 2026-09-10: a window shows terminals a session host
+    // owns, so that closing it — or losing it — stops being the same thing as
+    // ending the work inside it. This became the default the day the gates were
+    // measured on the reworked branch, not the day a line was written — survival
+    // at twenty of twenty kill-relaunch cycles losing nothing, and a realistic-
+    // load keystroke tail of thirty microseconds with none of a thousand over a
+    // millisecond. `TD_NO_SESSIOND` opts back out to the serverless path, where
+    // the window owns its own terminals, byte-for-byte what it was before the
+    // split. An explicitly-scratch launch never hosts either way.
+    let hosted = !std::env::var("TD_NO_SESSIOND")
+        .is_ok_and(|v| matches!(v.trim(), "1" | "on" | "true" | "yes"));
     let (key, claim, host) = if explicit_scratch || !hosted {
         let (key, claim) = if explicit_scratch {
             (
