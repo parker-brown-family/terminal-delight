@@ -1711,6 +1711,11 @@ enum BarBranch {
     Unfiled,
 }
 
+/// Where each left-bar row was drawn this frame, in draw order — the drop
+/// targets a filing drag lands on. Shared with the paint pass, which is what
+/// knows the boxes, so it carries the same lock the other bounds registries do.
+type BarBoxes = Arc<Mutex<Vec<(BarBranch, Bounds<Pixels>)>>>;
+
 /// A left-bar row being dragged onto a branch: the filing gesture.
 ///
 /// Grabbing a TASK row and dropping it on a project files that task there.
@@ -2466,7 +2471,7 @@ struct Workspace {
     /// into a project without a menu.
     bar_drag: Option<BarDrag>,
     /// Live per-row boxes for drop hit-testing while a bar drag is in flight.
-    bar_bounds: Arc<Mutex<Vec<(BarBranch, Bounds<Pixels>)>>>,
+    bar_bounds: BarBoxes,
     /// Which tab's config pane is open, if any (right-click / ctrl+click a tab).
     tab_menu: Option<usize>,
     /// Window-space anchor for the open tab config pane.

@@ -639,7 +639,7 @@ mod tests {
 
     #[test]
     fn scope_narrows_the_strip_by_branch() {
-        let places: Vec<Place> = vec![
+        let places: Vec<Place> = [
             task(Some(1), Some(10)),
             task(Some(1), None),
             task(Some(2), None),
