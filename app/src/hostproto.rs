@@ -386,6 +386,14 @@ pub fn parse_stream_greeting(line: &str) -> Option<PaneId> {
         .map(PaneId)
 }
 
+/// How a version refusal opens, and the one phrase either side may match on.
+///
+/// A refusal arrives as an ordinary `Reply::Error`, because that is the shape
+/// every build can read — including the old one, which is precisely who
+/// receives it when the number changes. So the machine-readable part has to
+/// live in the text, and it lives here rather than being spelled out twice.
+pub const VERSION_REFUSAL: &str = "protocol mismatch";
+
 /// Whether a peer speaking `theirs` can be understood.
 ///
 /// Names both numbers when it cannot, because "protocol mismatch" alone sends
@@ -395,7 +403,7 @@ pub fn version_check(theirs: u32) -> Result<(), String> {
         Ok(())
     } else {
         Err(format!(
-            "protocol mismatch: this build speaks {PROTO_VERSION}, the other side speaks {theirs}"
+            "{VERSION_REFUSAL}: this build speaks {PROTO_VERSION}, the other side speaks {theirs}"
         ))
     }
 }

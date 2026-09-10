@@ -1926,7 +1926,19 @@ fn handle_control_line(host: &Arc<Host>, line: &str, conn: Option<&Arc<Conn>>) -
                 msg: "watching is a property of a connection, and this line arrived on none".into(),
             },
         },
-        Request::Shutdown => Reply::ShuttingDown,
+        Request::Shutdown => {
+            // Checkpoint on the way out, and the order is the whole point. A
+            // host is asked to stand down by a client that cannot speak its
+            // protocol, and what happens next is that the newer build reads
+            // this file and starts from it — so the file has to be what the
+            // session was a moment ago, not what it was at the last tick of a
+            // clock that may have been five minutes back. This degrades a
+            // protocol break to exactly what a window used to do, once, and
+            // deliberately: the terminals go with the host, and the layout
+            // survives them.
+            host.checkpoint_once();
+            Reply::ShuttingDown
+        }
     }
 }
 
@@ -2582,6 +2594,53 @@ mod owning {
             Reply::Panes { panes } => assert_eq!(panes.len(), 1, "{panes:?}"),
             other => panic!("a question was refused: {other:?}"),
         }
+    }
+
+    #[test]
+    fn a_host_asked_to_stand_down_writes_what_it_had_before_it_goes() {
+        // What makes a protocol break survivable. The old host is asked to go
+        // by a build that cannot speak to it, and everything the session was
+        // has to be in the file by the time it does — the newer build has no
+        // other way to learn it. A checkpoint clock that last ran five minutes
+        // ago is not that.
+        let scratch = scratch("standdown");
+        let path = state_file_in(&scratch);
+        let host = Host::with_shell("test", None);
+        host.persist_to(path.clone());
+        assert!(matches!(
+            answer(
+                &host,
+                &save_line(
+                    "active = 0\n\n[[tabs]]\nname = \"WHAT WAS RUNNING\"\n\n[tabs.node.Leaf]\ncwd = \"/tmp\"\n"
+                )
+            ),
+            Reply::Saved {
+                outcome: Outcome::Ok(_)
+            }
+        ));
+        // Taken away, so that what is there afterwards can only have been
+        // written on the way out. A file changed underneath is a different
+        // case with a rule of its own — the host adopts it — and this test
+        // would be answering that question instead of this one.
+        std::fs::remove_file(&path).expect("take the file away");
+        let (_, checkpoints) = host.upkeep_counts();
+
+        assert!(matches!(
+            answer(&host, r#"{"verb":"shutdown"}"#),
+            Reply::ShuttingDown
+        ));
+
+        assert_eq!(
+            host.upkeep_counts().1,
+            checkpoints + 1,
+            "standing down did not checkpoint"
+        );
+        let left = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("a host stood down without writing anything: {e}"));
+        assert!(
+            left.contains("WHAT WAS RUNNING"),
+            "a host stood down without writing what it was holding: {left}"
+        );
     }
 
     #[test]

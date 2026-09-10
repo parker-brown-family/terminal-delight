@@ -737,7 +737,14 @@ pub fn resolve_hosted_in(
     // socket would strand whatever it is holding. A session in that state is
     // left entirely alone until somebody looks at it.
     for id in ranked {
-        if !probe(&id).is_absent() {
+        let found = probe(&id);
+        // A host that answers and refuses this build is the one case where a
+        // live socket does not protect the session behind it: nothing here can
+        // talk to it, so leaving it alone means the session is unreachable for
+        // as long as it runs, and this launch opens a stranger instead. It is
+        // taken, and `spawn_host` asks it to checkpoint and stand down first —
+        // the approved degrade, once, per protocol bump.
+        if !found.is_absent() && !found.is_skewed() {
             continue;
         }
         return Resolved {

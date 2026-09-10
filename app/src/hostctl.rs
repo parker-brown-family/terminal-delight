@@ -59,10 +59,13 @@ pub enum Started {
 
 /// What a probe found.
 ///
-/// Three states, because a socket that exists but will not answer is not the
-/// same thing as no host at all: the first is a machine in a state somebody
-/// should look at, the second is an ordinary cold start. Collapse them and a
-/// launch quietly starts a second host beside a sick one.
+/// Four states, and the distinctions are the point. A socket that exists but
+/// will not answer is not the same thing as no host at all: the first is a
+/// machine in a state somebody should look at, the second is an ordinary cold
+/// start, and collapsing them starts a second host beside a sick one. Nor is
+/// either the same as a host that answers and refuses, which is healthy, is
+/// holding somebody's terminals, and is the only one of the three a launch may
+/// act on.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HostProbe {
     Live {
@@ -76,6 +79,21 @@ pub enum HostProbe {
     },
     NoSocket,
     Unresponsive,
+    /// The socket answered and refused us: it is a host from a build whose
+    /// protocol this one does not speak.
+    ///
+    /// Its own number is deliberately not carried. The refusal names both
+    /// versions in prose for a person reading a log, but nothing in the reply
+    /// is a field, and inventing one here would put a number in the record
+    /// that nobody measured. What this state says is exactly what was
+    /// observed: a healthy host, and no common language.
+    ///
+    /// Kept apart from `Unresponsive` because they call for opposite things. A
+    /// host that will not answer is a machine somebody should look at, and is
+    /// left alone. A host that answers and refuses is a decision: the approved
+    /// one is that it checkpoints and stands down so the newer build can start
+    /// from the file it leaves.
+    Skewed,
 }
 
 impl HostProbe {
@@ -102,6 +120,11 @@ impl HostProbe {
     /// its terminals running where nothing can reach them.
     pub fn is_absent(&self) -> bool {
         matches!(self, HostProbe::NoSocket)
+    }
+
+    /// A live host this build cannot talk to.
+    pub fn is_skewed(&self) -> bool {
+        matches!(self, HostProbe::Skewed)
     }
 }
 
@@ -138,6 +161,13 @@ pub fn probe_at(path: &Path, budget: Duration) -> HostProbe {
             panes,
             attended,
         },
+        // It answered, and what it said was that it cannot speak to us. That
+        // is a healthy host on the wrong side of a protocol change, which is a
+        // different fact from a host that will not answer at all — and the
+        // only one of the two anybody may act on.
+        Err(err) if err.to_string().contains(crate::hostproto::VERSION_REFUSAL) => {
+            HostProbe::Skewed
+        }
         // It answered something, or nothing, but not a greeting. A host in that
         // state is a fact worth carrying, not an absence.
         _ => HostProbe::Unresponsive,
@@ -168,6 +198,58 @@ pub fn sockets_present_in(dir: &Path) -> Vec<String> {
         .collect();
     out.sort();
     out
+}
+
+/// How long a host we cannot speak to is given to write its file and go.
+///
+/// Generous, because what it is doing in that time is a checkpoint: reading
+/// every pane's working directory out of `/proc` and writing the session file.
+/// The alternative to waiting is starting a second host over a socket the
+/// first still holds, which is the failure this whole path exists to avoid.
+pub const STAND_DOWN_BUDGET: Duration = Duration::from_secs(5);
+
+/// Ask a host this build cannot speak to to checkpoint and stand down, and
+/// wait until it has gone.
+///
+/// The approved path through a protocol break, and the only one: the old host
+/// writes what it holds, exits, and the new build starts from the file it
+/// left. That degrades a version bump to exactly what a window used to do —
+/// the terminals end with the process — once, deliberately, instead of the
+/// alternative that shipped, which was a second window rising beside a live
+/// host with both of them writing one session file.
+///
+/// The hello is expected to be refused. Being refused for a version is what
+/// earns this connection the right to ask for this one thing and nothing else.
+pub fn stand_down_at(path: &Path, budget: Duration) -> std::io::Result<()> {
+    let stream = UnixStream::connect(path)?;
+    let mut conn = Conn::over(stream, budget)?;
+    // Refused, and the refusal is read here rather than left in the stream —
+    // an unread error line would be taken for the answer to the next thing
+    // asked, which is the only thing this connection has to ask.
+    let _ = conn.hello(ClientKind::Window);
+    conn.send(&Request::Shutdown)?;
+    conn.expect(|reply| match reply {
+        Reply::ShuttingDown => Ok(()),
+        other => Err(other),
+    })?;
+
+    // Gone means gone. The next thing the caller does is bind that socket, and
+    // a host that is still holding it would refuse — correctly, and for a
+    // reason that would look nothing like this one by the time it surfaced.
+    let deadline = Instant::now() + budget;
+    while Instant::now() < deadline {
+        if probe_at(path, PROBE_BUDGET).is_absent() {
+            return Ok(());
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    Err(std::io::Error::new(
+        std::io::ErrorKind::TimedOut,
+        format!(
+            "the host at {} was asked to stand down and is still there",
+            path.display()
+        ),
+    ))
 }
 
 /// One control connection, and the rule that a reply is read by shape.
@@ -535,7 +617,7 @@ pub fn watch(socket: &Path) -> std::io::Result<futures::channel::mpsc::Unbounded
     Ok(rx)
 }
 
-/// Start a session host for `key`, and wait for it to be ready to talk./// Start a session host for `key`, and wait for it to be ready to talk.
+/// Start a session host for `key`, and wait for it to be ready to talk.
 ///
 /// Two windows launching at the same moment both find no host and both try to
 /// start one — and the second would unlink the first's socket and bind its own,
@@ -550,8 +632,22 @@ pub fn spawn_host(key: &str, budget: Duration) -> std::io::Result<Arc<HostLink>>
     let _spawn_lock = crate::instance::lock_host_spawn(key);
     // Inside the lock, ask again: while we waited, the window we were racing
     // may have started the very host we were about to duplicate.
-    if probe_host(key).is_live() {
+    let found = probe_host(key);
+    if found.is_live() {
         return HostLink::attach(key);
+    }
+    // A host from a build that cannot speak to this one. It is asked to
+    // checkpoint and stand down before anything else happens, because the
+    // alternative is what the reviews found: this process opens a window that
+    // owns its own terminals while that host keeps its own, and two processes
+    // write one session file. Waited for rather than fired and forgotten — the
+    // next thing done here is bind the socket it is still holding.
+    if found.is_skewed() {
+        eprintln!(
+            "terminal-delight: the host for session '{key}' speaks a protocol this build does \
+             not — asking it to checkpoint and stand down"
+        );
+        stand_down_at(&host_socket_path(key), STAND_DOWN_BUDGET)?;
     }
 
     let exe = std::env::current_exe()?;
@@ -669,6 +765,85 @@ mod talking {
         let verdict = probe_at(&path, Duration::from_millis(200));
         assert_eq!(verdict, HostProbe::Unresponsive, "{verdict:?}");
         drop(held.join());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_host_that_refuses_our_version_is_skewed_rather_than_unresponsive() {
+        // The two look identical from a distance — neither answers a greeting
+        // — and they call for opposite things. A host that will not answer is
+        // left strictly alone; a host that answers and refuses is one this
+        // build may ask to stand down, and must, or the session behind it is
+        // unreachable for as long as it runs.
+        let dir = tmp("skew");
+        let path = dir.join("session-skew.sock");
+        let listener = std::os::unix::net::UnixListener::bind(&path).expect("bind");
+        let served = std::thread::spawn(move || {
+            let (stream, _) = listener.accept().expect("accept");
+            let mut reader = BufReader::new(stream.try_clone().expect("clone"));
+            let mut line = String::new();
+            let read = reader.read_line(&mut line);
+            let mut writer = stream;
+            let wrote = writer.write_all(
+                b"{\"reply\":\"error\",\"msg\":\"protocol mismatch: this build speaks 2, \
+                  the other side speaks 1\"}\n",
+            );
+            (line, read, wrote)
+        });
+        let verdict = probe_at(&path, EXCHANGE_TIMEOUT);
+        let served = served.join();
+        assert_eq!(verdict, HostProbe::Skewed, "the fake host said: {served:?}");
+        assert!(verdict.is_skewed());
+        assert!(!verdict.is_live() && !verdict.is_absent() && !verdict.is_free());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn standing_a_host_down_asks_it_to_go_and_waits_until_it_has() {
+        // What a launch does when it meets a host from another build. Both
+        // halves matter: it has to ask, and it has to still be there when the
+        // asking is over — the next thing the caller does is bind that socket.
+        let dir = tmp("standdown");
+        let path = dir.join("session-standdown.sock");
+        let listener = std::os::unix::net::UnixListener::bind(&path).expect("bind");
+        let socket = path.clone();
+        let served = std::thread::spawn(move || {
+            let (stream, _) = listener.accept().expect("accept");
+            let mut reader = BufReader::new(stream.try_clone().expect("clone"));
+            let mut writer = stream;
+            let mut said = Vec::new();
+            for reply in [
+                &b"{\"reply\":\"error\",\"msg\":\"protocol mismatch: this build speaks 2, the other side speaks 1\"}\n"[..],
+                &b"{\"reply\":\"shutting-down\"}\n"[..],
+            ] {
+                let mut line = String::new();
+                if reader.read_line(&mut line).unwrap_or(0) == 0 {
+                    break;
+                }
+                said.push(line);
+                let _ = writer.write_all(reply);
+            }
+            // A host that has stood down is gone, socket and all.
+            drop(writer);
+            drop(listener);
+            let _ = std::fs::remove_file(&socket);
+            said
+        });
+
+        stand_down_at(&path, Duration::from_secs(5)).expect("stand down");
+        let said = served.join().expect("the conversation");
+        assert!(
+            said[0].contains(r#""verb":"hello""#),
+            "it never introduced itself: {said:?}"
+        );
+        assert!(
+            said[1].contains(r#""verb":"shutdown""#),
+            "it never asked the host to go: {said:?}"
+        );
+        assert!(
+            !path.exists(),
+            "the caller was told the host had gone while its socket was still there"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
