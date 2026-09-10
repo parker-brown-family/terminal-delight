@@ -2047,6 +2047,10 @@ impl gpui::EventEmitter<OpenAgentPanel> for TerminalView {}
 pub struct OpenUsagePanel;
 impl gpui::EventEmitter<OpenUsagePanel> for TerminalView {}
 
+/// Ctrl+Shift+B — show or hide the left bar (the session's project tree).
+pub struct ToggleLeftBar;
+impl gpui::EventEmitter<ToggleLeftBar> for TerminalView {}
+
 /// Ctrl+F (`global = false`) / Ctrl+Shift+F (`global = true`) was pressed in this
 /// pane — ask the workspace to open the find panel. In-pane find searches just
 /// this pane (and the panel centres over it); global find searches every pane.
@@ -4301,6 +4305,15 @@ impl TerminalView {
                     cx.emit(OpenAgentPanel);
                     return;
                 }
+                // Ctrl+Shift+B → the left bar (the session's tree). B for bar,
+                // and the chord an editor user already has in their fingers.
+                // Here rather than in `Workspace::on_key` for the reason the
+                // comment above gives: the focused terminal takes the key
+                // first, so a chord added there would never fire.
+                "b" => {
+                    cx.emit(ToggleLeftBar);
+                    return;
+                }
                 // Two keys for one panel, and the second is not redundant.
                 //
                 // fcitx5's Unicode addon binds Ctrl+Shift+U — `libunicode.so`
@@ -5705,8 +5718,12 @@ fn invert_logical_read(
 static AVAILABLE_FONTS: OnceLock<Vec<String>> = OnceLock::new();
 
 /// Common monospace families to try, in order, when the requested one is absent.
+///
+/// This chain is the LAST resort, not the first: a theme naming no font takes
+/// the desktop's monospace family (see [`default_font_family`]), and only a
+/// machine that cannot answer that question falls through to here.
 const MONO_FALLBACKS: &[&str] = &[
-    "JetBrains Mono",
+    SHIPPED_FONT,
     "DejaVu Sans Mono",
     "Liberation Mono",
     "Noto Sans Mono",
@@ -5729,11 +5746,114 @@ fn font_available(name: &str) -> bool {
     }
 }
 
+/// The desktop's own monospace font, resolved once per process.
+///
+/// **This is the default TD dresses in, and the reason is that Omarchy already
+/// answered the question.** `omarchy font set` writes the chosen family into
+/// every terminal's config and then into `~/.config/fontconfig/fonts.conf` as a
+/// strong `prepend_first` on the `monospace` alias, with this comment above it:
+/// *"fontconfig is the canonical source of truth — the omarchy shell, Qt apps,
+/// and anything resolving `monospace` all read from here."* Its own
+/// `omarchy-font-current` is one line: `fc-match monospace`. A terminal that
+/// picked its own family would be the one window on the desktop wearing a
+/// different face, and would go stale the moment somebody changed the system
+/// font.
+///
+/// `fc-match` answers with a comma-separated alias list
+/// (`JetBrainsMono Nerd Font,JetBrainsMono NF`); the head is the family.
+/// Returns `None` when fontconfig is not there to ask — a machine without it is
+/// not an Omarchy desktop, and the shipped default takes over.
+static SYSTEM_MONO: OnceLock<Option<String>> = OnceLock::new();
+
+/// The first family in an `fc-match` alias list, trimmed. Pure, so the parsing
+/// is tested without a fontconfig to run.
+fn first_family(fc_output: &str) -> Option<String> {
+    let head = fc_output.lines().next()?.split(',').next()?.trim();
+    (!head.is_empty()).then(|| head.to_string())
+}
+
+pub fn system_mono_family() -> Option<String> {
+    SYSTEM_MONO
+        .get_or_init(|| {
+            let out = std::process::Command::new("fc-match")
+                .args(["monospace", "-f", "%{family}"])
+                .output()
+                .ok()?;
+            if !out.status.success() {
+                return None;
+            }
+            first_family(&String::from_utf8_lossy(&out.stdout))
+        })
+        .clone()
+}
+
+/// The family a theme that names no font should use: the desktop's, if it has
+/// one that is actually installed, else the shipped default.
+///
+/// A theme file that DOES name a font still wins — someone who wrote
+/// `family = "Iosevka"` in their theme meant it, and the desktop does not get a
+/// vote over an explicit choice.
+pub fn default_font_family() -> String {
+    system_mono_family()
+        .filter(|f| font_available(f))
+        .unwrap_or_else(|| SHIPPED_FONT.to_string())
+}
+
+/// What TD asks for when the desktop cannot say. Also the head of
+/// [`MONO_FALLBACKS`].
+pub const SHIPPED_FONT: &str = "JetBrains Mono";
+
+/// The same family under another spelling — a patched build of the font the
+/// user asked for, which is the font they asked for.
+///
+/// Measured on this machine 2026-09-10: TD asked for `JetBrains Mono`, the box
+/// had it installed as `JetBrainsMono Nerd Font` / `JetBrainsMono NF`, the
+/// exact-name test missed both, and the whole chrome silently fell through to
+/// Liberation Mono — which has no `▾` (U+25BE), no `▸` (U+25B8), no `⋯`, no
+/// `⟨⟩`, and drew each of them as nothing at all. The diagnostic even said so
+/// on every launch, and read as noise because the font *was* installed.
+///
+/// The match is on the family name with its spaces removed, optionally followed
+/// by one of the Nerd Font suffixes — tight enough that `Noto Sans` cannot
+/// capture `Noto Sans Devanagari`, loose enough to catch the packaging every
+/// patched font on earth uses.
+fn same_family_variant(requested: &str, candidate: &str) -> bool {
+    let compact = |s: &str| s.chars().filter(|c| !c.is_whitespace()).collect::<String>();
+    let (want, got) = (
+        compact(requested).to_lowercase(),
+        compact(candidate).to_lowercase(),
+    );
+    if want == got {
+        return true;
+    }
+    let Some(rest) = got.strip_prefix(&want) else {
+        return false;
+    };
+    matches!(
+        rest,
+        "nerdfont" | "nf" | "nerdfontmono" | "nerdfontpropo" | "nerdfontproportional"
+    )
+}
+
+/// A variant spelling of the requested family that IS installed, if any.
+fn family_variant(requested: &str) -> Option<String> {
+    AVAILABLE_FONTS
+        .get()?
+        .iter()
+        .find(|name| same_family_variant(requested, name))
+        .cloned()
+}
+
 /// Resolve the requested family against what's actually installed, falling back
 /// through a chain of common monospace families. Returns the family to request.
 pub fn resolve_family(requested: &str) -> String {
     if font_available(requested) {
         return requested.to_string();
+    }
+    // The font the user asked for, packaged under a patched name, is not a
+    // fallback — it is the font. Tried before any substitute.
+    if let Some(variant) = family_variant(requested) {
+        return variant;
     }
     for fb in MONO_FALLBACKS {
         if !fb.eq_ignore_ascii_case(requested) && font_available(fb) {
@@ -5757,7 +5877,10 @@ pub fn resolve_family(requested: &str) -> String {
 /// `the_font_diagnostic_is_silent_about_a_family_that_resolves`.
 pub fn font_diagnostic(want: &str) -> Option<String> {
     let got = resolve_family(want);
-    if got == want {
+    // Same font, other spelling — nothing was substituted, so there is nothing
+    // to report. Saying "JetBrains Mono not installed" about a box that has
+    // JetBrainsMono Nerd Font is how a true warning gets trained into noise.
+    if got == want || same_family_variant(want, &got) {
         return None;
     }
     let n = AVAILABLE_FONTS.get().map(|v| v.len()).unwrap_or(0);
@@ -6988,7 +7111,7 @@ impl Render for TerminalView {
                                 a: 0.,
                             })
                             .group_hover(hdr_grp.clone(), move |s| s.text_color(bar_fg.alpha(0.85)))
-                            .child("✎"),
+                            .child("\u{270F}"),
                     )
                     .on_mouse_down(
                         MouseButton::Left,
@@ -7509,6 +7632,65 @@ mod tests {
             underline: None,
             strikethrough: None,
         }
+    }
+
+    /// `fc-match` answers with an alias list; the family is its head.
+    ///
+    /// The parsing is its own function because the desktop's font is now TD's
+    /// default, and a default that came back as `JetBrainsMono Nerd
+    /// Font,JetBrainsMono NF` — one string, comma and all — would resolve to
+    /// nothing and drop the whole app to a fallback face without a word.
+    #[test]
+    fn the_desktop_font_is_the_head_of_the_alias_list() {
+        assert_eq!(
+            first_family("JetBrainsMono Nerd Font,JetBrainsMono NF\n").as_deref(),
+            Some("JetBrainsMono Nerd Font")
+        );
+        assert_eq!(
+            first_family("Liberation Mono\n").as_deref(),
+            Some("Liberation Mono")
+        );
+        // trailing spaces and a bare newline are not a family
+        assert_eq!(first_family("  Iosevka  ,x\n").as_deref(), Some("Iosevka"));
+        assert_eq!(first_family(""), None);
+        assert_eq!(first_family("\n"), None);
+        assert_eq!(first_family(",Nothing\n"), None);
+    }
+
+    /// The font a person installed IS the font they asked for, whatever the
+    /// packagers called the file.
+    ///
+    /// This is not a hypothetical tidy-up. On 2026-09-10 this box had
+    /// `JetBrainsMono Nerd Font` installed, TD asked for `JetBrains Mono`, the
+    /// exact-name test missed it, and the entire UI silently ran on Liberation
+    /// Mono — which lacks the disclosure triangles the left bar draws with, so
+    /// they rendered as nothing. A font mismatch is not a cosmetic problem; it
+    /// deletes glyphs.
+    #[test]
+    fn a_nerd_font_build_of_the_requested_family_is_that_family() {
+        assert!(same_family_variant(
+            "JetBrains Mono",
+            "JetBrainsMono Nerd Font"
+        ));
+        assert!(same_family_variant("JetBrains Mono", "JetBrainsMono NF"));
+        assert!(same_family_variant(
+            "JetBrains Mono",
+            "JetBrainsMono Nerd Font Mono"
+        ));
+        // the same name, spelled the same way
+        assert!(same_family_variant("JetBrains Mono", "JetBrains Mono"));
+        assert!(same_family_variant("Fira Code", "FiraCode Nerd Font"));
+
+        // And the line it must not cross: a DIFFERENT family that merely starts
+        // with the same words. Matching by prefix alone would hand a request
+        // for Noto Sans a Devanagari font and call it a success.
+        assert!(!same_family_variant("Noto Sans", "Noto Sans Devanagari"));
+        assert!(!same_family_variant(
+            "Noto Sans Mono",
+            "Noto Sans Mono CJK SC"
+        ));
+        assert!(!same_family_variant("JetBrains Mono", "DejaVu Sans Mono"));
+        assert!(!same_family_variant("Mono", "Monospace"));
     }
 
     #[test]

@@ -7,7 +7,67 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ## [Unreleased]
 
+### Changed
+
+- **TD wears the desktop's font.** A theme that names no font now takes whatever
+  Omarchy has pointed the `monospace` alias at — the same family alacritty,
+  foot, ghostty and the shell are already using — instead of asking for
+  `JetBrains Mono` by name. `omarchy font set` writes its choice into
+  `~/.config/fontconfig/fonts.conf` as a strong `prepend_first` and calls
+  fontconfig "the canonical source of truth"; `omarchy-font-current` is one line
+  of `fc-match monospace`. TD now asks the same question, so changing the system
+  font changes TD's on its next launch. A theme file that DOES name a family
+  still wins — an explicit choice outranks the desktop — and a machine with no
+  fontconfig to ask falls back to the shipped default exactly as before.
+
+### Fixed
+
+- **The font TD asked for was installed, and TD could not find it.** The lookup
+  tested for an exact family name, so a box carrying `JetBrainsMono Nerd Font`
+  answered "JetBrains Mono is not installed" and the whole UI silently ran on
+  Liberation Mono — which has no `▾` (U+25BE) and no `▸` (U+25B8), so the left
+  bar's disclosure triangles rendered as blank space and folding looked broken.
+  A patched build of the requested family is now recognised as that family (the
+  name with spaces removed, optionally followed by a Nerd Font suffix), tried
+  before any substitute, and the launch diagnostic stays quiet when that is what
+  happened. The match is tight enough that `Noto Sans` cannot capture `Noto Sans
+  Devanagari`.
+- **The rename pencil on every tab has been invisible.** It was drawn with
+  U+270E, which exists in exactly one font installed on a typical desktop — and
+  that font is in none of TD's fallback chains. It is now U+270F, which lives in
+  Noto Color Emoji beside the pin, the robot and the tick.
+
 ### Added
+
+- **A left bar, and a tab is now a task.** The mother bar had run out of
+  attentional space: twelve titles competing for one glance, wrapping onto a
+  second row, which is the same problem stacked. The left edge of the window now
+  carries the session as a collapsible tree, two layers deep and no deeper —
+  **PROJECT** over **INITIATIVE** over the tabs themselves, each holding its
+  sub-terminals. The initiative layer is the tab group that already existed,
+  read as what it always was: a run of tasks belonging to one push. Its colour
+  band, rotated ninety degrees, is the rail each initiative's rows sit against.
+  - **Scoping is the point.** Clicking a project or an initiative narrows the
+    MOTHER BAR to that branch; the tree never narrows. A strip carrying one
+    push's worth of tabs is a strip that stops wrapping.
+  - **Nothing can be lost behind a fold.** The branches holding the active task
+    refuse to collapse, activating a task from anywhere widens the scope to
+    contain it, and every branch row rolls up the 🤖 / ✅ / ❌ / 📌 of everything
+    beneath it — a folded project holding an agent that stopped to ask a
+    question blinks in the tree. The strip carries a `⋯n` chip counting what the
+    scope is hiding, lit when one of them is waiting on you.
+  - **Filing.** Drag a task (or a whole initiative) onto a branch; the chip under
+    the cursor says where it will land, in that branch's colour. A tab's config
+    tray gained the same control for people who would rather press a button, and
+    `⌁` in the bar's header files every unfiled task under the project its
+    terminal is actually sitting in — its git repository, walking up to the root,
+    so a worktree adopts as itself rather than as the folder its siblings share.
+  - `ctrl+shift+B` shows and hides the bar; with it hidden the strip keeps a `⟩`
+    handle where the bar used to be, because a feature you can only restore by
+    knowing a chord is one people turn off once and never see again. The tree,
+    its folds, the bar's width and the current scope all persist per session, and
+    a session file written before any of this existed opens as what it is — an
+    unorganised list of tasks, not an empty window.
 
 - **A favourites shelf in the paint overlay, because nobody wears thirty-three
   looks.** The overlay's two existing shelves are each COMPLETE — every colour
