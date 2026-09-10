@@ -2047,6 +2047,10 @@ impl gpui::EventEmitter<OpenAgentPanel> for TerminalView {}
 pub struct OpenUsagePanel;
 impl gpui::EventEmitter<OpenUsagePanel> for TerminalView {}
 
+/// Ctrl+Shift+B — show or hide the left bar (the session's project tree).
+pub struct ToggleLeftBar;
+impl gpui::EventEmitter<ToggleLeftBar> for TerminalView {}
+
 /// Ctrl+F (`global = false`) / Ctrl+Shift+F (`global = true`) was pressed in this
 /// pane — ask the workspace to open the find panel. In-pane find searches just
 /// this pane (and the panel centres over it); global find searches every pane.
@@ -4299,6 +4303,15 @@ impl TerminalView {
                 // tests green, and does nothing when you press it.
                 "a" => {
                     cx.emit(OpenAgentPanel);
+                    return;
+                }
+                // Ctrl+Shift+B → the left bar (the session's tree). B for bar,
+                // and the chord an editor user already has in their fingers.
+                // Here rather than in `Workspace::on_key` for the reason the
+                // comment above gives: the focused terminal takes the key
+                // first, so a chord added there would never fire.
+                "b" => {
+                    cx.emit(ToggleLeftBar);
                     return;
                 }
                 // Two keys for one panel, and the second is not redundant.

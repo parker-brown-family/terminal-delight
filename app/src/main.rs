@@ -56,6 +56,7 @@ mod term;
 mod testsync;
 mod theme;
 mod toolprop;
+mod tree;
 mod usage;
 mod vitals;
 mod warp;
@@ -77,7 +78,7 @@ use pane::{
     AgentDone, AgentWorkingChanged, CloseFocusRead, ClosePane, DragPaneStart, FocusReadNav,
     OpenAgentPanel, OpenDisplayMenu, OpenFind, OpenFocusRead, OpenHelp, OpenLogoPicker,
     OpenThemeMenu, OpenUsagePanel, PaintApplied, PaneRenamed, ReadNav, RequestCloseTab,
-    TerminalView,
+    TerminalView, ToggleLeftBar,
 };
 use serde::{Deserialize, Serialize};
 use theme::{PaneTheme, ThemeChoice};
@@ -680,6 +681,29 @@ fn default_ratio() -> f32 {
 /// itself. Every other tab / split opened afterwards gets the normal default.
 const FIRST_RUN_HINT: &str = "RIGHT CLICK TO RENAME";
 
+/// The left bar shows by default in a session that has never said otherwise.
+///
+/// It is on rather than off because a bar nobody has found is a bar nobody
+/// uses: the tree is the session's index, and an index that has to be
+/// discovered through a chord is furniture. One ctrl+shift+B hides it forever
+/// after, per session.
+const LEFT_BAR_DEFAULT_ON: bool = true;
+/// Default bar width in logical pixels at scale 1.0 — wide enough for two
+/// levels of indent plus a name plus its roll-up glyphs.
+const LEFT_BAR_W: f32 = 208.;
+/// Narrow enough to be a rail of names, never so narrow the glyphs collide.
+const LEFT_BAR_MIN: f32 = 132.;
+/// Past this the tree is stealing the terminals' width, which is the wrong way
+/// round for a terminal.
+const LEFT_BAR_MAX: f32 = 420.;
+/// Where the left bar's animation keys start.
+///
+/// gpui keys an animation by the value it is given, so a tab showing a
+/// breathing robot in BOTH the strip and the tree must hand out two different
+/// keys or the two elements share one animation — and the shared one stops
+/// when either element goes away. Well past any real tab count.
+const BAR_BADGE_KEYS: usize = 1 << 20;
+
 /// The fixed "binder divider" palette offered in a tab's colour tray — (hue,
 /// saturation, lightness). Saturated-but-muted so white outer-bar text stays
 /// legible on top. A stable, named set keeps tabs consistent: pink stays pink.
@@ -694,6 +718,55 @@ const TAB_SWATCHES: &[(f32, f32, f32)] = &[
     (0.78, 0.42, 0.52), // violet
     (0.92, 0.55, 0.55), // pink
 ];
+
+/// Whether the left bar shows, given what the state file said (or did not say)
+/// and what kind of window this is.
+///
+/// `None` is a file written before the bar existed, and it is deliberately not
+/// read as `false`: nobody hid the bar, nobody had the chance. It resolves to
+/// the default, once, at load — and the next save writes the answer down, so
+/// the question is asked exactly one time per session.
+///
+/// A scratch or demo window never shows it whatever the file says: those are
+/// one terminal in a hurry, and a tree of one row is furniture.
+fn left_bar_visible(saved: Option<bool>, scratch: bool, demo: bool) -> bool {
+    if scratch || demo {
+        return false;
+    }
+    saved.unwrap_or(LEFT_BAR_DEFAULT_ON)
+}
+
+/// The colour a project takes when nobody has picked one.
+///
+/// Spread around the wheel by id with an irrational-ish step so consecutive
+/// projects never land on neighbouring hues, and kept at the same muted
+/// saturation as the tab swatches so a project dot and a tab band read as the
+/// same family of colour.
+fn project_hue(id: u32) -> Hsla {
+    hsla((id as f32 * 0.293).fract(), 0.52, 0.58, 1.0)
+}
+
+/// The project a directory belongs to: the name of its git repository, or of
+/// the directory itself when it is not in one.
+///
+/// Walks up looking for `.git` — a worktree's `.git` is a FILE, not a
+/// directory, so both are accepted or every git worktree on the machine would
+/// adopt as its parent directory instead of as itself. Returns `None` for a
+/// path with no name at all (`/`), which is not a project.
+fn project_name_for(dir: &str) -> Option<String> {
+    let start = std::path::Path::new(dir);
+    let mut at = Some(start);
+    while let Some(p) = at {
+        if p.join(".git").exists() {
+            return p
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .or_else(|| Some(p.to_string_lossy().to_string()));
+        }
+        at = p.parent();
+    }
+    start.file_name().map(|n| n.to_string_lossy().to_string())
+}
 
 struct Tab {
     root: Node,
@@ -713,7 +786,16 @@ struct Tab {
     text_color: Option<Hsla>,
     /// The group this tab belongs to (a [`TabGroup::id`]), if any. Members of a
     /// group render under a shared colour band on the mother bar. Persisted.
+    ///
+    /// In the left bar's vocabulary this is the tab's INITIATIVE — the middle
+    /// layer of the tree. Same field, same colour band, read as what it always
+    /// was: a run of tasks belonging to one push.
     group: Option<u32>,
+    /// The project this tab hangs from DIRECTLY, when it belongs to no
+    /// initiative. A grouped tab inherits its group's project instead and
+    /// leaves this `None`, so the two can never disagree about which project a
+    /// task is in — see [`Workspace::place_of`]. Persisted.
+    project: Option<u32>,
 }
 
 impl Tab {
@@ -725,6 +807,7 @@ impl Tab {
             color: None,
             text_color: None,
             group: None,
+            project: None,
         }
     }
 }
@@ -962,6 +1045,40 @@ struct TabGroup {
     /// Folded into a single counted pill when true (unless it holds the active
     /// tab, which force-expands so you never lose your place).
     collapsed: bool,
+    /// The project this group hangs from in the left bar, if any. A group that
+    /// belongs to no project sits at the top level of the tree — which is every
+    /// group in a session written before the tree existed. Persisted.
+    project: Option<u32>,
+}
+
+/// The outer layer of the left bar's tree: a PROJECT, holding initiatives (tab
+/// groups) and any tasks filed straight under it.
+///
+/// Deliberately thin. A project is a name, a colour and a fold — it owns no
+/// terminals, no layout and no theme, so nothing about it can go wrong at
+/// runtime and nothing about it needs the session host's agreement. What makes
+/// it worth having is that it is the branch a person folds away, and the branch
+/// the mother bar can be scoped to.
+#[derive(Clone)]
+struct Project {
+    id: u32,
+    /// `None` renders as a generated name; the bar's ✎ writes a real one.
+    name: Option<String>,
+    /// The dot beside the name, and the tint its rows take when scoped.
+    color: Hsla,
+    /// Folded away. Never honoured for the project holding the active task.
+    collapsed: bool,
+}
+
+impl Project {
+    /// What the bar shows when nobody has named it yet. Numbered by creation
+    /// order rather than by position, so a rename is never undone by a
+    /// reorder.
+    fn label(&self) -> String {
+        self.name
+            .clone()
+            .unwrap_or_else(|| format!("project {}", self.id))
+    }
 }
 
 /// Which colour a tab-config wheel pip edits: the button FILL or the label TEXT.
@@ -1140,6 +1257,25 @@ struct StateFile {
     /// Tab groups (browser-style colour bands). Absent on pre-feature files.
     #[serde(default)]
     groups: Vec<SavedGroup>,
+    /// Left-bar projects — the tree's outer layer. Absent on pre-tree files,
+    /// which read as a session that has never been organised, not as an empty
+    /// one.
+    #[serde(default)]
+    projects: Vec<SavedProject>,
+    /// Whether the left bar is showing. `None` on a file written before the bar
+    /// existed — which is not the same as "hidden", and is resolved once, at
+    /// load, to the default rather than being collapsed into `false` on disk.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    left_bar: Option<bool>,
+    /// The bar's width in logical pixels at scale 1.0, if it has ever been
+    /// dragged. `None` = the default width.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    left_bar_w: Option<f32>,
+    /// Which branch the mother bar was scoped to. Restored, then checked
+    /// against the active tab — a scope that would open the window with its own
+    /// active task off the strip is widened rather than honoured.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    scope: Option<SavedScope>,
     /// Read-only MCP control-surface policy (the mother-bar robot panel). Absent
     /// on pre-feature files → the locked-down [`mcp::McpConfig`] default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1197,6 +1333,10 @@ impl Default for StateFile {
             track: None,
             tabs: Vec::new(),
             groups: Vec::new(),
+            projects: Vec::new(),
+            left_bar: None,
+            left_bar_w: None,
+            scope: None,
             mcp: None,
             focus_inherit: false,
             anchor_top: false,
@@ -1220,6 +1360,11 @@ struct SavedTab {
     /// The group id this tab belongs to, if any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     group: Option<u32>,
+    /// The project id this tab hangs from directly (only when ungrouped — a
+    /// grouped tab inherits its group's project). Absent on pre-tree files,
+    /// which is how an old session opens as one unfiled list.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    project: Option<u32>,
     node: SavedNode,
 }
 
@@ -1232,6 +1377,51 @@ struct SavedGroup {
     color: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     text_color: Option<String>,
+    #[serde(default)]
+    collapsed: bool,
+    /// The project this group hangs from in the left bar. Absent = top level.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    project: Option<u32>,
+}
+
+/// The persisted form of [`tree::Scope`]. Its own type so the state file is
+/// never coupled to the tree module's derives.
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug, Default)]
+enum SavedScope {
+    #[default]
+    All,
+    Project(u32),
+    Initiative(u32),
+}
+
+impl From<tree::Scope> for SavedScope {
+    fn from(s: tree::Scope) -> Self {
+        match s {
+            tree::Scope::All => SavedScope::All,
+            tree::Scope::Project(p) => SavedScope::Project(p),
+            tree::Scope::Initiative(g) => SavedScope::Initiative(g),
+        }
+    }
+}
+
+impl From<SavedScope> for tree::Scope {
+    fn from(s: SavedScope) -> Self {
+        match s {
+            SavedScope::All => tree::Scope::All,
+            SavedScope::Project(p) => tree::Scope::Project(p),
+            SavedScope::Initiative(g) => tree::Scope::Initiative(g),
+        }
+    }
+}
+
+/// A persisted project — the left bar's outer layer. `id` is what tabs and
+/// groups reference; the colour is a hex string like every other saved colour.
+#[derive(Serialize, Deserialize)]
+struct SavedProject {
+    id: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    name: Option<String>,
+    color: String,
     #[serde(default)]
     collapsed: bool,
 }
@@ -1505,6 +1695,46 @@ struct GroupDrag {
     at: Point<Pixels>,
     /// True once the cursor moved far enough to be a drag, not a stray click.
     engaged: bool,
+}
+
+/// A branch of the left bar's tree, as a click target: which layer, which id.
+///
+/// One type for both layers because every branch gesture — fold, scope, rename,
+/// drop-onto — applies to either, and a pair of near-identical enums would be
+/// two places to forget the same rule.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum BarBranch {
+    Project(u32),
+    Initiative(u32),
+    /// The loose bucket. Not a real branch — nothing to fold, nothing to
+    /// rename, and dropping here means "file this under nothing".
+    Unfiled,
+}
+
+/// A left-bar row being dragged onto a branch: the filing gesture.
+///
+/// Grabbing a TASK row and dropping it on a project files that task there.
+/// Grabbing an INITIATIVE row and dropping it on a project moves the whole
+/// initiative, tasks and all — which is the move a person actually means when
+/// a push turns out to belong to a different project.
+struct BarDrag {
+    what: BarDragged,
+    /// Where the grab started (window space) — engages past a small threshold,
+    /// so a click on a row is still a click.
+    start: Point<Pixels>,
+    at: Point<Pixels>,
+    engaged: bool,
+    /// The branch under the cursor right now, resolved each move.
+    over: Option<BarBranch>,
+}
+
+/// What a [`BarDrag`] is carrying.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum BarDragged {
+    /// A tab, by index at grab time.
+    Task(usize),
+    /// A whole initiative, by group id.
+    Initiative(u32),
 }
 
 /// What the find panel is searching, and where it centres.
@@ -2204,9 +2434,39 @@ struct Workspace {
     /// "drop onto a new row" bar instead of the thin between-tabs caret.
     tab_drop_newrow: bool,
     /// Browser-style tab groups (colour bands). Members reference a group by id.
+    /// The left bar's INITIATIVE layer.
     groups: Vec<TabGroup>,
     /// Monotonic id source for new groups (never reused, so stale refs stay safe).
     next_group_id: u32,
+    /// The left bar's PROJECT layer. Empty in a session nobody has organised —
+    /// the tree then draws the tabs it already had, vertically.
+    projects: Vec<Project>,
+    /// Monotonic id source for projects. Same reasoning as groups: an id is
+    /// never reused, so a stale reference resolves to nothing instead of to
+    /// somebody else's project.
+    next_project_id: u32,
+    /// The left bar is showing. Toggled with ctrl+shift+B (intercepted in the
+    /// pane, which is what has focus) and persisted per session.
+    left_bar: bool,
+    /// The bar's width in logical pixels at scale 1.0. Dragged by its right
+    /// edge; persisted.
+    left_bar_w: f32,
+    /// While the bar's right edge is being dragged: the cursor x it started at
+    /// and the width it started from. Held as a pair rather than as a live
+    /// width so the drag tracks the cursor exactly however far it travels
+    /// outside the bar.
+    bar_resize: Option<(f32, f32)>,
+    /// Which branch the MOTHER BAR is narrowed to. The tree never narrows.
+    scope: tree::Scope,
+    /// Inline rename in the left bar: which branch row is being edited, and its
+    /// buffer. Tasks are renamed with the strip's own editor (`renaming`), so
+    /// this only ever holds a project or an initiative.
+    bar_rename: Option<(BarBranch, EditBuffer)>,
+    /// A left-bar row being dragged onto a branch, if any — how a task is filed
+    /// into a project without a menu.
+    bar_drag: Option<BarDrag>,
+    /// Live per-row boxes for drop hit-testing while a bar drag is in flight.
+    bar_bounds: Arc<Mutex<Vec<(BarBranch, Bounds<Pixels>)>>>,
     /// Which tab's config pane is open, if any (right-click / ctrl+click a tab).
     tab_menu: Option<usize>,
     /// Window-space anchor for the open tab config pane.
@@ -2431,6 +2691,13 @@ fn wire_pane(pane: &Entity<TerminalView>, window: &mut Window, cx: &mut Context<
     .detach();
     // Ctrl+Shift+A in any pane opens the agent-watch (MCP) panel — same surface
     // the header robot icon toggles on.
+    // ctrl+shift+B in any pane → show/hide the session's tree
+    cx.subscribe(pane, |ws, _pane, _ev: &ToggleLeftBar, cx| {
+        ws.left_bar = !ws.left_bar;
+        ws.save(cx);
+        cx.notify();
+    })
+    .detach();
     cx.subscribe(pane, |ws, _pane, _ev: &OpenAgentPanel, cx| {
         ws.mcp_menu = true;
         cx.notify();
@@ -3046,6 +3313,18 @@ impl Workspace {
             tab_drop_newrow: false,
             groups: Vec::new(),
             next_group_id: 1,
+            projects: Vec::new(),
+            next_project_id: 1,
+            left_bar: left_bar_visible(saved.left_bar, scratch, demo),
+            left_bar_w: saved
+                .left_bar_w
+                .unwrap_or(LEFT_BAR_W)
+                .clamp(LEFT_BAR_MIN, LEFT_BAR_MAX),
+            bar_resize: None,
+            scope: saved.scope.map(tree::Scope::from).unwrap_or_default(),
+            bar_rename: None,
+            bar_drag: None,
+            bar_bounds: Arc::new(Mutex::new(Vec::new())),
             tab_menu: None,
             tab_menu_at: None,
             group_menu: None,
@@ -3129,8 +3408,10 @@ impl Workspace {
                 pane.update(cx, |v, _| v.name = Some(FIRST_RUN_HINT.into()));
             }
         } else {
-            ws.restore_groups(&saved);
+            ws.restore_tree(&saved);
             let live: std::collections::HashSet<u32> = ws.groups.iter().map(|g| g.id).collect();
+            let live_projects: std::collections::HashSet<u32> =
+                ws.projects.iter().map(|p| p.id).collect();
             for t in &saved.tabs {
                 let root = build_node(&t.node, window, cx);
                 let mut tab = Tab::new(root, t.name.clone());
@@ -3138,6 +3419,7 @@ impl Workspace {
                 tab.text_color = t.text_color.as_deref().and_then(theme::parse_hex);
                 // drop a dangling group ref (a group that failed to parse / vanished)
                 tab.group = t.group.filter(|g| live.contains(g));
+                tab.project = t.project.filter(|p| live_projects.contains(p));
                 ws.tabs.push(tab);
             }
             ws.prune_groups();
@@ -3334,11 +3616,13 @@ impl Workspace {
             }
         };
         let plan = plan_attach(&saved.tabs, &live);
-        self.restore_groups(saved);
+        self.restore_tree(saved);
         let live_by_id: std::collections::HashMap<u64, hostproto::PaneInfo> =
             live.iter().map(|p| (p.pane.0, p.clone())).collect();
         let live_groups: std::collections::HashSet<u32> =
             self.groups.iter().map(|g| g.id).collect();
+        let live_projects: std::collections::HashSet<u32> =
+            self.projects.iter().map(|p| p.id).collect();
 
         for (tab, plans) in saved.tabs.iter().zip(plan.tabs) {
             let mut plans = plans.into_iter();
@@ -3347,6 +3631,7 @@ impl Workspace {
             built.color = tab.color.as_deref().and_then(theme::parse_hex);
             built.text_color = tab.text_color.as_deref().and_then(theme::parse_hex);
             built.group = tab.group.filter(|g| live_groups.contains(g));
+            built.project = tab.project.filter(|p| live_projects.contains(p));
             self.tabs.push(built);
         }
 
@@ -3608,15 +3893,36 @@ impl Workspace {
         .detach();
     }
 
-    /// The saved tab groups, rebuilt.    /// The saved tab groups, rebuilt. Shared by both restore paths so a hosted
-    /// window and a serverless one cannot drift into two ideas of a group.
-    fn restore_groups(&mut self, saved: &StateFile) {
+    /// The saved tree, rebuilt: projects first, then the groups that hang from
+    /// them. Shared by both restore paths so a hosted window and a serverless
+    /// one cannot drift into two ideas of a group.
+    fn restore_tree(&mut self, saved: &StateFile) {
+        self.projects = saved
+            .projects
+            .iter()
+            .map(|p| Project {
+                id: p.id,
+                name: p.name.clone(),
+                // Same reasoning as a group's colour: never drop a project
+                // because its colour failed to parse. Losing the project would
+                // scatter every task filed under it back to the loose bucket,
+                // which is somebody's organisation deleted by a bad hex string.
+                color: theme::parse_hex(&p.color).unwrap_or_else(|| project_hue(p.id)),
+                collapsed: p.collapsed,
+            })
+            .collect();
+        self.next_project_id = self.projects.iter().map(|p| p.id + 1).max().unwrap_or(1);
+        let live_projects: std::collections::HashSet<u32> =
+            self.projects.iter().map(|p| p.id).collect();
         self.groups = saved
             .groups
             .iter()
             .map(|g| TabGroup {
                 id: g.id,
                 name: g.name.clone(),
+                // A group pointing at a project that is no longer in the file
+                // rises to the top level rather than vanishing with it.
+                project: g.project.filter(|p| live_projects.contains(p)),
                 // NEVER drop a group on a colour-parse failure — that would
                 // remove its id from the live set and silently scatter its
                 // member tabs into Ungrouped on the next restore. Fall back to
@@ -3725,6 +4031,9 @@ impl Workspace {
                     color: t.color.map(hsla_to_hex),
                     text_color: t.text_color.map(hsla_to_hex),
                     group: t.group,
+                    // A grouped task's project is its group's; writing it here
+                    // too would be a second copy of one fact, free to rot.
+                    project: t.project.filter(|_| t.group.is_none()),
                     node: t.root.to_saved(cx),
                 })
                 .collect(),
@@ -3737,8 +4046,22 @@ impl Workspace {
                     color: hsla_to_hex(g.color),
                     text_color: g.text_color.map(hsla_to_hex),
                     collapsed: g.collapsed,
+                    project: g.project,
                 })
                 .collect(),
+            projects: self
+                .projects
+                .iter()
+                .map(|p| SavedProject {
+                    id: p.id,
+                    name: p.name.clone(),
+                    color: hsla_to_hex(p.color),
+                    collapsed: p.collapsed,
+                })
+                .collect(),
+            left_bar: Some(self.left_bar),
+            left_bar_w: Some(self.left_bar_w),
+            scope: Some(self.scope.into()),
             mcp: Some(self.mcp.clone()),
             focus_inherit: self.focus_inherit_theme,
             anchor_top: self.anchor_top,
@@ -5698,12 +6021,16 @@ impl Workspace {
         let color = tab.color.unwrap_or_else(|| hsla(0.47, 0.5, 0.5, 1.0));
         let id = self.next_group_id;
         self.next_group_id += 1;
+        // A group made FROM a task inherits that task's project, so grouping
+        // two tasks inside a project does not quietly lift them out of it.
+        let project = self.place_of(i).project;
         self.groups.push(TabGroup {
             id,
             name: None,
             color,
             text_color: None,
             collapsed: false,
+            project,
         });
         if let Some(t) = self.tabs.get_mut(i) {
             t.group = Some(id);
@@ -5758,6 +6085,328 @@ impl Workspace {
             self.save(cx);
             cx.notify();
         }
+    }
+
+    // ---- the left bar's tree: projects, initiatives, scope -------------------
+
+    /// Where task `i` sits in the tree.
+    ///
+    /// A grouped task's project is READ FROM ITS GROUP rather than from itself,
+    /// so the two can never contradict each other: file a group under a project
+    /// and every task in it moves, with nothing to keep in step afterwards.
+    /// Both ids are filtered against what actually exists, because a dangling
+    /// reference must resolve to "unfiled", never to a branch that isn't there.
+    fn place_of(&self, i: usize) -> tree::Place {
+        let Some(t) = self.tabs.get(i) else {
+            return tree::Place::default();
+        };
+        let initiative = t.group.filter(|g| self.group_index(*g).is_some());
+        let project = match initiative {
+            Some(g) => self.group_index(g).and_then(|idx| self.groups[idx].project),
+            None => t.project,
+        };
+        tree::Place {
+            project: project.filter(|p| self.projects.iter().any(|q| q.id == *p)),
+            initiative,
+        }
+    }
+
+    /// Every task as the tree sees it: where it sits, and what it is saying.
+    ///
+    /// Rebuilt per frame on purpose. Every input is a flag the pane already
+    /// holds — the same ones the mother bar's badges read — so this costs a
+    /// walk of the tabs, and the alternative (a cached roll-up invalidated on
+    /// every agent state change) is a second source of truth about whether an
+    /// agent is waiting for you.
+    fn task_refs(&self, cx: &App) -> Vec<tree::TaskRef> {
+        (0..self.tabs.len())
+            .map(|i| {
+                let mut needs_input = 0;
+                let mut working = 0;
+                let mut done = 0;
+                let mut blocked = 0;
+                for badge in self.tab_agent_badges(i, cx) {
+                    match badge {
+                        AgentBadge::NeedsInput => needs_input += 1,
+                        AgentBadge::Working => working += 1,
+                        AgentBadge::Done => done += 1,
+                        AgentBadge::Blocked => blocked += 1,
+                    }
+                }
+                tree::TaskRef {
+                    place: self.place_of(i),
+                    roll: tree::Roll::task(
+                        needs_input,
+                        working,
+                        done,
+                        blocked,
+                        self.tab_pinned_notes(i, cx),
+                        self.tab_pane_count(i),
+                    ),
+                }
+            })
+            .collect()
+    }
+
+    fn project_at(&self, id: u32) -> Option<&Project> {
+        self.projects.iter().find(|p| p.id == id)
+    }
+
+    /// What a branch is called, for a row label, a scope chip or a drag chip.
+    fn branch_label(&self, branch: BarBranch) -> String {
+        match branch {
+            BarBranch::Project(id) => self
+                .project_at(id)
+                .map(|p| p.label())
+                .unwrap_or_else(|| "project".into()),
+            BarBranch::Initiative(gid) => self
+                .groups
+                .iter()
+                .find(|g| g.id == gid)
+                .and_then(|g| g.name.clone())
+                .unwrap_or_else(|| format!("initiative {gid}")),
+            BarBranch::Unfiled => "unfiled".into(),
+        }
+    }
+
+    /// The colour a branch paints with — its own, and for the loose bucket the
+    /// bar's own faint, because unfiled is a state rather than a choice.
+    fn branch_color(&self, branch: BarBranch, cx: &App) -> Hsla {
+        match branch {
+            BarBranch::Project(id) => self
+                .project_at(id)
+                .map(|p| p.color)
+                .unwrap_or_else(|| theme::theme(cx).faint),
+            BarBranch::Initiative(gid) => self
+                .groups
+                .iter()
+                .find(|g| g.id == gid)
+                .map(|g| g.color)
+                .unwrap_or_else(|| theme::theme(cx).faint),
+            BarBranch::Unfiled => theme::theme(cx).faint,
+        }
+    }
+
+    /// Start a project, and file `seed` under it when there is one.
+    ///
+    /// A project created empty is a row with nothing in it, which reads as a
+    /// mistake; created from the task or initiative you were looking at, it
+    /// reads as "this is what that belongs to".
+    fn new_project(&mut self, seed: Option<BarDragged>, cx: &mut Context<Self>) -> u32 {
+        let id = self.next_project_id;
+        self.next_project_id += 1;
+        self.projects.push(Project {
+            id,
+            name: None,
+            color: project_hue(id),
+            collapsed: false,
+        });
+        match seed {
+            Some(BarDragged::Task(i)) => self.file_task(i, BarBranch::Project(id)),
+            Some(BarDragged::Initiative(gid)) => self.file_initiative(gid, BarBranch::Project(id)),
+            None => {}
+        }
+        self.save(cx);
+        cx.notify();
+        id
+    }
+
+    /// File task `i` under a branch — the drop half of a left-bar drag.
+    ///
+    /// Dropping a task onto an INITIATIVE hands it to the group, which owns the
+    /// project; dropping it onto a PROJECT takes it out of whatever initiative
+    /// it was in, because a task cannot be in a project and in another
+    /// project's initiative at once, and silently keeping the old group would
+    /// be exactly that.
+    fn file_task(&mut self, i: usize, into: BarBranch) {
+        let Some(t) = self.tabs.get_mut(i) else {
+            return;
+        };
+        match into {
+            BarBranch::Project(p) => {
+                t.group = None;
+                t.project = Some(p);
+            }
+            BarBranch::Initiative(g) => {
+                t.group = Some(g);
+                t.project = None;
+            }
+            BarBranch::Unfiled => {
+                t.group = None;
+                t.project = None;
+            }
+        }
+        self.prune_groups();
+    }
+
+    /// Move a whole initiative — and therefore every task in it — under a
+    /// project, or out to the top level.
+    fn file_initiative(&mut self, gid: u32, into: BarBranch) {
+        let project = match into {
+            BarBranch::Project(p) => Some(p),
+            BarBranch::Unfiled => None,
+            // An initiative inside an initiative is the third layer the tree
+            // deliberately does not have.
+            BarBranch::Initiative(_) => return,
+        };
+        if let Some(g) = self.groups.iter_mut().find(|g| g.id == gid) {
+            g.project = project;
+        }
+    }
+
+    /// Fold / unfold a branch of the tree.
+    fn toggle_branch(&mut self, branch: BarBranch, cx: &mut Context<Self>) {
+        match branch {
+            BarBranch::Project(id) => {
+                if let Some(p) = self.projects.iter_mut().find(|p| p.id == id) {
+                    p.collapsed = !p.collapsed;
+                }
+            }
+            BarBranch::Initiative(gid) => {
+                if let Some(g) = self.groups.iter_mut().find(|g| g.id == gid) {
+                    g.collapsed = !g.collapsed;
+                }
+            }
+            BarBranch::Unfiled => return,
+        }
+        self.save(cx);
+        cx.notify();
+    }
+
+    /// Narrow the mother bar to a branch, or back out to everything.
+    ///
+    /// Scoping away from the task you are in would leave the strip showing a
+    /// set that does not contain the active tab, so the scope only takes if it
+    /// still shows it — otherwise the active task moves to the branch you just
+    /// asked to look at. Choosing the second is deliberate: you asked to work
+    /// on that branch.
+    fn set_scope(&mut self, to: tree::Scope, window: &mut Window, cx: &mut Context<Self>) {
+        self.scope = to;
+        let places = self.places();
+        let active_shown = places
+            .get(self.active)
+            .map(|p| self.scope.shows(p))
+            .unwrap_or(true);
+        if !active_shown {
+            if let Some(first) = places.iter().position(|p| self.scope.shows(p)) {
+                self.activate_tab(first, window, cx);
+            } else {
+                // An empty branch cannot be worked in. Back out rather than
+                // strand the strip with nothing on it.
+                self.scope = tree::Scope::All;
+            }
+        }
+        self.save(cx);
+        cx.notify();
+    }
+
+    fn places(&self) -> Vec<tree::Place> {
+        (0..self.tabs.len()).map(|i| self.place_of(i)).collect()
+    }
+
+    /// Widen the scope if it would hide task `i` — called on every activation,
+    /// wherever it came from (a click, ctrl+pgup, a ctl script, a notification
+    /// jump). The strip always contains the tab you are in.
+    fn ensure_scope_shows(&mut self, i: usize) {
+        let place = self.place_of(i);
+        if let Some(wider) = self.scope.widened_for(&place) {
+            self.scope = wider;
+        }
+    }
+
+    /// Commit an in-flight left-bar rename (project or initiative).
+    fn commit_bar_rename(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some((branch, eb)) = self.bar_rename.take() else {
+            return false;
+        };
+        let text = eb.text().trim().to_string();
+        let name = (!text.is_empty()).then_some(text);
+        match branch {
+            BarBranch::Project(id) => {
+                if let Some(p) = self.projects.iter_mut().find(|p| p.id == id) {
+                    p.name = name;
+                }
+            }
+            BarBranch::Initiative(gid) => {
+                if let Some(g) = self.groups.iter_mut().find(|g| g.id == gid) {
+                    g.name = name;
+                }
+            }
+            BarBranch::Unfiled => {}
+        }
+        self.save(cx);
+        cx.notify();
+        true
+    }
+
+    /// Adopt projects from where the terminals actually are.
+    ///
+    /// The one gesture that makes the tree worth having on a session that has
+    /// twelve tabs and no organisation: every unfiled task is filed under a
+    /// project named for its first pane's git root (or its working directory
+    /// when it is not in a repo), and tasks sharing a root land together.
+    /// Existing projects with that name are reused, so pressing it twice is
+    /// not two copies of the same project.
+    ///
+    /// Deliberately only touches UNFILED tasks. Filing you did by hand is a
+    /// decision; a button that overwrote it would be the tool disagreeing with
+    /// its user about their own work.
+    fn adopt_projects_from_dirs(&mut self, cx: &mut Context<Self>) {
+        let mut named: Vec<(String, u32)> = self
+            .projects
+            .iter()
+            .filter_map(|p| p.name.clone().map(|n| (n, p.id)))
+            .collect();
+        for i in 0..self.tabs.len() {
+            if !self.place_of(i).unfiled() {
+                continue;
+            }
+            let Some(dir) = self.task_dir(i, cx) else {
+                continue;
+            };
+            let Some(name) = project_name_for(&dir) else {
+                continue;
+            };
+            let id = match named.iter().find(|(n, _)| *n == name) {
+                Some((_, id)) => *id,
+                None => {
+                    let id = self.next_project_id;
+                    self.next_project_id += 1;
+                    self.projects.push(Project {
+                        id,
+                        name: Some(name.clone()),
+                        color: project_hue(id),
+                        collapsed: false,
+                    });
+                    named.push((name, id));
+                    id
+                }
+            };
+            self.file_task(i, BarBranch::Project(id));
+        }
+        self.save(cx);
+        cx.notify();
+    }
+
+    /// Which branch a cursor is over, from the row boxes captured last frame.
+    ///
+    /// Scanned newest-last so the innermost row wins where boxes overlap — a
+    /// task row sits inside no other row today, but a nested layer added later
+    /// would silently drop into its parent otherwise.
+    fn resolve_bar_drop(&self, pos: Point<Pixels>) -> Option<BarBranch> {
+        let rows = self.bar_bounds.lock().unwrap();
+        rows.iter()
+            .rev()
+            .find(|(_, b)| b.contains(&pos))
+            .map(|(branch, _)| *branch)
+    }
+
+    /// Where a task is, on disk: its first pane's live working directory.
+    fn task_dir(&self, i: usize, cx: &App) -> Option<String> {
+        let tab = self.tabs.get(i)?;
+        let mut leaves = vec![];
+        tab.root.leaves(&mut leaves);
+        leaves.first().and_then(|p| p.read(cx).current_cwd())
     }
 
     // ---- ctl `tabs`: the tab strip, scripted ---------------------------------
@@ -5819,6 +6468,9 @@ impl Workspace {
             color: color.unwrap_or_else(|| hsla(0.47, 0.5, 0.5, 1.0)),
             text_color: None,
             collapsed: false,
+            // A scripted group starts at the top level of the tree; a caller
+            // that wants it in a project drags it there, or files a member.
+            project: None,
         });
         id
     }
@@ -7978,6 +8630,11 @@ impl Workspace {
     fn activate_tab(&mut self, i: usize, window: &mut Window, cx: &mut Context<Self>) {
         if i < self.tabs.len() {
             self.active = i;
+            // However this activation arrived — a tree click, ctrl+pgup, a ctl
+            // script, a jump from a notification — the strip must contain the
+            // tab it lands on. A narrowed mother bar that does not show the
+            // active tab is a window lying about where you are.
+            self.ensure_scope_shows(i);
             // Visiting the tab IS reading its finish badges: clear every
             // latched ✅/❌ in it. The focus-in edge alone can miss — a bell
             // that latched while this pane already held (idle) keyboard focus
@@ -8147,6 +8804,7 @@ impl Workspace {
             || self.lang_picker.is_some()
             || self.logo_picker.is_some()
             || self.renaming.is_some()
+            || self.bar_rename.is_some()
             || self.group_rename.is_some()
             || self.confirm_close.is_some()
             || self.theme_menu.is_some()
@@ -8539,6 +9197,25 @@ impl Workspace {
             }
             return;
         }
+        // a left-bar branch rename owns the keyboard while open, on the same
+        // terms as a tab rename: ↵ commits, esc drops back to the terminal,
+        // everything else edits.
+        if let Some((branch, mut eb)) = self.bar_rename.take() {
+            match ks.key.as_str() {
+                "enter" => {
+                    self.bar_rename = Some((branch, eb));
+                    self.commit_bar_rename(cx);
+                    self.focus_active(window, cx);
+                }
+                "escape" => self.focus_active(window, cx),
+                _ => {
+                    eb.apply(ks.key.as_str(), m, ks.key_char.as_deref(), 24);
+                    self.bar_rename = Some((branch, eb));
+                }
+            }
+            cx.notify();
+            return;
+        }
         // the inline rename box owns the keyboard while open
         if let Some((tab_i, mut eb)) = self.renaming.take() {
             match ks.key.as_str() {
@@ -8672,6 +9349,46 @@ impl Workspace {
     }
 
     fn on_mouse_move(&mut self, ev: &MouseMoveEvent, _w: &mut Window, cx: &mut Context<Self>) {
+        // the left bar's edge is being dragged: the width follows the cursor
+        // exactly, from where the grab started, so the bar cannot drift under a
+        // fast drag the way a delta-per-frame resize does
+        if let Some((from_x, from_w)) = self.bar_resize {
+            if ev.pressed_button != Some(MouseButton::Left) {
+                self.bar_resize = None;
+                self.save(cx);
+                cx.notify();
+                return;
+            }
+            let s = theme::outer_choice(cx).grade.scale.max(0.1);
+            let delta = (f32::from(ev.position.x) - from_x) / s;
+            self.left_bar_w = (from_w + delta).clamp(LEFT_BAR_MIN, LEFT_BAR_MAX);
+            cx.notify();
+            return;
+        }
+        // a left-bar filing drag: engage past a threshold (so a click on a row
+        // is still a click) and resolve which branch a release would file into
+        if self.bar_drag.is_some() {
+            if ev.pressed_button != Some(MouseButton::Left) {
+                self.bar_drag = None;
+                cx.notify();
+                return;
+            }
+            let pos = ev.position;
+            let over = self.resolve_bar_drop(pos);
+            if let Some(d) = self.bar_drag.as_mut() {
+                d.at = pos;
+                if !d.engaged {
+                    let dx = f32::from(pos.x) - f32::from(d.start.x);
+                    let dy = f32::from(pos.y) - f32::from(d.start.y);
+                    if (dx * dx + dy * dy).sqrt() > 6.0 {
+                        d.engaged = true;
+                    }
+                }
+                d.over = d.engaged.then_some(over).flatten();
+            }
+            cx.notify();
+            return;
+        }
         // an outer-tab reorder in flight owns the move: track the cursor, engage
         // past a small threshold (so a plain tab click still activates), and
         // resolve which slot a release would drop the tab into.
@@ -8927,6 +9644,37 @@ impl Workspace {
 
     fn on_mouse_up(&mut self, ev: &MouseUpEvent, window: &mut Window, cx: &mut Context<Self>) {
         self.scrubbing = false;
+        if self.bar_resize.take().is_some() {
+            self.save(cx);
+            cx.notify();
+            return;
+        }
+        // a left-bar drag lands: file what was grabbed into the branch under the
+        // cursor. A drag that never engaged was a click, and the click has
+        // already done its work (activate / scope) on the way down.
+        if let Some(drag) = self.bar_drag.take() {
+            if drag.engaged {
+                if let Some(into) = drag.over {
+                    match drag.what {
+                        BarDragged::Task(i) => self.file_task(i, into),
+                        BarDragged::Initiative(gid) => self.file_initiative(gid, into),
+                    }
+                    // Filing a task out of the branch the strip is scoped to
+                    // would otherwise leave the active tab off the strip.
+                    self.ensure_scope_shows(self.active);
+                    self.save(cx);
+                }
+                cx.notify();
+                return;
+            }
+            // it never travelled: the press was a click on an initiative row,
+            // and a click on a branch scopes the strip to it
+            if let BarDragged::Initiative(gid) = drag.what {
+                let next = self.scope.toggled(tree::Scope::Initiative(gid));
+                self.set_scope(next, window, cx);
+                return;
+            }
+        }
         if self.wheel_drag.take().is_some()
             || std::mem::take(&mut self.light_drag)
             || self.track_drag.take().is_some()
@@ -9291,13 +10039,15 @@ impl Workspace {
             .into_iter()
             .filter_map(|t| {
                 // rebuild around the live subtree but CARRY the tab's identity —
-                // name, colour overrides, and group membership all survive a reap
+                // name, colour overrides, and where it sits in the tree all
+                // survive a reap
                 t.root.reap(cx).map(|root| Tab {
                     root,
                     name: t.name,
                     focused: t.focused,
                     color: t.color,
                     text_color: t.text_color,
+                    project: t.project,
                     group: t.group,
                 })
             })
@@ -10149,6 +10899,762 @@ impl Workspace {
             AgentBadge::Done => div().text_size(px(11. * s)).child("✅").into_any_element(),
             AgentBadge::Blocked => div().text_size(px(11. * s)).child("❌").into_any_element(),
         }
+    }
+
+    /// The badges a BRANCH row carries: what its tasks are saying, summed.
+    ///
+    /// A folded branch is exactly when this matters, so the loudest state keeps
+    /// its animation — a project with a robot waiting on you blinks in the tree
+    /// whether or not you can see the task it is waiting in. The quieter states
+    /// (finished, blocked, pinned) are counted rather than animated: they are
+    /// things that already happened, and a row of pulsing history is noise.
+    fn roll_badges(
+        &self,
+        roll: &tree::Roll,
+        key: usize,
+        s: f32,
+        th: &theme::Theme,
+    ) -> Vec<AnyElement> {
+        let mut out: Vec<AnyElement> = vec![];
+        let agents = roll.needs_input + roll.working;
+        if agents > 0 {
+            let badge = if roll.needs_input > 0 {
+                AgentBadge::NeedsInput
+            } else {
+                AgentBadge::Working
+            };
+            out.push(Self::agent_badge_el(badge, key, 0, s * 0.9));
+            if agents > 1 {
+                out.push(
+                    div()
+                        .text_size(px(9. * s))
+                        .text_color(th.text.alpha(0.75))
+                        .child(format!("{agents}"))
+                        .into_any_element(),
+                );
+            }
+        }
+        let quiet = |glyph: &'static str, n: usize| -> Option<AnyElement> {
+            (n > 0).then(|| {
+                div()
+                    .text_size(px(10. * s))
+                    .child(if n > 1 {
+                        SharedString::from(format!("{glyph}{n}"))
+                    } else {
+                        SharedString::from(glyph)
+                    })
+                    .into_any_element()
+            })
+        };
+        out.extend(quiet("✅", roll.done));
+        out.extend(quiet("❌", roll.blocked));
+        out.extend(quiet("📌", roll.pins));
+        out
+    }
+
+    /// One row of the left bar, whatever layer it is on.
+    ///
+    /// Every row is the same shape — indent, disclosure, colour mark, label,
+    /// what it is saying — because the eye learns one shape and then reads the
+    /// tree by indentation alone.
+    fn bar_row(&self, row: tree::Row, cx: &mut Context<Self>) -> AnyElement {
+        let th = theme::theme(cx);
+        let s = theme::outer_choice(cx).grade.scale;
+        let step = px(11. * s);
+        match row {
+            tree::Row::Project {
+                id,
+                depth,
+                roll,
+                collapsed,
+            } => {
+                let p = self.project_at(id).cloned();
+                let color = p.as_ref().map(|p| p.color).unwrap_or(th.faint);
+                let label = p.map(|p| p.label()).unwrap_or_default();
+                self.branch_row(
+                    BarBranch::Project(id),
+                    depth,
+                    collapsed,
+                    roll,
+                    color,
+                    label.to_uppercase(),
+                    // A project's mark is a filled dot: it names a place, and a
+                    // place is a point.
+                    div()
+                        .w(px(7. * s))
+                        .h(px(7. * s))
+                        .rounded_full()
+                        .bg(color)
+                        .into_any_element(),
+                    step,
+                    &th,
+                    s,
+                    cx,
+                )
+            }
+            tree::Row::Initiative {
+                id,
+                depth,
+                roll,
+                collapsed,
+            } => {
+                let g = self.groups.iter().find(|g| g.id == id);
+                let color = g.map(|g| g.color).unwrap_or(th.faint);
+                let label = g
+                    .and_then(|g| g.name.clone())
+                    .unwrap_or_else(|| format!("initiative {id}"));
+                self.branch_row(
+                    BarBranch::Initiative(id),
+                    depth,
+                    collapsed,
+                    roll,
+                    color,
+                    label,
+                    // An initiative's mark is the group's colour RAIL, stood on
+                    // end: the same band its tabs rest on in the mother bar,
+                    // rotated into the new geometry. Same fact, same colour,
+                    // read the same way.
+                    div()
+                        .w(px(3. * s))
+                        .h(px(13. * s))
+                        .rounded_sm()
+                        .bg(color)
+                        .into_any_element(),
+                    step,
+                    &th,
+                    s,
+                    cx,
+                )
+            }
+            tree::Row::Task { index, depth } => self.task_row(index, depth, step, &th, s, cx),
+            tree::Row::Unfiled { depth } => div()
+                .pl(step * (depth as f32) + px(6. * s))
+                .pr(px(6. * s))
+                .py(px(4. * s))
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(6. * s))
+                .child(div().h(px(1.)).flex_1().bg(th.faint.alpha(0.35)))
+                .child(
+                    div()
+                        .text_size(px(8. * s))
+                        .text_color(th.faint)
+                        .child("⌁")
+                        .into_any_element(),
+                )
+                .child(div().h(px(1.)).flex_1().bg(th.faint.alpha(0.35)))
+                .into_any_element(),
+        }
+    }
+
+    /// A PROJECT or INITIATIVE row. One function for both layers: they differ
+    /// in their mark and their label's weight, and in nothing a person does to
+    /// them.
+    #[allow(clippy::too_many_arguments)]
+    fn branch_row(
+        &self,
+        branch: BarBranch,
+        depth: u8,
+        collapsed: bool,
+        roll: tree::Roll,
+        color: Hsla,
+        label: String,
+        mark: AnyElement,
+        step: Pixels,
+        th: &theme::Theme,
+        s: f32,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let scoped = match branch {
+            BarBranch::Project(id) => self.scope == tree::Scope::Project(id),
+            BarBranch::Initiative(id) => self.scope == tree::Scope::Initiative(id),
+            BarBranch::Unfiled => false,
+        };
+        let key = match branch {
+            BarBranch::Project(id) => 40_000 + id as usize,
+            BarBranch::Initiative(id) => 50_000 + id as usize,
+            BarBranch::Unfiled => 60_000,
+        };
+        let is_project = matches!(branch, BarBranch::Project(_));
+        let drop_hi = self
+            .bar_drag
+            .as_ref()
+            .filter(|d| d.engaged)
+            .and_then(|d| d.over)
+            == Some(branch);
+        let row_id = SharedString::from(format!("bar-branch-{key}"));
+        let store = self.bar_bounds.clone();
+
+        // renaming this branch owns the row
+        if let Some((_, eb)) = self.bar_rename.as_ref().filter(|(b, _)| *b == branch) {
+            return div()
+                .pl(step * (depth as f32) + px(4. * s))
+                .pr(px(4. * s))
+                .py(px(1. * s))
+                .child(
+                    div()
+                        .px(px(4. * s))
+                        .rounded_sm()
+                        .border_1()
+                        .border_color(th.accent)
+                        .bg(darken(th.bg, 0.8))
+                        .text_size(px(10.5 * s))
+                        .text_color(th.text)
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                        .child(render_edit_buffer(
+                            eb,
+                            s,
+                            th.text,
+                            th.cursor,
+                            th.accent.alpha(0.4),
+                        )),
+                )
+                .into_any_element();
+        }
+
+        let grp = SharedString::from(format!("bar-grp-{key}"));
+        let pencil_col = th.text.alpha(0.75);
+        div()
+            .id(row_id)
+            .group(grp.clone())
+            .relative()
+            .pl(step * (depth as f32) + px(4. * s))
+            .pr(px(5. * s))
+            .py(px(2. * s))
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(5. * s))
+            .rounded_sm()
+            .cursor_pointer()
+            // the scoped branch is lit: the strip beside it is showing exactly
+            // this, and the tree says which branch that is without a legend
+            .when(scoped, |d| {
+                d.bg(color.alpha(0.20)).border_l_2().border_color(th.accent)
+            })
+            .when(drop_hi, |d| d.bg(th.accent.alpha(0.28)))
+            .hover(move |st| st.bg(color.alpha(0.12)))
+            // the fold triangle: its own target, so folding never scopes and
+            // scoping never folds
+            .child(
+                div()
+                    .id(SharedString::from(format!("bar-fold-{key}")))
+                    .w(px(11. * s))
+                    .text_size(px(9. * s))
+                    .text_color(th.faint)
+                    .child(if collapsed { "▸" } else { "▾" })
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                            cx.stop_propagation();
+                            ws.toggle_branch(branch, cx);
+                        }),
+                    ),
+            )
+            .child(mark)
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .overflow_hidden()
+                    .whitespace_nowrap()
+                    .text_size(px(if is_project { 9.5 * s } else { 10.5 * s }))
+                    .when(is_project, |d| {
+                        d.font_weight(gpui::FontWeight::EXTRA_BOLD)
+                            .text_color(if scoped {
+                                th.accent
+                            } else {
+                                th.text.alpha(0.9)
+                            })
+                    })
+                    .when(!is_project, |d| {
+                        d.text_color(if scoped {
+                            th.accent
+                        } else {
+                            th.text.alpha(0.82)
+                        })
+                    })
+                    .child(label.clone()),
+            )
+            .children(self.roll_badges(&roll, key, s, th))
+            // the task count, so a folded branch still says how much is in it
+            .child(
+                div()
+                    .text_size(px(8.5 * s))
+                    .text_color(th.faint)
+                    .child(format!("{}", roll.tasks)),
+            )
+            .child(
+                div()
+                    .id(SharedString::from(format!("bar-pencil-{key}")))
+                    .text_size(px(9. * s))
+                    .text_color(hsla(0., 0., 0., 0.))
+                    .group_hover(grp, move |st| st.text_color(pencil_col))
+                    .child("✎")
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
+                            cx.stop_propagation();
+                            ws.start_bar_rename(branch, window, cx);
+                        }),
+                    ),
+            )
+            // the row's own box, for drop hit-testing
+            .child(
+                div().absolute().inset_0().child(
+                    canvas(
+                        move |bounds, _, _| {
+                            store.lock().unwrap().push((branch, bounds));
+                        },
+                        |_, _, _, _| {},
+                    )
+                    .size_full(),
+                ),
+            )
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |ws, ev: &MouseDownEvent, window, cx| {
+                    cx.stop_propagation();
+                    if ev.click_count >= 2 {
+                        ws.start_bar_rename(branch, window, cx);
+                        return;
+                    }
+                    // An initiative row can be dragged into a project, so its
+                    // press only ARMS a drag: the scope changes on release, and
+                    // only if the cursor never travelled. Pressing to drag must
+                    // not also re-scope the strip under the thing being
+                    // dragged. A project row has nothing above it to be filed
+                    // into, so its press is a plain click and acts at once.
+                    if let BarBranch::Initiative(gid) = branch {
+                        ws.bar_drag = Some(BarDrag {
+                            what: BarDragged::Initiative(gid),
+                            start: ev.position,
+                            at: ev.position,
+                            engaged: false,
+                            over: None,
+                        });
+                        return;
+                    }
+                    let to = match branch {
+                        BarBranch::Project(id) => tree::Scope::Project(id),
+                        BarBranch::Initiative(id) => tree::Scope::Initiative(id),
+                        BarBranch::Unfiled => tree::Scope::All,
+                    };
+                    let next = ws.scope.toggled(to);
+                    ws.set_scope(next, window, cx);
+                }),
+            )
+            .into_any_element()
+    }
+
+    /// A TASK row: one tab, seen from the tree.
+    fn task_row(
+        &self,
+        i: usize,
+        depth: u8,
+        step: Pixels,
+        th: &theme::Theme,
+        s: f32,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let is_active = i == self.active;
+        let label = self.tabs[i]
+            .name
+            .clone()
+            .unwrap_or_else(|| format!("{}", i + 1));
+        let (fill, text) = self.resolved_tab_colors(i);
+        let panes = self.tab_pane_count(i);
+        let grp = SharedString::from(format!("bar-task-grp-{i}"));
+        let store = self.bar_bounds.clone();
+        let place = self.place_of(i);
+        let neighbour = match (place.initiative, place.project) {
+            (Some(g), _) => BarBranch::Initiative(g),
+            (None, Some(p)) => BarBranch::Project(p),
+            (None, None) => BarBranch::Unfiled,
+        };
+
+        // the strip's own rename editor owns this row while it is renaming, so
+        // one gesture renames a task wherever it is grabbed from
+        if let Some((_, eb)) = self.renaming.as_ref().filter(|(ri, _)| *ri == i) {
+            return div()
+                .pl(step * (depth as f32) + px(4. * s))
+                .pr(px(4. * s))
+                .py(px(1. * s))
+                .child(
+                    div()
+                        .px(px(4. * s))
+                        .rounded_sm()
+                        .border_1()
+                        .border_color(th.accent)
+                        .bg(darken(th.bg, 0.8))
+                        .text_size(px(10.5 * s))
+                        .text_color(th.text)
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                        .child(render_edit_buffer(
+                            eb,
+                            s,
+                            th.text,
+                            th.cursor,
+                            th.accent.alpha(0.4),
+                        )),
+                )
+                .into_any_element();
+        }
+
+        div()
+            .id(SharedString::from(format!("bar-task-{i}")))
+            .group(grp.clone())
+            .relative()
+            .pl(step * (depth as f32) + px(4. * s))
+            .pr(px(5. * s))
+            .py(px(2. * s))
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(5. * s))
+            .rounded_sm()
+            .cursor_pointer()
+            .when(is_active, |d| {
+                d.bg(th.accent.alpha(0.22))
+                    .border_l_2()
+                    .border_color(th.accent)
+            })
+            .hover(move |st| st.bg(hsla(0., 0., 1., 0.06)))
+            // the task's own colour, if it has one — the same fill its tab
+            // button wears, so a coloured tab is the same colour in both places
+            .child(
+                div()
+                    .w(px(3. * s))
+                    .h(px(11. * s))
+                    .rounded_sm()
+                    .bg(fill.unwrap_or(th.faint.alpha(0.35))),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .overflow_hidden()
+                    .whitespace_nowrap()
+                    .text_size(px(10.5 * s))
+                    .text_color(text.unwrap_or(if is_active {
+                        th.text
+                    } else {
+                        th.text.alpha(0.8)
+                    }))
+                    .child(label),
+            )
+            // this task's own agent roster, animating exactly as it does on the
+            // strip. The badge key is offset off the strip's range so a tab
+            // showing in both places gets two animations rather than one shared
+            // between them.
+            .children({
+                let badges = self.tab_agent_badges(i, cx);
+                let over = badge_overflow(badges.len());
+                let mut strip: Vec<AnyElement> = badges
+                    .into_iter()
+                    .take(MAX_TAB_BADGES)
+                    .enumerate()
+                    .map(|(slot, badge)| {
+                        Self::agent_badge_el(badge, BAR_BADGE_KEYS + i, slot, s * 0.85)
+                    })
+                    .collect();
+                if over > 0 {
+                    strip.push(
+                        div()
+                            .text_size(px(8.5 * s))
+                            .text_color(th.faint)
+                            .child(format!("+{over}"))
+                            .into_any_element(),
+                    );
+                }
+                strip
+            })
+            .children({
+                let pinned = self.tab_pinned_notes(i, cx);
+                (pinned > 0).then(|| {
+                    div()
+                        .text_size(px(10. * s))
+                        .child(if pinned > 1 {
+                            SharedString::from(format!("📌{pinned}"))
+                        } else {
+                            SharedString::from("📌")
+                        })
+                        .into_any_element()
+                })
+            })
+            // how many terminals are inside — the tree's answer to "what is a
+            // task made of". Hidden at one, which is most tasks and says
+            // nothing.
+            .children((panes > 1).then(|| {
+                div()
+                    .text_size(px(8.5 * s))
+                    .text_color(th.faint)
+                    .child(format!("▤{panes}"))
+                    .into_any_element()
+            }))
+            .child(
+                div()
+                    .id(SharedString::from(format!("bar-task-x-{i}")))
+                    .text_size(px(11. * s))
+                    .text_color(hsla(0., 0., 0., 0.))
+                    .group_hover(grp, move |st| st.text_color(th.faint))
+                    .child("×")
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
+                            cx.stop_propagation();
+                            ws.request_close_tab(i, window, cx);
+                        }),
+                    ),
+            )
+            // A task row is a drop target too, standing for the branch it hangs
+            // from: dropping one task onto another files it where that one
+            // lives, which is the gesture people try before they aim at a
+            // branch header.
+            .child(
+                div().absolute().inset_0().child(
+                    canvas(
+                        move |bounds, _, _| {
+                            store.lock().unwrap().push((neighbour, bounds));
+                        },
+                        |_, _, _, _| {},
+                    )
+                    .size_full(),
+                ),
+            )
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(move |ws, ev: &MouseDownEvent, _w, cx| {
+                    // the same config tray the tab button opens: rename, colour,
+                    // group — one menu, reachable from either geometry
+                    cx.stop_propagation();
+                    ws.open_tab_menu(i, ev.position, cx);
+                }),
+            )
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |ws, ev: &MouseDownEvent, window, cx| {
+                    cx.stop_propagation();
+                    if ev.click_count >= 2 {
+                        let seed = ws.tabs[i].name.clone().unwrap_or_default();
+                        ws.renaming = Some((i, EditBuffer::seeded(&seed)));
+                        window.focus(&ws.focus_handle, cx);
+                        cx.notify();
+                        return;
+                    }
+                    ws.activate_tab(i, window, cx);
+                    ws.bar_drag = Some(BarDrag {
+                        what: BarDragged::Task(i),
+                        start: ev.position,
+                        at: ev.position,
+                        engaged: false,
+                        over: None,
+                    });
+                }),
+            )
+            .into_any_element()
+    }
+
+    /// Open the inline rename box on a branch row.
+    fn start_bar_rename(&mut self, branch: BarBranch, window: &mut Window, cx: &mut Context<Self>) {
+        let seed = match branch {
+            BarBranch::Project(id) => self
+                .project_at(id)
+                .and_then(|p| p.name.clone())
+                .unwrap_or_default(),
+            BarBranch::Initiative(gid) => self
+                .groups
+                .iter()
+                .find(|g| g.id == gid)
+                .and_then(|g| g.name.clone())
+                .unwrap_or_default(),
+            BarBranch::Unfiled => return,
+        };
+        self.bar_rename = Some((branch, EditBuffer::seeded(&seed)));
+        window.focus(&self.focus_handle, cx);
+        cx.notify();
+    }
+
+    /// The left bar: the whole session as a tree, beside the terminals.
+    ///
+    /// What makes this more than a second copy of the tab strip is that the
+    /// tree is COMPLETE and the strip is not: scoping the strip to one branch
+    /// is what stops it wrapping into a second row of titles nobody can read at
+    /// a glance, and it is only safe to hide tabs from the strip because they
+    /// are all still here, still counted, and still able to interrupt you
+    /// through the branch they hang from.
+    fn render_left_bar(&self, cx: &mut Context<Self>) -> Option<gpui::Div> {
+        if !self.left_bar {
+            return None;
+        }
+        let th = theme::theme(cx);
+        let s = theme::outer_choice(cx).grade.scale;
+        // Rebuilt every frame; the drop targets below are pushed back in during
+        // paint. Stale boxes from the last frame would file a task into a
+        // branch that has since moved.
+        self.bar_bounds.lock().unwrap().clear();
+
+        let projects: Vec<tree::ProjectRef> = self
+            .projects
+            .iter()
+            .map(|p| tree::ProjectRef {
+                id: p.id,
+                collapsed: p.collapsed,
+            })
+            .collect();
+        let initiatives: Vec<tree::InitiativeRef> = self
+            .groups
+            .iter()
+            .map(|g| tree::InitiativeRef {
+                id: g.id,
+                project: g.project,
+                collapsed: g.collapsed,
+            })
+            .collect();
+        let tasks = self.task_refs(cx);
+        let rows = tree::rows(&projects, &initiatives, &tasks, Some(self.active));
+
+        let scope_label = match self.scope {
+            tree::Scope::All => "∗".to_string(),
+            tree::Scope::Project(id) => self.branch_label(BarBranch::Project(id)),
+            tree::Scope::Initiative(id) => self.branch_label(BarBranch::Initiative(id)),
+        };
+        let scoped = self.scope != tree::Scope::All;
+        let header = div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(4. * s))
+            .px(px(6. * s))
+            .py(px(4. * s))
+            .child(
+                // the scope chip: what the mother bar is currently showing, and
+                // the one click back to everything
+                div()
+                    .id("bar-scope")
+                    .flex_1()
+                    .min_w_0()
+                    .overflow_hidden()
+                    .whitespace_nowrap()
+                    .px(px(5. * s))
+                    .py(px(1. * s))
+                    .rounded_sm()
+                    .text_size(px(9. * s))
+                    .font_weight(gpui::FontWeight::EXTRA_BOLD)
+                    .text_color(if scoped { th.accent } else { th.faint })
+                    .when(scoped, |d| d.bg(th.accent.alpha(0.14)))
+                    .cursor_pointer()
+                    .child(scope_label.to_uppercase())
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|ws, _: &MouseDownEvent, window, cx| {
+                            cx.stop_propagation();
+                            ws.set_scope(tree::Scope::All, window, cx);
+                        }),
+                    ),
+            )
+            .child(
+                // adopt: file every loose task under the project its terminal is
+                // actually sitting in
+                Self::bezel_btn_s(&th, "⌁", false, s * 0.85)
+                    .id("bar-adopt")
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                            cx.stop_propagation();
+                            ws.adopt_projects_from_dirs(cx);
+                        }),
+                    ),
+            )
+            .child(
+                Self::bezel_btn_s(&th, "＋", false, s * 0.85)
+                    .id("bar-new-project")
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|ws, _: &MouseDownEvent, window, cx| {
+                            cx.stop_propagation();
+                            // seeded with the task you are in: a project born
+                            // holding the thing you were looking at
+                            let seed = Some(BarDragged::Task(ws.active));
+                            let id = ws.new_project(seed, cx);
+                            ws.start_bar_rename(BarBranch::Project(id), window, cx);
+                        }),
+                    ),
+            )
+            .child(
+                Self::bezel_btn_s(&th, "⟨", false, s * 0.85)
+                    .id("bar-hide")
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                            cx.stop_propagation();
+                            ws.left_bar = false;
+                            ws.save(cx);
+                            cx.notify();
+                        }),
+                    ),
+            );
+
+        let mut list = div()
+            .id("bar-list")
+            .flex_1()
+            .min_h(px(0.))
+            .overflow_y_scroll()
+            .flex()
+            .flex_col()
+            .gap(px(1. * s))
+            .pb(px(6. * s));
+        for row in rows {
+            list = list.child(self.bar_row(row, cx));
+        }
+
+        Some(
+            div()
+                .flex_none()
+                .w(px(self.left_bar_w * s))
+                .h_full()
+                .ml_2()
+                .mt(px(7.))
+                .relative()
+                .flex()
+                .flex_col()
+                .min_h(px(0.))
+                .rounded(px(10.))
+                .overflow_hidden()
+                .bg(th.bg)
+                .border_1()
+                .border_color(darken(th.surface, 0.3))
+                .child(header)
+                .child(div().h(px(1.)).mx(px(6. * s)).bg(th.faint.alpha(0.25)))
+                .child(list)
+                // the drag handle on the bar's right edge — a hairline that
+                // lights up under the cursor, like a window's own edge
+                .child(
+                    div()
+                        .id("bar-resize")
+                        .absolute()
+                        .top_0()
+                        .bottom_0()
+                        .right_0()
+                        .w(px(5.))
+                        .cursor_col_resize()
+                        .hover(|st| st.bg(th.accent.alpha(0.35)))
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|ws, ev: &MouseDownEvent, _w, cx| {
+                                cx.stop_propagation();
+                                ws.bar_resize = Some((f32::from(ev.position.x), ws.left_bar_w));
+                            }),
+                        ),
+                ),
+        )
     }
 
     /// One mother-bar tab button (or its inline rename box). Tinted by the tab's
@@ -11726,6 +13232,25 @@ impl Render for Workspace {
             // another row instead of overrunning the bar's edge.
             .min_w_0()
             .w_full();
+        // With the tree closed, the strip carries the handle that opens it —
+        // sitting where the bar itself would be, so the way back is where the
+        // thing went. A feature you can only restore by knowing a chord is a
+        // feature people turn off once and never see again.
+        if !self.left_bar {
+            tab_strip = tab_strip.child(
+                Self::bezel_btn_s(&th, "⟩", false, scale)
+                    .id("show-left-bar")
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                            cx.stop_propagation();
+                            ws.left_bar = true;
+                            ws.save(cx);
+                            cx.notify();
+                        }),
+                    ),
+            );
+        }
         // while a tab is being dragged, an accent bar marks the slot it'd land in
         let dragging_tab = self.tab_drag.as_ref().is_some_and(|d| d.engaged)
             || self.group_drag.as_ref().is_some_and(|d| d.engaged);
@@ -11747,10 +13272,24 @@ impl Render for Workspace {
                 }])
         };
         let active_group = self.tabs.get(self.active).and_then(|t| t.group);
+        // The strip carries only the branch the left bar is scoped to. Every
+        // other tab is still open, still running and still one click away in
+        // the tree — and still shouting through its branch's roll-up if its
+        // agent stops to ask something. `Scope::All` (the default, and where a
+        // session with no projects stays forever) shows everything, so this is
+        // the identity filter until somebody organises their window.
+        let scope = self.scope;
+        let places = self.places();
+        let visible = tree::in_scope(&places, scope);
+        let shown = |i: usize| visible.contains(&i);
         let mut i = 0;
         while i < tab_count {
             if dragging_tab && drop_slot == Some(i) {
                 tab_strip = tab_strip.child(drop_marker());
+            }
+            if !shown(i) {
+                i += 1;
+                continue;
             }
             if let Some(g) = self.tabs[i]
                 .group
@@ -11812,6 +13351,46 @@ impl Render for Workspace {
             MouseButton::Left,
             cx.listener(|ws, _: &MouseDownEvent, window, cx| ws.new_tab(window, cx)),
         ));
+        // ---- what the scope is hiding -------------------------------------
+        // The catch that makes narrowing the strip honest. Tabs outside the
+        // scope are off the strip, and with the tree closed they would have no
+        // surface at all — so the count of them sits at the end of the strip,
+        // wearing whatever the loudest of them is saying. Clicking it puts
+        // everything back. Absent entirely when nothing is hidden, which is
+        // every unscoped session.
+        if scope != tree::Scope::All {
+            let hidden = tree::out_of_scope(&self.task_refs(cx), scope);
+            if hidden.tasks > 0 {
+                let glyphs = tree::roll_glyphs(&hidden);
+                let mut chip = Self::bezel_btn_s(
+                    &th,
+                    &if hidden.quiet() {
+                        format!("⋯{}", hidden.tasks)
+                    } else {
+                        format!("⋯{} {glyphs}", hidden.tasks)
+                    },
+                    false,
+                    scale,
+                )
+                .text_color(if hidden.needs_input > 0 {
+                    th.accent
+                } else {
+                    th.faint
+                });
+                if hidden.needs_input > 0 {
+                    // somebody out there is waiting on you: the chip glows the
+                    // way a HEY blinker does, without stealing its blink
+                    chip = chip.border_color(th.accent);
+                }
+                tab_strip = tab_strip.child(chip.on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|ws, _: &MouseDownEvent, window, cx| {
+                        cx.stop_propagation();
+                        ws.set_scope(tree::Scope::All, window, cx);
+                    }),
+                ));
+            }
+        }
         // dragging a tab past the bottom of the strip → a VERY obvious full-width
         // bar wraps onto its own line: "drop here to start a new row".
         if new_row_drop {
@@ -16246,6 +17825,93 @@ impl Render for Workspace {
                     group_box = group_box.child(add_row);
                 }
 
+                // ---- project: the layer above the group ----------------------
+                // The tray already answers "which group is this tab in"; the
+                // tree added a layer above it, and a tab config that could not
+                // reach it would leave dragging in the bar as the only way to
+                // file anything. A GROUPED tab is filed through its group, so
+                // this offers the group's project when it has one and nothing
+                // to press when it does not — a member tab must not be able to
+                // contradict its own initiative.
+                let place = self.place_of(i);
+                let mut project_box = div().flex().flex_col().gap_1().child(
+                    div()
+                        .text_size(px(9.))
+                        .text_color(th.text.alpha(0.7))
+                        .child(if grouped {
+                            "project (via group)"
+                        } else {
+                            "project"
+                        }),
+                );
+                let mut chips = div().flex().flex_row().flex_wrap().gap_1().max_w(px(184.));
+                let here = place.project;
+                for p in &self.projects {
+                    let (pid, pcol, pname) = (p.id, p.color, p.label());
+                    let on = here == Some(pid);
+                    let target = if grouped {
+                        gid.map(BarDragged::Initiative)
+                    } else {
+                        Some(BarDragged::Task(i))
+                    };
+                    chips = chips.child(
+                        div()
+                            .id(SharedString::from(format!("addproj-{i}-{pid}")))
+                            .px_1()
+                            .py_0p5()
+                            .rounded_sm()
+                            .border_1()
+                            .border_color(if on { th.accent } else { pcol })
+                            .bg(pcol.alpha(if on { 0.55 } else { 0.25 }))
+                            .cursor_pointer()
+                            .text_size(px(10.))
+                            .text_color(th.text)
+                            .child(pname)
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                                    cx.stop_propagation();
+                                    // pressing the project a tab is already in
+                                    // takes it back out — one control, both ways
+                                    let into = if on {
+                                        BarBranch::Unfiled
+                                    } else {
+                                        BarBranch::Project(pid)
+                                    };
+                                    match target {
+                                        Some(BarDragged::Initiative(g)) => {
+                                            ws.file_initiative(g, into)
+                                        }
+                                        Some(BarDragged::Task(t)) => ws.file_task(t, into),
+                                        None => {}
+                                    }
+                                    ws.ensure_scope_shows(ws.active);
+                                    ws.save(cx);
+                                    cx.notify();
+                                }),
+                            ),
+                    );
+                }
+                project_box = project_box.child(chips).child(
+                    Self::bezel_btn(&th, "＋ new project", false).on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
+                            cx.stop_propagation();
+                            let seed = match ws.tabs.get(i).and_then(|t| t.group) {
+                                Some(g) => Some(BarDragged::Initiative(g)),
+                                None => Some(BarDragged::Task(i)),
+                            };
+                            let id = ws.new_project(seed, cx);
+                            // a fresh project opens straight into its rename
+                            // box in the tree, which is also how you find out
+                            // the tree is where it went
+                            ws.left_bar = true;
+                            ws.tab_menu = None;
+                            ws.start_bar_rename(BarBranch::Project(id), window, cx);
+                        }),
+                    ),
+                );
+
                 let panel = div()
                     .absolute()
                     .left(px(f32::from(at.x)))
@@ -16275,7 +17941,8 @@ impl Render for Workspace {
                     .child(self.tab_lightness_bar(i, cx))
                     .child(swatches)
                     .child(div().flex().flex_row().justify_end().child(clear))
-                    .child(group_box);
+                    .child(group_box)
+                    .child(project_box);
                 // full-window scrim: a click anywhere else dismisses the pane
                 Some(
                     div()
@@ -16966,6 +18633,30 @@ impl Render for Workspace {
             None
         };
 
+        // filing a task or an initiative from the tree: the chip says where the
+        // release would put it, in that branch's own colour, so a drop is never
+        // a guess
+        let bar_chip = self.bar_drag.as_ref().filter(|d| d.engaged).map(|d| {
+            let (label, color) = match d.over {
+                Some(branch) => (
+                    format!("⇲ {}", self.branch_label(branch)),
+                    self.branch_color(branch, cx),
+                ),
+                None => ("⇲ …".to_string(), th.faint),
+            };
+            div()
+                .absolute()
+                .left(px(f32::from(d.at.x) + 12.))
+                .top(px(f32::from(d.at.y) + 12.))
+                .px_2()
+                .py_0p5()
+                .rounded_sm()
+                .bg(color.alpha(0.92))
+                .text_color(th.bg)
+                .text_size(px(10.5))
+                .child(label)
+        });
+
         let drag_chip = self.drag_pane.as_ref().filter(|d| d.engaged).map(|d| {
             div()
                 .absolute()
@@ -17009,6 +18700,18 @@ impl Render for Workspace {
             .mt(px(7.))
             .child(pane_area);
 
+        // The tree and the screen share the space under the mother bar. The bar
+        // is `flex_none` at its own width and the screen takes what is left, so
+        // dragging the bar wider is the terminals getting narrower and nothing
+        // else moves.
+        let stage = div()
+            .flex()
+            .flex_row()
+            .flex_1()
+            .min_h_0()
+            .children(self.render_left_bar(cx))
+            .child(screen);
+
         let root = div()
             .size_full()
             .bg(darken(bezel, 0.5))
@@ -17040,6 +18743,7 @@ impl Render for Workspace {
                 MouseButton::Left,
                 cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
                     ws.commit_rename(cx);
+                    ws.commit_bar_rename(cx);
                 }),
             )
             .child(
@@ -17088,7 +18792,7 @@ impl Render for Workspace {
                         },
                     ])
                     .child(bezel_top)
-                    .child(screen)
+                    .child(stage)
                     .child(bezel_bottom)
                     .children(menu_overlay)
                     .children(osd_overlay)
@@ -17102,6 +18806,7 @@ impl Render for Workspace {
                     .children(help_overlay)
                     .children(tab_menu_overlay)
                     .children(group_menu_overlay)
+                    .children(bar_chip)
                     .children(drag_chip)
                     // the FOCUS reading modal rides above everything else
                     .children(focus_overlay)
@@ -17147,6 +18852,7 @@ mod tests {
             color: None,
             text_color: None,
             group: None,
+            project: None,
             node,
         }
     }
@@ -17486,6 +19192,7 @@ mod tests {
             text_color: None,
             group: None,
             node: leaf_with(Some(12), "/work", None),
+            project: None,
         };
         let body = toml::to_string(&StateFile {
             tabs: vec![with_id],
@@ -17508,6 +19215,125 @@ mod tests {
             panic!("not a leaf");
         };
         assert_eq!(*pane_id, None);
+    }
+
+    /// The tree is somebody's organisation of their own work. It has to come
+    /// back exactly, or the feature is a toy: a project whose tasks scattered
+    /// overnight is worse than no projects at all.
+    #[test]
+    fn the_left_bar_tree_survives_a_round_trip_through_the_state_file() {
+        let state = StateFile {
+            projects: vec![SavedProject {
+                id: 3,
+                name: Some("terminal-delight".into()),
+                color: "#4d8fa8".into(),
+                collapsed: true,
+            }],
+            groups: vec![SavedGroup {
+                id: 7,
+                name: Some("left bar".into()),
+                color: "#3a8f4d".into(),
+                text_color: None,
+                collapsed: false,
+                project: Some(3),
+            }],
+            tabs: vec![
+                SavedTab {
+                    name: Some("build".into()),
+                    color: None,
+                    text_color: None,
+                    group: Some(7),
+                    project: None,
+                    node: leaf_with(None, "/work", None),
+                },
+                SavedTab {
+                    name: Some("loose".into()),
+                    color: None,
+                    text_color: None,
+                    group: None,
+                    project: Some(3),
+                    node: leaf_with(None, "/work", None),
+                },
+            ],
+            left_bar: Some(false),
+            left_bar_w: Some(260.0),
+            scope: Some(SavedScope::Project(3)),
+            ..Default::default()
+        };
+        let body = toml::to_string(&state).expect("serialise");
+        let back: StateFile = toml::from_str(&body).expect("read back");
+        assert_eq!(back.projects.len(), 1);
+        assert_eq!(back.projects[0].id, 3);
+        assert_eq!(back.projects[0].name.as_deref(), Some("terminal-delight"));
+        assert!(back.projects[0].collapsed);
+        assert_eq!(back.groups[0].project, Some(3));
+        assert_eq!(back.tabs[0].group, Some(7));
+        assert_eq!(back.tabs[1].project, Some(3));
+        assert_eq!(back.left_bar, Some(false));
+        assert_eq!(back.left_bar_w, Some(260.0));
+        assert_eq!(back.scope, Some(SavedScope::Project(3)));
+    }
+
+    /// Every session on this machine predates the tree. Opening one must not
+    /// look like a window that lost its tabs.
+    #[test]
+    fn a_state_file_written_before_the_tree_reads_as_an_unorganised_session() {
+        let old: StateFile =
+            toml::from_str("active = 0\npanes = 1\n[[tabs]]\n[tabs.node.Leaf]\ncwd = \"/work\"\n")
+                .expect("read an old file");
+        assert!(old.projects.is_empty());
+        assert_eq!(old.tabs[0].project, None);
+        // The three that must be ABSENT rather than false/zero: nobody hid the
+        // bar, nobody sized it, and nobody scoped anything.
+        assert_eq!(old.left_bar, None);
+        assert_eq!(old.left_bar_w, None);
+        assert_eq!(old.scope, None);
+    }
+
+    /// Unknown is not hidden. A file that never had the field gets the default;
+    /// a file that says `false` is a person's decision and is obeyed.
+    #[test]
+    fn an_absent_left_bar_preference_is_not_a_hidden_left_bar() {
+        assert_eq!(left_bar_visible(None, false, false), LEFT_BAR_DEFAULT_ON);
+        assert!(!left_bar_visible(Some(false), false, false));
+        assert!(left_bar_visible(Some(true), false, false));
+        // scratch and demo windows never carry the tree, whatever is on disk
+        assert!(!left_bar_visible(Some(true), true, false));
+        assert!(!left_bar_visible(Some(true), false, true));
+    }
+
+    /// A task adopted into a project is adopted into its REPOSITORY, not into
+    /// whichever directory the shell happens to be sitting in.
+    #[test]
+    fn adoption_names_a_project_after_its_git_root_not_its_subdirectory() {
+        let root = std::env::temp_dir().join(format!("td-tree-{}", std::process::id()));
+        let deep = root.join("repo").join("app").join("src");
+        std::fs::create_dir_all(&deep).expect("temp tree");
+        std::fs::create_dir_all(root.join("repo").join(".git")).expect("git dir");
+        assert_eq!(
+            project_name_for(&deep.to_string_lossy()).as_deref(),
+            Some("repo")
+        );
+
+        // A git WORKTREE's `.git` is a file, not a directory. Missing that
+        // would file every worktree on the machine under its parent folder —
+        // which is where all of this repository's worktrees live, together.
+        let wt = root.join("worktree");
+        std::fs::create_dir_all(wt.join("app")).expect("worktree");
+        std::fs::write(wt.join(".git"), "gitdir: /elsewhere\n").expect("git file");
+        assert_eq!(
+            project_name_for(&wt.join("app").to_string_lossy()).as_deref(),
+            Some("worktree")
+        );
+
+        // Outside a repository, the directory itself is the project.
+        let bare = root.join("notes");
+        std::fs::create_dir_all(&bare).expect("bare dir");
+        assert_eq!(
+            project_name_for(&bare.to_string_lossy()).as_deref(),
+            Some("notes")
+        );
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     /// The HEY blinker is a square wave, not a fade: hard ON through the first
@@ -18364,6 +20190,7 @@ mod tests {
             text_color: None,
             group: None,
             node,
+            project: None,
         };
         let mut tabs = vec![
             tab(SavedNode::Split {
@@ -18563,6 +20390,7 @@ mod tests {
             text_color: None,
             group: None,
             node: saved,
+            project: None,
         })
         .expect("serialize");
         let back: SavedTab = toml::from_str(&toml).expect("deserialize");
@@ -18737,12 +20565,14 @@ id = "hacker"
                     note: None,
                     pane_id: None,
                 },
+                project: None,
             }],
             groups: vec![],
             mcp: None,
             focus_inherit: false,
             anchor_top: false,
             lang: lang::Lang::default(),
+            ..Default::default()
         };
         let body = toml::to_string(&state).expect("serializes");
         let back: StateFile = toml::from_str(&body).expect("round-trips");
@@ -18780,12 +20610,14 @@ id = "hacker"
                     note: None,
                     pane_id: None,
                 },
+                project: None,
             }],
             groups: vec![],
             mcp: None,
             focus_inherit: false,
             anchor_top: false,
             lang: lang::Lang::default(),
+            ..Default::default()
         };
         let body = toml::to_string(&state).expect("serializes");
         let back: StateFile = toml::from_str(&body).expect("round-trips");
@@ -18828,6 +20660,7 @@ id = "hacker"
                     text_color: Some("#ffffff".into()),
                     group: Some(7),
                     node: leaf(),
+                    project: None,
                 },
                 SavedTab {
                     name: Some("loose".into()),
@@ -18835,6 +20668,7 @@ id = "hacker"
                     text_color: None,
                     group: None,
                     node: leaf(),
+                    project: None,
                 },
             ],
             groups: vec![SavedGroup {
@@ -18843,11 +20677,13 @@ id = "hacker"
                 color: "#2d8f4d".into(),
                 text_color: Some("#101010".into()),
                 collapsed: true,
+                project: None,
             }],
             mcp: None,
             focus_inherit: false,
             anchor_top: false,
             lang: lang::Lang::default(),
+            ..Default::default()
         };
         let body = toml::to_string(&state).expect("serializes");
         let back: StateFile = toml::from_str(&body).expect("round-trips");
@@ -19164,12 +21000,14 @@ node = "Leaf"
                 text_color: None,
                 group: None,
                 node,
+                project: None,
             }],
             groups: vec![],
             mcp: None,
             focus_inherit: false,
             anchor_top: false,
             lang: lang::Lang::default(),
+            ..Default::default()
         };
         let body = toml::to_string(&state).expect("serializes");
         let back: StateFile = toml::from_str(&body).expect("round-trips");
