@@ -5718,8 +5718,12 @@ fn invert_logical_read(
 static AVAILABLE_FONTS: OnceLock<Vec<String>> = OnceLock::new();
 
 /// Common monospace families to try, in order, when the requested one is absent.
+///
+/// This chain is the LAST resort, not the first: a theme naming no font takes
+/// the desktop's monospace family (see [`default_font_family`]), and only a
+/// machine that cannot answer that question falls through to here.
 const MONO_FALLBACKS: &[&str] = &[
-    "JetBrains Mono",
+    SHIPPED_FONT,
     "DejaVu Sans Mono",
     "Liberation Mono",
     "Noto Sans Mono",
@@ -5741,6 +5745,63 @@ fn font_available(name: &str) -> bool {
         None => true,
     }
 }
+
+/// The desktop's own monospace font, resolved once per process.
+///
+/// **This is the default TD dresses in, and the reason is that Omarchy already
+/// answered the question.** `omarchy font set` writes the chosen family into
+/// every terminal's config and then into `~/.config/fontconfig/fonts.conf` as a
+/// strong `prepend_first` on the `monospace` alias, with this comment above it:
+/// *"fontconfig is the canonical source of truth — the omarchy shell, Qt apps,
+/// and anything resolving `monospace` all read from here."* Its own
+/// `omarchy-font-current` is one line: `fc-match monospace`. A terminal that
+/// picked its own family would be the one window on the desktop wearing a
+/// different face, and would go stale the moment somebody changed the system
+/// font.
+///
+/// `fc-match` answers with a comma-separated alias list
+/// (`JetBrainsMono Nerd Font,JetBrainsMono NF`); the head is the family.
+/// Returns `None` when fontconfig is not there to ask — a machine without it is
+/// not an Omarchy desktop, and the shipped default takes over.
+static SYSTEM_MONO: OnceLock<Option<String>> = OnceLock::new();
+
+/// The first family in an `fc-match` alias list, trimmed. Pure, so the parsing
+/// is tested without a fontconfig to run.
+fn first_family(fc_output: &str) -> Option<String> {
+    let head = fc_output.lines().next()?.split(',').next()?.trim();
+    (!head.is_empty()).then(|| head.to_string())
+}
+
+pub fn system_mono_family() -> Option<String> {
+    SYSTEM_MONO
+        .get_or_init(|| {
+            let out = std::process::Command::new("fc-match")
+                .args(["monospace", "-f", "%{family}"])
+                .output()
+                .ok()?;
+            if !out.status.success() {
+                return None;
+            }
+            first_family(&String::from_utf8_lossy(&out.stdout))
+        })
+        .clone()
+}
+
+/// The family a theme that names no font should use: the desktop's, if it has
+/// one that is actually installed, else the shipped default.
+///
+/// A theme file that DOES name a font still wins — someone who wrote
+/// `family = "Iosevka"` in their theme meant it, and the desktop does not get a
+/// vote over an explicit choice.
+pub fn default_font_family() -> String {
+    system_mono_family()
+        .filter(|f| font_available(f))
+        .unwrap_or_else(|| SHIPPED_FONT.to_string())
+}
+
+/// What TD asks for when the desktop cannot say. Also the head of
+/// [`MONO_FALLBACKS`].
+pub const SHIPPED_FONT: &str = "JetBrains Mono";
 
 /// The same family under another spelling — a patched build of the font the
 /// user asked for, which is the font they asked for.
@@ -7571,6 +7632,29 @@ mod tests {
             underline: None,
             strikethrough: None,
         }
+    }
+
+    /// `fc-match` answers with an alias list; the family is its head.
+    ///
+    /// The parsing is its own function because the desktop's font is now TD's
+    /// default, and a default that came back as `JetBrainsMono Nerd
+    /// Font,JetBrainsMono NF` — one string, comma and all — would resolve to
+    /// nothing and drop the whole app to a fallback face without a word.
+    #[test]
+    fn the_desktop_font_is_the_head_of_the_alias_list() {
+        assert_eq!(
+            first_family("JetBrainsMono Nerd Font,JetBrainsMono NF\n").as_deref(),
+            Some("JetBrainsMono Nerd Font")
+        );
+        assert_eq!(
+            first_family("Liberation Mono\n").as_deref(),
+            Some("Liberation Mono")
+        );
+        // trailing spaces and a bare newline are not a family
+        assert_eq!(first_family("  Iosevka  ,x\n").as_deref(), Some("Iosevka"));
+        assert_eq!(first_family(""), None);
+        assert_eq!(first_family("\n"), None);
+        assert_eq!(first_family(",Nothing\n"), None);
     }
 
     /// The font a person installed IS the font they asked for, whatever the

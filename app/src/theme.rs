@@ -2490,7 +2490,14 @@ pub(crate) fn parse(source: &str) -> Result<Theme, String> {
             .unwrap_or(default_screen_glare)
             .clamp(0., 1.),
         bezel: file.effects.bezel.unwrap_or(0.).clamp(0., 1.),
-        font_family: file.font.family.unwrap_or_else(|| "JetBrains Mono".into()),
+        // A theme that names no font wears the desktop's: whatever Omarchy has
+        // pointed `monospace` at, which is what every other terminal on this
+        // machine is already using. An explicit `family =` in the theme file
+        // still wins — see [`crate::pane::default_font_family`].
+        font_family: file
+            .font
+            .family
+            .unwrap_or_else(crate::pane::default_font_family),
         font_size: file.font.size.unwrap_or(14.).clamp(8., 32.),
         cell_h: file.font.cell_height.unwrap_or(20.).clamp(10., 48.),
     })

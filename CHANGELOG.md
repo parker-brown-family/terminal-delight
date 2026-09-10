@@ -7,6 +7,36 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ## [Unreleased]
 
+### Changed
+
+- **TD wears the desktop's font.** A theme that names no font now takes whatever
+  Omarchy has pointed the `monospace` alias at — the same family alacritty,
+  foot, ghostty and the shell are already using — instead of asking for
+  `JetBrains Mono` by name. `omarchy font set` writes its choice into
+  `~/.config/fontconfig/fonts.conf` as a strong `prepend_first` and calls
+  fontconfig "the canonical source of truth"; `omarchy-font-current` is one line
+  of `fc-match monospace`. TD now asks the same question, so changing the system
+  font changes TD's on its next launch. A theme file that DOES name a family
+  still wins — an explicit choice outranks the desktop — and a machine with no
+  fontconfig to ask falls back to the shipped default exactly as before.
+
+### Fixed
+
+- **The font TD asked for was installed, and TD could not find it.** The lookup
+  tested for an exact family name, so a box carrying `JetBrainsMono Nerd Font`
+  answered "JetBrains Mono is not installed" and the whole UI silently ran on
+  Liberation Mono — which has no `▾` (U+25BE) and no `▸` (U+25B8), so the left
+  bar's disclosure triangles rendered as blank space and folding looked broken.
+  A patched build of the requested family is now recognised as that family (the
+  name with spaces removed, optionally followed by a Nerd Font suffix), tried
+  before any substitute, and the launch diagnostic stays quiet when that is what
+  happened. The match is tight enough that `Noto Sans` cannot capture `Noto Sans
+  Devanagari`.
+- **The rename pencil on every tab has been invisible.** It was drawn with
+  U+270E, which exists in exactly one font installed on a typical desktop — and
+  that font is in none of TD's fallback chains. It is now U+270F, which lives in
+  Noto Color Emoji beside the pin, the robot and the tick.
+
 ### Added
 
 - **A left bar, and a tab is now a task.** The mother bar had run out of
