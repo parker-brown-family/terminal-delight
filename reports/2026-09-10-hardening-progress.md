@@ -30,3 +30,17 @@ Did NOT blind-implement or install core protocol/rendering changes autonomously.
 
 ### Light monitoring loop armed
 Periodic health check (no window storm): re-confirm survival cohort alive, watch for a crash-loop, re-run the unit suite. Logged here each pass.
+
+### Cycle 3 (Parker said implement all, full send) — DONE
+- #355 IMPLEMENTED (commit b1e2808): host writes session-<key>.window (SO_PEERCRED pid) on a window hello; relay resolves the window by session when its ancestry walk finds none. No wire-protocol change. Host-side sandbox-verified (file written with the window pid). 705 green.
+- #356 IMPLEMENTED (commit cf6d41f): per-pane repair cooldown breaks the re-snapshot loop — if a pane still diverges within 45s of a repair, hold the stable replica instead of flickering. Transient divergence still heals first pass. 705 green.
+- Release built + INSTALLED as td-cf6d41f-hardened (symlink swapped). Prior builds preserved: td-3ead832-cs-split (pre-fix hosted), td-95cec1d-main (serverless).
+- Pushed cs/hosted-hardening; PR #358 (closes #355, #356).
+
+### To verify (needs a RELAUNCH — only a real window exercises these)
+1. Relaunch a TD window. Agents should regain mcp__terminal-delight__* (MCP handshake succeeds).
+2. Leave a pane quiet / change a pane theme — the ignition flicker + theme-wipe should be gone (or bounded to at most one repair per 45s, logged not looped).
+Rollback if wrong: ln -sfn ~/.local/lib/terminal-delight/td-3ead832-cs-split ~/.local/bin/terminal-delight
+
+### Still open (narrower)
+- The encoder round-trip gap under #356 (why a fresh snapshot doesn't reproduce some grid state) — needs the offset/grid data the guard logs from a real divergence. #356's mitigation stops the flicker; this would remove the divergence itself.
