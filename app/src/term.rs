@@ -48,12 +48,53 @@ impl Dimensions for GridSize {
 /// sound (if slightly over-eager) proxy for "the grid is different now".
 /// Consumers cache derived views (the FOCUS reader's document) against it.
 #[derive(Clone)]
-pub struct EventProxy(UnboundedSender<TermEvent>, Arc<AtomicU64>);
+pub struct EventProxy {
+    events: UnboundedSender<TermEvent>,
+    generation: Arc<AtomicU64>,
+    /// Whether a program's question to the terminal is answered from here.
+    answers_here: bool,
+}
+
+/// Who answers the questions a program asks the terminal — what are you (DA),
+/// where is the cursor (DSR) — each of which must be answered exactly once.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum Answers {
+    /// This process owns the pseudoterminal, so it answers. Note that it does
+    /// not answer *here*: the event is forwarded to the pane, which bounces it
+    /// back through the notifier (see the module note).
+    Here,
+    /// Another process owns the pseudoterminal and has already answered, and
+    /// its answer is in the byte stream we are reading. Answering again would
+    /// not be a duplicate reply — it would reach the program as characters the
+    /// user appears to have typed, mid-screen, in the middle of vim.
+    Elsewhere,
+}
+
+impl EventProxy {
+    fn new(
+        events: UnboundedSender<TermEvent>,
+        generation: Arc<AtomicU64>,
+        answers: Answers,
+    ) -> Self {
+        Self {
+            events,
+            generation,
+            answers_here: answers == Answers::Here,
+        }
+    }
+}
 
 impl EventListener for EventProxy {
     fn send_event(&self, event: TermEvent) {
-        self.1.fetch_add(1, Ordering::Relaxed);
-        let _ = self.0.unbounded_send(event);
+        // The counter moves for every event, forwarded or swallowed: it is the
+        // invalidation token for cached views, and an event we decline to
+        // answer still means the emulation has moved on. A replica whose
+        // generation stopped advancing would freeze every cache built on it.
+        self.generation.fetch_add(1, Ordering::Relaxed);
+        if !self.answers_here && matches!(event, TermEvent::PtyWrite(_)) {
+            return;
+        }
+        let _ = self.events.unbounded_send(event);
     }
 }
 
@@ -63,9 +104,21 @@ pub struct Session {
     /// Taken once by the UI entity to drive event handling.
     pub events: Option<UnboundedReceiver<TermEvent>>,
     /// Our own handle on the PTY master — used to ask the kernel what the
-    /// foreground process is (tcgetpgrp), powering mode detection.
+    /// foreground process is (tcgetpgrp), powering mode detection. `None` on a
+    /// replica: the kernel object belongs to the session host, and the only
+    /// honest thing a client can say about a file descriptor it does not have
+    /// is that it does not have it.
     pub master: Option<File>,
-    pub shell_pid: u32,
+    /// The process at the far end of this terminal.
+    ///
+    /// `Some`, and our own child, when we forked it. `Some`, and somebody
+    /// else's child, when a session host reported it — readable through /proc,
+    /// but never ours to signal. `None` when nobody has said, which is a state
+    /// that genuinely occurs and is not a zero: a pane whose owner has not
+    /// named a process is not a pane running pid 0, and mode detection, cwd
+    /// capture and the vitals sweep each have to be able to tell those apart or
+    /// they will confidently report facts about init.
+    pub shell_pid: Option<u32>,
     /// Monotonic content generation, bumped by [`EventProxy`] on every terminal
     /// event. Equal generations guarantee the grid has not changed since; a
     /// changed generation merely *permits* change (title/bell events bump it
@@ -82,6 +135,11 @@ impl Session {
 
 impl Session {
     /// Resize both the emulation grid and the PTY (SIGWINCH to the child).
+    ///
+    /// On a replica the second half is not a syscall but a sentence: the size
+    /// is announced to whoever owns the pseudoterminal (see
+    /// [`crate::socketpty::SocketPty`]), because a terminal that more than one
+    /// client may be looking at is told its size rather than inferring it.
     pub fn resize(&self, size: GridSize, cell_width: u16, cell_height: u16) {
         let window_size = WindowSize {
             num_lines: size.rows as u16,
@@ -94,35 +152,62 @@ impl Session {
     }
 }
 
+/// Everything `tty::new` needs to start a shell, plus the environment the
+/// caller wants stamped into it.
+pub struct SpawnSpec {
+    pub size: GridSize,
+    pub cell_width: u16,
+    pub cell_height: u16,
+    /// A vanished dir falls back to the default start directory rather than
+    /// failing the pane.
+    pub cwd: Option<std::path::PathBuf>,
+    pub env: Vec<(String, String)>,
+}
+
 /// Spawn the user's default shell on a PTY, emulation wired, I/O thread running.
 #[allow(dead_code)]
 pub fn spawn(size: GridSize, cell_width: u16, cell_height: u16) -> io::Result<Session> {
     spawn_in(size, cell_width, cell_height, None)
 }
 
-/// `spawn`, but the shell starts in `cwd` (session restore). A vanished dir
-/// falls back to the default start directory rather than failing the pane.
+/// `spawn`, but the shell starts in `cwd` (session restore).
 pub fn spawn_in(
     size: GridSize,
     cell_width: u16,
     cell_height: u16,
     cwd: Option<std::path::PathBuf>,
 ) -> io::Result<Session> {
-    let (tx, rx) = unbounded();
-    let generation = Arc::new(AtomicU64::new(0));
-    let proxy = EventProxy(tx, generation.clone());
-
-    let window_size = WindowSize {
-        num_lines: size.rows as u16,
-        num_cols: size.cols as u16,
+    let spec = SpawnSpec {
+        size,
         cell_width,
         cell_height,
+        cwd,
+        env: vec![],
+    };
+    let pty = spawn_pty(&spec)?;
+    // Read before the pseudoterminal is handed to the event loop, which takes
+    // ownership of it: a generic `T` has neither of these accessors.
+    let master = pty.file().try_clone().ok();
+    let shell_pid = pty.child().id();
+    wire_event_loop(pty, size, master, Some(shell_pid), Answers::Here)
+}
+
+/// The pseudoterminal half of a spawn: a real kernel object with a real child.
+pub fn spawn_pty(spec: &SpawnSpec) -> io::Result<tty::Pty> {
+    let window_size = WindowSize {
+        num_lines: spec.size.rows as u16,
+        num_cols: spec.size.cols as u16,
+        cell_width: spec.cell_width,
+        cell_height: spec.cell_height,
     };
 
     let mut options = tty::Options {
-        working_directory: cwd.filter(|d| d.is_dir()),
+        working_directory: spec.cwd.clone().filter(|d| d.is_dir()),
         ..Default::default()
     };
+    for (name, value) in &spec.env {
+        options.env.insert(name.clone(), value.clone());
+    }
     // A demo window runs THIS binary as every pane's program — a frozen screen of
     // lorem-ipsum styled like a real agent session — instead of the user's shell.
     // So a shared demo shows no real shell, cwd, scrollback, or secret, yet flows
@@ -136,9 +221,30 @@ pub fn spawn_in(
             ));
         }
     }
-    let pty = tty::new(&options, window_size, 0)?;
-    let master = pty.file().try_clone().ok();
-    let shell_pid = pty.child().id();
+    tty::new(&options, window_size, 0)
+}
+
+/// The emulator half: a `Term`, alacritty's own event loop over whatever the
+/// terminal actually is, and the channel the pane reads events from.
+///
+/// Generic over the pseudoterminal because the client's is a socket
+/// ([`crate::socketpty::SocketPty`]) and the bounds are exactly the ones
+/// `EventLoop::new` states. `master` and `shell_pid` are passed in rather than
+/// asked of `pty`: a generic `T` has no `.file()` or `.child()`, and on a
+/// replica neither exists to ask.
+pub fn wire_event_loop<T>(
+    pty: T,
+    size: GridSize,
+    master: Option<File>,
+    shell_pid: Option<u32>,
+    answers: Answers,
+) -> io::Result<Session>
+where
+    T: tty::EventedPty + alacritty_terminal::event::OnResize + Send + 'static,
+{
+    let (tx, rx) = unbounded();
+    let generation = Arc::new(AtomicU64::new(0));
+    let proxy = EventProxy::new(tx, generation.clone(), answers);
     let term = Arc::new(FairMutex::new(Term::new(
         Config::default(),
         &size,
@@ -156,6 +262,680 @@ pub fn spawn_in(
         shell_pid,
         generation,
     })
+}
+
+/// What a window hands [`attach_in`] once the control conversation is done: the
+/// pane's byte stream, and somewhere to put a resize.
+pub struct AttachStreams {
+    /// Connected, and already past its greeting: the next bytes readable are
+    /// the snapshot of everything this pane has printed, then its live output.
+    pub bytes: std::os::unix::net::UnixStream,
+    /// A resize is a control verb, never a byte-stream fact. Called from the
+    /// event loop's own thread, hence `Send`.
+    pub announce_resize: Box<dyn FnMut(WindowSize) + Send + 'static>,
+}
+
+/// THE SEAM: a terminal this process does not own, driven by alacritty's stock
+/// event loop over a socket, into an ordinary [`Session`].
+///
+/// The same type comes back as [`spawn_in`] returns, which is the whole point —
+/// every one of the pane's reads (styled lines, selection, scrollback, the
+/// FOCUS document mirror) runs against the replica unchanged, and selection and
+/// scroll position stay client state by construction, because they were never
+/// anywhere else.
+///
+/// `shell_pid` is what the host reported: an attribute of a process this window
+/// did not start, or `None` if the host named none.
+pub fn attach_in(
+    size: GridSize,
+    streams: AttachStreams,
+    shell_pid: Option<u32>,
+) -> io::Result<(Session, crate::gridwire::ReplicaGuard)> {
+    let AttachStreams {
+        bytes,
+        announce_resize,
+    } = streams;
+    let pty = crate::socketpty::SocketPty::with_resize(bytes, announce_resize)?;
+    // Shared with the reader the event loop is about to own: the count of bytes
+    // that have actually reached this replica's parser, which is the clock the
+    // divergence guard reads.
+    let consumed = pty.consumed();
+    let session = wire_event_loop(pty, size, None, shell_pid, Answers::Elsewhere)?;
+    let guard = crate::gridwire::ReplicaGuard::new(
+        session.term.clone(),
+        session.generation.clone(),
+        consumed,
+    );
+    Ok((session, guard))
+}
+
+/// How long a keystroke takes to come back, with and without the seam.
+///
+/// This is the instrument behind the flip gate: the split becomes the default
+/// only if typing into an attached window feels like typing into today's, and
+/// "feels like" is not a thing anybody can settle by discussion. So the same
+/// measurement runs against both — a terminal this process owns, and one a
+/// session host owns two socket hops away — and the difference between them is
+/// the cost of the seam.
+///
+/// **The signal is the content generation**, which alacritty's own reader bumps
+/// once per parse cycle (`event_loop.rs:167`) after the bytes it read are in the
+/// grid. So a sample is exactly: write a byte the way the GUI writes one, and
+/// wait until the terminal has drawn what came back. Not a proxy for that, and
+/// not a sleep.
+///
+/// **The instrument is identical in both modes** — same program in the pane
+/// (`cat`, so the echo comes from the line discipline and nothing else is
+/// running), same number of flooding panes beside it, same loop. That is the
+/// whole design: any overhead the harness itself carries is carried twice and
+/// cancels in the difference.
+///
+/// Driven by `scripts/td-echo-bench.sh`, which runs it four times over
+/// mode × flood and applies the gate. Ignored by default because it takes
+/// seconds, spawns processes, and answers a question the suite is not asking.
+#[cfg(test)]
+mod echo_bench {
+    use std::io::Write;
+    use std::time::{Duration, Instant};
+
+    use alacritty_terminal::event::Notify;
+
+    use super::*;
+
+    /// Samples taken per run, after the warm-up. A thousand is enough for a p99
+    /// to mean something and quick enough that four runs are a coffee.
+    const SAMPLES: usize = 1000;
+    /// Discarded: the first keystrokes into a fresh terminal pay for pages the
+    /// process has not touched yet, and a flip gate is about the steady state.
+    const WARM_UP: usize = 100;
+    /// A sample that takes this long has not measured latency, it has measured
+    /// something being broken.
+    const PATIENCE: Duration = Duration::from_secs(5);
+
+    fn env_or(name: &str, fallback: &str) -> String {
+        std::env::var(name).unwrap_or_else(|_| fallback.to_string())
+    }
+
+    /// What a flooding pane runs, and there are two honest answers.
+    ///
+    /// `yes` at full rate is a stress case: it writes as fast as a
+    /// pseudoterminal will take it, which on a machine with no spare core is a
+    /// measurement of the scheduler more than of the seam. A busy build is
+    /// nothing like it — a couple of thousand lines a second, in bursts, with
+    /// gaps. Both are worth knowing and they answer different questions, so the
+    /// bench says which one it ran rather than letting a number stand for both.
+    fn flood_program(kind: &str) -> (&'static str, Vec<String>) {
+        match kind {
+            "saturating" => ("yes", vec!["flooding-the-terminal-with-output".to_string()]),
+            // ~2000 lines a second per pane, in bursts: more than a talkative
+            // build, and leaves the machine cores to schedule with.
+            _ => (
+                "sh",
+                vec![
+                    "-c".to_string(),
+                    "while :; do seq 1 200; sleep 0.1; done".to_string(),
+                ],
+            ),
+        }
+    }
+
+    /// One keystroke, there and back.
+    fn sample(session: &Session) -> Duration {
+        let before = session.content_generation();
+        let started = Instant::now();
+        session.notifier.notify(b"x".to_vec());
+        loop {
+            if session.content_generation() != before {
+                return started.elapsed();
+            }
+            if started.elapsed() > PATIENCE {
+                panic!("a keystroke never came back — the terminal is not echoing");
+            }
+            std::hint::spin_loop();
+        }
+    }
+
+    fn percentile(sorted: &[Duration], p: f64) -> u128 {
+        let at = ((sorted.len() as f64 - 1.0) * p).round() as usize;
+        sorted[at].as_micros()
+    }
+
+    /// A terminal this process owns, running `prog`.
+    ///
+    /// Built here rather than through `spawn_in` because the bench needs to
+    /// choose the program, and `spawn_in` deliberately runs the user's shell.
+    /// Everything below the program — the event loop, the parser, the Term — is
+    /// the same code the pane uses.
+    fn local_pane(prog: &str, args: &[&str]) -> Session {
+        let size = GridSize {
+            cols: 100,
+            rows: 28,
+        };
+        let window_size = WindowSize {
+            num_lines: size.rows as u16,
+            num_cols: size.cols as u16,
+            cell_width: 8,
+            cell_height: 20,
+        };
+        let options = tty::Options {
+            shell: Some(tty::Shell::new(
+                prog.to_string(),
+                args.iter().map(|a| a.to_string()).collect(),
+            )),
+            ..Default::default()
+        };
+        let pty = tty::new(&options, window_size, 0).expect("a pseudoterminal");
+        let master = pty.file().try_clone().ok();
+        let shell_pid = pty.child().id();
+        wire_event_loop(pty, size, master, Some(shell_pid), Answers::Here)
+            .expect("wire the event loop")
+    }
+
+    /// The same shape, two socket hops away: a real session host in its own
+    /// runtime directory, with the panes attached exactly as a window attaches
+    /// them.
+    fn hosted_panes(
+        binary: &str,
+        flood: usize,
+        watch_flood: bool,
+        flood_kind: &str,
+    ) -> (std::process::Child, Vec<Session>) {
+        let run = std::env::temp_dir().join(format!("td-echo-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&run);
+        std::fs::create_dir_all(&run).expect("a place to run");
+
+        // One host, two programs: the pane being measured runs `cat` so its echo
+        // comes from the line discipline alone, and every other pane floods. The
+        // host stamps TD_PANE_ID into each pane, which is what lets one shell
+        // script be both.
+        let shell = run.join("bench-shell.sh");
+        let flooding = match flood_kind {
+            "saturating" => "exec yes flooding-the-terminal-with-output".to_string(),
+            _ => "while :; do seq 1 200; sleep 0.1; done".to_string(),
+        };
+        std::fs::write(
+            &shell,
+            format!("#!/bin/sh\nif [ \"$TD_PANE_ID\" = \"1\" ]; then exec cat; fi\n{flooding}\n"),
+        )
+        .expect("write the pane program");
+        let mut permissions = std::fs::metadata(&shell).expect("stat").permissions();
+        use std::os::unix::fs::PermissionsExt;
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&shell, permissions).expect("make it runnable");
+
+        let session = "echo-bench";
+        let host = std::process::Command::new(binary)
+            .args(["serve", "--session", session])
+            // Child-only environment: the bench never touches its own, so it
+            // cannot disturb anything else running in this process.
+            .env("XDG_RUNTIME_DIR", &run)
+            .env("XDG_CONFIG_HOME", run.join("config"))
+            .env("TD_HOST_SHELL", &shell)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("start a session host");
+
+        let socket = run
+            .join("terminal-delight")
+            .join(format!("session-{session}.sock"));
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while Instant::now() < deadline && !socket.exists() {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(socket.exists(), "the host never bound {}", socket.display());
+
+        let link = crate::hostctl::HostLink::attach_at(&socket).expect("attach to the host");
+        let geom = crate::hostproto::PaneGeom {
+            cols: 100,
+            rows: 28,
+            cell_width: 8,
+            cell_height: 20,
+        };
+        let mut sessions = vec![];
+        for index in 0..=flood {
+            // No recipe: the bench measures a terminal echoing, and an agent in
+            // the pane would be measuring the agent.
+            let (info, _) = link.spawn_pane(None, None, geom).expect("start a pane");
+            // A flooding pane the client does not attach still floods the HOST:
+            // its pseudoterminal is read and parsed there either way. Leaving it
+            // unattached is how the bench tells the two costs apart — what the
+            // host pays to keep the truth, and what the window pays to draw a
+            // copy of it.
+            if index > 0 && !watch_flood {
+                continue;
+            }
+            link.attach_pane(info.pane, geom)
+                .expect("declare the attach");
+            let stream = link.open_pane_stream(info.pane).expect("the pane's bytes");
+            let announce = link.clone();
+            let pane = info.pane;
+            let (session, _guard) = attach_in(
+                GridSize {
+                    cols: 100,
+                    rows: 28,
+                },
+                AttachStreams {
+                    bytes: stream,
+                    announce_resize: Box::new(move |size: WindowSize| {
+                        announce.announce_resize(
+                            pane,
+                            crate::hostproto::PaneGeom {
+                                cols: size.num_cols,
+                                rows: size.num_lines,
+                                cell_width: size.cell_width,
+                                cell_height: size.cell_height,
+                            },
+                        );
+                    }),
+                },
+                Some(info.shell_pid),
+            )
+            .expect("attach the pane");
+            // The guard is dropped: this bench measures latency, and divergence
+            // is somebody else's test.
+            sessions.push(session);
+        }
+        (host, sessions)
+    }
+
+    #[test]
+    #[ignore = "latency bench — run via scripts/td-echo-bench.sh"]
+    fn echo_latency_bench() {
+        let mode = env_or("TD_ECHO_MODE", "local");
+        // Default to the load a person actually produces. The saturating case
+        // is still one env var away, and still worth running — but a gate
+        // reported against it would be answering a question nobody asked.
+        let flood_kind = env_or("TD_ECHO_FLOOD_KIND", "realistic");
+        let flood: usize = env_or("TD_ECHO_FLOOD", "0").parse().expect("TD_ECHO_FLOOD");
+        let samples: usize = env_or("TD_ECHO_SAMPLES", &SAMPLES.to_string())
+            .parse()
+            .expect("TD_ECHO_SAMPLES");
+
+        let _guard = crate::testsync::forks_and_locks();
+        let mut host = None;
+        let measured: Session;
+        let mut _flooding: Vec<Session> = vec![];
+
+        match mode.as_str() {
+            "local" => {
+                measured = local_pane("cat", &[]);
+                let (program, args) = flood_program(&flood_kind);
+                let args: Vec<&str> = args.iter().map(String::as_str).collect();
+                for _ in 0..flood {
+                    _flooding.push(local_pane(program, &args));
+                }
+            }
+            "attached" => {
+                // Never a number that was not measured: a bench that quietly
+                // fell back to the local path would report the seam as free.
+                let binary = env_or("TD_BIN", "");
+                assert!(
+                    !binary.is_empty() && std::path::Path::new(&binary).exists(),
+                    "attached mode needs TD_BIN pointing at a built terminal-delight; \
+                     refusing to report a number this run did not measure"
+                );
+                let watch_flood = env_or("TD_ECHO_WATCH_FLOOD", "1") != "0";
+                let (child, mut sessions) = hosted_panes(&binary, flood, watch_flood, &flood_kind);
+                host = Some(child);
+                measured = sessions.remove(0);
+                _flooding = sessions;
+            }
+            other => panic!("TD_ECHO_MODE must be local or attached, not {other:?}"),
+        }
+
+        // Wait for the pane to be a terminal before timing anything: a shell
+        // that has not finished starting is not a latency measurement.
+        let ready = Instant::now();
+        while measured.content_generation() == 0 {
+            sample(&measured);
+            assert!(
+                ready.elapsed() < Duration::from_secs(20),
+                "the measured pane never echoed anything"
+            );
+        }
+        for _ in 0..WARM_UP {
+            sample(&measured);
+        }
+
+        let mut taken: Vec<Duration> = Vec::with_capacity(samples);
+        for _ in 0..samples {
+            taken.push(sample(&measured));
+        }
+        taken.sort();
+
+        let watching = env_or("TD_ECHO_WATCH_FLOOD", "1") != "0";
+        // The tail is reported with its shape, not just its edge. A p99 alone
+        // cannot tell "every keystroke is slightly slow" from "one keystroke in
+        // a hundred stalls", and those are different experiences to sit in front
+        // of — the first is a slow terminal, the second is a terminal that
+        // hiccups. `over_1ms` is the count a person would actually notice.
+        let over_1ms = taken.iter().filter(|d| d.as_micros() > 1000).count();
+        let line = format!(
+            r#"{{"mode":"{mode}","flood":{flood},"load":"{flood_kind}","watched":{watching},"samples":{samples},"p50_us":{},"p99_us":{},"p999_us":{},"max_us":{},"over_1ms":{over_1ms}}}"#,
+            percentile(&taken, 0.50),
+            percentile(&taken, 0.99),
+            percentile(&taken, 0.999),
+            taken.last().expect("samples").as_micros(),
+        );
+        println!("{line}");
+        let _ = std::io::stdout().flush();
+
+        drop(measured);
+        drop(std::mem::take(&mut _flooding));
+        if let Some(mut host) = host.take() {
+            let _ = host.kill();
+            let _ = host.wait();
+            let _ = std::fs::remove_dir_all(
+                std::env::temp_dir().join(format!("td-echo-{}", std::process::id())),
+            );
+        }
+    }
+}
+
+/// The client seam, driven for real.
+///
+/// A socket pair stands in for the host: one end is handed to [`attach_in`] and
+/// becomes an ordinary [`Session`], the other is written to and read from the
+/// way a session host would. Nothing here is a mock — it is alacritty's own
+/// event loop, parser and `Term`, which is the whole argument for cutting the
+/// seam at a file descriptor.
+#[cfg(test)]
+mod attached {
+    use std::io::{Read, Write};
+    use std::os::unix::net::UnixStream;
+    use std::sync::{Arc, Mutex};
+    use std::time::{Duration, Instant};
+
+    use alacritty_terminal::event::Event as TermEvent;
+    use alacritty_terminal::index::{Column, Line};
+    use alacritty_terminal::term::{Config, Term};
+    use alacritty_terminal::vte::ansi::Processor;
+
+    use super::*;
+    use crate::gridwire::{grid_hash, GridCheck, GuardVerdict, Unsettled};
+
+    fn within(limit: Duration, mut done: impl FnMut() -> bool) -> bool {
+        let deadline = Instant::now() + limit;
+        while Instant::now() < deadline {
+            if done() {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        done()
+    }
+
+    /// An attached pane and the host end of its stream.
+    struct Pair {
+        host: UnixStream,
+        session: Session,
+        guard: crate::gridwire::ReplicaGuard,
+        /// Every resize the replica announced, in order — the control verbs a
+        /// real host would have received.
+        announced: Arc<Mutex<Vec<WindowSize>>>,
+    }
+
+    fn attached(cols: usize, rows: usize, shell_pid: Option<u32>) -> Pair {
+        let (host, client) = UnixStream::pair().expect("socket pair");
+        let announced: Arc<Mutex<Vec<WindowSize>>> = Arc::default();
+        let heard = announced.clone();
+        let (session, guard) = attach_in(
+            GridSize { cols, rows },
+            AttachStreams {
+                bytes: client,
+                announce_resize: Box::new(move |size| {
+                    heard.lock().expect("announced").push(size);
+                }),
+            },
+            shell_pid,
+        )
+        .expect("attach");
+        Pair {
+            host,
+            session,
+            guard,
+            announced,
+        }
+    }
+
+    #[test]
+    fn an_attached_pane_has_no_descriptor_and_says_so() {
+        // The two facts every caller downstream branches on. A replica that
+        // reported a master would have `capture` read the wrong process's
+        // foreground group through a descriptor it does not have.
+        let pair = attached(20, 5, Some(4242));
+        assert!(
+            pair.session.master.is_none(),
+            "the pseudoterminal belongs to the host"
+        );
+        assert_eq!(pair.session.shell_pid, Some(4242), "the host said which");
+
+        let unknown = attached(20, 5, None);
+        assert_eq!(
+            unknown.session.shell_pid, None,
+            "and when nobody said, nothing is claimed"
+        );
+    }
+
+    #[test]
+    fn the_hosts_output_lands_in_the_replica_grid() {
+        let mut pair = attached(20, 5, Some(1));
+        pair.host.write_all(b"hello\r\nworld").expect("host writes");
+        let term = pair.session.term.clone();
+        assert!(
+            within(Duration::from_secs(5), || {
+                term.lock().grid()[Line(1)][Column(4)].c == 'd'
+            }),
+            "the host's bytes never reached the replica"
+        );
+    }
+
+    #[test]
+    fn a_replica_never_answers_a_question_the_host_has_already_answered() {
+        // A program asking the terminal what it is (DA) gets exactly one reply,
+        // and it comes from the process that owns the pseudoterminal. If the
+        // replica answered too, the second answer would arrive at the program
+        // as characters the user appears to have typed — mid-screen, inside
+        // vim. The generation must still move, because it is the invalidation
+        // token every cached view is built on.
+        let mut pair = attached(20, 5, Some(1));
+        let before = pair.session.content_generation();
+        pair.host.write_all(b"\x1b[c").expect("device attributes");
+
+        assert!(
+            within(Duration::from_secs(5), || pair.session.content_generation()
+                > before),
+            "the replica's generation must move even for an event it swallows"
+        );
+        // Nothing goes back up the socket. Read with a short timeout: the
+        // absence of an answer is the assertion.
+        pair.host
+            .set_read_timeout(Some(Duration::from_millis(300)))
+            .expect("timeout");
+        let mut buf = [0u8; 64];
+        match pair.host.read(&mut buf) {
+            Ok(0) => {}
+            Ok(n) => panic!(
+                "the replica answered a query the host owns: {:?}",
+                String::from_utf8_lossy(&buf[..n])
+            ),
+            Err(e) => assert!(
+                matches!(
+                    e.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                ),
+                "unexpected error waiting for silence: {e}"
+            ),
+        }
+        // A local terminal, by contrast, forwards it for the pane to bounce.
+        let (tx, mut rx) = unbounded();
+        let generation = Arc::new(AtomicU64::new(0));
+        let local = EventProxy::new(tx, generation, Answers::Here);
+        local.send_event(TermEvent::PtyWrite("\x1b[?6c".into()));
+        assert!(
+            matches!(rx.try_recv(), Ok(TermEvent::PtyWrite(_))),
+            "a terminal we own must still forward its own answers"
+        );
+    }
+
+    #[test]
+    fn keystrokes_go_up_the_socket_and_a_resize_does_not() {
+        // A size is a fact the owner is told, never one it infers from the byte
+        // stream: more than one client may be looking, and a resize mixed into
+        // the output is a resize somebody has to guess the end of.
+        let mut pair = attached(20, 5, Some(1));
+        use alacritty_terminal::event::Notify;
+        pair.session.notifier.notify(b"ls -la\n".to_vec());
+        pair.host
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .expect("timeout");
+        let mut buf = [0u8; 32];
+        let read = pair.host.read(&mut buf).expect("the host reads keystrokes");
+        assert_eq!(&buf[..read], b"ls -la\n");
+
+        pair.session.resize(GridSize { cols: 30, rows: 9 }, 7, 15);
+        assert!(
+            within(Duration::from_secs(5), || !pair
+                .announced
+                .lock()
+                .expect("announced")
+                .is_empty()),
+            "the new size was never announced to the host"
+        );
+        let announced = pair.announced.lock().expect("announced");
+        let last = announced.last().expect("one announcement");
+        assert_eq!((last.num_cols, last.num_lines), (30, 9));
+        assert_eq!((last.cell_width, last.cell_height), (7, 15));
+
+        // and nothing about the size went up the byte stream
+        pair.host
+            .set_read_timeout(Some(Duration::from_millis(200)))
+            .expect("timeout");
+        let mut spill = [0u8; 64];
+        match pair.host.read(&mut spill) {
+            Ok(0) => {}
+            Ok(n) => panic!(
+                "a resize leaked into the byte stream: {:?}",
+                String::from_utf8_lossy(&spill[..n])
+            ),
+            Err(_) => {}
+        }
+    }
+
+    /// An independent terminal fed the same bytes — what a host's own grid
+    /// would look like, without a host.
+    fn authoritative(cols: usize, rows: usize, bytes: &[u8]) -> Term<EventProxy> {
+        let (tx, _rx) = unbounded();
+        let proxy = EventProxy::new(tx, Arc::new(AtomicU64::new(0)), Answers::Here);
+        let size = GridSize { cols, rows };
+        let mut term = Term::new(Config::default(), &size, proxy);
+        let mut parser: Processor = Processor::new();
+        parser.advance(&mut term, bytes);
+        term
+    }
+
+    #[test]
+    fn the_guard_agrees_when_the_two_terminals_have_seen_the_same_bytes() {
+        let mut pair = attached(20, 5, Some(1));
+        let bytes = b"one\r\ntwo\r\nthree\r\n\x1b[32mgreen\x1b[0m";
+        pair.host.write_all(bytes).expect("host writes");
+        assert!(
+            within(Duration::from_secs(5), || pair.guard.consumed()
+                == bytes.len() as u64),
+            "the replica never consumed the stream: {} of {}",
+            pair.guard.consumed(),
+            bytes.len()
+        );
+
+        let host_term = authoritative(20, 5, bytes);
+        let probe = GridCheck {
+            pane: crate::hostproto::PaneId(1),
+            stream_offset: bytes.len() as u64,
+            hash: grid_hash(&host_term),
+        };
+        assert!(
+            within(Duration::from_secs(5), || pair.guard.check(&probe)
+                == GuardVerdict::Match),
+            "two terminals fed the same bytes disagreed: {:?}",
+            pair.guard.check(&probe)
+        );
+
+        // Being at a different point in the stream is not disagreement, in
+        // either direction — and the guard says which, because "behind" and
+        // "past it" are different facts about a client.
+        let behind = GridCheck {
+            stream_offset: probe.stream_offset + 64,
+            ..probe
+        };
+        assert!(
+            matches!(
+                pair.guard.check(&behind),
+                GuardVerdict::NotYet(Unsettled::Behind { .. })
+            ),
+            "a probe from further along the stream is not a mismatch"
+        );
+        let stale = GridCheck {
+            stream_offset: probe.stream_offset - 1,
+            ..probe
+        };
+        assert!(
+            matches!(
+                pair.guard.check(&stale),
+                GuardVerdict::NotYet(Unsettled::Ahead { .. })
+            ),
+            "a probe the replica has already read past is stale, not wrong"
+        );
+    }
+
+    #[test]
+    fn the_guard_notices_a_terminal_that_has_actually_diverged() {
+        // The failure it exists for: the same byte count, a different screen.
+        // Without this the whole guard is decoration.
+        let mut pair = attached(20, 5, Some(1));
+        let bytes = b"the quick brown fox";
+        pair.host.write_all(bytes).expect("host writes");
+        assert!(within(Duration::from_secs(5), || pair.guard.consumed()
+            == bytes.len() as u64));
+
+        let host_term = authoritative(20, 5, b"the quick brown FOX");
+        let verdict = pair.guard.check(&GridCheck {
+            pane: crate::hostproto::PaneId(1),
+            stream_offset: bytes.len() as u64,
+            hash: grid_hash(&host_term),
+        });
+        assert!(
+            matches!(verdict, GuardVerdict::Mismatch { .. }),
+            "one different word must read as divergence, got {verdict:?}"
+        );
+    }
+
+    #[test]
+    fn scrolling_the_replica_is_not_divergence() {
+        // A person reading their scrollback is not a client that has gone
+        // wrong. The hash covers the terminal; the view belongs to the viewer.
+        use alacritty_terminal::grid::Scroll;
+        let mut pair = attached(20, 3, Some(1));
+        let bytes = b"a\r\nb\r\nc\r\nd\r\ne\r\nf\r\n";
+        pair.host.write_all(bytes).expect("host writes");
+        assert!(within(Duration::from_secs(5), || pair.guard.consumed()
+            == bytes.len() as u64));
+        let probe = GridCheck {
+            pane: crate::hostproto::PaneId(1),
+            stream_offset: bytes.len() as u64,
+            hash: grid_hash(&authoritative(20, 3, bytes)),
+        };
+        assert!(within(Duration::from_secs(5), || pair.guard.check(&probe)
+            == GuardVerdict::Match));
+
+        pair.session.term.lock().scroll_display(Scroll::PageUp);
+        assert_eq!(
+            pair.guard.check(&probe),
+            GuardVerdict::Match,
+            "a scrolled-back reader must not read as a diverged client"
+        );
+    }
 }
 
 /// Headless, deterministic terminal-correctness matrix.

@@ -23,7 +23,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
 /// What a pane needs at spawn time to pick its work back up.
-#[derive(Clone, Default, Debug)]
+#[derive(Clone, Default, Debug, PartialEq)]
 pub struct PaneRestore {
     pub cwd: Option<String>,
     /// Command typed into the fresh shell (newline appended by the caller's PTY writer).
@@ -55,6 +55,33 @@ pub fn capture_cwd(master: Option<&File>, shell_pid: u32) -> Option<String> {
     proc_cwd(fg).or_else(|| proc_cwd(shell_pid))
 }
 
+/// Snapshot one pane whose pseudoterminal belongs to another process.
+///
+/// Same two facts as [`capture`], reached the long way round: the foreground
+/// process group is recorded in `/proc/<pid>/stat` as well as being askable
+/// through a descriptor, so a window attached to a session host can still say
+/// what a pane is doing and where it is doing it. What it cannot do is hold the
+/// descriptor, which is the whole reason this exists.
+///
+/// A pane whose process has gone reports nothing rather than the last thing it
+/// knew: pids are recycled, and a stale one would name a stranger.
+pub fn capture_via_proc(shell_pid: u32) -> PaneRuntime {
+    match probe_external(shell_pid, &home_dir()) {
+        Ok(report) => PaneRuntime {
+            cwd: report.cwd,
+            resume: report.resume,
+        },
+        // The probe refuses a process with no controlling terminal, which a
+        // pane's shell always has while it lives; the cwd is still worth
+        // asking for on its own, since a shell sitting at a prompt with no
+        // foreground child is the common case.
+        Err(_) => PaneRuntime {
+            cwd: proc_cwd(shell_pid),
+            resume: None,
+        },
+    }
+}
+
 /// Snapshot one live pane from its PTY master + shell pid.
 pub fn capture(master: Option<&File>, shell_pid: u32) -> PaneRuntime {
     let fg = master.and_then(fg_pgid).unwrap_or(shell_pid);
@@ -71,6 +98,20 @@ pub fn capture(master: Option<&File>, shell_pid: u32) -> PaneRuntime {
 
 /// Crash-safe write: tmp file + rename, so a crash mid-write never truncates
 /// the last good state.
+///
+/// **Atomic against a crash, not against another writer.** The temporary file
+/// is named from the destination, so two callers writing the same path at the
+/// same time share one temp path: the first rename takes it away from the
+/// second, which fails with a bare "No such file or directory" naming the
+/// destination it never got to. Serialise the callers — the read-decide-write
+/// around any guard needs it anyway, since a write landing between the reading
+/// and the decision makes the decision stale.
+///
+/// Written here because the knowledge was two files away from the danger. The
+/// session host hit it with a client save and a checkpoint overlapping; it
+/// failed twice in forty suite runs and took a captured soak to name. Its lock
+/// is `Host::writing`, and `two_things_writing_at_once_still_leave_one_good_file`
+/// fails five times out of five without it.
 pub fn write_atomic(path: &Path, body: &str) -> io::Result<()> {
     if let Some(dir) = path.parent() {
         // 0700 dir: the state it holds (cwd history + agent session ids) is the
@@ -735,9 +776,8 @@ mod tests {
         std::fs::remove_dir_all(&tmp).unwrap();
     }
 
-    fn tmp_home(tag: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("td-sess-{tag}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
+    fn tmp_home(tag: &str) -> crate::testsync::Scratch {
+        let dir = crate::testsync::Scratch::new(&format!("sess-{tag}"));
         std::fs::create_dir_all(dir.join(".claude")).unwrap();
         dir
     }
@@ -1094,11 +1134,8 @@ mod probe_tests {
 mod ledger_tests {
     use super::*;
 
-    fn tmp_home(tag: &str) -> PathBuf {
-        let d = std::env::temp_dir().join(format!("td-ledger-{}-{tag}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&d);
-        std::fs::create_dir_all(&d).unwrap();
-        d
+    fn tmp_home(tag: &str) -> crate::testsync::Scratch {
+        crate::testsync::Scratch::new(&format!("ledger-{tag}"))
     }
 
     fn write_ledger(home: &Path, pid: u32, sid: &str) {

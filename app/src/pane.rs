@@ -54,6 +54,23 @@ impl PaneMode {
         }
     }
 
+    /// The same classification, made by a session host instead of by us.
+    ///
+    /// A host watching its own pseudoterminals is in a better position to say
+    /// what is running than a window that has to read /proc from outside, so
+    /// where it has an answer that answer wins. Where it has none — a pane it
+    /// has not classified yet — there is nothing to convert, and a pane keeps
+    /// whatever it already believed rather than being told it is a shell.
+    pub fn from_wire(mode: &crate::hostproto::WireMode) -> PaneMode {
+        match mode {
+            crate::hostproto::WireMode::Shell => PaneMode::Shell,
+            crate::hostproto::WireMode::Claude => PaneMode::Claude,
+            crate::hostproto::WireMode::Codex => PaneMode::Codex,
+            crate::hostproto::WireMode::Remote => PaneMode::Remote,
+            crate::hostproto::WireMode::Other(name) => PaneMode::Other(name.clone()),
+        }
+    }
+
     pub fn label(&self) -> &str {
         match self {
             PaneMode::Shell => "SHELL",
@@ -1786,6 +1803,27 @@ struct MirrorDocKey {
 pub struct TerminalView {
     focus_handle: FocusHandle,
     session: term::Session,
+    /// The session host's durable name for this pane, when the terminal in it
+    /// belongs to a host rather than to this window. `None` is not a missing
+    /// value to be filled in later: it says this pane's terminal is this
+    /// process's own child, which is a different kind of pane, not an
+    /// unidentified one.
+    pane_id: Option<u64>,
+    /// The divergence guard, on an attached pane only — the thing that can
+    /// answer "is what I am drawing still what the host has?".
+    guard: Option<crate::gridwire::ReplicaGuard>,
+    /// Set when another window took this pane's terminal away.
+    ///
+    /// The terminal did not end — it is still running, one process over, with
+    /// somebody else watching it. This window keeps the last grid it was sent
+    /// and stops changing, which is what losing a steal is supposed to look
+    /// like, and is emphatically not what a pane whose shell exited looks like.
+    superseded: bool,
+    /// What this pane was built from: the directory and the command that would
+    /// put it back. Kept because on an attached pane it is the only copy — the
+    /// window is a process away from the terminal, and a reading that comes
+    /// back empty is not evidence that the recipe was wrong.
+    staged: crate::session::PaneRestore,
     /// The OSC-driven shell title (apps overwrite it via the title sequence).
     pub title: String,
     /// A user-set name (right-click the header to rename). Wins over `title`
@@ -2404,20 +2442,120 @@ impl TerminalView {
     /// What this pane is doing right now — cwd + resumable agent session —
     /// captured from the kernel for the workspace snapshot.
     pub fn runtime(&self) -> crate::session::PaneRuntime {
-        crate::session::capture(self.session.master.as_ref(), self.session.shell_pid)
+        let live = self.live_runtime();
+        if self.pane_id.is_none() {
+            // A terminal of our own: today's answer, unchanged. A recipe that
+            // has stopped being true here stops being written, which is what
+            // the dead-agent reaping downstream expects.
+            return live;
+        }
+        // A terminal a host owns. The reading is taken through /proc from
+        // outside, and "I could not see an agent" is not the same claim as
+        // "there is no agent" — so what the pane was built from is kept where
+        // the reading came back with nothing. Losing it would thin the file
+        // that a host crash falls back to.
+        crate::session::PaneRuntime {
+            cwd: live.cwd.or_else(|| self.staged.cwd.clone()),
+            resume: live.resume.or_else(|| self.staged.resume.clone()),
+        }
+    }
+
+    fn live_runtime(&self) -> crate::session::PaneRuntime {
+        match (self.session.master.as_ref(), self.session.shell_pid) {
+            // Our own terminal: ask the kernel through the descriptor we hold.
+            (Some(master), Some(pid)) => crate::session::capture(Some(master), pid),
+            // Somebody else's: the descriptor is theirs, so the same questions
+            // are asked of /proc instead. Same answers, one hop further away.
+            (None, Some(pid)) => crate::session::capture_via_proc(pid),
+            // No terminal we can name. Nothing is known, and nothing is the
+            // honest thing to report — a pane with no process is not a pane in
+            // the root directory running nothing.
+            (_, None) => crate::session::PaneRuntime::default(),
+        }
     }
 
     /// The pane's live cwd, cheaply (no agent-session scan) — polled by the
     /// workspace's dir-logo sweep and read at picker-open / pick time.
     pub fn current_cwd(&self) -> Option<String> {
-        crate::session::capture_cwd(self.session.master.as_ref(), self.session.shell_pid)
+        let pid = self.session.shell_pid?;
+        crate::session::capture_cwd(self.session.master.as_ref(), pid)
     }
 
     /// This pane's shell pid — the kernel handle behind its identity. Ephemeral
     /// (recycles across a resume); the durable key is the agent session. Read by
     /// the read-only MCP snapshot.
-    pub fn shell_pid(&self) -> u32 {
+    ///
+    /// `None` when nobody has said what runs here: an attached pane whose host
+    /// named no process. Callers that use a pid as an address have to decide
+    /// what to do about that, which is the point — the old signature let them
+    /// address a pane by a number that had been invented for them.
+    pub fn shell_pid(&self) -> Option<u32> {
         self.session.shell_pid
+    }
+
+    /// The terminal's content generation — the token every cached view of this
+    /// pane is invalidated against, and the way a caller tells a pane that is
+    /// sitting still from one that is printing.
+    pub fn content_generation(&self) -> u64 {
+        self.session.content_generation()
+    }
+
+    /// The host's durable name for this pane, if it has one.
+    pub fn pane_id(&self) -> Option<u64> {
+        self.pane_id
+    }
+
+    /// Whether this pane has reported an ending that has not been explained yet.
+    ///
+    /// A replica learns that its stream stopped, and nothing more: the byte
+    /// stream has no way to say whether the program inside the terminal exited
+    /// or whether another window took the terminal away. Both arrive here as
+    /// the same flag, which is why something has to ask.
+    pub fn ended_unexplained(&self) -> bool {
+        self.exited && self.pane_id.is_some() && !self.superseded
+    }
+
+    /// Whether this pane is frozen because its terminal is being shown
+    /// somewhere else.
+    pub fn superseded(&self) -> bool {
+        self.superseded
+    }
+
+    /// Another window took this pane's terminal. Not an ending.
+    pub fn mark_superseded(&mut self, cx: &mut Context<Self>) {
+        self.exited = false;
+        self.superseded = true;
+        cx.notify();
+    }
+
+    /// The mode a session host reported, replacing the answer a pane with a PTY
+    /// of its own reads from the kernel. Nothing calls this until the host has
+    /// a way to say so; it is the receiving half of that sentence.
+    #[allow(dead_code)]
+    pub fn set_host_mode(&mut self, mode: PaneMode, cx: &mut Context<Self>) {
+        if self.mode != mode {
+            self.mode = mode;
+            cx.notify();
+        }
+    }
+
+    /// How many bytes of the host's stream this pane has taken. `None` on a
+    /// pane whose terminal is its own — there is no stream to be at a point in.
+    pub fn stream_consumed(&self) -> Option<u64> {
+        self.guard.as_ref().map(|guard| guard.consumed())
+    }
+
+    /// Answer a host's integrity probe about this pane.
+    ///
+    /// A mismatch is not repaired here: the repair is to take the pane again,
+    /// which is a workspace-level act (a fresh stream, a fresh snapshot), and a
+    /// pane cannot re-attach itself.
+    #[allow(dead_code)]
+    pub fn check_divergence(
+        &self,
+        probe: &crate::gridwire::GridCheck,
+    ) -> Option<crate::gridwire::GuardVerdict> {
+        self.guard.as_ref().map(|guard| guard.check(probe))
     }
 
     /// Whether this pane is floating a click-target popup of its OWN over the
@@ -2447,6 +2585,43 @@ impl TerminalView {
             cols: 100,
             rows: 28,
         };
+        let cwd = restore.cwd.clone().map(std::path::PathBuf::from);
+        let session = term::spawn_in(grid, 8, 20, cwd).expect("spawn shell");
+        if let Some(cmd) = restore.resume.as_deref() {
+            session.notifier.notify(format!("{cmd}\n").into_bytes());
+        }
+        Self::around(session, None, None, &restore, grid, cx)
+    }
+
+    /// A pane showing a terminal this window does not own.
+    ///
+    /// Everything below the seam is identical to a pane with its own shell —
+    /// the same event pump, the same grid reads, the same selection and scroll,
+    /// which stay client state because they were never anywhere else. What
+    /// differs is what the pane may assume about the process at the far end:
+    /// there is no descriptor to ask the kernel through, and the pid it has is
+    /// somebody else's child.
+    pub fn new_attached(
+        session: term::Session,
+        guard: crate::gridwire::ReplicaGuard,
+        pane_id: u64,
+        restore: crate::session::PaneRestore,
+        grid: term::GridSize,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        Self::around(session, Some(guard), Some(pane_id), &restore, grid, cx)
+    }
+
+    /// Everything a pane is once its terminal exists, whichever kind it is.
+    fn around(
+        session: term::Session,
+        guard: Option<crate::gridwire::ReplicaGuard>,
+        pane_id: Option<u64>,
+        restore: &crate::session::PaneRestore,
+        grid: term::GridSize,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let mut session = session;
         let logo = restore.logo.clone();
         // A restored note comes back POSTED, never composing: the window just
         // opened and the cursor belongs to the shell, not to a piece of paper.
@@ -2465,12 +2640,6 @@ impl TerminalView {
                 edit: None,
                 pinned: n.pinned,
             });
-        let cwd = restore.cwd.clone().map(std::path::PathBuf::from);
-        let mut session = term::spawn_in(grid, 8, 20, cwd).expect("spawn shell");
-        if let Some(cmd) = restore.resume.as_deref() {
-            session.notifier.notify(format!("{cmd}\n").into_bytes());
-        }
-
         let mut events = session.events.take().expect("events taken once");
         cx.spawn(async move |this, cx| {
             while let Some(event) = events.next().await {
@@ -2487,14 +2656,27 @@ impl TerminalView {
         .detach();
 
         // foreground-process watcher: what is this tube showing?
+        //
+        // Only for a terminal this window owns. An attached pane is told by the
+        // host, which is holding the pseudoterminal and therefore knows first —
+        // and knows properly, through the descriptor, rather than by reading
+        // /proc from outside. Two watchers on one terminal was work done twice
+        // for an answer that already existed in the right process (#336), and
+        // the reason it was here at all is that the host had no way to say it.
+        // It has one now: `set_host_mode`, fed by the push feed.
         cx.spawn(async move |this, cx| loop {
             cx.background_executor()
                 .timer(std::time::Duration::from_millis(800))
                 .await;
             let alive = this
                 .update(cx, |view: &mut TerminalView, cx| {
-                    if let Some(master) = view.session.master.as_ref() {
-                        let detected = foreground_mode(master, view.session.shell_pid);
+                    let detected = match (view.session.master.as_ref(), view.session.shell_pid) {
+                        (Some(master), Some(pid)) => Some(foreground_mode(master, pid)),
+                        // Somebody else's terminal, or nobody's: not this
+                        // window's question to answer.
+                        _ => None,
+                    };
+                    if let Some(detected) = detected {
                         // Sticky agent detection (spec §4): an agent runs child
                         // processes (bash/node/rg) as the terminal's foreground group
                         // while working, momentarily reclassifying the pane as Shell —
@@ -2665,6 +2847,10 @@ impl TerminalView {
         Self {
             focus_handle: cx.focus_handle(),
             session,
+            pane_id,
+            guard,
+            superseded: false,
+            staged: restore.clone(),
             title: "shell".into(),
             name: None,
             logo,

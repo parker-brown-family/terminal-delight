@@ -1,0 +1,732 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Client-server build report</title>
+<style>
+:root {
+  color-scheme: dark;
+  --surface-0: #111110; --surface-1: #1a1a19; --surface-2: #232321; --surface-3: #2e2e2b;
+  --line: #3a3a36;
+  --text-primary: #ffffff; --text-secondary: #c3c2b7; --text-muted: #8b8a80;
+  --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500;
+  --good: #0ca30c; --warning: #fab219; --serious: #ec835a; --critical: #d03b3b;
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, "JetBrains Mono", Menlo, Consolas, monospace;
+  --sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif;
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body { margin: 0; background: var(--surface-0); color: var(--text-primary);
+  font-family: var(--sans); font-size: 15px; line-height: 1.6; -webkit-font-smoothing: antialiased; }
+.wrap { max-width: 1180px; margin: 0 auto; padding: 0 24px 120px; }
+header.top .wrap { padding-bottom: 0; }
+h1 { font-size: 34px; line-height: 1.18; margin: 0 0 16px; letter-spacing: -.02em; font-weight: 650; }
+h2.sec { font-size: 13px; font-family: var(--mono); letter-spacing: .13em; text-transform: uppercase;
+  color: var(--text-muted); margin: 56px 0 18px; padding-bottom: 10px; border-bottom: 1px solid var(--line); }
+dialog { border: 1px solid var(--line); border-radius: 12px; background: var(--surface-1);
+  color: var(--text-primary); max-width: 880px; width: calc(100vw - 44px); max-height: 86vh; padding: 0; overflow: hidden; }
+dialog::backdrop { background: rgba(0,0,0,.76); backdrop-filter: blur(3px); }
+.dlg-head { position: sticky; top: 0; background: var(--surface-2); border-bottom: 1px solid var(--line);
+  padding: 20px 26px; display: flex; justify-content: space-between; align-items: flex-start; gap: 20px; z-index: 2; }
+.dlg-head h3 { margin: 0 0 5px; font-size: 20px; letter-spacing: -.015em; }
+.dlg-head .repo { font-family: var(--mono); font-size: 11.5px; color: var(--text-muted); margin: 0; }
+.x { background: var(--surface-3); border: 1px solid var(--line); color: var(--text-secondary);
+  border-radius: 6px; width: 30px; height: 30px; font-size: 17px; line-height: 1; cursor: pointer; flex: none; }
+.x:hover { background: var(--critical); color: #fff; border-color: var(--critical); }
+.dlg-body { padding: 24px 26px 34px; overflow-y: auto; max-height: calc(86vh - 78px); }
+.dlg-body h4 { font-family: var(--mono); font-size: 11.5px; letter-spacing: .12em; text-transform: uppercase;
+  color: var(--text-muted); margin: 30px 0 12px; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
+.dlg-body h4:first-child { margin-top: 0; }
+.dlg-body p { margin: 0 0 13px; color: var(--text-secondary); font-size: 14.5px; }
+.dlg-body ul, .dlg-body ol { margin: 0 0 15px; padding-left: 20px; color: var(--text-secondary); font-size: 14.5px; }
+.dlg-body li { margin-bottom: 8px; }
+.dlg-body strong { color: var(--text-primary); font-weight: 600; }
+code { font-family: var(--mono); font-size: 12.5px; background: var(--surface-3);
+  padding: 1.5px 5px; border-radius: 4px; color: #e8d9a8; word-break: break-word; }
+pre { background: var(--surface-0); border: 1px solid var(--line); border-radius: 7px;
+  padding: 15px 17px; overflow-x: auto; margin: 0 0 15px; }
+pre code { background: none; padding: 0; color: var(--text-secondary); font-size: 12.5px; line-height: 1.65; }
+table { width: 100%; border-collapse: collapse; margin: 0 0 17px; font-size: 13.5px; }
+th, td { text-align: left; padding: 9px 11px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-family: var(--mono); font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase;
+  color: var(--text-muted); font-weight: 500; background: var(--surface-2); }
+td { color: var(--text-secondary); }
+td b, td strong { color: var(--text-primary); }
+.callout { border-left: 3px solid var(--warning); background: rgba(250,178,25,.07);
+  padding: 14px 18px; border-radius: 0 7px 7px 0; margin: 0 0 17px; }
+.callout.crit { border-color: var(--critical); background: rgba(208,59,59,.08); }
+.callout.good { border-color: var(--good); background: rgba(12,163,12,.08); }
+.callout p:last-child { margin-bottom: 0; }
+.callout .lbl { font-family: var(--mono); font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase;
+  color: var(--text-muted); margin: 0 0 7px; display: block; }
+.tag { display: inline-block; font-family: var(--mono); font-size: 10px; letter-spacing: .07em;
+  text-transform: uppercase; padding: 2.5px 7px; border-radius: 4px; margin-right: 6px; font-weight: 600; }
+.tag.v { background: rgba(12,163,12,.18); color: #6cd46c; border: 1px solid rgba(12,163,12,.4); }
+.tag.w { background: rgba(250,178,25,.14); color: #f5c95f; border: 1px solid rgba(250,178,25,.38); }
+.tag.c { background: rgba(208,59,59,.16); color: #f08a8a; border: 1px solid rgba(208,59,59,.4); }
+footer { margin-top: 70px; padding-top: 26px; border-top: 1px solid var(--line);
+  font-family: var(--mono); font-size: 11.5px; color: var(--text-muted); }
+footer p { margin: 0 0 7px; }
+@media (max-width: 640px) { h1 { font-size: 26px; } .wrap { padding: 0 16px 80px; } }
+
+.notable { position: relative; }
+.note-btn { position: absolute; top: 8px; right: 8px; z-index: 6; width: 26px; height: 26px;
+  line-height: 1; padding: 0; background: var(--surface-3); border: 1px solid var(--line);
+  border-radius: 6px; color: var(--text-muted); font-size: 13px; cursor: pointer; opacity: 0;
+  transition: opacity .12s, background .12s, color .12s, border-color .12s; }
+.notable:hover > .note-btn, .note-btn:focus-visible { opacity: 1; }
+.note-btn:hover { background: var(--warning); border-color: var(--warning); color: var(--surface-1); }
+.notable.has-note > .note-btn { opacity: 1; background: var(--warning); border-color: var(--warning);
+  color: var(--surface-1); font-weight: 700; }
+.notable.has-note { box-shadow: inset 3px 0 0 var(--warning); }
+tr.notable.has-note > td:first-child { box-shadow: inset 3px 0 0 var(--warning); }
+tr.notable .note-btn { position: static; opacity: .35; width: 22px; height: 22px; font-size: 11px;
+  margin-left: 6px; vertical-align: middle; display: inline-block; }
+tr.notable:hover .note-btn { opacity: 1; }
+.notebar { position: fixed; right: 18px; bottom: 18px; z-index: 900; display: flex; gap: 14px;
+  align-items: center; background: var(--surface-2); border: 1px solid var(--line); border-radius: 14px;
+  padding: 12px 16px; box-shadow: 0 10px 32px rgba(0,0,0,.55); font-family: var(--mono); font-size: 12.5px; }
+.notebar .cnt { color: var(--text-muted); padding-right: 2px; }
+.notebar .cnt b { color: var(--warning); font-size: 17px; }
+.notebar button { font-family: var(--mono); font-size: 17px; letter-spacing: .03em; cursor: pointer;
+  background: var(--surface-3); border: 1px solid var(--line); color: var(--text-secondary);
+  border-radius: 10px; padding: 15px 26px; font-weight: 600;
+  transition: background .12s, color .12s, border-color .12s; }
+.notebar button:hover { background: var(--warning); color: var(--surface-1); border-color: var(--warning); }
+.notebar button.primary { background: rgba(250,178,25,.16); border-color: rgba(250,178,25,.55); color: #f5c95f; }
+.notebar button:not(.primary) { font-size: 13.5px; padding: 12px 16px; font-weight: 500; }
+.notebar button.copied, .notebar button.copied:hover { background: var(--warning);
+  border-color: var(--warning); color: var(--surface-1); font-weight: 700; }
+.notebar button:disabled { opacity: .4; cursor: default; background: var(--surface-3);
+  color: var(--text-muted); border-color: var(--line); }
+@media (max-width: 640px) { .notebar { right: 8px; bottom: 8px; flex-wrap: wrap; max-width: calc(100vw - 16px); } }
+dialog#d-note { max-width: 620px; }
+#note-list { margin: 0 0 18px; padding: 0; list-style: none; }
+#note-list li { background: var(--surface-2); border: 1px solid var(--line); border-left: 3px solid var(--warning);
+  border-radius: 0 7px 7px 0; padding: 11px 14px; margin-bottom: 9px; font-size: 14px; color: var(--text-secondary); }
+#note-list .nts { font-family: var(--mono); font-size: 10px; color: var(--text-muted);
+  display: flex; justify-content: space-between; gap: 10px; margin-bottom: 6px; }
+#note-list .ndel { background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 11px; padding: 0; }
+#note-list .ndel:hover { color: var(--critical); }
+#note-none { color: var(--text-muted); font-size: 13.5px; margin: 0 0 16px; }
+#note-text { width: 100%; min-height: 104px; background: var(--surface-0); border: 1px solid var(--line);
+  border-radius: 7px; color: var(--text-primary); padding: 11px 13px; font-family: var(--sans);
+  font-size: 14.5px; resize: vertical; line-height: 1.55; }
+#note-text:focus { outline: none; border-color: var(--warning); }
+.note-actions { display: flex; gap: 9px; align-items: center; margin-top: 11px; }
+.note-actions button { font-family: var(--mono); font-size: 11.5px; cursor: pointer; border-radius: 6px;
+  padding: 8px 14px; border: 1px solid var(--line); background: var(--surface-3); color: var(--text-secondary); }
+.note-actions button.save { background: var(--warning); border-color: var(--warning); color: var(--surface-1); font-weight: 600; }
+.note-actions .hintk { font-family: var(--mono); font-size: 10.5px; color: var(--text-muted); margin-left: auto; }
+
+header.top { border-bottom: 1px solid var(--line); background: var(--surface-1); padding: 44px 0 34px; }
+.verdict { font-size: 18.5px; line-height: 1.55; color: var(--text-secondary); max-width: 880px; margin: 0 0 14px; }
+.verdict b { color: var(--text-primary); }
+.metaline { font-family: var(--mono); font-size: 11.5px; color: var(--text-muted); }
+.metaline span { margin-right: 18px; }
+.esc-list { list-style: none; margin: 0; padding: 0; }
+.esc-list li { display: flex; gap: 16px; align-items: flex-start; background: var(--surface-1);
+  border: 1px solid var(--line); border-radius: 9px; padding: 14px 44px 14px 16px; margin-bottom: 10px; }
+.esc-n { flex: none; width: 28px; height: 28px; border-radius: 50%; background: var(--surface-3);
+  border: 1px solid var(--line); font-family: var(--mono); font-size: 13px; font-weight: 700;
+  color: var(--warning); display: flex; align-items: center; justify-content: center; margin-top: 2px; }
+.esc-list h3 { margin: 0 0 3px; font-size: 15.5px; }
+.esc-list p { margin: 0; font-size: 13.5px; color: var(--text-secondary); }
+.finding { background: var(--surface-1); border: 1px solid var(--line); border-left: 3px solid var(--s3);
+  border-radius: 0 9px 9px 0; padding: 15px 44px 15px 18px; margin-bottom: 12px; }
+.finding.catch { border-left-color: var(--critical); }
+.finding.ship { border-left-color: var(--good); }
+.finding h3 { margin: 0 0 6px; font-size: 15.5px; }
+.finding p { margin: 0 0 8px; font-size: 14px; color: var(--text-secondary); }
+.finding p:last-child { margin-bottom: 0; }
+.finding .files { font-family: var(--mono); font-size: 11px; color: var(--text-muted); }
+.grill .ask { background: var(--surface-1); border: 1px solid var(--line); border-left: 3px solid var(--warning);
+  border-radius: 0 9px 9px 0; padding: 16px 44px 16px 18px; margin-bottom: 14px; }
+.grill .ask h3 { margin: 0 0 7px; font-size: 16px; }
+.grill .ask p { margin: 0 0 9px; font-size: 14px; color: var(--text-secondary); }
+.grill .rec { background: rgba(250,178,25,.08); border-radius: 6px; padding: 9px 12px;
+  font-size: 13.5px; margin-bottom: 0 !important; }
+.grill .rec b { color: #f5c95f; }
+.more { font-family: var(--mono); font-size: 12px; cursor: pointer; background: var(--surface-2);
+  border: 1px solid var(--line); color: var(--text-secondary); border-radius: 7px; padding: 7px 13px; margin: 4px 8px 0 0; }
+.more:hover { background: var(--surface-3); color: var(--text-primary); }
+table.wide td:first-child { color: var(--text-primary); font-weight: 600; white-space: nowrap; }
+.mut td:first-child { white-space: normal; font-weight: 500; color: var(--text-secondary); }
+.mut .caught { color: #6cd46c; font-family: var(--mono); font-size: 11.5px; white-space: nowrap; }
+.mut .escaped { color: #f5c95f; font-family: var(--mono); font-size: 11.5px; white-space: nowrap; }
+.mut .equiv { color: var(--text-muted); font-family: var(--mono); font-size: 11.5px; white-space: nowrap; }
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="wrap">
+    <h1>Client-server build report</h1>
+    <p class="verdict"><b>The phantom-window bug is fixed and proven, and the two riskiest
+    mechanisms in the whole split are built and tested.</b> Four commits on a branch, 593 tests
+    green, nothing installed — another agent's build holds the symlink and taking it would drop
+    their work.</p>
+    <p class="metaline">
+      <span>2026-09-08, evening</span>
+      <span>branch client-server-split</span>
+      <span>slice 0 done · slice 1 mostly</span>
+    </p>
+  </div>
+</header>
+
+<div class="wrap">
+
+<h2 class="sec">Read first</h2>
+<ol class="esc-list">
+  <li><span class="esc-n">1</span><div>
+    <h3>The typo really did open a window</h3>
+    <p>Run the new tests against the previous commit and <code>terminal-delight sevre</code>
+    reaches <code>open window</code> at main.rs:18569 — it survives only because the test
+    strips the display variables. That is the phantom-window class caught in the act, and it
+    now exits 2 with the disk untouched.</p>
+  </div></li>
+  <li><span class="esc-n">2</span><div>
+    <h3>The tests were themselves tested</h3>
+    <p>The snapshot encoder was broken seven ways on purpose. Six breakages were caught — two
+    only after the tests were strengthened, meaning the first versions passed against a broken
+    encoder. That's the table below, and it is the part I'd want a reviewer to read.</p>
+  </div></li>
+  <li><span class="esc-n">3</span><div>
+    <h3>The socket seam found two design errors</h3>
+    <p>One of them fatal to the plan as written: the way the design intended to notice a
+    hung-up host cannot work, because the event loop deliberately refuses to read a hung-up
+    descriptor. Found by the test hanging, not by reasoning.</p>
+  </div></li>
+  <li><span class="esc-n">4</span><div>
+    <h3>Nothing is installed, on purpose</h3>
+    <p>The live symlink points at <code>td-0c37dc4-favourites-shelf</code> — another agent's
+    build from this afternoon. Building over it would silently drop their paint-shelf work
+    while you were away. Your own rule says installed is the done line; this is the exception
+    it allows, said out loud.</p>
+  </div></li>
+  <li><span class="esc-n">5</span><div>
+    <h3>Two slice-1 items held back deliberately</h3>
+    <p>Attaching a <code>Session</code> to a socket forces a decision about <code>shell_pid</code>
+    — an attached pane has no local process — and that ripples into pane.rs. It belongs with
+    the attach work, not ahead of it. Reasons recorded in the state file.</p>
+  </div></li>
+</ol>
+
+<h2 class="sec">What shipped</h2>
+
+<div class="finding ship">
+  <h3><span class="tag v">measured</span>Slice 0 — an unknown word costs an exit code, not a window</h3>
+  <p>One pure function classifies <code>argv[1]</code>: a known headless verb, a reply from the
+  flag gate, a positional naming a directory that exists, or a refusal naming the word. The
+  reserved open-here slot is now honoured rather than merely tolerated — it starts the first
+  terminal of a window with no saved layout. Five unit tests pin the contract and its ordering;
+  three run the real binary against a throwaway HOME and assert the tree is still empty
+  afterwards, which is the disk half of the bug rather than just the window half.</p>
+  <p class="files">3d50f96 · app/src/main.rs · app/tests/dispatch_cli.rs · evidence posted to #314</p>
+</div>
+
+<div class="finding ship">
+  <h3><span class="tag v">measured</span>The snapshot encoder — a terminal's truth as bytes</h3>
+  <p>Reads a terminal and re-emits scrollback, screen, colours, attributes, wide characters,
+  combining marks, soft wrap, cursor and modes as ordinary VT bytes another terminal can eat,
+  plus a cross-process content hash that ignores scroll position and selection because those
+  belong to whoever is looking. Twelve round-trip tests: feed a terminal, encode it, replay
+  into a fresh one, require them indistinguishable cell by cell.</p>
+  <p class="files">884faaf · app/src/gridwire.rs</p>
+</div>
+
+<div class="finding ship">
+  <h3><span class="tag v">measured</span>The seam — alacritty's own event loop, driven by a socket</h3>
+  <p>A connected socket presented as the pseudoterminal alacritty expects, so a client with no
+  PTY runs the stock reader thread, stock parser and a stock terminal. Four tests drive both
+  ends over a socket pair: output lands in the replica's grid with colour intact, keystrokes
+  travel back, a resize is <em>announced</em> rather than applied, and a hangup ends the reader
+  thread instead of spinning it. This was the design's least-confident item — "compile-verified
+  nowhere" — and it is now verified by running.</p>
+  <p class="files">227ddf3 · app/src/socketpty.rs</p>
+</div>
+
+<h2 class="sec">Breaking it on purpose</h2>
+
+<p style="color:var(--text-secondary); font-size:14px; max-width:820px;">Every round-trip test
+passed the first time it ran, which is exactly when a test suite deserves suspicion. So the
+encoder was deliberately broken seven ways to see whether the suite noticed.</p>
+
+<table class="wide mut">
+  <thead><tr><th>Deliberate breakage</th><th>Result</th></tr></thead>
+  <tbody>
+    <tr><td>Stop skipping the second half of a wide character</td><td class="caught">caught</td></tr>
+    <tr><td>Drop the underline's own colour</td><td class="caught">caught</td></tr>
+    <tr><td>Drop combining marks</td><td class="caught">caught</td></tr>
+    <tr><td>Emit a newline after the final row</td><td class="caught">caught — by eight tests</td></tr>
+    <tr><td>Trim a wrapped row's trailing blanks like any other row</td><td class="escaped">escaped → test added</td></tr>
+    <tr><td>Force line-wrap off before painting</td><td class="escaped">escaped → test added</td></tr>
+    <tr><td>Turn on insert mode before painting</td><td class="equiv">survives — equivalent</td></tr>
+  </tbody>
+</table>
+
+<div class="callout">
+  <span class="lbl">what the two escapes were</span>
+  <p>A wrapped row can end in <em>written spaces</em>, which look exactly like the blanks it is
+  safe to trim — trim them and the text no longer runs off the edge, so two rows silently
+  become one. And a re-snapshot lands on the <em>live</em> client, not a fresh one, so it has to
+  survive whatever modes the previous snapshot left behind. Both now have tests; both were
+  invisible until the encoder was broken.</p>
+  <p>The seventh survives because it changes nothing observable: inserting into blank cells and
+  overwriting them leave the same grid. Stated rather than counted as a pass.</p>
+</div>
+
+<button class="more" data-dlg="d-errors">The two design errors, in detail</button>
+<button class="more" data-dlg="d-how">How it was built and verified</button>
+<button class="more" data-dlg="d-limits">Limits and what is not proven</button>
+
+<h2 class="sec">Your call</h2>
+<div class="grill">
+  <div class="ask">
+    <h3>1 · Install slice 0, or leave the symlink alone?</h3>
+    <p>The dispatch fix is small, self-contained and strictly better, but the installed binary
+    is another agent's favourites-shelf build. Installing mine would give you the #314 fix and
+    take away their shelf until they rebuild.</p>
+    <p class="rec"><b>Recommendation:</b> leave it. Let their work land first, then one build
+    carries both. Nothing about slice 0 is urgent enough to cost someone else's afternoon.</p>
+  </div>
+  <div class="ask">
+    <h3>2 · Continue to slice 2, the host?</h3>
+    <p>Both risky mechanisms are proven, so the host is now mostly assembly: the serve verb, the
+    pane table, the socket and its verbs, the lease-fenced splice. It is also the biggest single
+    slice.</p>
+    <p class="rec"><b>Recommendation:</b> yes, next session — with the two held slice-1 items
+    folded into slice 3 where they belong.</p>
+  </div>
+  <div class="ask">
+    <h3>3 · Should the branch become a pull request now?</h3>
+    <p>Four commits, all green, none of it user-visible except the dispatch fix. A PR now is a
+    reviewable unit; a PR at the end is one nobody can read.</p>
+    <p class="rec"><b>Recommendation:</b> open it now as a draft, so slices land as reviewable
+    increments rather than one 5,000-line diff at the flip.</p>
+  </div>
+  <div class="ask">
+    <h3>4 · The crate-private token hazard — worth an upstream pull request?</h3>
+    <p>Filed as a falsifiable issue (#325). Our copy of alacritty's two dispatch constants
+    cannot be checked by the compiler, and an upgrade renumbering them fails silently.</p>
+    <p class="rec"><b>Recommendation:</b> send the upstream patch exporting them — it is four
+    lines and it deletes our copy. Until then the issue names the tripwire.</p>
+  </div>
+</div>
+
+<footer>
+  <p>Client-server split · terminal-delight · 2026-09-08</p>
+  <p>branch client-server-split (worktree ~/Work/td-client-server) · c8ad330 gates · 3d50f96 slice 0 · 884faaf gridwire · 227ddf3 socketpty · 03c35c9 status</p>
+  <p>593 tests green, from a 570 baseline · nothing installed · annotate anything, then copy map</p>
+</footer>
+
+</div><!-- /wrap -->
+
+<dialog id="d-errors">
+  <div class="dlg-head">
+    <div><h3>The two design errors</h3>
+    <p class="repo">found by building the seam, not by reading it</p></div>
+    <button class="x" data-close>&times;</button>
+  </div>
+  <div class="dlg-body">
+    <h4>The hangup that could never be noticed</h4>
+    <p>The approved design said a client learns its host has gone from a zero-length read, and
+    that the reader would then poke a descriptor registered under the child key to turn that
+    into the event upstream understands. The first implementation did exactly that, and the
+    test hung for its full five seconds.</p>
+    <p>The reason is in alacritty's loop: a descriptor that has hung up arrives with the
+    interrupt flag set, and the loop <strong>skips it deliberately</strong> — "don't try to do
+    I/O on a dead PTY" (event_loop.rs:275). So the zero-length read never happens. A closed
+    socket stays readable forever and the reader thread spins on an end it is not allowed to
+    look at.</p>
+    <p>The fix registers the same stream a second time under the child key and establishes the
+    hangup by <em>peeking</em> — asking whether the far end has closed without consuming a byte
+    the terminal still needs to draw. Four lines of syscall, and the test now finishes in
+    hundredths of a second. Worth noting the shape of this: it was found by a test hanging, and
+    no amount of re-reading the design would have produced it.</p>
+    <h4>Constants the compiler cannot check</h4>
+    <p>The event loop dispatches poller events by matching integer keys that alacritty keeps
+    crate-private, and exports neither them nor a helper that sets them. An out-of-crate
+    pseudoterminal has to agree by value, so our file hardcodes 0 and 1 with the upstream file
+    and line beside them.</p>
+    <p>Get it wrong and nothing errors: output arrives on the child arm, or a hangup on the read
+    arm, and a pane simply stops printing. Filed as #325 with the reproduction (change the
+    constant, watch the test hang) and its invalidation criteria — chiefly, if a later alacritty
+    exports them, our copies get deleted and the issue closes.</p>
+    <h4>What both have in common</h4>
+    <p>Neither was a mistake in reasoning; both were places where the design described upstream
+    behaviour it had read rather than run. That is the argument for building the risky seam
+    early rather than at the end, which is what the slice order already said.</p>
+  </div>
+</dialog>
+
+<dialog id="d-how">
+  <div class="dlg-head">
+    <div><h3>How it was built and verified</h3>
+    <p class="repo">the working setup, for the next session</p></div>
+    <button class="x" data-close>&times;</button>
+  </div>
+  <div class="dlg-body">
+    <h4>Where</h4>
+    <p>A git worktree at <code>~/Work/td-client-server</code> on branch
+    <code>client-server-split</code>, cut from main. The live tree was left alone: it has
+    another agent's uncommitted paint-shelf work checked out on shorts-pipeline, and its build
+    is the one installed. The gate docs stopped riding shorts-pipeline and moved onto this
+    branch, ending the cherry-pick dance.</p>
+    <h4>The build loop</h4>
+    <p>The worktree's 19&nbsp;GB build cache was reflink-cloned from the live tree in 4.7
+    seconds at zero disk cost — btrfs copy-on-write — so every dependency stayed warm and no
+    lock is shared with the other agent. Incremental builds run about twenty seconds; the whole
+    suite runs in well under a second.</p>
+    <h4>The verification standard used</h4>
+    <ul>
+      <li><strong>Baseline first.</strong> 570 tests green before anything changed, so any
+      later failure has a known origin.</li>
+      <li><strong>Every new test proven able to fail.</strong> The dispatch tests were run
+      against the parent commit and two failed, printing the <code>open window</code> panic
+      that proves the bug was real. The encoder tests were run against seven deliberately
+      broken encoders.</li>
+      <li><strong>Real processes where the claim is about processes.</strong> The dispatch
+      integration tests spawn the actual binary with a sacrificial HOME and strip the display
+      variables, so a regression cannot paint a window on your desktop — and if it tried, the
+      test would time out and kill it.</li>
+      <li><strong>No sleeps.</strong> The socket tests poll for a condition with a deadline
+      rather than sleeping a fixed time, because a fixed sleep is how a suite becomes flaky.</li>
+    </ul>
+    <h4>Commits</h4>
+    <p>Each carries the three-paragraph message and names the least-confident decisions it
+    touches, per the amendment you added at the omarchy Gate 3.</p>
+  </div>
+</dialog>
+
+<dialog id="d-limits">
+  <div class="dlg-head">
+    <div><h3>Limits</h3>
+    <p class="repo">what this evening did not establish</p></div>
+    <button class="x" data-close>&times;</button>
+  </div>
+  <div class="dlg-body">
+    <h4>Nothing ran as a terminal</h4>
+    <p>Every test here is headless: no window opened, no shell was spawned by the new code, no
+    real session was attached. The encoder is proven against terminals built by feeding bytes,
+    and the seam against a socket pair inside one process. That is the right level for these
+    two pieces, and it is not the same as the feature working.</p>
+    <h4>The performance bets are untouched</h4>
+    <p>Dual-terminal cost and input-echo latency remain exactly as unmeasured as they were at
+    Gate 2. They gate the default flip at slice 5, not this work.</p>
+    <h4>The encoder's documented gaps</h4>
+    <p>Scroll regions, tab stops, the saved cursor, window title and charset selection are not
+    carried in a snapshot; each is a program that redraws rather than a program that lies, and
+    each is stated in the module's own documentation rather than discovered later. The
+    alt-screen leg carries only what is readable, so history under vim heals when vim exits —
+    the trade you accepted at Gate 3.</p>
+    <h4>One test that cannot fail, named</h4>
+    <p>Of the three real-binary tests, <code>version_still_answers_without_touching_the_disk</code>
+    passes against the old code too. It is a regression guard for the flag gate you already had,
+    not evidence of new behaviour, and it is counted as such.</p>
+  </div>
+</dialog>
+
+<div class="notebar" id="notebar">
+  <span class="cnt"><b id="note-count">0</b> notes</span>
+  <button id="btn-export" class="primary" data-note-action="export"
+          title="Copy the anchored note map to the clipboard">&#x1F4CB; copy map</button>
+  <button id="btn-embed" data-note-action="embed"
+          title="Download this file with your notes baked in">&#x1F4BE; save into file</button>
+</div>
+
+<dialog id="d-note">
+  <div class="dlg-head">
+    <div><h3 id="note-title">Note</h3><p class="repo" id="note-anchor">&nbsp;</p></div>
+    <button class="x" data-close>&times;</button>
+  </div>
+  <div class="dlg-body">
+    <ul id="note-list"></ul>
+    <p id="note-none">No notes on this yet.</p>
+    <textarea id="note-text"
+      placeholder="Your note. Saved against this element; copy map puts it on the clipboard, save into file bakes it into the HTML."></textarea>
+    <div class="note-actions">
+      <button class="save" data-note-action="add">Add note</button>
+      <button data-close>Close</button>
+      <span class="hintk">Ctrl+Enter to add</span>
+    </div>
+  </div>
+</dialog>
+
+<script type="application/json" id="report-notes">{}</script>
+<script>
+  window.NOTES_FILE = '2026-09-08-client-server-build-report.html';
+</script>
+<script>
+(function () {
+  'use strict';
+  Array.prototype.forEach.call(document.querySelectorAll('[data-dlg]'), function (b) {
+    b.addEventListener('click', function () {
+      var d = document.getElementById(b.dataset.dlg);
+      if (d) d.showModal();
+    });
+  });
+  Array.prototype.forEach.call(document.querySelectorAll('dialog'), function (d) {
+    if (d.id === 'd-note') return;
+    Array.prototype.forEach.call(d.querySelectorAll('[data-close]'), function (x) {
+      x.addEventListener('click', function () { d.close(); });
+    });
+    d.addEventListener('click', function (e) { if (e.target === d) d.close(); });
+  });
+})();
+</script>
+<script>
+/* decision-brief — reader notes. Inlined so the file survives being emailed.
+ * NOTHING HERE MAY CONTAIN A LITERAL CLOSING SCRIPT TAG. */
+(function () {
+  'use strict';
+
+  var FILE = window.NOTES_FILE ||
+    (location.pathname.split('/').pop() || 'decision-brief.html');
+  var KEY = 'notes:' + FILE;
+
+  var TARGETS = window.NOTES_TARGETS || [
+    ['.grill .q, .grill-q, .ask', 'ask'],
+    ['.card', 'verdict'],
+    ['.esc-list li', 'readfirst'],
+    ['.finding', 'finding'],
+    ['.tile', 'stat'],
+    ['table.wide tr', 'row'],
+    ['.bar-row', 'chart'],
+    ['.callout', 'callout'],
+    ['dialog .dlg-body > h4', 'sub']
+  ];
+
+  var baked = {};
+  try {
+    var island = document.getElementById('report-notes');
+    if (island) baked = JSON.parse(island.textContent || '{}');
+  } catch (e) { /* a malformed island must not break the page */ }
+
+  var N;
+  try { N = JSON.parse(localStorage.getItem(KEY) || 'null') || baked; }
+  catch (e) { N = baked; }
+
+  var active = null, activeTitle = '';
+
+  function save() {
+    try { localStorage.setItem(KEY, JSON.stringify(N)); } catch (e) {}
+  }
+  function esc(s) {
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+  function slug(s) {
+    return String(s || 'x').toLowerCase().replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-|-$/g, '').slice(0, 44) || 'x';
+  }
+  function titleOf(el) {
+    var h = el.querySelector('h2,h3,h4,.bar-lab,.k,.lbl,td:first-child,th:first-child');
+    var t = ((h ? h.textContent : el.textContent) || 'item').replace(/\s+/g, ' ').trim();
+    return t.length > 72 ? t.slice(0, 69) + '…' : t;
+  }
+
+  function tag() {
+    var used = {};
+    TARGETS.forEach(function (pair) {
+      var sel = pair[0], pre = pair[1];
+      Array.prototype.forEach.call(document.querySelectorAll(sel), function (el, i) {
+        if (el.classList.contains('notable')) return;
+        if (el.tagName === 'TR' && el.querySelector('th')) return;
+        if (el.closest('#d-note, .notebar')) return;
+
+        var id;
+        var num = el.querySelector('.esc-n');
+        if (num) id = pre + '-' + num.textContent.trim();
+        else id = pre + '-' + slug(titleOf(el)).split('-').slice(0, 4).join('-');
+
+        var base = id, n = 2;
+        while (used[id]) id = base + '-' + (n++);
+        used[id] = 1;
+
+        el.classList.add('notable');
+        el.dataset.nid = id;
+        el.dataset.ntitle = titleOf(el);
+        if (!el.id) el.id = id;
+
+        var b = document.createElement('button');
+        b.className = 'note-btn';
+        b.type = 'button';
+        b.title = 'Add a note';
+        b.innerHTML = '&#x1F4AC;';
+        b.addEventListener('click', function (ev) {
+          ev.preventDefault(); ev.stopPropagation(); open(el);
+        });
+        el.appendChild(b);
+      });
+    });
+  }
+
+  function badges() {
+    var total = 0;
+    Array.prototype.forEach.call(document.querySelectorAll('.notable'), function (el) {
+      var n = (N[el.dataset.nid] || []).length;
+      total += n;
+      el.classList.toggle('has-note', n > 0);
+      var b = el.querySelector(':scope > .note-btn');
+      if (b) b.innerHTML = n ? String(n) : '&#x1F4AC;';
+    });
+    var c = document.getElementById('note-count');
+    if (c) c.textContent = total;
+    ['btn-export', 'btn-embed'].forEach(function (id) {
+      var b = document.getElementById(id);
+      if (b) b.disabled = total === 0;
+    });
+  }
+
+  function render() {
+    var list = N[active] || [];
+    var ul = document.getElementById('note-list');
+    document.getElementById('note-none').style.display = list.length ? 'none' : 'block';
+    ul.innerHTML = list.map(function (n, i) {
+      return '<li><div class="nts"><span>' + esc(n.ts) + '</span>' +
+        '<button class="ndel" data-i="' + i + '">delete</button></div>' + esc(n.text) + '</li>';
+    }).join('');
+    Array.prototype.forEach.call(ul.querySelectorAll('.ndel'), function (b) {
+      b.addEventListener('click', function () { del(+b.dataset.i); });
+    });
+  }
+
+  function open(el) {
+    active = el.dataset.nid;
+    activeTitle = el.dataset.ntitle;
+    document.getElementById('note-title').textContent = activeTitle;
+    document.getElementById('note-anchor').textContent = '#' + active;
+    render();
+    document.getElementById('d-note').showModal();
+    document.getElementById('note-text').focus();
+  }
+
+  function add() {
+    var ta = document.getElementById('note-text');
+    var t = ta.value.trim();
+    if (!t || !active) return;
+    (N[active] = N[active] || []).push({
+      text: t,
+      title: activeTitle,
+      ts: new Date().toISOString().slice(0, 16).replace('T', ' ')
+    });
+    ta.value = '';
+    save(); render(); badges();
+  }
+
+  function del(i) {
+    N[active].splice(i, 1);
+    if (!N[active].length) delete N[active];
+    save(); render(); badges();
+  }
+
+  function buildMap() {
+    var count = 0, els = 0;
+    for (var k in N) { if (N.hasOwnProperty(k)) { els++; count += N[k].length; } }
+    var out = [
+      'NOTES — ' + FILE,
+      count + ' notes on ' + els + ' elements.',
+      'Each [anchor] is an element id in that file — search it to find the passage.',
+      ''
+    ];
+    Array.prototype.forEach.call(document.querySelectorAll('.notable'), function (el) {
+      var list = N[el.dataset.nid];
+      if (!list || !list.length) return;
+      out.push('[' + el.dataset.nid + '] ' + el.dataset.ntitle);
+      list.forEach(function (n) { out.push('  · ' + n.text.replace(/\n+/g, ' ')); });
+      out.push('');
+    });
+    return out.join('\n');
+  }
+
+  function copyMap(btn) {
+    var txt = buildMap();
+    var done = function () {
+      if (!btn) return;
+      var o = btn.getAttribute('data-label') || btn.innerHTML;
+      btn.setAttribute('data-label', o);
+      btn.innerHTML = '&#x2713; copied &middot; ~' + Math.ceil(txt.length / 4) + ' tokens';
+      btn.classList.add('copied');
+      clearTimeout(btn._t);
+      btn._t = setTimeout(function () {
+        btn.innerHTML = o; btn.classList.remove('copied');
+      }, 2000);
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(txt).then(done, function () { legacyCopy(txt); done(); });
+    } else { legacyCopy(txt); done(); }
+  }
+
+  function legacyCopy(txt) {
+    var ta = document.createElement('textarea');
+    ta.value = txt;
+    ta.setAttribute('readonly', '');
+    ta.style.cssText = 'position:fixed;top:-1000px;opacity:0';
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand('copy'); } catch (e) {}
+    document.body.removeChild(ta);
+  }
+
+  function embedNotes() {
+    var doc = document.documentElement.cloneNode(true);
+    Array.prototype.forEach.call(doc.querySelectorAll('.note-btn'), function (n) { n.remove(); });
+    Array.prototype.forEach.call(doc.querySelectorAll('.notable'), function (n) {
+      n.classList.remove('notable', 'has-note');
+    });
+    var island = doc.querySelector('#report-notes');
+    if (island) island.textContent = JSON.stringify(N, null, 1);
+    var body = doc.querySelector('body');
+    if (body) body.appendChild(document.createComment('\nREADER NOTES —\n' + buildMap() + '\n'));
+
+    var blob = new Blob(['<!DOCTYPE html>\n' + doc.outerHTML], { type: 'text/html' });
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = FILE;
+    a.click();
+    setTimeout(function () { URL.revokeObjectURL(a.href); }, 4000);
+
+    var b = document.getElementById('btn-embed');
+    if (b) { var o = b.innerHTML; b.innerHTML = 'saved &#x2713;'; setTimeout(function () { b.innerHTML = o; }, 2200); }
+  }
+
+  function clearNotes() {
+    if (!confirm('Delete every note in this brief?')) return;
+    N = {}; save(); badges();
+  }
+
+  function init() {
+    var ta = document.getElementById('note-text');
+    if (ta) {
+      ta.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); add(); }
+      });
+    }
+    document.addEventListener('click', function (e) {
+      var t = e.target.closest('[data-note-action]');
+      if (!t) return;
+      var a = t.dataset.noteAction;
+      if (a === 'add') add();
+      else if (a === 'export' || a === 'copy') copyMap(t);
+      else if (a === 'embed') embedNotes();
+      else if (a === 'clear') clearNotes();
+    });
+    ['d-note'].forEach(function (id) {
+      var d = document.getElementById(id);
+      if (!d) return;
+      Array.prototype.forEach.call(d.querySelectorAll('[data-close]'), function (x) {
+        x.addEventListener('click', function () { d.close(); });
+      });
+      d.addEventListener('click', function (e) { if (e.target === d) d.close(); });
+    });
+    tag();
+    badges();
+  }
+
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
+  else init();
+})();
+</script>
+</body>
+</html>
