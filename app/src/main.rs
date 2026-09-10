@@ -19906,8 +19906,14 @@ fn main() {
         // No lock is consulted here any more. A hosted window writes nothing —
         // it hands its layout to the host — so the claim that decides who may
         // write a session file has no bearing on whether this window may show
-        // one. What arbitrates is the host: a second window attaching takes the
-        // panes, which is the behaviour the product gate asked for.
+        // one. What arbitrates is the host, per pane: a second window attaching
+        // to a pane takes that pane's stream and leaves every other one alone,
+        // so two windows on one session share it rather than one of them
+        // winning. Window-level steal was written into Gate 2, never built,
+        // and deleted on 2026-09-10 — this comment claimed it as "the
+        // behaviour the product gate asked for" until then, which is the third
+        // comment on this branch found promising something the code does not
+        // do.
         let link = {
             let reached = match resolved.route {
                 instance::Route::AttachLive => hostctl::HostLink::attach(&resolved.id),

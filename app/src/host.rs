@@ -47,9 +47,9 @@ use polling::{Event, PollMode, Poller};
 
 use crate::gridwire;
 use crate::hostproto::{
-    host_socket_path, parse_stream_greeting, ClientKind, ClosedPane, GridCheck, Outcome, PaneGeom,
-    PaneId, PaneInfo, Persisted, Push, Reply, Request, WireMode, ENV_PANE_ID, ENV_SESSION,
-    LAYOUT_SCHEMA, PROTO_VERSION,
+    host_socket_path, parse_stream_greeting, ClosedPane, GridCheck, Outcome, PaneGeom, PaneId,
+    PaneInfo, Persisted, Push, Reply, Request, WireMode, ENV_PANE_ID, ENV_SESSION, LAYOUT_SCHEMA,
+    PROTO_VERSION,
 };
 use crate::session::PaneRuntime;
 use crate::term::GridSize;
@@ -377,11 +377,6 @@ impl Cadence {
 struct Conn {
     id: u64,
     write: Mutex<UnixStream>,
-    /// Set when a later window said hello and took the session away from this
-    /// one. A superseded connection may still ask questions — that is how its
-    /// window finds out it was superseded rather than that its terminals died
-    /// — but it may no longer change anything.
-    superseded: AtomicBool,
 }
 
 impl Conn {
@@ -389,7 +384,6 @@ impl Conn {
         Self {
             id,
             write: Mutex::new(stream),
-            superseded: AtomicBool::new(false),
         }
     }
 
@@ -397,11 +391,6 @@ impl Conn {
     fn say(&self, line: &str) -> bool {
         let mut out = self.write.lock().expect("conn write");
         out.write_all(line.as_bytes()).is_ok()
-    }
-
-    /// Whether a later window has taken the session from this connection.
-    fn superseded(&self) -> bool {
-        self.superseded.load(Ordering::SeqCst)
     }
 }
 
@@ -536,15 +525,6 @@ pub struct Host {
     last_written: Mutex<Option<String>>,
     /// Control connections that asked to be told when something changes.
     watchers: Mutex<Vec<Arc<Conn>>>,
-    /// The control connection of the window that currently holds this session.
-    ///
-    /// One slot, because a session has one window: a second window saying
-    /// hello takes it, tmux-style, and the window it took it from is frozen
-    /// out rather than refused (Gate 2, decision 1). A tool never occupies
-    /// this slot and never empties it — every launch probes every candidate
-    /// host, and if asking could steal, every launch would rob the window
-    /// already running.
-    gui: Mutex<Option<Arc<Conn>>>,
     next_conn: AtomicU64,
     /// How many times each clock has come round. Nothing in production reads
     /// them; they are how a test tells a host that has backed off from one that
@@ -585,7 +565,6 @@ impl Host {
             layout: Mutex::new(None),
             last_written: Mutex::new(None),
             watchers: Mutex::new(Vec::new()),
-            gui: Mutex::new(None),
             next_conn: AtomicU64::new(1),
             watches: AtomicU64::new(0),
             checkpoints: AtomicU64::new(0),
@@ -1115,60 +1094,14 @@ impl Host {
         }
     }
 
-    /// Called when a connection ends, however it ends.
-    ///
-    /// A subscription that outlived its socket would be a write to a closed
-    /// descriptor on every tick, for the life of the host; and a window slot
-    /// still holding a departed window's connection would hold its descriptor
-    /// open with it, until some later window happened to arrive.
-    fn hang_up(&self, id: u64) {
+    /// Stop. Called when a connection ends, however it ends — a subscription
+    /// that outlived its socket would be a write to a closed descriptor on
+    /// every tick, for the life of the host.
+    fn unwatch(&self, id: u64) {
         self.watchers
             .lock()
             .expect("watchers")
             .retain(|w| w.id != id);
-        let mut gui = self.gui.lock().expect("gui");
-        if gui.as_ref().is_some_and(|held| held.id == id) {
-            *gui = None;
-        }
-    }
-
-    /// A window says hello: it takes the session, and whoever held it loses it.
-    ///
-    /// The steal is the approved answer to two windows wanting one session
-    /// (Gate 2, decision 1): the newest wins, because it is the one a person
-    /// is looking at, and refusing it would leave a relaunch staring at a
-    /// terminal the ghost of its predecessor still owns. What the loser loses
-    /// is both halves of holding a session — the pane streams it is drawing
-    /// from, and the right to change anything, the session file included.
-    ///
-    /// Its control connection is left open on purpose. The loser has to find
-    /// out *which* of the two things happened to its streams — a terminal that
-    /// exited is over, a terminal taken away is still running — and asking is
-    /// how it tells them apart. A connection dropped here would leave it with
-    /// no way to ask and one obvious wrong answer to reach for.
-    fn take_the_session(&self, conn: &Arc<Conn>) {
-        let mut gui = self.gui.lock().expect("gui");
-        let loser = match gui.as_ref() {
-            Some(held) if held.id == conn.id => None,
-            Some(_) => gui.take(),
-            None => None,
-        };
-        *gui = Some(conn.clone());
-        // A window that lost the session and says hello again has it back:
-        // taking it is what the verb means, whoever last held it.
-        conn.superseded.store(false, Ordering::SeqCst);
-        drop(gui);
-        let Some(loser) = loser else { return };
-        loser.superseded.store(true, Ordering::SeqCst);
-        // Everything attached belonged to the window that just lost the
-        // session: a window says hello before it attaches anything, so at this
-        // instant the newcomer holds nothing. Sinks carry no owner — a byte
-        // stream is a separate connection that names a pane and nothing else —
-        // and inventing one here would be a fence with a hole in it while the
-        // stream connection stays unauthenticated by design.
-        for (_, pane) in self.pane_list() {
-            *pane.sink.lock().expect("sink lock") = None;
-        }
     }
 
     /// Tell every watching connection about something that happened.
@@ -1699,9 +1632,8 @@ fn serve_connection(host: &Arc<Host>, stream: UnixStream) {
         stream,
     ));
     control_loop(host, &conn, first, reader);
-    // However this connection ended, it is no longer anybody to push to, and
-    // no longer the window holding this session.
-    host.hang_up(conn.id);
+    // However this connection ended, it is no longer anybody to push to.
+    host.unwatch(conn.id);
 }
 
 /// One control conversation: a verb in, a line out, until somebody hangs up.
@@ -1753,54 +1685,14 @@ fn keep_typing(host: &Arc<Host>, pane: PaneId, serial: u64, mut reader: BufReade
     host.detach(pane, serial);
 }
 
-/// What a window that has lost the session is told when it tries to change it.
-///
-/// Shaped per verb rather than as a bare error, and that is not politeness. A
-/// client reads the replies on its connection in order and steps over the ones
-/// it was not waiting for; a bare error is the one shape it cannot step over,
-/// so a refusal in that shape would be read as the answer to whatever it asked
-/// next. Questions are not refused at all — a window that has just lost its
-/// streams has to be able to ask whether its terminals died or were taken, and
-/// asking is the only way it can tell those apart.
-fn refuse_the_superseded(request: &Request) -> Option<Reply> {
-    const LOST: &str = "another window holds this session now";
-    Some(match request {
-        Request::SpawnPane { .. } => Reply::Spawned {
-            outcome: Outcome::Err(LOST.into()),
-            started: false,
-        },
-        Request::AttachPane { pane, .. } => Reply::Attached {
-            pane: *pane,
-            outcome: Outcome::Err(LOST.into()),
-        },
-        Request::Resize { pane, .. } => Reply::Resized {
-            pane: *pane,
-            outcome: Outcome::Err(LOST.into()),
-        },
-        Request::ClosePane { pane } => Reply::Closed {
-            pane: *pane,
-            outcome: Outcome::Err(LOST.into()),
-        },
-        Request::Save { .. } => Reply::Saved {
-            outcome: Outcome::Err(LOST.into()),
-        },
-        Request::Shutdown => Reply::Error {
-            msg: format!("{LOST}, and ending it is theirs to ask for"),
-        },
-        // Saying hello again takes the session back, which is what the verb
-        // means. The rest are questions.
-        Request::Hello { .. } | Request::ListPanes | Request::GridCheck { .. } | Request::Watch => {
-            return None
-        }
-    })
-}
-
 /// Answer one control line.
 ///
 /// Nothing here consults what the connection said earlier, and that is the
 /// design rather than an omission: authorisation is the peer-uid check taken
 /// in `serve_connection` before a byte is parsed, and a verb that trusted a
-/// claim in its own payload is what Gate 1 ruled out.
+/// claim in its own payload is what Gate 1 ruled out. The one place the wire
+/// is stateful is `watch`, which is a subscription and has to know which
+/// connection to push to.
 fn handle_control_line(host: &Arc<Host>, line: &str, conn: Option<&Arc<Conn>>) -> Reply {
     let request: Request = match serde_json::from_str(line.trim()) {
         Ok(request) => request,
@@ -1810,20 +1702,14 @@ fn handle_control_line(host: &Arc<Host>, line: &str, conn: Option<&Arc<Conn>>) -
             }
         }
     };
-    if conn.is_some_and(|conn| conn.superseded()) {
-        if let Some(refusal) = refuse_the_superseded(&request) {
-            return refusal;
-        }
-    }
     match request {
         Request::Hello { proto, kind } => match crate::hostproto::version_check(proto) {
             Ok(()) => {
-                // Only a window takes the session, and it takes it by saying
-                // what it is. A tool asks its questions and leaves the window
-                // that is using this session exactly as it found it.
-                if let (ClientKind::Window, Some(conn)) = (kind, conn) {
-                    host.take_the_session(conn);
-                }
+                // What a peer says it is is recorded nowhere and gates
+                // nothing. Saying hello signs a connection up for exactly one
+                // thing — finding out whether the two sides speak the same
+                // protocol — and a client that skips it is answered anyway.
+                let _ = kind;
                 Reply::Hello {
                     proto: PROTO_VERSION,
                     session: host.key.clone(),
@@ -2711,53 +2597,79 @@ mod owning {
     }
 
     #[test]
-    fn a_second_window_takes_the_session_and_the_first_keeps_only_its_questions() {
-        // The steal Gate 2 approved and nobody built. Two windows want one
-        // session — a relaunch beside a window that is already up, most often
-        // — and the newest wins, because it is the one a person is looking at.
-        let scratch = scratch("steal");
-        let (host, pane) = host_with_cat_pane();
+    fn two_windows_on_one_session_share_its_panes() {
+        // The accepted v1 behaviour, written down because it was briefly the
+        // opposite. A window-level steal was built on 2026-09-10 — a second
+        // `window` hello dropped the first window's connection and every pane
+        // sink it held — and reversed the same day: no user asked for it, the
+        // authorisation boundary is the peer-uid check on the socket, and
+        // anything that can open a second window on this session can already
+        // do far worse than watch it.
+        //
+        // So: saying hello costs nobody anything, and what arbitrates a pane
+        // is attaching to it. Most recent attach wins that pane; every other
+        // pane stays exactly where it was; both windows stay live.
+        let scratch = scratch("shared");
+        let host = Host::with_shell("test", Some("/bin/cat".into()));
+        let first_pane = spawn_guarded(&host).pane;
+        let second_pane = spawn_guarded(&host).pane;
         host.persist_to(state_file_in(&scratch));
         let layout = "active = 0\n\n[[tabs]]\n\n[tabs.node.Leaf]\ncwd = \"/tmp\"\n";
 
-        let (_first_client, first) = connection(&host);
+        let (_a_client, window_a) = connection(&host);
         assert!(matches!(
-            say(&host, &first, &hello_of(ClientKind::Window)),
+            say(&host, &window_a, &hello_of(ClientKind::Window)),
             Reply::Hello { .. }
         ));
-        let (mut watching, server) = UnixStream::pair().expect("pair");
-        assert!(host.attach(pane, server).is_ok());
-        assert!(host.list_panes()[0].attached);
+        let (mut a_first, server) = UnixStream::pair().expect("pair");
+        let a_holds_first = match host.attach(first_pane, server) {
+            Outcome::Ok(held) => held,
+            Outcome::Err(err) => panic!("{err}"),
+        };
+        let (_a_second, server) = UnixStream::pair().expect("pair");
+        assert!(host.attach(second_pane, server).is_ok());
+
+        // A second window arrives and says what it is. Under the steal this
+        // was the moment window A lost everything.
+        let (_b_client, window_b) = connection(&host);
+        assert!(matches!(
+            say(&host, &window_b, &hello_of(ClientKind::Window)),
+            Reply::Hello { .. }
+        ));
+        assert!(
+            host.list_panes().iter().all(|p| p.attached),
+            "a window saying hello took another window's streams: {:?}",
+            host.list_panes()
+        );
         assert!(
             matches!(
-                say(&host, &first, &save_line(layout)),
+                say(&host, &window_a, &save_line(layout)),
                 Reply::Saved {
                     outcome: Outcome::Ok(_)
                 }
             ),
-            "the window holding the session could not write it"
+            "a window saying hello cost the other one the session file"
         );
 
-        // The second window arrives, and says what it is.
-        let (_second_client, second) = connection(&host);
-        assert!(matches!(
-            say(&host, &second, &hello_of(ClientKind::Window)),
-            Reply::Hello { .. }
-        ));
-
-        // The loser's stream is over. It finds that out the way a real window
-        // does: the socket it was reading from ends.
-        assert!(
-            !host.list_panes()[0].attached,
-            "the superseded window was left holding the pane's stream"
+        // B attaches to one pane. That pane, and only that pane, changes hands
+        // — and A's stream for it ends, which is the mechanism that lets A
+        // find out rather than guess.
+        let (_b_first, server) = UnixStream::pair().expect("pair");
+        let b_holds_first = match host.attach(first_pane, server) {
+            Outcome::Ok(held) => held,
+            Outcome::Err(err) => panic!("{err}"),
+        };
+        assert_ne!(
+            a_holds_first.serial, b_holds_first.serial,
+            "the second attach reused the first one's claim"
         );
-        watching
+        a_first
             .set_read_timeout(Some(Duration::from_secs(5)))
             .expect("a timeout");
         let mut buf = [0u8; 4096];
         let mut closed = false;
         for _ in 0..64 {
-            match watching.read(&mut buf) {
+            match a_first.read(&mut buf) {
                 Ok(0) | Err(_) => {
                     closed = true;
                     break;
@@ -2765,58 +2677,37 @@ mod owning {
                 Ok(_) => continue, // its own snapshot, still draining
             }
         }
-        assert!(closed, "the superseded window's stream is still live");
+        assert!(
+            closed,
+            "the pane changed hands without ending the old stream"
+        );
 
-        // And it may no longer change anything — the session file least of
-        // all, which is the invariant the whole split rests on.
-        match say(&host, &first, &save_line(layout)) {
-            Reply::Saved {
-                outcome: Outcome::Err(msg),
-            } => assert!(msg.contains("another window"), "{msg}"),
-            other => panic!("a superseded window still wrote the session: {other:?}"),
+        // Everything else is untouched: the other pane is still A's, both
+        // panes are still attended, and both windows can still act.
+        assert!(
+            host.list_panes().iter().all(|p| p.attached),
+            "the second pane lost its stream to an attach on the first: {:?}",
+            host.list_panes()
+        );
+        for (name, conn) in [("the first", &window_a), ("the second", &window_b)] {
+            assert!(
+                matches!(
+                    say(&host, conn, &save_line(layout)),
+                    Reply::Saved {
+                        outcome: Outcome::Ok(_)
+                    }
+                ),
+                "{name} window was frozen out"
+            );
         }
-        match say(&host, &first, r#"{"verb":"close-pane","pane":1}"#) {
-            Reply::Closed {
-                outcome: Outcome::Err(_),
-                ..
-            } => {}
-            other => panic!("a superseded window still closed a terminal: {other:?}"),
-        }
-
-        // What it keeps is the ability to ask, and it needs it: a stream that
-        // ended because the pane was taken and one that ended because the
-        // program exited arrive identically, and this is the only way to tell
-        // them apart.
-        match say(&host, &first, r#"{"verb":"list-panes"}"#) {
-            Reply::Panes { panes } => {
-                assert_eq!(panes.len(), 1, "{panes:?}");
-                assert!(!panes[0].ended, "the terminal is still running: {panes:?}");
-            }
-            other => panic!("a superseded window cannot ask what happened: {other:?}"),
-        }
-
-        // The winner has the session whole.
-        assert!(matches!(
-            say(&host, &second, &save_line(layout)),
-            Reply::Saved {
-                outcome: Outcome::Ok(_)
-            }
-        ));
     }
 
     #[test]
     fn a_tools_hello_takes_nothing_from_the_window_using_the_session() {
-        // The other half of the same rule, and the reason kind is on the wire
-        // at all: resolving a session probes every candidate host, so if
-        // asking could steal, every launch would rob the window already
-        // running.
-        let scratch = scratch("toolhello");
+        // Nor does anybody else's: this is the same claim as the shared-panes
+        // test from the other end, kept because a probe hellos on every launch
+        // and a regression here would show up as every launch stealing.
         let (host, pane) = host_with_cat_pane();
-        host.persist_to(state_file_in(&scratch));
-        let layout = "active = 0\n\n[[tabs]]\n\n[tabs.node.Leaf]\ncwd = \"/tmp\"\n";
-
-        let (_window_client, window) = connection(&host);
-        say(&host, &window, &hello_of(ClientKind::Window));
         let (_client, server) = UnixStream::pair().expect("pair");
         assert!(host.attach(pane, server).is_ok());
 
@@ -2827,15 +2718,6 @@ mod owning {
         assert!(
             host.list_panes()[0].attached,
             "a tool saying hello took the window's stream"
-        );
-        assert!(
-            matches!(
-                say(&host, &window, &save_line(layout)),
-                Reply::Saved {
-                    outcome: Outcome::Ok(_)
-                }
-            ),
-            "a tool saying hello cost the window the session"
         );
     }
 
@@ -2852,9 +2734,8 @@ mod owning {
     #[test]
     fn a_tool_asking_questions_never_costs_a_window_its_pane() {
         // Attaching is a property of opening a byte stream, not of saying
-        // hello — a tool's questions cost a window nothing, whatever it asks.
-        // Only a window's own hello takes a session, and it takes it from
-        // another window (see the steal above). It matters because resolving a
+        // hello — which is what makes this safe by construction rather than by
+        // a check somebody has to remember. It matters because resolving a
         // session probes every candidate host, and if asking could steal, then
         // every launch would detach the window already running.
         let (host, pane) = host_with_cat_pane();

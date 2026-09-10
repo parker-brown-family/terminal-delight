@@ -130,9 +130,10 @@ impl HostProbe {
 
 /// Ask a session's host who it is, without becoming its window.
 ///
-/// Announces itself as a tool for exactly that reason: a probe that attached
-/// would steal the panes from the window already using them, and every launch
-/// probes every candidate.
+/// Announces itself as a tool, which the host records and acts on in no way —
+/// what keeps this harmless is that it opens no pane stream, and a stream is
+/// the only thing that takes a pane from whoever is drawing it. Worth saying
+/// because every launch probes every candidate host.
 pub fn probe_host(key: &str) -> HostProbe {
     probe_at(&host_socket_path(key), PROBE_BUDGET)
 }

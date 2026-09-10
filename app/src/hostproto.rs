@@ -68,19 +68,28 @@ impl Default for PaneGeom {
     }
 }
 
-/// What kind of thing is talking, which decides whether it may take a pane
-/// away from whoever holds it.
+/// What kind of thing is talking. Descriptive, and deliberately not a
+/// permission.
 ///
-/// Only a window attaches. Everything else — a probe asking which sessions are
-/// alive, a script listing panes — connects, asks and goes, and must never
-/// cost a live window its connection. Getting this wrong would mean every
-/// launch stole from the window already running.
+/// It gates nothing, and after 2026-09-10 it is not meant to. The Gate 3 policy
+/// it was drawn for — a `Window` hello drops the previous window, a `Tool` never
+/// steals — was deleted rather than built: no user asked for it, and the
+/// authorisation boundary is the peer-uid check on the socket, which is a
+/// property of the connection rather than a claim inside a payload. A `kind`
+/// that decided anything would be exactly such a claim, and a peer that wanted
+/// a pane could simply write `window` in it.
+///
+/// What it is still worth: a host log and a `list-panes` reader can say what
+/// sort of thing is on the other end, and every client already sends it.
+/// Attaching is arbitrated where it actually happens — opening a pane's byte
+/// stream, most recent wins, per pane (issue 351, issue 353).
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
 #[serde(rename_all = "kebab-case")]
 pub enum ClientKind {
-    /// A window. May attach, and attaching supersedes whoever held the pane.
+    /// A window: something drawing panes for a person.
     Window,
-    /// A command-line client or a probe. Never attaches, never steals.
+    /// A command-line client, a script, or a probe asking which sessions are
+    /// alive.
     Tool,
 }
 
