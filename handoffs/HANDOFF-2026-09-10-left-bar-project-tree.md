@@ -2,7 +2,7 @@
 
 ## Status
 
-**BUILT, PUSHED, PR OPEN, NOT INSTALLED.** Branch `left-bar` @ `d3933d9` in the
+**BUILT, PUSHED, PR OPEN, NOT INSTALLED.** Branch `left-bar` @ `25102f1` in the
 worktree `~/Work/td-left-bar`, off `a493359` (main, post client-server merge).
 PR #359. Tests green: 711 pass, 0 fail.
 
@@ -12,7 +12,7 @@ PR #359. Tests green: 711 pass, 0 fail.
 fixing #355 the MCP relay and #356 the divergence guard). This branch predates
 those commits, so swapping the symlink to it would revert live fixes. The
 versioned binary is built and sitting beside them at
-`~/.local/lib/terminal-delight/td-d3933d9-left-bar` — one `ln -sfn` away — but
+`~/.local/lib/terminal-delight/td-25102f1-left-bar` — one `ln -sfn` away — but
 the correct order is: hardening merges to main → merge main into `left-bar` (or
 land #359 after it) → rebuild → install once.
 
