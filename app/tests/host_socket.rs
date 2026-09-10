@@ -166,8 +166,12 @@ fn a_window_can_start_a_terminal_take_it_over_and_type_into_it() {
         "the attached window is not live: {echoed:?}"
     );
 
-    // Closing is a verb, and it kills.
+    // Closing is a verb, and it kills. On a fresh connection that says hello
+    // first — a control connection that has not negotiated a version is
+    // refused this verb, and until that gate existed this test was the thing
+    // demonstrating it could be skipped.
     let mut control = Control::open(&session);
+    control.ask(r#"{"verb":"hello","proto":1,"kind":"tool"}"#);
     let closed = control.ask(&format!(r#"{{"verb":"close-pane","pane":{pane}}}"#));
     assert_eq!(closed["outcome"]["ok"]["signalled"], true, "{closed}");
     assert!(
@@ -185,6 +189,7 @@ fn a_window_can_start_a_terminal_take_it_over_and_type_into_it() {
     // still there. "Still listed" and "still running" are not the same
     // question, and only one of them is this one.
     let mut control = Control::open(&session);
+    control.ask(r#"{"verb":"hello","proto":1,"kind":"tool"}"#);
     let bye = control.ask(r#"{"verb":"shutdown"}"#);
     assert_eq!(bye["reply"], "shutting-down", "{bye}");
     let mut session = session;
@@ -297,6 +302,45 @@ fn a_version_it_cannot_speak_is_refused_by_name() {
     // this whole feature started from.
     let mut control = Control::open(&session);
     assert_eq!(control.ask("{not json}")["reply"], "error");
+}
+
+#[test]
+fn a_connection_that_never_negotiated_is_refused_the_verbs_that_destroy() {
+    // Over a real socket, because this is the gap a real socket had: the host
+    // answered each line on its own merits and remembered nothing, so anything
+    // that could open the socket could hang up a terminal or stop the host
+    // without ever saying which protocol it speaks. Same-uid throughout — the
+    // socket has always been uid-gated — so this is not about intruders. It is
+    // that a version break cannot be handled while nobody has to negotiate.
+    let session = start_host("cold");
+    let mut control = Control::open(&session);
+    control.ask(r#"{"verb":"hello","proto":1,"kind":"window"}"#);
+    let spawned = control.ask(
+        r#"{"verb":"spawn-pane","geom":{"cols":40,"rows":8,"cell_width":8,"cell_height":16}}"#,
+    );
+    let pane = spawned["outcome"]["ok"]["pane"].as_u64().expect("pane");
+    let shell_pid = spawned["outcome"]["ok"]["shell_pid"].as_u64().expect("pid");
+
+    let mut cold = Control::open(&session);
+    let refused = cold.ask(&format!(r#"{{"verb":"close-pane","pane":{pane}}}"#));
+    assert_eq!(refused["reply"], "closed", "{refused}");
+    let msg = refused["outcome"]["err"].as_str().unwrap_or_default();
+    assert!(
+        msg.contains("hello"),
+        "refused without saying why: {refused}"
+    );
+
+    let refused = cold.ask(r#"{"verb":"shutdown"}"#);
+    assert_eq!(refused["reply"], "error", "{refused}");
+
+    // The terminal is still running and so is the host, which is the whole
+    // claim. Asked after both refusals, on a connection that did negotiate.
+    assert!(
+        PathBuf::from(format!("/proc/{shell_pid}")).exists(),
+        "a connection that never said hello hung up a terminal"
+    );
+    let listed = control.ask(r#"{"verb":"list-panes"}"#);
+    assert_eq!(listed["panes"][0]["pane"], pane, "{listed}");
 }
 
 #[test]

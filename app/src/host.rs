@@ -382,6 +382,28 @@ struct Conn {
     /// window finds out it was superseded rather than that its terminals died
     /// — but it may no longer change anything.
     superseded: AtomicBool,
+    /// What this connection has negotiated, which decides whether it may
+    /// change anything at all.
+    greeting: Mutex<Greeting>,
+}
+
+/// How far a control connection has got with saying who it is.
+///
+/// The protocol says hello opens a connection, and until this existed the host
+/// kept no memory of one line to the next: every request was answered on its
+/// own, so a client that had never negotiated a version — or had been told its
+/// version could not be spoken — could still close panes and stop the host.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Greeting {
+    /// Nothing said yet.
+    Silent,
+    /// A hello arrived speaking a version this build cannot. The peer may not
+    /// touch the session, and may ask for exactly one thing: that the host
+    /// checkpoint and stand down, which is the whole of the approved path
+    /// through a protocol break.
+    Skewed,
+    /// A hello this build could answer.
+    Spoke,
 }
 
 impl Conn {
@@ -390,6 +412,24 @@ impl Conn {
             id,
             write: Mutex::new(stream),
             superseded: AtomicBool::new(false),
+            greeting: Mutex::new(Greeting::Silent),
+        }
+    }
+
+    fn greeting(&self) -> Greeting {
+        *self.greeting.lock().expect("greeting")
+    }
+
+    /// Record what a hello did.
+    ///
+    /// A connection that has already negotiated does not un-negotiate by
+    /// asking again badly: `Spoke` is a fact about a conversation that
+    /// happened, and a later bad number is one more thing this build cannot
+    /// speak, not a retraction of one it could.
+    fn greeted(&self, outcome: Greeting) {
+        let mut greeting = self.greeting.lock().expect("greeting");
+        if *greeting != Greeting::Spoke {
+            *greeting = outcome;
         }
     }
 
@@ -1733,6 +1773,44 @@ fn refuse_the_superseded(request: &Request) -> Option<Reply> {
     })
 }
 
+/// What a connection that has not negotiated is told when it tries to change
+/// the session.
+///
+/// Four verbs, and they are the four the status file names: spawn, close, save
+/// and shutdown. Not everything, on purpose — a question costs nothing and
+/// every launch asks several, and a gate wide enough to cover resize would
+/// refuse a client for asking a pane to be the size it already is. What these
+/// four have in common is that a client which cannot state a version it speaks
+/// should not be able to end a terminal, end a host, or write the file that
+/// says what the session was.
+///
+/// The one exception is the reason this gate can exist at all. A peer refused
+/// for version skew must still be able to say "checkpoint and stand down", or
+/// the approved path through a protocol break — the old host writes what it
+/// has and goes, the new build recovers from the file — has no way to be
+/// asked for.
+fn refuse_the_ungreeted(request: &Request, greeting: Greeting) -> Option<Reply> {
+    if greeting == Greeting::Spoke {
+        return None;
+    }
+    const COLD: &str = "say hello first: this connection has not negotiated a protocol version";
+    Some(match request {
+        Request::SpawnPane { .. } => Reply::Spawned {
+            outcome: Outcome::Err(COLD.into()),
+            started: false,
+        },
+        Request::ClosePane { pane } => Reply::Closed {
+            pane: *pane,
+            outcome: Outcome::Err(COLD.into()),
+        },
+        Request::Save { .. } => Reply::Saved {
+            outcome: Outcome::Err(COLD.into()),
+        },
+        Request::Shutdown if greeting == Greeting::Silent => Reply::Error { msg: COLD.into() },
+        _ => return None,
+    })
+}
+
 fn handle_control_line(host: &Arc<Host>, line: &str, conn: Option<&Arc<Conn>>) -> Reply {
     let request: Request = match serde_json::from_str(line.trim()) {
         Ok(request) => request,
@@ -1742,6 +1820,14 @@ fn handle_control_line(host: &Arc<Host>, line: &str, conn: Option<&Arc<Conn>>) -
             }
         }
     };
+    // A line that arrived on no connection at all is this file's own tests
+    // driving the verb table; there is no peer to have negotiated with, and
+    // nothing for a gate to protect. Everything a client can reach arrives on
+    // a connection.
+    let greeting = conn.map_or(Greeting::Spoke, |conn| conn.greeting());
+    if let Some(refusal) = refuse_the_ungreeted(&request, greeting) {
+        return refusal;
+    }
     if conn.is_some_and(|conn| conn.superseded()) {
         if let Some(refusal) = refuse_the_superseded(&request) {
             return refusal;
@@ -1750,6 +1836,9 @@ fn handle_control_line(host: &Arc<Host>, line: &str, conn: Option<&Arc<Conn>>) -
     match request {
         Request::Hello { proto, kind } => match crate::hostproto::version_check(proto) {
             Ok(()) => {
+                if let Some(conn) = conn {
+                    conn.greeted(Greeting::Spoke);
+                }
                 // Only a window takes the session, and it takes it by saying
                 // what it is. A tool asks its questions and leaves the window
                 // that is using this session exactly as it found it.
@@ -1763,7 +1852,15 @@ fn handle_control_line(host: &Arc<Host>, line: &str, conn: Option<&Arc<Conn>>) -
                     attended: host.attended(),
                 }
             }
-            Err(msg) => Reply::Error { msg },
+            Err(msg) => {
+                // Refused, and remembered as refused. This is the connection
+                // the version-break path runs on: it may not touch the
+                // session, and it may ask the host to checkpoint and go.
+                if let Some(conn) = conn {
+                    conn.greeted(Greeting::Skewed);
+                }
+                Reply::Error { msg }
+            }
         },
         Request::ListPanes => Reply::Panes {
             panes: host.list_panes(),
@@ -2095,7 +2192,18 @@ mod owning {
     /// that is how every control line reaches the host, and a verb whose answer
     /// depends on which connection asked would otherwise be tested against a
     /// shape a client cannot produce.
+    /// Says hello first, as a tool, because every client does and because a
+    /// connection that has not negotiated is now refused the verbs that change
+    /// anything. A tool rather than a window so that reaching for this helper
+    /// never quietly takes the session from a window a test set up.
     fn answer(host: &Arc<Host>, line: &str) -> Reply {
+        let (_client, conn) = connection(host);
+        handle_control_line(host, &hello_of(ClientKind::Tool), Some(&conn));
+        handle_control_line(host, line, Some(&conn))
+    }
+
+    /// Say one verb over a connection that has said nothing at all.
+    fn answer_cold(host: &Arc<Host>, line: &str) -> Reply {
         let (_client, conn) = connection(host);
         handle_control_line(host, line, Some(&conn))
     }
@@ -2409,6 +2517,105 @@ mod owning {
                 }
             ),
             "{closed:?}"
+        );
+    }
+
+    #[test]
+    fn a_connection_that_never_said_hello_cannot_change_anything() {
+        // The protocol has always said hello opens a connection. The host kept
+        // no memory of one line to the next, so it did not: anything that could
+        // reach the socket could close a terminal or stop the host without ever
+        // stating a version it speaks, and one of our own integration tests
+        // relied on that to do exactly those two things.
+        let scratch = scratch("cold");
+        let (host, pane) = host_with_cat_pane();
+        host.persist_to(state_file_in(&scratch));
+
+        match answer_cold(&host, &format!(r#"{{"verb":"close-pane","pane":{pane}}}"#)) {
+            Reply::Closed {
+                outcome: Outcome::Err(msg),
+                ..
+            } => assert!(msg.contains("hello"), "{msg}"),
+            other => panic!("a cold connection closed a terminal: {other:?}"),
+        }
+        assert!(
+            matches!(
+                answer_cold(
+                    &host,
+                    &save_line("active = 0\n\n[[tabs]]\n\n[tabs.node.Leaf]\ncwd = \"/tmp\"\n")
+                ),
+                Reply::Saved {
+                    outcome: Outcome::Err(_)
+                }
+            ),
+            "a cold connection wrote the session file"
+        );
+        assert!(
+            matches!(
+                answer_cold(
+                    &host,
+                    &serde_json::to_string(&Request::SpawnPane {
+                        cwd: None,
+                        resume: None,
+                        geom: PaneGeom::default(),
+                    })
+                    .unwrap()
+                ),
+                Reply::Spawned {
+                    outcome: Outcome::Err(_),
+                    ..
+                }
+            ),
+            "a cold connection started a terminal"
+        );
+        assert!(
+            matches!(
+                answer_cold(&host, r#"{"verb":"shutdown"}"#),
+                Reply::Error { .. }
+            ),
+            "a cold connection stopped the host"
+        );
+
+        // The terminal it tried to close is still running, and questions are
+        // still free: a gate on everything would refuse a probe for asking.
+        match answer_cold(&host, r#"{"verb":"list-panes"}"#) {
+            Reply::Panes { panes } => assert_eq!(panes.len(), 1, "{panes:?}"),
+            other => panic!("a question was refused: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_peer_whose_version_we_cannot_speak_may_still_ask_us_to_stand_down() {
+        // The carve-out the gate is built around, and the reason it is a
+        // carve-out rather than an oversight: the approved path through a
+        // protocol break is that the old host checkpoints and goes, and the
+        // only peer who can ask for that is the one that was just refused.
+        let (host, _pane) = host_with_cat_pane();
+        let (_client, conn) = connection(&host);
+
+        match say(
+            &host,
+            &conn,
+            r#"{"verb":"hello","proto":99,"kind":"window"}"#,
+        ) {
+            Reply::Error { msg } => assert!(msg.contains("99"), "{msg}"),
+            other => panic!("a version we cannot speak was accepted: {other:?}"),
+        }
+        // It may not touch the session it cannot describe.
+        assert!(matches!(
+            say(&host, &conn, r#"{"verb":"close-pane","pane":1}"#),
+            Reply::Closed {
+                outcome: Outcome::Err(_),
+                ..
+            }
+        ));
+        // And it may ask for the one thing that makes recovery possible.
+        assert!(
+            matches!(
+                say(&host, &conn, r#"{"verb":"shutdown"}"#),
+                Reply::ShuttingDown
+            ),
+            "the refused peer could not ask the host to stand down"
         );
     }
 
