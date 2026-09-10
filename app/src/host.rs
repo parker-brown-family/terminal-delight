@@ -4206,16 +4206,34 @@ cwd = "/somebody-elses-terminal"
             )
             .is_ok());
 
+        // The barrier is the test. Eight threads started in a loop do not
+        // overlap by starting — the first is several writes in before the last
+        // exists — and the fault this guards appeared twice in forty soak
+        // runs, so a green run that happened to serialise would prove nothing
+        // and look exactly like a run that proved something. Every writer now
+        // waits at the door before each write, so they arrive together, every
+        // time, on purpose.
+        //
+        // Together at the door is the strongest thing available here, and it
+        // is the right one: what is being tested is a mutex, so two threads
+        // genuinely inside the interval at once is the state the mutex exists
+        // to prevent. Line them all up in front of it and the first to take it
+        // is holding it while seven others are asking.
+        const WRITERS: usize = 8;
+        let gate = Arc::new(std::sync::Barrier::new(WRITERS));
         let mut writers = Vec::new();
-        for n in 0..8 {
+        for n in 0..WRITERS {
             let host = host.clone();
+            let gate = gate.clone();
             let body = format!(
                 "active = 0\n\n[[tabs]]\nname = \"writer {n}\"\n\n[tabs.node.Leaf]\ncwd = \"/tmp\"\n"
             );
             writers.push(std::thread::spawn(move || {
                 let mut outcomes = Vec::new();
                 for _ in 0..8 {
+                    gate.wait();
                     outcomes.push(host.save(LAYOUT_SCHEMA, &body, true));
+                    gate.wait();
                     outcomes.push(host.persist_now(true));
                 }
                 outcomes
