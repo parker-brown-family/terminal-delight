@@ -1860,16 +1860,6 @@ pub struct TerminalView {
     /// the selection at this point as the viewport scrolls under it.
     last_mouse: gpui::Point<Pixels>,
     pending_input: Option<Instant>,
-    /// When a *human* last put a keystroke into this pane. Set in [`Self::send`]
-    /// and never cleared, so it is the honest "how long has nobody touched
-    /// this" clock. Deliberately not `pending_input`, which is transient, and
-    /// deliberately not the transcript's last line, which moves whenever the
-    /// agent writes to itself. TD's own keepalive writes bypass `send` and so
-    /// do not reset it — a machine typing into a pane is not human interaction.
-    /// See [`crate::keepalive`].
-    last_human_input: Instant,
-    /// Where this pane is in the cache-keepalive sequence.
-    keepalive: crate::keepalive::Stage,
     latency_log: bool,
     /// Written by the measuring canvas during prepaint; read by sync_size.
     content_bounds: Arc<Mutex<Option<Bounds<Pixels>>>>,
@@ -2877,11 +2867,6 @@ impl TerminalView {
             autoscroll_running: false,
             last_mouse: point(px(0.), px(0.)),
             pending_input: None,
-            // A pane starts its life having just been opened by a person, so
-            // the idle clock starts now rather than at the epoch — otherwise
-            // every pane would be born fifty minutes stale.
-            last_human_input: Instant::now(),
-            keepalive: crate::keepalive::Stage::Awake,
             latency_log: std::env::var("TD_LATENCY").is_ok(),
             content_bounds: Arc::new(Mutex::new(None)),
             spawned: Instant::now(),
@@ -3618,59 +3603,7 @@ impl TerminalView {
         // a real keystroke ends any keyboard selection in progress
         self.kbd_sel = None;
         self.pending_input = Some(Instant::now());
-        self.last_human_input = Instant::now();
         self.session.notifier.notify(bytes);
-        cx.notify();
-    }
-
-    /// How long since a human touched this pane. The keepalive clock.
-    pub fn idle_since_human(&self) -> Duration {
-        self.last_human_input.elapsed()
-    }
-
-    pub fn keepalive_stage(&self) -> crate::keepalive::Stage {
-        self.keepalive
-    }
-
-    /// Carry out one keepalive step. The pty writes go through `notifier`
-    /// directly rather than through [`Self::send`], because `send` is the human
-    /// path: routing through it would reset the idle clock this feature is
-    /// reading, and the pane would never reach the next stage.
-    ///
-    /// Focus is not touched. Nothing here raises, activates or scrolls the pane
-    /// — the human keeps working wherever they are, which is the whole point.
-    pub fn keepalive_step(&mut self, act: crate::keepalive::Act, cx: &mut Context<Self>) {
-        use crate::keepalive::{Act, Stage};
-
-        // Enter is the one irreversible byte in this whole feature, and until
-        // now it was pressed on the strength of `needs_input` and
-        // `bell_blocked` — screen-row heuristics that are allowed to be wrong.
-        // The sibling herdr plugin hit exactly that: its runtime reported a
-        // pane as idle and ready to receive input while Claude Code was sitting
-        // on its "Do you trust the files in this folder?" dialog, because a
-        // status describes the agent PROCESS, not the screen. Enter there
-        // answers the dialog.
-        //
-        // So do not predict. Look: this pane's own grid must still be showing
-        // the message we typed two minutes ago. If it is not, the characters
-        // went somewhere that is not a visible text field, and pressing Enter
-        // is the one thing we must not do about it.
-        if act == Act::Send && self.grep_grid(crate::keepalive::PROBE, 1).is_empty() {
-            self.keepalive = Stage::Refused;
-            cx.notify();
-            return;
-        }
-
-        let bracketed = self
-            .session
-            .term
-            .lock()
-            .mode()
-            .contains(TermMode::BRACKETED_PASTE);
-        if let Some(bytes) = crate::keepalive::bytes(act, bracketed) {
-            self.session.notifier.notify(bytes);
-        }
-        self.keepalive = crate::keepalive::advance(self.keepalive, act);
         cx.notify();
     }
 
@@ -3753,37 +3686,92 @@ impl TerminalView {
         if matches!(key, "left" | "right" | "up" | "down") {
             return PaintKey::Bubble;
         }
-        // `z` turns the SHELF (colour sets ⇄ desktop palettes), `shift+z` turns
-        // it back. It is the one letter allowed to be a verb rather than a name,
-        // because nothing on either shelf is spelled with one — guarded by
-        // `the_shelf_key_is_not_a_chord_on_either_shelf`.
+        // `z` turns the SHELF, `shift+z` turns it back. It is allowed to be a
+        // verb rather than a name because nothing on our own shelves is spelled
+        // with one — guarded by `the_shelf_key_is_not_a_chord_on_either_shelf`.
         if key.eq_ignore_ascii_case("z") {
             theme::cycle_paint_shelf(cx, if m.shift { -1 } else { 1 });
             return PaintKey::Took;
         }
+        // `f` is the second verb, and the FAVOURITES shelf is why: it is the one
+        // shelf worth reaching without counting `z` presses, because it is the
+        // one you actually wear from. `shift+f` is the other half of the same
+        // verb — it stars, or unstars, the look this pane is WEARING, so a
+        // shortlist is built where you can see it rather than by editing a file.
+        //
+        // Unlike `z` this letter is NOT free: it costs `flexoki-light` its chord
+        // on the desktop shelf. That is the trade `z` already documents — a
+        // collision costs one letter, never the shelf — and the palette keeps
+        // its tile and its click either way. Guarded by
+        // `the_shelf_verbs_are_not_chords_on_our_own_shelves`.
+        if key.eq_ignore_ascii_case("f") {
+            if m.shift {
+                match self.worn_fav(cx) {
+                    // Nothing to star: the pane is following the desktop, or
+                    // wearing a look with no name to write down (a custom
+                    // palette, a hand-seeded tint). A no-op, not a wrong entry.
+                    None => {}
+                    Some(worn) => {
+                        crate::fav::toggle(cx, worn);
+                    }
+                }
+            } else {
+                theme::set_paint_shelf(cx, theme::Shelf::Favourites);
+            }
+            cx.notify();
+            return PaintKey::Took;
+        }
         if !m.shift {
-            // On the COLOUR SETS shelf, `d` and a set's first letter come out of
-            // ONE table (`Dynamic::paint_chord`), so the tiles, the legend and
-            // this handler cannot drift apart; those letters are unique and never
-            // `d`/`s` (`named_sets_spell_a_unique_paint_alphabet`).
-            //
-            // On the DESKTOP PALETTES shelf the names belong to Omarchy and DO
-            // collide — `catppuccin` beside `catppuccin-latte`, three `r`s — so a
-            // letter CYCLES through the palettes sharing it, painting each one on
-            // the way past. `d` still hands the pane back to the desktop on both
-            // shelves, which is why it is checked before the cycle.
-            if theme::paint_shelf(cx) == 1 && !key.eq_ignore_ascii_case("d") {
+            // `d` hands the pane back to the desktop from EVERY shelf, which is
+            // why it is resolved before any shelf's own letters. It is the one
+            // entry `Dynamic::paint_chord` reports as `Some(None)`.
+            if key.eq_ignore_ascii_case("d") {
+                self.paint_pick(None, cx);
+                return PaintKey::Took;
+            }
+            let one_char = {
                 let mut ch = key.chars();
-                if let (Some(c), None) = (ch.next(), ch.next()) {
-                    let worn = self.worn_palette(cx);
-                    if let Some(id) = crate::palette::next_for_letter(cx, c, worn.as_deref()) {
-                        self.paint_palette(Some(id), cx);
+                match (ch.next(), ch.next()) {
+                    (Some(c), None) => Some(c),
+                    _ => None, // "escape", "left", … are not chords
+                }
+            };
+            match theme::paint_shelf(cx) {
+                // The user's own list mixes both vocabularies and is free to
+                // hold two things spelled alike, so a letter CYCLES here exactly
+                // as it does on the desktop shelf.
+                theme::Shelf::Favourites => {
+                    if let Some(c) = one_char {
+                        let worn = self.worn_fav(cx);
+                        if let Some(f) = crate::fav::next_for_letter(cx, c, worn.as_ref()) {
+                            self.paint_fav(&f, cx);
+                            return PaintKey::Took;
+                        }
+                    }
+                }
+                // On the COLOUR SETS shelf a set's first letter comes out of ONE
+                // table (`Dynamic::paint_chord`), so the tiles, the legend and
+                // this handler cannot drift apart; those letters are unique and
+                // never `d`/`s` (`named_sets_spell_a_unique_paint_alphabet`).
+                theme::Shelf::Sets => {
+                    if let Some(pick) = theme::Dynamic::paint_chord(key) {
+                        self.paint_pick(pick, cx);
                         return PaintKey::Took;
                     }
                 }
-            } else if let Some(pick) = theme::Dynamic::paint_chord(key) {
-                self.paint_pick(pick, cx);
-                return PaintKey::Took;
+                // On the DESKTOP PALETTES shelf the names belong to Omarchy and
+                // DO collide — `catppuccin` beside `catppuccin-latte`, three
+                // `r`s — so a letter cycles through the palettes sharing it,
+                // painting each one on the way past.
+                theme::Shelf::Palettes => {
+                    if let Some(c) = one_char {
+                        let worn = self.worn_palette(cx);
+                        if let Some(id) = crate::palette::next_for_letter(cx, c, worn.as_deref()) {
+                            self.paint_palette(Some(id), cx);
+                            return PaintKey::Took;
+                        }
+                    }
+                }
             }
         }
         // Anything else printable is swallowed rather than typed: the overlay is
@@ -3795,15 +3783,49 @@ impl TerminalView {
         PaintKey::Pass
     }
 
-    /// The desktop palette this pane is actually WEARING, if any — the cursor the
-    /// letter-cycle walks from. A pane that follows the outer scope wears nothing
-    /// of its own, so the next `r` starts the `r` group from the top rather than
-    /// from wherever the mother happens to sit.
-    fn worn_palette(&self, cx: &App) -> Option<String> {
+    /// The named look this pane is actually WEARING, if any — the cursor every
+    /// letter-cycle walks from, and the thing `shift+f` stars.
+    ///
+    /// A pane that follows the outer scope wears nothing OF ITS OWN, so the next
+    /// `r` starts the `r` group from the top rather than from wherever the
+    /// mother happens to sit. `None` also covers the looks that have no name to
+    /// write down: a custom palette, or a set-less seed tint. Absent and
+    /// unnameable both mean "there is no cursor here", which is the honest
+    /// answer for a cycle and for a star alike.
+    fn worn_fav(&self, cx: &App) -> Option<crate::fav::Fav> {
         if self.appearance.inherit_theme {
             return None;
         }
-        self.appearance.effective(&theme::outer_choice(cx)).palette
+        let eff = self.appearance.effective(&theme::outer_choice(cx));
+        // A palette paints over a set (`paint_palette` clears `dynamic`), so a
+        // pane wearing one is wearing THAT, whatever else the group still holds.
+        if let Some(id) = eff.palette {
+            return Some(crate::fav::Fav::Palette(id));
+        }
+        theme::Dynamic::NAMED
+            .iter()
+            .find(|d| d.same_kind(&eff.dynamic))
+            .cloned()
+            .map(crate::fav::Fav::Set)
+    }
+
+    /// The desktop palette this pane is wearing — [`Self::worn_fav`] narrowed to
+    /// the desktop shelf's own vocabulary, so the two cycles read one fact.
+    fn worn_palette(&self, cx: &App) -> Option<String> {
+        match self.worn_fav(cx) {
+            Some(crate::fav::Fav::Palette(id)) => Some(id),
+            _ => None,
+        }
+    }
+
+    /// Paint a favourite, whichever vocabulary it came from. The favourites
+    /// shelf is a VIEW over the other two, never a third kind of paint — so it
+    /// dispatches to the same two appliers and inherits their clearing rules.
+    fn paint_fav(&mut self, f: &crate::fav::Fav, cx: &mut Context<Self>) {
+        match f {
+            crate::fav::Fav::Set(d) => self.paint_pick(Some(d.clone()), cx),
+            crate::fav::Fav::Palette(id) => self.paint_palette(Some(id.clone()), cx),
+        }
     }
 
     /// This pane's note box on the glass — recomputed from the LIVE content rect
@@ -6128,8 +6150,14 @@ impl Render for TerminalView {
             // the letters — so the keyboard always has one unambiguous target.
             let sel = self.focus_handle(cx).is_focused(window);
             let shelf = theme::paint_shelf(cx);
-            let shelf_count = theme::shelf_count(cx);
+            let shelves = theme::shelves(cx);
             let palettes = crate::palette::chips(cx);
+            let favourites = crate::fav::tiles(cx);
+            // What the pane wears, resolved once: the ★ on every tile is "is
+            // THIS one starred", and the legend's `⇧F` only has something to say
+            // when there is a worn look to star.
+            let worn = self.worn_fav(cx);
+            let starred = |f: &crate::fav::Fav| crate::fav::contains(cx, f);
             let (acc, surf, txt, faint) = (th.accent, th.surface, th.text, th.faint);
             let ff = th.font_family.clone();
             // ONE tile shape serves both shelves: a face (a set's glyph, or a
@@ -6141,8 +6169,10 @@ impl Render for TerminalView {
                              rest: String,
                              second: String,
                              swatch: Option<Hsla>,
-                             lit: bool| {
+                             lit: bool,
+                             star: bool| {
                 div()
+                    .relative()
                     .w(px(62.))
                     .flex()
                     .flex_col()
@@ -6159,6 +6189,21 @@ impl Render for TerminalView {
                     })
                     .cursor_pointer()
                     .hover(move |s| s.bg(acc.alpha(0.20)))
+                    // A ★ marks a tile that is ALSO on the favourites shelf —
+                    // drawn only on the two full shelves, since on the shortlist
+                    // itself every tile would carry one and the mark would stop
+                    // meaning anything.
+                    .when(star, |d| {
+                        d.child(
+                            div()
+                                .absolute()
+                                .top(px(2.))
+                                .right(px(4.))
+                                .text_size(px(8.))
+                                .text_color(acc)
+                                .child("★"),
+                        )
+                    })
                     // Face and name sit in FIXED-height boxes so every tile is the
                     // same height whether its name takes one line or two —
                     // otherwise the rows stagger and the grid reads as scrunched.
@@ -6275,6 +6320,7 @@ impl Render for TerminalView {
                     String::new(),
                     None,
                     following,
+                    false,
                 )
                 .on_mouse_down(
                     MouseButton::Left,
@@ -6284,59 +6330,89 @@ impl Render for TerminalView {
                     }),
                 ),
             );
-            if shelf == 0 {
-                for d in theme::Dynamic::NAMED.iter() {
-                    // A colour set is only "the one you're on" when no palette has
-                    // since painted over it — otherwise every set would read lit.
-                    let lit = !following && eff.palette.is_none() && eff.dynamic.same_kind(d);
-                    let pick = d.clone();
-                    grid = grid.child(
-                        tile(
-                            glyph_face(d.glyph()),
-                            d.paint_letter(),
-                            d.label()[1..].to_uppercase(),
-                            String::new(),
-                            d.swatch(),
-                            lit,
-                        )
-                        .on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(move |v, _, _, cx| {
-                                v.paint_pick(Some(pick.clone()), cx);
-                                cx.stop_propagation();
-                            }),
-                        ),
-                    );
+            match shelf {
+                // The shortlist: both vocabularies, in the order the file lists
+                // them, with anything this desktop cannot draw already dropped
+                // by `fav::tiles`.
+                theme::Shelf::Favourites => {
+                    for t in favourites {
+                        let lit = !following && worn.as_ref() == Some(&t.fav);
+                        let face = match t.face {
+                            crate::fav::Face::Glyph(g) => glyph_face(g),
+                            crate::fav::Face::Screen { bg, chips, light } => {
+                                screen_face(bg, chips, light)
+                            }
+                        };
+                        let pick = t.fav.clone();
+                        grid = grid.child(
+                            tile(face, t.letter, t.rest, t.second, t.swatch, lit, false)
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(move |v, _, _, cx| {
+                                        v.paint_fav(&pick, cx);
+                                        cx.stop_propagation();
+                                    }),
+                                ),
+                        );
+                    }
                 }
-            } else {
-                for p in palettes {
-                    let lit = !following && eff.palette.as_deref() == Some(p.id.as_str());
-                    let id = p.id.clone();
-                    grid = grid.child(
-                        tile(
-                            screen_face(p.bg, p.chips, p.light),
-                            p.letter,
-                            p.rest.clone(),
-                            p.second.clone(),
-                            Some(p.chips[0]),
-                            lit,
-                        )
-                        .on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(move |v, _, _, cx| {
-                                v.paint_palette(Some(id.clone()), cx);
-                                cx.stop_propagation();
-                            }),
-                        ),
-                    );
+                theme::Shelf::Sets => {
+                    for d in theme::Dynamic::NAMED.iter() {
+                        // A colour set is only "the one you're on" when no palette has
+                        // since painted over it — otherwise every set would read lit.
+                        let lit = !following && eff.palette.is_none() && eff.dynamic.same_kind(d);
+                        let pick = d.clone();
+                        grid = grid.child(
+                            tile(
+                                glyph_face(d.glyph()),
+                                d.paint_letter(),
+                                d.label()[1..].to_uppercase(),
+                                String::new(),
+                                d.swatch(),
+                                lit,
+                                starred(&crate::fav::Fav::Set(d.clone())),
+                            )
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |v, _, _, cx| {
+                                    v.paint_pick(Some(pick.clone()), cx);
+                                    cx.stop_propagation();
+                                }),
+                            ),
+                        );
+                    }
+                }
+                theme::Shelf::Palettes => {
+                    for p in palettes {
+                        let lit = !following && eff.palette.as_deref() == Some(p.id.as_str());
+                        let id = p.id.clone();
+                        grid = grid.child(
+                            tile(
+                                screen_face(p.bg, p.chips, p.light),
+                                p.letter,
+                                p.rest.clone(),
+                                p.second.clone(),
+                                Some(p.chips[0]),
+                                lit,
+                                starred(&crate::fav::Fav::Palette(p.id.clone())),
+                            )
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |v, _, _, cx| {
+                                    v.paint_palette(Some(id.clone()), cx);
+                                    cx.stop_propagation();
+                                }),
+                            ),
+                        );
+                    }
                 }
             }
             // The shelf pills — the visible half of `z`. Shown only when there is
             // somewhere to switch TO (no Omarchy installed → no second shelf).
-            let pills = (shelf_count > 1).then(|| {
+            let pills = (shelves.len() > 1).then(|| {
                 let mut row = div().flex().flex_row().gap(px(4.));
-                for (i, name) in theme::PAINT_SHELVES.iter().enumerate() {
-                    let on = i as u8 == shelf;
+                for s in shelves.iter().copied() {
+                    let on = s == shelf;
                     row = row.child(
                         div()
                             .px(px(9.))
@@ -6349,11 +6425,11 @@ impl Render for TerminalView {
                             .text_color(if on { txt } else { faint })
                             .cursor_pointer()
                             .hover(move |s| s.bg(acc.alpha(0.28)))
-                            .child(*name)
+                            .child(s.label())
                             .on_mouse_down(
                                 MouseButton::Left,
                                 cx.listener(move |_v, _, _, cx| {
-                                    theme::set_paint_shelf(cx, i as u8);
+                                    theme::set_paint_shelf(cx, s);
                                     cx.stop_propagation();
                                 }),
                             ),
@@ -6405,15 +6481,38 @@ impl Render for TerminalView {
                         .child(grid)
                         .child(
                             // The legend is the contract: everything named here
-                            // works, and nothing that works is unnamed.
-                            div()
-                                .text_size(px(9.))
-                                .text_color(faint)
-                                .child(if shelf_count > 1 {
-                                    "↔ select · letter paints · z shelf · d desktop · esc done"
-                                } else {
-                                    "↔ select · letter paints · d desktop · esc done"
-                                }),
+                            // works, and nothing that works is unnamed. It is
+                            // built from what this desktop can actually do, so a
+                            // machine with no Omarchy and no shortlist is not
+                            // promised two shelves it hasn't got.
+                            div().text_size(px(9.)).text_color(faint).child({
+                                let mut parts = vec!["↔ select", "letter paints"];
+                                if shelves.len() > 1 {
+                                    parts.push("z shelf");
+                                }
+                                if shelves.contains(&theme::Shelf::Favourites) {
+                                    parts.push("f favourites");
+                                }
+                                // `⇧f` is offered only when there is something to
+                                // star: a pane following the desktop has no worn
+                                // look, and naming a key that would do nothing is
+                                // exactly what this legend promises never to do.
+                                if worn.is_some() {
+                                    parts.push(
+                                        if worn
+                                            .as_ref()
+                                            .is_some_and(|w| crate::fav::contains(cx, w))
+                                        {
+                                            "⇧f unstar"
+                                        } else {
+                                            "⇧f star"
+                                        },
+                                    );
+                                }
+                                parts.push("d desktop");
+                                parts.push("esc done");
+                                parts.join(" · ")
+                            }),
                         ),
                 )
         });

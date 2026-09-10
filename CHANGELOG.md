@@ -9,6 +9,29 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ### Added
 
+- **A favourites shelf in the paint overlay, because nobody wears thirty-three
+  looks.** The overlay's two existing shelves are each COMPLETE — every colour
+  set we ship, every Omarchy palette installed on the machine — and that
+  completeness is exactly what makes them slow to paint from. The new shelf is a
+  hand-picked shortlist that **mixes both vocabularies**, since a person's
+  shortlist does not respect where a colour came from. It sorts first and is the
+  default, because it is the shelf that actually gets worn.
+  - `⇧f` stars the look a pane is wearing, and unstars it; the legend says which
+    of the two the key will do rather than making you find out.
+  - The list lives in `~/.config/terminal-delight/favourites.toml` as one ordered
+    array of **tagged** ids — `favourites = ["palette:retro-82", "set:army"]`.
+    The tag is load-bearing, not decoration: a desktop is free to ship a theme
+    named `army` beside our colour set of the same name, and an untagged list
+    could not say which one was starred. Order in the file is order on the shelf.
+  - A favourite naming something this desktop does not have — a theme from the
+    old laptop — is **unresolvable, not absent**: skipped when the grid is drawn
+    and *kept* in the file, so reinstalling the theme brings the tile back
+    instead of it having been quietly dropped months earlier. A typo in a
+    hand-edited file drops that one line rather than poisoning the list.
+  - The shelf disappears when nothing is starred, and a stored shelf that has
+    gone away — the last favourite unstarred while the overlay is open — falls
+    back to the first visible shelf rather than to a clamped number.
+
 - **Agents can leave notes on the fridge door.** A new `leave_note` MCP tool
   posts a sticky note onto a pane's glass — a bold headline plus at most ten
   words of body ("GET MILK!" / "home at 7pm") — so a returning human reads the

@@ -526,6 +526,36 @@ bright_magenta = "#bb9af7"
         }
     }
 
+    /// `f` is the overlay's SECOND verb (jump to favourites / star what is
+    /// worn), and unlike `z` it was not free — it costs `flexoki-light` its
+    /// chord on the desktop shelf.
+    ///
+    /// This test is the price tag, not an alarm. It asserts what we chose: `f`
+    /// is a chord on no shelf of OURS, and the desktop palettes it does shadow
+    /// are named here, so the day a theme called `firewatch` is installed the
+    /// list changes and somebody re-reads the decision instead of discovering it
+    /// through a key that quietly stopped working.
+    #[test]
+    fn the_favourites_verb_shadows_only_what_we_agreed_it_would() {
+        assert!(
+            crate::theme::Dynamic::paint_chord("f").is_none(),
+            "no colour set may take the favourites key"
+        );
+        let shadowed: Vec<String> = load(&[PathBuf::from("/usr/share/omarchy/themes")])
+            .into_iter()
+            .filter(|p| p.paint_letter() == 'F')
+            .map(|p| p.id)
+            .collect();
+        // Stock Omarchy, as of this writing, ships exactly one `f`. A desktop
+        // with no Omarchy installed shadows nothing, which is also fine.
+        assert!(
+            shadowed.is_empty() || shadowed == ["flexoki-light"],
+            "the favourites key now shadows {shadowed:?} — these palettes keep \
+             their tile and their click but lose their chord. Still the right \
+             trade? See `paint_key`."
+        );
+    }
+
     #[test]
     fn a_user_theme_shadows_a_stock_one_of_the_same_name() {
         let dir = std::env::temp_dir().join(format!("td-pal-{}", std::process::id()));
