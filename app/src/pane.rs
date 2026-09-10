@@ -5742,11 +5742,57 @@ fn font_available(name: &str) -> bool {
     }
 }
 
+/// The same family under another spelling — a patched build of the font the
+/// user asked for, which is the font they asked for.
+///
+/// Measured on this machine 2026-09-10: TD asked for `JetBrains Mono`, the box
+/// had it installed as `JetBrainsMono Nerd Font` / `JetBrainsMono NF`, the
+/// exact-name test missed both, and the whole chrome silently fell through to
+/// Liberation Mono — which has no `▾` (U+25BE), no `▸` (U+25B8), no `⋯`, no
+/// `⟨⟩`, and drew each of them as nothing at all. The diagnostic even said so
+/// on every launch, and read as noise because the font *was* installed.
+///
+/// The match is on the family name with its spaces removed, optionally followed
+/// by one of the Nerd Font suffixes — tight enough that `Noto Sans` cannot
+/// capture `Noto Sans Devanagari`, loose enough to catch the packaging every
+/// patched font on earth uses.
+fn same_family_variant(requested: &str, candidate: &str) -> bool {
+    let compact = |s: &str| s.chars().filter(|c| !c.is_whitespace()).collect::<String>();
+    let (want, got) = (
+        compact(requested).to_lowercase(),
+        compact(candidate).to_lowercase(),
+    );
+    if want == got {
+        return true;
+    }
+    let Some(rest) = got.strip_prefix(&want) else {
+        return false;
+    };
+    matches!(
+        rest,
+        "nerdfont" | "nf" | "nerdfontmono" | "nerdfontpropo" | "nerdfontproportional"
+    )
+}
+
+/// A variant spelling of the requested family that IS installed, if any.
+fn family_variant(requested: &str) -> Option<String> {
+    AVAILABLE_FONTS
+        .get()?
+        .iter()
+        .find(|name| same_family_variant(requested, name))
+        .cloned()
+}
+
 /// Resolve the requested family against what's actually installed, falling back
 /// through a chain of common monospace families. Returns the family to request.
 pub fn resolve_family(requested: &str) -> String {
     if font_available(requested) {
         return requested.to_string();
+    }
+    // The font the user asked for, packaged under a patched name, is not a
+    // fallback — it is the font. Tried before any substitute.
+    if let Some(variant) = family_variant(requested) {
+        return variant;
     }
     for fb in MONO_FALLBACKS {
         if !fb.eq_ignore_ascii_case(requested) && font_available(fb) {
@@ -5770,7 +5816,10 @@ pub fn resolve_family(requested: &str) -> String {
 /// `the_font_diagnostic_is_silent_about_a_family_that_resolves`.
 pub fn font_diagnostic(want: &str) -> Option<String> {
     let got = resolve_family(want);
-    if got == want {
+    // Same font, other spelling — nothing was substituted, so there is nothing
+    // to report. Saying "JetBrains Mono not installed" about a box that has
+    // JetBrainsMono Nerd Font is how a true warning gets trained into noise.
+    if got == want || same_family_variant(want, &got) {
         return None;
     }
     let n = AVAILABLE_FONTS.get().map(|v| v.len()).unwrap_or(0);
@@ -7522,6 +7571,42 @@ mod tests {
             underline: None,
             strikethrough: None,
         }
+    }
+
+    /// The font a person installed IS the font they asked for, whatever the
+    /// packagers called the file.
+    ///
+    /// This is not a hypothetical tidy-up. On 2026-09-10 this box had
+    /// `JetBrainsMono Nerd Font` installed, TD asked for `JetBrains Mono`, the
+    /// exact-name test missed it, and the entire UI silently ran on Liberation
+    /// Mono — which lacks the disclosure triangles the left bar draws with, so
+    /// they rendered as nothing. A font mismatch is not a cosmetic problem; it
+    /// deletes glyphs.
+    #[test]
+    fn a_nerd_font_build_of_the_requested_family_is_that_family() {
+        assert!(same_family_variant(
+            "JetBrains Mono",
+            "JetBrainsMono Nerd Font"
+        ));
+        assert!(same_family_variant("JetBrains Mono", "JetBrainsMono NF"));
+        assert!(same_family_variant(
+            "JetBrains Mono",
+            "JetBrainsMono Nerd Font Mono"
+        ));
+        // the same name, spelled the same way
+        assert!(same_family_variant("JetBrains Mono", "JetBrains Mono"));
+        assert!(same_family_variant("Fira Code", "FiraCode Nerd Font"));
+
+        // And the line it must not cross: a DIFFERENT family that merely starts
+        // with the same words. Matching by prefix alone would hand a request
+        // for Noto Sans a Devanagari font and call it a success.
+        assert!(!same_family_variant("Noto Sans", "Noto Sans Devanagari"));
+        assert!(!same_family_variant(
+            "Noto Sans Mono",
+            "Noto Sans Mono CJK SC"
+        ));
+        assert!(!same_family_variant("JetBrains Mono", "DejaVu Sans Mono"));
+        assert!(!same_family_variant("Mono", "Monospace"));
     }
 
     #[test]

@@ -1711,17 +1711,27 @@ enum BarBranch {
     Unfiled,
 }
 
+/// Which way a drawn triangle points. Used for the fold disclosures and for the
+/// handles that hide and show the bar, which are the same shape turned around.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum BarDir {
+    Down,
+    Right,
+    Left,
+}
+
 /// Where each left-bar row was drawn this frame, in draw order — the drop
 /// targets a filing drag lands on. Shared with the paint pass, which is what
 /// knows the boxes, so it carries the same lock the other bounds registries do.
-type BarBoxes = Arc<Mutex<Vec<(BarBranch, Bounds<Pixels>)>>>;
+type BarBoxes = Arc<Mutex<Vec<(tree::RowId, Bounds<Pixels>)>>>;
 
-/// A left-bar row being dragged onto a branch: the filing gesture.
+/// A left-bar row being dragged: the filing AND ordering gesture, which are the
+/// same drag and differ only in where inside a row you let go.
 ///
-/// Grabbing a TASK row and dropping it on a project files that task there.
-/// Grabbing an INITIATIVE row and dropping it on a project moves the whole
-/// initiative, tasks and all — which is the move a person actually means when
-/// a push turns out to belong to a different project.
+/// Onto the middle of a branch, a task joins that branch. Onto a task, it takes
+/// that task's branch and the seat above or below it, depending on which half
+/// of the row the cursor was in. An initiative dropped beside another adopts
+/// its project and its side. A project dropped beside another simply reorders.
 struct BarDrag {
     what: BarDragged,
     /// Where the grab started (window space) — engages past a small threshold,
@@ -1729,8 +1739,8 @@ struct BarDrag {
     start: Point<Pixels>,
     at: Point<Pixels>,
     engaged: bool,
-    /// The branch under the cursor right now, resolved each move.
-    over: Option<BarBranch>,
+    /// What a release right now would do, resolved on every move.
+    over: Option<tree::Drop>,
 }
 
 /// What a [`BarDrag`] is carrying.
@@ -1738,8 +1748,11 @@ struct BarDrag {
 enum BarDragged {
     /// A tab, by index at grab time.
     Task(usize),
-    /// A whole initiative, by group id.
+    /// A whole initiative, by group id — its tasks travel with it.
     Initiative(u32),
+    /// A project, by id. Reorders the top layer, which is the only layer whose
+    /// order is its own rather than the tab strip's.
+    Project(u32),
 }
 
 /// What the find panel is searching, and where it centres.
@@ -6209,7 +6222,9 @@ impl Workspace {
         match seed {
             Some(BarDragged::Task(i)) => self.file_task(i, BarBranch::Project(id)),
             Some(BarDragged::Initiative(gid)) => self.file_initiative(gid, BarBranch::Project(id)),
-            None => {}
+            // A project cannot be seeded with another project: the tree has two
+            // layers, and this is the top one.
+            Some(BarDragged::Project(_)) | None => {}
         }
         self.save(cx);
         cx.notify();
@@ -6393,17 +6408,119 @@ impl Workspace {
         cx.notify();
     }
 
-    /// Which branch a cursor is over, from the row boxes captured last frame.
+    /// What a release at `pos` would do, from the row boxes captured last frame.
     ///
-    /// Scanned newest-last so the innermost row wins where boxes overlap — a
-    /// task row sits inside no other row today, but a nested layer added later
-    /// would silently drop into its parent otherwise.
-    fn resolve_bar_drop(&self, pos: Point<Pixels>) -> Option<BarBranch> {
+    /// The row's HEIGHT carries the verb, which is the whole trick that lets one
+    /// drag both file and order: the middle of a branch header means *join
+    /// this*, its edges and a task's two halves mean *sit here*. A quarter is
+    /// enough of a target at these row heights, and a task — which has no
+    /// "into" — splits cleanly down the middle.
+    ///
+    /// Scanned newest-last so the innermost row wins where boxes overlap.
+    fn resolve_bar_drop(&self, pos: Point<Pixels>) -> Option<tree::Drop> {
         let rows = self.bar_bounds.lock().unwrap();
-        rows.iter()
-            .rev()
-            .find(|(_, b)| b.contains(&pos))
-            .map(|(branch, _)| *branch)
+        let (id, bounds) = rows.iter().rev().find(|(_, b)| b.contains(&pos))?;
+        let top = f32::from(bounds.origin.y);
+        let height = f32::from(bounds.size.height).max(1.0);
+        let frac = ((f32::from(pos.y) - top) / height).clamp(0.0, 1.0);
+        Some(match id {
+            tree::RowId::Task(_) => {
+                if frac < 0.5 {
+                    tree::Drop::Before(*id)
+                } else {
+                    tree::Drop::After(*id)
+                }
+            }
+            tree::RowId::Unfiled => tree::Drop::Into(*id),
+            _ if frac < 0.25 => tree::Drop::Before(*id),
+            _ if frac > 0.75 => tree::Drop::After(*id),
+            _ => tree::Drop::Into(*id),
+        })
+    }
+
+    /// Write a task's branch from a resolved [`tree::Place`] — the two fields
+    /// that say where it hangs, set together so they cannot disagree.
+    fn place_task(&mut self, i: usize, place: tree::Place) {
+        let Some(t) = self.tabs.get_mut(i) else {
+            return;
+        };
+        match place.initiative {
+            Some(g) => {
+                t.group = Some(g);
+                t.project = None;
+            }
+            None => {
+                t.group = None;
+                t.project = place.project;
+            }
+        }
+        self.prune_groups();
+    }
+
+    /// Land a left-bar drag: file what was dragged, and seat it where the caret
+    /// was drawn. Returns false when the release meant nothing (a project
+    /// dropped onto a task, an initiative onto itself), so the caller can leave
+    /// everything alone rather than inventing a move.
+    fn apply_bar_drop(
+        &mut self,
+        what: BarDragged,
+        drop: tree::Drop,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let places = self.places();
+        let inis: Vec<tree::InitiativeRef> = self
+            .groups
+            .iter()
+            .map(|g| tree::InitiativeRef {
+                id: g.id,
+                project: g.project,
+                collapsed: g.collapsed,
+            })
+            .collect();
+        match what {
+            BarDragged::Task(i) => {
+                let Some(landing) = tree::land_task(&places, &inis, drop) else {
+                    return false;
+                };
+                self.place_task(i, landing.place);
+                if let Some(slot) = landing.slot {
+                    // move_tab saves; without a move we still have a filing to
+                    // write down.
+                    self.move_tab(i, slot, cx);
+                } else {
+                    self.save(cx);
+                }
+                true
+            }
+            BarDragged::Initiative(gid) => {
+                let Some(landing) = tree::land_initiative(&places, &inis, gid, drop) else {
+                    return false;
+                };
+                if let Some(g) = self.groups.iter_mut().find(|g| g.id == gid) {
+                    g.project = landing.project;
+                }
+                match landing.slot {
+                    Some(slot) => self.move_group(gid, slot, cx),
+                    None => self.save(cx),
+                }
+                true
+            }
+            BarDragged::Project(pid) => {
+                let (neighbour, after) = match drop {
+                    tree::Drop::Before(tree::RowId::Project(q)) => (q, false),
+                    tree::Drop::After(tree::RowId::Project(q)) => (q, true),
+                    // Dropping a project into anything is not a move: a project
+                    // has nothing above it to be filed under.
+                    _ => return false,
+                };
+                let mut ids: Vec<u32> = self.projects.iter().map(|p| p.id).collect();
+                tree::reorder(&mut ids, pid, neighbour, after);
+                self.projects
+                    .sort_by_key(|p| ids.iter().position(|id| *id == p.id).unwrap_or(usize::MAX));
+                self.save(cx);
+                true
+            }
+        }
     }
 
     /// Where a task is, on disk: its first pane's live working directory.
@@ -9659,23 +9776,26 @@ impl Workspace {
         // already done its work (activate / scope) on the way down.
         if let Some(drag) = self.bar_drag.take() {
             if drag.engaged {
-                if let Some(into) = drag.over {
-                    match drag.what {
-                        BarDragged::Task(i) => self.file_task(i, into),
-                        BarDragged::Initiative(gid) => self.file_initiative(gid, into),
+                if let Some(drop) = drag.over {
+                    if self.apply_bar_drop(drag.what, drop, cx) {
+                        // Filing a task out of the branch the strip is scoped to
+                        // would otherwise leave the active tab off the strip.
+                        self.ensure_scope_shows(self.active);
+                        self.save(cx);
                     }
-                    // Filing a task out of the branch the strip is scoped to
-                    // would otherwise leave the active tab off the strip.
-                    self.ensure_scope_shows(self.active);
-                    self.save(cx);
                 }
                 cx.notify();
                 return;
             }
-            // it never travelled: the press was a click on an initiative row,
-            // and a click on a branch scopes the strip to it
-            if let BarDragged::Initiative(gid) = drag.what {
-                let next = self.scope.toggled(tree::Scope::Initiative(gid));
+            // it never travelled: the press was a click on a branch row, and a
+            // click on a branch scopes the strip to it
+            let to = match drag.what {
+                BarDragged::Initiative(gid) => Some(tree::Scope::Initiative(gid)),
+                BarDragged::Project(pid) => Some(tree::Scope::Project(pid)),
+                BarDragged::Task(_) => None,
+            };
+            if let Some(to) = to {
+                let next = self.scope.toggled(to);
                 self.set_scope(next, window, cx);
                 return;
             }
@@ -10906,6 +11026,35 @@ impl Workspace {
         }
     }
 
+    /// A triangle, drawn from rectangles rather than typed as a glyph.
+    ///
+    /// The fold affordance may not depend on a font, and on this machine that
+    /// is not a hypothetical: TD asks for JetBrains Mono, the box has it under
+    /// the name `JetBrainsMono Nerd Font`, the lookup missed it, and the whole
+    /// chrome fell back to Liberation Mono — which has no `▾` (U+25BE) and no
+    /// `▸` (U+25B8) at all. The disclosure triangles rendered as nothing, and a
+    /// fold you cannot see is a fold that does not exist. Four stacked bars
+    /// whose widths taper are a triangle in any font, forever.
+    fn triangle(dir: BarDir, color: Hsla, s: f32) -> gpui::Div {
+        let step = (2.0 * s).max(1.5);
+        let widths: &[f32] = match dir {
+            BarDir::Down => &[8., 6., 4., 2.],
+            BarDir::Right | BarDir::Left => &[2., 4., 6., 8., 6., 4., 2.],
+        };
+        let mut col = div().flex().flex_col();
+        col = match dir {
+            BarDir::Down => col.items_center(),
+            // a right-pointing triangle is the same bars, left-aligned: the far
+            // edge is what traces the point
+            BarDir::Right => col.items_start(),
+            BarDir::Left => col.items_end(),
+        };
+        for w in widths {
+            col = col.child(div().w(px(w * s)).h(px(step)).bg(color));
+        }
+        col
+    }
+
     /// The badges a BRANCH row carries: what its tasks are saying, summed.
     ///
     /// A folded branch is exactly when this matters, so the loudest state keeps
@@ -11032,24 +11181,50 @@ impl Workspace {
                 )
             }
             tree::Row::Task { index, depth } => self.task_row(index, depth, step, &th, s, cx),
-            tree::Row::Unfiled { depth } => div()
-                .pl(step * (depth as f32) + px(6. * s))
-                .pr(px(6. * s))
-                .py(px(4. * s))
-                .flex()
-                .flex_row()
-                .items_center()
-                .gap(px(6. * s))
-                .child(div().h(px(1.)).flex_1().bg(th.faint.alpha(0.35)))
-                .child(
-                    div()
-                        .text_size(px(8. * s))
-                        .text_color(th.faint)
-                        .child("⌁")
-                        .into_any_element(),
-                )
-                .child(div().h(px(1.)).flex_1().bg(th.faint.alpha(0.35)))
-                .into_any_element(),
+            tree::Row::Unfiled { depth } => {
+                // A hairline and nothing else. It is also a drop target — "file
+                // this under nothing" is an answer — so it registers its box and
+                // lights up like a branch when a drag is over it.
+                let store = self.bar_bounds.clone();
+                let hot = self
+                    .bar_drag
+                    .as_ref()
+                    .filter(|d| d.engaged)
+                    .and_then(|d| d.over)
+                    .is_some_and(|drop| {
+                        matches!(
+                            drop,
+                            tree::Drop::Into(tree::RowId::Unfiled)
+                                | tree::Drop::Before(tree::RowId::Unfiled)
+                                | tree::Drop::After(tree::RowId::Unfiled)
+                        )
+                    });
+                div()
+                    .relative()
+                    .pl(step * (depth as f32) + px(6. * s))
+                    .pr(px(6. * s))
+                    .py(px(5. * s))
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .child(div().h(px(if hot { 2. } else { 1. })).flex_1().bg(if hot {
+                        th.accent
+                    } else {
+                        th.faint.alpha(0.35)
+                    }))
+                    .child(
+                        div().absolute().inset_0().child(
+                            canvas(
+                                move |bounds, _, _| {
+                                    store.lock().unwrap().push((tree::RowId::Unfiled, bounds));
+                                },
+                                |_, _, _, _| {},
+                            )
+                            .size_full(),
+                        ),
+                    )
+                    .into_any_element()
+            }
         }
     }
 
@@ -11082,12 +11257,12 @@ impl Workspace {
             BarBranch::Unfiled => 60_000,
         };
         let is_project = matches!(branch, BarBranch::Project(_));
-        let drop_hi = self
-            .bar_drag
-            .as_ref()
-            .filter(|d| d.engaged)
-            .and_then(|d| d.over)
-            == Some(branch);
+        let row_id_kind = match branch {
+            BarBranch::Project(id) => tree::RowId::Project(id),
+            BarBranch::Initiative(id) => tree::RowId::Initiative(id),
+            BarBranch::Unfiled => tree::RowId::Unfiled,
+        };
+        let (drop_hi, caret) = self.bar_drop_marks(row_id_kind, th);
         let row_id = SharedString::from(format!("bar-branch-{key}"));
         let store = self.bar_bounds.clone();
 
@@ -11143,15 +11318,35 @@ impl Workspace {
             })
             .when(drop_hi, |d| d.bg(th.accent.alpha(0.28)))
             .hover(move |st| st.bg(color.alpha(0.12)))
-            // the fold triangle: its own target, so folding never scopes and
-            // scoping never folds
+            .children(caret)
+            // The fold: its own target, wide enough to hit without aiming, so
+            // folding never scopes and scoping never folds. The triangle is
+            // drawn, not typed — see [`Self::triangle`].
             .child(
                 div()
                     .id(SharedString::from(format!("bar-fold-{key}")))
-                    .w(px(11. * s))
-                    .text_size(px(9. * s))
-                    .text_color(th.faint)
-                    .child(if collapsed { "▸" } else { "▾" })
+                    .w(px(15. * s))
+                    .h(px(15. * s))
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .justify_center()
+                    .rounded_sm()
+                    .cursor_pointer()
+                    .hover(|st| st.bg(hsla(0., 0., 1., 0.12)))
+                    .child(Self::triangle(
+                        if collapsed {
+                            BarDir::Right
+                        } else {
+                            BarDir::Down
+                        },
+                        if collapsed {
+                            th.text.alpha(0.75)
+                        } else {
+                            th.faint
+                        },
+                        s,
+                    ))
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
@@ -11213,7 +11408,7 @@ impl Workspace {
                 div().absolute().inset_0().child(
                     canvas(
                         move |bounds, _, _| {
-                            store.lock().unwrap().push((branch, bounds));
+                            store.lock().unwrap().push((row_id_kind, bounds));
                         },
                         |_, _, _, _| {},
                     )
@@ -11228,32 +11423,76 @@ impl Workspace {
                         ws.start_bar_rename(branch, window, cx);
                         return;
                     }
-                    // An initiative row can be dragged into a project, so its
-                    // press only ARMS a drag: the scope changes on release, and
+                    // Every branch row is draggable — an initiative into a
+                    // project or beside another, a project beside another — so
+                    // the press only ARMS: the scope changes on release, and
                     // only if the cursor never travelled. Pressing to drag must
-                    // not also re-scope the strip under the thing being
-                    // dragged. A project row has nothing above it to be filed
-                    // into, so its press is a plain click and acts at once.
-                    if let BarBranch::Initiative(gid) = branch {
-                        ws.bar_drag = Some(BarDrag {
-                            what: BarDragged::Initiative(gid),
-                            start: ev.position,
-                            at: ev.position,
-                            engaged: false,
-                            over: None,
-                        });
-                        return;
-                    }
-                    let to = match branch {
-                        BarBranch::Project(id) => tree::Scope::Project(id),
-                        BarBranch::Initiative(id) => tree::Scope::Initiative(id),
-                        BarBranch::Unfiled => tree::Scope::All,
+                    // not re-scope the strip under the thing being dragged.
+                    let what = match branch {
+                        BarBranch::Initiative(gid) => Some(BarDragged::Initiative(gid)),
+                        BarBranch::Project(pid) => Some(BarDragged::Project(pid)),
+                        BarBranch::Unfiled => None,
                     };
-                    let next = ws.scope.toggled(to);
-                    ws.set_scope(next, window, cx);
+                    match what {
+                        Some(what) => {
+                            ws.bar_drag = Some(BarDrag {
+                                what,
+                                start: ev.position,
+                                at: ev.position,
+                                engaged: false,
+                                over: None,
+                            });
+                        }
+                        None => {
+                            let next = ws.scope.toggled(tree::Scope::All);
+                            ws.set_scope(next, window, cx);
+                        }
+                    }
                 }),
             )
             .into_any_element()
+    }
+
+    /// How a row should mark an in-flight drag: whether the drop would land
+    /// INTO it, and the insertion caret to draw if the drop would seat
+    /// something above or below it.
+    ///
+    /// One function so the two marks can never contradict each other — a row
+    /// lit as a destination *and* wearing a caret would be telling a person two
+    /// different things about the same release.
+    fn bar_drop_marks(&self, row: tree::RowId, th: &theme::Theme) -> (bool, Option<gpui::Div>) {
+        let Some(drop) = self
+            .bar_drag
+            .as_ref()
+            .filter(|d| d.engaged)
+            .and_then(|d| d.over)
+        else {
+            return (false, None);
+        };
+        let caret = |top: bool| {
+            div()
+                .absolute()
+                .left_0()
+                .right_0()
+                .when(top, |d| d.top(px(-1.)))
+                .when(!top, |d| d.bottom(px(-1.)))
+                .h(px(2.))
+                .rounded_full()
+                .bg(th.accent)
+                .shadow(vec![BoxShadow {
+                    color: th.accent.alpha(0.9),
+                    offset: point(px(0.), px(0.)),
+                    blur_radius: px(5.),
+                    spread_radius: px(0.5),
+                    inset: false,
+                }])
+        };
+        match drop {
+            tree::Drop::Into(id) if id == row => (true, None),
+            tree::Drop::Before(id) if id == row => (false, Some(caret(true))),
+            tree::Drop::After(id) if id == row => (false, Some(caret(false))),
+            _ => (false, None),
+        }
     }
 
     /// A TASK row: one tab, seen from the tree.
@@ -11275,12 +11514,7 @@ impl Workspace {
         let panes = self.tab_pane_count(i);
         let grp = SharedString::from(format!("bar-task-grp-{i}"));
         let store = self.bar_bounds.clone();
-        let place = self.place_of(i);
-        let neighbour = match (place.initiative, place.project) {
-            (Some(g), _) => BarBranch::Initiative(g),
-            (None, Some(p)) => BarBranch::Project(p),
-            (None, None) => BarBranch::Unfiled,
-        };
+        let (_, caret) = self.bar_drop_marks(tree::RowId::Task(i), th);
 
         // the strip's own rename editor owns this row while it is renaming, so
         // one gesture renames a task wherever it is grabbed from
@@ -11396,12 +11630,13 @@ impl Workspace {
             })
             // how many terminals are inside — the tree's answer to "what is a
             // task made of". Hidden at one, which is most tasks and says
-            // nothing.
+            // nothing. A bare number, because every glyph that meant "panes"
+            // was missing from the fallback font (U+25A4 among them).
             .children((panes > 1).then(|| {
                 div()
                     .text_size(px(8.5 * s))
                     .text_color(th.faint)
-                    .child(format!("▤{panes}"))
+                    .child(format!("\u{2022}{panes}"))
                     .into_any_element()
             }))
             .child(
@@ -11419,21 +11654,21 @@ impl Workspace {
                         }),
                     ),
             )
-            // A task row is a drop target too, standing for the branch it hangs
-            // from: dropping one task onto another files it where that one
-            // lives, which is the gesture people try before they aim at a
-            // branch header.
+            // A task row is a drop target too: dropping one task onto another
+            // takes that task's branch AND its seat, which is the gesture
+            // people try before they aim at a branch header.
             .child(
                 div().absolute().inset_0().child(
                     canvas(
                         move |bounds, _, _| {
-                            store.lock().unwrap().push((neighbour, bounds));
+                            store.lock().unwrap().push((tree::RowId::Task(i), bounds));
                         },
                         |_, _, _, _| {},
                     )
                     .size_full(),
                 ),
             )
+            .children(caret)
             .on_mouse_down(
                 MouseButton::Right,
                 cx.listener(move |ws, ev: &MouseDownEvent, _w, cx| {
@@ -11465,6 +11700,32 @@ impl Workspace {
                 }),
             )
             .into_any_element()
+    }
+
+    /// Is every branch of the tree folded? Drives which way the fold-all
+    /// triangle points, and therefore what pressing it will do.
+    ///
+    /// A tree with no branches at all counts as folded, so the button offers to
+    /// open rather than to fold nothing.
+    fn tree_all_folded(&self) -> bool {
+        self.projects.iter().all(|p| p.collapsed) && self.groups.iter().all(|g| g.collapsed)
+    }
+
+    /// Fold the whole tree, or open it — whichever the current state is not.
+    ///
+    /// The branch holding the active task still refuses to disappear when
+    /// folded (the row builder pins it open), so this cannot lose your place
+    /// even when it folds everything else.
+    fn fold_whole_tree(&mut self, cx: &mut Context<Self>) {
+        let fold = !self.tree_all_folded();
+        for p in &mut self.projects {
+            p.collapsed = fold;
+        }
+        for g in &mut self.groups {
+            g.collapsed = fold;
+        }
+        self.save(cx);
+        cx.notify();
     }
 
     /// Open the inline rename box on a branch row.
@@ -11514,7 +11775,12 @@ impl Workspace {
                 collapsed: p.collapsed,
             })
             .collect();
-        let initiatives: Vec<tree::InitiativeRef> = self
+        // Initiatives are listed in the order their tasks appear on the strip,
+        // not in the order the groups happen to sit in memory. That is what
+        // makes dragging one up or down mean something: reordering an
+        // initiative slides its whole run of tabs, and the tree has to show the
+        // same answer the mother bar does.
+        let mut initiatives: Vec<tree::InitiativeRef> = self
             .groups
             .iter()
             .map(|g| tree::InitiativeRef {
@@ -11523,11 +11789,20 @@ impl Workspace {
                 collapsed: g.collapsed,
             })
             .collect();
+        let first_task_of = |gid: u32| {
+            self.tabs
+                .iter()
+                .position(|t| t.group == Some(gid))
+                .unwrap_or(usize::MAX)
+        };
+        initiatives.sort_by_key(|i| first_task_of(i.id));
         let tasks = self.task_refs(cx);
         let rows = tree::rows(&projects, &initiatives, &tasks, Some(self.active));
 
         let scope_label = match self.scope {
-            tree::Scope::All => "∗".to_string(),
+            // bb calls the unnarrowed view "All Threads"; the same word does the
+            // job here, and it is three ASCII letters no font can fail to draw.
+            tree::Scope::All => "all".to_string(),
             tree::Scope::Project(id) => self.branch_label(BarBranch::Project(id)),
             tree::Scope::Initiative(id) => self.branch_label(BarBranch::Initiative(id)),
         };
@@ -11566,9 +11841,41 @@ impl Workspace {
                     ),
             )
             .child(
+                // fold or unfold the whole tree. One button rather than two,
+                // showing the triangle of what pressing it does: pointing down
+                // while anything is open (press to fold), pointing right once
+                // everything is folded (press to open).
+                div()
+                    .id("bar-fold-all")
+                    .w(px(17. * s))
+                    .h(px(15. * s))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded_sm()
+                    .cursor_pointer()
+                    .hover(|st| st.bg(hsla(0., 0., 1., 0.12)))
+                    .child(Self::triangle(
+                        if self.tree_all_folded() {
+                            BarDir::Right
+                        } else {
+                            BarDir::Down
+                        },
+                        th.text.alpha(0.75),
+                        s * 1.1,
+                    ))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                            cx.stop_propagation();
+                            ws.fold_whole_tree(cx);
+                        }),
+                    ),
+            )
+            .child(
                 // adopt: file every loose task under the project its terminal is
                 // actually sitting in
-                Self::bezel_btn_s(&th, "⌁", false, s * 0.85)
+                Self::bezel_btn_s(&th, "\u{1F4C1}", false, s * 0.85)
                     .id("bar-adopt")
                     .on_mouse_down(
                         MouseButton::Left,
@@ -11579,7 +11886,7 @@ impl Workspace {
                     ),
             )
             .child(
-                Self::bezel_btn_s(&th, "＋", false, s * 0.85)
+                Self::bezel_btn_s(&th, "+", false, s * 0.85)
                     .id("bar-new-project")
                     .on_mouse_down(
                         MouseButton::Left,
@@ -11594,8 +11901,17 @@ impl Workspace {
                     ),
             )
             .child(
-                Self::bezel_btn_s(&th, "⟨", false, s * 0.85)
+                div()
                     .id("bar-hide")
+                    .w(px(15. * s))
+                    .h(px(15. * s))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded_sm()
+                    .cursor_pointer()
+                    .hover(|st| st.bg(hsla(0., 0., 1., 0.12)))
+                    .child(Self::triangle(BarDir::Left, th.text.alpha(0.7), s))
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
@@ -13227,12 +13543,24 @@ impl Render for Workspace {
         // the header icons for. Four ordinary tab titles wrapped into a scrunched
         // column at that cap; at full width they simply lay out, and only a
         // genuinely full bar wraps — onto a second TAB row, which pushes nothing.
+        // The strip belongs to the SCREEN, not to the whole window: with the
+        // tree open the tabs start where the terminals start, so a tab sits
+        // over the thing it opens instead of over the tree that lists it. The
+        // indent is computed from the same numbers the layout uses — the bar's
+        // width plus its margin and the screen's, less the bezel's own padding
+        // — so the two edges line up at any bar width and any scale.
+        let strip_indent = if self.left_bar {
+            (self.left_bar_w * scale + 16. - 12. * scale).max(0.)
+        } else {
+            0.
+        };
         let mut tab_strip = div()
             .flex()
             .flex_row()
             .flex_wrap()
             .gap(px(4. * scale))
             .items_center()
+            .pl(px(strip_indent))
             // min_w_0 lets the strip shrink BELOW its content so overflow wraps to
             // another row instead of overrunning the bar's edge.
             .min_w_0()
@@ -13243,8 +13571,17 @@ impl Render for Workspace {
         // feature people turn off once and never see again.
         if !self.left_bar {
             tab_strip = tab_strip.child(
-                Self::bezel_btn_s(&th, "⟩", false, scale)
+                div()
                     .id("show-left-bar")
+                    .w(px(16. * scale))
+                    .h(px(16. * scale))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded_sm()
+                    .cursor_pointer()
+                    .hover(|st| st.bg(hsla(0., 0., 1., 0.12)))
+                    .child(Self::triangle(BarDir::Right, th.text.alpha(0.7), scale))
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
@@ -13370,9 +13707,9 @@ impl Render for Workspace {
                 let mut chip = Self::bezel_btn_s(
                     &th,
                     &if hidden.quiet() {
-                        format!("⋯{}", hidden.tasks)
+                        format!("\u{2026}{}", hidden.tasks)
                     } else {
-                        format!("⋯{} {glyphs}", hidden.tasks)
+                        format!("\u{2026}{} {glyphs}", hidden.tasks)
                     },
                     false,
                     scale,
@@ -17888,7 +18225,7 @@ impl Render for Workspace {
                                             ws.file_initiative(g, into)
                                         }
                                         Some(BarDragged::Task(t)) => ws.file_task(t, into),
-                                        None => {}
+                                        Some(BarDragged::Project(_)) | None => {}
                                     }
                                     ws.ensure_scope_shows(ws.active);
                                     ws.save(cx);
@@ -18642,12 +18979,41 @@ impl Render for Workspace {
         // release would put it, in that branch's own colour, so a drop is never
         // a guess
         let bar_chip = self.bar_drag.as_ref().filter(|d| d.engaged).map(|d| {
-            let (label, color) = match d.over {
-                Some(branch) => (
-                    format!("⇲ {}", self.branch_label(branch)),
-                    self.branch_color(branch, cx),
+            let named = |row: tree::RowId| match row {
+                tree::RowId::Project(p) => (
+                    self.branch_label(BarBranch::Project(p)),
+                    self.branch_color(BarBranch::Project(p), cx),
                 ),
-                None => ("⇲ …".to_string(), th.faint),
+                tree::RowId::Initiative(g) => (
+                    self.branch_label(BarBranch::Initiative(g)),
+                    self.branch_color(BarBranch::Initiative(g), cx),
+                ),
+                tree::RowId::Task(i) => (
+                    self.tabs
+                        .get(i)
+                        .and_then(|t| t.name.clone())
+                        .unwrap_or_else(|| format!("{}", i + 1)),
+                    self.resolved_tab_colors(i).0.unwrap_or(th.faint),
+                ),
+                tree::RowId::Unfiled => ("unfiled".to_string(), th.faint),
+            };
+            // The chip says the VERB as well as the target, because "into
+            // client-server" and "above host debts" are different releases and
+            // the caret alone does not name what it is next to.
+            let (label, color) = match d.over {
+                Some(tree::Drop::Into(row)) => {
+                    let (name, c) = named(row);
+                    (format!("into {name}"), c)
+                }
+                Some(tree::Drop::Before(row)) => {
+                    let (name, c) = named(row);
+                    (format!("above {name}"), c)
+                }
+                Some(tree::Drop::After(row)) => {
+                    let (name, c) = named(row);
+                    (format!("below {name}"), c)
+                }
+                None => ("\u{2026}".to_string(), th.faint),
             };
             div()
                 .absolute()

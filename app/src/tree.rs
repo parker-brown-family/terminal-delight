@@ -332,6 +332,179 @@ pub fn rows(
     out
 }
 
+/// Which row a cursor is over, and what a release there would mean.
+///
+/// Two verbs, because a tree needs both and they are not the same gesture:
+/// **Into** joins a branch and lets the order be whatever it was; **Before** and
+/// **After** place the dragged thing at an exact seat. The renderer decides
+/// which one from where in the row's height the cursor sits — the middle of a
+/// branch header is *into*, its edges and a task's two halves are *between* —
+/// and this module decides what each one lands on.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum RowId {
+    Project(u32),
+    Initiative(u32),
+    /// A tab, by index.
+    Task(usize),
+    /// The divider above the loose tasks. Dropping here means "file this under
+    /// nothing", which is a real answer and not a failure to aim.
+    Unfiled,
+}
+
+/// What a release would do.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Drop {
+    Into(RowId),
+    Before(RowId),
+    After(RowId),
+}
+
+/// Where a dragged TASK ends up: the branch it joins, and the tab slot it takes.
+///
+/// `slot` is an insertion index in the pre-removal tab list — the same index
+/// space `Workspace::move_tab` speaks — and `None` means "join the branch and
+/// keep your place in the order", which is what dropping onto a branch header
+/// means.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub struct Landing {
+    pub place: Place,
+    pub slot: Option<usize>,
+}
+
+/// Where a dragged INITIATIVE ends up: the project it joins, and the tab slot
+/// its whole run of tasks slides to (`Workspace::move_group`'s index space).
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub struct BranchLanding {
+    pub project: Option<u32>,
+    pub slot: Option<usize>,
+}
+
+/// The project an initiative hangs from, filtered to one that exists.
+fn project_of(initiatives: &[InitiativeRef], gid: u32) -> Option<u32> {
+    initiatives
+        .iter()
+        .find(|i| i.id == gid)
+        .and_then(|i| i.project)
+}
+
+/// Resolve a task drag's release.
+///
+/// Returns `None` for a drop that means nothing — a task cannot be seated
+/// before a project header, because "between two projects" is not a place a
+/// task can be.
+pub fn land_task(places: &[Place], initiatives: &[InitiativeRef], drop: Drop) -> Option<Landing> {
+    let branch_place = |row: RowId| -> Option<Place> {
+        Some(match row {
+            RowId::Project(p) => Place {
+                project: Some(p),
+                initiative: None,
+            },
+            RowId::Initiative(g) => Place {
+                project: project_of(initiatives, g),
+                initiative: Some(g),
+            },
+            RowId::Unfiled => Place::default(),
+            RowId::Task(_) => return None,
+        })
+    };
+    match drop {
+        // Onto a branch: join it, and take the seat after its last task so a
+        // filed task lands where the eye was pointing rather than wherever its
+        // old tab index happens to fall.
+        Drop::Into(row) => {
+            let place = branch_place(row)?;
+            let last = places
+                .iter()
+                .enumerate()
+                .filter(|(_, p)| **p == place)
+                .map(|(i, _)| i)
+                .next_back();
+            Some(Landing {
+                place,
+                slot: last.map(|i| i + 1),
+            })
+        }
+        // Onto a task: take that task's branch, and the seat on the side the
+        // cursor was on.
+        Drop::Before(RowId::Task(j)) => Some(Landing {
+            place: *places.get(j)?,
+            slot: Some(j),
+        }),
+        Drop::After(RowId::Task(j)) => Some(Landing {
+            place: *places.get(j)?,
+            slot: Some(j + 1),
+        }),
+        // The edges of a branch header, for a task, mean the same as its
+        // middle: there is no "between two branches" for a task to sit in.
+        Drop::Before(row) | Drop::After(row) => land_task(places, initiatives, Drop::Into(row)),
+    }
+}
+
+/// Resolve an initiative drag's release: which project it joins, and where its
+/// run of tasks slides to.
+pub fn land_initiative(
+    places: &[Place],
+    initiatives: &[InitiativeRef],
+    moving: u32,
+    drop: Drop,
+) -> Option<BranchLanding> {
+    let tasks_of = |gid: u32| -> Vec<usize> {
+        places
+            .iter()
+            .enumerate()
+            .filter(|(_, p)| p.initiative == Some(gid))
+            .map(|(i, _)| i)
+            .collect()
+    };
+    match drop {
+        Drop::Into(RowId::Project(p)) => Some(BranchLanding {
+            project: Some(p),
+            slot: None,
+        }),
+        Drop::Into(RowId::Unfiled) | Drop::Before(RowId::Unfiled) | Drop::After(RowId::Unfiled) => {
+            Some(BranchLanding {
+                project: None,
+                slot: None,
+            })
+        }
+        // Onto another initiative: adopt ITS project (the one it is sitting in,
+        // which is what the eye is pointing at) and slide to that side of it.
+        Drop::Before(RowId::Initiative(g)) | Drop::After(RowId::Initiative(g)) if g != moving => {
+            let seats = tasks_of(g);
+            let slot = match drop {
+                Drop::Before(_) => seats.first().copied(),
+                _ => seats.last().map(|i| i + 1),
+            };
+            Some(BranchLanding {
+                project: project_of(initiatives, g),
+                slot,
+            })
+        }
+        // An initiative cannot be seated inside another initiative, or beside a
+        // task: the tree is two layers deep and stays that way.
+        _ => None,
+    }
+}
+
+/// Move `moving` to sit immediately before or after `neighbour` in a list of
+/// ids, preserving everything else. Used for the project layer, whose order is
+/// its own — unlike initiatives and tasks, which take their order from the tab
+/// list the mother bar draws.
+pub fn reorder(ids: &mut Vec<u32>, moving: u32, neighbour: u32, after: bool) {
+    if moving == neighbour {
+        return;
+    }
+    let Some(from) = ids.iter().position(|id| *id == moving) else {
+        return;
+    };
+    ids.remove(from);
+    let Some(at) = ids.iter().position(|id| *id == neighbour) else {
+        ids.insert(from.min(ids.len()), moving);
+        return;
+    };
+    ids.insert(if after { at + 1 } else { at }, moving);
+}
+
 /// The tasks the mother bar draws under `scope`, in tab order.
 ///
 /// Kept beside [`rows`] on purpose: the strip and the tree answer the same
@@ -701,6 +874,147 @@ mod tests {
             Scope::All.toggled(Scope::Initiative(9)),
             Scope::Initiative(9)
         );
+    }
+
+    #[test]
+    fn dropping_a_task_on_a_task_takes_its_branch_and_the_seat_you_pointed_at() {
+        // The gesture people try first, and the one bb taught them: drag a row
+        // onto another row and it lands exactly there, not "somewhere in that
+        // group".
+        let places = vec![
+            Place {
+                project: Some(1),
+                initiative: Some(10),
+            },
+            Place {
+                project: Some(1),
+                initiative: Some(10),
+            },
+            Place::default(),
+        ];
+        let inis = [initiative(10, Some(1), false)];
+        let before = land_task(&places, &inis, Drop::Before(RowId::Task(1))).expect("lands");
+        assert_eq!(before.place, places[1]);
+        assert_eq!(before.slot, Some(1));
+        let after = land_task(&places, &inis, Drop::After(RowId::Task(1))).expect("lands");
+        assert_eq!(after.place, places[1]);
+        assert_eq!(after.slot, Some(2));
+    }
+
+    #[test]
+    fn dropping_a_task_on_a_branch_header_files_it_at_the_end_of_that_branch() {
+        // Not "keeps its old index and appears in the middle of the branch" —
+        // which is what happens if the slot is left alone, and reads as the
+        // drop having landed somewhere else.
+        let places = vec![
+            Place {
+                project: Some(1),
+                initiative: Some(10),
+            },
+            Place {
+                project: Some(1),
+                initiative: Some(10),
+            },
+            Place::default(),
+        ];
+        let inis = [initiative(10, Some(1), false)];
+        let landing = land_task(&places, &inis, Drop::Into(RowId::Initiative(10))).expect("lands");
+        assert_eq!(
+            landing.place,
+            Place {
+                project: Some(1),
+                initiative: Some(10)
+            }
+        );
+        assert_eq!(landing.slot, Some(2), "after the branch's last task");
+
+        // Into an EMPTY branch there is no seat to take, so the tab keeps its
+        // place in the order and only its branch changes.
+        let empty = land_task(&places, &inis, Drop::Into(RowId::Project(9))).expect("lands");
+        assert_eq!(empty.place.project, Some(9));
+        assert_eq!(empty.slot, None);
+    }
+
+    #[test]
+    fn a_task_cannot_be_seated_between_two_branches() {
+        // The edges of a branch header mean the same as its middle for a task.
+        // Anything else would invent a place — "between projects" — that no
+        // task can occupy.
+        let places = vec![Place::default()];
+        let inis = [initiative(10, None, false)];
+        let edge = land_task(&places, &inis, Drop::Before(RowId::Project(3))).expect("lands");
+        assert_eq!(edge.place.project, Some(3));
+        assert_eq!(edge.place.initiative, None);
+    }
+
+    #[test]
+    fn an_initiative_dropped_beside_another_adopts_its_project_and_its_side() {
+        let places = vec![
+            Place {
+                project: Some(1),
+                initiative: Some(10),
+            },
+            Place {
+                project: Some(2),
+                initiative: Some(20),
+            },
+            Place {
+                project: Some(2),
+                initiative: Some(20),
+            },
+        ];
+        let inis = [
+            initiative(10, Some(1), false),
+            initiative(20, Some(2), false),
+        ];
+        let before = land_initiative(&places, &inis, 10, Drop::Before(RowId::Initiative(20)))
+            .expect("lands");
+        assert_eq!(before.project, Some(2));
+        assert_eq!(before.slot, Some(1), "the first seat of 20's run");
+        let after =
+            land_initiative(&places, &inis, 10, Drop::After(RowId::Initiative(20))).expect("lands");
+        assert_eq!(after.project, Some(2));
+        assert_eq!(after.slot, Some(3), "one past 20's last task");
+    }
+
+    #[test]
+    fn the_tree_refuses_the_third_layer() {
+        // An initiative inside an initiative, or beside a task, is the depth
+        // this tree deliberately does not have. It must resolve to nothing
+        // rather than to something surprising.
+        let places = vec![Place {
+            project: Some(1),
+            initiative: Some(10),
+        }];
+        let inis = [initiative(10, Some(1), false)];
+        assert_eq!(
+            land_initiative(&places, &inis, 10, Drop::Into(RowId::Initiative(10))),
+            None
+        );
+        assert_eq!(
+            land_initiative(&places, &inis, 10, Drop::Before(RowId::Task(0))),
+            None
+        );
+        // and it cannot be dropped onto itself
+        assert_eq!(
+            land_initiative(&places, &inis, 10, Drop::Before(RowId::Initiative(10))),
+            None
+        );
+    }
+
+    #[test]
+    fn reordering_ids_moves_one_and_disturbs_nothing_else() {
+        let mut ids = vec![1, 2, 3, 4];
+        reorder(&mut ids, 4, 2, false);
+        assert_eq!(ids, vec![1, 4, 2, 3]);
+        reorder(&mut ids, 1, 3, true);
+        assert_eq!(ids, vec![4, 2, 3, 1]);
+        // a no-op is a no-op, not a shuffle
+        reorder(&mut ids, 2, 2, false);
+        assert_eq!(ids, vec![4, 2, 3, 1]);
+        // an id that is not in the list leaves the list alone
+        reorder(&mut ids, 99, 3, false);
+        assert_eq!(ids, vec![4, 2, 3, 1]);
     }
 
     #[test]
