@@ -427,6 +427,25 @@ pub fn host_socket_path(key: &str) -> PathBuf {
     runtime_dir().join(format!("session-{key}.sock"))
 }
 
+/// Where a hosted session records the pid of the window currently attached to
+/// it. An agent's `terminal-delight mcp` relay reads this to find the window's
+/// ctl socket (`ctl-<pid>.sock`) — it can no longer walk its own process tree
+/// to the window, because a hosted pane is a child of the host, not the window.
+/// A stale value is harmless: the relay tolerates a dead pid and falls back.
+pub fn window_pid_path(key: &str) -> PathBuf {
+    runtime_dir().join(format!("session-{key}.window"))
+}
+
+/// Record the attached window's pid for this session (best-effort; a failed
+/// write just means the relay falls back to its process-tree walk).
+pub fn write_window_pid(key: &str, pid: u32) {
+    let path = window_pid_path(key);
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let _ = std::fs::write(&path, pid.to_string());
+}
+
 /// The private, per-user directory the sockets live in — the same one the
 /// existing control sockets use. Same-user access to it is the entire
 /// authorisation model, which is why nothing on the wire repeats the claim.
