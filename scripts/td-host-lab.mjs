@@ -43,6 +43,33 @@ const SOCKET = path.join(RUNTIME, "terminal-delight", `session-${SESSION}.sock`)
 const LOG = path.join(ROOT, "host.log");
 const PROTO = 1;
 
+/// The sandbox below moves the XDG directories into /tmp so the lab cannot
+/// touch your real terminal-delight session files. Every shell the host spawns
+/// inherits those variables too, and that is not what we meant: a terminal
+/// whose shells behave differently from your shells is testing the wrong
+/// thing. mise is where it bites — its trust database lives under
+/// XDG_STATE_HOME, so inside the sandbox ~/Work/.mise.toml reads as untrusted
+/// and the `mise activate bash` in .bashrc stops to ask whether to trust it.
+/// Kill the window (which is the entire point of this lab) and that question
+/// goes to a pty with nobody on the other end; mise panics on the EIO, panics
+/// again trying to report the panic, and aborts. One core dump per killed
+/// window. So pin mise back to its real directories before the sandbox can
+/// change the answer.
+const MISE_DIRS = (() => {
+  const xdg = (name, fallback) =>
+    process.env[name] ?? path.join(os.homedir(), fallback);
+  return {
+    MISE_CONFIG_DIR: process.env.MISE_CONFIG_DIR ??
+      path.join(xdg("XDG_CONFIG_HOME", ".config"), "mise"),
+    MISE_STATE_DIR: process.env.MISE_STATE_DIR ??
+      path.join(xdg("XDG_STATE_HOME", ".local/state"), "mise"),
+    MISE_DATA_DIR: process.env.MISE_DATA_DIR ??
+      path.join(xdg("XDG_DATA_HOME", ".local/share"), "mise"),
+    MISE_CACHE_DIR: process.env.MISE_CACHE_DIR ??
+      path.join(xdg("XDG_CACHE_HOME", ".cache"), "mise"),
+  };
+})();
+
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function die(message) {
@@ -112,6 +139,8 @@ async function up() {
       XDG_CONFIG_HOME: path.join(ROOT, "config"),
       XDG_STATE_HOME: path.join(ROOT, "state"),
       XDG_DATA_HOME: path.join(ROOT, "data"),
+      // Not the shells, though — see MISE_DIRS.
+      ...MISE_DIRS,
     },
   });
   child.unref();
