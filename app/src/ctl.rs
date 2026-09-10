@@ -1065,6 +1065,20 @@ fn relay_target(args: &[String]) -> Result<u32, String> {
     if let Some(pid) = owning_td_pid() {
         return Ok(pid);
     }
+    // A hosted pane is a child of the host, not the window, so the walk above
+    // reaches the host (which has no ctl socket) and never the window. The host
+    // records the attached window's pid per session; if this pane carries
+    // TD_SESSION, use that window's ctl socket when it is live. A stale or
+    // missing record falls through to discovery below.
+    if let Ok(key) = std::env::var("TD_SESSION") {
+        if let Ok(text) = std::fs::read_to_string(crate::hostproto::window_pid_path(&key)) {
+            if let Ok(pid) = text.trim().parse::<u32>() {
+                if socket_path(pid).exists() {
+                    return Ok(pid);
+                }
+            }
+        }
+    }
     match discover().as_slice() {
         [] => Err(format!(
             "no terminal-delight control sockets in {:?} — is one running, and \

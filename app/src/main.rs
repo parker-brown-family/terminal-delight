@@ -3828,7 +3828,19 @@ impl Workspace {
     /// has ever run is a repair nobody knows works.
     fn watch_for_divergence(ctx: AttachCtx, window: &Window, cx: &mut Context<Self>) {
         let forced = std::env::var("TD_GUARD_FORCE_MISMATCH").is_ok_and(|v| v == "1");
-        cx.spawn_in(window, async move |this, cx| loop {
+        cx.spawn_in(window, async move |this, cx| {
+            // Break the re-snapshot loop. A genuine Mismatch on a QUIET pane
+            // means the snapshot the guard just painted did not reproduce the
+            // host exactly — an encoder round-trip gap for some grid state — so
+            // taking the pane again lands the same imperfect grid and diverges
+            // again, forever, which is the visible ignition/flicker. Cool a pane
+            // down after a repair: if it still disagrees within the window, the
+            // snapshot cannot heal it, so hold the stable (slightly-off) replica
+            // instead of flickering. A transient divergence is healed on the
+            // first pass and never reaches the cooldown.
+            let mut repaired_at: std::collections::HashMap<hostproto::PaneId, std::time::Instant> =
+                std::collections::HashMap::new();
+            loop {
             cx.background_executor()
                 .timer(Duration::from_secs(GUARD_PERIOD_SECS))
                 .await;
@@ -3889,11 +3901,23 @@ impl Workspace {
                     _ => false,
                 };
                 if diverged {
-                    let _ = this.update_in(cx, |ws: &mut Workspace, window, cx| {
-                        ws.reattach_pane(pane, &view, window, cx);
-                    });
+                    let cooled = repaired_at
+                        .get(&pane)
+                        .is_some_and(|t| t.elapsed() < Duration::from_secs(45));
+                    if cooled {
+                        eprintln!(
+                            "terminal-delight: pane {pane} still diverges after a recent \
+                             re-snapshot; holding its replica rather than looping the repair"
+                        );
+                    } else {
+                        repaired_at.insert(pane, std::time::Instant::now());
+                        let _ = this.update_in(cx, |ws: &mut Workspace, window, cx| {
+                            ws.reattach_pane(pane, &view, window, cx);
+                        });
+                    }
                 }
             }
+        }
         })
         .detach();
     }
