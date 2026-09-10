@@ -179,6 +179,31 @@ p99 than a local one, against the 1000µs Gate 2 asked for. Three runs of
 | 1 | 10.4 | 108µs | 134µs | 6537µs |
 | 2 | 14.1 | 41µs | 81µs | 1180µs |
 | 3 | 15.8 | 136µs | 53µs | 5422µs |
+| 4 | after the 2026-09-10 rework | 39µs | **30µs** | 2741µs |
+
+### Re-measured 2026-09-10, after the contract core and its reversal
+
+Run 4 above is the same instrument on the branch as it stands after slice 4.5
+and the reversal of two of its commits — the host now carries a sixty-four pane
+cap, a bounded dead-pane table, a checkpoint on the way out, and a stateless
+wire. **Both halves of the gate still pass, and the realistic figure is the
+best of the four runs:**
+
+- **Echo, realistic load, eight panes: 30µs** more at p99 than a local
+  keystroke (local 62µs, attached 92µs), **0 of 1000 keystrokes over a
+  millisecond.** Quiet: 39µs, also 0 of 1000.
+- **Saturating: 2741µs, 42 of 1000 over a millisecond** — reported, not gated,
+  and inside the 1180–6537µs band the same code has produced across four runs
+  on different background loads. It remains a scheduler number.
+- **Survival, gui-kill at N=20: 20 of 20 cycles lost nothing.** Four terminals
+  a cycle — three thousand lines of scrollback, an nvim, a btop, an idle shell
+  — the window killed outright each time, `"losses":0,"failures":[]`.
+
+The floor-control leg was not re-run, and does not need to be: it measures
+today's serverless path, which this rework did not touch, and its job is to
+prove the instrument can see a loss at all. Its standing result is 20 of 20
+lost. Nothing here is an eyeball check — no VISIBLE lag at eight panes is still
+a person's judgement and still unrun.
 
 Keystrokes over a millisecond, per thousand: **0–6 realistic, 23–189
 saturating.** The instrument is identical across every condition, so the figure
