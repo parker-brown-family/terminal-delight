@@ -7050,7 +7050,7 @@ impl Render for TerminalView {
                                 a: 0.,
                             })
                             .group_hover(hdr_grp.clone(), move |s| s.text_color(bar_fg.alpha(0.85)))
-                            .child("✎"),
+                            .child("\u{270F}"),
                     )
                     .on_mouse_down(
                         MouseButton::Left,

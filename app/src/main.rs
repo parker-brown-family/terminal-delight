@@ -11394,7 +11394,7 @@ impl Workspace {
                     .text_size(px(9. * s))
                     .text_color(hsla(0., 0., 0., 0.))
                     .group_hover(grp, move |st| st.text_color(pencil_col))
-                    .child("✎")
+                    .child("\u{270F}")
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
@@ -12036,14 +12036,21 @@ impl Workspace {
             );
         let tab_grp = SharedString::from(format!("tab-grp-{i}"));
         let pencil_col = text.unwrap_or(th.text).alpha(0.8);
-        // hover-revealed ✎ affordance: invites the rename without a word
+        // Hover-revealed rename affordance: invites the rename without a word.
+        //
+        // U+270F, not U+270E, and the difference is whether anyone ever sees
+        // it. Measured on this box 2026-09-10: the lower pencil exists in
+        // exactly one installed font — Noto Sans Symbols 2, which is not in the
+        // fallback chain — so it has been drawing as nothing on every tab since
+        // it was added. Its neighbour is in Noto Color Emoji, which is where
+        // 📌 and 🤖 already come from.
         let pencil = div()
             .id(SharedString::from(format!("tab-pencil-{i}")))
             .text_size(px(10. * ts))
             .text_color(hsla(0., 0., 0., 0.)) // hidden until the tab is hovered
             .group_hover(tab_grp.clone(), move |s| s.text_color(pencil_col))
             .cursor_pointer()
-            .child("✎")
+            .child("\u{270F}")
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
