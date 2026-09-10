@@ -13,6 +13,13 @@
   close never reaching its save. The amendment is in 01-product.md under "What
   closing means"; Gates 2 and 3 do not yet carry it, and the slice below is
   where it lands.
+  **TIMING, 2026-09-10 (the re-cut).** That section of 01-product.md describes
+  the iteration *after* the flip, not the build that flips. Close keeps today's
+  immediate meaning until the held state and the reopen key land, which is how
+  the meaning still ships exactly once — the reason the amendment was ordered
+  before the flip in the first place. Anyone reading "What closing means" and
+  implementing from it should know it is the next iteration's spec, not this
+  one's. The product doc itself is Parker's to amend and has been left alone.
 - Gate 2 — Architecture: APPROVED 2026-09-08 — via annotated brief (5 notes,
   reports/2026-09-08-client-server-gate2.html). Trunk: per-session PTY host +
   client-side replica Term, one binary. All five decision-round answers
@@ -126,35 +133,57 @@
       terminals missing — and a `legacy-load` harness leg hand-writes an
       eight-pane tab with no pane ids and requires all eight to come up.
       Slice 4 is complete.
-- [ ] Slice 4.5 — the close undo window, and the review's three contract
-      breaches. Added 2026-09-09 after the fresh-agent review
-      (`reports/2026-09-09-client-server-review.html`) and Parker's amendment to
-      Gate 1. Ordered before the flip because two of the four items decide what
-      a close and a version bump mean, and flipping the default first would ship
-      those meanings to everyone.
-      - [ ] The held-close state: a third state in the saved layout carrying a
-            deadline, the retention cap at ten, and `close_pane` growing a timer
-            the host owns. **The tracer slice** — everything else here hangs off
-            the state existing, and the branch's current bug is squatting on the
-            spot where it goes.
-      - [ ] Reopen: first candidate at relaunch, ctrl+shift+z mid-session,
-            most-recent-first, plus the F1 line and the first-close hint.
-      - [ ] `hello` becomes a state machine: a control connection that has not
-            negotiated cannot spawn, close, save or shut down. Every real client
-            path already says hello first — `probe_at`, `attach_at` and `watch`
-            all negotiate — so the only thing this breaks is the integration
-            test at `app/tests/host_socket.rs:169-188`, which opens fresh
-            sockets and issues verbs cold. Needs a carve-out decision first: a
-            peer refused for version skew still has to be able to say
-            "checkpoint and stand down", or the item below cannot work.
-      - [ ] The version-break handoff: a protocol mismatch asks the old host to
-            checkpoint and exit rather than falling into a serverless window
-            beside a live host, which is two writers on one session file.
-      - [ ] Exited panes leave the host table bounded, and a pane held for a
-            person is distinguishable from one whose child exited on its own.
-      - [ ] Regressions for all of it, each proven against its parent commit.
-            No test today covers a live pane going to a deliberately empty saved
-            layout, and none asserts that an un-negotiated verb is refused.
+- [x] Slice 4.5 — **the contract core**. Added 2026-09-09 after the fresh-agent
+      review (`reports/2026-09-09-client-server-review.html`) and Parker's
+      amendment to Gate 1; **re-cut 2026-09-10** by Parker through the overseer,
+      on the anchor check (`reports/2026-09-10-slice-45-anchor-check.html`).
+      The re-cut: the close-undo half — the held state and the reopen key —
+      moves to **after the flip**, and close keeps today's immediate meaning
+      until it lands, so the meaning still ships once. What stays here is the
+      contract, because it is what everyone meets the moment the default flips.
+      - [x] Window steal, per the design that was approved at Gate 2 and written
+            out at `03-program-design.md:706-752` and then silently left the
+            plan: one window slot, a `window` hello takes it and the previous
+            window's pane sinks, and the loser may ask questions and change
+            nothing. A tool's hello takes nothing. **One departure from the
+            sketch, deliberate:** the loser's control connection stays open. The
+            sketch dropped it and had the client read the EOF as `Lost`; the
+            client that got built asks the host whether a stream ended or was
+            taken, and a window that cannot ask reaps panes that are still
+            running — the bug slice 3 fixed. Refusals are per verb instead.
+      - [x] `hello` becomes a state machine: a control connection that has not
+            negotiated cannot spawn, close, save or shut down. Four verbs, not
+            all of them — a launch probes every candidate and questions cost
+            nothing. The carve-out is decided and built: a peer refused for
+            version skew may still say "checkpoint and stand down". The
+            integration test at `app/tests/host_socket.rs:169-188` was the
+            thing demonstrating the gap and changed in the same commit.
+      - [x] The version-break handoff: a shutdown checkpoints before it stops, a
+            probe that is refused for its version reports `Skewed` rather than
+            `Unresponsive`, and a launch meeting a skewed host for the session
+            it is opening stands it down and waits before starting its own. The
+            routing was worse than the review saw — a skewed host read as
+            unresponsive, so tier 3 skipped that session and the launch opened a
+            stranger, leaving the work in a process nothing could reach.
+      - [x] Bounds: `spawn_pane` refuses a sixty-fifth live terminal by name
+            (Gate 3's number), and exited panes are kept to the sixteen most
+            recent, oldest first. The dead are kept at all because a window that
+            has lost a stream asks whether the pane ended or was taken. **Not**
+            the held-for-a-person third state — that is the close-undo work's
+            spot and is left empty for it.
+      - [x] Regressions for all of it, each proven against the behaviour it
+            claims to test rather than against a green run: the steal, the gate
+            (three tests), the stand-down, both bounds. The one that stays
+            honest about itself is the persistence barrier — with the writer
+            lock removed, the old shape also failed ten of ten on this machine,
+            so the barrier buys determinism rather than a demonstrated
+            detection rate.
+      - [ ] **Deferred to after the flip, by the re-cut:** the held-close state
+            (a third state in the saved layout with a deadline, cap at ten) and
+            reopen (ctrl+shift+z, first candidate at relaunch, the F1 line and
+            the first-close hint). The anchor check recommends an in-memory v1
+            first — held panes in the host's table only, persistence into the
+            layout as the follow-up.
 - [ ] Slice 5 — flip the default, gated on the harness numbers Parker signs.
       **Both halves of the gate now have numbers, and both pass.**
       Survival: lost sessions = 0, five legs, repeatedly. Latency
