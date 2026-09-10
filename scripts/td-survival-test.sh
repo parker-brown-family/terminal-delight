@@ -379,9 +379,13 @@ host_is_attended() {
 }
 
 launch_gui() { # launch_gui <hosted|serverless>
+  # Since 2026-09-10 hosted is the DEFAULT, so a plain launch hosts and the
+  # opt-out env picks serverless. Before the flip this was the other way round —
+  # hosted needed TD_SESSIOND=1 and a plain launch was serverless — which would
+  # now make the floor-control leg run hosted and quietly stop losing.
   local mode="$1"
-  if [ "$mode" = hosted ]; then
-    TD_SESSIOND=1 TD_SESSION="$SESSION" "$BIN" >>"$GUI_LOG" 2>&1 &
+  if [ "$mode" = serverless ]; then
+    TD_NO_SESSIOND=1 TD_SESSION="$SESSION" "$BIN" >>"$GUI_LOG" 2>&1 &
   else
     TD_SESSION="$SESSION" "$BIN" >>"$GUI_LOG" 2>&1 &
   fi
