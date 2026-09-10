@@ -141,23 +141,28 @@
       moves to **after the flip**, and close keeps today's immediate meaning
       until it lands, so the meaning still ships once. What stays here is the
       contract, because it is what everyone meets the moment the default flips.
-      - [x] Window steal, per the design that was approved at Gate 2 and written
-            out at `03-program-design.md:706-752` and then silently left the
-            plan: one window slot, a `window` hello takes it and the previous
-            window's pane sinks, and the loser may ask questions and change
-            nothing. A tool's hello takes nothing. **One departure from the
-            sketch, deliberate:** the loser's control connection stays open. The
-            sketch dropped it and had the client read the EOF as `Lost`; the
-            client that got built asks the host whether a stream ended or was
-            taken, and a window that cannot ask reaps panes that are still
-            running — the bug slice 3 fixed. Refusals are per verb instead.
-      - [x] `hello` becomes a state machine: a control connection that has not
-            negotiated cannot spawn, close, save or shut down. Four verbs, not
-            all of them — a launch probes every candidate and questions cost
-            nothing. The carve-out is decided and built: a peer refused for
-            version skew may still say "checkpoint and stand down". The
-            integration test at `app/tests/host_socket.rs:169-188` was the
-            thing demonstrating the gap and changed in the same commit.
+      - [x] ~~Window steal~~ — **built 2026-09-10, REVERSED the same day.**
+            Deleted rather than built: no window slot, no window-level
+            supersede, `ClientKind` gates nothing. Two windows on one session
+            share its panes, most recent attach winning per pane, both live
+            (issue 351). Parker's reasoning is recorded as an amendment in
+            `02-architecture.md` under decision 1, which is left standing above
+            it. Pane-level supersede survives and is not the same thing — the
+            attachment `serial`, and a stream that ends when another client
+            takes that pane, is what lets a window ask whether its terminal
+            exited or was taken rather than reaping one that is still running.
+      - [x] ~~`hello` becomes a state machine~~ — **built 2026-09-10, REVERSED
+            the same day.** `hello` negotiates a version and opens nothing; a
+            connection that never sent one may spawn, close, save and shut down.
+            The boundary is the peer-uid check at accept, which is what Gate 1
+            actually required: authority as a checkable property of the
+            connection rather than a claim inside a payload. The reversal is
+            also what keeps the version-break path possible — a new binary
+            meeting an old host must be able to say "stand down" to a peer it
+            can never negotiate with, so the gate and the repair were the same
+            mechanism. `docs/protocol/session-host-v1.md` carried the
+            "hello is the first line" promise that the code never kept; it now
+            says what is true.
       - [x] The version-break handoff: a shutdown checkpoints before it stops, a
             probe that is refused for its version reports `Skewed` rather than
             `Unresponsive`, and a launch meeting a skewed host for the session
@@ -172,12 +177,28 @@
             the held-for-a-person third state — that is the close-undo work's
             spot and is left empty for it.
       - [x] Regressions for all of it, each proven against the behaviour it
-            claims to test rather than against a green run: the steal, the gate
-            (three tests), the stand-down, both bounds. The one that stays
-            honest about itself is the persistence barrier — with the writer
-            lock removed, the old shape also failed ten of ten on this machine,
-            so the barrier buys determinism rather than a demonstrated
+            claims to test rather than against a green run — including the two
+            reversals, which invert their tests rather than deleting them: run
+            against the commits they reverse, one fails with "a connection that
+            skipped the greeting was refused the save" and the other with "a
+            window saying hello took another window's streams". The one that
+            stays honest about itself is the persistence barrier — with the
+            writer lock removed, the old shape also failed ten of ten on this
+            machine, so the barrier buys determinism rather than a demonstrated
             detection rate.
+
+      **The reversal, 2026-09-10.** Two of this slice's six commits were undone
+      hours after they landed, on the reconciled fresh-agent review
+      (`reports/2026-09-09-client-server-review-reconciled.html`) and Parker's
+      decision with it. The reconciled review took both original reviews' P1 the
+      other way: the stateless wire is the upgrade path rather than a breach,
+      the peer-uid check is the boundary Gate 1 asked for, and the steal was a
+      policy with no implementation and no user asking for it. What that review
+      called the real defect — a version bump leaving two writers on one file —
+      is client-side, and is the one part of the original build that stands
+      untouched, along with the pane bounds and the persistence barrier. The
+      build was not wasted: it is what made the argument concrete enough to
+      settle, and the reversal cost two commits rather than a rewrite.
       - [ ] **Deferred to after the flip, by the re-cut:** the held-close state
             (a third state in the saved layout with a deadline, cap at ten) and
             reopen (ctrl+shift+z, first candidate at relaunch, the F1 line and

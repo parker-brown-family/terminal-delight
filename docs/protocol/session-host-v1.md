@@ -61,7 +61,10 @@ one ends.
 
 ## Hello, and what a version means
 
-`hello` is the first line of a control connection.
+`hello` asks whether the two sides speak the same protocol. It is **optional**,
+and it opens nothing: every verb is answered on a connection that never sent
+one. Real clients send it first because they want the answer, not because the
+host requires it.
 
 ```json request
 {"verb":"hello","proto":1,"kind":"window"}
@@ -71,12 +74,29 @@ one ends.
 {"reply":"hello","proto":1,"session":"2","panes":2,"attended":true}
 ```
 
-`kind` says what is talking. A `window` may attach, and attaching supersedes
-whoever held the pane. A `tool` — a probe asking which sessions are alive, a
-script listing panes — connects, asks and goes, and must never cost a live
-window its stream. That is safe by construction rather than by a check somebody
-has to remember: attaching is a property of opening a byte stream, and a control
-connection never opens one.
+**The boundary is the peer-uid check above, and nothing else.** It is a property
+of the connection, taken at accept, before a byte is parsed — which is what
+makes it a boundary. A handshake would add no authority on top of it, and a verb
+that trusted a claim inside its own payload would be a step backwards: `kind`
+is such a claim, so `kind` decides nothing. It says what is talking, for a log
+and for a person reading `list-panes`, and that is all it says.
+
+Two consequences worth stating plainly, because an earlier draft of this page
+said the opposite and code was written to match it:
+
+- **A connection that never said hello may spawn, close, save and shut down.**
+  This is the door a protocol bump walks out through: a new binary meeting an
+  old host has to be able to say `shutdown` to a peer it can never negotiate
+  with. Require a handshake and the refusal closes the repair with it.
+- **A `window` hello takes nothing from anybody.** What arbitrates a pane is
+  attaching to it: the most recent attach wins *that pane*, its previous holder's
+  stream ends, and every other pane stays where it was. Two windows on one
+  session share its panes and both stay live.
+
+*(Reversed 2026-09-10. This page previously said `hello` was the first line of a
+control connection and that a `window` hello superseded the previous window.
+Neither was ever implemented; the reasoning for deleting rather than building
+them is under "Amendment, 2026-09-10" in `docs/plans/client-server/02-architecture.md`.)*
 
 `attended` is whether any window currently holds a pane's stream. A host with
 panes and nobody looking at them is exactly what a relaunch should find and
@@ -96,7 +116,7 @@ name, so nobody has to read a changelog to work out which side is old:
 
 | Verb | What it does | Reply |
 |---|---|---|
-| `hello` | opens a control connection | `hello` |
+| `hello` | negotiates a protocol version — optional, opens nothing | `hello` |
 | `list-panes` | what exists, and what is true of it | `panes` |
 | `spawn-pane` | start a terminal | `spawned` |
 | `attach-pane` | set the size and declare intent to attach | `attached` |

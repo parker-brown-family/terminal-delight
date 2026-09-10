@@ -697,6 +697,21 @@ impl ReplicaGuard {
 /// (Command::pre_exec(libc::setsid)); serve itself never forks.
 pub fn run_serve(args: ServeArgs) -> i32;
 
+> **REVERSED 2026-09-10 — the `gui_conn` slot and the steal it serves are not
+> built and will not be.** Everything from `gui_sink` and `gui_conn` below
+> through `handle_request`'s "a Gui-kind hello drops the previous gui_conn
+> (steal, decision 1)" describes a policy Parker deleted on the reconciled
+> fresh-agent review; the reasoning is recorded under "Amendment, 2026-09-10"
+> in `02-architecture.md`. It is left here rather than edited out because this
+> page is the record of what was designed, and because the two-line sketch of
+> the steal is precisely what nobody built for the life of the branch.
+>
+> What is true instead: no window slot, no window-level supersede, and
+> `ClientKind` gates nothing. Pane-level supersede — `TeeSinks::remove` on the
+> old sink at stream-connect, the `serial` on an attachment — is real and is
+> what `splice_attach` below still describes. Two windows share a session's
+> panes, most recent attach winning per pane (issue 351).
+
 /// One live pane: the authoritative side. `session` is a stock term::Session
 /// (term.rs:60) built by term::spawn_hosted over a TeePty.
 pub(crate) struct HostPane {
@@ -967,7 +982,7 @@ mode×flood∈{local,attached}×{0,8}, gates p99(attached)−p99(local) ≤ 1000
 
 ### docs/protocol/session-host-v1.md (new) — outline
 
-1 Transport & auth — `session-<id>.sock` in the 0700 runtime dir; flock-guarded; auth is SO_PEERCRED uid at accept and NOTHING else. 2 Framing — control: NDJSON, one verb per line, replies + pushes interleaved; byte stream: one line `stream <pane_id>`, then raw unframed bytes both ways, FIFO per pane (the guard's offset arithmetic depends on it). 3 Handshake & versioning — hello first; `version_check` rule; additive-within-major (unknown fields ignored, pinned by test); on a true break: Shutdown → checkpoint → TOML recovery — degrades to exactly today, once, deliberately. 4 Verbs — request/reply schemas with embedded JSON examples the conformance tests deserialize. 5 Pushes — mode/exit/detached/grid-check; per-conn, best-effort, never blocking the host. 6 Attach & steal — attach-pane (resize+intent) then stream-connect (atomic splice); new attach wins; nothing assumes exactly one attached client; resize is told, last-writer-wins. 7 Close semantics — close-pane = SIGHUP the child tree; disconnect kills nothing. 8 Persistence — opaque schema-versioned envelope; host merges only per-leaf cwd/resume by pane_id; 30s checkpoint; shrink guard verbatim; host recounts leaves. 9 Invariants & tripwires — the FairMutex LEASE argument (re-verify on any alacritty upgrade); host pane table beats the TOML; ids never reused; scrollback never on disk. 10 Conformance — the test names pinning each section.
+1 Transport & auth — `session-<id>.sock` in the 0700 runtime dir; flock-guarded; auth is SO_PEERCRED uid at accept and NOTHING else. 2 Framing — control: NDJSON, one verb per line, replies + pushes interleaved; byte stream: one line `stream <pane_id>`, then raw unframed bytes both ways, FIFO per pane (the guard's offset arithmetic depends on it). 3 Handshake & versioning — hello is OPTIONAL (reversed 2026-09-10: it negotiates a version, it does not open a connection, and the peer-uid check at accept is the boundary); `version_check` rule; additive-within-major (unknown fields ignored, pinned by test); on a true break: Shutdown → checkpoint → TOML recovery — degrades to exactly today, once, deliberately. 4 Verbs — request/reply schemas with embedded JSON examples the conformance tests deserialize. 5 Pushes — mode/exit/detached/grid-check; per-conn, best-effort, never blocking the host. 6 Attach — attach-pane (resize+intent) then stream-connect (atomic splice); new attach wins THAT PANE (window-level steal deleted 2026-09-10); nothing assumes exactly one attached client; resize is told, last-writer-wins. 7 Close semantics — close-pane = SIGHUP the child tree; disconnect kills nothing. 8 Persistence — opaque schema-versioned envelope; host merges only per-leaf cwd/resume by pane_id; 30s checkpoint; shrink guard verbatim; host recounts leaves. 9 Invariants & tripwires — the FairMutex LEASE argument (re-verify on any alacritty upgrade); host pane table beats the TOML; ids never reused; scrollback never on disk. 10 Conformance — the test names pinning each section.
 
 ## Call stacks
 

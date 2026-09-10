@@ -238,3 +238,42 @@ they are:
    becomes 4 for new layouts, and a legacy session file holding 5–8 panes
    must still load without losing a running pane — the orphan-adoption rule
    covers live panes; the loader must tolerate over-cap saved layouts.
+
+### Amendment, 2026-09-10: decision 1 is deleted rather than built
+
+Decision 1 above stands as the record of what was approved on 2026-09-08 and is
+left visible for that reason. It is no longer what the code does, and it is not
+going to be.
+
+**What replaces it.** A second attach wins *that pane* and nothing else. Two
+windows on one session share its panes: most recent attach wins per pane, every
+other pane stays where it was, both windows stay live, and neither is frozen or
+refused. `ClientKind` travels on the wire and gates nothing.
+
+**Parker's reasoning, on the reconciled fresh-agent review.** Window-level steal
+was approved at Gate 2, written out at `03-program-design.md:706-752`, and never
+implemented — the host discarded the client kind outright for the whole life of
+the branch. Two reviews filed that as a P1; the reconciled review took it the
+other way, and the decision was to delete the policy rather than build it. No
+user has asked for it. The authorisation boundary is the peer-uid check on the
+socket, and anything that can open a second window on this session can already
+kill the host outright, so what steal would arbitrate is not a security question
+but a preference nobody has stated. Shared panes is also what the comparable
+product does.
+
+**What survives, and it is not the same thing.** Pane-level supersede stays: an
+attachment carries a `serial`, and a stream ends when another client takes that
+pane. That mechanism predates steal and something important depends on it — a
+window whose stream ended asks the host whether the terminal exited or was taken
+away, and reaping panes that are still running is a bug this branch has already
+fixed once.
+
+**The one thing this leaves open**, recorded so it is a decision rather than a
+gap: attach is open to any connection, tool or window (issue 353). A same-uid
+peer can already displace a pane's stream and can stop the host, so a check
+there would be theatre rather than a boundary. Accepted for v1.
+
+Built and reversed the same day, 2026-09-10 — the reversal is two commits on
+this branch, and the shared-panes behaviour is asserted by
+`two_windows_on_one_session_share_its_panes` rather than left implied. Issue 351
+records the behaviour for whoever meets it next.
