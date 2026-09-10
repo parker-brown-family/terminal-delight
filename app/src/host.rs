@@ -445,6 +445,33 @@ impl Conn {
     }
 }
 
+/// The most live terminals one host will hold.
+///
+/// Generous, and a sanity cap rather than a policy: the real per-window limit
+/// is the client's `MAX_PANES` of four, and this is the number that stops a
+/// script talking to the socket in a loop from spawning until the machine
+/// falls over. In a house that runs agents in loops that is a live class of
+/// accident rather than a hypothetical one. It must stay well above
+/// `LEGACY_PANE_CEILING` so that restoring an old eight-pane layout never
+/// meets it.
+pub const HOST_PANE_SANITY_CAP: usize = 64;
+
+/// How many terminals whose child has exited stay in the table.
+///
+/// They cannot leave the moment they die. A window that has just seen a stream
+/// end asks the host whether the terminal exited or was taken from it, and a
+/// pane the host has already forgotten answers "exited" to both — which is the
+/// wrong answer to one of them, and costs a running pane its place on screen.
+/// So the dead are kept, and kept bounded: oldest first, by ids that only ever
+/// go up. Sixteen is enough for any window to have asked its question long
+/// before the answer is evicted.
+///
+/// This is deliberately not the third state that a held-for-a-person pane will
+/// need. A terminal whose child exited on its own and one a person closed and
+/// may want back are different facts, and collapsing them here would leave the
+/// close-undo work with nowhere to put the difference.
+const EXITED_KEEP: usize = 16;
+
 /// How long a write to a client may take before that client is written off.
 ///
 /// A push is a hundred-odd bytes into a socket somebody is reading; taking a
@@ -629,6 +656,20 @@ impl Host {
                     started: false,
                 });
             }
+        }
+        // Every terminal this host has ever held arrived through here, so this
+        // is the one place where both of its bounds can be kept. The dead are
+        // pruned first: they are what a long-running host accumulates, and a
+        // corpse must not be able to hold the cap against a live pane.
+        forget_the_oldest_dead(&mut panes);
+        let live = panes
+            .values()
+            .filter(|pane| !pane.ended.load(Ordering::SeqCst))
+            .count();
+        if live >= HOST_PANE_SANITY_CAP {
+            return Err(io::Error::other(format!(
+                "this session already holds its limit of {HOST_PANE_SANITY_CAP} terminals"
+            )));
         }
         let pane = PaneId(self.next_pane.fetch_add(1, Ordering::SeqCst));
         let size = GridSize {
@@ -1626,6 +1667,27 @@ fn next_mode(
 /// lives in a private directory, and this confirms at the moment of connection
 /// what the directory implies. Nothing further up the stack repeats the claim,
 /// so nothing further up can be wrong about it.
+/// Keep the pane table's dead down to [`EXITED_KEEP`], oldest first.
+///
+/// Pane ids are minted from a counter that only goes up and are never reused,
+/// so sorting them is sorting by age — no clock, and nothing to be wrong about
+/// when two panes die inside one tick of one.
+fn forget_the_oldest_dead(panes: &mut HashMap<PaneId, Arc<HostPane>>) {
+    let mut dead: Vec<PaneId> = panes
+        .iter()
+        .filter(|(_, pane)| pane.ended.load(Ordering::SeqCst))
+        .map(|(id, _)| *id)
+        .collect();
+    if dead.len() <= EXITED_KEEP {
+        return;
+    }
+    dead.sort_unstable();
+    let surplus = dead.len() - EXITED_KEEP;
+    for id in dead.into_iter().take(surplus) {
+        panes.remove(&id);
+    }
+}
+
 fn peer_is_us(stream: &UnixStream) -> bool {
     use std::os::fd::AsRawFd;
     let mut cred = libc::ucred {
@@ -2533,6 +2595,82 @@ mod owning {
     }
 
     #[test]
+    fn a_session_stops_starting_terminals_at_the_host_cap() {
+        // Gate 3 put a generous ceiling on the host and nothing implemented
+        // it. The window's own cap of four protects the window and nothing
+        // else: anything that can open the socket can ask for terminals in a
+        // loop, and in a house that runs agents in loops that is a way to lose
+        // a machine rather than a hypothetical.
+        let host = Host::with_shell("test", Some("/bin/cat".into()));
+        let _guard = crate::testsync::forks_and_locks();
+        for n in 0..HOST_PANE_SANITY_CAP {
+            assert!(
+                host.spawn_pane(None, None, PaneGeom::default()).is_ok(),
+                "the host refused terminal {n}, below its own cap"
+            );
+        }
+        let Err(refused) = host.spawn_pane(None, None, PaneGeom::default()) else {
+            panic!("the cap let one more terminal through");
+        };
+        assert!(
+            refused.to_string().contains("64"),
+            "refused without saying what the limit is: {refused}"
+        );
+        assert_eq!(host.pane_count(), HOST_PANE_SANITY_CAP);
+    }
+
+    #[test]
+    fn terminals_whose_children_have_gone_do_not_pile_up() {
+        // A host lives for hours and holds every pane whose child exited, so
+        // an ordinary session's churn grows the table for as long as the host
+        // runs. They cannot go the instant they die — a window that has lost a
+        // stream asks whether the pane ended or was taken, and a forgotten
+        // pane answers "ended" to both — so they are kept, and bounded.
+        let host = Host::with_shell("test", Some("/bin/true".into()));
+        let _guard = crate::testsync::forks_and_locks();
+        let wanted = EXITED_KEEP + 6;
+        for _ in 0..wanted {
+            host.spawn_pane(None, None, PaneGeom::default())
+                .expect("start a terminal");
+        }
+        // Not a count: the sweep runs on every spawn, so the dead are already
+        // being bounded while this loop is still spawning, and waiting for
+        // twenty-two corpses to be visible at once would be waiting for the
+        // thing under test to fail.
+        assert!(
+            within(Duration::from_secs(10), || {
+                let held = host.list_panes();
+                !held.is_empty() && held.iter().all(|p| p.ended)
+            }),
+            "the children never exited: {:?}",
+            host.list_panes()
+        );
+
+        // The next spawn is where the table is swept — the one place every
+        // pane this host will ever hold passes through.
+        host.spawn_pane(None, None, PaneGeom::default())
+            .expect("start a terminal");
+        let held = host.list_panes();
+        let dead = held.iter().filter(|p| p.ended).count();
+        assert!(
+            dead <= EXITED_KEEP,
+            "the host is holding {dead} dead terminals: {held:?}"
+        );
+
+        // And what it kept is the recent ones: a window asking about the pane
+        // that died a moment ago must still get an answer, while the one that
+        // died twenty terminals back is nobody's question any more.
+        assert!(
+            held.iter().any(|p| p.pane.0 == wanted as u64),
+            "the pane that died last is the one it forgot: {held:?}"
+        );
+        assert!(
+            !held.iter().any(|p| p.pane.0 == 1),
+            "the first terminal of the session is still in the table: {held:?}"
+        );
+    }
+
+    #[test]
     fn a_connection_that_never_said_hello_cannot_change_anything() {
         // The protocol has always said hello opens a connection. The host kept
         // no memory of one line to the next, so it did not: anything that could
@@ -2610,13 +2748,9 @@ mod owning {
         assert!(matches!(
             answer(
                 &host,
-                &save_line(
-                    "active = 0\n\n[[tabs]]\nname = \"WHAT WAS RUNNING\"\n\n[tabs.node.Leaf]\ncwd = \"/tmp\"\n"
-                )
+                &save_line("active = 0\n\n[[tabs]]\nname = \"WHAT WAS RUNNING\"\n\n[tabs.node.Leaf]\ncwd = \"/tmp\"\n")
             ),
-            Reply::Saved {
-                outcome: Outcome::Ok(_)
-            }
+            Reply::Saved { outcome: Outcome::Ok(_) }
         ));
         // Taken away, so that what is there afterwards can only have been
         // written on the way out. A file changed underneath is a different
