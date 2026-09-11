@@ -16,7 +16,7 @@
 //! becomes a field in a message, every future transport inherits a security
 //! model designed for a local pipe.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -439,11 +439,41 @@ pub fn window_pid_path(key: &str) -> PathBuf {
 /// Record the attached window's pid for this session (best-effort; a failed
 /// write just means the relay falls back to its process-tree walk).
 pub fn write_window_pid(key: &str, pid: u32) {
-    let path = window_pid_path(key);
+    write_window_pid_at(&window_pid_path(key), pid);
+}
+
+/// The same file, addressed from the SOCKET the window actually connected to
+/// rather than from the ambient runtime directory.
+///
+/// The window writes this record as well as the host, and it has to, because
+/// the host that wrote it is the half that cannot be upgraded without killing
+/// the terminals it is holding. A session hosted by an older build answers
+/// hello and records nothing, so an agent in one of its panes finds no window
+/// and loses its `mcp__terminal-delight__*` tools — until the host is restarted,
+/// which costs every process in that session. A window that records itself
+/// makes the upgrade a window relaunch again.
+///
+/// Addressed beside the socket for the same reason [`crate::hostctl::HostLink`]
+/// remembers its socket path: a link opened at a given path keeps talking to
+/// that host even if the ambient runtime directory changes underneath it, and
+/// the record has to land where that host's readers will look.
+pub fn window_pid_beside(socket: &Path, key: &str) -> PathBuf {
+    socket
+        .parent()
+        .map(|dir| dir.join(format!("session-{key}.window")))
+        .unwrap_or_else(|| window_pid_path(key))
+}
+
+/// Record the window's pid beside the socket it is attached to.
+pub fn write_window_pid_beside(socket: &Path, key: &str, pid: u32) {
+    write_window_pid_at(&window_pid_beside(socket, key), pid);
+}
+
+fn write_window_pid_at(path: &Path, pid: u32) {
     if let Some(dir) = path.parent() {
         let _ = std::fs::create_dir_all(dir);
     }
-    let _ = std::fs::write(&path, pid.to_string());
+    let _ = std::fs::write(path, pid.to_string());
 }
 
 /// The private, per-user directory the sockets live in — the same one the
