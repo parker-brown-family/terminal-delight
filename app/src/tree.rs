@@ -536,13 +536,47 @@ pub fn reorder(ids: &mut Vec<u32>, moving: u32, neighbour: u32, after: bool) {
 /// question about the same session and must never disagree about which tasks
 /// exist.
 pub fn family(places: &[Place], active: usize) -> Vec<usize> {
-    let home = places.get(active).and_then(|p| p.initiative);
+    let home = places.get(active).copied().unwrap_or_default();
     places
         .iter()
         .enumerate()
-        .filter(|(_, place)| place.initiative == home)
+        .filter(|(_, place)| same_branch(place, &home))
         .map(|(i, _)| i)
         .collect()
+}
+
+/// Do these two tasks hang from the SAME branch of the tree?
+///
+/// The one definition of the strip's key, and it has to be one definition:
+/// the filter, the heading over it and the slot a new tab lands in all have to
+/// agree, or the strip draws a set of tabs under a name that does not describe
+/// them. An initiative is a branch. A task in no initiative belongs to its
+/// PROJECT's loose bucket, not to a single global one — two projects' loose
+/// tasks are no more siblings than two projects' initiatives are, and drawing
+/// them together under one project's name was the bug that made this a
+/// function instead of a field comparison.
+pub fn same_branch(a: &Place, b: &Place) -> bool {
+    match (a.initiative, b.initiative) {
+        (Some(x), Some(y)) => x == y,
+        (None, None) => a.project == b.project,
+        _ => false,
+    }
+}
+
+/// Where the drag caret goes: how many of the strip's tabs are drawn BEFORE it.
+///
+/// The caret marks a gap, not an index. Drop slots are resolved in full-list
+/// index space while the strip draws one branch, so a family whose tabs are not
+/// adjacent — any session organised before a branch became contiguous — has
+/// landing slots belonging to tabs nobody can see. Every such slot collapses
+/// onto the visible gap it falls in, which is exactly where the drop lands.
+/// Matching the slot against a visible index instead drew no caret at all for
+/// those slots, and a drag with no feedback reads as a drag that will not work.
+///
+/// Returns `family.len()` for a slot past the last visible tab: the caret goes
+/// at the end of the strip.
+pub fn caret_gap(family: &[usize], slot: usize) -> usize {
+    family.iter().take_while(|&&i| i < slot).count()
 }
 
 /// What the strip is NOT showing, summed — the price of narrowing it.
@@ -854,9 +888,54 @@ mod tests {
         // happens to share a project
         assert_eq!(family(&places, 0), vec![0, 1]);
         assert_eq!(family(&places, 2), vec![2]);
-        // loose tasks keep each other company whatever project they hang from
-        assert_eq!(family(&places, 3), vec![3, 4]);
-        assert_eq!(family(&places, 4), vec![3, 4]);
+        // a loose task sits with its own project's loose tasks, and with
+        // nobody else's
+        assert_eq!(family(&places, 3), vec![3]);
+        assert_eq!(family(&places, 4), vec![4]);
+    }
+
+    #[test]
+    fn two_projects_loose_tasks_are_not_one_family() {
+        // The heading names ONE branch. If every loose task in the session were
+        // one family, selecting a task in project A would draw project B's
+        // loose tasks under A's name — a label that lies about the row beneath
+        // it, which is worse than no label.
+        let places: Vec<Place> = [
+            task(Some(1), None),
+            task(Some(2), None),
+            task(Some(1), None),
+            task(None, None),
+        ]
+        .iter()
+        .map(|t| t.place)
+        .collect();
+        assert_eq!(family(&places, 0), vec![0, 2]);
+        assert_eq!(family(&places, 1), vec![1]);
+        // filed under no project at all is its own bucket, not everyone's
+        assert_eq!(family(&places, 3), vec![3]);
+    }
+
+    #[test]
+    fn an_initiative_ignores_the_project_when_deciding_who_is_in_it() {
+        // A group carries its own project, and its members leave theirs unset
+        // (see `Workspace::place_of`), so initiative identity alone decides —
+        // and a project disagreeing must never split a group in half.
+        let a = Place {
+            project: Some(1),
+            initiative: Some(10),
+        };
+        let b = Place {
+            project: Some(2),
+            initiative: Some(10),
+        };
+        assert!(same_branch(&a, &b));
+        assert!(!same_branch(
+            &a,
+            &Place {
+                project: Some(1),
+                initiative: None,
+            }
+        ));
     }
 
     #[test]
@@ -876,6 +955,32 @@ mod tests {
             .map(|t| t.place)
             .collect();
         assert_eq!(family(&places, 99), vec![1]);
+    }
+
+    #[test]
+    fn the_drag_caret_finds_a_gap_even_when_the_branch_is_not_contiguous() {
+        // Underlying order G1 H1 G2 H2 with the G branch showing: the slot
+        // between G1 and H1 is index 1, which is a tab the strip does not draw.
+        // It has to land in the only gap it can mean — after G1.
+        let family = [0usize, 2];
+        assert_eq!(caret_gap(&family, 0), 0); // before the first
+        assert_eq!(caret_gap(&family, 1), 1); // the invisible slot, one gap in
+        assert_eq!(caret_gap(&family, 2), 1); // same gap, said the visible way
+        assert_eq!(caret_gap(&family, 3), 2); // after the last
+        assert_eq!(caret_gap(&family, 4), 2); // past the end of the whole list
+    }
+
+    #[test]
+    fn every_slot_in_a_contiguous_branch_still_maps_to_its_own_gap() {
+        // The ordinary case must not have been traded away for the odd one:
+        // with a contiguous family each slot keeps its own caret position.
+        let family = [3usize, 4, 5];
+        assert_eq!(caret_gap(&family, 3), 0);
+        assert_eq!(caret_gap(&family, 4), 1);
+        assert_eq!(caret_gap(&family, 5), 2);
+        assert_eq!(caret_gap(&family, 6), 3);
+        // an empty strip has exactly one gap, and it is the end
+        assert_eq!(caret_gap(&[], 7), 0);
     }
 
     #[test]

@@ -1051,6 +1051,18 @@ struct TabGroup {
     project: Option<u32>,
 }
 
+impl TabGroup {
+    /// What to call a group nobody has named — and the only place that decides
+    /// it. A new group starts nameless, so every surface that can draw one
+    /// needs this: without it the strip's heading renders as nothing at all,
+    /// which is an invisible control rather than an unnamed one.
+    fn label(&self) -> String {
+        self.name
+            .clone()
+            .unwrap_or_else(|| format!("initiative {}", self.id))
+    }
+}
+
 /// The outer layer of the left bar's tree: a PROJECT, holding initiatives (tab
 /// groups) and any tasks filed straight under it.
 ///
@@ -4555,15 +4567,17 @@ impl Workspace {
         // tab is still possible, by dragging one out of its branch, which is
         // where a deliberate choice belongs; it is no longer what a `+` does by
         // accident.
-        let (group, project) = self
-            .tabs
-            .get(self.active)
-            .map(|t| (t.group, t.project))
-            .unwrap_or((None, None));
+        let place = self.place_of(self.active);
         let mut tab = Tab::new(Node::Leaf(pane), None);
-        tab.group = group;
-        tab.project = project;
-        let at = self.branch_end(group);
+        tab.group = place.initiative;
+        // a grouped tab inherits its project from the group and leaves its own
+        // unset, so the two can never disagree — see `place_of`
+        tab.project = place
+            .initiative
+            .is_none()
+            .then_some(place.project)
+            .flatten();
+        let at = self.branch_end(place);
         self.tabs.insert(at, tab);
         self.active = at;
         self.save(cx);
@@ -6224,7 +6238,7 @@ impl Workspace {
                 .groups
                 .iter()
                 .find(|g| g.id == gid)
-                .and_then(|g| g.name.clone())
+                .map(|g| g.label())
                 .unwrap_or_else(|| format!("initiative {gid}")),
             BarBranch::Unfiled => "unfiled".into(),
         }
@@ -6363,19 +6377,19 @@ impl Workspace {
         cx.notify();
     }
 
-    /// Where a new member of `group` lands: after the last tab already in it,
-    /// so a branch stays one contiguous run in tab order and the strip never
-    /// has to draw a gap it cannot explain. A loose tab still goes at the end.
-    fn branch_end(&self, group: Option<u32>) -> usize {
-        match group {
-            None => self.tabs.len(),
-            Some(g) => self
-                .tabs
-                .iter()
-                .rposition(|t| t.group == Some(g))
-                .map(|i| i + 1)
-                .unwrap_or(self.tabs.len()),
-        }
+    /// Where a new member of `place`'s branch lands: after the last tab already
+    /// in it, so a branch stays one contiguous run in tab order and the strip
+    /// never has to draw a gap it cannot explain.
+    ///
+    /// Asked of the same key the strip filters by, never of the raw group id —
+    /// a loose task belongs to its project's bucket, so "beside its siblings"
+    /// has to mean the same thing here as it does there.
+    fn branch_end(&self, place: tree::Place) -> usize {
+        (0..self.tabs.len())
+            .rev()
+            .find(|&i| tree::same_branch(&self.place_of(i), &place))
+            .map(|i| i + 1)
+            .unwrap_or(self.tabs.len())
     }
 
     fn places(&self) -> Vec<tree::Place> {
@@ -11282,7 +11296,7 @@ impl Workspace {
                 let g = self.groups.iter().find(|g| g.id == id);
                 let color = g.map(|g| g.color).unwrap_or(th.faint);
                 let label = g
-                    .and_then(|g| g.name.clone())
+                    .map(|g| g.label())
                     .unwrap_or_else(|| format!("initiative {id}"));
                 self.branch_row(
                     BarBranch::Initiative(id),
@@ -12326,12 +12340,10 @@ impl Workspace {
         if width > 0. {
             col = col.w(px(width));
         }
-        let branch = self
-            .tabs
-            .get(self.active)
-            .and_then(|t| t.group)
-            .filter(|g| self.group_index(*g).is_some());
-        match branch {
+        // the same key the strip filters by, so the name over the tabs always
+        // describes the tabs
+        let place = self.place_of(self.active);
+        match place.initiative {
             Some(gid) => col.child(self.group_title(gid, cx)),
             // A loose tab hangs from its project, if it hangs from anything. The
             // heading says whichever branch of the tree the strip is standing
@@ -12339,17 +12351,19 @@ impl Workspace {
             // unorganised session gets a plain strip, not a label reading
             // "unfiled" over every tab it has.
             None => {
-                let project = self
-                    .tabs
-                    .get(self.active)
-                    .and_then(|t| t.project)
+                let project = place
+                    .project
                     .and_then(|p| self.projects.iter().find(|q| q.id == p))
                     .map(|p| (p.id, p.label()));
                 match project {
                     Some((pid, name)) => col.child(
                         div()
                             .min_w_0()
-                            .overflow_hidden()
+                            // truncate, not overflow_hidden: gpui wraps text by
+                            // default, and a wrapped heading makes the whole
+                            // mother bar taller — the fixed rail exists so a
+                            // name too long for it costs an ellipsis, never a row
+                            .truncate()
                             .text_size(px(10.5 * s))
                             .font_weight(gpui::FontWeight::SEMIBOLD)
                             .text_color(th.faint)
@@ -12383,8 +12397,15 @@ impl Workspace {
     fn group_title(&self, gid: u32, cx: &mut Context<Self>) -> gpui::Stateful<gpui::Div> {
         let th = theme::theme(cx);
         let s = theme::outer_choice(cx).grade.scale;
-        let g = self.groups.iter().find(|g| g.id == gid);
-        let name = g.and_then(|g| g.name.clone());
+        // never `name`: a group starts nameless, and a heading that renders
+        // nothing is an invisible control sitting on the widest surface in the
+        // window — with its click and right-click still live
+        let name = self
+            .groups
+            .iter()
+            .find(|g| g.id == gid)
+            .map(|g| g.label())
+            .unwrap_or_else(|| format!("initiative {gid}"));
         let mut chip = div()
             .id(SharedString::from(format!("grp-title-{gid}")))
             .flex()
@@ -12407,8 +12428,11 @@ impl Workspace {
                 th.cursor,
                 th.accent.alpha(0.4),
             ));
-        } else if let Some(n) = name {
-            chip = chip.child(n);
+        } else {
+            // truncate, not overflow_hidden: gpui wraps by default, and the
+            // whole point of the fixed rail is that a name too long for it
+            // costs an ellipsis rather than a second row on the mother bar
+            chip = chip.child(div().min_w_0().truncate().child(name));
         }
         chip.on_mouse_down(
             MouseButton::Left,
@@ -13752,14 +13776,17 @@ impl Render for Workspace {
         // always saw; see [`tree::family`].
         let places = self.places();
         let family = tree::family(&places, self.active);
-        for i in family.iter().copied() {
-            if dragging_tab && drop_slot == Some(i) {
+        // the caret marks a gap between visible tabs, not a tab index — see
+        // [`tree::caret_gap`], which is where the non-contiguous case is argued
+        let caret_at = drop_slot.map(|s| tree::caret_gap(&family, s));
+        for (n, i) in family.iter().copied().enumerate() {
+            if dragging_tab && caret_at == Some(n) {
                 tab_strip = tab_strip.child(drop_marker());
             }
             tab_strip = tab_strip.child(self.tab_button(i, cx));
         }
         // the end caret only when NOT a new-row drop (that gets the wide bar below)
-        if dragging_tab && drop_slot == Some(tab_count) && !new_row_drop {
+        if dragging_tab && caret_at == Some(family.len()) && !new_row_drop {
             tab_strip = tab_strip.child(drop_marker());
         }
         tab_strip = tab_strip.child(Self::bezel_btn_s(&th, "+", false, scale).on_mouse_down(
@@ -19245,6 +19272,60 @@ impl Render for Workspace {
 #[allow(clippy::items_after_test_module)]
 mod tests {
     use super::*;
+
+    /// The strip's heading must never be blank, and must never wrap.
+    ///
+    /// Two failures that look identical to a passing test suite. A group starts
+    /// nameless, and a heading that draws its name only when there is one
+    /// renders as an empty element — with its click and right-click still live,
+    /// so the branch's own handle becomes invisible on the widest surface in
+    /// the window. And gpui wraps text by default: a name wider than the fixed
+    /// rail does not clip, it takes a second line and makes the whole mother
+    /// bar taller, which is the one thing the rail exists to prevent.
+    ///
+    /// Source-scanned for the same reason the rename sweep is: the wrong
+    /// version compiles, renders, and passes everything else.
+    #[test]
+    fn the_strip_heading_is_never_blank_and_never_wraps() {
+        let src = include_str!("main.rs");
+        let body = |sig: &str| -> &str {
+            let at = src.find(sig).unwrap_or_else(|| panic!("{sig} not found"));
+            let end = src[at..].find("\n    }\n").expect("end of fn");
+            &src[at..at + end]
+        };
+
+        let title = body("fn group_title");
+        assert!(
+            title.contains(".label()"),
+            "group_title must go through TabGroup::label — reading `name` \
+             directly renders nothing at all for a group nobody has named yet"
+        );
+        assert!(
+            title.contains(".truncate()"),
+            "group_title must truncate: gpui wraps by default, so a long branch \
+             name grows the mother bar instead of clipping inside its rail"
+        );
+        assert!(
+            body("fn strip_heading").contains(".truncate()"),
+            "the project heading must truncate for the same reason"
+        );
+
+        // and the fallback has to actually say something
+        let nameless = TabGroup {
+            id: 7,
+            name: None,
+            color: white(),
+            text_color: None,
+            collapsed: false,
+            project: None,
+        };
+        let label = nameless.label();
+        assert!(
+            !label.trim().is_empty() && label.contains('7'),
+            "an unnamed group labelled {label:?} — the heading needs a name that \
+             identifies WHICH unnamed branch it is"
+        );
+    }
 
     /// Clicking away from an inline rename box must close EVERY kind of rename
     /// box, not most of them.
