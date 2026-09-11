@@ -1,0 +1,466 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Group-scoped tab strip — mock-ups</title>
+<style>
+  :root{
+    --bg:#0b0806;
+    --panel:#120d0a;
+    --ink:#e8ded2;
+    --dim:#8c8177;
+    --dimmer:#5d554e;
+    --rule:#2a211c;
+    --hot:#ff3b30;
+    --accent:#d9cfc2;
+    --glow:0 0 14px rgba(255,80,60,.18);
+    --mono:"Berkeley Mono","JetBrains Mono","SF Mono",ui-monospace,Menlo,Consolas,monospace;
+  }
+  body.light{
+    --bg:#f2efe9; --panel:#fbf9f5; --ink:#1e1a17; --dim:#6d645c; --dimmer:#a49a90;
+    --rule:#ddd6cc; --accent:#2b2622; --glow:none;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; padding:28px 24px 80px; background:var(--bg); color:var(--ink);
+    font-family:var(--mono); font-size:14px; line-height:1.55;
+    transition:background .2s,color .2s;
+  }
+  .wrap{max-width:1180px;margin:0 auto}
+  h1{font-size:19px;letter-spacing:.14em;text-transform:uppercase;margin:0 0 6px}
+  .sub{color:var(--dim);font-size:13px;margin:0 0 4px;max-width:78ch}
+  .toolbar{display:flex;gap:10px;align-items:center;margin:18px 0 30px;flex-wrap:wrap}
+  button.tog{
+    font:inherit;font-size:11px;letter-spacing:.12em;text-transform:uppercase;
+    background:transparent;color:var(--dim);border:1px solid var(--rule);
+    padding:6px 12px;border-radius:5px;cursor:pointer;
+  }
+  button.tog:hover{color:var(--ink);border-color:var(--dim)}
+
+  .card{border:1px solid var(--rule);border-radius:9px;margin:0 0 26px;overflow:hidden;background:var(--panel)}
+  .card > .head{padding:13px 16px 11px;border-bottom:1px solid var(--rule)}
+  .tag{font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:var(--dim)}
+  .name{font-size:15px;letter-spacing:.06em;margin:2px 0 5px}
+  .why{color:var(--dim);font-size:12.5px;margin:0;max-width:86ch}
+  .stage{padding:22px 18px;background:
+     radial-gradient(120% 140% at 50% -30%, rgba(255,255,255,.035), transparent 60%);}
+  body.light .stage{background:radial-gradient(120% 140% at 50% -30%, rgba(0,0,0,.03), transparent 60%)}
+
+  /* ---------- shared chrome atoms ---------- */
+  .strip{display:flex;align-items:stretch;gap:0;font-size:12px;letter-spacing:.11em;text-transform:uppercase}
+  .grouptitle{
+    display:flex;align-items:center;gap:8px;color:var(--dim);
+    font-size:11.5px;letter-spacing:.22em;white-space:nowrap;
+  }
+  .grouptitle .caret{color:var(--dimmer);font-size:9px}
+  .count{color:var(--dimmer);font-size:11px;letter-spacing:.1em}
+  .sep{width:1px;background:var(--rule);margin:0 14px}
+  .tab{
+    display:flex;align-items:center;gap:9px;padding:7px 13px;white-space:nowrap;
+    color:var(--dim);border-radius:6px;cursor:default;
+  }
+  .tab .icons{display:flex;gap:7px;align-items:center;font-size:11px;opacity:.9}
+  .tab.on{color:var(--ink)}
+  .plus{
+    margin-left:auto;color:var(--dimmer);border:1px solid var(--rule);border-radius:6px;
+    padding:5px 11px;font-size:12px;align-self:center;
+  }
+  .barwell{
+    background:var(--bg);border:1px solid var(--rule);border-radius:8px;padding:9px 11px;
+  }
+  body.light .barwell{background:#efeae1}
+
+  /* today */
+  .chip{
+    display:flex;align-items:center;gap:8px;padding:6px 13px;border-radius:7px;
+    font-size:12px;letter-spacing:.11em;color:#0b0806;font-weight:600;
+  }
+  .chip .n{opacity:.7}
+  .chip.bfs{background:#8a5a3b;color:#f3e3d4}
+  .chip.mkt{background:#16110d;color:#e8ded2;border:1px solid #2e2620}
+  .chip.hc{background:#2ee6b0;color:#05241c}
+  .chip.om{background:#7b3ff2;color:#efe8ff}
+  .chip.job{background:#9aa0a0;color:#12100f}
+  .chip.hot{background:var(--hot);color:#fff}
+  .chip.live{background:#ff5347;color:#fff;box-shadow:var(--glow);border:1px solid #ffd9d4}
+
+  /* A */
+  .A .tab.on{background:rgba(255,255,255,.07);box-shadow:inset 0 0 0 1px var(--rule)}
+  body.light .A .tab.on{background:rgba(0,0,0,.06)}
+
+  /* A-spec: title column locked to sidebar width, void gutter, inset tabs */
+  :root{--sidebar:210px;--void:18px;--gutter:14px}
+  .spec .barwell{padding:0;background:transparent;border:0}
+  .spec .strip{align-items:stretch}
+  .spec .titlecol{
+    width:var(--sidebar);flex:0 0 var(--sidebar);
+    display:flex;align-items:center;justify-content:center;gap:9px;
+    color:var(--dim);font-size:11.5px;letter-spacing:.24em;white-space:nowrap;
+    padding:8px 10px;
+  }
+  .spec .void{width:var(--void);flex:0 0 var(--void)}
+  .spec .tabs{display:flex;align-items:center;gap:2px;flex:1;min-width:0}
+  .spec .tab{padding:7px 14px;border-radius:0;box-shadow:none;background:transparent}
+  .spec .tab.on{color:var(--ink);box-shadow:inset 0 -2px 0 0 var(--accent);background:transparent}
+  .spec .plus{margin-left:auto}
+  .spec .body{display:flex;gap:0;margin-top:0}
+  .spec .leftbar{
+    width:var(--sidebar);flex:0 0 var(--sidebar);
+    border-top:1px solid var(--rule);border-right:1px solid var(--rule);
+    padding:9px 8px;font-size:11.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);
+  }
+  .spec .leftbar .row{display:flex;align-items:center;gap:8px;padding:4px 6px;border-radius:5px}
+  .spec .leftbar .row .k{width:2px;height:12px;border-radius:2px;background:var(--dimmer)}
+  .spec .leftbar .row.sel{background:rgba(255,255,255,.06);color:var(--ink)}
+  body.light .spec .leftbar .row.sel{background:rgba(0,0,0,.06)}
+  .spec .leftbar .row .n{margin-left:auto;color:var(--dimmer)}
+  .spec .surface{
+    flex:1;border-top:1px solid var(--rule);min-height:130px;
+    padding:12px var(--gutter);display:flex;gap:10px;
+  }
+  .spec .term{
+    flex:1;border:1px solid var(--rule);border-radius:7px;padding:10px 12px;
+    color:var(--dimmer);font-size:12px;min-width:0;
+  }
+  /* measuring marks */
+  .spec.measured .void{background:repeating-linear-gradient(135deg,transparent 0 5px,rgba(255,90,70,.30) 5px 6px)}
+  .spec.measured .titlecol{outline:1px dashed rgba(255,90,70,.45);outline-offset:-1px}
+  .spec.measured .tabs{outline:1px dashed rgba(90,190,255,.35);outline-offset:-1px}
+  .legend{display:flex;gap:22px;color:var(--dimmer);font-size:11px;margin:12px 2px 0;flex-wrap:wrap}
+  .legend i{display:inline-block;width:11px;height:11px;vertical-align:-1px;margin-right:6px;border-radius:2px}
+  .legend .l1 i{outline:1px dashed rgba(255,90,70,.6)}
+  .legend .l2 i{background:repeating-linear-gradient(135deg,transparent 0 4px,rgba(255,90,70,.35) 4px 5px)}
+  .legend .l3 i{outline:1px dashed rgba(90,190,255,.5)}
+  .collapsed{--sidebar:44px}
+  .collapsed .leftbar{padding:9px 4px}
+  .collapsed .leftbar .row{justify-content:center;padding:5px 0}
+  .collapsed .leftbar .row span{display:none}
+  .collapsed .titlecol{letter-spacing:.12em;font-size:10px;overflow:hidden}
+
+  /* B */
+  .B .titlerow{
+    display:flex;align-items:center;gap:12px;padding:0 4px 8px;border-bottom:1px solid var(--rule);
+  }
+  .B .titlerow .grouptitle{font-size:12px;letter-spacing:.26em;color:var(--ink)}
+  .B .acts{margin-left:auto;display:flex;gap:14px;color:var(--dimmer);font-size:11px}
+  .B .tabrow{display:flex;padding-top:8px}
+  .B .tab{border-radius:0;padding:5px 15px;border-bottom:2px solid transparent;margin-bottom:-1px}
+  .B .tab.on{border-bottom-color:var(--accent);color:var(--ink)}
+
+  /* C */
+  .C .barwell{padding:0}
+  .C .strip{align-items:center}
+  .C .ctitle{
+    padding:8px 16px;color:var(--dim);font-size:11px;letter-spacing:.26em;
+    border-right:1px solid var(--rule);white-space:nowrap;
+  }
+  .C .tab{
+    flex:1 1 0;justify-content:center;border-radius:0;border-right:1px solid var(--rule);
+    padding:8px 10px;min-width:0;
+  }
+  .C .tab span.lbl{overflow:hidden;text-overflow:ellipsis}
+  .C .tab.on{background:rgba(255,255,255,.06);box-shadow:inset 0 2px 0 0 var(--accent)}
+  body.light .C .tab.on{background:rgba(0,0,0,.05)}
+  .C .plus{margin:0;border:0;border-left:1px solid var(--rule);border-radius:0;padding:8px 14px}
+
+  /* D */
+  .D .dtitle{display:flex;align-items:center;gap:9px;padding:6px 0 6px 11px;border-left:2px solid var(--dim)}
+  .D .dtitle b{font-weight:500;letter-spacing:.22em;font-size:11.5px;color:var(--ink)}
+  .D .dot{color:var(--dimmer);padding:0 3px}
+  .D .tab{padding:6px 9px}
+  .D .tab.on{box-shadow:inset 0 0 0 1px var(--dim);color:var(--ink)}
+
+  /* E */
+  .E .tab{padding:7px 14px;border-radius:0}
+  .E .tab.on{color:var(--ink);box-shadow:inset 0 -2px 0 0 var(--accent)}
+  .E .wintitle{color:var(--dimmer);font-size:11px;letter-spacing:.24em;padding:0 4px 7px}
+
+  /* context strip: left bar + pane */
+  .ctx{display:flex;gap:14px;margin-top:16px}
+  .ctx .left{
+    width:210px;border:1px solid var(--rule);border-radius:8px;padding:9px 8px;
+    font-size:11.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);
+  }
+  .ctx .left .row{display:flex;align-items:center;gap:8px;padding:4px 6px;border-radius:5px}
+  .ctx .left .row .k{width:2px;height:12px;border-radius:2px;background:var(--dimmer)}
+  .ctx .left .row.sel{background:rgba(255,255,255,.06);color:var(--ink)}
+  body.light .ctx .left .row.sel{background:rgba(0,0,0,.06)}
+  .ctx .left .row .n{margin-left:auto;color:var(--dimmer)}
+  .ctx .pane{
+    flex:1;border:1px solid var(--rule);border-radius:8px;min-height:112px;
+    color:var(--dimmer);font-size:12px;padding:11px 13px;
+  }
+  .k.bfs{background:#8a5a3b!important}.k.mkt{background:#4b4340!important}
+  .k.hc{background:#2ee6b0!important}.k.om{background:#7b3ff2!important}
+  .k.job{background:#9aa0a0!important}.k.td{background:var(--hot)!important}
+
+  .note{color:var(--dim);font-size:12.5px;margin:34px 0 0;padding-top:18px;border-top:1px solid var(--rule)}
+  .note b{color:var(--ink);font-weight:500}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>Tabs for the group you are in</h1>
+  <p class="sub">Headless + sidebar. The left bar already carries every group, so the top strip stops repeating it: one quiet group title, then that group's tabs, neutral rather than colour-coded. <b>A is chosen</b> — it leads, drawn to spec with its alignments and its three states. The other four are kept below as the record.</p>
+
+  <div class="toolbar">
+    <button class="tog" onclick="document.body.classList.toggle('light')">flip light / dark</button>
+    <span class="count">group colour survives only in the left bar's 2px key</span>
+  </div>
+
+  <!-- ================= TODAY ================= -->
+  <div class="card">
+    <div class="head">
+      <div class="tag">today — reference</div>
+      <div class="name">Every group, plus the active group's tabs</div>
+      <p class="why">Two taxonomies sharing one row, both colour-coded, and the left bar says the same thing again underneath.</p>
+    </div>
+    <div class="stage">
+      <div class="barwell">
+        <div class="strip" style="gap:8px;align-items:center">
+          <span class="chip bfs">▸ BFS <span class="n">3</span></span>
+          <span class="chip mkt">▸ MARKETING <span class="n">3</span></span>
+          <span class="chip hc">▸ HC VIDEO <span class="n">1</span></span>
+          <span class="chip om">▸ OMARCHY <span class="n">1</span></span>
+          <span class="chip job">▸ JOB <span class="n">2</span></span>
+          <span class="chip hot">▾ TD HEADLESS</span>
+          <span class="chip live">OVERVIEW 📌 ◑ ◑ ✅ ✎ ✕</span>
+          <span class="plus">+</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= A — SPEC ================= -->
+  <div class="card">
+    <div class="head">
+      <div class="tag">A — the spec</div>
+      <div class="name">Title column locked to the sidebar, void gutter, tabs inset over the terminals</div>
+      <p class="why">Two alignments doing the work. The group title owns a column exactly as wide as the left bar and centers in it, so the heading sits over the thing it labels. Then an empty gutter — nothing in it, no caret, no separator — before the first tab, so the strip starts a little way inside the terminal surface rather than butting against the sidebar edge. The tab row lines up with the left inset of the terminals below it.</p>
+    </div>
+    <div class="stage">
+
+      <div class="spec">
+        <div class="barwell">
+          <div class="strip">
+            <div class="titlecol">TD HEADLESS</div>
+            <div class="void"></div>
+            <div class="tabs">
+              <span class="tab on">OVERVIEW <span class="icons">📌 ◑ ◑ ✅ ✎ ✕</span></span>
+              <span class="tab">CLIENT SERVER <span class="icons">◑</span></span>
+              <span class="plus">+</span>
+            </div>
+          </div>
+        </div>
+        <div class="body">
+          <div class="leftbar">
+            <div class="row"><i class="k bfs"></i><span>BFS</span><span class="n">3</span></div>
+            <div class="row"><i class="k mkt"></i><span>MARKETING</span><span class="n">3</span></div>
+            <div class="row"><i class="k hc"></i><span>HC VIDEO</span><span class="n">1</span></div>
+            <div class="row"><i class="k om"></i><span>OMARCHY</span><span class="n">1</span></div>
+            <div class="row"><i class="k job"></i><span>JOB</span><span class="n">2</span></div>
+            <div class="row sel"><i class="k td"></i><span>TD HEADLESS</span><span class="n">2</span></div>
+          </div>
+          <div class="surface">
+            <div class="term">the first tab's left edge and the first terminal's left edge are the same line</div>
+            <div class="term">▸ CLAUDE · client server architecture</div>
+          </div>
+        </div>
+      </div>
+
+      <p class="why" style="margin:26px 0 10px">Same thing with the measurements drawn on — dashed red is the sidebar-width title column, hatched is the void, dashed blue is where tabs are allowed to live.</p>
+      <div class="spec measured">
+        <div class="barwell">
+          <div class="strip">
+            <div class="titlecol">TD HEADLESS</div>
+            <div class="void"></div>
+            <div class="tabs">
+              <span class="tab on">OVERVIEW <span class="icons">📌 ◑ ◑ ✅ ✎ ✕</span></span>
+              <span class="tab">CLIENT SERVER <span class="icons">◑</span></span>
+              <span class="plus">+</span>
+            </div>
+          </div>
+        </div>
+        <div class="body">
+          <div class="leftbar">
+            <div class="row sel"><i class="k td"></i><span>TD HEADLESS</span><span class="n">2</span></div>
+            <div class="row"><i class="k bfs"></i><span>BFS</span><span class="n">3</span></div>
+          </div>
+          <div class="surface"><div class="term">terminal surface</div></div>
+        </div>
+      </div>
+      <div class="legend">
+        <span class="l1"><i></i>title column = sidebar width, centered</span>
+        <span class="l2"><i></i>void gutter, ~18px, deliberately empty</span>
+        <span class="l3"><i></i>tabs, flush with the terminals' inset</span>
+      </div>
+
+      <p class="why" style="margin:30px 0 10px">Sidebar collapsed: the column collapses with it and the title shrinks to fit, keeping the gutter and the tab inset intact.</p>
+      <div class="spec collapsed">
+        <div class="barwell">
+          <div class="strip">
+            <div class="titlecol">TD HDLS</div>
+            <div class="void"></div>
+            <div class="tabs">
+              <span class="tab on">OVERVIEW <span class="icons">📌 ◑ ◑ ✅ ✕</span></span>
+              <span class="tab">CLIENT SERVER <span class="icons">◑</span></span>
+              <span class="plus">+</span>
+            </div>
+          </div>
+        </div>
+        <div class="body">
+          <div class="leftbar">
+            <div class="row sel"><i class="k td"></i><span>TD HEADLESS</span></div>
+            <div class="row"><i class="k bfs"></i><span>BFS</span></div>
+            <div class="row"><i class="k hc"></i><span>HC VIDEO</span></div>
+          </div>
+          <div class="surface"><div class="term">terminal surface</div></div>
+        </div>
+      </div>
+
+      <p class="why" style="margin:30px 0 10px">A name wider than the sidebar truncates inside its column rather than pushing the tabs right — the column is a fixed rail, not content-sized.</p>
+      <div class="spec">
+        <div class="barwell">
+          <div class="strip">
+            <div class="titlecol" style="overflow:hidden;text-overflow:ellipsis;display:block;text-align:center;line-height:2.2">CLIENT SERVER SPLIT HARDENING</div>
+            <div class="void"></div>
+            <div class="tabs">
+              <span class="tab on">OVERVIEW <span class="icons">📌 ✕</span></span>
+              <span class="tab">GUARD COOLDOWN</span>
+              <span class="plus">+</span>
+            </div>
+          </div>
+        </div>
+        <div class="body">
+          <div class="leftbar"><div class="row sel"><i class="k td"></i><span>CLIENT SERVER SPLIT HARDENING</span></div></div>
+          <div class="surface"><div class="term">terminal surface</div></div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ================= A ================= -->
+  <div class="card A">
+    <div class="head">
+      <div class="tag">variation A — first sketch, superseded by the spec above</div>
+      <div class="name">Title inline, one row</div>
+      <p class="why">Group name sits where the first chip used to, dimmed and spaced out so it reads as a heading rather than a tab. Hairline, then the tabs. Cheapest in vertical space — nothing moves down.</p>
+    </div>
+    <div class="stage">
+      <div class="barwell">
+        <div class="strip" style="align-items:center">
+          <span class="grouptitle"><span class="caret">▾</span>TD HEADLESS<span class="count">2</span></span>
+          <span class="sep"></span>
+          <span class="tab on">OVERVIEW <span class="icons">📌 ◑ ◑ ✅ ✎ ✕</span></span>
+          <span class="tab">CLIENT SERVER <span class="icons">◑</span></span>
+          <span class="plus">+</span>
+        </div>
+      </div>
+      <div class="ctx">
+        <div class="left">
+          <div class="row"><i class="k bfs"></i>BFS<span class="n">3</span></div>
+          <div class="row"><i class="k mkt"></i>MARKETING<span class="n">3</span></div>
+          <div class="row"><i class="k hc"></i>HC VIDEO<span class="n">1</span></div>
+          <div class="row"><i class="k om"></i>OMARCHY<span class="n">1</span></div>
+          <div class="row"><i class="k job"></i>JOB<span class="n">2</span></div>
+          <div class="row sel"><i class="k td"></i>TD HEADLESS<span class="n">2</span></div>
+        </div>
+        <div class="pane">the colour lives here, once — selection in the left bar is what says which group you are in</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= B ================= -->
+  <div class="card B">
+    <div class="head">
+      <div class="tag">variation B</div>
+      <div class="name">Header line above, tab row below</div>
+      <p class="why">The group is a document title with its own actions on the right; the row underneath is nothing but tabs, underlined like editor tabs. Costs ~18px of height and buys an unambiguous separation of the two levels.</p>
+    </div>
+    <div class="stage">
+      <div class="barwell">
+        <div class="titlerow">
+          <span class="grouptitle">TD HEADLESS</span>
+          <span class="count">2 tabs</span>
+          <span class="acts"><span>rename</span><span>collapse</span><span>+ tab</span></span>
+        </div>
+        <div class="tabrow">
+          <span class="tab on">OVERVIEW <span class="icons">📌 ◑ ◑ ✅ ✎ ✕</span></span>
+          <span class="tab">CLIENT SERVER <span class="icons">◑</span></span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= C ================= -->
+  <div class="card C">
+    <div class="head">
+      <div class="tag">variation C</div>
+      <div class="name">Terminal-app segments — title in the gutter, tabs fill the width</div>
+      <p class="why">Tabs divide the remaining width evenly with hairline separators, active one lifted by a top rule and a faint fill. The most literal read of "like a light terminal"; long titles truncate instead of pushing the strip wide.</p>
+    </div>
+    <div class="stage">
+      <div class="barwell">
+        <div class="strip">
+          <span class="ctitle">TD HEADLESS</span>
+          <span class="tab on"><span class="lbl">OVERVIEW</span> <span class="icons">📌 ◑ ◑ ✅ ✕</span></span>
+          <span class="tab"><span class="lbl">CLIENT SERVER</span> <span class="icons">◑</span></span>
+          <span class="tab"><span class="lbl">SHORTS PIPELINE</span></span>
+          <span class="plus">+</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= D ================= -->
+  <div class="card D">
+    <div class="head">
+      <div class="tag">variation D</div>
+      <div class="name">Breadcrumb, maximum room for names</div>
+      <p class="why">Group as a left-ruled breadcrumb, tabs as plain words separated by dots, active one boxed. Nothing is painted, so a twelve-tab group still fits; the trade is that an inactive tab is quiet enough to miss.</p>
+    </div>
+    <div class="stage">
+      <div class="barwell">
+        <div class="strip" style="align-items:center">
+          <span class="dtitle"><b>TD HEADLESS</b><span class="count">2</span></span>
+          <span class="sep"></span>
+          <span class="tab on">OVERVIEW <span class="icons">📌 ◑ ◑ ✅ ✕</span></span>
+          <span class="dot">·</span>
+          <span class="tab">CLIENT SERVER <span class="icons">◑</span></span>
+          <span class="dot">·</span>
+          <span class="tab">SHORTS PIPELINE</span>
+          <span class="dot">·</span>
+          <span class="tab">LEFT BAR</span>
+          <span class="plus">+</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= E ================= -->
+  <div class="card E">
+    <div class="head">
+      <div class="tag">variation E</div>
+      <div class="name">No header at all — the window title carries the group</div>
+      <p class="why">Taken to its end: the left bar names the group, so the strip is only tabs and the group name moves up into the window title, where it costs nothing. Worth seeing even if it turns out to be a step too far when the sidebar is collapsed.</p>
+    </div>
+    <div class="stage">
+      <div class="wintitle">TERMINAL DELIGHT — TD HEADLESS</div>
+      <div class="barwell">
+        <div class="strip">
+          <span class="tab on">OVERVIEW <span class="icons">📌 ◑ ◑ ✅ ✎ ✕</span></span>
+          <span class="tab">CLIENT SERVER <span class="icons">◑</span></span>
+          <span class="plus">+</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <p class="note"><b>Chosen 2026-09-11:</b> A, drawn as the spec at the top — title column locked to the sidebar width and centered in it, an empty gutter after it, tabs starting inset over the terminal surface and using C's underline for the active one rather than a fill. The variations below are kept for the record. Three numbers are still open and are the kind that only look wrong on screen: the gutter (18px here), the tab inset against the terminals' own padding (they should be the same line, whatever that line is), and where a long group name gives up and truncates.</p>
+
+</div>
+</body>
+</html>
