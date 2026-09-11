@@ -521,30 +521,42 @@ pub fn reorder(ids: &mut Vec<u32>, moving: u32, neighbour: u32, after: bool) {
     ids.insert(if after { at + 1 } else { at }, moving);
 }
 
-/// The tasks the mother bar draws under `scope`, in tab order.
+/// The tasks the strip draws: the branch the active task is in, in tab order.
+///
+/// One initiative's worth of tabs and nothing else. The tree beside the strip
+/// already lists every other branch, so a strip that carried them too spent the
+/// widest surface in the window repeating the one fact that was never in doubt
+/// — and it is the reason the strip kept running out of room.
+///
+/// A task in no initiative sits with the other loose ones, which makes this the
+/// identity function for a session that has never been organised: every tab,
+/// exactly as before.
 ///
 /// Kept beside [`rows`] on purpose: the strip and the tree answer the same
 /// question about the same session and must never disagree about which tasks
 /// exist.
-pub fn in_scope(places: &[Place], scope: Scope) -> Vec<usize> {
+pub fn family(places: &[Place], active: usize) -> Vec<usize> {
+    let home = places.get(active).and_then(|p| p.initiative);
     places
         .iter()
         .enumerate()
-        .filter(|(_, place)| scope.shows(place))
+        .filter(|(_, place)| place.initiative == home)
         .map(|(i, _)| i)
         .collect()
 }
 
-/// What the scope is HIDING from the strip, summed — the price of narrowing it.
+/// What the strip is NOT showing, summed — the price of narrowing it.
 ///
 /// The tree shows this branch by branch, but the tree can be closed, and a
-/// scoped strip with the tree closed is the one arrangement where an agent
+/// narrowed strip with the tree closed is the one arrangement where an agent
 /// could stop and ask a question with nothing on screen to say so. This is what
-/// the mother bar's own out-of-scope chip reads.
-pub fn out_of_scope(tasks: &[TaskRef], scope: Scope) -> Roll {
+/// the mother bar's own out-of-branch chip reads.
+pub fn roll_outside(tasks: &[TaskRef], shown: &[usize]) -> Roll {
     let mut roll = Roll::default();
-    for t in tasks.iter().filter(|t| !scope.shows(&t.place)) {
-        roll.fold(&t.roll);
+    for (i, t) in tasks.iter().enumerate() {
+        if !shown.contains(&i) {
+            roll.fold(&t.roll);
+        }
     }
     roll
 }
@@ -827,36 +839,61 @@ mod tests {
     }
 
     #[test]
-    fn scope_narrows_the_strip_by_branch() {
+    fn the_strip_carries_the_branch_you_are_in_and_no_other() {
         let places: Vec<Place> = [
             task(Some(1), Some(10)),
-            task(Some(1), None),
+            task(Some(1), Some(10)),
+            task(Some(1), Some(11)),
             task(Some(2), None),
             task(None, None),
         ]
         .iter()
         .map(|t| t.place)
         .collect();
-        assert_eq!(in_scope(&places, Scope::All), vec![0, 1, 2, 3]);
-        assert_eq!(in_scope(&places, Scope::Project(1)), vec![0, 1]);
-        assert_eq!(in_scope(&places, Scope::Initiative(10)), vec![0]);
+        // in an initiative: its members, and not the sibling initiative that
+        // happens to share a project
+        assert_eq!(family(&places, 0), vec![0, 1]);
+        assert_eq!(family(&places, 2), vec![2]);
+        // loose tasks keep each other company whatever project they hang from
+        assert_eq!(family(&places, 3), vec![3, 4]);
+        assert_eq!(family(&places, 4), vec![3, 4]);
     }
 
     #[test]
-    fn what_the_scope_hides_is_counted_so_the_strip_can_say_so() {
-        // The safety catch on scoping: an agent that stops to ask a question in
-        // a project you are not looking at must still be able to interrupt you.
+    fn a_session_that_never_organised_anything_still_sees_every_tab() {
+        // The identity case, and the one that decides whether this is safe to
+        // ship to somebody who has never made a group.
+        let places: Vec<Place> = (0..4).map(|_| task(None, None).place).collect();
+        assert_eq!(family(&places, 0), vec![0, 1, 2, 3]);
+    }
+
+    #[test]
+    fn an_active_index_off_the_end_narrows_to_the_loose_tabs_not_to_nothing() {
+        // A strip with nothing on it is the one state there is no way back from,
+        // so an impossible index lands somewhere rather than nowhere.
+        let places: Vec<Place> = [task(Some(1), Some(10)), task(None, None)]
+            .iter()
+            .map(|t| t.place)
+            .collect();
+        assert_eq!(family(&places, 99), vec![1]);
+    }
+
+    #[test]
+    fn what_the_strip_hides_is_counted_so_the_strip_can_say_so() {
+        // The safety catch on narrowing: an agent that stops to ask a question
+        // in a branch you are not looking at must still be able to interrupt
+        // you.
         let tasks = vec![
             loud(Some(1), None, 0),
             loud(Some(2), None, 1),
             loud(None, None, 2),
         ];
-        let hidden = out_of_scope(&tasks, Scope::Project(1));
+        let hidden = roll_outside(&tasks, &[0]);
         assert_eq!(hidden.needs_input, 3);
         assert_eq!(hidden.tasks, 2);
         // nothing is hidden when nothing is narrowed
-        assert_eq!(out_of_scope(&tasks, Scope::All), Roll::default());
-        assert!(out_of_scope(&tasks, Scope::All).quiet());
+        assert_eq!(roll_outside(&tasks, &[0, 1, 2]), Roll::default());
+        assert!(roll_outside(&tasks, &[0, 1, 2]).quiet());
     }
 
     #[test]

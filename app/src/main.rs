@@ -4547,8 +4547,25 @@ impl Workspace {
             eprintln!("new_tab");
         }
         let pane = make_pane(window, cx);
-        self.tabs.push(Tab::new(Node::Leaf(pane), None));
-        self.active = self.tabs.len() - 1;
+        // A new tab joins the branch you are in, and lands beside its siblings
+        // rather than at the end of the window, so a branch stays one run in tab
+        // order. The strip shows one branch and the tree shows the rest, so a
+        // tab that landed loose would open somewhere neither of them is
+        // pointing — visible only after you went looking for it. Making a loose
+        // tab is still possible, by dragging one out of its branch, which is
+        // where a deliberate choice belongs; it is no longer what a `+` does by
+        // accident.
+        let (group, project) = self
+            .tabs
+            .get(self.active)
+            .map(|t| (t.group, t.project))
+            .unwrap_or((None, None));
+        let mut tab = Tab::new(Node::Leaf(pane), None);
+        tab.group = group;
+        tab.project = project;
+        let at = self.branch_end(group);
+        self.tabs.insert(at, tab);
+        self.active = at;
         self.save(cx);
         cx.notify();
         // Defer the focus: new_tab fires from a mother-bar mouse-down listener, so
@@ -6344,6 +6361,21 @@ impl Workspace {
         }
         self.save(cx);
         cx.notify();
+    }
+
+    /// Where a new member of `group` lands: after the last tab already in it,
+    /// so a branch stays one contiguous run in tab order and the strip never
+    /// has to draw a gap it cannot explain. A loose tab still goes at the end.
+    fn branch_end(&self, group: Option<u32>) -> usize {
+        match group {
+            None => self.tabs.len(),
+            Some(g) => self
+                .tabs
+                .iter()
+                .rposition(|t| t.group == Some(g))
+                .map(|i| i + 1)
+                .unwrap_or(self.tabs.len()),
+        }
     }
 
     fn places(&self) -> Vec<tree::Place> {
@@ -12045,7 +12077,13 @@ impl Workspace {
             .name
             .clone()
             .unwrap_or_else(|| format!("{}", i + 1));
-        let (fill, text) = self.resolved_tab_colors(i);
+        // The strip is NOT colour-coded. The branch's colour is already the
+        // key beside its name in the tree, and painting it again on every one
+        // of its tabs said the same thing five times in the loudest place in
+        // the window. An explicit per-tab colour is a choice somebody made, so
+        // it survives — as the tab's own label and underline, not as a filled
+        // chip competing with its neighbours.
+        let (fill, text) = (self.tabs[i].color, self.tabs[i].text_color);
         // the per-tab close affordance — an X in the tab's own frame
         let close_x = div()
             .px(px(4. * ts))
@@ -12087,18 +12125,26 @@ impl Workspace {
                     cx.notify();
                 }),
             );
-        // tint to the resolved fill (tab override or group lead); the resolved
-        // text colour rides over the bezel's default label colour
-        let mut btn = Self::bezel_btn_s(&th, &label, is_active, ts);
-        if let Some(c) = fill {
-            btn = btn
-                .bg(linear_gradient(
-                    135.,
-                    linear_color_stop(brighten(c, 1.35), 0.),
-                    linear_color_stop(darken(c, 0.6), 1.),
-                ))
-                .border_color(if is_active { th.accent } else { c });
-        }
+        // Flat, and the active one underlined. The bezel button was doing the
+        // work of telling six chips apart on a strip that carried the whole
+        // session; carrying one branch, the strip has room to be quiet, and one
+        // underline is enough to say which tab you are in. The rule takes the
+        // tab's own colour when it has one, so a deliberately coloured tab
+        // still reads as itself.
+        let rule = fill.unwrap_or(th.accent);
+        let mut btn = div()
+            .px(px(10. * ts))
+            .py(px(3. * ts))
+            .text_size(px(11. * ts))
+            .cursor_pointer()
+            .border_b_2()
+            .border_color(if is_active {
+                rule
+            } else {
+                hsla(0., 0., 0., 0.)
+            })
+            .text_color(if is_active { th.text } else { th.faint })
+            .child(label.to_string());
         if let Some(tc) = text {
             btn = btn.text_color(tc);
         }
@@ -12222,44 +12268,97 @@ impl Workspace {
             .child(close_x)
     }
 
-    /// The handle at the left of an expanded group's band: shows the group name
-    /// in its colour; click folds the group.
-    fn group_chip(&self, gid: u32, cx: &mut Context<Self>) -> gpui::Stateful<gpui::Div> {
+    /// The column the heading stands in: exactly as wide as the tree beside it,
+    /// so the branch's name is centred over the rows it names.
+    ///
+    /// Fixed width, not content width. A long branch name truncates inside the
+    /// column rather than pushing the first tab to the right — the tabs' left
+    /// edge is a line shared with the terminals below, and a heading is not
+    /// allowed to move it. With the tree closed the column collapses to nothing
+    /// and the heading takes only what it needs.
+    fn strip_heading(&self, width: f32, cx: &mut Context<Self>) -> gpui::Div {
+        let th = theme::theme(cx);
+        let s = theme::outer_choice(cx).grade.scale;
+        let mut col = div()
+            .flex()
+            .flex_none()
+            .flex_row()
+            .items_center()
+            .justify_center()
+            .overflow_hidden()
+            .px(px(6. * s));
+        if width > 0. {
+            col = col.w(px(width));
+        }
+        let branch = self
+            .tabs
+            .get(self.active)
+            .and_then(|t| t.group)
+            .filter(|g| self.group_index(*g).is_some());
+        match branch {
+            Some(gid) => col.child(self.group_title(gid, cx)),
+            // A loose tab hangs from its project, if it hangs from anything. The
+            // heading says whichever branch of the tree the strip is standing
+            // over, and when that is nothing at all it says nothing — an
+            // unorganised session gets a plain strip, not a label reading
+            // "unfiled" over every tab it has.
+            None => {
+                let project = self
+                    .tabs
+                    .get(self.active)
+                    .and_then(|t| t.project)
+                    .and_then(|p| self.projects.iter().find(|q| q.id == p))
+                    .map(|p| p.label());
+                match project {
+                    Some(name) => col.child(
+                        div()
+                            .min_w_0()
+                            .overflow_hidden()
+                            .text_size(px(10.5 * s))
+                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                            .text_color(th.faint)
+                            .child(name),
+                    ),
+                    None => col,
+                }
+            }
+        }
+    }
+
+    /// The strip's heading: the name of the branch it is carrying, standing
+    /// over the tree rather than in the tabs' own row.
+    ///
+    /// Not a chip and not coloured. The tree directly below it carries this
+    /// branch's colour key and its name already; a second coloured token on top
+    /// of that was the same fact twice, in the place with the least room for
+    /// it. Still the branch's handle, though — right-click for its own menu
+    /// (rename, colour, fold, disband), and a plain click folds it in the tree.
+    fn group_title(&self, gid: u32, cx: &mut Context<Self>) -> gpui::Stateful<gpui::Div> {
         let th = theme::theme(cx);
         let s = theme::outer_choice(cx).grade.scale;
         let g = self.groups.iter().find(|g| g.id == gid);
-        let color = g.map(|g| g.color).unwrap_or(th.accent);
         let name = g.and_then(|g| g.name.clone());
-        let glyph_col = if color.l > 0.55 {
-            hsla(0., 0., 0.08, 0.95)
-        } else {
-            white()
-        };
-        // double-click the chip to rename the group inline
         let mut chip = div()
-            .id(SharedString::from(format!("grp-chip-{gid}")))
+            .id(SharedString::from(format!("grp-title-{gid}")))
             .flex()
             .flex_row()
             .items_center()
+            .justify_center()
+            .min_w_0()
+            .overflow_hidden()
             .gap(px(4. * s))
             .px(px(4. * s))
-            .h(px(20. * s))
-            // square the bottom so the handle sits flush ON the group's colour
-            // rail (rounded top only) — the "parent tab" touching the bar
-            .rounded_t_md()
-            .bg(color)
             .cursor_pointer()
-            .text_size(px(9. * s))
-            .font_weight(gpui::FontWeight::EXTRA_BOLD)
-            .text_color(glyph_col)
-            .child("▾");
+            .text_size(px(10.5 * s))
+            .font_weight(gpui::FontWeight::SEMIBOLD)
+            .text_color(th.faint);
         if let Some((_, eb)) = self.group_rename.as_ref().filter(|(rg, _)| *rg == gid) {
             chip = chip.child(render_edit_buffer(
                 eb,
                 s,
-                glyph_col,
-                glyph_col,
-                glyph_col.alpha(0.35),
+                th.text,
+                th.cursor,
+                th.accent.alpha(0.4),
             ));
         } else if let Some(n) = name {
             chip = chip.child(n);
@@ -12289,73 +12388,6 @@ impl Workspace {
                 ws.open_group_menu(gid, ev.position, cx);
             }),
         )
-    }
-
-    /// A collapsed group folded into one counted pill; click expands.
-    fn group_pill(
-        &self,
-        gid: u32,
-        count: usize,
-        cx: &mut Context<Self>,
-    ) -> gpui::Stateful<gpui::Div> {
-        let th = theme::theme(cx);
-        let g = self.groups.iter().find(|g| g.id == gid);
-        let color = g.map(|g| g.color).unwrap_or(th.accent);
-        let name = g
-            .and_then(|g| g.name.clone())
-            .unwrap_or_else(|| "group".into());
-        let glyph_col = if color.l > 0.55 {
-            hsla(0., 0., 0.08, 0.95)
-        } else {
-            white()
-        };
-        let s = theme::outer_choice(cx).grade.scale;
-        div()
-            .id(SharedString::from(format!("grp-pill-{gid}")))
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap(px(4. * s))
-            .px(px(8. * s))
-            .py(px(2. * s))
-            .rounded_sm()
-            .border_1()
-            .border_color(color)
-            .bg(linear_gradient(
-                135.,
-                linear_color_stop(brighten(color, 1.2), 0.),
-                linear_color_stop(darken(color, 0.6), 1.),
-            ))
-            .cursor_pointer()
-            .text_size(px(11. * s))
-            .font_weight(gpui::FontWeight::EXTRA_BOLD)
-            .text_color(glyph_col)
-            .child("▸")
-            .child(name)
-            .child(format!("{count}"))
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(move |ws, ev: &MouseDownEvent, _w, cx| {
-                    cx.stop_propagation();
-                    // arm a group drag; a release without travel expands the pill.
-                    ws.group_drag = Some(GroupDrag {
-                        gid,
-                        start: ev.position,
-                        at: ev.position,
-                        engaged: false,
-                    });
-                    ws.tab_drop = None;
-                    cx.notify();
-                }),
-            )
-            // right-click a folded group → its config menu, same as the handle.
-            .on_mouse_down(
-                MouseButton::Right,
-                cx.listener(move |ws, ev: &MouseDownEvent, _w, cx| {
-                    cx.stop_propagation();
-                    ws.open_group_menu(gid, ev.position, cx);
-                }),
-            )
     }
 
     /// The tab-config wheel: the same HSV disk as the theme breakout, carrying
@@ -13587,17 +13619,25 @@ impl Render for Workspace {
         } else {
             0.
         };
+        // The heading stands in a column the width of the tree, centred over it,
+        // so the name sits above the rows it belongs to. Then a gutter that is
+        // VOID on purpose: the tabs start a little way INSIDE the terminals
+        // rather than hard against the tree's edge, which is what makes the
+        // strip read as belonging to the screen. Nothing is allowed to live in
+        // that gap — the moment a control moves into it, the inset stops
+        // reading as deliberate and starts reading as that control's margin.
+        let strip_void = 14. * scale;
+        let strip_heading = self.strip_heading(strip_indent, cx);
         let mut tab_strip = div()
             .flex()
             .flex_row()
             .flex_wrap()
             .gap(px(4. * scale))
             .items_center()
-            .pl(px(strip_indent))
             // min_w_0 lets the strip shrink BELOW its content so overflow wraps to
             // another row instead of overrunning the bar's edge.
             .min_w_0()
-            .w_full();
+            .flex_1();
         // With the tree closed, the strip carries the handle that opens it —
         // sitting where the bar itself would be, so the way back is where the
         // thing went. A feature you can only restore by knowing a chord is a
@@ -13646,77 +13686,19 @@ impl Render for Workspace {
                     inset: false,
                 }])
         };
-        let active_group = self.tabs.get(self.active).and_then(|t| t.group);
-        // The strip carries only the branch the left bar is scoped to. Every
-        // other tab is still open, still running and still one click away in
-        // the tree — and still shouting through its branch's roll-up if its
-        // agent stops to ask something. `Scope::All` (the default, and where a
-        // session with no projects stays forever) shows everything, so this is
-        // the identity filter until somebody organises their window.
-        let scope = self.scope;
+        // The strip carries ONE branch — the tabs sharing the active tab's
+        // initiative — and the tree beside it carries the rest. Every other tab
+        // is still open, still running and still one click away in the tree, and
+        // still shouting through its branch's roll-up if its agent stops to ask
+        // something. A session that has never made a branch sees every tab it
+        // always saw; see [`tree::family`].
         let places = self.places();
-        let visible = tree::in_scope(&places, scope);
-        let shown = |i: usize| visible.contains(&i);
-        let mut i = 0;
-        while i < tab_count {
+        let family = tree::family(&places, self.active);
+        for i in family.iter().copied() {
             if dragging_tab && drop_slot == Some(i) {
                 tab_strip = tab_strip.child(drop_marker());
             }
-            if !shown(i) {
-                i += 1;
-                continue;
-            }
-            if let Some(g) = self.tabs[i]
-                .group
-                .filter(|g| self.group_index(*g).is_some())
-            {
-                // a maximal run [i, j) of adjacent tabs in this group
-                let mut j = i;
-                while j < tab_count && self.tabs[j].group == Some(g) {
-                    j += 1;
-                }
-                let grp = &self.groups[self.group_index(g).unwrap()];
-                let color = grp.color;
-                // force-expand the run that holds the active tab
-                let collapsed = grp.collapsed && active_group != Some(g);
-                if collapsed {
-                    tab_strip = tab_strip.child(self.group_pill(g, j - i, cx));
-                } else {
-                    // The group reads as ONE bound unit: the handle + members all
-                    // rest on a shared colour rail (items_end sits everything on the
-                    // bar), and extra horizontal margin sets the group apart from
-                    // its neighbours — ungrouped tabs keep their tight 4px gap.
-                    let mut band = div()
-                        .relative()
-                        .flex()
-                        .flex_row()
-                        .items_end()
-                        .gap(px(4. * scale))
-                        .mx(px(6. * scale))
-                        .pb(px(4. * scale))
-                        .child(self.group_chip(g, cx));
-                    for k in i..j {
-                        band = band.child(self.tab_button(k, cx));
-                    }
-                    // the colour rail the whole run rests on — the handle's square
-                    // bottom meets it, so the chip and its tabs read as linked
-                    band = band.child(
-                        div()
-                            .absolute()
-                            .left_0()
-                            .right_0()
-                            .bottom_0()
-                            .h(px(4. * scale))
-                            .rounded_b_md()
-                            .bg(color),
-                    );
-                    tab_strip = tab_strip.child(band);
-                }
-                i = j;
-                continue;
-            }
             tab_strip = tab_strip.child(self.tab_button(i, cx));
-            i += 1;
         }
         // the end caret only when NOT a new-row drop (that gets the wide bar below)
         if dragging_tab && drop_slot == Some(tab_count) && !new_row_drop {
@@ -13726,16 +13708,21 @@ impl Render for Workspace {
             MouseButton::Left,
             cx.listener(|ws, _: &MouseDownEvent, window, cx| ws.new_tab(window, cx)),
         ));
-        // ---- what the scope is hiding -------------------------------------
-        // The catch that makes narrowing the strip honest. Tabs outside the
-        // scope are off the strip, and with the tree closed they would have no
-        // surface at all — so the count of them sits at the end of the strip,
-        // wearing whatever the loudest of them is saying. Clicking it puts
-        // everything back. Absent entirely when nothing is hidden, which is
-        // every unscoped session.
-        if scope != tree::Scope::All {
-            let hidden = tree::out_of_scope(&self.task_refs(cx), scope);
-            if hidden.tasks > 0 {
+        // ---- what the strip is not showing ---------------------------------
+        // The catch that makes narrowing the strip honest. Tabs in other
+        // branches are off the strip, and with the tree closed they would have
+        // no surface at all — so a count of them sits at the end of the strip,
+        // wearing whatever the loudest of them is saying, and clicking it opens
+        // the tree where they live.
+        //
+        // Only when they are SAYING something. Under the old scope rule this
+        // chip was rare, because narrowing was a thing you chose; the strip now
+        // narrows always, so a plain count would be permanent furniture
+        // restating what the tree spells out in full. A quiet branch elsewhere
+        // is not news.
+        {
+            let hidden = tree::roll_outside(&self.task_refs(cx), &family);
+            if !hidden.quiet() {
                 let glyphs = tree::roll_glyphs(&hidden);
                 let mut chip = Self::bezel_btn_s(
                     &th,
@@ -13759,9 +13746,14 @@ impl Render for Workspace {
                 }
                 tab_strip = tab_strip.child(chip.on_mouse_down(
                     MouseButton::Left,
-                    cx.listener(|ws, _: &MouseDownEvent, window, cx| {
+                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
                         cx.stop_propagation();
-                        ws.set_scope(tree::Scope::All, window, cx);
+                        // the branches it is counting are in the tree, so the
+                        // click opens the tree rather than dumping them all onto
+                        // the strip the narrowing just cleared
+                        ws.left_bar = true;
+                        ws.save(cx);
+                        cx.notify();
                     }),
                 ));
             }
@@ -14234,6 +14226,10 @@ impl Render for Workspace {
                     .pt(px(4. * scale))
                     .flex()
                     .flex_row()
+                    .items_center()
+                    .child(strip_heading)
+                    // the void: no control, no rule, no handle
+                    .child(div().flex_none().w(px(strip_void)))
                     .child(tab_strip),
             );
 
