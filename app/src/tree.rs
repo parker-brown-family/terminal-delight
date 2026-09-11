@@ -250,6 +250,8 @@ pub fn rows(
 
     let live_projects: Vec<u32> = projects.iter().map(|p| p.id).collect();
     let known = |p: Option<u32>| p.filter(|id| live_projects.contains(id));
+    let live_initiatives: Vec<u32> = initiatives.iter().map(|i| i.id).collect();
+    let known_initiative = |g: Option<u32>| g.filter(|id| live_initiatives.contains(id));
 
     let roll_of = |pred: &dyn Fn(&Place) -> bool| {
         let mut roll = Roll::default();
@@ -302,7 +304,9 @@ pub fn rows(
             push_initiative(&mut out, ini, 1);
         }
         for (i, t) in tasks.iter().enumerate() {
-            if t.place.project == Some(p.id) && t.place.initiative.is_none() {
+            if known(t.place.project) == Some(p.id)
+                && known_initiative(t.place.initiative).is_none()
+            {
                 out.push(Row::Task { index: i, depth: 1 });
             }
         }
@@ -314,10 +318,22 @@ pub fn rows(
         push_initiative(&mut out, ini, 0);
     }
 
+    // Everything that hangs from nothing that exists.
+    //
+    // Not the same test as [`Place::unfiled`], and the difference is a task
+    // that would otherwise be listed NOWHERE: one pointing at a project or an
+    // initiative that is no longer in the session. The restore path filters
+    // those ids, so in a running window it cannot happen — but "the tree is the
+    // complete index of the session" is this module's promise, not the caller's
+    // discipline, and a tree that quietly drops a task has broken it whether or
+    // not the caller was careful. Found by the shape sweep in the tests, which
+    // is exactly what a sweep is for.
     let loose: Vec<usize> = tasks
         .iter()
         .enumerate()
-        .filter(|(_, t)| t.place.unfiled())
+        .filter(|(_, t)| {
+            known(t.place.project).is_none() && known_initiative(t.place.initiative).is_none()
+        })
         .map(|(i, _)| i)
         .collect();
     if !loose.is_empty() {
@@ -1000,6 +1016,260 @@ mod tests {
             land_initiative(&places, &inis, 10, Drop::Before(RowId::Initiative(10))),
             None
         );
+    }
+
+    /// Build a deterministic spread of trees — every combination of two
+    /// projects, three initiatives (one dangling, one unfiled) and folds on and
+    /// off — and hold the three invariants over all of them.
+    ///
+    /// Written as a sweep rather than as more hand-picked cases because the
+    /// invariants are what the feature IS: a tree that loses a task has lost
+    /// somebody's work from the only complete index of the session, and the
+    /// shapes that do it are the ones nobody thought to write a case for.
+    fn sweep(mut check: impl FnMut(&[Row], &[TaskRef], Option<usize>)) {
+        let places = [
+            Place {
+                project: Some(1),
+                initiative: Some(10),
+            },
+            Place {
+                project: Some(1),
+                initiative: None,
+            },
+            Place {
+                project: Some(2),
+                initiative: Some(11),
+            },
+            Place {
+                project: Some(2),
+                initiative: None,
+            },
+            Place {
+                project: None,
+                initiative: Some(12),
+            },
+            Place {
+                project: None,
+                initiative: None,
+            },
+            // a task pointing at a project that does not exist: the restore
+            // path filters these, but the row builder must not depend on that
+            Place {
+                project: Some(99),
+                initiative: None,
+            },
+        ];
+        for mask in 0u32..(1 << 7) {
+            let tasks: Vec<TaskRef> = places
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| mask & (1 << i) != 0)
+                .map(|(i, place)| TaskRef {
+                    place: *place,
+                    roll: Roll::task(i % 2, 0, 0, 0, i % 3, 1),
+                })
+                .collect();
+            if tasks.is_empty() {
+                continue;
+            }
+            for folds in 0u32..8 {
+                let projects = [project(1, folds & 1 != 0), project(2, folds & 2 != 0)];
+                let inis = [
+                    initiative(10, Some(1), folds & 4 != 0),
+                    initiative(11, Some(2), false),
+                    // an initiative whose project is not in the list
+                    initiative(12, Some(77), false),
+                ];
+                for active in [None, Some(0), Some(tasks.len() - 1)] {
+                    let rows = rows(&projects, &inis, &tasks, active);
+                    check(&rows, &tasks, active);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn across_every_shape_each_task_is_listed_once_or_folded_away() {
+        sweep(|rows, tasks, _| {
+            let mut seen: Vec<usize> = rows
+                .iter()
+                .filter_map(|r| match r {
+                    Row::Task { index, .. } => Some(*index),
+                    _ => None,
+                })
+                .collect();
+            let before = seen.len();
+            seen.sort_unstable();
+            seen.dedup();
+            assert_eq!(before, seen.len(), "a task was listed twice: {rows:?}");
+            assert!(
+                seen.len() <= tasks.len(),
+                "more task rows than tasks: {rows:?}"
+            );
+            // Anything missing is missing because a branch above it is folded —
+            // never because the builder dropped it.
+            for (i, _) in tasks.iter().enumerate() {
+                if !seen.contains(&i) {
+                    let folded = rows.iter().any(|r| match r {
+                        Row::Project { collapsed, .. } | Row::Initiative { collapsed, .. } => {
+                            *collapsed
+                        }
+                        _ => false,
+                    });
+                    assert!(folded, "task {i} vanished with nothing folded: {rows:?}");
+                }
+            }
+        });
+    }
+
+    #[test]
+    fn across_every_shape_the_active_task_is_always_on_screen() {
+        sweep(|rows, _, active| {
+            let Some(active) = active else { return };
+            let shown = rows
+                .iter()
+                .any(|r| matches!(r, Row::Task { index, .. } if *index == active));
+            assert!(
+                shown,
+                "the active task {active} was folded away — the window has lost your place: {rows:?}"
+            );
+        });
+    }
+
+    #[test]
+    fn across_every_shape_the_indentation_reads_as_a_tree() {
+        // A row deeper than its parent by more than one step, or a task at the
+        // depth of a project it does not belong to, is a tree that lies about
+        // what contains what.
+        sweep(|rows, _, _| {
+            let mut last_branch_depth = 0u8;
+            for row in rows {
+                match row {
+                    Row::Project { depth, .. } => {
+                        assert_eq!(*depth, 0, "a project is always a root: {rows:?}");
+                        last_branch_depth = 0;
+                    }
+                    Row::Initiative { depth, .. } => {
+                        assert!(
+                            *depth <= 1,
+                            "an initiative is never deeper than one: {rows:?}"
+                        );
+                        last_branch_depth = *depth;
+                    }
+                    Row::Task { depth, .. } => {
+                        assert!(*depth <= 2, "a task is never deeper than two: {rows:?}");
+                        assert!(
+                            *depth <= last_branch_depth + 1,
+                            "a task indented past its branch: {rows:?}"
+                        );
+                    }
+                    Row::Unfiled { depth } => {
+                        assert_eq!(*depth, 0, "the loose divider is a root: {rows:?}");
+                        last_branch_depth = 0;
+                    }
+                }
+            }
+        });
+    }
+
+    #[test]
+    fn widening_always_produces_a_scope_that_shows_the_task() {
+        // The strip's half of the same promise. Whatever place a task is in,
+        // and whatever the scope was, one widening is enough — never two, and
+        // never a scope that still hides it.
+        let places = [
+            Place {
+                project: Some(1),
+                initiative: Some(10),
+            },
+            Place {
+                project: Some(2),
+                initiative: None,
+            },
+            Place {
+                project: None,
+                initiative: Some(12),
+            },
+            Place::default(),
+        ];
+        let scopes = [
+            Scope::All,
+            Scope::Project(1),
+            Scope::Project(2),
+            Scope::Project(99),
+            Scope::Initiative(10),
+            Scope::Initiative(12),
+        ];
+        for scope in scopes {
+            for place in places {
+                let settled = scope.widened_for(&place).unwrap_or(scope);
+                assert!(
+                    settled.shows(&place),
+                    "{scope:?} widened for {place:?} to {settled:?}, which still hides it"
+                );
+                assert_eq!(
+                    settled.widened_for(&place),
+                    None,
+                    "widening twice: {scope:?} -> {settled:?} for {place:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn every_landing_puts_a_task_somewhere_the_tree_can_draw_it() {
+        // A drop that resolved to "in initiative 10, but in project 2" would
+        // render under a branch it does not belong to. The landing's place must
+        // agree with the initiative's own project, always.
+        let places = vec![
+            Place {
+                project: Some(1),
+                initiative: Some(10),
+            },
+            Place {
+                project: Some(2),
+                initiative: Some(20),
+            },
+            Place::default(),
+        ];
+        let inis = [
+            initiative(10, Some(1), false),
+            initiative(20, Some(2), false),
+        ];
+        let targets = [
+            RowId::Project(1),
+            RowId::Project(2),
+            RowId::Initiative(10),
+            RowId::Initiative(20),
+            RowId::Task(0),
+            RowId::Task(1),
+            RowId::Task(2),
+            RowId::Unfiled,
+        ];
+        for target in targets {
+            for drop in [
+                Drop::Into(target),
+                Drop::Before(target),
+                Drop::After(target),
+            ] {
+                let Some(landing) = land_task(&places, &inis, drop) else {
+                    continue;
+                };
+                if let Some(g) = landing.place.initiative {
+                    assert_eq!(
+                        landing.place.project,
+                        project_of(&inis, g),
+                        "{drop:?} landed a task in initiative {g} under the wrong project"
+                    );
+                }
+                if let Some(slot) = landing.slot {
+                    assert!(
+                        slot <= places.len(),
+                        "{drop:?} produced slot {slot}, past the end of the tab list"
+                    );
+                }
+            }
+        }
     }
 
     #[test]
