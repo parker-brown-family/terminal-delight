@@ -3841,83 +3841,85 @@ impl Workspace {
             let mut repaired_at: std::collections::HashMap<hostproto::PaneId, std::time::Instant> =
                 std::collections::HashMap::new();
             loop {
-            cx.background_executor()
-                .timer(Duration::from_secs(GUARD_PERIOD_SECS))
-                .await;
-            let Ok(first) = this.update(cx, |ws: &mut Workspace, cx| ws.attached_panes(cx)) else {
-                break;
-            };
-            if first.is_empty() {
-                continue;
-            }
-            // A second reading, a moment later: what has not moved is quiet.
-            cx.background_executor()
-                .timer(Duration::from_millis(750))
-                .await;
-            let Ok(again) = this.update(cx, |ws: &mut Workspace, cx| ws.attached_panes(cx)) else {
-                break;
-            };
-            for (pane, view, generation) in again {
-                let was = first
-                    .iter()
-                    .find(|(id, _, _)| *id == pane)
-                    .map(|(_, _, g)| *g);
-                if was != Some(generation) {
-                    continue;
-                }
-                let link = ctx.link.clone();
-                let probe = cx
-                    .background_executor()
-                    .spawn(async move { link.grid_check(pane) })
+                cx.background_executor()
+                    .timer(Duration::from_secs(GUARD_PERIOD_SECS))
                     .await;
-                let Ok(probe) = probe else { continue };
-                let checked = this
-                    .update(cx, |_ws: &mut Workspace, cx| {
-                        let view = view.read(cx);
-                        (view.check_divergence(&probe), view.stream_consumed())
-                    })
-                    .ok();
-                let Some((verdict, consumed)) = checked else {
+                let Ok(first) = this.update(cx, |ws: &mut Workspace, cx| ws.attached_panes(cx))
+                else {
                     break;
                 };
-                let diverged = match verdict {
-                    Some(gridwire::GuardVerdict::Mismatch { host, replica }) => {
-                        eprintln!(
-                            "terminal-delight: pane {pane} has diverged from the session host \
+                if first.is_empty() {
+                    continue;
+                }
+                // A second reading, a moment later: what has not moved is quiet.
+                cx.background_executor()
+                    .timer(Duration::from_millis(750))
+                    .await;
+                let Ok(again) = this.update(cx, |ws: &mut Workspace, cx| ws.attached_panes(cx))
+                else {
+                    break;
+                };
+                for (pane, view, generation) in again {
+                    let was = first
+                        .iter()
+                        .find(|(id, _, _)| *id == pane)
+                        .map(|(_, _, g)| *g);
+                    if was != Some(generation) {
+                        continue;
+                    }
+                    let link = ctx.link.clone();
+                    let probe = cx
+                        .background_executor()
+                        .spawn(async move { link.grid_check(pane) })
+                        .await;
+                    let Ok(probe) = probe else { continue };
+                    let checked = this
+                        .update(cx, |_ws: &mut Workspace, cx| {
+                            let view = view.read(cx);
+                            (view.check_divergence(&probe), view.stream_consumed())
+                        })
+                        .ok();
+                    let Some((verdict, consumed)) = checked else {
+                        break;
+                    };
+                    let diverged = match verdict {
+                        Some(gridwire::GuardVerdict::Mismatch { host, replica }) => {
+                            eprintln!(
+                                "terminal-delight: pane {pane} has diverged from the session host \
                              at offset {} of {} consumed (host {host:x}, window {replica:x}); \
                              taking it again",
-                            probe.stream_offset,
-                            consumed.map_or_else(|| "unknown".to_string(), |n| n.to_string())
-                        );
-                        true
-                    }
-                    Some(gridwire::GuardVerdict::Match) if forced => {
-                        eprintln!(
+                                probe.stream_offset,
+                                consumed.map_or_else(|| "unknown".to_string(), |n| n.to_string())
+                            );
+                            true
+                        }
+                        Some(gridwire::GuardVerdict::Match) if forced => {
+                            eprintln!(
                             "terminal-delight: TD_GUARD_FORCE_MISMATCH — pane {pane} agrees with \
                              the host and is being taken again anyway"
                         );
-                        true
-                    }
-                    _ => false,
-                };
-                if diverged {
-                    let cooled = repaired_at
-                        .get(&pane)
-                        .is_some_and(|t| t.elapsed() < Duration::from_secs(45));
-                    if cooled {
-                        eprintln!(
-                            "terminal-delight: pane {pane} still diverges after a recent \
+                            true
+                        }
+                        _ => false,
+                    };
+                    if diverged {
+                        let cooled = repaired_at
+                            .get(&pane)
+                            .is_some_and(|t| t.elapsed() < Duration::from_secs(45));
+                        if cooled {
+                            eprintln!(
+                                "terminal-delight: pane {pane} still diverges after a recent \
                              re-snapshot; holding its replica rather than looping the repair"
-                        );
-                    } else {
-                        repaired_at.insert(pane, std::time::Instant::now());
-                        let _ = this.update_in(cx, |ws: &mut Workspace, window, cx| {
-                            ws.reattach_pane(pane, &view, window, cx);
-                        });
+                            );
+                        } else {
+                            repaired_at.insert(pane, std::time::Instant::now());
+                            let _ = this.update_in(cx, |ws: &mut Workspace, window, cx| {
+                                ws.reattach_pane(pane, &view, window, cx);
+                            });
+                        }
                     }
                 }
             }
-        }
         })
         .detach();
     }

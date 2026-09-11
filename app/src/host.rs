@@ -1748,7 +1748,7 @@ fn handle_control_line(host: &Arc<Host>, line: &str, conn: Option<&Arc<Conn>>) -
                 // answered; it simply records no window.
                 if matches!(kind, crate::hostproto::ClientKind::Window) {
                     if let Some(pid) = conn.and_then(|c| c.peer_pid) {
-                        let _ = crate::hostproto::write_window_pid(&host.key, pid);
+                        crate::hostproto::write_window_pid(&host.key, pid);
                     }
                 }
                 Reply::Hello {
