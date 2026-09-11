@@ -398,7 +398,7 @@ mod tests {
         // `catppuccin` and `cherry` both spell C — the collision a user's own
         // list is free to contain, and the reason this shelf cycles like the
         // desktop one instead of assuming unique letters.
-        let items = vec![
+        let items = [
             Fav::Palette("catppuccin".into()),
             Fav::Set(Dynamic::Cherry),
             Fav::Set(Dynamic::Army),
