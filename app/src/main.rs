@@ -1051,6 +1051,18 @@ struct TabGroup {
     project: Option<u32>,
 }
 
+impl TabGroup {
+    /// What to call a group nobody has named — and the only place that decides
+    /// it. A new group starts nameless, so every surface that can draw one
+    /// needs this: without it the strip's heading renders as nothing at all,
+    /// which is an invisible control rather than an unnamed one.
+    fn label(&self) -> String {
+        self.name
+            .clone()
+            .unwrap_or_else(|| format!("initiative {}", self.id))
+    }
+}
+
 /// The outer layer of the left bar's tree: a PROJECT, holding initiatives (tab
 /// groups) and any tasks filed straight under it.
 ///
@@ -1062,7 +1074,7 @@ struct TabGroup {
 #[derive(Clone)]
 struct Project {
     id: u32,
-    /// `None` renders as a generated name; the bar's ✎ writes a real one.
+    /// `None` renders as a generated name; right-clicking the row writes a real one.
     name: Option<String>,
     /// The dot beside the name, and the tint its rows take when scoped.
     color: Hsla,
@@ -4547,8 +4559,27 @@ impl Workspace {
             eprintln!("new_tab");
         }
         let pane = make_pane(window, cx);
-        self.tabs.push(Tab::new(Node::Leaf(pane), None));
-        self.active = self.tabs.len() - 1;
+        // A new tab joins the branch you are in, and lands beside its siblings
+        // rather than at the end of the window, so a branch stays one run in tab
+        // order. The strip shows one branch and the tree shows the rest, so a
+        // tab that landed loose would open somewhere neither of them is
+        // pointing — visible only after you went looking for it. Making a loose
+        // tab is still possible, by dragging one out of its branch, which is
+        // where a deliberate choice belongs; it is no longer what a `+` does by
+        // accident.
+        let place = self.place_of(self.active);
+        let mut tab = Tab::new(Node::Leaf(pane), None);
+        tab.group = place.initiative;
+        // a grouped tab inherits its project from the group and leaves its own
+        // unset, so the two can never disagree — see `place_of`
+        tab.project = place
+            .initiative
+            .is_none()
+            .then_some(place.project)
+            .flatten();
+        let at = self.branch_end(place);
+        self.tabs.insert(at, tab);
+        self.active = at;
         self.save(cx);
         cx.notify();
         // Defer the focus: new_tab fires from a mother-bar mouse-down listener, so
@@ -6207,7 +6238,7 @@ impl Workspace {
                 .groups
                 .iter()
                 .find(|g| g.id == gid)
-                .and_then(|g| g.name.clone())
+                .map(|g| g.label())
                 .unwrap_or_else(|| format!("initiative {gid}")),
             BarBranch::Unfiled => "unfiled".into(),
         }
@@ -6344,6 +6375,21 @@ impl Workspace {
         }
         self.save(cx);
         cx.notify();
+    }
+
+    /// Where a new member of `place`'s branch lands: after the last tab already
+    /// in it, so a branch stays one contiguous run in tab order and the strip
+    /// never has to draw a gap it cannot explain.
+    ///
+    /// Asked of the same key the strip filters by, never of the raw group id —
+    /// a loose task belongs to its project's bucket, so "beside its siblings"
+    /// has to mean the same thing here as it does there.
+    fn branch_end(&self, place: tree::Place) -> usize {
+        (0..self.tabs.len())
+            .rev()
+            .find(|&i| tree::same_branch(&self.place_of(i), &place))
+            .map(|i| i + 1)
+            .unwrap_or(self.tabs.len())
     }
 
     fn places(&self) -> Vec<tree::Place> {
@@ -9000,6 +9046,75 @@ impl Workspace {
         true
     }
 
+    /// Commit an in-progress group rename (if any). Same terms as the tab and
+    /// branch editors: an empty name clears back to the unnamed group.
+    fn commit_group_rename(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some((gid, eb)) = self.group_rename.take() else {
+            return false;
+        };
+        let name = eb.text();
+        if let Some(g) = self.groups.iter_mut().find(|g| g.id == gid) {
+            g.name = (!name.trim().is_empty()).then(|| name.trim().to_string());
+        }
+        self.save(cx);
+        cx.notify();
+        true
+    }
+
+    /// Open the inline rename box on a tab — from the strip, from the tree, or
+    /// from a double-click. One door, so the seeding can never drift apart.
+    fn start_tab_rename(&mut self, i: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(tab) = self.tabs.get(i) else { return };
+        let seed = tab.name.clone().unwrap_or_default();
+        self.commit_all_renames(cx);
+        self.tab_menu = None;
+        self.renaming = Some((i, EditBuffer::seeded(&seed)));
+        window.focus(&self.focus_handle, cx);
+        cx.notify();
+    }
+
+    /// Open the inline rename box on a group heading.
+    fn start_group_rename(&mut self, gid: u32, window: &mut Window, cx: &mut Context<Self>) {
+        let seed = self
+            .groups
+            .iter()
+            .find(|g| g.id == gid)
+            .and_then(|g| g.name.clone())
+            .unwrap_or_default();
+        self.commit_all_renames(cx);
+        self.group_menu = None;
+        self.tab_menu = None;
+        self.group_rename = Some((gid, EditBuffer::seeded(&seed)));
+        window.focus(&self.focus_handle, cx);
+        cx.notify();
+    }
+
+    /// Close every inline editor in the window, saving what was typed.
+    ///
+    /// This is the whole of "click off to close": a rename that stays open
+    /// after you have clicked somewhere else keeps eating the keystrokes you
+    /// meant for a terminal, and you do not find out until you read back what
+    /// you thought you had typed into a shell. Every editor is swept, including
+    /// the pane headers, which each own their own buffer — a workspace-level
+    /// commit that reached only the workspace's own three was the hole.
+    fn commit_all_renames(&mut self, cx: &mut Context<Self>) {
+        self.commit_rename(cx);
+        self.commit_bar_rename(cx);
+        self.commit_group_rename(cx);
+        let panes: Vec<Entity<TerminalView>> = {
+            let mut leaves = vec![];
+            for tab in &self.tabs {
+                tab.root.leaves(&mut leaves);
+            }
+            leaves.into_iter().cloned().collect()
+        };
+        for p in panes {
+            p.update(cx, |v, cx| {
+                v.commit_rename(cx);
+            });
+        }
+    }
+
     /// Set the *outer* (Mother) menu-bar size — the bezel scrubber and ctrl+scroll.
     /// Panes that follow outer (the default) pick this up live; a pane that has
     /// detached its grade keeps its own size. Sizes the header, not the grid.
@@ -11181,7 +11296,7 @@ impl Workspace {
                 let g = self.groups.iter().find(|g| g.id == id);
                 let color = g.map(|g| g.color).unwrap_or(th.faint);
                 let label = g
-                    .and_then(|g| g.name.clone())
+                    .map(|g| g.label())
                     .unwrap_or_else(|| format!("initiative {id}"));
                 self.branch_row(
                     BarBranch::Initiative(id),
@@ -11323,10 +11438,9 @@ impl Workspace {
         }
 
         let grp = SharedString::from(format!("bar-grp-{key}"));
-        let pencil_col = th.text.alpha(0.75);
         div()
             .id(row_id)
-            .group(grp.clone())
+            .group(grp)
             .relative()
             .pl(step * (depth as f32) + px(4. * s))
             .pr(px(5. * s))
@@ -11414,21 +11528,6 @@ impl Workspace {
                     .text_color(th.faint)
                     .child(format!("{}", roll.tasks)),
             )
-            .child(
-                div()
-                    .id(SharedString::from(format!("bar-pencil-{key}")))
-                    .text_size(px(9. * s))
-                    .text_color(hsla(0., 0., 0., 0.))
-                    .group_hover(grp, move |st| st.text_color(pencil_col))
-                    .child("\u{270F}")
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
-                            cx.stop_propagation();
-                            ws.start_bar_rename(branch, window, cx);
-                        }),
-                    ),
-            )
             // the row's own box, for drop hit-testing
             .child(
                 div().absolute().inset_0().child(
@@ -11440,6 +11539,14 @@ impl Workspace {
                     )
                     .size_full(),
                 ),
+            )
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
+                    // right-click → write over the branch name in place
+                    cx.stop_propagation();
+                    ws.start_bar_rename(branch, window, cx);
+                }),
             )
             .on_mouse_down(
                 MouseButton::Left,
@@ -11697,22 +11804,25 @@ impl Workspace {
             .children(caret)
             .on_mouse_down(
                 MouseButton::Right,
-                cx.listener(move |ws, ev: &MouseDownEvent, _w, cx| {
-                    // the same config tray the tab button opens: rename, colour,
-                    // group — one menu, reachable from either geometry
+                cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
+                    // right-click writes over the name, the same as on the tab
+                    // itself — one task, two geometries, one gesture.
                     cx.stop_propagation();
-                    ws.open_tab_menu(i, ev.position, cx);
+                    ws.start_tab_rename(i, window, cx);
                 }),
             )
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |ws, ev: &MouseDownEvent, window, cx| {
                     cx.stop_propagation();
+                    if ev.modifiers.control {
+                        // ctrl+click → this task's config tray (colour, group,
+                        // project), as on the tab button
+                        ws.open_tab_menu(i, ev.position, cx);
+                        return;
+                    }
                     if ev.click_count >= 2 {
-                        let seed = ws.tabs[i].name.clone().unwrap_or_default();
-                        ws.renaming = Some((i, EditBuffer::seeded(&seed)));
-                        window.focus(&ws.focus_handle, cx);
-                        cx.notify();
+                        ws.start_tab_rename(i, window, cx);
                         return;
                     }
                     ws.activate_tab(i, window, cx);
@@ -12005,8 +12115,8 @@ impl Workspace {
     }
 
     /// One mother-bar tab button (or its inline rename box). Tinted by the tab's
-    /// resolved fill/text (own override → group lead → bezel default). Right-click
-    /// or ctrl+click opens the tab config pane; ✎ / double-click rename.
+    /// resolved fill/text (own override → group lead → bezel default).
+    /// Right-click (or double-click) renames; ctrl+click opens the config pane.
     fn tab_button(&self, i: usize, cx: &mut Context<Self>) -> gpui::Div {
         let th = theme::theme(cx);
         // tabs ride the menu-bar slider: everything in the tab scales with the bar
@@ -12045,7 +12155,13 @@ impl Workspace {
             .name
             .clone()
             .unwrap_or_else(|| format!("{}", i + 1));
-        let (fill, text) = self.resolved_tab_colors(i);
+        // The strip is NOT colour-coded. The branch's colour is already the
+        // key beside its name in the tree, and painting it again on every one
+        // of its tabs said the same thing five times in the loudest place in
+        // the window. An explicit per-tab colour is a choice somebody made, so
+        // it survives — as the tab's own label and underline, not as a filled
+        // chip competing with its neighbours.
+        let (fill, text) = (self.tabs[i].color, self.tabs[i].text_color);
         // the per-tab close affordance — an X in the tab's own frame
         let close_x = div()
             .px(px(4. * ts))
@@ -12061,44 +12177,26 @@ impl Workspace {
                 }),
             );
         let tab_grp = SharedString::from(format!("tab-grp-{i}"));
-        let pencil_col = text.unwrap_or(th.text).alpha(0.8);
-        // Hover-revealed rename affordance: invites the rename without a word.
-        //
-        // U+270F, not U+270E, and the difference is whether anyone ever sees
-        // it. Measured on this box 2026-09-10: the lower pencil exists in
-        // exactly one installed font — Noto Sans Symbols 2, which is not in the
-        // fallback chain — so it has been drawing as nothing on every tab since
-        // it was added. Its neighbour is in Noto Color Emoji, which is where
-        // 📌 and 🤖 already come from.
-        let pencil = div()
-            .id(SharedString::from(format!("tab-pencil-{i}")))
-            .text_size(px(10. * ts))
-            .text_color(hsla(0., 0., 0., 0.)) // hidden until the tab is hovered
-            .group_hover(tab_grp.clone(), move |s| s.text_color(pencil_col))
+        // Flat, and the active one underlined. The bezel button was doing the
+        // work of telling six chips apart on a strip that carried the whole
+        // session; carrying one branch, the strip has room to be quiet, and one
+        // underline is enough to say which tab you are in. The rule takes the
+        // tab's own colour when it has one, so a deliberately coloured tab
+        // still reads as itself.
+        let rule = fill.unwrap_or(th.accent);
+        let mut btn = div()
+            .px(px(10. * ts))
+            .py(px(3. * ts))
+            .text_size(px(11. * ts))
             .cursor_pointer()
-            .child("\u{270F}")
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
-                    cx.stop_propagation();
-                    let seed = ws.tabs[i].name.clone().unwrap_or_default();
-                    ws.renaming = Some((i, EditBuffer::seeded(&seed)));
-                    window.focus(&ws.focus_handle, cx);
-                    cx.notify();
-                }),
-            );
-        // tint to the resolved fill (tab override or group lead); the resolved
-        // text colour rides over the bezel's default label colour
-        let mut btn = Self::bezel_btn_s(&th, &label, is_active, ts);
-        if let Some(c) = fill {
-            btn = btn
-                .bg(linear_gradient(
-                    135.,
-                    linear_color_stop(brighten(c, 1.35), 0.),
-                    linear_color_stop(darken(c, 0.6), 1.),
-                ))
-                .border_color(if is_active { th.accent } else { c });
-        }
+            .border_b_2()
+            .border_color(if is_active {
+                rule
+            } else {
+                hsla(0., 0., 0., 0.)
+            })
+            .text_color(if is_active { th.text } else { th.faint })
+            .child(label.to_string());
         if let Some(tc) = text {
             btn = btn.text_color(tc);
         }
@@ -12124,10 +12222,7 @@ impl Workspace {
                         ws.open_tab_menu(i, ev.position, cx);
                     } else if ev.click_count >= 2 {
                         // double-click to rename (the file-manager gesture)
-                        let seed = ws.tabs[i].name.clone().unwrap_or_default();
-                        ws.renaming = Some((i, EditBuffer::seeded(&seed)));
-                        window.focus(&ws.focus_handle, cx);
-                        cx.notify();
+                        ws.start_tab_rename(i, window, cx);
                     } else {
                         // select now; arm a reorder drag that engages only if the
                         // cursor travels far enough (else it stays a plain click)
@@ -12144,11 +12239,13 @@ impl Workspace {
             )
             .on_mouse_down(
                 MouseButton::Right,
-                cx.listener(move |ws, ev: &MouseDownEvent, _w, cx| {
-                    // right-click → open this tab's config pane (rename + colour +
-                    // group), like the other configuration trays
+                cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
+                    // right-click → write over the name, right here. The one
+                    // gesture for editing any text in the chrome, so nobody has
+                    // to remember which surface wears which affordance. The
+                    // config tray (colour + group) is ctrl+click.
                     cx.stop_propagation();
-                    ws.open_tab_menu(i, ev.position, cx);
+                    ws.start_tab_rename(i, window, cx);
                 }),
             )
             .child(
@@ -12218,56 +12315,139 @@ impl Workspace {
                 }
                 strip
             })
-            .child(pencil)
             .child(close_x)
     }
 
-    /// The handle at the left of an expanded group's band: shows the group name
-    /// in its colour; click folds the group.
-    fn group_chip(&self, gid: u32, cx: &mut Context<Self>) -> gpui::Stateful<gpui::Div> {
+    /// The column the heading stands in: exactly as wide as the tree beside it,
+    /// so the branch's name is centred over the rows it names.
+    ///
+    /// Fixed width, not content width. A long branch name truncates inside the
+    /// column rather than pushing the first tab to the right — the tabs' left
+    /// edge is a line shared with the terminals below, and a heading is not
+    /// allowed to move it. With the tree closed the column collapses to nothing
+    /// and the heading takes only what it needs.
+    fn strip_heading(&self, width: f32, cx: &mut Context<Self>) -> gpui::Div {
         let th = theme::theme(cx);
         let s = theme::outer_choice(cx).grade.scale;
-        let g = self.groups.iter().find(|g| g.id == gid);
-        let color = g.map(|g| g.color).unwrap_or(th.accent);
-        let name = g.and_then(|g| g.name.clone());
-        let glyph_col = if color.l > 0.55 {
-            hsla(0., 0., 0.08, 0.95)
-        } else {
-            white()
-        };
-        // double-click the chip to rename the group inline
+        let mut col = div()
+            .flex()
+            .flex_none()
+            .flex_row()
+            .items_center()
+            .justify_center()
+            .overflow_hidden()
+            .px(px(6. * s));
+        if width > 0. {
+            col = col.w(px(width));
+        }
+        // the same key the strip filters by, so the name over the tabs always
+        // describes the tabs
+        let place = self.place_of(self.active);
+        match place.initiative {
+            Some(gid) => col.child(self.group_title(gid, cx)),
+            // A loose tab hangs from its project, if it hangs from anything. The
+            // heading says whichever branch of the tree the strip is standing
+            // over, and when that is nothing at all it says nothing — an
+            // unorganised session gets a plain strip, not a label reading
+            // "unfiled" over every tab it has.
+            None => {
+                let project = place
+                    .project
+                    .and_then(|p| self.projects.iter().find(|q| q.id == p))
+                    .map(|p| (p.id, p.label()));
+                match project {
+                    Some((pid, name)) => col.child(
+                        div()
+                            .min_w_0()
+                            // truncate, not overflow_hidden: gpui wraps text by
+                            // default, and a wrapped heading makes the whole
+                            // mother bar taller — the fixed rail exists so a
+                            // name too long for it costs an ellipsis, never a row
+                            .truncate()
+                            .text_size(px(10.5 * s))
+                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                            .text_color(th.faint)
+                            .child(name)
+                            // a name in the chrome, so it renames the way every
+                            // other one does — the tree row beside it is the
+                            // same project and answers to the same gesture
+                            .on_mouse_down(
+                                MouseButton::Right,
+                                cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
+                                    cx.stop_propagation();
+                                    ws.start_bar_rename(BarBranch::Project(pid), window, cx);
+                                }),
+                            ),
+                    ),
+                    None => col,
+                }
+            }
+        }
+    }
+
+    /// The strip's heading: the name of the branch it is carrying, standing
+    /// over the tree rather than in the tabs' own row.
+    ///
+    /// Not a chip and not coloured. The tree directly below it carries this
+    /// branch's colour key and its name already; a second coloured token on top
+    /// of that was the same fact twice, in the place with the least room for
+    /// it. Still the branch's handle, though — right-click writes over its
+    /// name, ctrl+click opens its menu (colour, fold, disband), and a plain
+    /// click folds it in the tree.
+    fn group_title(&self, gid: u32, cx: &mut Context<Self>) -> gpui::Stateful<gpui::Div> {
+        let th = theme::theme(cx);
+        let s = theme::outer_choice(cx).grade.scale;
+        // never `name`: a group starts nameless, and a heading that renders
+        // nothing is an invisible control sitting on the widest surface in the
+        // window — with its click and right-click still live
+        let name = self
+            .groups
+            .iter()
+            .find(|g| g.id == gid)
+            .map(|g| g.label())
+            .unwrap_or_else(|| format!("initiative {gid}"));
         let mut chip = div()
-            .id(SharedString::from(format!("grp-chip-{gid}")))
+            .id(SharedString::from(format!("grp-title-{gid}")))
             .flex()
             .flex_row()
             .items_center()
+            .justify_center()
+            .min_w_0()
+            .overflow_hidden()
             .gap(px(4. * s))
             .px(px(4. * s))
-            .h(px(20. * s))
-            // square the bottom so the handle sits flush ON the group's colour
-            // rail (rounded top only) — the "parent tab" touching the bar
-            .rounded_t_md()
-            .bg(color)
             .cursor_pointer()
-            .text_size(px(9. * s))
-            .font_weight(gpui::FontWeight::EXTRA_BOLD)
-            .text_color(glyph_col)
-            .child("▾");
+            .text_size(px(10.5 * s))
+            .font_weight(gpui::FontWeight::SEMIBOLD)
+            .text_color(th.faint);
         if let Some((_, eb)) = self.group_rename.as_ref().filter(|(rg, _)| *rg == gid) {
             chip = chip.child(render_edit_buffer(
                 eb,
                 s,
-                glyph_col,
-                glyph_col,
-                glyph_col.alpha(0.35),
+                th.text,
+                th.cursor,
+                th.accent.alpha(0.4),
             ));
-        } else if let Some(n) = name {
-            chip = chip.child(n);
+        } else {
+            // truncate, not overflow_hidden: gpui wraps by default, and the
+            // whole point of the fixed rail is that a name too long for it
+            // costs an ellipsis rather than a second row on the mother bar
+            chip = chip.child(div().min_w_0().truncate().child(name));
         }
         chip.on_mouse_down(
             MouseButton::Left,
             cx.listener(move |ws, ev: &MouseDownEvent, _window, cx| {
                 cx.stop_propagation();
+                if ws.group_rename.as_ref().is_some_and(|(rg, _)| *rg == gid) {
+                    // clicking the edit box itself keeps editing — it must not
+                    // arm the fold/reorder drag sitting under the same pixels
+                    return;
+                }
+                if ev.modifiers.control {
+                    // ctrl+click → the group's config tray (colour, fold, disband)
+                    ws.open_group_menu(gid, ev.position, cx);
+                    return;
+                }
                 // arm a group drag: a release without travel folds the group, a
                 // release after travel reorders the whole group (see on_mouse_up).
                 ws.group_drag = Some(GroupDrag {
@@ -12280,82 +12460,16 @@ impl Workspace {
                 cx.notify();
             }),
         )
-        // right-click the handle → the group's own config menu (rename, colour,
-        // fold, disband). Group properties live on the group, not its members.
+        // right-click the handle → write over the group's name in place, the
+        // same gesture as every other name in the chrome. The group's other
+        // properties (colour, fold, disband) are ctrl+click.
         .on_mouse_down(
             MouseButton::Right,
-            cx.listener(move |ws, ev: &MouseDownEvent, _w, cx| {
+            cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
                 cx.stop_propagation();
-                ws.open_group_menu(gid, ev.position, cx);
+                ws.start_group_rename(gid, window, cx);
             }),
         )
-    }
-
-    /// A collapsed group folded into one counted pill; click expands.
-    fn group_pill(
-        &self,
-        gid: u32,
-        count: usize,
-        cx: &mut Context<Self>,
-    ) -> gpui::Stateful<gpui::Div> {
-        let th = theme::theme(cx);
-        let g = self.groups.iter().find(|g| g.id == gid);
-        let color = g.map(|g| g.color).unwrap_or(th.accent);
-        let name = g
-            .and_then(|g| g.name.clone())
-            .unwrap_or_else(|| "group".into());
-        let glyph_col = if color.l > 0.55 {
-            hsla(0., 0., 0.08, 0.95)
-        } else {
-            white()
-        };
-        let s = theme::outer_choice(cx).grade.scale;
-        div()
-            .id(SharedString::from(format!("grp-pill-{gid}")))
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap(px(4. * s))
-            .px(px(8. * s))
-            .py(px(2. * s))
-            .rounded_sm()
-            .border_1()
-            .border_color(color)
-            .bg(linear_gradient(
-                135.,
-                linear_color_stop(brighten(color, 1.2), 0.),
-                linear_color_stop(darken(color, 0.6), 1.),
-            ))
-            .cursor_pointer()
-            .text_size(px(11. * s))
-            .font_weight(gpui::FontWeight::EXTRA_BOLD)
-            .text_color(glyph_col)
-            .child("▸")
-            .child(name)
-            .child(format!("{count}"))
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(move |ws, ev: &MouseDownEvent, _w, cx| {
-                    cx.stop_propagation();
-                    // arm a group drag; a release without travel expands the pill.
-                    ws.group_drag = Some(GroupDrag {
-                        gid,
-                        start: ev.position,
-                        at: ev.position,
-                        engaged: false,
-                    });
-                    ws.tab_drop = None;
-                    cx.notify();
-                }),
-            )
-            // right-click a folded group → its config menu, same as the handle.
-            .on_mouse_down(
-                MouseButton::Right,
-                cx.listener(move |ws, ev: &MouseDownEvent, _w, cx| {
-                    cx.stop_propagation();
-                    ws.open_group_menu(gid, ev.position, cx);
-                }),
-            )
     }
 
     /// The tab-config wheel: the same HSV disk as the theme breakout, carrying
@@ -13587,17 +13701,25 @@ impl Render for Workspace {
         } else {
             0.
         };
+        // The heading stands in a column the width of the tree, centred over it,
+        // so the name sits above the rows it belongs to. Then a gutter that is
+        // VOID on purpose: the tabs start a little way INSIDE the terminals
+        // rather than hard against the tree's edge, which is what makes the
+        // strip read as belonging to the screen. Nothing is allowed to live in
+        // that gap — the moment a control moves into it, the inset stops
+        // reading as deliberate and starts reading as that control's margin.
+        let strip_void = 14. * scale;
+        let strip_heading = self.strip_heading(strip_indent, cx);
         let mut tab_strip = div()
             .flex()
             .flex_row()
             .flex_wrap()
             .gap(px(4. * scale))
             .items_center()
-            .pl(px(strip_indent))
             // min_w_0 lets the strip shrink BELOW its content so overflow wraps to
             // another row instead of overrunning the bar's edge.
             .min_w_0()
-            .w_full();
+            .flex_1();
         // With the tree closed, the strip carries the handle that opens it —
         // sitting where the bar itself would be, so the way back is where the
         // thing went. A feature you can only restore by knowing a chord is a
@@ -13646,96 +13768,46 @@ impl Render for Workspace {
                     inset: false,
                 }])
         };
-        let active_group = self.tabs.get(self.active).and_then(|t| t.group);
-        // The strip carries only the branch the left bar is scoped to. Every
-        // other tab is still open, still running and still one click away in
-        // the tree — and still shouting through its branch's roll-up if its
-        // agent stops to ask something. `Scope::All` (the default, and where a
-        // session with no projects stays forever) shows everything, so this is
-        // the identity filter until somebody organises their window.
-        let scope = self.scope;
+        // The strip carries ONE branch — the tabs sharing the active tab's
+        // initiative — and the tree beside it carries the rest. Every other tab
+        // is still open, still running and still one click away in the tree, and
+        // still shouting through its branch's roll-up if its agent stops to ask
+        // something. A session that has never made a branch sees every tab it
+        // always saw; see [`tree::family`].
         let places = self.places();
-        let visible = tree::in_scope(&places, scope);
-        let shown = |i: usize| visible.contains(&i);
-        let mut i = 0;
-        while i < tab_count {
-            if dragging_tab && drop_slot == Some(i) {
+        let family = tree::family(&places, self.active);
+        // the caret marks a gap between visible tabs, not a tab index — see
+        // [`tree::caret_gap`], which is where the non-contiguous case is argued
+        let caret_at = drop_slot.map(|s| tree::caret_gap(&family, s));
+        for (n, i) in family.iter().copied().enumerate() {
+            if dragging_tab && caret_at == Some(n) {
                 tab_strip = tab_strip.child(drop_marker());
             }
-            if !shown(i) {
-                i += 1;
-                continue;
-            }
-            if let Some(g) = self.tabs[i]
-                .group
-                .filter(|g| self.group_index(*g).is_some())
-            {
-                // a maximal run [i, j) of adjacent tabs in this group
-                let mut j = i;
-                while j < tab_count && self.tabs[j].group == Some(g) {
-                    j += 1;
-                }
-                let grp = &self.groups[self.group_index(g).unwrap()];
-                let color = grp.color;
-                // force-expand the run that holds the active tab
-                let collapsed = grp.collapsed && active_group != Some(g);
-                if collapsed {
-                    tab_strip = tab_strip.child(self.group_pill(g, j - i, cx));
-                } else {
-                    // The group reads as ONE bound unit: the handle + members all
-                    // rest on a shared colour rail (items_end sits everything on the
-                    // bar), and extra horizontal margin sets the group apart from
-                    // its neighbours — ungrouped tabs keep their tight 4px gap.
-                    let mut band = div()
-                        .relative()
-                        .flex()
-                        .flex_row()
-                        .items_end()
-                        .gap(px(4. * scale))
-                        .mx(px(6. * scale))
-                        .pb(px(4. * scale))
-                        .child(self.group_chip(g, cx));
-                    for k in i..j {
-                        band = band.child(self.tab_button(k, cx));
-                    }
-                    // the colour rail the whole run rests on — the handle's square
-                    // bottom meets it, so the chip and its tabs read as linked
-                    band = band.child(
-                        div()
-                            .absolute()
-                            .left_0()
-                            .right_0()
-                            .bottom_0()
-                            .h(px(4. * scale))
-                            .rounded_b_md()
-                            .bg(color),
-                    );
-                    tab_strip = tab_strip.child(band);
-                }
-                i = j;
-                continue;
-            }
             tab_strip = tab_strip.child(self.tab_button(i, cx));
-            i += 1;
         }
         // the end caret only when NOT a new-row drop (that gets the wide bar below)
-        if dragging_tab && drop_slot == Some(tab_count) && !new_row_drop {
+        if dragging_tab && caret_at == Some(family.len()) && !new_row_drop {
             tab_strip = tab_strip.child(drop_marker());
         }
         tab_strip = tab_strip.child(Self::bezel_btn_s(&th, "+", false, scale).on_mouse_down(
             MouseButton::Left,
             cx.listener(|ws, _: &MouseDownEvent, window, cx| ws.new_tab(window, cx)),
         ));
-        // ---- what the scope is hiding -------------------------------------
-        // The catch that makes narrowing the strip honest. Tabs outside the
-        // scope are off the strip, and with the tree closed they would have no
-        // surface at all — so the count of them sits at the end of the strip,
-        // wearing whatever the loudest of them is saying. Clicking it puts
-        // everything back. Absent entirely when nothing is hidden, which is
-        // every unscoped session.
-        if scope != tree::Scope::All {
-            let hidden = tree::out_of_scope(&self.task_refs(cx), scope);
-            if hidden.tasks > 0 {
+        // ---- what the strip is not showing ---------------------------------
+        // The catch that makes narrowing the strip honest. Tabs in other
+        // branches are off the strip, and with the tree closed they would have
+        // no surface at all — so a count of them sits at the end of the strip,
+        // wearing whatever the loudest of them is saying, and clicking it opens
+        // the tree where they live.
+        //
+        // Only when they are SAYING something. Under the old scope rule this
+        // chip was rare, because narrowing was a thing you chose; the strip now
+        // narrows always, so a plain count would be permanent furniture
+        // restating what the tree spells out in full. A quiet branch elsewhere
+        // is not news.
+        {
+            let hidden = tree::roll_outside(&self.task_refs(cx), &family);
+            if !hidden.quiet() {
                 let glyphs = tree::roll_glyphs(&hidden);
                 let mut chip = Self::bezel_btn_s(
                     &th,
@@ -13759,9 +13831,14 @@ impl Render for Workspace {
                 }
                 tab_strip = tab_strip.child(chip.on_mouse_down(
                     MouseButton::Left,
-                    cx.listener(|ws, _: &MouseDownEvent, window, cx| {
+                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
                         cx.stop_propagation();
-                        ws.set_scope(tree::Scope::All, window, cx);
+                        // the branches it is counting are in the tree, so the
+                        // click opens the tree rather than dumping them all onto
+                        // the strip the narrowing just cleared
+                        ws.left_bar = true;
+                        ws.save(cx);
+                        cx.notify();
                     }),
                 ));
             }
@@ -14234,6 +14311,10 @@ impl Render for Workspace {
                     .pt(px(4. * scale))
                     .flex()
                     .flex_row()
+                    .items_center()
+                    .child(strip_heading)
+                    // the void: no control, no rule, no handle
+                    .child(div().flex_none().w(px(strip_void)))
                     .child(tab_strip),
             );
 
@@ -18037,23 +18118,6 @@ impl Render for Workspace {
                 let at = self.tab_menu_at.unwrap_or_default();
                 let pip = self.tab_pip;
 
-                // rename this tab (closes the pane, opens the inline strip editor)
-                let rename_btn = Self::bezel_btn(&th, "✎ rename tab", false).on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
-                        cx.stop_propagation();
-                        let seed = ws
-                            .tabs
-                            .get(i)
-                            .and_then(|t| t.name.clone())
-                            .unwrap_or_default();
-                        ws.tab_menu = None;
-                        ws.renaming = Some((i, EditBuffer::seeded(&seed)));
-                        window.focus(&ws.focus_handle, cx);
-                        cx.notify();
-                    }),
-                );
-
                 // which pip the wheel + lightness slider drive
                 let pip_row = div()
                     .flex()
@@ -18310,7 +18374,6 @@ impl Render for Workspace {
                             .text_color(th.text.alpha(0.85))
                             .child(format!("\u{201c}{label}\u{201d}")),
                     )
-                    .child(rename_btn)
                     .child(pip_row)
                     .child(self.tab_color_wheel(i, cx))
                     .child(self.tab_lightness_bar(i, cx))
@@ -18347,23 +18410,6 @@ impl Render for Workspace {
             let pip = self.tab_pip;
             let mi = self.tabs.iter().position(|t| t.group == Some(gid))?;
 
-            let rename_btn = Self::bezel_btn(&th, "✎ rename group", false).on_mouse_down(
-                MouseButton::Left,
-                cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
-                    cx.stop_propagation();
-                    let seed = ws
-                        .groups
-                        .iter()
-                        .find(|g| g.id == gid)
-                        .and_then(|g| g.name.clone())
-                        .unwrap_or_default();
-                    ws.group_menu = None;
-                    ws.tab_menu = None;
-                    ws.group_rename = Some((gid, EditBuffer::seeded(&seed)));
-                    window.focus(&ws.focus_handle, cx);
-                    cx.notify();
-                }),
-            );
             let fold_btn =
                 Self::bezel_btn(&th, if collapsed { "expand" } else { "collapse" }, false)
                     .on_mouse_down(
@@ -18469,14 +18515,7 @@ impl Render for Workspace {
                         .text_color(th.text.alpha(0.85))
                         .child(format!("group · {gname}")),
                 )
-                .child(
-                    div()
-                        .flex()
-                        .flex_row()
-                        .gap_1()
-                        .child(rename_btn)
-                        .child(fold_btn),
-                )
+                .child(div().flex().flex_row().gap_1().child(fold_btn))
                 .child(pip_row)
                 .child(self.tab_color_wheel(mi, cx))
                 .child(self.tab_lightness_bar(mi, cx))
@@ -19138,16 +19177,14 @@ impl Render for Workspace {
             .on_scroll_wheel(cx.listener(Self::on_wheel))
             .on_mouse_move(cx.listener(Self::on_mouse_move))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
-            // Click anywhere outside an open tab-rename box (a terminal, the
-            // bezel, empty space) saves the rename — the edit no longer eats
-            // keystrokes meant for the pane you just clicked into. The tab /
-            // pencil / rename-box handlers stop_propagation, so they don't trip
-            // this; a click ON the edit box keeps editing.
+            // Click anywhere outside an open rename box (a terminal, the bezel,
+            // empty space) saves it and closes it — tab, task, branch, group
+            // heading and pane header alike. The rename-box handlers
+            // stop_propagation, so a click ON the box keeps editing.
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                    ws.commit_rename(cx);
-                    ws.commit_bar_rename(cx);
+                    ws.commit_all_renames(cx);
                 }),
             )
             .child(
@@ -19235,6 +19272,133 @@ impl Render for Workspace {
 #[allow(clippy::items_after_test_module)]
 mod tests {
     use super::*;
+
+    /// The strip's heading must never be blank, and must never wrap.
+    ///
+    /// Two failures that look identical to a passing test suite. A group starts
+    /// nameless, and a heading that draws its name only when there is one
+    /// renders as an empty element — with its click and right-click still live,
+    /// so the branch's own handle becomes invisible on the widest surface in
+    /// the window. And gpui wraps text by default: a name wider than the fixed
+    /// rail does not clip, it takes a second line and makes the whole mother
+    /// bar taller, which is the one thing the rail exists to prevent.
+    ///
+    /// Source-scanned for the same reason the rename sweep is: the wrong
+    /// version compiles, renders, and passes everything else.
+    #[test]
+    fn the_strip_heading_is_never_blank_and_never_wraps() {
+        let src = include_str!("main.rs");
+        let body = |sig: &str| -> &str {
+            let at = src.find(sig).unwrap_or_else(|| panic!("{sig} not found"));
+            let end = src[at..].find("\n    }\n").expect("end of fn");
+            &src[at..at + end]
+        };
+
+        let title = body("fn group_title");
+        assert!(
+            title.contains(".label()"),
+            "group_title must go through TabGroup::label — reading `name` \
+             directly renders nothing at all for a group nobody has named yet"
+        );
+        assert!(
+            title.contains(".truncate()"),
+            "group_title must truncate: gpui wraps by default, so a long branch \
+             name grows the mother bar instead of clipping inside its rail"
+        );
+        assert!(
+            body("fn strip_heading").contains(".truncate()"),
+            "the project heading must truncate for the same reason"
+        );
+
+        // and the fallback has to actually say something
+        let nameless = TabGroup {
+            id: 7,
+            name: None,
+            color: white(),
+            text_color: None,
+            collapsed: false,
+            project: None,
+        };
+        let label = nameless.label();
+        assert!(
+            !label.trim().is_empty() && label.contains('7'),
+            "an unnamed group labelled {label:?} — the heading needs a name that \
+             identifies WHICH unnamed branch it is"
+        );
+    }
+
+    /// Clicking away from an inline rename box must close EVERY kind of rename
+    /// box, not most of them.
+    ///
+    /// A rename left open after the click owns the keyboard, so the next thing
+    /// typed — a command, meant for the shell you just clicked into — is
+    /// swallowed into a name, and you find that out by reading back a terminal
+    /// that received nothing. The sweep used to reach two editors out of the
+    /// five in the window (the tab strip and the left bar), which is why the
+    /// group heading and the pane headers behaved that way.
+    ///
+    /// Source-scanned because there is nothing else to observe: a new
+    /// `*_rename` field compiles, renders and edits perfectly well while being
+    /// invisible to the sweep.
+    #[test]
+    fn clicking_off_closes_every_inline_editor() {
+        let src = include_str!("main.rs");
+        let body = |sig: &str| -> &str {
+            let at = src.find(sig).unwrap_or_else(|| panic!("{sig} not found"));
+            let end = src[at..].find("\n    }\n").expect("end of fn");
+            &src[at..at + end]
+        };
+
+        // the sweep closes all three workspace editors, and the panes' own
+        let sweep = body("fn commit_all_renames");
+        for call in [
+            "self.commit_rename(cx)",
+            "self.commit_bar_rename(cx)",
+            "self.commit_group_rename(cx)",
+            "v.commit_rename(cx)",
+        ] {
+            assert!(
+                sweep.contains(call),
+                "commit_all_renames does not call {call} — an editor it misses \
+                 stays open after a click and eats the keystrokes meant for the \
+                 terminal that was clicked into"
+            );
+        }
+
+        // every editor the Workspace struct declares is taken by one of them
+        let at = src.find("struct Workspace {").expect("struct Workspace");
+        let end = src[at..].find("\n}\n").expect("end of struct Workspace");
+        let fields: Vec<&str> = src[at..at + end]
+            .lines()
+            .map(str::trim)
+            .filter(|l| l.starts_with("renaming: Option<") || l.contains("_rename: Option<"))
+            .filter_map(|l| l.split(':').next())
+            .collect();
+        assert!(
+            fields.len() >= 3,
+            "expected the three workspace rename buffers, found {fields:?}"
+        );
+        let commits = format!(
+            "{}{}{}",
+            body("fn commit_rename"),
+            body("fn commit_bar_rename"),
+            body("fn commit_group_rename")
+        );
+        for f in fields {
+            assert!(
+                commits.contains(&format!("self.{f}.take()")),
+                "the `{f}` editor is never taken by a commit_* fn, so clicking \
+                 off cannot close it — add it to the sweep in commit_all_renames"
+            );
+        }
+
+        // ...and the click that lands outside every box runs the sweep
+        assert!(
+            src.contains("ws.commit_all_renames(cx);"),
+            "the workspace root's click handler must run the sweep — without it \
+             nothing closes a rename except Enter"
+        );
+    }
 
     // ---- restoring a layout whose terminals belong to a session host -------
 

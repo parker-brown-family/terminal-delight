@@ -521,30 +521,76 @@ pub fn reorder(ids: &mut Vec<u32>, moving: u32, neighbour: u32, after: bool) {
     ids.insert(if after { at + 1 } else { at }, moving);
 }
 
-/// The tasks the mother bar draws under `scope`, in tab order.
+/// The tasks the strip draws: the branch the active task is in, in tab order.
+///
+/// One initiative's worth of tabs and nothing else. The tree beside the strip
+/// already lists every other branch, so a strip that carried them too spent the
+/// widest surface in the window repeating the one fact that was never in doubt
+/// — and it is the reason the strip kept running out of room.
+///
+/// A task in no initiative sits with the other loose ones, which makes this the
+/// identity function for a session that has never been organised: every tab,
+/// exactly as before.
 ///
 /// Kept beside [`rows`] on purpose: the strip and the tree answer the same
 /// question about the same session and must never disagree about which tasks
 /// exist.
-pub fn in_scope(places: &[Place], scope: Scope) -> Vec<usize> {
+pub fn family(places: &[Place], active: usize) -> Vec<usize> {
+    let home = places.get(active).copied().unwrap_or_default();
     places
         .iter()
         .enumerate()
-        .filter(|(_, place)| scope.shows(place))
+        .filter(|(_, place)| same_branch(place, &home))
         .map(|(i, _)| i)
         .collect()
 }
 
-/// What the scope is HIDING from the strip, summed — the price of narrowing it.
+/// Do these two tasks hang from the SAME branch of the tree?
+///
+/// The one definition of the strip's key, and it has to be one definition:
+/// the filter, the heading over it and the slot a new tab lands in all have to
+/// agree, or the strip draws a set of tabs under a name that does not describe
+/// them. An initiative is a branch. A task in no initiative belongs to its
+/// PROJECT's loose bucket, not to a single global one — two projects' loose
+/// tasks are no more siblings than two projects' initiatives are, and drawing
+/// them together under one project's name was the bug that made this a
+/// function instead of a field comparison.
+pub fn same_branch(a: &Place, b: &Place) -> bool {
+    match (a.initiative, b.initiative) {
+        (Some(x), Some(y)) => x == y,
+        (None, None) => a.project == b.project,
+        _ => false,
+    }
+}
+
+/// Where the drag caret goes: how many of the strip's tabs are drawn BEFORE it.
+///
+/// The caret marks a gap, not an index. Drop slots are resolved in full-list
+/// index space while the strip draws one branch, so a family whose tabs are not
+/// adjacent — any session organised before a branch became contiguous — has
+/// landing slots belonging to tabs nobody can see. Every such slot collapses
+/// onto the visible gap it falls in, which is exactly where the drop lands.
+/// Matching the slot against a visible index instead drew no caret at all for
+/// those slots, and a drag with no feedback reads as a drag that will not work.
+///
+/// Returns `family.len()` for a slot past the last visible tab: the caret goes
+/// at the end of the strip.
+pub fn caret_gap(family: &[usize], slot: usize) -> usize {
+    family.iter().take_while(|&&i| i < slot).count()
+}
+
+/// What the strip is NOT showing, summed — the price of narrowing it.
 ///
 /// The tree shows this branch by branch, but the tree can be closed, and a
-/// scoped strip with the tree closed is the one arrangement where an agent
+/// narrowed strip with the tree closed is the one arrangement where an agent
 /// could stop and ask a question with nothing on screen to say so. This is what
-/// the mother bar's own out-of-scope chip reads.
-pub fn out_of_scope(tasks: &[TaskRef], scope: Scope) -> Roll {
+/// the mother bar's own out-of-branch chip reads.
+pub fn roll_outside(tasks: &[TaskRef], shown: &[usize]) -> Roll {
     let mut roll = Roll::default();
-    for t in tasks.iter().filter(|t| !scope.shows(&t.place)) {
-        roll.fold(&t.roll);
+    for (i, t) in tasks.iter().enumerate() {
+        if !shown.contains(&i) {
+            roll.fold(&t.roll);
+        }
     }
     roll
 }
@@ -827,36 +873,132 @@ mod tests {
     }
 
     #[test]
-    fn scope_narrows_the_strip_by_branch() {
+    fn the_strip_carries_the_branch_you_are_in_and_no_other() {
         let places: Vec<Place> = [
             task(Some(1), Some(10)),
-            task(Some(1), None),
+            task(Some(1), Some(10)),
+            task(Some(1), Some(11)),
             task(Some(2), None),
             task(None, None),
         ]
         .iter()
         .map(|t| t.place)
         .collect();
-        assert_eq!(in_scope(&places, Scope::All), vec![0, 1, 2, 3]);
-        assert_eq!(in_scope(&places, Scope::Project(1)), vec![0, 1]);
-        assert_eq!(in_scope(&places, Scope::Initiative(10)), vec![0]);
+        // in an initiative: its members, and not the sibling initiative that
+        // happens to share a project
+        assert_eq!(family(&places, 0), vec![0, 1]);
+        assert_eq!(family(&places, 2), vec![2]);
+        // a loose task sits with its own project's loose tasks, and with
+        // nobody else's
+        assert_eq!(family(&places, 3), vec![3]);
+        assert_eq!(family(&places, 4), vec![4]);
     }
 
     #[test]
-    fn what_the_scope_hides_is_counted_so_the_strip_can_say_so() {
-        // The safety catch on scoping: an agent that stops to ask a question in
-        // a project you are not looking at must still be able to interrupt you.
+    fn two_projects_loose_tasks_are_not_one_family() {
+        // The heading names ONE branch. If every loose task in the session were
+        // one family, selecting a task in project A would draw project B's
+        // loose tasks under A's name — a label that lies about the row beneath
+        // it, which is worse than no label.
+        let places: Vec<Place> = [
+            task(Some(1), None),
+            task(Some(2), None),
+            task(Some(1), None),
+            task(None, None),
+        ]
+        .iter()
+        .map(|t| t.place)
+        .collect();
+        assert_eq!(family(&places, 0), vec![0, 2]);
+        assert_eq!(family(&places, 1), vec![1]);
+        // filed under no project at all is its own bucket, not everyone's
+        assert_eq!(family(&places, 3), vec![3]);
+    }
+
+    #[test]
+    fn an_initiative_ignores_the_project_when_deciding_who_is_in_it() {
+        // A group carries its own project, and its members leave theirs unset
+        // (see `Workspace::place_of`), so initiative identity alone decides —
+        // and a project disagreeing must never split a group in half.
+        let a = Place {
+            project: Some(1),
+            initiative: Some(10),
+        };
+        let b = Place {
+            project: Some(2),
+            initiative: Some(10),
+        };
+        assert!(same_branch(&a, &b));
+        assert!(!same_branch(
+            &a,
+            &Place {
+                project: Some(1),
+                initiative: None,
+            }
+        ));
+    }
+
+    #[test]
+    fn a_session_that_never_organised_anything_still_sees_every_tab() {
+        // The identity case, and the one that decides whether this is safe to
+        // ship to somebody who has never made a group.
+        let places: Vec<Place> = (0..4).map(|_| task(None, None).place).collect();
+        assert_eq!(family(&places, 0), vec![0, 1, 2, 3]);
+    }
+
+    #[test]
+    fn an_active_index_off_the_end_narrows_to_the_loose_tabs_not_to_nothing() {
+        // A strip with nothing on it is the one state there is no way back from,
+        // so an impossible index lands somewhere rather than nowhere.
+        let places: Vec<Place> = [task(Some(1), Some(10)), task(None, None)]
+            .iter()
+            .map(|t| t.place)
+            .collect();
+        assert_eq!(family(&places, 99), vec![1]);
+    }
+
+    #[test]
+    fn the_drag_caret_finds_a_gap_even_when_the_branch_is_not_contiguous() {
+        // Underlying order G1 H1 G2 H2 with the G branch showing: the slot
+        // between G1 and H1 is index 1, which is a tab the strip does not draw.
+        // It has to land in the only gap it can mean — after G1.
+        let family = [0usize, 2];
+        assert_eq!(caret_gap(&family, 0), 0); // before the first
+        assert_eq!(caret_gap(&family, 1), 1); // the invisible slot, one gap in
+        assert_eq!(caret_gap(&family, 2), 1); // same gap, said the visible way
+        assert_eq!(caret_gap(&family, 3), 2); // after the last
+        assert_eq!(caret_gap(&family, 4), 2); // past the end of the whole list
+    }
+
+    #[test]
+    fn every_slot_in_a_contiguous_branch_still_maps_to_its_own_gap() {
+        // The ordinary case must not have been traded away for the odd one:
+        // with a contiguous family each slot keeps its own caret position.
+        let family = [3usize, 4, 5];
+        assert_eq!(caret_gap(&family, 3), 0);
+        assert_eq!(caret_gap(&family, 4), 1);
+        assert_eq!(caret_gap(&family, 5), 2);
+        assert_eq!(caret_gap(&family, 6), 3);
+        // an empty strip has exactly one gap, and it is the end
+        assert_eq!(caret_gap(&[], 7), 0);
+    }
+
+    #[test]
+    fn what_the_strip_hides_is_counted_so_the_strip_can_say_so() {
+        // The safety catch on narrowing: an agent that stops to ask a question
+        // in a branch you are not looking at must still be able to interrupt
+        // you.
         let tasks = vec![
             loud(Some(1), None, 0),
             loud(Some(2), None, 1),
             loud(None, None, 2),
         ];
-        let hidden = out_of_scope(&tasks, Scope::Project(1));
+        let hidden = roll_outside(&tasks, &[0]);
         assert_eq!(hidden.needs_input, 3);
         assert_eq!(hidden.tasks, 2);
         // nothing is hidden when nothing is narrowed
-        assert_eq!(out_of_scope(&tasks, Scope::All), Roll::default());
-        assert!(out_of_scope(&tasks, Scope::All).quiet());
+        assert_eq!(roll_outside(&tasks, &[0, 1, 2]), Roll::default());
+        assert!(roll_outside(&tasks, &[0, 1, 2]).quiet());
     }
 
     #[test]
