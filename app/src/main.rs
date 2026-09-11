@@ -2967,11 +2967,51 @@ fn born_geom() -> hostproto::PaneGeom {
     }
 }
 
+/// The size to declare when taking over a terminal the host already holds, and
+/// the shape to build the replica at. Both are the host's answer, never one of
+/// this window's own.
+///
+/// `AttachPane` is not a declaration of intent — it resizes the real
+/// pseudoterminal (`host.rs`, `Request::AttachPane` → `host.resize`), which
+/// SIGWINCHes whatever is running in it. A window that has not laid the pane out
+/// yet has taken no measurement, and [`BORN_GRID`] is not one: it is a default
+/// standing in for a number nobody read. Handing it to the host overwrites a
+/// real size with an invented one, and the agent inside redraws itself to fit.
+///
+/// So the size travels the other way here. The host has held this pane all
+/// along and knows its size; this window adopts it, and says a size of its own
+/// only once a layout pass has produced one — which is what `announce_resize`
+/// carries.
+///
+/// The replica is built at the same size for a second reason: the snapshot that
+/// arrives on the byte stream was encoded from a grid of exactly that shape, and
+/// replaying it into a differently-shaped terminal re-wraps it into a grid the
+/// host never had. `gridwire::grid_hash` walks `0..cols` of every row, so two
+/// terminals of different sizes cannot hash equal — the divergence guard then
+/// reports a mismatch it can never repair, because every re-snapshot lands the
+/// same reflow.
+///
+/// Attaching with `born_geom()` instead is what stamped 100×28 onto fifteen of
+/// twenty live pseudoterminals on 2026-09-11 (#383): every relaunch re-applied
+/// it, and only the panes whose tab was brought to the front were ever
+/// corrected.
+fn attached_geom(info: &hostproto::PaneInfo) -> (hostproto::PaneGeom, term::GridSize) {
+    let geom = info.geom;
+    let grid = term::GridSize {
+        cols: geom.cols as usize,
+        rows: geom.rows as usize,
+    };
+    (geom, grid)
+}
+
 /// Take over a terminal the host is holding, and show it in a pane.
 ///
-/// The order is the contract: say what size the pane will be, *then* open the
-/// byte stream. The host snapshots at the moment the stream connects, so a size
+/// The order is the contract: say what size the pane is, *then* open the byte
+/// stream. The host snapshots at the moment the stream connects, so a size
 /// declared afterwards would arrive against a snapshot taken at the old one.
+///
+/// Which size that is, and why it is not this window's to choose, is
+/// [`attached_geom`].
 fn make_pane_attached(
     info: &hostproto::PaneInfo,
     restore: session::PaneRestore,
@@ -2979,7 +3019,7 @@ fn make_pane_attached(
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) -> std::io::Result<Entity<TerminalView>> {
-    let geom = born_geom();
+    let (geom, grid) = attached_geom(info);
     ctx.link.attach_pane(info.pane, geom)?;
     let stream = ctx.link.open_pane_stream(info.pane)?;
     let link = ctx.link.clone();
@@ -3000,9 +3040,9 @@ fn make_pane_attached(
     };
     // The pid is the host's, and only an attribute: this window did not start
     // that process and will never signal it.
-    let (session, guard) = term::attach_in(BORN_GRID, streams, Some(info.shell_pid))?;
+    let (session, guard) = term::attach_in(grid, streams, Some(info.shell_pid))?;
     let pane =
-        cx.new(|cx| TerminalView::new_attached(session, guard, pane_id.0, restore, BORN_GRID, cx));
+        cx.new(|cx| TerminalView::new_attached(session, guard, pane_id.0, restore, grid, cx));
     pane.update(cx, |view, cx| {
         view.appearance = PaneTheme::house();
         // The host has been watching this terminal; a window that has just
@@ -19272,6 +19312,59 @@ impl Render for Workspace {
 #[allow(clippy::items_after_test_module)]
 mod tests {
     use super::*;
+
+    /// A window takes over a pane at the size the host reports, never at one of
+    /// its own.
+    ///
+    /// `AttachPane` resizes the real pseudoterminal, so the number declared at
+    /// attach reaches the agent running inside it. A window that has not laid
+    /// the pane out has measured nothing, and [`BORN_GRID`] is a default rather
+    /// than a reading — handing it over replaces a real size with an invented
+    /// one.
+    ///
+    /// That is not hypothetical. On 2026-09-11 fifteen of twenty live
+    /// pseudoterminals sat at 100×28 while their panes were drawn up to 193
+    /// columns wide, because every attach stamped the placeholder on and only a
+    /// pane whose tab was brought to the front ever got corrected (#383). Both
+    /// assertions below fail if `attached_geom` goes back to answering
+    /// `born_geom()`, which is how this test was checked: the fix is one line,
+    /// and so is undoing it.
+    #[test]
+    fn a_window_attaches_at_the_size_the_host_reports() {
+        let held = hostproto::PaneGeom {
+            cols: 193,
+            rows: 50,
+            cell_width: 8,
+            cell_height: 20,
+        };
+        let info = hostproto::PaneInfo {
+            pane: hostproto::PaneId(7),
+            shell_pid: 4242,
+            cwd: None,
+            resume: Some("claude --resume 4a1c".into()),
+            mode: Some(hostproto::WireMode::Claude),
+            attached: false,
+            ended: false,
+            geom: held,
+        };
+
+        let (declared, grid) = attached_geom(&info);
+        assert_eq!(
+            (declared.cols, declared.rows),
+            (held.cols, held.rows),
+            "attach declared a size the host did not report, which resizes the pty under a \
+             running agent"
+        );
+        // The replica is built at the same shape because the snapshot on the
+        // byte stream was encoded from a grid of that shape; a different one
+        // re-wraps it into a grid the host never had, and no re-snapshot can
+        // reconcile the two.
+        assert_eq!(
+            (grid.cols, grid.rows),
+            (held.cols as usize, held.rows as usize),
+            "the replica was built at a different shape than the snapshot it is about to replay"
+        );
+    }
 
     /// The strip's heading must never be blank, and must never wrap.
     ///
