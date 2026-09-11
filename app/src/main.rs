@@ -49,6 +49,7 @@ mod pane;
 mod plugins;
 mod recover;
 mod session;
+mod slot;
 mod socketpty;
 mod sticky;
 mod term;
@@ -692,6 +693,11 @@ const LEFT_BAR_DEFAULT_ON: bool = true;
 /// levels of indent plus a name plus its roll-up glyphs.
 const LEFT_BAR_W: f32 = 208.;
 /// Narrow enough to be a rail of names, never so narrow the glyphs collide.
+/// The bottom slot reads as what is left, not what is gone. "13% left" is the
+/// question a person actually asks of an allowance; "87% spent" is the same
+/// fact arranged so it has to be subtracted first.
+const SLOT_REMAINING_DEFAULT: bool = true;
+
 const LEFT_BAR_MIN: f32 = 132.;
 /// Past this the tree is stealing the terminals' width, which is the wrong way
 /// round for a terminal.
@@ -1283,6 +1289,13 @@ struct StateFile {
     /// dragged. `None` = the default width.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     left_bar_w: Option<f32>,
+    /// Whether the bottom slot's allowance rows read as what is left rather
+    /// than what is spent. A display flip computed at paint — the record's own
+    /// `percent` is always the fraction *spent*, so no config change can ever
+    /// rewrite what a vendor published. Absent = the default, resolved once at
+    /// load, and not the same thing as `false`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    slot_remaining: Option<bool>,
     /// Which branch the mother bar was scoped to. Restored, then checked
     /// against the active tab — a scope that would open the window with its own
     /// active task off the strip is widened rather than honoured.
@@ -1348,6 +1361,10 @@ impl Default for StateFile {
             projects: Vec::new(),
             left_bar: None,
             left_bar_w: None,
+            // `None`, not `Some(false)`: a fresh state file has no opinion
+            // about the slot, and that is a different thing from having chosen
+            // to see allowances as spent.
+            slot_remaining: None,
             scope: None,
             mcp: None,
             focus_inherit: false,
@@ -2481,6 +2498,9 @@ struct Workspace {
     /// The bar's width in logical pixels at scale 1.0. Dragged by its right
     /// edge; persisted.
     left_bar_w: f32,
+    /// The bottom slot's allowance rows read as remaining rather than spent.
+    /// A paint-time flip over `usage::Limit::percent`, never a stored number.
+    slot_remaining: bool,
     /// While the bar's right edge is being dragged: the cursor x it started at
     /// and the width it started from. Held as a pair rather than as a live
     /// width so the drag tracks the cursor exactly however far it travels
@@ -3428,6 +3448,10 @@ impl Workspace {
                 .left_bar_w
                 .unwrap_or(LEFT_BAR_W)
                 .clamp(LEFT_BAR_MIN, LEFT_BAR_MAX),
+            // Resolved here, once, the way `left_bar` is: a file written before
+            // the slot existed carries no opinion, and "no opinion" is the
+            // default reading rather than the off one.
+            slot_remaining: saved.slot_remaining.unwrap_or(SLOT_REMAINING_DEFAULT),
             bar_resize: None,
             scope: saved.scope.map(tree::Scope::from).unwrap_or_default(),
             bar_rename: None,
@@ -4195,6 +4219,7 @@ impl Workspace {
                 .collect(),
             left_bar: Some(self.left_bar),
             left_bar_w: Some(self.left_bar_w),
+            slot_remaining: Some(self.slot_remaining),
             scope: Some(self.scope.into()),
             mcp: Some(self.mcp.clone()),
             focus_inherit: self.focus_inherit_theme,
@@ -4988,19 +5013,9 @@ impl Workspace {
         let pick = self.usage_pick.min(drawable.len() - 1);
         let rec = drawable[pick];
 
-        // A gauge is read before it is understood, so this ramp is deliberately
-        // NOT themed: green under two thirds, amber past it, red in the last
-        // sixth. A palette that made 90% of a weekly limit look calm would be a
-        // prettier lie than TD is willing to tell.
-        fn pressure(frac: f32) -> gpui::Hsla {
-            if frac >= 0.85 {
-                hsla(0.01, 0.72, 0.60, 1.)
-            } else if frac >= 0.66 {
-                hsla(0.09, 0.82, 0.60, 1.)
-            } else {
-                hsla(0.38, 0.52, 0.52, 1.)
-            }
-        }
+        // The ramp is `pressure` at module scope now, because the bar's bottom
+        // slot reads the same gauge and a second set of thresholds beside this
+        // one is how two surfaces start disagreeing about what 87% looks like.
         let track = th.text.alpha(0.10);
         let meter = move |frac: f32, col: gpui::Hsla, h: f32| {
             let f = frac.clamp(0., 1.);
@@ -11967,6 +11982,386 @@ impl Workspace {
         cx.notify();
     }
 
+    /// Every agent pane's state, tallied for the bottom slot's rollup line.
+    ///
+    /// The wall already computes this shape, but against its own filters — a
+    /// scoped strip, a program filter, a state filter. The slot counts the
+    /// session whole, because a sidebar that is on screen constantly is the
+    /// wrong place to be told about a subset.
+    fn slot_tally(&self, cx: &App) -> slot::Tally {
+        let mut t = slot::Tally::default();
+        for tab in self.tabs.iter() {
+            let mut leaves = Vec::new();
+            tab.root.leaves(&mut leaves);
+            for e in leaves {
+                let p = e.read(cx);
+                if !p.mode.is_agent() {
+                    continue;
+                }
+                match p.agent_status().state {
+                    hud::AgentState::Working => t.working += 1,
+                    hud::AgentState::Blocked => t.blocked += 1,
+                    hud::AgentState::Error => t.errored += 1,
+                    hud::AgentState::Finished => t.finished += 1,
+                    hud::AgentState::Idle => t.idle += 1,
+                }
+            }
+        }
+        t
+    }
+
+    /// The allowance rows, read out of the records the usage panel already
+    /// holds in memory.
+    ///
+    /// No collector is run, no file is opened and nothing is awaited: the bar
+    /// rebuilds every frame, and a widget that touched the disk during paint
+    /// would be a stutter in a surface that is never not on screen.
+    fn slot_rows(&self) -> Vec<slot::ProviderRow> {
+        let now = usage::now_epoch();
+        self.usage_records
+            .iter()
+            .map(|r| {
+                // A record that does not say when it was written yields `None`
+                // here, and `from_record` treats that as one more thing nobody
+                // measured rather than as "just now".
+                let age =
+                    usage::parse_epoch(&r.updated_at).map(|t| ((now - t).max(0) as f32) / 3600.0);
+                slot::ProviderRow::from_record(r, age)
+            })
+            .collect()
+    }
+
+    /// The bar's bottom slot — an allowance row per subscription, then the
+    /// agent-state rollup on a bordered line of its own.
+    ///
+    /// **Heights are declared, not discovered.** The slot is `flex_none` and
+    /// states its own height, so however many subscriptions exist the tree
+    /// keeps the remaining column. A widget that sized itself from its content
+    /// could push the tree out of the bar on a busy day — a bug that only
+    /// appears when you are busiest.
+    ///
+    /// **Absence is decided before colour is.** Every rail asks "is there a
+    /// reading" first and draws a hatch when there is not. A ramp reaching for
+    /// an urgency needs a number to compute it from, and a window a vendor does
+    /// not publish has none — so the alternative to the hatch is not a pale bar
+    /// but a confident empty one, which reads as "you are out" for a
+    /// subscription nobody has ever collected.
+    fn render_bar_slot(&self, th: &theme::Theme, s: f32, cx: &App) -> Option<gpui::Div> {
+        let rows = self.slot_rows();
+        let tally = self.slot_tally(cx);
+        if rows.is_empty() && tally.total() == 0 {
+            return None;
+        }
+
+        let text = th.text;
+        let faint = th.faint;
+        let track = text.alpha(0.10);
+        let rail_h = 4.0 * s;
+        let tick_h = 3.0 * s;
+        let row_h = 20.0 * s;
+        let counter_h = 17.0 * s;
+        let mark_w = 14.0;
+        let val_w = 26.0;
+
+        // What the rail itself gets, once the gutters, the mark and the value
+        // cell have taken theirs. This is the number the degradation ladder is
+        // resolved against, not the bar's own width.
+        let rail_w = (self.left_bar_w - mark_w - val_w - 22.0).max(8.0);
+        let remaining_mode = self.slot_remaining;
+
+        // "No reading", drawn so it cannot be mistaken for either end of the
+        // scale: a hatched track with its own outline, at the rail's height.
+        let hatch = move |h: f32| {
+            let mut d = div()
+                .w_full()
+                .h(px(h))
+                .rounded_full()
+                .bg(text.alpha(0.04))
+                .border_1()
+                .border_color(faint.alpha(0.40))
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(2.0 * s))
+                .px(px(1.0 * s))
+                .overflow_hidden();
+            for _ in 0..9 {
+                d = d.child(
+                    div()
+                        .flex_1()
+                        .h(px((h - 2.0).max(1.0)))
+                        .bg(faint.alpha(0.30)),
+                );
+            }
+            d
+        };
+
+        // Fresh paints at full strength; stale keeps its number and dims,
+        // because a four-hour-old session reading is still worth more than
+        // nothing. Unknown never reaches here — it has already become a hatch.
+        //
+        // Note the two axes come from different halves of the reading: the bar
+        // is as long as what the *display* is set to show, and as loud as what
+        // has actually been *spent*. Inverting the display must not make a
+        // nearly-exhausted allowance look calm.
+        let lit_colour = |reading: &slot::Reading| -> Option<(f32, Hsla)> {
+            let spent = reading.spent()?;
+            let shown = if remaining_mode {
+                reading.remaining()?
+            } else {
+                spent
+            };
+            let dim = if reading.is_stale() { 0.55 } else { 1.0 };
+            Some((shown, pressure(spent).alpha(slot::intensity(spent) * dim)))
+        };
+
+        let mut stack = div()
+            .flex_none()
+            .flex()
+            .flex_col()
+            .gap(px(2.0 * s))
+            .px(px(6.0 * s))
+            .pb(px(5.0 * s));
+
+        for row in &rows {
+            let deg = slot::Degrade::resolve(self.left_bar_w, rail_w, row.session_ticks);
+
+            // The long window, as one solid rail.
+            let week = match lit_colour(&row.week) {
+                None => hatch(rail_h),
+                Some((shown, col)) => {
+                    div()
+                        .w_full()
+                        .h(px(rail_h))
+                        .rounded_full()
+                        .bg(track)
+                        .overflow_hidden()
+                        .child(
+                            div()
+                                .h_full()
+                                // A non-zero share never renders as an empty
+                                // track — the same floor the usage panel's
+                                // meter uses, for the same reason.
+                                .w(gpui::relative(if shown > 0.0 {
+                                    shown.max(0.02)
+                                } else {
+                                    0.0
+                                }))
+                                .rounded_full()
+                                .bg(col),
+                        )
+                }
+            };
+
+            // The short window, as a notched rail: one tick per unit of the
+            // window the vendor named.
+            let session = match lit_colour(&row.session) {
+                None => hatch(tick_h),
+                Some((shown, col)) => {
+                    let lit = slot::ticks_lit(shown, deg.ticks);
+                    let mut d = div()
+                        .flex()
+                        .flex_row()
+                        .w_full()
+                        .h(px(tick_h))
+                        .gap(px(1.0 * s));
+                    for i in 0..deg.ticks {
+                        d = d.child(div().flex_1().h_full().rounded_sm().bg(if i < lit {
+                            col
+                        } else {
+                            track
+                        }));
+                    }
+                    d
+                }
+            };
+
+            // The trailing cell: a percentage, an age, or an em dash. Never a
+            // zero standing in for a number nobody has — which is why every
+            // branch here comes from asking the reading what it is, and none
+            // of them ends in a default.
+            let (val, val_alpha) = if row.week.is_unknown() {
+                ("\u{2014}".to_string(), 0.40)
+            } else if let Some(age) = row.week.age() {
+                (age.to_string(), 0.45)
+            } else if let Some(shown) = if remaining_mode {
+                row.week.remaining()
+            } else {
+                row.week.spent()
+            } {
+                (format!("{}%", (shown * 100.0).round() as i64), 0.62)
+            } else {
+                ("\u{2014}".to_string(), 0.40)
+            };
+
+            // The mark is a shorthand for the vendor's own words, never a
+            // replacement for them, so the hover spells out each window's
+            // label exactly as the vendor published it — and says "no reading"
+            // in words where there is none, rather than leaving a reader to
+            // infer it from a texture.
+            let hover_title = {
+                let mut out = vec![if row.name.is_empty() {
+                    row.id.clone()
+                } else {
+                    row.name.clone()
+                }];
+                for (label, reading) in [
+                    (&row.session_label, &row.session),
+                    (&row.week_label, &row.week),
+                ] {
+                    let named = if label.is_empty() { "window" } else { label };
+                    out.push(match reading {
+                        slot::Reading::Unknown => format!("{named}: no reading"),
+                        slot::Reading::Stale { spent, age } => format!(
+                            "{named}: {}% spent, {age} old",
+                            (spent * 100.).round() as i64
+                        ),
+                        slot::Reading::Fresh(p) => {
+                            format!("{named}: {}% spent", (p * 100.).round() as i64)
+                        }
+                    });
+                }
+                out
+            };
+
+            let mut line = div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .h(px(row_h))
+                .gap(px(5.0 * s))
+                .child(
+                    // The provider's mark. A brand asset under its own
+                    // guidelines is the normal answer and a licensing question
+                    // rather than a drawing one; a glyph the collector
+                    // publishes is the answer for a provider TD has never
+                    // heard of. Initials are the third way out, and it has to
+                    // exist whatever happens to the other two because the
+                    // provider list is open-ended by construction.
+                    div()
+                        .flex_none()
+                        .w(px(mark_w * s))
+                        .h(px(mark_w * s))
+                        .rounded_sm()
+                        .border_1()
+                        .border_color(text.alpha(0.18))
+                        .bg(text.alpha(0.06))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .text_size(px(7.5 * s))
+                        .text_color(text.alpha(0.75))
+                        .child(row.initials.clone()),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w(px(0.))
+                        .flex()
+                        .flex_col()
+                        .gap(px(2.0 * s))
+                        .child(week)
+                        .child(session),
+                );
+            if deg.show_pct {
+                line = line.child(
+                    div()
+                        .flex_none()
+                        .w(px(val_w * s))
+                        .text_size(px(8.5 * s))
+                        .text_color(text.alpha(val_alpha))
+                        .child(val),
+                );
+            }
+            let (tip_bg, tip_text, tip_faint) = (darken(th.surface, 0.85), th.text, th.faint);
+            stack = stack.child(
+                line.id(SharedString::from(format!("slot-{}", row.id)))
+                    .tooltip(move |_w, cx| {
+                        cx.new(|_| SlotTooltip {
+                            lines: hover_title.clone(),
+                            bg: tip_bg,
+                            text: tip_text,
+                            faint: tip_faint,
+                        })
+                        .into()
+                    }),
+            );
+        }
+
+        // ---- the rollup, on a bordered line of its own ----------------------
+        //
+        // The robot is `U+F06A9` out of the Nerd Font TD resolves, checked
+        // against `fc-list :charset` rather than assumed: the mock's `🤖`
+        // (`U+1F916`) is in no monospace font on this machine and would paint
+        // as blank space, which reads as a broken feature rather than as a
+        // missing character. The pause is `U+2016` for the same reason —
+        // `U+23F8`, which `hud::AgentState::badge` returns, is absent too.
+        let cells: [(hud::AgentState, u32, &str); 5] = [
+            (hud::AgentState::Working, tally.working, "\u{25b6}"),
+            (hud::AgentState::Blocked, tally.blocked, "\u{2016}"),
+            (hud::AgentState::Error, tally.errored, "\u{2715}"),
+            (hud::AgentState::Finished, tally.finished, "\u{2713}"),
+            (hud::AgentState::Idle, tally.idle, "\u{25cb}"),
+        ];
+        let mut counter = div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .h(px(counter_h))
+            .gap(px(4.0 * s))
+            .px(px(4.0 * s))
+            .rounded(px(4.0 * s))
+            .border_1()
+            .border_color(if tally.needs_you() {
+                hsla(0.11, 0.85, 0.60, 1.).alpha(0.55)
+            } else {
+                text.alpha(0.14)
+            })
+            .child(
+                div()
+                    .flex_none()
+                    .text_size(px(9.0 * s))
+                    .text_color(text.alpha(0.55))
+                    .child("\u{f06a9}"),
+            );
+        for (state, n, glyph) in cells {
+            let hot = n > 0;
+            let col = if hot {
+                agent_state_glow(th, text.alpha(0.55), state)
+            } else {
+                text.alpha(0.30)
+            };
+            // The state that wants a human is the only one that gets a fill.
+            let chip = hot && state.needs_you();
+            counter = counter.child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(1.0 * s))
+                    .px(px(if chip { 2.5 * s } else { 0. }))
+                    .rounded_sm()
+                    .bg(if chip {
+                        col.alpha(0.22)
+                    } else {
+                        gpui::transparent_black()
+                    })
+                    .text_size(px(8.5 * s))
+                    .text_color(col)
+                    .child(glyph.to_string())
+                    .child(div().text_size(px(9.0 * s)).child(n.to_string())),
+            );
+        }
+
+        Some(
+            stack
+                .child(counter)
+                .h(px(rows.len() as f32 * (row_h + 2.0 * s)
+                    + counter_h
+                    + 5.0 * s)),
+        )
+    }
+
     /// The left bar: the whole session as a tree, beside the terminals.
     ///
     /// What makes this more than a second copy of the tab strip is that the
@@ -12174,6 +12569,22 @@ impl Workspace {
                 .child(header)
                 .child(div().h(px(1.)).mx(px(6. * s)).bg(th.faint.alpha(0.25)))
                 .child(list)
+                // The bottom slot, under the tree. `list` is `flex_1` and the
+                // slot is `flex_none` with a declared height, so the tree
+                // yields exactly the slot's height and not a pixel more —
+                // whatever the slot is holding.
+                .children(self.render_bar_slot(&th, s, cx).map(|slot| {
+                    div()
+                        .flex_none()
+                        .child(
+                            div()
+                                .h(px(1.))
+                                .mx(px(6. * s))
+                                .mb(px(4. * s))
+                                .bg(th.faint.alpha(0.25)),
+                        )
+                        .child(slot)
+                }))
                 // the drag handle on the bar's right edge — a hairline that
                 // lights up under the cursor, like a window's own edge
                 .child(
@@ -12722,6 +13133,40 @@ impl Workspace {
 /// caption is truncated — e.g. `tactical` for `tactical-overdrive`). For the
 /// hot-reloaded `custom` slot it also shows the resolved file path on THIS
 /// machine and a clickable "Open in editor" line.
+/// The hover over one of the bottom slot's allowance rows: the provider, then
+/// a line per window naming it in the vendor's own words.
+struct SlotTooltip {
+    lines: Vec<String>,
+    bg: Hsla,
+    text: Hsla,
+    faint: Hsla,
+}
+
+impl Render for SlotTooltip {
+    fn render(&mut self, _w: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        let mut card = div()
+            .flex()
+            .flex_col()
+            .gap(px(2.))
+            .px(px(9.))
+            .py(px(6.))
+            .rounded_md()
+            .border_1()
+            .border_color(self.faint.alpha(0.5))
+            .bg(self.bg)
+            .text_color(self.text);
+        for (i, line) in self.lines.iter().enumerate() {
+            card = card.child(
+                div()
+                    .text_size(px(if i == 0 { 12. } else { 10.5 }))
+                    .text_color(if i == 0 { self.text } else { self.faint })
+                    .child(line.clone()),
+            );
+        }
+        card
+    }
+}
+
 struct ThemeTooltip {
     name: SharedString,
     /// `Some` only for the custom slot — the file to reveal/open.
@@ -12883,6 +13328,24 @@ fn mix(a: Hsla, b: Hsla, t: f32) -> Hsla {
         s: lerp(a.s, b.s),
         l: lerp(a.l, b.l),
         a: lerp(a.a, b.a),
+    }
+}
+
+/// The house pressure ramp — what each band of a spent allowance looks like.
+///
+/// A gauge is read before it is understood, so this ramp is deliberately NOT
+/// themed: green under two thirds, amber past it, red in the last sixth. A
+/// palette that made 90% of a weekly limit look calm would be a prettier lie
+/// than TD is willing to tell.
+///
+/// *Which* band a fraction falls in is [`slot::band`], so the thresholds are
+/// unit-tested without a renderer and the usage panel and the bar's bottom slot
+/// cannot drift apart. This function only says what a band looks like.
+fn pressure(frac: f32) -> Hsla {
+    match slot::band(frac) {
+        slot::Band::Spent => hsla(0.01, 0.72, 0.60, 1.),
+        slot::Band::Warn => hsla(0.09, 0.82, 0.60, 1.),
+        slot::Band::Calm => hsla(0.38, 0.52, 0.52, 1.),
     }
 }
 
@@ -20050,11 +20513,60 @@ mod tests {
                 .expect("read an old file");
         assert!(old.projects.is_empty());
         assert_eq!(old.tabs[0].project, None);
-        // The three that must be ABSENT rather than false/zero: nobody hid the
-        // bar, nobody sized it, and nobody scoped anything.
+        // The four that must be ABSENT rather than false/zero: nobody hid the
+        // bar, nobody sized it, nobody scoped anything, and nobody has said
+        // how the bottom slot should read.
         assert_eq!(old.left_bar, None);
         assert_eq!(old.left_bar_w, None);
         assert_eq!(old.scope, None);
+        assert_eq!(old.slot_remaining, None);
+    }
+
+    /// The slot's own absent-is-not-off case. A file written before the slot
+    /// existed must open showing what is LEFT — the default — rather than
+    /// having its silence read as a preference for showing what is spent.
+    #[test]
+    fn an_absent_slot_preference_is_not_a_preference_for_spent() {
+        let old: StateFile =
+            toml::from_str("active = 0\npanes = 1\n[[tabs]]\n[tabs.node.Leaf]\ncwd = \"/work\"\n")
+                .expect("read an old file");
+        assert_eq!(old.slot_remaining, None, "the file carries no opinion");
+        assert!(
+            old.slot_remaining.unwrap_or(SLOT_REMAINING_DEFAULT),
+            "and no opinion resolves to the default reading, not to false"
+        );
+
+        // A person who actually chose `spent` is obeyed, and is distinguishable
+        // from the file that never said.
+        let chosen: StateFile = toml::from_str(
+            "active = 0\npanes = 1\nslot_remaining = false\n\
+             [[tabs]]\n[tabs.node.Leaf]\ncwd = \"/work\"\n",
+        )
+        .expect("read");
+        assert_eq!(chosen.slot_remaining, Some(false));
+        assert!(!chosen.slot_remaining.unwrap_or(SLOT_REMAINING_DEFAULT));
+    }
+
+    /// The flip is a display setting, so saving it must never be able to
+    /// rewrite what a vendor published.
+    #[test]
+    fn the_remaining_flip_never_touches_a_published_number() {
+        let rec = usage::Record {
+            id: "claude".into(),
+            ready: true,
+            limits: vec![usage::Limit {
+                label: "Weekly (7-day)".into(),
+                percent: 0.87,
+                resets_at: String::new(),
+            }],
+            ..Default::default()
+        };
+        let row = slot::ProviderRow::from_record(&rec, Some(1.0));
+        // Read as remaining...
+        assert_eq!(row.week.remaining(), Some(0.13));
+        // ...and the record still says what it said.
+        assert_eq!(rec.limits[0].percent, 0.87);
+        assert_eq!(row.week.spent(), Some(0.87));
     }
 
     /// Unknown is not hidden. A file that never had the field gets the default;
