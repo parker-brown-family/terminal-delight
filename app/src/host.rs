@@ -377,13 +377,21 @@ impl Cadence {
 struct Conn {
     id: u64,
     write: Mutex<UnixStream>,
+    /// The pid on the other end of this control connection (SO_PEERCRED at
+    /// accept). Recorded for one narrow use: a `window` hello writes it so an
+    /// agent's `terminal-delight mcp` relay can find the window's ctl socket —
+    /// which it can no longer reach by walking its own process tree, because a
+    /// hosted pane is a child of the host, not the window. It gates nothing and
+    /// drops no connection: this is not steal.
+    peer_pid: Option<u32>,
 }
 
 impl Conn {
-    fn new(id: u64, stream: UnixStream) -> Self {
+    fn new(id: u64, stream: UnixStream, peer_pid: Option<u32>) -> Self {
         Self {
             id,
             write: Mutex::new(stream),
+            peer_pid,
         }
     }
 
@@ -1601,6 +1609,29 @@ fn peer_is_us(stream: &UnixStream) -> bool {
     ok && cred.uid == unsafe { libc::getuid() }
 }
 
+/// The pid on the other end, from SO_PEERCRED. Used only to record which window
+/// is attached, so the `mcp` relay can find its ctl socket by session rather
+/// than by a process-ancestry walk the split severed.
+fn peer_pid(stream: &UnixStream) -> Option<u32> {
+    use std::os::fd::AsRawFd;
+    let mut cred = libc::ucred {
+        pid: 0,
+        uid: u32::MAX,
+        gid: u32::MAX,
+    };
+    let mut len = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
+    let ok = unsafe {
+        libc::getsockopt(
+            stream.as_raw_fd(),
+            libc::SOL_SOCKET,
+            libc::SO_PEERCRED,
+            std::ptr::from_mut(&mut cred).cast::<libc::c_void>(),
+            &mut len,
+        )
+    } == 0;
+    (ok && cred.pid > 0).then_some(cred.pid as u32)
+}
+
 /// Serve one connection: either a control conversation or a pane's byte
 /// stream, decided by its first line.
 fn serve_connection(host: &Arc<Host>, stream: UnixStream) {
@@ -1627,9 +1658,11 @@ fn serve_connection(host: &Arc<Host>, stream: UnixStream) {
     // A client that has stopped reading must not be able to hold the watcher's
     // thread, which writes to this same socket.
     let _ = stream.set_write_timeout(Some(WRITE_WITHIN));
+    let pid = peer_pid(&stream);
     let conn = Arc::new(Conn::new(
         host.next_conn.fetch_add(1, Ordering::SeqCst),
         stream,
+        pid,
     ));
     control_loop(host, &conn, first, reader);
     // However this connection ended, it is no longer anybody to push to.
@@ -1705,11 +1738,19 @@ fn handle_control_line(host: &Arc<Host>, line: &str, conn: Option<&Arc<Conn>>) -
     match request {
         Request::Hello { proto, kind } => match crate::hostproto::version_check(proto) {
             Ok(()) => {
-                // What a peer says it is is recorded nowhere and gates
-                // nothing. Saying hello signs a connection up for exactly one
-                // thing — finding out whether the two sides speak the same
-                // protocol — and a client that skips it is answered anyway.
-                let _ = kind;
+                // A peer's kind still gates nothing and drops no connection —
+                // this is not steal. It records exactly one fact: a `window`
+                // hello writes the window's pid to `session-<key>.window`, so
+                // an agent's `terminal-delight mcp` relay can find the window's
+                // ctl socket by session. The process-ancestry walk it used to
+                // rely on cannot cross from a hosted pane (a child of the host)
+                // to its window (a sibling). A client that skips hello is still
+                // answered; it simply records no window.
+                if matches!(kind, crate::hostproto::ClientKind::Window) {
+                    if let Some(pid) = conn.and_then(|c| c.peer_pid) {
+                        crate::hostproto::write_window_pid(&host.key, pid);
+                    }
+                }
                 Reply::Hello {
                     proto: PROTO_VERSION,
                     session: host.key.clone(),
@@ -2094,6 +2135,7 @@ mod owning {
         let conn = Arc::new(Conn::new(
             host.next_conn.fetch_add(1, Ordering::SeqCst),
             server,
+            None,
         ));
         (client, conn)
     }
@@ -3344,6 +3386,7 @@ mod owning {
         let conn = Arc::new(Conn::new(
             host.next_conn.fetch_add(1, Ordering::SeqCst),
             server,
+            None,
         ));
         host.watch(&conn);
         client
@@ -3448,6 +3491,7 @@ mod owning {
         let older = Arc::new(Conn::new(
             host.next_conn.fetch_add(1, Ordering::SeqCst),
             server,
+            None,
         ));
         // Everything such a client does say, said: a hello and a question. It
         // is saying hello that must not sign it up for anything, which is the

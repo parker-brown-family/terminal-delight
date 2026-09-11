@@ -102,6 +102,20 @@ fi
 MARK="td-survival-$$"
 RUN="$(mktemp -d "/tmp/${MARK}-XXXXXX")"
 SESSION="survival"
+# The sandbox below is for terminal-delight's own files. The shells this test
+# opens inherit it too, which is not what we meant — mise reads its global
+# configuration out of XDG_CONFIG_HOME and its trust database out of
+# XDG_STATE_HOME, and a lab shell that cannot find either is not the shell we
+# are claiming survives. Worse, an untrusted config makes `mise activate bash`
+# stop to ask a question, and this test kills the window it would be asking on:
+# the write lands on a pty with no reader, mise panics on the EIO, panics again
+# reporting it, and aborts — a core dump per cycle. Pin mise to the real
+# directories while we still know where they are. See scripts/td-host-lab.mjs.
+export MISE_CONFIG_DIR="${MISE_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/mise}"
+export MISE_STATE_DIR="${MISE_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/mise}"
+export MISE_DATA_DIR="${MISE_DATA_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/mise}"
+export MISE_CACHE_DIR="${MISE_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/mise}"
+
 export XDG_CONFIG_HOME="$RUN/config"
 REAL_RUNTIME="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 export XDG_RUNTIME_DIR="$RUN/run"
