@@ -2,104 +2,101 @@
 
 ## Status
 
-**BUILT, PUSHED, PR OPEN, NOT INSTALLED.** Branch `left-bar` @ `25102f1` in the
-worktree `~/Work/td-left-bar`, off `a493359` (main, post client-server merge).
-PR #359. Tests green: 711 pass, 0 fail.
+**MERGED. NOT INSTALLED.** PR #359 merged; `main` is `bef1016`. Branch
+`left-bar` @ `6936c43` in `~/Work/td-left-bar`, pushed, nothing uncommitted.
+719 tests green, `cargo fmt` and `cargo clippy --all-targets` clean.
 
-**Why not installed, which is the one thing to read before installing it:**
-`~/.local/bin/terminal-delight` points at `td-cf6d41f-hardened`, installed at
-15:09 today by the in-flight hosted-mode hardening work (`cs/hosted-hardening`,
-fixing #355 the MCP relay and #356 the divergence guard). This branch predates
-those commits, so swapping the symlink to it would revert live fixes. The
-versioned binary is built and sitting beside them at
-`~/.local/lib/terminal-delight/td-25102f1-left-bar` — one `ln -sfn` away — but
-the correct order is: hardening merges to main → merge main into `left-bar` (or
-land #359 after it) → rebuild → install once.
+**Read this before installing anything.** `~/.local/bin/terminal-delight` still
+points at `td-cf6d41f-hardened`, which carries the two hosted-mode regression
+fixes (#355 the MCP relay, #356 the divergence-guard re-snapshot) that `main`
+does **not**. Installing from `main` as it stands reverts live fixes on a
+machine running agents through them. A concurrent agent staged a
+`left-bar-hardened` combine branch — right idea, but cut before `main`'s tip, so
+it is missing `6936c43` (the desktop-font default) and `eebeee3` (the pencil).
 
-## What it is
+The whole sequence is **GitHub #364, `priority: highest`**: merge PR #358 →
+merge `main` into the combine → build → symlink-swap → restart TD once.
 
-The session drawn as a tree down the left edge of the window: **PROJECT** over
-**INITIATIVE** over the tabs themselves, each tab holding its sub-terminals.
-Issue #319's hierarchy, built. The initiative layer is the tab group that
-already existed — same colour, same fold, same contiguous run — given a
-`project` and read as what it always was.
+## What's done
 
-The payoff is **scoping**: clicking a branch narrows the MOTHER BAR to it while
-the tree stays whole. A strip carrying one push's worth of tabs is a strip that
-stops wrapping, which was the whole complaint in #319.
+- **The tree.** PROJECT over INITIATIVE over the tabs, each tab a task holding
+  its sub-terminals. The initiative layer is the tab group that already existed,
+  given a `project`. New pure module `app/src/tree.rs` — rows, roll-up, scope
+  rules and drop landings, free of gpui, 20 tests.
+- **Scoping.** Clicking a branch narrows the MOTHER BAR to it; the tree never
+  narrows. Three invariants pay for it: the tree is complete, the active task's
+  branches refuse to fold and the scope always contains it, and branch rows roll
+  up 🤖/✅/❌/📌 with a `…n` chip on the strip for what is hidden.
+- **Filing and ordering, one drag.** The middle of a branch header means *join
+  this*; a row's two halves mean *sit here*. Caret marks the seat, the drag chip
+  names the verb.
+- **The tabs sit over the terminals** — the strip is indented by the bar's width
+  plus the same margins the screen uses.
+- **Folding is real** — triangles drawn from rectangles, 15px targets, a
+  fold-everything button.
+- **TD wears the desktop's font** — `fc-match monospace`, what `omarchy font
+  set` writes. An explicit `family =` in a theme still wins.
+- **Two font bugs fixed:** the resolver now finds `JetBrainsMono Nerd Font` when
+  asked for `JetBrains Mono` (it was silently running the whole UI on Liberation
+  Mono), and the tab rename pencil moved U+270E → U+270F, because U+270E is in
+  no font TD falls back to and has been invisible since it was added.
 
-## The invariants (they are the deliverable, not the layout)
+**Verification:** six of the tree's invariants were mutated on purpose and every
+one's test went red (`scratchpad/mutate.sh`). End to end, a release build read a
+seeded tree of two projects / two initiatives / seven tasks, rendered without a
+panic, and saved it back complete. The font default was proved without touching
+the real desktop — fontconfig reads its user file from `XDG_CONFIG_HOME`, so the
+demo window's throwaway config could be moved to Liberation Mono while the real
+desktop kept its face.
 
-1. Every task appears in the tree exactly once, whatever the scope, whatever is
-   folded.
-2. The branches holding the active task refuse to fold; activating a task from
-   anywhere widens the scope to contain it. The strip always shows where you are.
-3. A hidden tab can still shout: branch rows roll up 🤖 / ✅ / ❌ / 📌 and keep
-   the animation for the loudest state; the strip carries a `⋯n` chip counting
-   what the scope hides, lit when one of them needs input.
-4. Unknown is not hidden: `left_bar` is `Option<bool>` on disk, resolved once at
-   load. A pre-tree file opens as an unorganised list, not an empty window.
-5. A grouped task's project is read from its group and never written twice.
+## How to run / verify
 
-## Where the code is
-
-- `app/src/tree.rs` — **new**, ~600 lines. Pure: row builder, roll-up, scope
-  rules, free of gpui and `Workspace`. 14 tests.
-- `app/src/main.rs` — `Project` / `SavedProject` / `SavedScope` / `BarBranch` /
-  `BarDrag`; `place_of`, `task_refs`, `file_task`, `file_initiative`,
-  `set_scope`, `ensure_scope_shows`, `adopt_projects_from_dirs`;
-  `render_left_bar`, `bar_row`, `branch_row`, `task_row`, `roll_badges`; the
-  strip's scope filter and its `⋯n` chip; the project section in the tab tray.
-- `app/src/pane.rs` — `ToggleLeftBar` (ctrl+shift+B), emitted from the pane
-  because that is what has focus.
-- `docs/plans/left-bar/` — the combined plan page and the status/score.
-
-## How to look at it (without touching the installed binary)
-
-A window is **already open on Hyprland workspace 8** running this build against
-a throwaway config seeded with two projects, two initiatives and seven tasks.
-To start another like it:
-
+```
+cargo test --manifest-path app/Cargo.toml
+```
 ```
 XDG_CONFIG_HOME=/tmp/claude-1000/-home-parker-BROWN-FAMILY-SPORTS-Software-terminal-delight/6fb46c4f-0f39-4742-b95d-1536c379d48b/scratchpad/smoke-config TD_NO_SESSIOND=1 /home/parker/Work/td-left-bar/app/target/release/terminal-delight
 ```
+```
+fc-list ":charset=25be" family
+```
 
-The seeded state and the launcher live in that scratchpad
-(`smoke-left-bar.sh`); `TD_NO_SESSIOND=1` keeps it off the live session host.
+The first is the suite. The second opens a demo window against a throwaway
+config seeded with a tree worth looking at, touching neither the real config nor
+the live session host. The third is the glyph check any new chrome character
+must pass — an empty result means no installed font can draw it.
 
-## Verified
+## Not done / next
 
-- `cargo test --manifest-path app/Cargo.toml` — 711 pass, 0 fail, 2 ignored.
-- **Mutation-tested**, because a test that cannot fail is decoration: six
-  load-bearing invariants were each broken on purpose and every one's test went
-  red (force-expand, exactly-once, unknown-is-not-hidden, the waiting-agent
-  count, git-root adoption, the out-of-scope roll-up). Script kept at
-  `scratchpad/mutate.sh`.
-- **End to end in the real app**: the release binary read the seeded tree,
-  rendered it without a panic, and saved it back complete — `left_bar`,
-  `left_bar_w`, `scope`, both `[[projects]]`, both groups' `project`, every
-  task's placement.
-- **Against the running old host**: the host merges layouts as untyped TOML, so
-  the new keys survive a save made through `td-cf6d41f`. No `LAYOUT_SCHEMA` bump.
-
-## What is NOT done
-
-- **No screenshot.** `grim` times out on this compositor from an agent shell —
-  three attempts, `-g` and `-o` both, so the rig was abandoned rather than
-  diagnosed. The parked window on workspace 8 is the substitute.
-- **No project overview.** Clicking a project scopes the strip; it does not fill
-  the main space with cards. #319 left that question open and it stays open.
-- **No help-modal row for ctrl+shift+B** — `lang.rs` forces all nine languages
-  and a row in English alone is worse than none. The `⟩` handle on the strip is
-  the discoverable path back meanwhile.
-- **No keyboard navigation inside the tree** (arrows to walk rows).
-- **No reordering of projects**, and no drag of a project row.
+- **#364 (urgent)** — one install carrying both. Everything else waits behind it.
+- **#360** — reordering a tab on a *scoped* strip resolves its drop slot against
+  the unfiltered tab list. A mechanism, not yet a sighting.
+- **#362** — the rest of the chrome's glyphs have never been checked against the
+  fonts that exist; the check belongs in CI.
+- **#363** — the desktop font is read at startup, so `omarchy font set` needs a
+  relaunch. Omarchy fires a `font-set` hook nothing of ours listens to.
+- **#319 stays open** — its "done when" asks for the gate run, and the project
+  overview (what the main space shows when a PROJECT is clicked) is still the
+  open design question. Clicking a project scopes the strip today.
 
 ## Watch out
 
-- Reorder-drag markers on the strip are computed from full tab indices while the
-  strip may be showing a subset; dragging tabs around *while scoped* can land a
-  tab in a surprising slot. Not hit in practice — reordering is usually done
-  unscoped — but it is the known rough edge.
+- **Never install over the running binary** — versioned path plus `ln -sfn`.
 - `prune_groups` still deletes an initiative when its last task leaves it. That
   is existing behaviour, now reachable by dragging in the tree.
+- A **demo TD window is running on Hyprland workspace 1** against the throwaway
+  config. Close it with ✕; it is not the installed build and never was.
+- `grim` times out from an agent shell on this box (both `-g` and `-o`), so a
+  GUI change cannot be screenshotted from here. Launch, read the state file the
+  app writes BACK, and park the window for a human eye.
+
+## Where it's recorded
+
+- **APES episode:** `…/apes/projects/terminal-delight/episodes/2026-09-10-left-bar-project-tree.md`
+- **APES ticket:** the build ticket closed with its deliverable; the install is
+  `…-mtw6uypw` in `todo`, mirroring #364.
+- **lean-ctx:** `ctx_session` decision recorded this session.
+- **file-memory:** `left-bar-tree.md`, `td-wears-the-desktop-font.md`,
+  `screen-capture-is-unavailable.md`.
+- **Harvest:** `handoffs/2026-09-10-left-bar-tieoff.cdx`.
+- **PR:** https://github.com/parker-brown-family/terminal-delight/pull/359
