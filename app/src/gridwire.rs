@@ -943,6 +943,126 @@ mod roundtrip {
         best[start..].to_vec()
     }
 
+    /// Replay a snapshot captured from a REAL host and check it against the
+    /// hash that host computed for its own grid.
+    ///
+    /// Every other test in this module is the encoder marking its own homework:
+    /// it builds a terminal, encodes it, replays it, and compares the two
+    /// terminals it made. This one compares against a number produced by a
+    /// different process, from a real pseudoterminal, over content a shell
+    /// actually printed. It is the only test here that could catch the encoder
+    /// and the hash being wrong in the same direction.
+    ///
+    /// Capture with `scripts/probe-capture.py`, which stands up a throwaway
+    /// session host, feeds a pane the shapes the generated sweep found, and
+    /// writes `<name>.bin` and `<name>.json` beside each other.
+    ///
+    /// ```text
+    /// TD_SNAPSHOT=/path/to/capture cargo test --bin terminal-delight \
+    ///     a_real_hosts_snapshot -- --ignored --nocapture
+    /// ```
+    ///
+    /// `TD_SNAPSHOT_UNMASKED=1` hashes spacer flags in, which is what
+    /// `grid_hash` did before `DERIVED_FLAGS` — set it when the capture came
+    /// from a host built before that change, or the comparison is between two
+    /// different hash functions and means nothing.
+    #[test]
+    #[ignore = "needs a capture from a real host; see the doc comment"]
+    fn a_real_hosts_snapshot_replays_to_the_hash_that_host_reported() {
+        let Ok(base) = std::env::var("TD_SNAPSHOT") else {
+            panic!("set TD_SNAPSHOT to the capture prefix (without .bin/.json)");
+        };
+        let bytes = std::fs::read(format!("{base}.bin")).expect("the captured bytes");
+        let meta = std::fs::read_to_string(format!("{base}.json")).expect("the capture metadata");
+        let field = |k: &str| -> u64 {
+            let at = meta
+                .find(&format!("\"{k}\""))
+                .unwrap_or_else(|| panic!("no {k}"));
+            let rest = &meta[at + k.len() + 3..];
+            let digits: String = rest
+                .trim_start_matches([':', ' '])
+                .chars()
+                .take_while(|c| c.is_ascii_digit())
+                .collect();
+            digits
+                .parse()
+                .unwrap_or_else(|_| panic!("{k} is not a number"))
+        };
+        let (cols, rows) = (field("cols") as usize, field("rows") as usize);
+        let reported = field("hash");
+        assert_eq!(
+            field("bytes_read"),
+            field("stream_offset"),
+            "the capture is not aligned with the host's stream — the pane was still printing, \
+             so its hash describes a grid these bytes do not produce"
+        );
+
+        let replica = term_fed(cols, rows, &bytes);
+        let unmasked = std::env::var("TD_SNAPSHOT_UNMASKED").is_ok();
+        let ours = if unmasked {
+            grid_hash_including_spacers(&replica)
+        } else {
+            grid_hash(&replica)
+        };
+        assert_eq!(
+            ours,
+            reported,
+            "replaying {} bytes of a real host's snapshot at {cols}x{rows} produced a grid the \
+             host would call divergent (ours {ours:#x}, host {reported:#x}){}",
+            bytes.len(),
+            if unmasked { " [unmasked]" } else { "" }
+        );
+    }
+
+    /// `grid_hash` as it was before `DERIVED_FLAGS` — spacer flags hashed in.
+    ///
+    /// Exists so a capture taken from an older host can be checked against the
+    /// hash function that host was actually running. Comparing it to today's
+    /// would be comparing two different functions and calling the difference a
+    /// bug.
+    fn grid_hash_including_spacers<T>(term: &Term<T>) -> u64 {
+        const OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
+        const PRIME: u64 = 0x0000_0100_0000_01b3;
+        let mut h = OFFSET;
+        let mut eat = |bytes: &[u8]| {
+            for b in bytes {
+                h ^= *b as u64;
+                h = h.wrapping_mul(PRIME);
+            }
+        };
+        let grid = term.grid();
+        let cols = grid.columns();
+        for line in grid.topmost_line().0..=grid.bottommost_line().0 {
+            let row = &grid[Line(line)];
+            for col in 0..cols {
+                let cell = &row[Column(col)];
+                eat(&(cell.c as u32).to_le_bytes());
+                eat(&cell.flags.bits().to_le_bytes());
+                eat(&super::hash_color(cell.fg).to_le_bytes());
+                eat(&super::hash_color(cell.bg).to_le_bytes());
+                eat(&match cell.underline_color() {
+                    Some(c) => super::hash_color(c),
+                    None => u32::MAX,
+                }
+                .to_le_bytes());
+                for &mark in cell.zerowidth().unwrap_or(&[]) {
+                    eat(&(mark as u32).to_le_bytes());
+                }
+                eat(b"|");
+            }
+            eat(b"\n");
+        }
+        let cursor = grid.cursor.point;
+        eat(&cursor.line.0.to_le_bytes());
+        eat(&cursor.column.0.to_le_bytes());
+        let modes = super::RESTORED_MODES
+            .iter()
+            .map(|(bit, _)| *bit)
+            .fold(TermMode::SHOW_CURSOR | TermMode::ALT_SCREEN, |a, b| a | b);
+        eat(&(term.mode().intersection(modes)).bits().to_le_bytes());
+        h
+    }
+
     #[test]
     #[ignore = "diagnostic: prints the encoder's bytes for a failing case"]
     fn dump_the_snapshot_for_a_failing_case() {
