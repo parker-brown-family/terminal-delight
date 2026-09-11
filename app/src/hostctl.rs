@@ -369,6 +369,14 @@ impl HostLink {
             }
             other => return Err(std::io::Error::other(format!("odd greeting: {other:?}"))),
         };
+        // Record this window against the session, beside the socket it just
+        // greeted. The HOST does this too, on the same hello — but the host is
+        // the half that cannot be upgraded without killing the terminals it
+        // holds, so a session started by an older build would otherwise leave
+        // every agent in it unable to find its window (#355) until those
+        // terminals were thrown away. Both sides writing the same fact costs a
+        // few bytes and makes the upgrade a window relaunch.
+        crate::hostproto::write_window_pid_beside(path, &session, std::process::id());
         Ok(Arc::new(Self {
             conn: Mutex::new(conn),
             session,
@@ -796,6 +804,64 @@ mod talking {
         assert_eq!(verdict, HostProbe::Skewed, "the fake host said: {served:?}");
         assert!(verdict.is_skewed());
         assert!(!verdict.is_live() && !verdict.is_absent() && !verdict.is_free());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The upgrade path this exists for: a session whose HOST is an older
+    /// build, answering hello and recording nothing.
+    ///
+    /// Before this, the only way to give the agents in such a session their
+    /// `mcp__terminal-delight__*` tools back was to restart the host — which
+    /// throws away every process it is holding, which is the one cost the whole
+    /// client-server split was built to avoid. The window records itself, so
+    /// the upgrade is a window relaunch.
+    #[test]
+    fn a_window_records_itself_against_a_host_too_old_to_do_it() {
+        let dir = tmp("recordself");
+        let path = dir.join("session-recordself.sock");
+        let listener = std::os::unix::net::UnixListener::bind(&path).expect("bind");
+        // A pre-#355 host: it greets, and it writes no window record.
+        let served = std::thread::spawn(move || {
+            let (stream, _) = listener.accept().expect("accept");
+            let mut reader = BufReader::new(stream.try_clone().expect("clone"));
+            let mut line = String::new();
+            let _ = reader.read_line(&mut line);
+            let mut writer = stream;
+            let _ = writer.write_all(
+                format!(
+                    "{{\"reply\":\"hello\",\"proto\":{PROTO_VERSION},\
+                     \"session\":\"recordself\",\"panes\":3,\"attended\":false}}\n"
+                )
+                .as_bytes(),
+            );
+            // hold the connection open while the assertion runs
+            std::thread::sleep(Duration::from_millis(300));
+            line
+        });
+
+        let link = HostLink::attach_at(&path).expect("attach");
+        assert_eq!(link.session(), "recordself");
+        let record = dir.join("session-recordself.window");
+        assert!(
+            record.exists(),
+            "the window attached and left no record of itself for the relay to find"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&record)
+                .expect("read the record")
+                .trim(),
+            std::process::id().to_string(),
+            "the record must name THIS window, not the host and not a stale pid"
+        );
+        // It lands beside the socket that was actually greeted — not in the
+        // ambient runtime directory, which is a different place whenever a test
+        // or a second desktop session is running.
+        assert_eq!(
+            crate::hostproto::window_pid_beside(&path, "recordself"),
+            record
+        );
+
+        let _ = served.join();
         let _ = std::fs::remove_dir_all(&dir);
     }
 
