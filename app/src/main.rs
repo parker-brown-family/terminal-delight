@@ -2623,11 +2623,11 @@ struct Workspace {
 
 fn make_pane(window: &mut Window, cx: &mut Context<Workspace>) -> Entity<TerminalView> {
     // A brand-new terminal with no restore context. The pinned house DESIGN
-    // appearance is applied by make_pane_restored, so this is a thin alias.
-    make_pane_restored(session::PaneRestore::default(), window, cx)
+    // appearance is applied by make_pane_window_owned, so this is a thin alias.
+    make_pane_window_owned(session::PaneRestore::default(), window, cx)
 }
 
-fn make_pane_restored(
+fn make_pane_window_owned(
     restore: session::PaneRestore,
     window: &mut Window,
     cx: &mut Context<Workspace>,
@@ -3105,7 +3105,45 @@ fn make_pane_hosted_or_local(
                 "terminal-delight: could not reach the session host for a pane ({err}); \
                  opening a local terminal instead — it will not survive this window"
             );
-            make_pane_restored(restore, window, cx)
+            make_pane_window_owned(restore, window, cx)
+        }
+    }
+}
+
+impl Workspace {
+    /// The only way a pane is made after the window is up.
+    ///
+    /// Hosted: the host spawns it, so it outlives this window. Serverless,
+    /// scratch and demo: this window owns it, which is what those modes are.
+    ///
+    /// Every creation gesture goes through here, for the same reason the house
+    /// appearance does. `make_pane_window_owned` already carries the note that
+    /// centralising the default *there* rather than in `make_pane` is what
+    /// killed the orange-overglow class, because split, tear-off and every
+    /// future creation site inherit it for free. Ownership never got that
+    /// chokepoint, and the result was #377: `+`, `ctl adopt` and split each
+    /// made a pseudoterminal belonging to the window, which a relaunch then
+    /// destroyed. Three sites, three separate discoveries, one missing funnel.
+    ///
+    /// The invariant is not "the client never makes a pty" — demo, scratch and
+    /// serverless own theirs deliberately, and deleting that would remove the
+    /// ability to bisect a host bug by turning the host off. It is "**a hosted
+    /// window never makes one**", enforced here rather than remembered.
+    ///
+    /// `self.attach.clone()` first, the way `explain_endings` already does, so
+    /// the borrow of `self` ends before `cx` is used mutably.
+    fn make_pane_in_mode(
+        &self,
+        restore: session::PaneRestore,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<TerminalView> {
+        match self.attach.clone() {
+            Some(ctx) => {
+                let built = make_pane_host_spawned(restore.clone(), &ctx, window, cx);
+                make_pane_hosted_or_local(built, restore, window, cx)
+            }
+            None => make_pane_window_owned(restore, window, cx),
         }
     }
 }
@@ -3196,7 +3234,7 @@ fn build_node(saved: &SavedNode, window: &mut Window, cx: &mut Context<Workspace
             // pane this leaf used to show is not this window's business.
             pane_id: _,
         } => {
-            let pane = make_pane_restored(
+            let pane = make_pane_window_owned(
                 session::PaneRestore {
                     cwd: cwd.clone(),
                     resume: resume.clone(),
@@ -3212,7 +3250,7 @@ fn build_node(saved: &SavedNode, window: &mut Window, cx: &mut Context<Workspace
                 cx,
             );
             // Restore the pane's EXACT saved appearance, overriding the green
-            // house default that make_pane_restored pins. A saved pristine
+            // house default that make_pane_window_owned pins. A saved pristine
             // appearance means "follow the outer cabinet" and must win here —
             // hence this applies unconditionally, not just when non-pristine.
             let appearance = appearance.clone();
@@ -3446,7 +3484,7 @@ impl Workspace {
         } else if scratch {
             // one terminal, seeded if this is a torn-off pane
             let pane = match seed {
-                Some(restore) => make_pane_restored(restore, window, cx),
+                Some(restore) => make_pane_window_owned(restore, window, cx),
                 None => make_pane(window, cx),
             };
             ws.tabs.push(Tab::new(Node::Leaf(pane), None));
@@ -3457,7 +3495,7 @@ impl Workspace {
             // and nowhere else: the sole terminal opens in that directory.
             match seed {
                 Some(restore) => {
-                    let pane = make_pane_restored(restore, window, cx);
+                    let pane = make_pane_window_owned(restore, window, cx);
                     ws.tabs.push(Tab::new(Node::Leaf(pane), None));
                     ws.active = 0;
                     ws.focus_active(window, cx);
@@ -4598,7 +4636,7 @@ impl Workspace {
         if std::env::var("TD_KEYDEBUG").is_ok() {
             eprintln!("new_tab");
         }
-        let pane = make_pane(window, cx);
+        let pane = self.make_pane_in_mode(session::PaneRestore::default(), window, cx);
         // A new tab joins the branch you are in, and lands beside its siblings
         // rather than at the end of the window, so a branch stays one run in tab
         // order. The strip shows one branch and the tree shows the rest, so a
@@ -4662,7 +4700,12 @@ impl Workspace {
             logo: None,
             note: None,
         };
-        let pane = make_pane_restored(restore, window, cx);
+        // Through the chokepoint, which buys two things beyond survival: the
+        // host refuses to type a recipe the session is already running and
+        // shows that pane instead (`Started::Already`), so `ctl adopt` can no
+        // longer double-run an agent; and the pane gets a host pane id, which
+        // is what `hangup`, `attached_panes` and the serializer all key off.
+        let pane = self.make_pane_in_mode(restore, window, cx);
         self.tabs.push(Tab::new(Node::Leaf(pane), None));
         self.active = self.tabs.len() - 1;
         self.save(cx);
@@ -5847,7 +5890,7 @@ impl Workspace {
         // inherit the split pane's live working directory — a split stays in the
         // same project (TAB = project), instead of dropping back to $HOME.
         let cwd = target_pane.read(cx).runtime().cwd;
-        let new_pane = make_pane_restored(
+        let new_pane = self.make_pane_in_mode(
             session::PaneRestore {
                 cwd,
                 resume: None,
@@ -19363,6 +19406,69 @@ mod tests {
             (grid.cols, grid.rows),
             (held.cols as usize, held.rows as usize),
             "the replica was built at a different shape than the snapshot it is about to replay"
+        );
+    }
+
+    /// Every gesture that makes a pane after the window is up goes through the
+    /// one function that knows whether this window is allowed to own a
+    /// pseudoterminal.
+    ///
+    /// The invariant is not "the client never spawns a pty" — demo, scratch and
+    /// serverless own theirs by design, and removing that would remove the
+    /// ability to bisect a host bug by turning the host off. It is that a
+    /// *hosted* window never does, because a pty the window owns dies with the
+    /// window, and a person who opened a tab an hour ago has no way to know
+    /// which kind they got until a relaunch throws one away.
+    ///
+    /// Source-scanned rather than exercised, for the same reason the rename
+    /// sweep beside it is: a `Workspace` needs a live gpui `Window`, so the
+    /// wrong version compiles, renders, and passes everything else. This is the
+    /// cheap check that catches a fourth creation site being added — which is
+    /// exactly how the first three arrived, each one predating the split and
+    /// none of them revisited (#377, #382).
+    ///
+    /// A stronger version exists if this ever drifts: give the window-owned
+    /// builder a witness parameter only the legitimate callers can construct,
+    /// so the compiler holds the invariant instead of a string search. Start
+    /// here; escalate if it fails to hold.
+    #[test]
+    fn a_hosted_window_makes_no_pane_of_its_own() {
+        let src = include_str!("main.rs");
+        let body = |sig: &str| -> &str {
+            let at = src.find(sig).unwrap_or_else(|| panic!("{sig} not found"));
+            let end = src[at..].find("\n    }\n").expect("end of fn");
+            &src[at..at + end]
+        };
+
+        // Full signatures, not name prefixes: `fn split` alone matches
+        // `split_leaf` three thousand lines earlier, and a source scan that
+        // silently reads the wrong function is worse than no scan.
+        for gesture in [
+            "fn new_tab(&mut self",
+            "fn adopt_pane(",
+            "fn split(&mut self, dir: SplitDir",
+        ] {
+            let b = body(gesture);
+            assert!(
+                b.contains("make_pane_in_mode"),
+                "{gesture} must create its pane through make_pane_in_mode; anything else \
+                 gives a hosted window a pseudoterminal of its own, which a relaunch destroys"
+            );
+            assert!(
+                !b.contains("make_pane_window_owned(") && !b.contains("make_pane(window, cx)"),
+                "{gesture} still reaches a window-owned builder directly"
+            );
+        }
+
+        // And the chokepoint has to actually branch on the mode rather than
+        // being a rename of one of the two paths.
+        let choke = body("fn make_pane_in_mode");
+        assert!(
+            choke.contains("self.attach.clone()")
+                && choke.contains("make_pane_host_spawned")
+                && choke.contains("make_pane_window_owned"),
+            "make_pane_in_mode must choose between the host and this window by asking which \
+             mode the workspace is in"
         );
     }
 
