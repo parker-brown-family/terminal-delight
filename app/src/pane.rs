@@ -4227,8 +4227,8 @@ impl TerminalView {
         if let Some(mut buf) = self.renaming.take() {
             match ks.key.as_str() {
                 "enter" => {
-                    self.name = (!buf.trim().is_empty()).then(|| buf.trim().to_string());
-                    cx.emit(PaneRenamed);
+                    self.renaming = Some(buf);
+                    self.commit_rename(cx);
                 }
                 "escape" => {}
                 "backspace" => {
@@ -5088,7 +5088,27 @@ impl TerminalView {
         cx.notify();
     }
 
+    /// Commit an in-flight header rename (if any) and leave edit mode — the
+    /// "click off saves" behaviour, on the same terms as the tab strip. An
+    /// empty name clears back to the terminal's own OSC title.
+    pub fn commit_rename(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some(buf) = self.renaming.take() else {
+            return false;
+        };
+        self.name = (!buf.trim().is_empty()).then(|| buf.trim().to_string());
+        cx.emit(PaneRenamed);
+        cx.notify();
+        true
+    }
+
     fn on_mouse_down(&mut self, ev: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        // Any press that is not the rename box itself (which stops propagation)
+        // closes the rename and saves it — including a press inside this pane's
+        // own grid, which the workspace's click-off sweep never sees when this
+        // pane swallows the event for a sticky note or its context menu.
+        if self.renaming.is_some() {
+            self.commit_rename(cx);
+        }
         if std::env::var("TD_KEYDEBUG").is_ok() {
             eprintln!("pane mousedown at {:?}", ev.position);
         }
@@ -7062,9 +7082,13 @@ impl Render for TerminalView {
             // the title / status / grid-label text scales with the bar
             .text_size(px(th.font_size * scale))
             .child(if let Some(buf) = self.renaming.clone() {
-                // inline rename box: a left-click anywhere else commits via
-                // focus loss is not wired, so enter/escape (in on_key) close it
+                // inline rename box: ↵ commits, esc reverts, and a click
+                // anywhere outside the box commits too (see `commit_rename`) —
+                // clicking away must never leave this eating the keystrokes
+                // you meant for the terminal underneath.
                 div()
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation())
                     .flex_1()
                     // min-width:0 lets the title actually shrink (a nowrap flex
                     // child keeps min-width:auto otherwise) — so it clips instead
@@ -7100,19 +7124,6 @@ impl Render for TerminalView {
                     .cursor_pointer()
                     .child(logo_el)
                     .child(format!("▸ {} · {label}", self.mode.label_i18n()))
-                    // hover-revealed ✎ affordance (invites the rename)
-                    .child(
-                        div()
-                            .text_size(px(11. * scale))
-                            .text_color(Hsla {
-                                h: 0.,
-                                s: 0.,
-                                l: 0.,
-                                a: 0.,
-                            })
-                            .group_hover(hdr_grp.clone(), move |s| s.text_color(bar_fg.alpha(0.85)))
-                            .child("\u{270F}"),
-                    )
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(|view, ev: &MouseDownEvent, window, cx| {
