@@ -15115,7 +15115,14 @@ impl Render for Workspace {
             .items_center()
             .px(px(12. * scale))
             .py(px(7. * scale))
-            .gap(px(8. * scale))
+            // NO row gap, deliberately. The corner is pinned to the tree's
+            // width and the void after it is an exact number, so the tabs'
+            // left edge is `px + strip_indent + strip_void` — the same
+            // arithmetic the layout below uses to place the terminals. A flex
+            // gap would be added between EVERY pair, putting two of them ahead
+            // of the strip and pushing the tabs 16px right of the panes they
+            // sit over, which is the one thing the indent exists to prevent.
+            // The right-hand controls carry their own margin instead.
             // the mother bar is the move handle: arm on press, hand off to the
             // compositor on the first drag (a plain click stays a click).
             .on_mouse_down(
@@ -15195,6 +15202,8 @@ impl Render for Workspace {
                     .flex_row()
                     .items_center()
                     .gap(px(12. * scale))
+                    // its own margin, since the row carries no gap
+                    .ml(px(12. * scale))
                     .child(scrubber)
                     .child(win_controls),
             );
@@ -20789,6 +20798,17 @@ mod tests {
             top.contains("w(px(strip_void))"),
             "…and the void after it survives: it is what makes the strip read \
              as belonging to the screen rather than to the tree"
+        );
+        // No flex gap on the row. A gap is inserted between EVERY pair, so two
+        // of them would land ahead of the strip and push the tabs 16px right of
+        // the panes they sit over — the one thing the indent exists to prevent.
+        // The tabs' left edge has to stay `px + strip_indent + strip_void`,
+        // which is the arithmetic the layout below uses for the terminals.
+        let row_head = &top[..top.find(".child(").unwrap_or(top.len())];
+        assert!(
+            !row_head.contains(".gap(px("),
+            "the mother bar's row must carry no gap, or the tabs stop lining up \
+             with the terminals"
         );
         // One name-rendering path, called at two sizes, so the corner and the
         // strip can never disagree about what the branch is called.
