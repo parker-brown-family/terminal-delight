@@ -1360,6 +1360,20 @@ pub fn init(cx: &mut App) {
     let (custom, active_id) = match fs::read_to_string(&path).ok().map(|s| parse(&s)) {
         Some(Ok(spec)) => {
             report_unknown(&path, &spec);
+            // The one positive witness this layer has. A skin is data, it is
+            // applied silently, and the chrome cannot be screenshotted from a
+            // shell — so without this line "the skin I asked for is live" is an
+            // inference from the absence of errors, which is not evidence of
+            // anything. Printed only when a file was actually read, so the
+            // default launch stays quiet.
+            eprintln!(
+                "terminal-delight: skin \"{}\" from {} ({:?} corners, {:?} boundary, {:?} emphasis)",
+                spec.name,
+                path.display(),
+                spec.shape.corner.unwrap_or_default(),
+                spec.shape.boundary.unwrap_or_default(),
+                spec.shape.emphasis.unwrap_or_default(),
+            );
             (Arc::new(spec), "custom".to_string())
         }
         Some(Err(err)) => {
