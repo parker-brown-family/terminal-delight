@@ -14628,13 +14628,15 @@ impl Render for Workspace {
         // that gap — the moment a control moves into it, the inset stops
         // reading as deliberate and starts reading as that control's margin.
         let strip_void = 14. * scale;
-        // The branch's name used to stand in a column of exactly this width,
-        // centred over the tree. It is in the header row now, beside the mark,
-        // where the words `▸ TERMINAL DELIGHT` were — so what is left here is
-        // the INDENT alone, which is a separate job and still needed: it is
-        // what makes a tab sit over the terminals it opens rather than over the
-        // tree that lists them.
-        let strip_gutter = div().flex_none().w(px(strip_indent));
+        // `strip_indent` is the tree's width, and it is what keeps the tabs'
+        // left edge on the line the terminals start at — a tab sits over the
+        // thing it opens rather than over the tree that lists it.
+        //
+        // It used to be a spacer of its own on a second row. Now that the
+        // header is one line, the CORNER is pinned to this width instead: the
+        // mark and the branch name occupy exactly the tree's column, so the
+        // tabs begin where they always did and the space the corner was
+        // leaving empty is doing a job.
         let mut tab_strip = div()
             .flex()
             .flex_row()
@@ -15091,18 +15093,36 @@ impl Render for Workspace {
             .min_h(px(43. * scale))
             .flex_none()
             .flex()
-            // TWO STACKED ROWS — brand + controls above, TABS ON THEIR OWN ROW
-            // below. They used to share one line, with the strip capped at 55% of
-            // the bar and wrapping inside that cap: four ordinary titles were
-            // already enough to fold the tabs into a narrow scrunched column
-            // pressed against the header icons, which is unusable at a glance.
-            // Given a row to itself the strip has the full width, so the common
-            // case doesn't wrap at all — and when it eventually does, it grows
-            // downward without ever moving the brand or the controls.
-            .flex_col()
+            // ONE ROW — the mark and the branch's name, then the tabs, then the
+            // scale and the frame buttons.
+            //
+            // It was two stacked rows, and for a good reason at the time: the
+            // strip used to be capped at 55% of the bar and wrapped inside that
+            // cap, so four ordinary titles folded the tabs into a scrunched
+            // column pressed against a row of header glyphs. A row of its own
+            // fixed that. Three things then removed the cause. The strip now
+            // carries ONE BRANCH rather than the whole session, so its normal
+            // length is a handful of tabs; the header glyphs moved to the
+            // bottom bezel, so nothing is competing for the right-hand side but
+            // the scale and the window buttons; and the brand's words became an
+            // 18px mark. What was left was a second row holding a short strip
+            // with a wide gap beside it and a first row holding a mark with a
+            // wider gap beside THAT — two lines of mostly nothing.
+            //
+            // The strip is still `flex_1` and still wraps, so a genuinely full
+            // bar grows downward exactly as it did. `min_h` is a minimum.
+            .flex_row()
+            .items_center()
             .px(px(12. * scale))
             .py(px(7. * scale))
-            .gap(px(3. * scale))
+            // NO row gap, deliberately. The corner is pinned to the tree's
+            // width and the void after it is an exact number, so the tabs'
+            // left edge is `px + strip_indent + strip_void` — the same
+            // arithmetic the layout below uses to place the terminals. A flex
+            // gap would be added between EVERY pair, putting two of them ahead
+            // of the strip and pushing the tabs 16px right of the panes they
+            // sit over, which is the one thing the indent exists to prevent.
+            // The right-hand controls carry their own margin instead.
             // the mother bar is the move handle: arm on press, hand off to the
             // compositor on the first drag (a plain click stays a click).
             .on_mouse_down(
@@ -15124,95 +15144,68 @@ impl Render for Workspace {
                 }),
             )
             .child(
-                // ROW 1 — the brand on the left, the controls on the right, on one
-                // line, always. Nothing here wraps or reflows any more: the tabs
-                // that used to share this line now have their own row below.
+                // THE CORNER: the app's MARK, then the name of the branch this
+                // window is standing in.
+                //
+                // It used to read `▸ TERMINAL DELIGHT` — the widest thing on
+                // the busiest row, spent saying something that never changes
+                // and that the window's own title already says. Worse, the
+                // strip heading below it said the active branch's name, so a
+                // session whose project is called Terminal Delight printed the
+                // same three words twice, stacked, in the two most prominent
+                // places in the window. The mark says which program this is in
+                // 18px; the words beside it now say something that changes.
+                //
+                // Pinned to the width of the TREE, which is what keeps the
+                // tabs' left edge on the line the terminals start at — the
+                // alignment the old second row got from its heading column. A
+                // branch named longer than the tree is wide truncates here
+                // rather than pushing the first tab right. With the tree closed
+                // there is no column to match, so it takes what it needs.
                 div()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .justify_between()
-                    .gap(px(12. * scale))
-                    .child(
-                        // LEFT GROUP: the app's MARK, then the name of the
-                        // branch this window is standing in.
-                        //
-                        // This slot used to read `▸ TERMINAL DELIGHT` — the
-                        // widest thing on the busiest row, spent saying
-                        // something that never changes and that the window's
-                        // own title already says. Worse, the strip heading
-                        // below it said the active branch's name, so a session
-                        // whose project is called Terminal Delight printed the
-                        // same three words twice, stacked, in the two most
-                        // prominent places in the window.
-                        //
-                        // The mark says which program this is in 18px. The
-                        // words that follow it now say something that changes.
-                        div()
-                            .flex_1()
-                            .min_w(px(0.))
-                            // clip instead of paint-over: when the window narrows past the
-                            // brand, the fixed-size children must truncate, not bleed onto
-                            // the always-kept right-side controls (issue #86).
-                            .overflow_hidden()
-                            .flex()
-                            .flex_row()
-                            .items_center()
-                            .gap(px(8. * scale))
-                            .child(
-                                // A fixed height, so the row keeps its size
-                                // whatever the branch is called.
-                                div()
-                                    .flex_none()
-                                    .h(px(22. * scale))
-                                    .flex()
-                                    .flex_row()
-                                    .items_center()
-                                    .gap(px(8. * scale))
-                                    .child(
-                                        gpui::img(crate::art::mark_png())
-                                            .w(px(18. * scale))
-                                            .h(px(18. * scale)),
-                                    ),
-                            )
-                            .child(self.place_name(None, 13. * scale, cx)),
-                    )
-                    .child(
-                        // never compressed or pushed off. The menu glyphs used
-                        // to lead this group and the splits followed them; both
-                        // are at the bottom now, which leaves the top right
-                        // holding the menu-bar SCALE and the window's own frame
-                        // buttons — the scale because it sizes this very bar,
-                        // and the frame buttons because they are the
-                        // compositor's furniture rather than TD's.
-                        div()
-                            .flex_none()
-                            .flex()
-                            .flex_row()
-                            .items_center()
-                            .gap(px(12. * scale))
-                            .child(scrubber)
-                            .child(win_controls),
-                    ),
-            )
-            .child(
-                // ROW 2 — THE TABS, on their own row and nothing else's. Full
-                // width, so the ordinary handful of tabs lays out flat instead of
-                // wrapping; overflow_hidden keeps a wrapping strip inside the bar,
-                // and the top padding is headroom for the ACTIVE tab, which lifts
-                // mt(-4) and reads 20% bigger than its neighbours.
-                div()
-                    .w_full()
-                    .min_w(px(0.))
+                    .flex_none()
+                    .when(strip_indent > 0., |d| d.w(px(strip_indent)))
+                    .h(px(22. * scale))
+                    // clip instead of paint-over: when the window narrows past
+                    // the corner, the fixed-size children must truncate, not
+                    // bleed onto the always-kept right-side controls (#86).
                     .overflow_hidden()
-                    .pt(px(4. * scale))
                     .flex()
                     .flex_row()
                     .items_center()
-                    .child(strip_gutter)
-                    // the void: no control, no rule, no handle
-                    .child(div().flex_none().w(px(strip_void)))
-                    .child(tab_strip),
+                    .gap(px(8. * scale))
+                    .child(
+                        gpui::img(crate::art::mark_png())
+                            .flex_none()
+                            .w(px(18. * scale))
+                            .h(px(18. * scale)),
+                    )
+                    .child(self.place_name(None, 13. * scale, cx)),
+            )
+            // the void: no control, no rule, no handle. What makes the strip
+            // read as belonging to the screen rather than to the tree.
+            .child(div().flex_none().w(px(strip_void)))
+            // THE TABS, inline. `flex_1` + `min_w_0` + `flex_wrap`, so they
+            // take the middle, absorb the slack that used to be dead space on
+            // two rows, and still wrap downward on a genuinely full bar.
+            .child(tab_strip)
+            .child(
+                // Never compressed or pushed off. The menu glyphs used to lead
+                // this group and the splits followed them; both are at the
+                // bottom now, which leaves this end holding the menu-bar SCALE
+                // and the window's own frame buttons — the scale because it
+                // sizes this very bar, and the frame buttons because they are
+                // the compositor's furniture rather than TD's.
+                div()
+                    .flex_none()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(12. * scale))
+                    // its own margin, since the row carries no gap
+                    .ml(px(12. * scale))
+                    .child(scrubber)
+                    .child(win_controls),
             );
 
         let bezel_bottom = div()
@@ -20778,13 +20771,44 @@ mod tests {
             !src.contains(&brand_text),
             "the header no longer prints the program's name as words"
         );
-        // The strip keeps the INDENT the heading used to provide — a separate
-        // job, and the thing that makes a tab sit over the terminals it opens
-        // rather than over the tree that lists them.
+        // ONE ROW. The corner, the void, the tabs and the right-hand controls
+        // are siblings of `bezel_top` itself, not children of two stacked
+        // rows — two rows each holding a short thing with a wide gap beside it
+        // was the awkward space this removed.
         assert!(
-            src.contains("let strip_gutter = div().flex_none().w(px(strip_indent));")
-                && src.contains(".child(strip_gutter)"),
-            "the tab row keeps its indent after losing the heading"
+            top.contains(".flex_row()") && !top.contains(".flex_col()"),
+            "the mother bar is one row: the tabs share it with the corner and \
+             the scale"
+        );
+        assert!(
+            top.contains(".child(tab_strip)"),
+            "the tabs are inline in that row"
+        );
+        // And the corner carries the INDENT the second row's spacer used to
+        // provide — the thing that keeps a tab sitting over the terminals it
+        // opens rather than over the tree that lists them. Pinning the corner
+        // to the tree's width is what makes one row possible without moving
+        // the tabs' left edge.
+        assert!(
+            top.contains(".when(strip_indent > 0., |d| d.w(px(strip_indent)))"),
+            "the corner occupies the tree's column, so the tabs begin where \
+             they always did"
+        );
+        assert!(
+            top.contains("w(px(strip_void))"),
+            "…and the void after it survives: it is what makes the strip read \
+             as belonging to the screen rather than to the tree"
+        );
+        // No flex gap on the row. A gap is inserted between EVERY pair, so two
+        // of them would land ahead of the strip and push the tabs 16px right of
+        // the panes they sit over — the one thing the indent exists to prevent.
+        // The tabs' left edge has to stay `px + strip_indent + strip_void`,
+        // which is the arithmetic the layout below uses for the terminals.
+        let row_head = &top[..top.find(".child(").unwrap_or(top.len())];
+        assert!(
+            !row_head.contains(".gap(px("),
+            "the mother bar's row must carry no gap, or the tabs stop lining up \
+             with the terminals"
         );
         // One name-rendering path, called at two sizes, so the corner and the
         // strip can never disagree about what the branch is called.
