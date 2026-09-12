@@ -698,6 +698,40 @@ const LEFT_BAR_W: f32 = 208.;
 /// fact arranged so it has to be subtracted first.
 const SLOT_REMAINING_DEFAULT: bool = true;
 
+/// One size for every NAME in the chrome: a tab's label on the strip, and a
+/// row's label in the tree beside it.
+///
+/// They are the same kind of thing — a name you click to go somewhere — drawn
+/// in two places, and two sizes made the tree read as a smaller, lesser copy of
+/// the strip instead of the complete version of it, which is exactly backwards:
+/// the strip carries one branch and the tree carries the session. The ACTIVE
+/// tab still lifts 20% on top of this, which is a different job (saying where
+/// you are) and stays.
+const CHROME_NAME_PT: f32 = 11.0;
+
+/// The chrome's menu glyphs — paint, display, graveyard, plugins — at HALF the
+/// pane header's icon size.
+///
+/// They moved to the bottom bezel at the size they had in the top right, and
+/// there they were the loudest thing on a row whose whole job is to be quiet:
+/// four buttons you press occasionally, drawn as big as the things you read
+/// constantly.
+const CHROME_GLYPH: f32 = pane::HICON * 0.5;
+
+/// The provider mark in an allowance row, at twice what it was.
+///
+/// It is the only glyph in the slot that says WHOSE allowance a rail belongs
+/// to, and at 14px a real logo is a smudge — which defeats the point of the
+/// marks having stopped being initials. The rails and the trailing figure grow
+/// by half as much (see [`SLOT_RAIL_GROWTH`]): a 2× badge beside an unchanged
+/// 4px hairline stops reading as one row.
+const SLOT_MARK_PT: f32 = 28.0;
+
+/// How much the rails and the trailing figure grow alongside a doubled mark.
+/// Deliberately less than the mark's 2×: the mark had the most to gain from
+/// the space, and rails that thick start competing with the tree above them.
+const SLOT_RAIL_GROWTH: f32 = 1.5;
+
 const LEFT_BAR_MIN: f32 = 132.;
 /// Past this the tree is stealing the terminals' width, which is the wrong way
 /// round for a terminal.
@@ -11768,7 +11802,7 @@ impl Workspace {
                         .border_1()
                         .border_color(th.accent)
                         .bg(darken(th.bg, 0.8))
-                        .text_size(px(10.5 * s))
+                        .text_size(px(CHROME_NAME_PT * s))
                         .text_color(th.text)
                         .flex()
                         .flex_row()
@@ -11850,7 +11884,7 @@ impl Workspace {
                     .min_w_0()
                     .overflow_hidden()
                     .whitespace_nowrap()
-                    .text_size(px(if is_project { 9.5 * s } else { 10.5 * s }))
+                    .text_size(px(CHROME_NAME_PT * s))
                     .when(is_project, |d| {
                         d.font_weight(gpui::FontWeight::EXTRA_BOLD)
                             .text_color(if scoped {
@@ -12011,7 +12045,7 @@ impl Workspace {
                         .border_1()
                         .border_color(th.accent)
                         .bg(darken(th.bg, 0.8))
-                        .text_size(px(10.5 * s))
+                        .text_size(px(CHROME_NAME_PT * s))
                         .text_color(th.text)
                         .flex()
                         .flex_row()
@@ -12062,7 +12096,7 @@ impl Workspace {
                     .min_w_0()
                     .overflow_hidden()
                     .whitespace_nowrap()
-                    .text_size(px(10.5 * s))
+                    .text_size(px(CHROME_NAME_PT * s))
                     .text_color(text.unwrap_or(if is_active {
                         th.text
                     } else {
@@ -12311,12 +12345,13 @@ impl Workspace {
         let text = th.text;
         let faint = th.faint;
         let track = text.alpha(0.10);
-        let rail_h = 4.0 * s;
-        let tick_h = 3.0 * s;
-        let row_h = 20.0 * s;
+        let rail_h = 4.0 * SLOT_RAIL_GROWTH * s;
+        let tick_h = 3.0 * SLOT_RAIL_GROWTH * s;
+        // Tall enough for the mark, which is now the row's tallest thing.
+        let row_h = (SLOT_MARK_PT + 4.0) * s;
         let counter_h = 17.0 * s;
-        let mark_w = 14.0;
-        let val_w = 26.0;
+        let mark_w = SLOT_MARK_PT;
+        let val_w = 30.0;
 
         // What the rail itself gets, once the gutters, the mark and the value
         // cell have taken theirs. This is the number the degradation ladder is
@@ -12374,7 +12409,7 @@ impl Workspace {
             .flex_none()
             .flex()
             .flex_col()
-            .gap(px(2.0 * s))
+            .gap(px(6.0 * s))
             .px(px(6.0 * s))
             .pb(px(5.0 * s));
 
@@ -12506,7 +12541,7 @@ impl Workspace {
                         .flex()
                         .items_center()
                         .justify_center()
-                        .text_size(px(7.5 * s))
+                        .text_size(px(7.5 * SLOT_RAIL_GROWTH * s))
                         .text_color(text.alpha(0.75))
                         .map(|d| match self.provider_marks.get(&row.id) {
                             // gpui draws an SVG as a MASK tinted by
@@ -12531,7 +12566,7 @@ impl Workspace {
                         .min_w(px(0.))
                         .flex()
                         .flex_col()
-                        .gap(px(2.0 * s))
+                        .gap(px(3.0 * s))
                         .child(week)
                         .child(session),
                 );
@@ -12540,7 +12575,7 @@ impl Workspace {
                     div()
                         .flex_none()
                         .w(px(val_w * s))
-                        .text_size(px(8.5 * s))
+                        .text_size(px(8.5 * SLOT_RAIL_GROWTH * s))
                         .text_color(text.alpha(val_alpha))
                         .child(val),
                 );
@@ -12671,9 +12706,13 @@ impl Workspace {
         Some(
             stack
                 .child(counter)
-                .h(px(rows.len() as f32 * (row_h + 2.0 * s)
+                // Declared, not discovered — the tree yields exactly this and
+                // not a pixel more, so a busy day cannot push it out of the
+                // bar. The `6.0` is the stack's own gap between components, and
+                // it is counted once per row plus once for the counter.
+                .h(px(rows.len() as f32 * (row_h + 6.0 * s)
                     + counter_h
-                    + 5.0 * s)),
+                    + 11.0 * s)),
         )
     }
 
@@ -12944,7 +12983,7 @@ impl Workspace {
                 .border_1()
                 .border_color(th.accent)
                 .bg(darken(th.bg, 0.8))
-                .text_size(px(11. * s))
+                .text_size(px(CHROME_NAME_PT * s))
                 .text_color(th.text)
                 .flex()
                 .flex_row()
@@ -12996,7 +13035,7 @@ impl Workspace {
         let mut btn = div()
             .px(px(10. * ts))
             .py(px(3. * ts))
-            .text_size(px(11. * ts))
+            .text_size(px(CHROME_NAME_PT * ts))
             .cursor_pointer()
             .border_b_2()
             .border_color(if is_active {
@@ -13089,7 +13128,7 @@ impl Workspace {
                 let pinned = self.tab_pinned_notes(i, cx);
                 (pinned > 0).then(|| {
                     div()
-                        .text_size(px(11. * ts))
+                        .text_size(px(CHROME_NAME_PT * ts))
                         .child(if pinned > 1 {
                             SharedString::from(format!("📌{pinned}"))
                         } else {
@@ -14928,8 +14967,8 @@ impl Render for Workspace {
         let chrome_narrow = chrome_vw < CHROME_NARROW;
 
         let ic_theme = Self::hicon_s(&th, self.theme_menu.is_some(), scale)
-            .text_size(px(pane::HICON * scale))
-            .line_height(px(pane::HICON * scale))
+            .text_size(px(CHROME_GLYPH * scale))
+            .line_height(px(CHROME_GLYPH * scale))
             .child("🎨")
             .on_mouse_down(
                 MouseButton::Left,
@@ -14943,7 +14982,7 @@ impl Render for Workspace {
         let ic_osd = Self::hicon_s(&th, self.osd_menu.is_some(), scale)
             .flex()
             .items_center()
-            .child(pane::eq_icon(th.accent, scale))
+            .child(pane::eq_icon(th.accent, scale * 0.5))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
@@ -14960,8 +14999,8 @@ impl Render for Workspace {
         // `…` menu below still lists it, because the left bar can be closed
         // (ctrl+shift+B) and a surface with no door at all is not a collapse.
         let ic_dead = Self::hicon_s(&th, self.dead_menu, scale)
-            .text_size(px(pane::HICON * scale))
-            .line_height(px(pane::HICON * scale))
+            .text_size(px(CHROME_GLYPH * scale))
+            .line_height(px(CHROME_GLYPH * scale))
             .child("\u{1faa6}")
             .on_mouse_down(
                 MouseButton::Left,
@@ -14973,8 +15012,8 @@ impl Render for Workspace {
                 }),
             );
         let ic_plugins = Self::hicon_s(&th, self.plugins_menu, scale)
-            .text_size(px(pane::HICON * scale))
-            .line_height(px(pane::HICON * scale))
+            .text_size(px(CHROME_GLYPH * scale))
+            .line_height(px(CHROME_GLYPH * scale))
             .child("\u{1f9e9}")
             .on_mouse_down(
                 MouseButton::Left,
@@ -14985,8 +15024,8 @@ impl Render for Workspace {
                 }),
             );
         let ic_more = Self::hicon_s(&th, self.more_menu, scale)
-            .text_size(px(pane::HICON * scale))
-            .line_height(px(pane::HICON * scale))
+            .text_size(px(CHROME_GLYPH * scale))
+            .line_height(px(CHROME_GLYPH * scale))
             .child("\u{2026}")
             .on_mouse_down(
                 MouseButton::Left,
@@ -15100,11 +15139,13 @@ impl Render for Workspace {
                             ),
                     )
                     .child(
-                        // never compressed or pushed off — the controls are
-                        // always kept. The menu glyphs used to lead this group;
-                        // they are at the bottom left now, which left this row
-                        // holding only the things that act on the WINDOW: its
-                        // size, its splits, and its frame.
+                        // never compressed or pushed off. The menu glyphs used
+                        // to lead this group and the splits followed them; both
+                        // are at the bottom now, which leaves the top right
+                        // holding the menu-bar SCALE and the window's own frame
+                        // buttons — the scale because it sizes this very bar,
+                        // and the frame buttons because they are the
+                        // compositor's furniture rather than TD's.
                         div()
                             .flex_none()
                             .flex()
@@ -15112,7 +15153,6 @@ impl Render for Workspace {
                             .items_center()
                             .gap(px(12. * scale))
                             .child(scrubber)
-                            .child(cluster)
                             .child(win_controls),
                     ),
             )
@@ -15137,9 +15177,9 @@ impl Render for Workspace {
             );
 
         let bezel_bottom = div()
-            // min-height, and tall enough for a glyph button: the menu row
-            // lives here now. It used to be a 22px strip carrying one sentence.
-            .min_h(px((pane::HICON + 6.) * scale))
+            // min-height, and tall enough for a glyph button plus the headroom
+            // above it. It used to be a 22px strip carrying one sentence.
+            .min_h(px((CHROME_GLYPH + 14.) * scale))
             .flex_none()
             .flex()
             .flex_row()
@@ -15147,11 +15187,13 @@ impl Render for Workspace {
             .justify_between()
             .gap(px(12. * scale))
             .px(px(12. * scale))
+            // Headroom over the glyph row, so the buttons sit in a band of
+            // their own rather than against the tree's bottom edge.
+            .pt(px(7. * scale))
+            .pb(px(3. * scale))
             .text_size(px(10.5 * scale))
             .text_color(th.text)
-            // THE MENU ROW. Where the top right's glyphs went, at the size and
-            // in the style they had there — `hicon_s` at the same scale, so
-            // this is a move and not a redesign.
+            // THE MENU ROW, at the left — where the top right's glyphs went.
             //
             // What was here was `🎨 · <focused pane title>`, and it went
             // rather than moving: the focused pane draws its own title in its
@@ -15160,10 +15202,20 @@ impl Render for Workspace {
             // are looking at.
             .child(chrome_icons)
             .child(
+                // THE ACTING END, at the right: what the window holds, then the
+                // two things you do to it.
+                //
+                // The splits came down from the top row, which now carries only
+                // the menu-bar scale and the window's own frame buttons. And
+                // `● READY` is gone — it was lit green in every frame TD has
+                // ever drawn, so it never once distinguished one state from
+                // another. A status light that cannot say anything else is a
+                // decoration in the shape of an instrument, and it was sitting
+                // in the slot two real controls needed.
                 div()
                     .flex()
                     .flex_row()
-                    .gap(px(8. * scale))
+                    .gap(px(10. * scale))
                     .items_center()
                     .child(format!(
                         "{} {} · {} {}",
@@ -15176,11 +15228,7 @@ impl Render for Workspace {
                             s.st_panes
                         }
                     ))
-                    .child(
-                        div()
-                            .text_color(th.accent)
-                            .child(format!("● {}", s.ch_ready)),
-                    ),
+                    .child(cluster),
             );
 
         // ---- theme breakout: icon grid + seed swatches, per scope ----
@@ -20622,16 +20670,108 @@ mod tests {
             "the bottom bezel must not name the focused pane: its own header \
              already does, at the top of the thing you are looking at"
         );
-        // …and the move kept the size and style it had, rather than becoming a
-        // second, smaller design for the same buttons.
+        // The buttons keep the `hicon_s` frame they had in the top right; only
+        // the glyph inside them shrank (see the sizes test below).
         assert!(
             src.contains("Self::hicon_s(&th, self.theme_menu.is_some(), scale)"),
             "the glyphs keep hicon_s at the bar's own scale"
         );
         assert!(
-            bottom.contains("pane::HICON"),
+            bottom.contains("CHROME_GLYPH"),
             "and the bezel has to be tall enough to hold one, or the row clips"
         );
+        assert!(
+            bottom.contains(".pt(px("),
+            "with headroom above it, or the buttons sit against the tree's edge"
+        );
+
+        // The acting end. The splits came down here and the status light went.
+        assert!(
+            bottom.contains(".child(cluster)"),
+            "the split buttons are at the bottom right now"
+        );
+        assert!(!top.contains(".child(cluster)"), "…and not also up top");
+        let ready = ["ch", "ready"].join("_");
+        assert!(
+            !src.contains(&ready),
+            "the READY light is gone: it was lit in every frame TD ever drew, \
+             so it never distinguished one state from another"
+        );
+        // What is left in the top right: the scale that sizes this very bar,
+        // and the compositor's own frame buttons.
+        assert!(
+            top.contains(".child(scrubber)") && top.contains(".child(win_controls)"),
+            "the top right keeps the menu-bar scale and the window buttons"
+        );
+    }
+
+    /// The two sizes Parker asked for, as ratios rather than loose numbers.
+    ///
+    /// A glance surface and a click surface were drawn at the same size, which
+    /// made the wrong one loud: four buttons you press occasionally were as big
+    /// as the numbers you read constantly, and the provider mark — the only
+    /// glyph saying WHOSE allowance a rail is — was a 14px smudge.
+    #[test]
+    fn the_glance_glyphs_are_twice_the_size_and_the_click_glyphs_are_half() {
+        let src = shipped_src();
+        assert!(
+            src.contains("const CHROME_GLYPH: f32 = pane::HICON * 0.5;"),
+            "the chrome's menu glyphs are half the pane header's icon, and \
+             derived from it rather than hardcoded — or the two drift"
+        );
+        assert!(
+            src.contains("const SLOT_MARK_PT: f32 = 28.0;")
+                && src.contains("let mark_w = SLOT_MARK_PT;"),
+            "the provider mark is 28px, twice the 14 it was"
+        );
+        // The pane header's own icons are untouched: `HICON` is shared, so
+        // halving the constant instead of deriving a second one would have
+        // shrunk every pane header on the way past.
+        assert!(
+            src.contains("pane::eq_icon(th.accent, scale * 0.5)"),
+            "the chrome's drawn display glyph halves at its call site, since it \
+             takes a scale rather than a size"
+        );
+        assert!(
+            src.contains("pub const HICON: f32 = 28.0;") || !src.contains("pub const HICON"),
+            "HICON itself must not be changed — the pane headers share it"
+        );
+
+        // One size for every name in the chrome, in both places that draw one.
+        assert!(
+            src.contains("const CHROME_NAME_PT: f32 = 11.0;"),
+            "names in the chrome have one size"
+        );
+        // The EXACT expression at each name's own text_size, not merely that
+        // the function mentions the constant somewhere. Both of these draw more
+        // than one sized thing — a tab has a close ×, a row has its rename box
+        // — so "mentions it" passed a build where only the label had been put
+        // back to a loose number. Found by mutation, not by reading.
+        for (sig, expr, what) in [
+            ("fn tab_button", "px(CHROME_NAME_PT * ts)", "a tab's label"),
+            (
+                "fn task_row",
+                "px(CHROME_NAME_PT * s)",
+                "a task row in the tree",
+            ),
+            (
+                "fn branch_row",
+                "px(CHROME_NAME_PT * s)",
+                "a branch row in the tree",
+            ),
+        ] {
+            let at = src.find(sig).unwrap_or_else(|| panic!("{sig} not found"));
+            let end = src[at..].find("\n    }\n").expect("end of fn");
+            let body = &src[at..at + end];
+            assert!(body.contains(expr), "{what} must size itself with {expr}");
+            assert!(
+                !body.contains("px(10.5 * s)")
+                    && !body.contains("px(9.5 * s)")
+                    && !body.contains("px(11. * ts)"),
+                "{what} still carries its own size, so the tree and the strip \
+                 disagree about how big a name is"
+            );
+        }
     }
 
     /// The agent wall opens from the rollup that summarises it.
