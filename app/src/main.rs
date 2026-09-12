@@ -19915,6 +19915,19 @@ impl Render for Workspace {
 mod tests {
     use super::*;
 
+    /// This file's source with the test module cut off.
+    ///
+    /// Several tests below assert that a particular line of real code exists,
+    /// or no longer exists. The sentence making the assertion is itself a line
+    /// of this file, so searching the WHOLE file is answered by the search —
+    /// and that is not hypothetical: the allowance-slot test below passed
+    /// against a deliberately reverted build, because the needle it was looking
+    /// for was sitting in its own `assert!`. Search what ships, not what asks.
+    fn shipped_src() -> &'static str {
+        let src = include_str!("main.rs");
+        &src[..src.find("\nmod tests {").expect("the test module")]
+    }
+
     /// A window takes over a pane at the size the host reports, never at one of
     /// its own.
     ///
@@ -20171,9 +20184,11 @@ mod tests {
     /// surface two sessions were editing at once (#360).
     #[test]
     fn the_mother_bar_carries_no_caption_and_no_out_of_branch_total() {
-        let src = include_str!("main.rs");
-        // Spelled in pieces, or this test's own source answers the search it
-        // is making.
+        let src = shipped_src();
+        // The negative assertions still spell their needles in pieces: these
+        // three names are ones this test WANTS absent, and writing them out
+        // would only move the problem from `shipped_src` to a reader wondering
+        // why the file still mentions them.
         let caption = ["ch", "sub", "terminal"].join("_");
         let summed = ["roll", "outside"].join("_");
         let glyphs = ["roll", "glyphs"].join("_");
@@ -20250,7 +20265,7 @@ mod tests {
         assert_eq!(repair_step(None), Repair::Take);
 
         let sweep = {
-            let src = include_str!("main.rs");
+            let src = shipped_src();
             let at = src.find("fn watch_for_divergence").expect("the guard");
             let end = src[at..].find("\n    }\n").expect("end of fn");
             &src[at..at + end]
@@ -20282,7 +20297,7 @@ mod tests {
     /// pane, it is just not the one that was there.
     #[test]
     fn a_repair_keeps_what_the_window_decided_about_the_pane() {
-        let src = include_str!("main.rs");
+        let src = shipped_src();
         let at = src.find("fn reattach_pane").expect("fn reattach_pane");
         let end = src[at..].find("\n    }\n").expect("end of fn");
         let repair = &src[at..at + end];
@@ -20321,7 +20336,7 @@ mod tests {
     /// that was never built, and is exactly how it was reported.
     #[test]
     fn the_allowance_rows_are_read_at_startup_and_swept_after_that() {
-        let src = include_str!("main.rs");
+        let src = shipped_src();
         assert!(
             src.contains("usage_records: usage::read_all(&session::home_dir()),"),
             "the workspace must read the collectors' cache where it is built, not \
