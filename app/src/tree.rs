@@ -579,46 +579,12 @@ pub fn caret_gap(family: &[usize], slot: usize) -> usize {
     family.iter().take_while(|&&i| i < slot).count()
 }
 
-/// What the strip is NOT showing, summed — the price of narrowing it.
-///
-/// The tree shows this branch by branch, but the tree can be closed, and a
-/// narrowed strip with the tree closed is the one arrangement where an agent
-/// could stop and ask a question with nothing on screen to say so. This is what
-/// the mother bar's own out-of-branch chip reads.
-pub fn roll_outside(tasks: &[TaskRef], shown: &[usize]) -> Roll {
-    let mut roll = Roll::default();
-    for (i, t) in tasks.iter().enumerate() {
-        if !shown.contains(&i) {
-            roll.fold(&t.roll);
-        }
-    }
-    roll
-}
-
-/// What a branch is saying, as one short line of glyphs, loudest first.
-///
-/// Returned as a string rather than elements so the summary can be tested and
-/// so a tooltip, a title bar and a row can all say the same thing.
-pub fn roll_glyphs(roll: &Roll) -> String {
-    let mut out = String::new();
-    let mut push = |glyph: &str, n: usize| {
-        if n == 0 {
-            return;
-        }
-        if !out.is_empty() {
-            out.push(' ');
-        }
-        out.push_str(glyph);
-        if n > 1 {
-            out.push_str(&n.to_string());
-        }
-    };
-    push("🤖", roll.needs_input + roll.working);
-    push("✅", roll.done);
-    push("❌", roll.blocked);
-    push("📌", roll.pins);
-    out
-}
+// `roll_outside` and `roll_glyphs` used to live here: the sum of every branch
+// the strip is not carrying, rendered as one line of glyphs for the mother
+// bar's out-of-branch chip. The chip is gone — the tree states the same rollup
+// branch by branch, and `Workspace::roll_badges` draws it there with the
+// loudest state still animated, which the flattened string could not do. Two
+// implementations of one summary, and the surviving one is the richer.
 
 #[cfg(test)]
 mod tests {
@@ -981,24 +947,6 @@ mod tests {
         assert_eq!(caret_gap(&family, 6), 3);
         // an empty strip has exactly one gap, and it is the end
         assert_eq!(caret_gap(&[], 7), 0);
-    }
-
-    #[test]
-    fn what_the_strip_hides_is_counted_so_the_strip_can_say_so() {
-        // The safety catch on narrowing: an agent that stops to ask a question
-        // in a branch you are not looking at must still be able to interrupt
-        // you.
-        let tasks = vec![
-            loud(Some(1), None, 0),
-            loud(Some(2), None, 1),
-            loud(None, None, 2),
-        ];
-        let hidden = roll_outside(&tasks, &[0]);
-        assert_eq!(hidden.needs_input, 3);
-        assert_eq!(hidden.tasks, 2);
-        // nothing is hidden when nothing is narrowed
-        assert_eq!(roll_outside(&tasks, &[0, 1, 2]), Roll::default());
-        assert!(roll_outside(&tasks, &[0, 1, 2]).quiet());
     }
 
     #[test]
@@ -1430,33 +1378,22 @@ mod tests {
     }
 
     #[test]
-    fn the_roll_up_line_is_loudest_first_and_silent_when_there_is_nothing_to_say() {
-        assert_eq!(roll_glyphs(&Roll::default()), "");
+    fn a_branch_with_nothing_to_say_is_quiet_and_one_with_anything_is_not() {
+        // `quiet` is the gate on drawing a folded branch's badge cluster at
+        // all. Every counted state has to open it — a branch holding only a
+        // pinned note is still saying something.
         assert!(Roll::default().quiet());
-        let roll = Roll {
-            needs_input: 1,
-            working: 2,
-            done: 1,
-            blocked: 0,
-            pins: 3,
-            panes: 9,
-            tasks: 4,
-        };
-        assert_eq!(roll_glyphs(&roll), "🤖3 ✅ 📌3");
-        assert!(!roll.quiet());
-    }
-
-    #[test]
-    fn a_working_agent_and_a_waiting_one_count_as_agents_not_as_two_kinds_of_row() {
-        // The tab strip draws one badge per agent and lets the loudest state
-        // win per pane. A branch row has no room for four robots, so it counts
-        // them — but it must not drop the waiting one into a different bucket
-        // and report "1 robot" when three are in flight.
-        let roll = Roll {
-            needs_input: 1,
-            working: 2,
-            ..Default::default()
-        };
-        assert_eq!(roll_glyphs(&roll), "🤖3");
+        for roll in [
+            Roll::task(1, 0, 0, 0, 0, 1),
+            Roll::task(0, 1, 0, 0, 0, 1),
+            Roll::task(0, 0, 1, 0, 0, 1),
+            Roll::task(0, 0, 0, 1, 0, 1),
+            Roll::task(0, 0, 0, 0, 1, 1),
+        ] {
+            assert!(!roll.quiet(), "{roll:?} has something to say");
+        }
+        // panes and tasks are size, not news: a branch of nine silent
+        // terminals draws no badges
+        assert!(Roll::task(0, 0, 0, 0, 0, 9).quiet());
     }
 }
