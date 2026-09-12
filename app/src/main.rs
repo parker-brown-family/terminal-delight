@@ -2962,6 +2962,56 @@ fn collect_saved_leaves<'a>(node: &'a SavedNode, out: &mut Vec<&'a SavedNode>) {
 /// against its own correctness.
 const GUARD_PERIOD_SECS: u64 = 30;
 
+/// What a guard pass does about a pane it has just found at odds with the host.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Repair {
+    /// Take the pane again, and say so. A fair attempt at a divergence that
+    /// might be transient, which most of them are.
+    Take,
+    /// The pane disagreed again on the very next pass, so the repair did not
+    /// take. Say that once and stop trying.
+    GiveUp,
+    /// Already given up on. Say nothing at all.
+    Hold,
+}
+
+/// The guard's rule for repeating a repair, as a function of what it has
+/// already tried on this pane — `None` meaning it has tried nothing, either
+/// because the pane has never disagreed or because it has since agreed.
+///
+/// Pulled out of the sweep so the property that matters can be asserted without
+/// a session host, a window or a clock: **a pane the snapshot cannot heal is
+/// taken again exactly once, and then left alone.** What this replaced was a
+/// 45-second cooldown checked by a sweep that runs every 30 seconds, so a
+/// permanently-diverging pane was re-snapshotted on every other pass — forever,
+/// at roughly the ninety-second cycle that kept being reported as "the theme
+/// resets by itself". Nothing about that rule was a function, so no test could
+/// have held it to anything; that is most of why it survived a review.
+fn repair_step(tried: Option<Repair>) -> Repair {
+    match tried {
+        None => Repair::Take,
+        Some(Repair::Take) => Repair::GiveUp,
+        Some(Repair::GiveUp | Repair::Hold) => Repair::Hold,
+    }
+}
+
+/// How often a window re-asks every vendor what is left of your allowance.
+///
+/// Five minutes, because the bottom slot is a surface nobody opens — it is
+/// simply there, and a number that is simply there is read at a glance and
+/// believed. The card can afford to ask on every open (see [`Workspace::open_usage`])
+/// because opening it IS the question; the slot has no such moment, so the
+/// clock is the only thing that keeps it honest. Weekly windows move slowly
+/// enough that five minutes is well inside the resolution anybody acts on, and
+/// the ask costs one short-lived collector process per window.
+const USAGE_SWEEP_SECS: u64 = 300;
+
+/// How long after a window opens the first allowance sweep runs. Short, so a
+/// window that has been shut all night is showing this morning's numbers rather
+/// than last night's cache for the first five minutes of the day — and not
+/// zero, so it is not competing with the window's own startup.
+const USAGE_FIRST_SWEEP_SECS: u64 = 5;
+
 /// Which shape of layout this build writes.
 ///
 /// Sent with every save so a host can tell whether it understands the tree well
@@ -3400,7 +3450,17 @@ impl Workspace {
             savings_view: None,
             savings_status: None,
             savings_tab: OverlayTab::Savings,
-            usage_records: Vec::new(),
+            // Read from disk at construction, not on the first click.
+            //
+            // The bottom slot draws these, and the bottom slot is on screen
+            // from the moment the window opens — so filling this only in
+            // `open_usage` meant the slot had nothing to draw until somebody
+            // opened the </> card, and a widget that is blank until you visit
+            // another surface reads as a widget that was never built. The files
+            // are the collectors' own cached JSON, small and already written;
+            // the numbers in them may be old, which is what `Reading::Stale`
+            // and the slot's dimming exist to say.
+            usage_records: usage::read_all(&session::home_dir()),
             usage_pick: 0,
             usage_status: None,
             usage_refreshing: false,
@@ -3589,6 +3649,28 @@ impl Workspace {
                 .is_err()
             {
                 break;
+            }
+        })
+        .detach();
+        // usage sweep: the bottom slot's allowance rows, kept current with
+        // nobody opening anything. The slot is the one number surface in TD
+        // that is never dismissed, so it is also the only one whose staleness
+        // has no natural moment of repair — every other panel refreshes when
+        // you open it, and the slot is never opened. Same shape as the sweeps
+        // around it: a timer on the background executor, the work itself
+        // already written (`refresh_usage` runs the collectors on the pool and
+        // swaps the records in), and the loop ends with the window.
+        cx.spawn(async move |this, cx| {
+            let mut wait = Duration::from_secs(USAGE_FIRST_SWEEP_SECS);
+            loop {
+                cx.background_executor().timer(wait).await;
+                wait = Duration::from_secs(USAGE_SWEEP_SECS);
+                if this
+                    .update(cx, |ws: &mut Workspace, cx| ws.refresh_usage(cx))
+                    .is_err()
+                {
+                    break; // window gone
+                }
             }
         })
         .detach();
@@ -3898,11 +3980,24 @@ impl Workspace {
     /// Take a pane again, from scratch, because what this window is drawing has
     /// stopped matching what the host holds.
     ///
-    /// The repair is deliberately total. A replica that has diverged cannot
-    /// reason its way back — it does not know which of its cells is the wrong
-    /// one — so it is thrown away and replaced by a fresh attachment, which
-    /// begins with a snapshot and is therefore right by construction. The cost
-    /// is this pane's scroll position and selection, and it is paid loudly.
+    /// The repair is deliberately total **in the grid, and nowhere else**. A
+    /// replica that has diverged cannot reason its way back — it does not know
+    /// which of its cells is the wrong one — so it is thrown away and replaced
+    /// by a fresh attachment, which begins with a snapshot and is therefore
+    /// right by construction. The cost is this pane's scroll position and
+    /// selection.
+    ///
+    /// Everything else the window knew about the pane is carried over, because
+    /// none of it was ever in question. It used to be dropped: the replacement
+    /// was built from `PaneRestore::default()` and then stamped with
+    /// [`theme::PaneTheme::house`] like any newly attached pane, so a repair
+    /// silently reverted the pane's theme, forgot its name and its logo, threw
+    /// away the sticky note on its glass, and — because the new view recorded
+    /// its own birth — replayed the CRT ignition. On a session where the guard
+    /// keeps finding a pane at odds with the host, that is a pane that flashes
+    /// and undresses itself every couple of minutes while you are reading it,
+    /// which is how this was reported: not as a divergence, but as "the theme
+    /// keeps resetting".
     fn reattach_pane(
         &mut self,
         pane: hostproto::PaneId,
@@ -3919,6 +4014,9 @@ impl Workspace {
         let Some(info) = live.into_iter().find(|p| p.pane == pane) else {
             return;
         };
+        // Lifted BEFORE the replacement is built, while the old view is still
+        // the one in the tree and nothing has borrowed `cx` mutably.
+        let carried = old.read(cx).presentation();
         let restore = session::PaneRestore {
             cwd: info.cwd.clone(),
             ..Default::default()
@@ -3930,6 +4028,7 @@ impl Workspace {
                 return;
             }
         };
+        fresh.update(cx, |view, _| view.adopt_presentation(carried));
         let old_id = old.entity_id();
         for tab in &mut self.tabs {
             if tab.root.replace_leaf(
@@ -3956,16 +4055,23 @@ impl Workspace {
     fn watch_for_divergence(ctx: AttachCtx, window: &Window, cx: &mut Context<Self>) {
         let forced = std::env::var("TD_GUARD_FORCE_MISMATCH").is_ok_and(|v| v == "1");
         cx.spawn_in(window, async move |this, cx| {
-            // Break the re-snapshot loop. A genuine Mismatch on a QUIET pane
-            // means the snapshot the guard just painted did not reproduce the
-            // host exactly — an encoder round-trip gap for some grid state — so
-            // taking the pane again lands the same imperfect grid and diverges
-            // again, forever, which is the visible ignition/flicker. Cool a pane
-            // down after a repair: if it still disagrees within the window, the
-            // snapshot cannot heal it, so hold the stable (slightly-off) replica
-            // instead of flickering. A transient divergence is healed on the
-            // first pass and never reaches the cooldown.
-            let mut repaired_at: std::collections::HashMap<hostproto::PaneId, std::time::Instant> =
+            // Break the re-snapshot loop, properly this time.
+            //
+            // A genuine Mismatch on a QUIET pane means the snapshot the guard
+            // just painted did not reproduce the host exactly — an encoder
+            // round-trip gap for some grid state (#378, #386) — so taking the
+            // pane again lands the same imperfect grid and diverges again. The
+            // first attempt at stopping that was a 45-second cooldown, and it
+            // could not work: the guard's own period is 30 seconds, so a pane
+            // that cannot be healed was merely repaired every OTHER pass
+            // instead of every pass. Halving the rate of a permanent flicker is
+            // not fixing it, and the ~90-second cycle that left is exactly what
+            // was still being reported.
+            //
+            // The rule now follows the mechanism rather than a clock, and it
+            // lives in [`repair_step`] where it can be tested. What each pane
+            // is remembering here is only the last step taken on it.
+            let mut repairs: std::collections::HashMap<hostproto::PaneId, Repair> =
                 std::collections::HashMap::new();
             loop {
                 cx.background_executor()
@@ -4009,41 +4115,67 @@ impl Workspace {
                     let Some((verdict, consumed)) = checked else {
                         break;
                     };
-                    let diverged = match verdict {
-                        Some(gridwire::GuardVerdict::Mismatch { host, replica }) => {
-                            eprintln!(
-                                "terminal-delight: pane {pane} has diverged from the session host \
-                             at offset {} of {} consumed (host {host:x}, window {replica:x}); \
-                             taking it again",
-                                probe.stream_offset,
-                                consumed.map_or_else(|| "unknown".to_string(), |n| n.to_string())
-                            );
-                            true
-                        }
-                        Some(gridwire::GuardVerdict::Match) if forced => {
-                            eprintln!(
+                    // The debug hook fires the repair on a pane that AGREES,
+                    // which is the whole point of it — so it goes round the
+                    // give-up bookkeeping below, which is about real
+                    // divergence and would silence the hook after one pass.
+                    if forced && verdict == Some(gridwire::GuardVerdict::Match) {
+                        eprintln!(
                             "terminal-delight: TD_GUARD_FORCE_MISMATCH — pane {pane} agrees with \
                              the host and is being taken again anyway"
                         );
-                            true
+                        let _ = this.update_in(cx, |ws: &mut Workspace, window, cx| {
+                            ws.reattach_pane(pane, &view, window, cx);
+                        });
+                        continue;
+                    }
+                    let disagreement = match verdict {
+                        Some(gridwire::GuardVerdict::Mismatch { host, replica }) => Some(format!(
+                            "at offset {} of {} consumed (host {host:x}, window {replica:x})",
+                            probe.stream_offset,
+                            consumed.map_or_else(|| "unknown".to_string(), |n| n.to_string())
+                        )),
+                        // Agreement re-arms the repair. Whatever the replica
+                        // could not reproduce before, it is reproducing now —
+                        // so a later disagreement is a new episode about a
+                        // different grid, and it deserves its own attempt
+                        // rather than inheriting a verdict passed on a grid
+                        // that no longer exists.
+                        Some(gridwire::GuardVerdict::Match) => {
+                            repairs.remove(&pane);
+                            None
                         }
-                        _ => false,
+                        // NotYet is not a mismatch and not an agreement: the two
+                        // ends are at different points in the stream and nothing
+                        // follows from that. `None` is a pane with no guard at
+                        // all — its terminal is its own. Neither is news.
+                        Some(gridwire::GuardVerdict::NotYet(_)) | None => None,
                     };
-                    if diverged {
-                        let cooled = repaired_at
-                            .get(&pane)
-                            .is_some_and(|t| t.elapsed() < Duration::from_secs(45));
-                        if cooled {
+                    let Some(why) = disagreement else {
+                        continue;
+                    };
+                    let step = repair_step(repairs.get(&pane).copied());
+                    repairs.insert(pane, step);
+                    match step {
+                        Repair::Take => {
                             eprintln!(
-                                "terminal-delight: pane {pane} still diverges after a recent \
-                             re-snapshot; holding its replica rather than looping the repair"
+                                "terminal-delight: pane {pane} has diverged from the session host \
+                                 {why}; taking it again"
                             );
-                        } else {
-                            repaired_at.insert(pane, std::time::Instant::now());
                             let _ = this.update_in(cx, |ws: &mut Workspace, window, cx| {
                                 ws.reattach_pane(pane, &view, window, cx);
                             });
                         }
+                        Repair::GiveUp => {
+                            eprintln!(
+                                "terminal-delight: pane {pane} diverges again after being taken \
+                                 again {why}; a fresh snapshot cannot reproduce this grid, so its \
+                                 replica stands as it is until it agrees with the host"
+                            );
+                        }
+                        // Already said once. Saying it every thirty seconds for
+                        // the life of the window is how a log stops being read.
+                        Repair::Hold => {}
                     }
                 }
             }
@@ -11308,6 +11440,13 @@ impl Workspace {
         s: f32,
         th: &theme::Theme,
     ) -> Vec<AnyElement> {
+        // Nothing under here is asking for anything, so the row carries no
+        // cluster at all. Size is not news: a branch holding nine silent
+        // terminals draws nothing, and a branch holding one pinned note draws
+        // the pin.
+        if roll.quiet() {
+            return vec![];
+        }
         let mut out: Vec<AnyElement> = vec![];
         let agents = roll.needs_input + roll.working;
         if agents > 0 {
@@ -14339,56 +14478,16 @@ impl Render for Workspace {
             MouseButton::Left,
             cx.listener(|ws, _: &MouseDownEvent, window, cx| ws.new_tab(window, cx)),
         ));
-        // ---- what the strip is not showing ---------------------------------
-        // The catch that makes narrowing the strip honest. Tabs in other
-        // branches are off the strip, and with the tree closed they would have
-        // no surface at all — so a count of them sits at the end of the strip,
-        // wearing whatever the loudest of them is saying, and clicking it opens
-        // the tree where they live.
+        // The strip ends at the + button. What it is NOT showing used to be
+        // counted here too, in a `…N 📌` chip that opened the tree — and the
+        // tree is where that count already lives, branch by branch, spelled out
+        // rather than summed. Two readings of one fact, and the summed one sat
+        // in the window's narrowest row: on a session organised into a dozen
+        // branches the chip was up permanently, so it stopped reading as news
+        // and started reading as furniture. The tree's own roll-ups are the
+        // surviving copy; the handle that opens the tree is still on this strip
+        // when the tree is closed.
         //
-        // Only when they are SAYING something. Under the old scope rule this
-        // chip was rare, because narrowing was a thing you chose; the strip now
-        // narrows always, so a plain count would be permanent furniture
-        // restating what the tree spells out in full. A quiet branch elsewhere
-        // is not news.
-        {
-            let hidden = tree::roll_outside(&self.task_refs(cx), &family);
-            if !hidden.quiet() {
-                let glyphs = tree::roll_glyphs(&hidden);
-                let mut chip = Self::bezel_btn_s(
-                    &th,
-                    &if hidden.quiet() {
-                        format!("\u{2026}{}", hidden.tasks)
-                    } else {
-                        format!("\u{2026}{} {glyphs}", hidden.tasks)
-                    },
-                    false,
-                    scale,
-                )
-                .text_color(if hidden.needs_input > 0 {
-                    th.accent
-                } else {
-                    th.faint
-                });
-                if hidden.needs_input > 0 {
-                    // somebody out there is waiting on you: the chip glows the
-                    // way a HEY blinker does, without stealing its blink
-                    chip = chip.border_color(th.accent);
-                }
-                tab_strip = tab_strip.child(chip.on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                        cx.stop_propagation();
-                        // the branches it is counting are in the tree, so the
-                        // click opens the tree rather than dumping them all onto
-                        // the strip the narrowing just cleared
-                        ws.left_bar = true;
-                        ws.save(cx);
-                        cx.notify();
-                    }),
-                ));
-            }
-        }
         // dragging a tab past the bottom of the strip → a VERY obvious full-width
         // bar wraps onto its own line: "drop here to start a new row".
         if new_row_drop {
@@ -14789,7 +14888,11 @@ impl Render for Workspace {
                     .justify_between()
                     .gap(px(12. * scale))
                     .child(
-                        // LEFT GROUP: the title + // SUB-TERMINAL.
+                        // LEFT GROUP: the title, and only the title. It used to
+                        // carry a dim `// SUB-TERMINAL` tag beside it, which
+                        // named the category the window belongs to rather than
+                        // anything about this window — a caption on the one row
+                        // where every other glyph is a control.
                         div()
                             .flex_1()
                             .min_w(px(0.))
@@ -14802,8 +14905,8 @@ impl Render for Workspace {
                             .items_center()
                             .gap(px(8. * scale))
                             .child(
-                                // title + // SUB-TERMINAL, on a fixed height so the row
-                                // keeps its size whatever the brand string is.
+                                // the title on a fixed height, so the row keeps
+                                // its size whatever the brand string is
                                 div()
                                     .flex_none()
                                     .h(px(22. * scale))
@@ -14820,13 +14923,6 @@ impl Render for Workspace {
                                             .font_weight(gpui::FontWeight::EXTRA_BOLD)
                                             .text_color(th.complement)
                                             .child(format!("▸ {}", s.brand)),
-                                    )
-                                    .child(
-                                        // Decoration only — stays a dim foreground tint.
-                                        div()
-                                            .text_size(px(9. * scale))
-                                            .text_color(th.text.alpha(0.4))
-                                            .child(format!("// {}", s.ch_sub_terminal)),
                                     ),
                             ),
                     )
@@ -20059,6 +20155,191 @@ mod tests {
             src.contains("ws.commit_all_renames(cx);"),
             "the workspace root's click handler must run the sweep — without it \
              nothing closes a rename except Enter"
+        );
+    }
+
+    /// Two things the mother bar deliberately no longer carries.
+    ///
+    /// Both were decoration on the window's narrowest row: a caption naming the
+    /// category of thing a terminal is, and a running total of the branches the
+    /// strip is not showing — which the tree spells out branch by branch, and
+    /// draws with the loudest state still animated, so the flattened copy was
+    /// the same fact twice in the place with the least room for it.
+    ///
+    /// Asserted rather than left to a reviewer's eye because of how each of
+    /// them arrived: one line at a time, in somebody else's commit, on a
+    /// surface two sessions were editing at once (#360).
+    #[test]
+    fn the_mother_bar_carries_no_caption_and_no_out_of_branch_total() {
+        let src = include_str!("main.rs");
+        // Spelled in pieces, or this test's own source answers the search it
+        // is making.
+        let caption = ["ch", "sub", "terminal"].join("_");
+        let summed = ["roll", "outside"].join("_");
+        let glyphs = ["roll", "glyphs"].join("_");
+        assert!(
+            !src.contains(&caption),
+            "the dim caption beside the brand is gone; if it is back, it is back \
+             in the one row where every other glyph is a control"
+        );
+        assert!(
+            !src.contains(&summed) && !src.contains(&glyphs),
+            "the strip's chip for what it is NOT showing is gone — the tree's own \
+             rollups are the surviving copy of that count"
+        );
+        // What the strip does still carry, so this test cannot pass by the tab
+        // row having been deleted wholesale.
+        assert!(
+            src.contains(r#"Self::bezel_btn_s(&th, "+", false, scale)"#),
+            "the + button is the strip's one control and stays"
+        );
+        assert!(
+            src.contains(r#".id("show-left-bar")"#),
+            "and with the tree closed the strip still carries the handle that \
+             opens it — that handle is now the only way back to the branches the \
+             strip is not showing"
+        );
+    }
+
+    // ---- the divergence guard's repair, and what it costs ------------------
+
+    /// A pane the snapshot cannot reproduce is taken again ONCE.
+    ///
+    /// This is the property the 45-second cooldown was reaching for and could
+    /// not reach: the sweep runs every 30 seconds, so "cooled" was false on
+    /// every other pass and a pane that could never hash equal was
+    /// re-snapshotted forever at about a ninety-second beat. Run the rule
+    /// twenty passes deep and count the repairs — one, or the loop is back.
+    #[test]
+    fn a_pane_the_snapshot_cannot_heal_is_taken_again_once_and_then_left_alone() {
+        let mut tried = None;
+        let mut takes = 0;
+        let mut said = 0;
+        for _ in 0..20 {
+            let step = repair_step(tried);
+            takes += usize::from(step == Repair::Take);
+            said += usize::from(step != Repair::Hold);
+            tried = Some(step);
+        }
+        assert_eq!(
+            takes, 1,
+            "a pane that never agrees must be taken again once, not on a cycle"
+        );
+        assert_eq!(
+            said, 2,
+            "the guard says what it did and then says why it stopped — and then \
+             stops talking, because a line every thirty seconds for the life of \
+             the window is a log nobody reads"
+        );
+    }
+
+    /// ...and agreement re-arms it, because that is a real signal.
+    ///
+    /// A pane that agrees is one whose replica is reproducing the host again.
+    /// A later disagreement is then about a different grid and deserves its own
+    /// attempt. Nothing else re-arms the repair — in particular no timer, which
+    /// is only a guess that the mechanism might work now.
+    #[test]
+    fn agreeing_with_the_host_re_arms_the_repair_and_nothing_else_does() {
+        assert_eq!(repair_step(None), Repair::Take);
+        assert_eq!(repair_step(Some(Repair::Take)), Repair::GiveUp);
+        assert_eq!(repair_step(Some(Repair::GiveUp)), Repair::Hold);
+        assert_eq!(repair_step(Some(Repair::Hold)), Repair::Hold);
+        // The sweep spells "it agreed" as forgetting the pane, and the rule
+        // starts over from there.
+        assert_eq!(repair_step(None), Repair::Take);
+
+        let sweep = {
+            let src = include_str!("main.rs");
+            let at = src.find("fn watch_for_divergence").expect("the guard");
+            let end = src[at..].find("\n    }\n").expect("end of fn");
+            &src[at..at + end]
+        };
+        assert!(
+            sweep.contains("repairs.remove(&pane)"),
+            "the guard must forget a pane that agrees — otherwise a pane it gave \
+             up on stays given up on for the life of the window, even after the \
+             terminal has drawn something the replica can reproduce"
+        );
+        assert!(
+            !sweep.contains("Duration::from_secs(45)") && !sweep.contains("elapsed()"),
+            "the stop rule is not allowed to be a clock again: a cooldown shorter \
+             than GUARD_PERIOD_SECS silences nothing, and one longer is a guess"
+        );
+    }
+
+    /// A repair replaces the replica, not the pane.
+    ///
+    /// The window's own decisions about a pane — its name, its dressing, the
+    /// note on its glass, and when it was born — were never what diverged, and
+    /// dropping them was the whole of what users actually saw: a pane that
+    /// re-fired its CRT ignition and came back in the house colours every
+    /// couple of minutes.
+    ///
+    /// Source-scanned because the failure compiles, renders and passes
+    /// everything else. There is no assertion about a pane's theme that a
+    /// headless test could make — the wrong version builds a perfectly good
+    /// pane, it is just not the one that was there.
+    #[test]
+    fn a_repair_keeps_what_the_window_decided_about_the_pane() {
+        let src = include_str!("main.rs");
+        let at = src.find("fn reattach_pane").expect("fn reattach_pane");
+        let end = src[at..].find("\n    }\n").expect("end of fn");
+        let repair = &src[at..at + end];
+        assert!(
+            repair.contains("old.read(cx).presentation()"),
+            "reattach_pane must lift the old view's presentation before building \
+             the replacement"
+        );
+        assert!(
+            repair.contains("adopt_presentation"),
+            "reattach_pane must put that presentation back on the fresh pane — \
+             otherwise the repair silently reverts the theme, forgets the name \
+             and the logo, drops the sticky note, and replays the ignition"
+        );
+        // `born` is the one that is invisible until you watch it happen: every
+        // other field is a thing you can see is missing, and this one is a
+        // flash you have to catch.
+        let pane_src = include_str!("pane.rs");
+        let at = pane_src
+            .find("pub fn adopt_presentation")
+            .expect("adopt_presentation");
+        let end = pane_src[at..].find("\n    }\n").expect("end of fn");
+        assert!(
+            pane_src[at..at + end].contains("self.born = from.born"),
+            "a repaired pane must inherit the moment the pane it replaces came \
+             into being — `born` drives the one-shot CRT ignition, so a fresh \
+             one is what makes a repair look like a birth"
+        );
+    }
+
+    /// The bottom slot has numbers before anybody opens anything.
+    ///
+    /// It draws `usage_records`, and those used to be filled only by
+    /// `open_usage`. So a window that nobody had taken to the </> card showed
+    /// an empty slot — which is indistinguishable, at a glance, from a widget
+    /// that was never built, and is exactly how it was reported.
+    #[test]
+    fn the_allowance_rows_are_read_at_startup_and_swept_after_that() {
+        let src = include_str!("main.rs");
+        assert!(
+            src.contains("usage_records: usage::read_all(&session::home_dir()),"),
+            "the workspace must read the collectors' cache where it is built, not \
+             wait for somebody to open the </> card"
+        );
+        assert!(
+            src.contains("Duration::from_secs(USAGE_SWEEP_SECS)")
+                && src.contains("ws.refresh_usage(cx)"),
+            "and re-ask on a clock: the slot is never opened, so opening it is \
+             not available as the moment its numbers get refreshed"
+        );
+        // Two-stage wait. A window opened after a night off would otherwise show
+        // last night's cache for its first five minutes, which is precisely the
+        // stretch where somebody is deciding what to run today.
+        assert!(
+            src.contains("Duration::from_secs(USAGE_FIRST_SWEEP_SECS)")
+                && src.contains("wait = Duration::from_secs(USAGE_SWEEP_SECS);"),
+            "the sweep must open on the short wait and then settle onto the period"
         );
     }
 

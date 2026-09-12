@@ -1800,6 +1800,32 @@ struct MirrorDocKey {
     theme_gen: u64,
 }
 
+/// What a WINDOW has decided about a pane, as distinct from what the pane's
+/// terminal is doing.
+///
+/// The split matters exactly once, and it matters a lot there: when a hosted
+/// window throws away a replica that has stopped agreeing with the session host
+/// and builds a new one from a fresh snapshot. The terminal did not change
+/// hands, did not restart, and did not lose a byte — only this window's picture
+/// of its grid was wrong. So the pane's name, its dressing, the note stuck to
+/// its glass and the moment it came into being are all still true of it, and
+/// carrying them across is what makes the repair invisible instead of a pane
+/// that flashes its power-on animation and comes back in the house colours.
+///
+/// Nothing captured from the kernel or from the host belongs here. The pid, the
+/// mode and the grid are the host's to state, and a repaired pane takes them
+/// fresh — that is the point of repairing it.
+#[derive(Clone)]
+pub struct Presentation {
+    born: Instant,
+    name: Option<String>,
+    logo: Option<String>,
+    dir_logo: Option<String>,
+    appearance: PaneTheme,
+    note: Option<crate::sticky::Sticky>,
+    peeled: Option<String>,
+}
+
 pub struct TerminalView {
     focus_handle: FocusHandle,
     session: term::Session,
@@ -2507,6 +2533,41 @@ impl TerminalView {
     /// The host's durable name for this pane, if it has one.
     pub fn pane_id(&self) -> Option<u64> {
         self.pane_id
+    }
+
+    /// Everything this WINDOW decided about the pane, lifted off it so it can be
+    /// put back on a replacement replica. See [`Presentation`].
+    pub fn presentation(&self) -> Presentation {
+        Presentation {
+            born: self.born,
+            name: self.name.clone(),
+            logo: self.logo.clone(),
+            dir_logo: self.dir_logo.clone(),
+            appearance: self.appearance.clone(),
+            note: self.note.clone(),
+            peeled: self.peeled.clone(),
+        }
+    }
+
+    /// Wear what the pane this one replaces was wearing.
+    ///
+    /// Called on a repaired pane, i.e. one whose replica was thrown away and
+    /// rebuilt from a fresh snapshot because it had stopped agreeing with the
+    /// host. The terminal is the same terminal; only this window's copy of its
+    /// grid was wrong. Everything here is therefore still true, and dropping it
+    /// was the visible half of the repair — a pane that re-fired its ignition
+    /// and came back in the house colours, every couple of minutes, while the
+    /// user watched.
+    pub fn adopt_presentation(&mut self, from: Presentation) {
+        // `born` first and on purpose: it drives the one-shot CRT ignition and
+        // nothing else, so inheriting it is the whole of "this is not a birth".
+        self.born = from.born;
+        self.name = from.name;
+        self.logo = from.logo;
+        self.dir_logo = from.dir_logo;
+        self.appearance = from.appearance;
+        self.note = from.note;
+        self.peeled = from.peeled;
     }
 
     /// Whether this pane has reported an ending that has not been explained yet.
