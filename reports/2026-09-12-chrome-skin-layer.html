@@ -391,62 +391,69 @@ button.more:hover { border-color: var(--s1); color: var(--text-primary); }
 <body>
 <header class="top">
   <div class="wrap">
-    <p class="kicker">terminal-delight &middot; chrome skin layer &middot; 12 Sep 2026</p>
+    <p class="kicker">terminal-delight &middot; chrome skin layer &middot; 12 Sep 2026 &middot; second pass</p>
     <h1>The chrome is themeable as data</h1>
-    <p class="verdict">Terminal Delight now has a <b>third themeable axis</b>. Colour and CRT texture were already data; <b>shape</b> is the new one &mdash; 25 chrome inks written as recipes over the palette, 14 geometry metrics, and 5 strategy enums that decide which element gets built. Art deco is the first skin, the left bar is converted, and the shipped default reproduces today&rsquo;s chrome exactly, asserted by a test rather than by eye.</p>
+    <p class="verdict">Terminal Delight now has a <b>third themeable axis</b>. Colour and CRT texture were already data; <b>shape</b> is the new one &mdash; 27 chrome inks written as recipes over the palette, 14 metrics, and 6 strategies that decide which element gets built. The shape-carrying half of six surfaces is converted, the shipped default still reproduces today&rsquo;s chrome exactly, and <b>a deco window is open on your desktop right now</b>.</p>
     <p class="meta">
       <span>PR <b>#405</b></span>
       <span>branch <b>chrome/skin-tokens</b></span>
-      <span>difficulty <b>8/10</b></span>
-      <span>tests <b>794 pass, 13 new</b></span>
+      <span>gates <b>approved</b></span>
+      <span>tests <b>797 pass, 16 new</b></span>
       <span>clippy + fmt <b>clean</b></span>
-      <span>gates <b>written, unapproved</b></span>
+      <span>installed <b>td-0122e05</b></span>
+      <span>score <b>opened 8, closed 6</b></span>
     </p>
   </div>
 </header>
 
 <div class="wrap">
 
+<div class="callout good">
+  <span class="lbl">nothing is waiting on a decision</span>
+  <p>All four questions came back <b>agree</b>. What is waiting on you is a <b>look</b>: there is a deco window open on your desktop &mdash; a scratch window, so it claims no session and closing it costs nothing. If it is gone, one line brings it back:</p>
+  <pre><code>TD_SCRATCH=1 TD_SKIN=~/Work/td-skin/app/skins/deco.toml terminal-delight</code></pre>
+</div>
+
 <h2 class="sec">Read first</h2>
 <ol class="esc-list">
   <li>
     <span class="esc-n">1</span>
     <div>
-      <h3>Shape is a separate axis, not a bigger palette</h3>
-      <p>The whole design falls out of this call. A skin holds no colours of its own by default &mdash; it holds <em>recipes</em> over whatever palette is live, plus the geometry and the strategies. Deco shape over the green hacker palette is a thing you can have, and that is deliberate.</p>
-      <p class="take">If you disagree here, everything below changes. <button class="more" data-dlg="d-axis">why not fold it into Theme</button></p>
+      <h3>Look at the tab strip before anything else</h3>
+      <p>It is the surface a look gets judged on and the one that moved most: tabs are square now, and the active one is marked by four corner brackets rather than a filled underline. If the brackets read as noise rather than as a pointer, the whole <code>emphasis</code> strategy is the thing to argue with.</p>
+      <p class="take">Second: the buttons. They lost their white glint and their drop shadow. <button class="more" data-dlg="d-bezel">why that is a contradiction, not a preference</button></p>
     </div>
   </li>
   <li>
     <span class="esc-n">2</span>
     <div>
-      <h3>The default skin is pinned to today&rsquo;s look by a test</h3>
-      <p><code>default_skin_reproduces_todays_chrome</code> asserts every resolved token equals the literal <code>main.rs</code> draws with &mdash; <code>rule_strong == darken(surface, 0.3)</code>, <code>mark_wash == accent.alpha(0.14)</code>, <code>radius() == px(4)</code>. Verified failable by moving <code>mark_wash</code> off 0.14.</p>
-      <p class="take">This is the property that makes converting 1,388 more call sites safe rather than brave.</p>
+      <h3>The seam is deliberate: overlays are still round</h3>
+      <p>Six surfaces are converted &mdash; bar, strip, left bar, rows, pane headers, workspace body. The usage face, the paint tray and the pickers are not, so opening one under deco shows round corners on a square app.</p>
+      <p class="take">That is slices 4&ndash;5, and it is the honest cost of stopping at an MVP. Do not read it as a bug.</p>
     </div>
   </li>
   <li>
     <span class="esc-n">3</span>
     <div>
-      <h3>What deco is made of, and what I left out</h3>
-      <p>Four devices, each load-bearing: square corners, the twin rule, the corner bracket, tracked caps. No bezels, no rivets, no gradients, no glow, no sunbursts, no HUD.</p>
-      <p class="take">Your brief was &ldquo;border styling and bars and boundaries&rdquo;. Scroll to the mockups and tell me if I read it right.</p>
+      <h3>The MVP cut is not &ldquo;slices 1&ndash;3&rdquo;, and that is the interesting part</h3>
+      <p>A surface holds two kinds of literal, and only one decides whether a look lands: <b>shape</b> (radii, boundaries, emphasis, lighting) and <b>layout</b> (padding, gaps, one-off tints). Converting the shape half of six surfaces beats converting all of two, because the question is whether deco looks right and only the shape half answers it.</p>
+      <p class="take"><span class="tag v">measured</span> 99 radius calls, plus the boundary colours, the selection devices and the surface lighting.</p>
     </div>
   </li>
   <li>
     <span class="esc-n">4</span>
     <div>
-      <h3>The layer found two real defects, one of them in shipped code</h3>
-      <p><code>field-command</code> points its accent at its own <code>ansi2</code>, so a &ldquo;healthy&rdquo; indicator resolved to exactly the colour of the furniture around it. That is a live theme, not the new one.</p>
-      <p class="take"><span class="tag v">measured</span> Both fixed; a test now checks all 12 skin&times;theme pairings. <button class="more" data-dlg="d-defects">what happened</button></p>
+      <h3>The golden test caught a real one</h3>
+      <p><code>radius()</code> was multiplying by the UI scale. Under the house scale of 0.80 that would have rounded <b>every corner in the app</b> by 0.8px &mdash; inside a change that claimed to alter nothing, and nobody would ever have found it by eye.</p>
+      <p class="take"><span class="tag v">measured</span> Corners are shapes, not lengths. There is now a test asserting that at five scales. <button class="more" data-dlg="d-defects">the other two it caught</button></p>
     </div>
   </li>
   <li>
     <span class="esc-n">5</span>
     <div>
-      <h3>Adoption is staged, and I have not seen it running</h3>
-      <p>One surface is converted. Six slices remain, costed at 1,388 literals and ordered by conflict cost rather than by visibility. Nothing is half-broken in the meantime, because the default skin is today&rsquo;s chrome.</p>
-      <p class="take"><span class="tag w">inferred</span> The pixels are unverified &mdash; screen capture does not work from an agent shell. Resolution, tokens and element construction are tested; the look is not.</p>
+      <h3>Chamfers are filed where you will trip over them</h3>
+      <p>Issue #407, plus the <code>Corner</code> enum&rsquo;s own doc comment and the header of <code>deco.toml</code> &mdash; the three places the people most likely to want one are standing. It carries the cost estimate <em>and</em> the check that would close it as not worth doing.</p>
+      <p class="take">Your words: <em>&ldquo;I do believe it will come up but I will forget!&rdquo;</em></p>
     </div>
   </li>
 </ol>
@@ -610,31 +617,53 @@ button.more:hover { border-color: var(--s1); color: var(--text-primary); }
   <p>Two adjacent triangle glyphs in the bar header were drawn at <code>text.alpha(0.75)</code> and <code>text.alpha(0.70)</code>. Both read <code>ink_dim</code> (0.70) now. Preserving a 5% difference between two neighbouring glyphs forever would have been preserving the disease that 59 distinct alphas are.</p>
   <p><span class="tag v">measured</span> The golden test asserts token values, not call sites, so it stays true &mdash; which is why this is written down here instead of hiding behind it.</p>
 </div>
+<div class="finding">
+  <h3>A helper that can drop its <code>&amp;Theme</code> is the proof the tokens are right</h3>
+  <p><code>bezel_btn_s</code> &mdash; the chrome&rsquo;s main button, 32 call sites &mdash; changed its palette parameter to <code>&amp;Skin</code> and lost nothing. Every colour it used (<code>accent</code>, <code>surface</code> brightened, <code>surface</code> darkened, <code>text</code>) was already a token. <code>hicon_s</code> did the same.</p>
+  <p><span class="tag v">measured</span> That is a stronger signal than any token count: a vocabulary that can replace the thing it was derived from is complete, and one that cannot is a subset pretending.</p>
+</div>
+<div class="finding">
+  <h3>The layer cost two tokens and one strategy across six surfaces</h3>
+  <p>The plan set its own failure line at &ldquo;more than two or three tokens across slices 1&ndash;3&rdquo;. The cut added <code>edge_strong</code> and <code>ink_off</code> &mdash; both transcriptions of expressions that already existed at six and one sites &mdash; plus <code>shine</code>, which was a genuine gap: nothing in the original five strategies could say whether a surface is lit.</p>
+  <p><span class="tag v">measured</span> That is what moved the difficulty score from 8 to an honest 6.</p>
+</div>
 
 <h2 class="sec">What happens next</h2>
-<p>Six slices, 1,388 literals, ordered by conflict cost rather than by visibility &mdash; <code>pane.rs</code> before the mother bar, because the pane header repeats fourteen times on a working screen and <code>main.rs</code> took four <code>chrome/*</code> merges on 12 September alone. Each slice reports how many <b>new tokens</b> it had to add, and that number is the honest post-hoc check on the 8/10: a design specified well enough needs none. <button class="more" data-dlg="d-slices">the slice table</button></p>
+<p>Two surfaces remain unconverted and they are the seam you will see: the <b>overlays</b> (usage, savings, find, plugins, the pickers) and the <b>theme tray</b>. Together they are 495 literals, and they were left last on purpose &mdash; the tray is the most idiosyncratic surface in the app, full of colour disks and swatch grids, and converting it early would have pushed a one-surface token into the shared vocabulary. <button class="more" data-dlg="d-slices">the slice table</button></p>
+<p>Say go and they land in one pass. Nothing else is blocked.</p>
 
-<h2 class="sec">Yours to call</h2>
+<h2 class="sec">Settled</h2>
+<p>Answered 12 Sep. Recorded here so none of it gets reopened by accident &mdash; and so the two riders, which are where the value in the review actually was, are attached to the decisions they changed.</p>
 <div class="grill">
   <div class="ask">
-    <h3>1 &middot; Is deco the house look, or one skin among several?</h3>
-    <p>The layer is agnostic. But if deco is heading for default, the remaining slices should be converted with deco in mind &mdash; and if it is one option among several, they should be converted to keep the default pixel-identical and nothing more.</p>
-    <p class="rec"><b>Recommendation:</b> one skin among several, for now. Ship it selectable, live with it for a week on real work, and decide once you have seen a 14-pane screen in it rather than a mockup.</p>
+    <h3>1 &middot; Deco is one skin among several, not the house look</h3>
+    <p>Answered <b>agree</b>. So the remaining slices convert to keep the default pixel-identical and nothing more &mdash; no deco-shaped assumptions land in shared code.</p>
+    <p class="rec"><b>Revisit when:</b> you have run a 14-pane screen on it for a week and still want it. Not before.</p>
   </div>
   <div class="ask">
-    <h3>2 &middot; Does a theme naming its skin go far enough, or does the tray need a picker?</h3>
-    <p>Today: a theme file carries <code>skin = "deco"</code>, and <code>$TD_SKIN</code> or <code>~/.config/terminal-delight/skin.toml</code> override it. There is no UI. A picker is more <code>main.rs</code>, in the surface most likely to conflict with another agent.</p>
-    <p class="rec"><b>Recommendation:</b> no picker yet. Two skins is not a choice worth a control; revisit at four.</p>
+    <h3>2 &middot; No skin picker in the tray</h3>
+    <p>Answered <b>agree</b>. A theme names its skin (<code>skin = "deco"</code>), and <code>$TD_SKIN</code> or <code>~/.config/terminal-delight/skin.toml</code> override it. Two skins is not a choice worth a control.</p>
+    <p class="rec"><b>Revisit at four skins</b> &mdash; that is the trigger, not a date.</p>
   </div>
   <div class="ask">
-    <h3>3 &middot; Should I keep converting, or stop until you have looked at it running?</h3>
-    <p>Slices 1&ndash;3 are about a day of mechanical work and each one is individually revertible. But I have not seen a single pixel of this &mdash; capture does not work from here &mdash; so every slice after the first is built on an unverified look.</p>
-    <p class="rec"><b>Recommendation:</b> stop here. Open a window on the branch, look at the left bar, then let me convert the rest in one pass with whatever you want changed already folded in.</p>
+    <h3>3 &middot; MVP, then look</h3>
+    <p>Answered <b>agree</b>, with the rider: <em>&ldquo;MVP and look before getting too deep&rdquo;</em>. That reshaped the work &mdash; the shape-carrying half of six surfaces rather than the whole of two &mdash; and it was the better cut. The window is open.</p>
+    <p class="rec"><b>Next:</b> the overlays and the theme tray (slices 4&ndash;5) close the round-on-square seam. Say go and they land in one pass.</p>
   </div>
   <div class="ask">
-    <h3>4 &middot; Chamfered corners &mdash; worth the rendering work later?</h3>
-    <p>The cut corner is the deco move a reader expects, and gpui cannot do it to a div; it needs a path per element. <code>Square</code> plus brackets gets most of the read for none of the risk, which is what shipped.</p>
-    <p class="rec"><b>Recommendation:</b> not now. Revisit only if the look lands and the missing chamfer is the thing you notice.</p>
+    <h3>4 &middot; Chamfers parked, loudly</h3>
+    <p>Answered <b>agree</b>, with the rider: <em>&ldquo;make heavy emphasis for a revisit though, I do believe it will come up but I will forget!&rdquo;</em> &rarr; issue #407, the <code>Corner</code> enum doc, and the <code>deco.toml</code> header.</p>
+    <p class="rec"><b>Revisit when:</b> you can point at a corner and say &ldquo;that looks flat, not deco&rdquo;. The issue carries the check that would instead close it <code>invalid</code>.</p>
+  </div>
+</div>
+
+<h2 class="sec">The one open question</h2>
+<div class="grill">
+  <div class="ask">
+    <h3>Does the bracket survive a real screen?</h3>
+    <p>Every mockup here has six rows and four tabs. Your actual window has nineteen panes and a full strip, and the bracket is the one device whose whole argument is that it <em>scales better than a fill</em> &mdash; a filled pill in a list of twenty is a stripe, a bracket is a pointer. That claim is untested at twenty.</p>
+    <p>It is also the only device that is cheap to change: <code>emphasis = "rail"</code> or <code>"underline"</code> in <code>deco.toml</code>, no rebuild, hot-reloaded in 300ms.</p>
+    <p class="rec"><b>Recommendation:</b> open a deco window, restore a real layout into it, and try all four values before deciding. If the brackets read as noise at that density, <code>rail</code> is the fallback I would pick &mdash; it keeps the marking structural without adding eight lines per selected thing.</p>
   </div>
 </div>
 
@@ -655,6 +684,19 @@ button.more:hover { border-color: var(--s1); color: var(--text-primary); }
     <p>There is also a practical asymmetry: the palette is <b>per-pane</b> and shape is not. A window whose panes had different corner radii would read as broken rather than as configured, so the two cannot share a scope even if they shared a file.</p>
     <h4>What it costs</h4>
     <p>A second file to know about, and a resolution order to explain: the user&rsquo;s own <code>skin.toml</code> wins, then the builtin the active theme named, then <code>default</code>. That is one more rule than &ldquo;the theme decides&rdquo;, and it is the price of the axis coming apart.</p>
+  </div>
+</dialog>
+
+<dialog id="d-bezel">
+  <div class="dlg-head"><div><h3>Why the buttons lost their glint</h3><p class="repo">Skin::bezel &middot; app/src/skin.rs</p></div><button class="x" data-close>&times;</button></div>
+  <div class="dlg-body">
+    <h4>What it was</h4>
+    <p><code>bezel_btn_s</code> is the chrome&rsquo;s main control &mdash; the split buttons, new-tab, the left bar&rsquo;s adopt and <code>+</code>, and twenty-five more sites. It carried two box shadows: a white inset glint along its top-left inside edge, and a dark seat under its bottom-right. Plus a diagonal gradient on the face. That is a raised physical key, and it is a good one.</p>
+    <h4>Why flat is not a preference</h4>
+    <p>A glint is a claim: <em>this object sits above the surface, catching a light from up here.</em> A hard square edge is a different claim: <em>this surface is a plane.</em> A skin that has chosen the second cannot also make the first without the two contradicting each other in the same six pixels &mdash; which is why every serious instrument panel ever built is flat, and not because someone preferred it.</p>
+    <p>So the decision moved into the <code>shine</code> strategy, and the call site stopped having an opinion. Under <code>gradient</code> the button is exactly what it always was; under <code>flat</code> the edge carries the whole state. Eight lit keys in a row read as a texture; eight edged ones read as eight buttons, which is the thing a bar of controls actually needs.</p>
+    <h4>The part worth noticing</h4>
+    <p>The helper&rsquo;s signature changed from <code>&amp;Theme</code> to <code>&amp;Skin</code> &mdash; and nothing was lost, because every colour it used was already a token: the accent at two alphas, the surface brightened, the surface darkened, the text. A helper that can drop its palette parameter entirely is the clearest evidence available that the token set is the right one. <code>hicon_s</code> did the same.</p>
   </div>
 </dialog>
 
@@ -715,10 +757,6 @@ button.more:hover { border-color: var(--s1); color: var(--text-primary); }
     </ul>
   </div>
 </dialog>
-<!-- decision-brief — the markup the notes system needs.
-     Paste immediately before the closing </body>. notes.js finds these by id.
-     Nothing here needs editing except NOTES_FILE. -->
-
 <div class="notebar" id="notebar">
   <span class="cnt"><b id="note-count">0</b> notes</span>
   <button id="btn-export" class="primary" data-note-action="export"
@@ -772,8 +810,24 @@ button.more:hover { border-color: var(--s1); color: var(--text-primary); }
   </div>
 </dialog>
 
-<!-- Notes are baked in here by "save into file". Leave it empty and leave it in. -->
-<script type="application/json" id="report-notes">{}</script>
+<!-- Seeded with the notes Parker wrote on the first pass, so the second pass opens
+     with his own words still attached to the decisions they settled. notes.js
+     prefers a baked-in island on first load, then localStorage. -->
+<script type="application/json" id="report-notes">{
+ "ask-1-deco-is-one": [
+  { "text": "Agree", "title": "1 · Deco is one skin among several, not the house look", "ts": "2026-09-12 21:06" }
+ ],
+ "ask-2-no-skin-picker": [
+  { "text": "Agree", "title": "2 · No skin picker in the tray", "ts": "2026-09-12 21:06" }
+ ],
+ "ask-3-mvp-then-look": [
+  { "text": "Agree.", "title": "3 · MVP, then look", "ts": "2026-09-12 21:07" },
+  { "text": "MVP and looko before getting too deep", "title": "3 · MVP, then look", "ts": "2026-09-12 21:07" }
+ ],
+ "ask-4-chamfers-parked-loudly": [
+  { "text": "Agree-- make heavy emphasis for a revisit though, I do believe it will come up but I will forget!", "title": "4 · Chamfers parked, loudly", "ts": "2026-09-12 21:07" }
+ ]
+}</script>
 
 <script>
   /* Set before notes.js runs. Used for the storage key and the download filename. */
