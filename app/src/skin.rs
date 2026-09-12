@@ -305,6 +305,7 @@ ink_tokens! {
     rule         => "rule",         Recipe::of(Role::Faint).a(0.25),               "an ordinary divider inside a region";
     rule_strong  => "rule_strong",  Recipe::of(Role::Surface).l(0.30),             "the line between two regions — a panel's own edge";
     edge         => "edge",         Recipe::of(Role::Accent).a(0.35),              "the edge of something interactive";
+    edge_strong  => "edge_strong",  Recipe::of(Role::Accent).a(0.50),              "the edge of a pane's own chrome — its header, its trays";
     focus        => "focus",        Recipe::of(Role::Accent),                      "the ring on the thing holding the keyboard";
 
     // ---- text ----
@@ -401,6 +402,16 @@ metric_tokens! {
 // ---------------------------------------------------------------------------
 
 /// How a corner is cut.
+///
+/// There is no `Chamfer`, and its absence is the one thing about this enum worth
+/// knowing. The cut corner is the deco move a reader actually pictures, and gpui
+/// cannot draw it: corner styling takes radii only, so a chamfer needs a rendered
+/// path and therefore a `canvas` behind every element that wants one. `Square`
+/// plus [`Skin::brackets`] gets most of the read for none of that risk.
+///
+/// **Parked and expected back** — issue #407 carries the cost estimate and the
+/// criterion that would close it `invalid`. It is filed rather than remembered
+/// because the person who parked it said he would forget.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum Corner {
     #[default]
@@ -463,6 +474,20 @@ pub enum Caps {
     Tracked,
 }
 
+/// Whether a surface is allowed to be lit.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum Shine {
+    /// A soft vertical gradient on raised surfaces — what a pane header does
+    /// today, and what makes the chrome read as a physical bar.
+    #[default]
+    Gradient,
+    /// Flat. A gradient and a hard boundary are two different claims about the
+    /// same edge: a look that draws its edges structurally has already said the
+    /// surface is a plane, and lighting it then contradicts that. Every serious
+    /// instrument panel is flat for this reason and not as an aesthetic.
+    Flat,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub struct Shapes {
     pub corner: Corner,
@@ -470,6 +495,7 @@ pub struct Shapes {
     pub emphasis: Emphasis,
     pub divider: Divider,
     pub caps: Caps,
+    pub shine: Shine,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -479,6 +505,7 @@ pub struct ShapeSpecs {
     pub emphasis: Option<Emphasis>,
     pub divider: Option<Divider>,
     pub caps: Option<Caps>,
+    pub shine: Option<Shine>,
 }
 
 impl ShapeSpecs {
@@ -489,6 +516,7 @@ impl ShapeSpecs {
             emphasis: self.emphasis.unwrap_or_default(),
             divider: self.divider.unwrap_or_default(),
             caps: self.caps.unwrap_or_default(),
+            shine: self.shine.unwrap_or_default(),
         }
     }
 }
@@ -602,27 +630,88 @@ impl Skin {
     }
 
     /// The radius of a small element, after the corner strategy has had its say.
+    ///
+    /// **Unscaled**, like border widths and unlike lengths. That is not a
+    /// simplification: it is what the chrome already does. `rounded_sm()` is a
+    /// fixed 4px and appears 55 times; the three sites that spell a scaled radius
+    /// keep it through [`Skin::rad`]. A radius describes the SHAPE of a corner
+    /// rather than the size of the thing it is on, so it belongs with the
+    /// hairline, and making it scale here would have quietly rounded every corner
+    /// in the app by 0.8px the moment the house scale (0.80) was applied.
     pub fn radius(&self) -> Pixels {
-        match self.shape.corner {
-            Corner::Round => self.px(self.m.radius),
-            Corner::Square => px(0.),
-        }
+        self.rad_raw(self.m.radius)
     }
 
-    /// The radius of a whole region.
+    /// The radius of a whole region — the left bar's own frame, at `px(10.)`.
     pub fn radius_lg(&self) -> Pixels {
-        match self.shape.corner {
-            Corner::Round => self.px(self.m.radius_lg),
-            Corner::Square => px(0.),
-        }
+        self.rad_raw(self.m.radius_lg)
     }
 
     /// A pill's radius — the chrome's `rounded_full`, which a square skin flattens
     /// like everything else.
+    ///
+    /// For pills: chips, tracks, badges, dots. **Not for circles the content
+    /// requires** — the HSV colour disk in the tab wheel keeps a literal
+    /// `rounded_full()`, because there hue is the angle and saturation the radius,
+    /// so the circle is the data structure. The skin owns the shapes the chrome
+    /// chose; it does not own the shapes the content is.
     pub fn radius_pill(&self) -> Pixels {
         match self.shape.corner {
             Corner::Round => px(9999.),
             Corner::Square => px(0.),
+        }
+    }
+
+    /// An arbitrary radius the chrome already spells as `rounded(px(v * scale))`.
+    /// Kept rather than folded into [`Skin::radius`] because the chrome genuinely
+    /// has several — a chip is not a card is not a window — and flattening them
+    /// all to one token would be a look change smuggled in under a refactor.
+    pub fn rad(&self, v: f32) -> Pixels {
+        match self.shape.corner {
+            Corner::Round => self.px(v),
+            Corner::Square => px(0.),
+        }
+    }
+
+    /// The same, for the sites that spell it `rounded(px(v))` with no scale.
+    pub fn rad_raw(&self, v: f32) -> Pixels {
+        match self.shape.corner {
+            Corner::Round => px(v),
+            Corner::Square => px(0.),
+        }
+    }
+
+    /// A TAB on the strip, marked or not. `tint` is the tab's own colour where
+    /// somebody chose one, so a deliberately coloured tab still reads as itself.
+    ///
+    /// Tabs are not rows. The strip is the surface a look gets judged on, because
+    /// it is the one a person looks at most, and it has a constraint a row does
+    /// not: **the rule is drawn in every state and merely goes transparent when
+    /// the tab is inactive.** A border that appeared on selection would shift the
+    /// entire strip by its own width every time you changed tabs. That trick is
+    /// in here rather than at the call site precisely because it is the kind of
+    /// thing a later strategy would quietly break.
+    ///
+    /// `Fill` and `Underline` are the same device here — the bottom rule the
+    /// strip already draws. That is not a fudge: the default skin has to be
+    /// pixel-identical to today, and today's tab is underlined whatever the rest
+    /// of the chrome does with its selected things.
+    pub fn tab<E: Styled + ParentElement>(&self, d: E, active: bool, tint: Hsla) -> E {
+        let clear = hsla(0., 0., 0., 0.);
+        let lit = |on: bool| if on { tint } else { clear };
+        match self.shape.emphasis {
+            Emphasis::Fill | Emphasis::Underline => b_b(d, self.m.rail).border_color(lit(active)),
+            Emphasis::Rail => b_l(d, self.m.rail).border_color(lit(active)),
+            // The rule still occupies its two pixels, transparent, so switching
+            // tabs under a bracketed skin moves nothing either.
+            Emphasis::Bracket => {
+                let d = b_b(d, self.m.rail).border_color(clear);
+                if active {
+                    self.brackets(d, tint)
+                } else {
+                    d
+                }
+            }
         }
     }
 
@@ -683,6 +772,23 @@ impl Skin {
             Boundary::Double => b_all(d, self.m.border)
                 .border_color(self.ink.rule_strong)
                 .child(ring(self.ink.rule)),
+        }
+    }
+
+    /// The ground of a raised surface, lit or flat according to the skin.
+    ///
+    /// Takes both stops because the caller has already computed its own lighter
+    /// tone from its own palette (a pane header's `lighter` is derived from the
+    /// pane's surface, not the window's), and inventing a second one here would
+    /// give a retinted pane two different headers.
+    pub fn ground(&self, lit: Hsla, base: Hsla) -> gpui::Background {
+        match self.shape.shine {
+            Shine::Gradient => gpui::linear_gradient(
+                180.,
+                gpui::linear_color_stop(lit, 0.),
+                gpui::linear_color_stop(base, 1.),
+            ),
+            Shine::Flat => base.into(),
         }
     }
 
@@ -831,6 +937,78 @@ impl Skin {
         }
     }
 
+    /// The chrome's main pressable control — the split buttons, new-tab, the left
+    /// bar's adopt and `+`. `s` is the absolute scale the bar is running at,
+    /// which the call sites already compute (some ask for `s * 0.85`).
+    ///
+    /// It is called a bezel because that is what it is under the default skin: a
+    /// raised key with a white glint along its top-left inside edge and a shadow
+    /// seated under it. Both of those are claims that the button is a physical
+    /// object above the surface — and a skin that has said [`Shine::Flat`] has
+    /// said the surface is a plane. So the glint and the seat are not "turned
+    /// off" as a style preference; they are removed because they contradict what
+    /// the rest of the skin is asserting. This is the single most visible place
+    /// the shine strategy earns its keep.
+    pub fn bezel(&self, active: bool, s: f32) -> Div {
+        let base = div()
+            .px(px(8. * s))
+            .py(px(2. * s))
+            .rounded(self.radius())
+            .border_1()
+            .text_size(px(11. * s))
+            .cursor_pointer();
+        match self.shape.shine {
+            Shine::Gradient => {
+                let glint = gpui::BoxShadow {
+                    color: gpui::white().alpha(0.22),
+                    offset: gpui::point(px(1.), px(1.)),
+                    blur_radius: px(0.),
+                    spread_radius: px(0.),
+                    inset: true,
+                };
+                let seat = gpui::BoxShadow {
+                    color: hsla(0., 0., 0., 0.55),
+                    offset: gpui::point(px(2.), px(2.)),
+                    blur_radius: px(3.),
+                    spread_radius: px(0.),
+                    inset: false,
+                };
+                let b = base.shadow(vec![glint, seat]);
+                if active {
+                    b.bg(gpui::linear_gradient(
+                        135.,
+                        gpui::linear_color_stop(self.ink.mark.alpha(0.42), 0.),
+                        gpui::linear_color_stop(self.ink.mark.alpha(0.12), 1.),
+                    ))
+                    .border_color(self.ink.mark)
+                    .text_color(gpui::white().alpha(0.92))
+                } else {
+                    b.bg(gpui::linear_gradient(
+                        135.,
+                        gpui::linear_color_stop(crate::brighten(self.ink.panel_raised, 1.7), 0.),
+                        gpui::linear_color_stop(crate::darken(self.ink.panel_raised, 0.7), 1.),
+                    ))
+                    .border_color(self.ink.mark.alpha(0.4))
+                    .text_color(self.ink.ink)
+                }
+            }
+            // Flat: the edge carries the whole state, which is what a bar of
+            // square buttons needs anyway — eight lit keys in a row read as a
+            // texture, eight edged ones read as eight buttons.
+            Shine::Flat => {
+                if active {
+                    base.bg(self.ink.mark_wash)
+                        .border_color(self.ink.mark)
+                        .text_color(self.ink.mark)
+                } else {
+                    base.bg(self.ink.btn_face)
+                        .border_color(self.ink.edge)
+                        .text_color(self.ink.ink_dim)
+                }
+            }
+        }
+    }
+
     /// A pressable control on a bar.
     pub fn btn(&self, active: bool) -> Div {
         let base = div()
@@ -903,6 +1081,7 @@ struct FileShape {
     emphasis: Option<String>,
     divider: Option<String>,
     caps: Option<String>,
+    shine: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -1088,6 +1267,12 @@ pub fn parse(source: &str) -> Result<SkinSpec, String> {
             "shape.caps",
             u,
         );
+        spec.shape.shine = enum_of(
+            sh.shine.as_ref(),
+            &[("gradient", Shine::Gradient), ("flat", Shine::Flat)],
+            "shape.shine",
+            u,
+        );
     }
 
     Ok(spec)
@@ -1148,6 +1333,14 @@ pub fn spec(cx: &App) -> Arc<SkinSpec> {
 pub fn skin(cx: &App, scale: f32) -> Skin {
     let th = theme::theme(cx);
     spec(cx).bake(&th, scale)
+}
+
+/// The skin for chrome that belongs to a PANE rather than to the window — a pane
+/// header, a pane frame. Panes carry their own palette, so baking against the
+/// window's would paint a green pane's header in the workspace's brass. Shape is
+/// still window-global: only the inks differ.
+pub fn for_theme(cx: &App, th: &Theme, scale: f32) -> Skin {
+    spec(cx).bake(th, scale)
 }
 
 /// Load the skin, start the hot-reload watcher. No first-run seed: an absent
@@ -1328,7 +1521,7 @@ impl Skin {
             .collect::<Vec<_>>()
             .join(",\n");
         format!(
-            "{{\n  \"skin\": \"{}\",\n  \"theme\": \"{theme_id}\",\n  \"scale\": {},\n  \"shape\": {{\n    \"corner\": \"{:?}\",\n    \"boundary\": \"{:?}\",\n    \"emphasis\": \"{:?}\",\n    \"divider\": \"{:?}\",\n    \"caps\": \"{:?}\"\n  }},\n  \"ink\": {{\n{inks}\n  }},\n  \"metric\": {{\n{metrics}\n  }}\n}}",
+            "{{\n  \"skin\": \"{}\",\n  \"theme\": \"{theme_id}\",\n  \"scale\": {},\n  \"shape\": {{\n    \"corner\": \"{:?}\",\n    \"boundary\": \"{:?}\",\n    \"emphasis\": \"{:?}\",\n    \"divider\": \"{:?}\",\n    \"caps\": \"{:?}\",\n    \"shine\": \"{:?}\"\n  }},\n  \"ink\": {{\n{inks}\n  }},\n  \"metric\": {{\n{metrics}\n  }}\n}}",
             self.name,
             self.scale,
             self.shape.corner,
@@ -1336,6 +1529,7 @@ impl Skin {
             self.shape.emphasis,
             self.shape.divider,
             self.shape.caps,
+            self.shape.shine,
         )
     }
 }
@@ -1454,8 +1648,26 @@ mod tests {
         let th = palette();
         let sk = parse(DEFAULT_SKIN_TOML).unwrap().bake(&th, 2.0);
         assert_eq!(sk.px(6.), px(12.));
-        assert_eq!(sk.radius(), px(8.));
         assert_eq!(sk.at(0.5).px(6.), px(6.));
+        assert_eq!(sk.rad(4.), px(8.), "`rad` is the SCALED radius");
+    }
+
+    /// Corners do not scale, and this is the test that says so.
+    ///
+    /// The chrome spells `rounded_sm()` — a fixed 4px — fifty-five times, and the
+    /// house scale is 0.80. A `radius()` that multiplied by the scale would have
+    /// rounded every corner in the app by 0.8px on the first frame, under a
+    /// refactor that claimed to change nothing. It was written that way once.
+    #[test]
+    fn a_corner_radius_is_a_shape_not_a_length_so_it_ignores_the_scale() {
+        let th = palette();
+        let spec = parse(DEFAULT_SKIN_TOML).unwrap();
+        for scale in [0.7, 0.8, 1.0, 1.6, 2.0] {
+            let sk = spec.bake(&th, scale);
+            assert_eq!(sk.radius(), px(4.), "radius moved at scale {scale}");
+            assert_eq!(sk.radius_lg(), px(10.), "radius_lg moved at scale {scale}");
+            assert_eq!(sk.radius_pill(), px(9999.), "pill moved at scale {scale}");
+        }
     }
 
     #[test]
@@ -1518,6 +1730,37 @@ mod tests {
                 .and_then(|v| v.trim().parse().ok())
                 .unwrap_or_else(|| panic!("`{key}` line quotes no number: {line}"));
             assert_eq!(quoted, want, "skins/default.toml has drifted on {key}");
+        }
+    }
+
+    /// The read-back verb prints every strategy there is.
+    ///
+    /// `shine` was added and the JSON was not, so for one build the probe
+    /// answered a question about the skin while silently omitting the field that
+    /// decides whether a header is lit. A verb that exists to make data
+    /// inspectable is worse than no verb when it under-reports, because it is
+    /// trusted. The `{:?}` of each enum is the payload, so the assertion is that
+    /// every strategy NAME appears as a key.
+    #[test]
+    fn the_probe_prints_every_shape_strategy() {
+        let th = palette();
+        let json = parse(include_str!("../skins/deco.toml"))
+            .unwrap()
+            .bake(&th, 1.0)
+            .to_json("deco");
+        for key in ["corner", "boundary", "emphasis", "divider", "caps", "shine"] {
+            assert!(
+                json.contains(&format!("\"{key}\"")),
+                "the probe omits {key}"
+            );
+        }
+        // …and every ink and metric, so a token added to the table cannot be
+        // added to the app without becoming inspectable in the same commit.
+        for key in INK_KEYS.iter().chain(METRIC_KEYS.iter()) {
+            assert!(
+                json.contains(&format!("\"{key}\"")),
+                "the probe omits {key}"
+            );
         }
     }
 

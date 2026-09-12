@@ -26,6 +26,12 @@
 # it works on the brass-on-black deco palette it ships with AND on the green
 # hacker palette, the olive field-command one, or anything an Omarchy theme
 # switch hands it. Shape is the axis; colour stays the palette's business.
+#
+# THE MISSING DEVICE: there is no chamfer. The cut corner is the deco move a
+# reader pictures first, and gpui cannot draw one — corner styling takes radii
+# only, so a chamfer needs a rendered path behind every element that wants it.
+# `corner = "square"` plus the bracket is the substitute. Parked as issue #407,
+# with the cost estimate and the check that would close it as not-worth-doing.
 
 name = "deco"
 icon = "◈"
@@ -36,6 +42,11 @@ boundary = "double"
 emphasis = "bracket"
 divider  = "double"
 caps     = "tracked"
+# No lit surfaces. A gradient on a header is shine, and shine is the claim that
+# the bar is a physical object catching a light — which is exactly the claim a
+# hard edge has already contradicted. Flat is not an aesthetic here; it is the
+# rest of the skin being consistent with itself.
+shine    = "flat"
 
 [metric]
 # Nothing rounds. `radius` still has a value because the inner ring of a double

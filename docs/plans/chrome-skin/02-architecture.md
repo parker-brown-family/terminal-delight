@@ -118,7 +118,16 @@ is how theming systems produce a file that looks right, parses fine, and does no
 - **Chamfered corners** (`Corner::Chamfer`), which is the deco move a reader expects.
   gpui cannot cut a corner off a div; it needs a path, and a path per chrome element is
   a rendering change, not a token. `Square` plus `brackets` gets most of the read for
-  none of the risk. Worth revisiting if the look lands.
+  none of the risk.
+
+  **This one is parked, not settled — issue #407.** Reviewed on 2026-09-12 with the
+  verdict *"agree, but make heavy emphasis for a revisit; I do believe it will come up
+  and I will forget"*. The issue carries the cost (a `canvas` + `PathBuilder` octagon
+  per element, so a rendering slice rather than a token slice) and, equally, the
+  criterion that would close it as not worth doing. It is also flagged in the `Corner`
+  enum's own doc comment and in the header of `app/skins/deco.toml`, so the three
+  people most likely to hit it — whoever adds a corner value, whoever writes a skin,
+  and whoever reads this plan — all meet it where they are standing.
 - **Letter-spacing as a style property.** gpui has none, so `Caps::Tracked` inserts
   U+2009 THIN SPACE between letters — in the string, behind `Skin::caps`, so exactly
   one place does it and a test can check it without a window.

@@ -43,6 +43,7 @@ icon = "▢"
 # rule         = { from = "faint", a = 0.25 }         # a divider inside a region
 # rule_strong  = { from = "surface", l = 0.30 }       # the line between regions
 # edge         = { from = "accent", a = 0.35 }        # the edge of a control
+# edge_strong  = { from = "accent", a = 0.50 }        # a pane's header and trays
 # focus        = { from = "accent" }                  # the ring on the keyboard holder
 
 # text
@@ -99,3 +100,4 @@ boundary = "hairline"   # hairline | double | inset | none
 emphasis = "fill"       # fill | underline | bracket | rail
 divider  = "line"       # line | double | none
 caps     = "off"        # off | upper | tracked
+shine    = "gradient"   # gradient | flat — whether a raised surface is lit

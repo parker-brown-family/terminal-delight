@@ -9178,7 +9178,7 @@ impl Workspace {
     /// ⚓, the active edge (TOP / BOTTOM), and up/down arrows ▲▼ marking which way
     /// content hugs. Clicking it flips the global toggle. Styled like the panel's
     /// other rows (a bezel button), accent-lit when anchoring to the top.
-    fn anchor_top_toggle(&self, th: &theme::Theme, cx: &mut Context<Self>) -> gpui::Div {
+    fn anchor_top_toggle(&self, sk: &skin::Skin, cx: &mut Context<Self>) -> gpui::Div {
         let on = self.anchor_top;
         // ⚓ <edge> <arrow>: ▲ points up when anchoring to the top, ▼ down for the
         // (default) bottom anchor — a glanceable direction cue beside the word.
@@ -9187,7 +9187,7 @@ impl Workspace {
         } else {
             "\u{2693} BOTTOM \u{25bc}"
         };
-        Self::bezel_btn(th, label, on).on_mouse_down(
+        Self::bezel_btn(sk, label, on).on_mouse_down(
             MouseButton::Left,
             cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
                 // keep the panel/scrim from seeing this (no close)
@@ -11378,68 +11378,28 @@ impl Workspace {
     /// A consistent header icon button (≈2× glyphs), scaled by the menu-bar
     /// slider `s`. The caller adds the glyph child (an emoji via `.child("…")`
     /// or `pane::eq_icon`) and `on_mouse_down`.
-    fn hicon_s(th: &theme::Theme, active: bool, s: f32) -> gpui::Div {
+    fn hicon_s(sk: &skin::Skin, active: bool, s: f32) -> gpui::Div {
         div()
             .px(px(4. * s))
-            .rounded_sm()
+            .rounded(sk.radius())
             .border_1()
-            .border_color(th.accent.alpha(0.5))
+            .border_color(sk.ink.edge_strong)
             .bg(if active {
-                th.accent.alpha(0.2)
+                sk.ink.mark.alpha(0.2)
             } else {
-                th.accent.alpha(0.0)
+                sk.ink.mark.alpha(0.0)
             })
             .cursor_pointer()
     }
 
-    fn bezel_btn(th: &theme::Theme, label: &str, active: bool) -> gpui::Div {
-        Self::bezel_btn_s(th, label, active, 1.0)
+    fn bezel_btn(sk: &skin::Skin, label: &str, active: bool) -> gpui::Div {
+        Self::bezel_btn_s(sk, label, active, 1.0)
     }
 
     /// `bezel_btn` scaled by the menu-bar slider `s` — padding + text grow with
     /// the bar so tabs and split/new-tab buttons resize together.
-    fn bezel_btn_s(th: &theme::Theme, label: &str, active: bool, s: f32) -> gpui::Div {
-        let glint = BoxShadow {
-            color: white().alpha(0.22),
-            offset: point(px(1.), px(1.)),
-            blur_radius: px(0.),
-            spread_radius: px(0.),
-            inset: true,
-        };
-        let seat = BoxShadow {
-            color: hsla(0., 0., 0., 0.55),
-            offset: point(px(2.), px(2.)),
-            blur_radius: px(3.),
-            spread_radius: px(0.),
-            inset: false,
-        };
-        let b = div()
-            .px(px(8. * s))
-            .py(px(2. * s))
-            .rounded_sm()
-            .border_1()
-            .text_size(px(11. * s))
-            .cursor_pointer()
-            .shadow(vec![glint, seat]);
-        if active {
-            b.bg(linear_gradient(
-                135.,
-                linear_color_stop(th.accent.alpha(0.42), 0.),
-                linear_color_stop(th.accent.alpha(0.12), 1.),
-            ))
-            .border_color(th.accent)
-            .text_color(white().alpha(0.92))
-            .child(label.to_string())
-        } else {
-            b.bg(linear_gradient(
-                135.,
-                linear_color_stop(brighten(th.surface, 1.7), 0.),
-                linear_color_stop(darken(th.surface, 0.7), 1.),
-            ))
-            .border_color(th.accent.alpha(0.4))
-            .text_color(th.text)
-            .child(label.to_string())
-        }
+    fn bezel_btn_s(sk: &skin::Skin, label: &str, active: bool, s: f32) -> gpui::Div {
+        sk.bezel(active, s).child(label.to_string())
     }
 
     /// Open the tab config pane for tab `i`, anchored at `at`. Defaults the wheel
@@ -11638,6 +11598,7 @@ impl Workspace {
     fn bar_row(&self, row: tree::Row, cx: &mut Context<Self>) -> AnyElement {
         let th = theme::theme(cx);
         let s = theme::outer_choice(cx).grade.scale;
+        let sk = skin::skin(cx, s);
         let step = px(11. * s);
         match row {
             tree::Row::Project {
@@ -11661,7 +11622,7 @@ impl Workspace {
                     div()
                         .w(px(7. * s))
                         .h(px(7. * s))
-                        .rounded_full()
+                        .rounded(sk.radius_pill())
                         .bg(color)
                         .into_any_element(),
                     step,
@@ -11695,7 +11656,7 @@ impl Workspace {
                     div()
                         .w(px(3. * s))
                         .h(px(13. * s))
-                        .rounded_sm()
+                        .rounded(sk.radius())
                         .bg(color)
                         .into_any_element(),
                     step,
@@ -11770,6 +11731,7 @@ impl Workspace {
         s: f32,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        let sk = skin::skin(cx, s);
         let scoped = match branch {
             BarBranch::Project(id) => self.scope == tree::Scope::Project(id),
             BarBranch::Initiative(id) => self.scope == tree::Scope::Initiative(id),
@@ -11786,7 +11748,7 @@ impl Workspace {
             BarBranch::Initiative(id) => tree::RowId::Initiative(id),
             BarBranch::Unfiled => tree::RowId::Unfiled,
         };
-        let (drop_hi, caret) = self.bar_drop_marks(row_id_kind, th);
+        let (drop_hi, caret) = self.bar_drop_marks(row_id_kind, th, &sk);
         let row_id = SharedString::from(format!("bar-branch-{key}"));
         let store = self.bar_bounds.clone();
 
@@ -11799,7 +11761,7 @@ impl Workspace {
                 .child(
                     div()
                         .px(px(4. * s))
-                        .rounded_sm()
+                        .rounded(sk.radius())
                         .border_1()
                         .border_color(th.accent)
                         .bg(darken(th.bg, 0.8))
@@ -11832,7 +11794,7 @@ impl Workspace {
             .flex_row()
             .items_center()
             .gap(px(5. * s))
-            .rounded_sm()
+            .rounded(sk.radius())
             .cursor_pointer()
             // the scoped branch is lit: the strip beside it is showing exactly
             // this, and the tree says which branch that is without a legend
@@ -11854,7 +11816,7 @@ impl Workspace {
                     .flex_row()
                     .items_center()
                     .justify_center()
-                    .rounded_sm()
+                    .rounded(sk.radius())
                     .cursor_pointer()
                     .hover(|st| st.bg(hsla(0., 0., 1., 0.12)))
                     .child(Self::triangle(
@@ -11976,7 +11938,12 @@ impl Workspace {
     /// One function so the two marks can never contradict each other — a row
     /// lit as a destination *and* wearing a caret would be telling a person two
     /// different things about the same release.
-    fn bar_drop_marks(&self, row: tree::RowId, th: &theme::Theme) -> (bool, Option<gpui::Div>) {
+    fn bar_drop_marks(
+        &self,
+        row: tree::RowId,
+        th: &theme::Theme,
+        sk: &skin::Skin,
+    ) -> (bool, Option<gpui::Div>) {
         let Some(drop) = self
             .bar_drag
             .as_ref()
@@ -11993,7 +11960,7 @@ impl Workspace {
                 .when(top, |d| d.top(px(-1.)))
                 .when(!top, |d| d.bottom(px(-1.)))
                 .h(px(2.))
-                .rounded_full()
+                .rounded(sk.radius_pill())
                 .bg(th.accent)
                 .shadow(vec![BoxShadow {
                     color: th.accent.alpha(0.9),
@@ -12021,6 +11988,7 @@ impl Workspace {
         s: f32,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        let sk = skin::skin(cx, s);
         let is_active = i == self.active;
         let label = self.tabs[i]
             .name
@@ -12030,7 +11998,7 @@ impl Workspace {
         let panes = self.tab_pane_count(i);
         let grp = SharedString::from(format!("bar-task-grp-{i}"));
         let store = self.bar_bounds.clone();
-        let (_, caret) = self.bar_drop_marks(tree::RowId::Task(i), th);
+        let (_, caret) = self.bar_drop_marks(tree::RowId::Task(i), th, &sk);
 
         // the strip's own rename editor owns this row while it is renaming, so
         // one gesture renames a task wherever it is grabbed from
@@ -12042,7 +12010,7 @@ impl Workspace {
                 .child(
                     div()
                         .px(px(4. * s))
-                        .rounded_sm()
+                        .rounded(sk.radius())
                         .border_1()
                         .border_color(th.accent)
                         .bg(darken(th.bg, 0.8))
@@ -12063,7 +12031,6 @@ impl Workspace {
                 .into_any_element();
         }
 
-        let sk = skin::skin(cx, s);
         sk.active_row(
             div()
                 .id(SharedString::from(format!("bar-task-{i}")))
@@ -12087,7 +12054,7 @@ impl Workspace {
             div()
                 .w(px(3. * s))
                 .h(px(11. * s))
-                .rounded_sm()
+                .rounded(sk.radius())
                 .bg(fill.unwrap_or(th.faint.alpha(0.35))),
         )
         .child(
@@ -12336,6 +12303,12 @@ impl Workspace {
         s: f32,
         cx: &mut Context<Self>,
     ) -> Option<gpui::Div> {
+        let sk = skin::skin(cx, s);
+        // Hoisted because the rails below are built inside `move` closures, and a
+        // `Skin` is not `Copy` — the closure would take the only one. A resolved
+        // radius is a `Pixels`, which is.
+        let pill = sk.radius_pill();
+        let rad = sk.radius();
         let rows = self.slot_rows();
         let tally = self.slot_tally(cx);
         if rows.is_empty() && tally.total() == 0 {
@@ -12365,7 +12338,7 @@ impl Workspace {
             let mut d = div()
                 .w_full()
                 .h(px(h))
-                .rounded_full()
+                .rounded(pill)
                 .bg(text.alpha(0.04))
                 .border_1()
                 .border_color(faint.alpha(0.40))
@@ -12423,7 +12396,7 @@ impl Workspace {
                     div()
                         .w_full()
                         .h(px(rail_h))
-                        .rounded_full()
+                        .rounded(pill)
                         .bg(track)
                         .overflow_hidden()
                         .child(
@@ -12437,7 +12410,7 @@ impl Workspace {
                                 } else {
                                     0.0
                                 }))
-                                .rounded_full()
+                                .rounded(pill)
                                 .bg(col),
                         )
                 }
@@ -12456,7 +12429,7 @@ impl Workspace {
                         .h(px(tick_h))
                         .gap(px(1.0 * s));
                     for i in 0..deg.ticks {
-                        d = d.child(div().flex_1().h_full().rounded_sm().bg(if i < lit {
+                        d = d.child(div().flex_1().h_full().rounded(rad).bg(if i < lit {
                             col
                         } else {
                             track
@@ -12534,7 +12507,7 @@ impl Workspace {
                         .flex_none()
                         .w(px(mark_w * s))
                         .h(px(mark_w * s))
-                        .rounded_sm()
+                        .rounded(rad)
                         .border_1()
                         .border_color(text.alpha(0.18))
                         .bg(text.alpha(0.06))
@@ -12690,7 +12663,7 @@ impl Workspace {
                     .items_center()
                     .gap(px(1.0 * s))
                     .px(px(if chip { 2.5 * s } else { 0. }))
-                    .rounded_sm()
+                    .rounded(rad)
                     .bg(if chip {
                         col.alpha(0.22)
                     } else {
@@ -12835,7 +12808,7 @@ impl Workspace {
             .child(
                 // adopt: file every loose task under the project its terminal is
                 // actually sitting in
-                Self::bezel_btn_s(&th, "\u{1F4C1}", false, s * 0.85)
+                Self::bezel_btn_s(&sk, "\u{1F4C1}", false, s * 0.85)
                     .id("bar-adopt")
                     .on_mouse_down(
                         MouseButton::Left,
@@ -12846,7 +12819,7 @@ impl Workspace {
                     ),
             )
             .child(
-                Self::bezel_btn_s(&th, "+", false, s * 0.85)
+                Self::bezel_btn_s(&sk, "+", false, s * 0.85)
                     .id("bar-new-project")
                     .on_mouse_down(
                         MouseButton::Left,
@@ -12965,6 +12938,7 @@ impl Workspace {
         let th = theme::theme(cx);
         // tabs ride the menu-bar slider: everything in the tab scales with the bar
         let s = theme::outer_choice(cx).grade.scale;
+        let sk = skin::skin(cx, s);
         let is_active = i == self.active;
         // the ACTIVE tab reads 20% bigger and lifts up out of the strip so the
         // current tab is unmistakable at a glance.
@@ -12975,9 +12949,9 @@ impl Workspace {
             return div()
                 .px(px(8. * s))
                 .py(px(2. * s))
-                .rounded_sm()
+                .rounded(sk.radius())
                 .border_1()
-                .border_color(th.accent)
+                .border_color(sk.ink.mark)
                 .bg(darken(th.bg, 0.8))
                 .text_size(px(CHROME_NAME_PT * s))
                 .text_color(th.text)
@@ -13027,20 +13001,26 @@ impl Workspace {
         // underline is enough to say which tab you are in. The rule takes the
         // tab's own colour when it has one, so a deliberately coloured tab
         // still reads as itself.
-        let rule = fill.unwrap_or(th.accent);
-        let mut btn = div()
-            .px(px(10. * ts))
-            .py(px(3. * ts))
-            .text_size(px(CHROME_NAME_PT * ts))
-            .cursor_pointer()
-            .border_b_2()
-            .border_color(if is_active {
-                rule
-            } else {
-                hsla(0., 0., 0., 0.)
-            })
-            .text_color(if is_active { th.text } else { th.faint })
-            .child(label.to_string());
+        let rule = fill.unwrap_or(sk.ink.mark);
+        // `sk.tab` owns the whole "which one am I on" decision — the underline
+        // today, corner brackets under deco — including the trick that keeps the
+        // rule's two pixels reserved in every state so the strip never shifts.
+        let mut btn = sk.tab(
+            div()
+                .relative()
+                .px(px(10. * ts))
+                .py(px(3. * ts))
+                .text_size(px(CHROME_NAME_PT * ts))
+                .cursor_pointer()
+                .text_color(if is_active {
+                    sk.ink.ink
+                } else {
+                    sk.ink.ink_off
+                })
+                .child(label.to_string()),
+            is_active,
+            rule,
+        );
         if let Some(tc) = text {
             btn = btn.text_color(tc);
         }
@@ -13109,7 +13089,7 @@ impl Workspace {
                     div()
                         .absolute()
                         .inset_0()
-                        .rounded_sm()
+                        .rounded(sk.radius())
                         .border_1()
                         .border_color(th.accent)
                         .bg(th.accent.alpha(0.25)),
@@ -13330,6 +13310,11 @@ impl Workspace {
             .w(px(D))
             .h(px(D))
             .relative()
+            // NOT `sk.radius_pill()`. This is an HSV disk: hue is the angle and
+            // saturation the distance from the centre, so the circle is the data
+            // structure and not a styling choice. A square skin squaring this
+            // would clip the corners off the colour space. The skin owns shapes
+            // the chrome chose; it does not own shapes the content requires.
             .rounded_full()
             .cursor_pointer()
             .on_mouse_down(
@@ -14563,6 +14548,11 @@ impl Render for Workspace {
             cx.defer_in(window, |ws, window, cx| ws.focus_active(window, cx));
         }
         let scale = theme::outer_choice(cx).grade.scale;
+        // The window's chrome shape, resolved once for the whole of this render.
+        // Everything below asks `sk` for a radius, an edge or an emphasis rather
+        // than spelling one, which is what lets a skin file restyle the bar, the
+        // strip and every overlay without a line of this function changing.
+        let sk = skin::skin(cx, scale);
         let bezel = darken(th.surface, 0.55);
         let tab = &self.tabs[self.active];
         let mut leaves = vec![];
@@ -14644,7 +14634,7 @@ impl Render for Workspace {
                     .flex()
                     .items_center()
                     .justify_center()
-                    .rounded_sm()
+                    .rounded(sk.radius())
                     .cursor_pointer()
                     .hover(|st| st.bg(hsla(0., 0., 1., 0.12)))
                     .child(Self::triangle(BarDir::Right, th.text.alpha(0.7), scale))
@@ -14669,7 +14659,7 @@ impl Render for Workspace {
             div()
                 .w(px(4. * scale))
                 .h(px(22. * scale))
-                .rounded_full()
+                .rounded(sk.radius_pill())
                 .bg(th.accent)
                 .shadow(vec![BoxShadow {
                     color: th.accent.alpha(0.9),
@@ -14700,7 +14690,7 @@ impl Render for Workspace {
         if dragging_tab && caret_at == Some(family.len()) && !new_row_drop {
             tab_strip = tab_strip.child(drop_marker());
         }
-        tab_strip = tab_strip.child(Self::bezel_btn_s(&th, "+", false, scale).on_mouse_down(
+        tab_strip = tab_strip.child(Self::bezel_btn_s(&sk, "+", false, scale).on_mouse_down(
             MouseButton::Left,
             cx.listener(|ws, _: &MouseDownEvent, window, cx| ws.new_tab(window, cx)),
         ));
@@ -14722,7 +14712,7 @@ impl Render for Workspace {
                     .w_full()
                     .h(px(6. * scale))
                     .mt(px(3. * scale))
-                    .rounded_full()
+                    .rounded(sk.radius_pill())
                     .bg(th.accent)
                     .shadow(vec![BoxShadow {
                         color: th.accent.alpha(0.9),
@@ -14794,7 +14784,7 @@ impl Render for Workspace {
                             .right_0()
                             .top(px(5.))
                             .h(px(3.))
-                            .rounded_full()
+                            .rounded(sk.radius_pill())
                             .bg(darken(th.surface, 0.4))
                             .border_1()
                             .border_color(th.faint),
@@ -14806,7 +14796,7 @@ impl Render for Workspace {
                             .top(px(5.))
                             .h(px(3.))
                             .w(px(90. * ratio))
-                            .rounded_full()
+                            .rounded(sk.radius_pill())
                             .bg(th.accent),
                     )
                     .child(
@@ -14816,7 +14806,7 @@ impl Render for Workspace {
                             .top(px(1.))
                             .w(px(10.))
                             .h(px(10.))
-                            .rounded_full()
+                            .rounded(sk.radius_pill())
                             .bg(linear_gradient(
                                 135.,
                                 linear_color_stop(brighten(th.accent, 1.4), 0.),
@@ -14839,7 +14829,7 @@ impl Render for Workspace {
             );
 
         // What the mother bar actually shows: ▭ 110%, one click to the track.
-        let scrubber = Self::hicon_s(&th, self.scale_menu, scale)
+        let scrubber = Self::hicon_s(&sk, self.scale_menu, scale)
             .flex()
             .flex_row()
             .items_center()
@@ -14870,7 +14860,7 @@ impl Render for Workspace {
         // window-control buttons), roomier, larger glyph+label — so they never
         // get crowded off the bar or look like an afterthought.
         let split_btn = |label: &str| {
-            Self::bezel_btn_s(&th, label, false, scale)
+            Self::bezel_btn_s(&sk, label, false, scale)
                 .h(px(26. * scale))
                 .px(px(10. * scale))
                 .py(px(0.))
@@ -14915,7 +14905,7 @@ impl Render for Workspace {
                 .flex()
                 .items_center()
                 .justify_center()
-                .rounded_sm()
+                .rounded(sk.radius())
                 .text_size(px(12. * scale))
                 .text_color(th.text.alpha(0.7))
                 .cursor_pointer()
@@ -14972,7 +14962,7 @@ impl Render for Workspace {
         let chrome_vw = f32::from(window.viewport_size().width);
         let chrome_narrow = chrome_vw < CHROME_NARROW;
 
-        let ic_theme = Self::hicon_s(&th, self.theme_menu.is_some(), scale)
+        let ic_theme = Self::hicon_s(&sk, self.theme_menu.is_some(), scale)
             .text_size(px(CHROME_GLYPH * scale))
             .line_height(px(CHROME_GLYPH * scale))
             .child("🎨")
@@ -14985,7 +14975,7 @@ impl Render for Workspace {
                     cx.notify();
                 }),
             );
-        let ic_osd = Self::hicon_s(&th, self.osd_menu.is_some(), scale)
+        let ic_osd = Self::hicon_s(&sk, self.osd_menu.is_some(), scale)
             .flex()
             .items_center()
             .child(pane::eq_icon(th.accent, scale * 0.5))
@@ -15004,7 +14994,7 @@ impl Render for Workspace {
         // instead of two, and the survivor is the one carrying the numbers. The
         // `…` menu below still lists it, because the left bar can be closed
         // (ctrl+shift+B) and a surface with no door at all is not a collapse.
-        let ic_dead = Self::hicon_s(&th, self.dead_menu, scale)
+        let ic_dead = Self::hicon_s(&sk, self.dead_menu, scale)
             .text_size(px(CHROME_GLYPH * scale))
             .line_height(px(CHROME_GLYPH * scale))
             .child("\u{1faa6}")
@@ -15017,7 +15007,7 @@ impl Render for Workspace {
                     cx.notify();
                 }),
             );
-        let ic_plugins = Self::hicon_s(&th, self.plugins_menu, scale)
+        let ic_plugins = Self::hicon_s(&sk, self.plugins_menu, scale)
             .text_size(px(CHROME_GLYPH * scale))
             .line_height(px(CHROME_GLYPH * scale))
             .child("\u{1f9e9}")
@@ -15029,7 +15019,7 @@ impl Render for Workspace {
                     cx.notify();
                 }),
             );
-        let ic_more = Self::hicon_s(&th, self.more_menu, scale)
+        let ic_more = Self::hicon_s(&sk, self.more_menu, scale)
             .text_size(px(CHROME_GLYPH * scale))
             .line_height(px(CHROME_GLYPH * scale))
             .child("\u{2026}")
@@ -15352,7 +15342,7 @@ impl Render for Workspace {
                         .flex()
                         .items_center()
                         .justify_center()
-                        .rounded_full()
+                        .rounded(sk.radius_pill())
                         .border_2()
                         .border_color(if on {
                             hsla(0.09, 0.9, 0.6, 1.0)
@@ -15578,7 +15568,7 @@ impl Render for Workspace {
                             .flex()
                             .items_center()
                             .justify_center()
-                            .rounded_md()
+                            .rounded(sk.rad_raw(6.))
                             .border_1()
                             .border_color(if active {
                                 th.accent
@@ -15658,7 +15648,7 @@ impl Render for Workspace {
             if !is_pane {
                 controls = controls
                     .child(label("ANCHOR"))
-                    .child(div().flex().child(self.anchor_top_toggle(&th, cx)));
+                    .child(div().flex().child(self.anchor_top_toggle(&sk, cx)));
             }
             if is_pane {
                 // Per-group toggle: on = this pane's theme follows the outer scope
@@ -15668,7 +15658,7 @@ impl Render for Workspace {
                 } else {
                     format!("◯ {}", t.follow_outer)
                 };
-                controls = controls.child(Self::bezel_btn(&th, &lbl, following).on_mouse_down(
+                controls = controls.child(Self::bezel_btn(&sk, &lbl, following).on_mouse_down(
                     MouseButton::Left,
                     cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
                         cx.stop_propagation();
@@ -15698,7 +15688,7 @@ impl Render for Workspace {
             };
             panel = panel
                 .p_3()
-                .rounded_md()
+                .rounded(sk.rad_raw(6.))
                 .border_2()
                 .border_color(th.accent.alpha(0.85))
                 .bg(darken(th.surface, 0.6))
@@ -15792,7 +15782,7 @@ impl Render for Workspace {
             };
             panel = panel
                 .p_3()
-                .rounded_md()
+                .rounded(sk.rad_raw(6.))
                 .border_2()
                 .border_color(th.accent.alpha(0.85))
                 .bg(darken(th.surface, 0.6))
@@ -15813,7 +15803,7 @@ impl Render for Workspace {
                 )))
                 .child(rows)
                 .child(
-                    Self::bezel_btn(&th, t.d_reset, grade.is_neutral()).on_mouse_down(
+                    Self::bezel_btn(&sk, t.d_reset, grade.is_neutral()).on_mouse_down(
                         MouseButton::Left,
                         cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
                             cx.stop_propagation();
@@ -15865,7 +15855,7 @@ impl Render for Workspace {
                     .child(label(t.d_crawl_hdr))
                     .child(
                         Self::bezel_btn(
-                            &th,
+                            &sk,
                             &if crawl_on {
                                 format!("\u{25a3} {}", t.d_crawl_on)
                             } else {
@@ -15909,7 +15899,7 @@ impl Render for Workspace {
                 } else {
                     format!("◯ {}", t.follow_outer)
                 };
-                panel = panel.child(Self::bezel_btn(&th, &lbl, following).on_mouse_down(
+                panel = panel.child(Self::bezel_btn(&sk, &lbl, following).on_mouse_down(
                     MouseButton::Left,
                     cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
                         cx.stop_propagation();
@@ -15958,7 +15948,7 @@ impl Render for Workspace {
                     .child(s)
             };
             let enable_btn = Self::bezel_btn(
-                &th,
+                &sk,
                 &if cfg.enabled {
                     format!("\u{25c9} {}", t.m_server_on)
                 } else {
@@ -15978,7 +15968,7 @@ impl Render for Workspace {
                 }),
             );
             let expose_btn = Self::bezel_btn(
-                &th,
+                &sk,
                 format!(
                     "{} {}",
                     t.m_expose,
@@ -16002,7 +15992,7 @@ impl Render for Workspace {
                 }),
             );
             let events_btn = Self::bezel_btn(
-                &th,
+                &sk,
                 &if cfg.events {
                     format!("\u{25c9} {}", t.m_events_on)
                 } else {
@@ -16025,7 +16015,7 @@ impl Render for Workspace {
             // theme as one coherent dashboard instead of mixing every pane's
             // own colours. The chrome stays flat so hit targets remain honest.
             let theme_btn = Self::bezel_btn(
-                &th,
+                &sk,
                 &if self.mcp_theme_preview {
                     format!("\u{1f3a8} {}", t.m_theme_on)
                 } else {
@@ -16048,7 +16038,7 @@ impl Render for Workspace {
             // remote-control one (set_pane_config). A deliberate second switch —
             // appearance only, never a PTY. Mirrors the TD_MCP_WRITE env var.
             let writes_btn = Self::bezel_btn(
-                &th,
+                &sk,
                 &if cfg.writable {
                     format!("\u{25c9} {}", t.m_writes_on)
                 } else {
@@ -16196,7 +16186,7 @@ impl Render for Workspace {
                         .gap_1()
                         .px_2()
                         .py_0p5()
-                        .rounded_full()
+                        .rounded(sk.radius_pill())
                         .border_1()
                         .border_color(if on { th.accent } else { th.text.alpha(0.2) })
                         .when(on, |d| d.bg(th.accent.alpha(0.16)))
@@ -16235,7 +16225,7 @@ impl Render for Workspace {
                         .gap_1()
                         .px_2()
                         .py_0p5()
-                        .rounded_full()
+                        .rounded(sk.radius_pill())
                         .border_1()
                         .border_color(if on { color } else { th.text.alpha(0.2) })
                         .when(on, |d| d.bg(color.alpha(0.16)))
@@ -16247,7 +16237,7 @@ impl Render for Workspace {
                                 .w(px(7.))
                                 .h(px(7.))
                                 .flex_none()
-                                .rounded_full()
+                                .rounded(sk.radius_pill())
                                 .bg(color),
                         )
                         .child(name.clone())
@@ -16288,7 +16278,7 @@ impl Render for Workspace {
                         .gap_1()
                         .px_2()
                         .py_0p5()
-                        .rounded_full()
+                        .rounded(sk.radius_pill())
                         .border_1()
                         .border_color(if on { th.accent } else { th.text.alpha(0.2) })
                         .when(on, |d| d.bg(th.accent.alpha(0.16)))
@@ -16327,7 +16317,7 @@ impl Render for Workspace {
                         .gap_1()
                         .px_2()
                         .py_0p5()
-                        .rounded_full()
+                        .rounded(sk.radius_pill())
                         .border_1()
                         .border_color(if on { color } else { color.alpha(0.34) })
                         .when(on, |d| d.bg(color.alpha(0.18)))
@@ -16339,7 +16329,7 @@ impl Render for Workspace {
                                 .w(px(7.))
                                 .h(px(7.))
                                 .flex_none()
-                                .rounded_full()
+                                .rounded(sk.radius_pill())
                                 .bg(color),
                         )
                         .child(program.clone())
@@ -16381,7 +16371,7 @@ impl Render for Workspace {
                         .gap_1()
                         .px_2()
                         .py_0p5()
-                        .rounded_full()
+                        .rounded(sk.radius_pill())
                         .border_1()
                         .border_color(if on { th.accent } else { th.text.alpha(0.2) })
                         .when(on, |d| d.bg(th.accent.alpha(0.16)))
@@ -16425,7 +16415,7 @@ impl Render for Workspace {
                         .gap_1()
                         .px_2()
                         .py_0p5()
-                        .rounded_full()
+                        .rounded(sk.radius_pill())
                         .border_1()
                         .border_color(if on { color } else { color.alpha(0.34) })
                         .when(on, |d| d.bg(color.alpha(0.18)))
@@ -16741,7 +16731,7 @@ impl Render for Workspace {
                             .gap_1()
                             .px_1()
                             .py_0p5()
-                            .rounded_sm()
+                            .rounded(sk.radius())
                             .border_1()
                             .border_color(col.alpha(0.5))
                             .bg(col.alpha(0.10))
@@ -16824,14 +16814,14 @@ impl Render for Workspace {
                                     .flex_none()
                                     .w(px(track_w))
                                     .h(px(4.5 * cs))
-                                    .rounded_sm()
+                                    .rounded(sk.radius())
                                     .bg(row_text.alpha(0.10))
                                     .overflow_hidden()
                                     // The gradient is ON the fill, so it spans
                                     // exactly what is drawn — no inner clipping
                                     // layer, and a short bar still reaches its
                                     // full colour at its own right edge.
-                                    .child(div().h_full().w(px(filled)).rounded_sm().bg(
+                                    .child(div().h_full().w(px(filled)).rounded(sk.radius()).bg(
                                         linear_gradient(
                                             90.,
                                             linear_color_stop(white().alpha(0.92), 0.),
@@ -16857,7 +16847,7 @@ impl Render for Workspace {
                         .gap_0p5()
                         .px_1()
                         .py_1()
-                        .rounded_sm()
+                        .rounded(sk.radius())
                         .border_1()
                         .border_color(status_glow.alpha(0.20))
                         .bg(well_bg.alpha(0.55))
@@ -16916,7 +16906,7 @@ impl Render for Workspace {
                         // The dark card FACE sits inset within. Frame band is 66% of
                         // its old thickness (5→3.3) — same outline + glow, slimmer.
                         .p(px(3.3 * cs))
-                        .rounded_lg()
+                        .rounded(sk.rad_raw(8.))
                         .border_2()
                         .border_color(kind_col.alpha(if live_glow { 0.42 } else { 0.32 }))
                         .bg(linear_gradient(
@@ -16946,7 +16936,7 @@ impl Render for Workspace {
                                 .flex_col()
                                 .gap_1()
                                 .p_1()
-                                .rounded_md()
+                                .rounded(sk.rad_raw(6.))
                                 .border_1()
                                 .border_color(kind_col.alpha(0.3))
                                 .bg(card_bg)
@@ -17008,7 +16998,7 @@ impl Render for Workspace {
                                                 .font_weight(gpui::FontWeight::EXTRA_BOLD)
                                                 .text_color(mode_col)
                                                 .px_1()
-                                                .rounded_sm()
+                                                .rounded(sk.radius())
                                                 .border_1()
                                                 .border_color(kind_col.alpha(0.42))
                                                 .bg(kind_col.alpha(0.12))
@@ -17036,7 +17026,7 @@ impl Render for Workspace {
                                         // deck-tinted rim + an inset shadow so
                                         // the warped screen reads as recessed
                                         // glass set into the card.
-                                        .rounded_lg()
+                                        .rounded(sk.rad_raw(8.))
                                         .border_2()
                                         .border_color(darken(kind_col, 0.62))
                                         .bg(well_bg.alpha(0.7))
@@ -17161,7 +17151,7 @@ impl Render for Workspace {
                                                             .flex_none()
                                                             .w(px(52. * cs))
                                                             .h(px(52. * cs))
-                                                            .rounded_full()
+                                                            .rounded(sk.radius_pill())
                                                             .border_2()
                                                             .border_color(gcol.alpha(0.55))
                                                             .bg(gcol.alpha(0.14))
@@ -17203,13 +17193,15 @@ impl Render for Workspace {
                                         })
                                         // CURVED-GLASS SHEEN over the logo so the art reads as
                                         // convex glass even when the barrel warp is subtle.
-                                        .child(div().absolute().inset_0().rounded_lg().bg(
-                                            linear_gradient(
-                                                180.,
-                                                linear_color_stop(white().alpha(0.45), 0.),
-                                                linear_color_stop(white().alpha(0.0), 0.55),
+                                        .child(
+                                            div().absolute().inset_0().rounded(sk.rad_raw(8.)).bg(
+                                                linear_gradient(
+                                                    180.,
+                                                    linear_color_stop(white().alpha(0.45), 0.),
+                                                    linear_color_stop(white().alpha(0.0), 0.55),
+                                                ),
                                             ),
-                                        )),
+                                        ),
                                 )
                                 // STAT BAR: model/service + effort. Status lives in
                                 // the bottom-right chip beside the ✓/✕/○ marker.
@@ -17273,7 +17265,7 @@ impl Render for Workspace {
                                             .justify_center()
                                             .w(px(18. * cs))
                                             .h(px(18. * cs))
-                                            .rounded_md()
+                                            .rounded(sk.rad_raw(6.))
                                             .border_1()
                                             .border_color(theme_tint.alpha(0.6))
                                             .bg(theme_tint.alpha(0.15))
@@ -17318,7 +17310,7 @@ impl Render for Workspace {
                                                 .gap_1()
                                                 .px_1()
                                                 .py_0p5()
-                                                .rounded_md()
+                                                .rounded(sk.rad_raw(6.))
                                                 .border_1()
                                                 .border_color(status_glow.alpha(0.55))
                                                 .bg(status_glow.alpha(0.12))
@@ -17393,7 +17385,7 @@ impl Render for Workspace {
                 .bottom(px(vp_h * 0.08))
                 .overflow_hidden()
                 .p_4()
-                .rounded_md()
+                .rounded(sk.rad_raw(6.))
                 .border_2()
                 .border_color(th.accent.alpha(0.85))
                 .bg(if preview {
@@ -17440,7 +17432,7 @@ impl Render for Workspace {
                                 .text_color(th.accent)
                                 .cursor_pointer()
                                 .px_1()
-                                .rounded_sm()
+                                .rounded(sk.radius())
                                 .when(state_filt == Some(hud::AgentState::Working), |d| {
                                     d.bg(th.accent.alpha(0.22))
                                 })
@@ -17462,7 +17454,7 @@ impl Render for Workspace {
                                 .text_color(hsla(0.11, 0.85, 0.60, 1.))
                                 .cursor_pointer()
                                 .px_1()
-                                .rounded_sm()
+                                .rounded(sk.radius())
                                 .when(state_filt == Some(hud::AgentState::Blocked), |d| {
                                     d.bg(hsla(0.11, 0.85, 0.60, 1.).alpha(0.22))
                                 })
@@ -17484,7 +17476,7 @@ impl Render for Workspace {
                                 .text_color(hsla(0., 0.75, 0.60, 1.))
                                 .cursor_pointer()
                                 .px_1()
-                                .rounded_sm()
+                                .rounded(sk.radius())
                                 .when(state_filt == Some(hud::AgentState::Error), |d| {
                                     d.bg(hsla(0., 0.75, 0.60, 1.).alpha(0.22))
                                 })
@@ -17510,7 +17502,7 @@ impl Render for Workspace {
                                 ))
                                 .cursor_pointer()
                                 .px_1()
-                                .rounded_sm()
+                                .rounded(sk.radius())
                                 .when(state_filt == Some(hud::AgentState::Finished), |d| {
                                     d.bg(agent_state_glow(
                                         &th,
@@ -17544,7 +17536,7 @@ impl Render for Workspace {
                                 .text_color(th.text.alpha(0.45))
                                 .cursor_pointer()
                                 .px_1()
-                                .rounded_sm()
+                                .rounded(sk.radius())
                                 .when(state_filt == Some(hud::AgentState::Idle), |d| {
                                     d.bg(th.text.alpha(0.45).alpha(0.22))
                                 })
@@ -17576,7 +17568,7 @@ impl Render for Workspace {
                                 .flex_none()
                                 .px_2()
                                 .py_0p5()
-                                .rounded_sm()
+                                .rounded(sk.radius())
                                 .border_1()
                                 .border_color(hsla(0.43, 0.68, 0.55, 0.6))
                                 .bg(hsla(0.43, 0.68, 0.55, 0.10))
@@ -17605,7 +17597,7 @@ impl Render for Workspace {
                                 .flex_none()
                                 .px_2()
                                 .py_0p5()
-                                .rounded_sm()
+                                .rounded(sk.radius())
                                 .border_1()
                                 .border_color(acc.alpha(0.6))
                                 .bg(acc.alpha(0.10))
@@ -17652,7 +17644,7 @@ impl Render for Workspace {
                             .gap_1()
                             .px_2()
                             .py_1()
-                            .rounded_lg()
+                            .rounded(sk.rad_raw(8.))
                             .bg(th.accent.alpha(0.06))
                             .border_1()
                             .border_color(th.accent.alpha(0.18))
@@ -17863,7 +17855,7 @@ impl Render for Workspace {
                         .gap_1()
                         .px_2()
                         .py_0p5()
-                        .rounded_full()
+                        .rounded(sk.radius_pill())
                         .border_1()
                         .border_color(if on { th.accent } else { th.text.alpha(0.2) })
                         .when(on, |d| d.bg(th.accent.alpha(0.16)))
@@ -17895,14 +17887,21 @@ impl Render for Workspace {
                         .gap_1()
                         .px_2()
                         .py_0p5()
-                        .rounded_full()
+                        .rounded(sk.radius_pill())
                         .border_1()
                         .border_color(if on { col } else { th.text.alpha(0.2) })
                         .when(on, |d| d.bg(col.alpha(0.16)))
                         .text_color(if on { th.text } else { th.text.alpha(0.65) })
                         .cursor_pointer()
                         .hover(move |s| s.border_color(col.alpha(0.7)))
-                        .child(div().w(px(7.)).h(px(7.)).flex_none().rounded_full().bg(col))
+                        .child(
+                            div()
+                                .w(px(7.))
+                                .h(px(7.))
+                                .flex_none()
+                                .rounded(sk.radius_pill())
+                                .bg(col),
+                        )
                         .child(proj.clone())
                         .child(
                             div()
@@ -17974,7 +17973,14 @@ impl Render for Workspace {
                             .pt_1()
                             .text_size(px(8.5 * gs))
                             .text_color(th.text.alpha(0.5))
-                            .child(div().w(px(8.)).h(px(8.)).flex_none().rounded_sm().bg(pcol))
+                            .child(
+                                div()
+                                    .w(px(8.))
+                                    .h(px(8.))
+                                    .flex_none()
+                                    .rounded(sk.radius())
+                                    .bg(pcol),
+                            )
                             .child(
                                 div()
                                     .font_weight(gpui::FontWeight::EXTRA_BOLD)
@@ -18044,7 +18050,7 @@ impl Render for Workspace {
                         .flex_shrink_0()
                         .px_2()
                         .py_1()
-                        .rounded_md()
+                        .rounded(sk.rad_raw(6.))
                         .border_2()
                         .border_color(dead_border)
                         .bg(dead_bg)
@@ -18084,7 +18090,7 @@ impl Render for Workspace {
                                                 .font_weight(gpui::FontWeight::EXTRA_BOLD)
                                                 .text_color(kind_col)
                                                 .px_1()
-                                                .rounded_sm()
+                                                .rounded(sk.radius())
                                                 .border_1()
                                                 .border_color(kind_col.alpha(0.42))
                                                 .bg(kind_col.alpha(0.12))
@@ -18129,7 +18135,7 @@ impl Render for Workspace {
                                             .flex_none()
                                             .px_2()
                                             .py_0p5()
-                                            .rounded_md()
+                                            .rounded(sk.rad_raw(6.))
                                             .border_1()
                                             .border_color(th.complement.alpha(0.5))
                                             .text_size(px(8.5 * gs))
@@ -18154,7 +18160,7 @@ impl Render for Workspace {
                                         .flex_none()
                                         .px_2()
                                         .py_0p5()
-                                        .rounded_md()
+                                        .rounded(sk.rad_raw(6.))
                                         .border_1()
                                         .border_color(th.accent.alpha(0.5))
                                         .text_size(px(8.5 * gs))
@@ -18190,7 +18196,7 @@ impl Render for Workspace {
                 .bottom(px(vp_h * 0.10))
                 .overflow_hidden()
                 .p_3()
-                .rounded_md()
+                .rounded(sk.rad_raw(6.))
                 .border_2()
                 .border_color(th.accent.alpha(0.85))
                 .bg(darken(th.surface, 0.6))
@@ -18297,7 +18303,7 @@ impl Render for Workspace {
             let confirm_btn = div()
                 .px_3()
                 .py_1()
-                .rounded_sm()
+                .rounded(sk.radius())
                 .border_1()
                 .border_color(danger)
                 .bg(danger.alpha(0.22))
@@ -18314,7 +18320,7 @@ impl Render for Workspace {
                         ws.close_tab(i, window, cx);
                     }),
                 );
-            let cancel_btn = Self::bezel_btn(&th, "CANCEL", false).on_mouse_down(
+            let cancel_btn = Self::bezel_btn(&sk, "CANCEL", false).on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
                     cx.stop_propagation();
@@ -18326,7 +18332,7 @@ impl Render for Workspace {
             // halo): a solid danger warning banner over a dark body.
             let panel = div()
                 .w(px(400.))
-                .rounded_lg()
+                .rounded(sk.rad_raw(8.))
                 .overflow_hidden()
                 .border_2()
                 .border_color(danger.alpha(0.9))
@@ -18424,7 +18430,7 @@ impl Render for Workspace {
         let scale_overlay = self.scale_menu.then(|| {
             let pct = (scale * 100.).round() as i32;
             let preset = |label: &'static str, val: f32| {
-                Self::bezel_btn(&th, label, (scale - val).abs() < 0.01)
+                Self::bezel_btn(&sk, label, (scale - val).abs() < 0.01)
                     .id(SharedString::from(format!("scale-preset-{label}")))
                     .hover(|s| s.border_color(th.accent))
                     .on_mouse_down(
@@ -18441,7 +18447,7 @@ impl Render for Workspace {
                 .right(px(12. * scale))
                 .w(px(240.))
                 .p_4()
-                .rounded_lg()
+                .rounded(sk.rad_raw(8.))
                 .border_2()
                 .border_color(th.accent.alpha(0.85))
                 .bg(darken(th.surface, 0.45))
@@ -18522,7 +18528,7 @@ impl Render for Workspace {
                     .gap_3()
                     .px_2()
                     .py_1()
-                    .rounded_sm()
+                    .rounded(sk.radius())
                     .cursor_pointer()
                     .text_size(px(11.5))
                     .text_color(th.text)
@@ -18539,7 +18545,7 @@ impl Render for Workspace {
                 .left(px(12. * scale))
                 .w(px(230.))
                 .p_2()
-                .rounded_lg()
+                .rounded(sk.rad_raw(8.))
                 .border_2()
                 .border_color(th.accent.alpha(0.85))
                 .bg(darken(th.surface, 0.45))
@@ -18826,7 +18832,7 @@ impl Render for Workspace {
                 div()
                     .px_2()
                     .py_0p5()
-                    .rounded_sm()
+                    .rounded(sk.radius())
                     .cursor_pointer()
                     .text_size(px(10.5))
                     .font_weight(gpui::FontWeight::BOLD)
@@ -18851,7 +18857,7 @@ impl Render for Workspace {
             let close_x = div()
                 .px_2()
                 .py_0p5()
-                .rounded_sm()
+                .rounded(sk.radius())
                 .cursor_pointer()
                 .text_color(th.text)
                 .text_size(px(14.))
@@ -18869,7 +18875,7 @@ impl Render for Workspace {
             let lang_pick = div()
                 .px_2()
                 .py_0p5()
-                .rounded_sm()
+                .rounded(sk.radius())
                 .cursor_pointer()
                 .text_size(px(10.5))
                 .font_weight(gpui::FontWeight::BOLD)
@@ -18894,7 +18900,7 @@ impl Render for Workspace {
                 .max_h(gpui::relative(0.88))
                 .overflow_hidden()
                 .p_5()
-                .rounded_lg()
+                .rounded(sk.rad_raw(8.))
                 .border_2()
                 .border_color(th.accent.alpha(0.85))
                 .bg(darken(th.surface, 0.45))
@@ -18969,7 +18975,7 @@ impl Render for Workspace {
                         .gap_1()
                         .child(
                             Self::bezel_btn(
-                                &th,
+                                &sk,
                                 &format!("\u{1f5a5}\u{fe0f}  {}", s.demo_btn),
                                 false,
                             )
@@ -19035,7 +19041,7 @@ impl Render for Workspace {
                     .flex_row()
                     .gap_1()
                     .child(
-                        Self::bezel_btn(&th, "▣ fill", pip == TabPip::Fill).on_mouse_down(
+                        Self::bezel_btn(&sk, "▣ fill", pip == TabPip::Fill).on_mouse_down(
                             MouseButton::Left,
                             cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
                                 cx.stop_propagation();
@@ -19045,7 +19051,7 @@ impl Render for Workspace {
                         ),
                     )
                     .child(
-                        Self::bezel_btn(&th, "T text", pip == TabPip::Text).on_mouse_down(
+                        Self::bezel_btn(&sk, "T text", pip == TabPip::Text).on_mouse_down(
                             MouseButton::Left,
                             cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
                                 cx.stop_propagation();
@@ -19068,7 +19074,7 @@ impl Render for Workspace {
                             )))
                             .w(px(18.))
                             .h(px(18.))
-                            .rounded_full()
+                            .rounded(sk.radius_pill())
                             .bg(c)
                             .cursor_pointer()
                             .border_1()
@@ -19085,7 +19091,7 @@ impl Render for Workspace {
                 }
 
                 // clear the active pip's override (no-op on a group's fill)
-                let clear = Self::bezel_btn(&th, "clear", false).on_mouse_down(
+                let clear = Self::bezel_btn(&sk, "clear", false).on_mouse_down(
                     MouseButton::Left,
                     cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
                         cx.stop_propagation();
@@ -19105,7 +19111,7 @@ impl Render for Workspace {
                     // membership only — the group's own colour / name / fold / disband
                     // live on the group's right-click menu, never on a member tab.
                     group_box = group_box.child(
-                        Self::bezel_btn(&th, "remove from group", false).on_mouse_down(
+                        Self::bezel_btn(&sk, "remove from group", false).on_mouse_down(
                             MouseButton::Left,
                             cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
                                 cx.stop_propagation();
@@ -19115,7 +19121,7 @@ impl Render for Workspace {
                     );
                 } else {
                     group_box =
-                        group_box.child(Self::bezel_btn(&th, "＋ new group", false).on_mouse_down(
+                        group_box.child(Self::bezel_btn(&sk, "＋ new group", false).on_mouse_down(
                             MouseButton::Left,
                             cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
                                 cx.stop_propagation();
@@ -19155,7 +19161,7 @@ impl Render for Workspace {
                                 .id(SharedString::from(format!("addgrp-{i}-{g_id}")))
                                 .px_1()
                                 .py_0p5()
-                                .rounded_sm()
+                                .rounded(sk.radius())
                                 .border_1()
                                 .border_color(g_col)
                                 .bg(g_col.alpha(0.3))
@@ -19209,7 +19215,7 @@ impl Render for Workspace {
                             .id(SharedString::from(format!("addproj-{i}-{pid}")))
                             .px_1()
                             .py_0p5()
-                            .rounded_sm()
+                            .rounded(sk.radius())
                             .border_1()
                             .border_color(if on { th.accent } else { pcol })
                             .bg(pcol.alpha(if on { 0.55 } else { 0.25 }))
@@ -19243,7 +19249,7 @@ impl Render for Workspace {
                     );
                 }
                 project_box = project_box.child(chips).child(
-                    Self::bezel_btn(&th, "＋ new project", false).on_mouse_down(
+                    Self::bezel_btn(&sk, "＋ new project", false).on_mouse_down(
                         MouseButton::Left,
                         cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
                             cx.stop_propagation();
@@ -19267,7 +19273,7 @@ impl Render for Workspace {
                     .left(px(f32::from(at.x)))
                     .top(px(f32::from(at.y) + 8.))
                     .p_2()
-                    .rounded_md()
+                    .rounded(sk.rad_raw(6.))
                     .border_1()
                     .border_color(th.accent.alpha(0.85))
                     .bg(darken(th.surface, 0.6))
@@ -19322,7 +19328,7 @@ impl Render for Workspace {
             let mi = self.tabs.iter().position(|t| t.group == Some(gid))?;
 
             let fold_btn =
-                Self::bezel_btn(&th, if collapsed { "expand" } else { "collapse" }, false)
+                Self::bezel_btn(&sk, if collapsed { "expand" } else { "collapse" }, false)
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
@@ -19330,7 +19336,7 @@ impl Render for Workspace {
                             ws.toggle_group_collapsed(gid, cx);
                         }),
                     );
-            let disband_btn = Self::bezel_btn(&th, "ungroup", false).on_mouse_down(
+            let disband_btn = Self::bezel_btn(&sk, "ungroup", false).on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
                     cx.stop_propagation();
@@ -19344,7 +19350,7 @@ impl Render for Workspace {
                 .flex_row()
                 .gap_1()
                 .child(
-                    Self::bezel_btn(&th, "▣ fill", pip == TabPip::Fill).on_mouse_down(
+                    Self::bezel_btn(&sk, "▣ fill", pip == TabPip::Fill).on_mouse_down(
                         MouseButton::Left,
                         cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
                             cx.stop_propagation();
@@ -19354,7 +19360,7 @@ impl Render for Workspace {
                     ),
                 )
                 .child(
-                    Self::bezel_btn(&th, "T text", pip == TabPip::Text).on_mouse_down(
+                    Self::bezel_btn(&sk, "T text", pip == TabPip::Text).on_mouse_down(
                         MouseButton::Left,
                         cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
                             cx.stop_propagation();
@@ -19377,7 +19383,7 @@ impl Render for Workspace {
                         )))
                         .w(px(18.))
                         .h(px(18.))
-                        .rounded_full()
+                        .rounded(sk.radius_pill())
                         .bg(c)
                         .cursor_pointer()
                         .border_1()
@@ -19394,7 +19400,7 @@ impl Render for Workspace {
             }
 
             // clear the active pip (a group's fill never clears; its text lead does)
-            let clear = Self::bezel_btn(&th, "clear", false).on_mouse_down(
+            let clear = Self::bezel_btn(&sk, "clear", false).on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
                     cx.stop_propagation();
@@ -19408,7 +19414,7 @@ impl Render for Workspace {
                 .left(px(f32::from(at.x)))
                 .top(px(f32::from(at.y) + 8.))
                 .p_2()
-                .rounded_md()
+                .rounded(sk.rad_raw(6.))
                 .border_2()
                 .border_color(th.accent.alpha(0.85))
                 .bg(darken(th.surface, 0.6))
@@ -20004,7 +20010,7 @@ impl Render for Workspace {
                 .top(px(f32::from(d.at.y) + 12.))
                 .px_2()
                 .py_0p5()
-                .rounded_sm()
+                .rounded(sk.radius())
                 .bg(color.alpha(0.92))
                 .text_color(th.bg)
                 .text_size(px(10.5))
@@ -20018,7 +20024,7 @@ impl Render for Workspace {
                 .top(px(f32::from(d.at.y) + 12.))
                 .px_2()
                 .py_0p5()
-                .rounded_sm()
+                .rounded(sk.radius())
                 .bg(th.accent.alpha(0.9))
                 .text_color(th.bg)
                 .text_size(px(10.5))
@@ -20195,6 +20201,67 @@ mod tests {
     fn shipped_src() -> &'static str {
         let src = include_str!("main.rs");
         &src[..src.find("\nmod tests {").expect("the test module")]
+    }
+
+    /// The always-visible chrome asks the SKIN for its corners, never gpui.
+    ///
+    /// Adoption is staged (see `docs/plans/chrome-skin/03-slices.md`), so the
+    /// overlays and pickers still carry `rounded_sm()` and that is fine — they
+    /// are surfaces you open, not surfaces you look at. The bar, the strip, the
+    /// left bar and the workspace body are the ones a skin has to be able to
+    /// restyle, and a single `rounded_*()` reintroduced there is invisible under
+    /// the default skin and wrong under every other one. That is precisely the
+    /// class of regression nobody notices: it only shows up for the person
+    /// running the skin nobody on the team runs.
+    ///
+    /// The one deliberate exception is the HSV disk in `tab_color_wheel`, whose
+    /// circle is its data structure rather than its styling.
+    #[test]
+    fn the_always_visible_chrome_takes_its_corners_from_the_skin() {
+        let src = shipped_src();
+        let region = |from: &str, to: &str| {
+            let a = src.find(from).unwrap_or_else(|| panic!("missing {from}"));
+            let b = src[a..]
+                .find(to)
+                .unwrap_or_else(|| panic!("missing {to} after {from}"));
+            &src[a..a + b]
+        };
+        // fn -> the next function that starts the NEXT surface
+        for (name, from, to) in [
+            (
+                "the left bar's branch rows",
+                "fn bar_row(",
+                "fn bar_drop_marks(",
+            ),
+            (
+                "the left bar's task rows",
+                "fn task_row(",
+                "fn tree_all_folded(",
+            ),
+            (
+                "the left bar's usage slot",
+                "fn render_bar_slot(",
+                "fn render_left_bar(",
+            ),
+            ("the left bar", "fn render_left_bar(", "fn tab_button("),
+            ("the tab strip", "fn tab_button(", "fn place_name("),
+            ("the bar's glyph buttons", "fn hicon_s(", "fn bezel_btn("),
+        ] {
+            let body = region(from, to);
+            for bad in [
+                ".rounded_sm()",
+                ".rounded_md()",
+                ".rounded_lg()",
+                ".rounded_full()",
+            ] {
+                assert!(
+                    !body.contains(bad),
+                    "{name} spells `{bad}` — ask the skin instead (sk.radius() / \
+                     sk.radius_pill() / sk.rad_raw(n)), or say in a comment why \
+                     this shape is the content's and not the chrome's"
+                );
+            }
+        }
     }
 
     /// A window takes over a pane at the size the host reports, never at one of
@@ -20474,7 +20541,7 @@ mod tests {
         // What the strip does still carry, so this test cannot pass by the tab
         // row having been deleted wholesale.
         assert!(
-            src.contains(r#"Self::bezel_btn_s(&th, "+", false, scale)"#),
+            src.contains(r#"Self::bezel_btn_s(&sk, "+", false, scale)"#),
             "the + button is the strip's one control and stays"
         );
         assert!(
@@ -20689,7 +20756,7 @@ mod tests {
         // The buttons keep the `hicon_s` frame they had in the top right; only
         // the glyph inside them shrank (see the sizes test below).
         assert!(
-            src.contains("Self::hicon_s(&th, self.theme_menu.is_some(), scale)"),
+            src.contains("Self::hicon_s(&sk, self.theme_menu.is_some(), scale)"),
             "the glyphs keep hicon_s at the bar's own scale"
         );
         assert!(
