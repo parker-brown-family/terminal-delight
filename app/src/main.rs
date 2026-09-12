@@ -2407,6 +2407,11 @@ struct Workspace {
     /// One record per AI coding subscription, heaviest first. Read off disk —
     /// see [`usage`] for who writes them and why none of it needs Omarchy.
     usage_records: Vec<usage::Record>,
+    /// Provider id → the mark file the user dropped for it, resolved whenever
+    /// `usage_records` changes and never while drawing. Absent id ⇒ the slot
+    /// draws that provider's initials, which is what ships. See
+    /// [`slot::mark_path`] and [`Self::adopt_usage_records`].
+    provider_marks: std::collections::HashMap<String, std::path::PathBuf>,
     /// Which subscription's card is open (index into the drawable records).
     usage_pick: usize,
     /// What the last refresh said, when it had something to say.
@@ -3450,17 +3455,15 @@ impl Workspace {
             savings_view: None,
             savings_status: None,
             savings_tab: OverlayTab::Savings,
-            // Read from disk at construction, not on the first click.
-            //
-            // The bottom slot draws these, and the bottom slot is on screen
-            // from the moment the window opens — so filling this only in
+            // Filled immediately below by `adopt_usage_records`, which cannot
+            // run until `ws` exists. Read at construction rather than on the
+            // first click: the bottom slot draws these and is on screen from
+            // the moment the window opens, so filling them only in
             // `open_usage` meant the slot had nothing to draw until somebody
-            // opened the </> card, and a widget that is blank until you visit
-            // another surface reads as a widget that was never built. The files
-            // are the collectors' own cached JSON, small and already written;
-            // the numbers in them may be old, which is what `Reading::Stale`
-            // and the slot's dimming exist to say.
-            usage_records: usage::read_all(&session::home_dir()),
+            // opened the </> card — and a widget that is blank until you visit
+            // another surface reads as a widget that was never built.
+            usage_records: Vec::new(),
+            provider_marks: std::collections::HashMap::new(),
             usage_pick: 0,
             usage_status: None,
             usage_refreshing: false,
@@ -3558,6 +3561,10 @@ impl Workspace {
             permit_shrink: std::cell::Cell::new(false),
             degraded: std::cell::Cell::new(false),
         };
+        // The collectors' cached JSON, off disk, before the first frame. Small
+        // files that are already written; the numbers in them may be old, which
+        // is what `slot::Reading::Stale` and the slot's dimming exist to say.
+        ws.adopt_usage_records(usage::read_all(&session::home_dir()));
         if let Some(ctx) = ws.attach.clone() {
             // A host is holding the terminals: what is running beats what was
             // written down. Everything else in this function is untouched by
@@ -4961,7 +4968,7 @@ impl Workspace {
     /// the question "where am I right now" — so it always asks.
     fn open_usage(&mut self, cx: &mut Context<Self>) {
         let home = session::home_dir();
-        self.usage_records = usage::read_all(&home);
+        self.adopt_usage_records(usage::read_all(&home));
         self.clamp_usage_pick();
         self.usage_status = None;
         self.savings_tab = OverlayTab::Usage;
@@ -5036,6 +5043,42 @@ impl Workspace {
         }
     }
 
+    /// Take a fresh set of allowance records, and re-resolve the provider marks
+    /// against them.
+    ///
+    /// One door for both, because they are one fact: a record's `id` is what
+    /// names its mark file, so records swapped without re-resolving would leave
+    /// the slot drawing the previous provider's logo beside this one's numbers.
+    ///
+    /// And the marks are resolved **here**, where records change, rather than
+    /// at the paint site. [`slot::mark_path`] stats the filesystem, and this
+    /// slot is the one surface in TD that is never dismissed — the module's own
+    /// rule is that it never touches the disk while drawing, because a stutter
+    /// in a widget that is always on screen is a stutter you can never get away
+    /// from.
+    fn adopt_usage_records(&mut self, records: Vec<usage::Record>) {
+        let config = instance::config_dir();
+        self.provider_marks = records
+            .iter()
+            .filter_map(|r| slot::mark_path(&config, &r.id).map(|p| (r.id.clone(), p)))
+            .collect();
+        self.usage_records = records;
+    }
+
+    /// Which usage tab a slot row's provider id names, if it has a card at all.
+    ///
+    /// The two lists are not the same list: the slot draws EVERY record — a
+    /// provider whose sign-in has expired still gets a row, hatched, because
+    /// "nobody has collected this" is the reading most worth seeing — while the
+    /// card draws only the records with content. So an index cannot be carried
+    /// from one to the other; it has to be asked for by id.
+    fn usage_tab_of(&self, id: &str) -> Option<usize> {
+        self.usage_records
+            .iter()
+            .filter(|r| r.has_content())
+            .position(|r| r.id == id)
+    }
+
     /// Keep the selected tab inside the record list after a refresh changes it.
     fn clamp_usage_pick(&mut self) {
         let n = self
@@ -5080,7 +5123,7 @@ impl Workspace {
             let _ = this.update(cx, |ws, cx| {
                 ws.usage_refreshing = false;
                 if !records.is_empty() {
-                    ws.usage_records = records;
+                    ws.adopt_usage_records(records);
                 }
                 ws.usage_status = err;
                 ws.clamp_usage_pick();
@@ -5705,8 +5748,72 @@ impl Workspace {
                     }),
                 )
         };
-        // Wraps rather than overflows: in a narrow tile the two tab chips drop
-        // under the wordmark instead of pushing it off the left edge.
+        // What the left bar's allowance rails are set to draw — the one setting
+        // the slot has, and it lives here because this card is the only surface
+        // that explains what the two numbers mean. The slot itself has no room
+        // for a control: it is four rails and a counter in a 200px rail, and a
+        // gesture hidden on one of them is a gesture nobody finds.
+        //
+        // The chip states the CURRENT setting rather than the action, because a
+        // button reading "show remaining" beside bars that already show
+        // remaining is a question nobody can answer from looking.
+        let left_mode = self.slot_remaining;
+        let bar_chip = {
+            let (acc, txt) = (th.accent, th.text);
+            div()
+                .id("slot-remaining-toggle")
+                .px_2p5()
+                .py_0p5()
+                .rounded_full()
+                .border_1()
+                .border_color(if left_mode {
+                    acc.alpha(0.85)
+                } else {
+                    txt.alpha(0.16)
+                })
+                .bg(if left_mode {
+                    acc.alpha(0.16)
+                } else {
+                    txt.alpha(0.03)
+                })
+                .text_size(px(10.))
+                .text_color(if left_mode { txt } else { txt.alpha(0.6) })
+                .cursor_pointer()
+                .hover(move |st| st.bg(acc.alpha(0.12)))
+                .child(if left_mode {
+                    "bar · what's left"
+                } else {
+                    "bar · what's spent"
+                })
+                .tooltip({
+                    let (tip_bg, tip_text, tip_faint) =
+                        (darken(th.surface, 0.85), th.text, th.faint);
+                    move |_w, cx| {
+                        cx.new(|_| SlotTooltip {
+                            lines: vec![
+                                "the left bar's allowance rails".into(),
+                                "bar LENGTH is whatever this chip says".into(),
+                                "bar COLOUR is always how much is spent".into(),
+                            ],
+                            bg: tip_bg,
+                            text: tip_text,
+                            faint: tip_faint,
+                        })
+                        .into()
+                    }
+                })
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                        cx.stop_propagation();
+                        ws.slot_remaining = !ws.slot_remaining;
+                        ws.save(cx);
+                        cx.notify();
+                    }),
+                )
+        };
+        // Wraps rather than overflows: in a narrow tile the chips drop under
+        // the wordmark instead of pushing it off the left edge.
         let header = div()
             .flex()
             .flex_row()
@@ -5724,6 +5831,10 @@ impl Workspace {
                     .flex_row()
                     .items_center()
                     .gap_1()
+                    // Only on the usage face. On the savings face it would be a
+                    // control for a widget the card in front of you has nothing
+                    // to do with.
+                    .when(tab == OverlayTab::Usage, |d| d.child(bar_chip))
                     .child(tab_chip("savings", OverlayTab::Savings, cx))
                     .child(tab_chip("usage", OverlayTab::Usage, cx)),
             );
@@ -12185,7 +12296,12 @@ impl Workspace {
     /// not publish has none — so the alternative to the hatch is not a pale bar
     /// but a confident empty one, which reads as "you are out" for a
     /// subscription nobody has ever collected.
-    fn render_bar_slot(&self, th: &theme::Theme, s: f32, cx: &App) -> Option<gpui::Div> {
+    fn render_bar_slot(
+        &self,
+        th: &theme::Theme,
+        s: f32,
+        cx: &mut Context<Self>,
+    ) -> Option<gpui::Div> {
         let rows = self.slot_rows();
         let tally = self.slot_tally(cx);
         if rows.is_empty() && tally.total() == 0 {
@@ -12370,13 +12486,15 @@ impl Workspace {
                 .h(px(row_h))
                 .gap(px(5.0 * s))
                 .child(
-                    // The provider's mark. A brand asset under its own
-                    // guidelines is the normal answer and a licensing question
-                    // rather than a drawing one; a glyph the collector
-                    // publishes is the answer for a provider TD has never
-                    // heard of. Initials are the third way out, and it has to
-                    // exist whatever happens to the other two because the
-                    // provider list is open-ended by construction.
+                    // The provider's mark: its own logo where the user has
+                    // dropped one in `<config>/marks/<id>.svg` (see
+                    // [`slot::mark_path`] for why this repo cannot ship them),
+                    // and the initials it has always drawn where they have not.
+                    //
+                    // The badge box stays either way. Some rows will have a
+                    // mark and some will not, and a column that changes shape
+                    // per row loses the rhythm that lets the eye find the rail
+                    // it wants without reading anything.
                     div()
                         .flex_none()
                         .w(px(mark_w * s))
@@ -12390,7 +12508,22 @@ impl Workspace {
                         .justify_center()
                         .text_size(px(7.5 * s))
                         .text_color(text.alpha(0.75))
-                        .child(row.initials.clone()),
+                        .map(|d| match self.provider_marks.get(&row.id) {
+                            // gpui draws an SVG as a MASK tinted by
+                            // `text_color`, so the mark follows the theme
+                            // instead of dragging a brand palette into a
+                            // window whose whole point is being re-coloured.
+                            Some(path) => d.child(
+                                gpui::svg()
+                                    .external_path(SharedString::from(
+                                        path.to_string_lossy().into_owned(),
+                                    ))
+                                    .w(px(mark_w * s * 0.7))
+                                    .h(px(mark_w * s * 0.7))
+                                    .text_color(text.alpha(0.85)),
+                            ),
+                            None => d.child(row.initials.clone()),
+                        }),
                 )
                 .child(
                     div()
@@ -12413,8 +12546,33 @@ impl Workspace {
                 );
             }
             let (tip_bg, tip_text, tip_faint) = (darken(th.surface, 0.85), th.text, th.faint);
+            let acc = th.accent;
+            let row_id = row.id.clone();
             stack = stack.child(
                 line.id(SharedString::from(format!("slot-{}", row.id)))
+                    // The hover says what this row's two windows are; the card
+                    // says where the tokens went, what resets when, and which
+                    // model spent them. A row is a summary, so it opens the
+                    // thing it summarises — and it opens on ITS OWN provider,
+                    // because clicking the Claude rail and landing on Codex is
+                    // the kind of small wrongness that stops people clicking.
+                    .cursor_pointer()
+                    .hover(move |st| st.bg(acc.alpha(0.10)))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                            cx.stop_propagation();
+                            ws.open_usage(cx);
+                            // After `open_usage`, which re-reads the records:
+                            // the card draws only the records with content, so
+                            // this index cannot be carried over from the slot,
+                            // which draws all of them.
+                            if let Some(tab) = ws.usage_tab_of(&row_id) {
+                                ws.usage_pick = tab;
+                            }
+                            cx.notify();
+                        }),
+                    )
                     .tooltip(move |_w, cx| {
                         cx.new(|_| SlotTooltip {
                             lines: hover_title.clone(),
@@ -12442,7 +12600,15 @@ impl Workspace {
             (hud::AgentState::Finished, tally.finished, "\u{2713}"),
             (hud::AgentState::Idle, tally.idle, "\u{25cb}"),
         ];
+        // This line is also the door to the agent wall, which is the surface it
+        // is a summary OF. It used to be opened by a robot glyph in the top
+        // right of the mother bar, three feet of screen away from the counter
+        // saying the thing you were about to go and look at. A rollup that
+        // opens the full view is one control instead of two, and the one that
+        // survives is the one carrying the numbers.
+        let acc = th.accent;
         let mut counter = div()
+            .id("slot-agent-rollup")
             .flex()
             .flex_row()
             .items_center()
@@ -12456,6 +12622,16 @@ impl Workspace {
             } else {
                 text.alpha(0.14)
             })
+            .cursor_pointer()
+            .hover(move |st| st.bg(acc.alpha(0.14)).border_color(acc.alpha(0.7)))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                    cx.stop_propagation();
+                    ws.mcp_menu = true;
+                    cx.notify();
+                }),
+            )
             .child(
                 div()
                     .flex_none()
@@ -14223,7 +14399,9 @@ impl Render for Workspace {
                 cache_read: cr,
                 cache_create: cw,
             };
-            self.usage_records = vec![
+            // Through the same door as every real set, so the capture shows
+            // the marks a real one would.
+            self.adopt_usage_records(vec![
                 usage::Record {
                     id: "claude".into(),
                     updated_at: stamped.into(),
@@ -14306,7 +14484,7 @@ impl Render for Workspace {
                     models: vec![model("kimi-k2-instruct", 640_000, 92_000, 0, 0)],
                     ..Default::default()
                 },
-            ];
+            ]);
             self.usage_pick = 0;
             self.usage_status = None;
             self.savings_tab = OverlayTab::Usage;
@@ -14352,16 +14530,19 @@ impl Render for Workspace {
         let tab = &self.tabs[self.active];
         let mut leaves = vec![];
         tab.root.leaves(&mut leaves);
+        // Which pane holds the keyboard — passed down to `render_node`, which
+        // draws the focus ring.
+        //
+        // The pane's TITLE used to be read here too, for the bottom bezel's
+        // `🎨 · <title>` line. That line is gone rather than moved: the pane
+        // draws its own title in its own header, so the bezel was restating, in
+        // the window's far corner, something already written at the top of the
+        // thing you are looking at. The bezel's left end carries the menu
+        // glyphs now.
         let focused_id = leaves
             .iter()
             .find(|p| p.focus_handle(cx).is_focused(window))
             .map(|p| p.entity_id());
-        let focused_title = leaves
-            .iter()
-            .find(|p| Some(p.entity_id()) == focused_id)
-            .or(leaves.first())
-            .map(|p| p.read(cx).title.clone())
-            .unwrap_or_default();
         let pane_count = self.pane_count();
         let tab_count = self.tabs.len();
         let jiggle = self.jiggle.px;
@@ -14729,17 +14910,22 @@ impl Render for Workspace {
                 ))
             });
 
-        // ---- header glyph row, and what it becomes on a thin tile ----
-        // Five glyphs (six, until the campfire went with the keepalive), the size
-        // scrubber, the split cluster and the window buttons
-        // all want the same line. Past `HEADER_NARROW` they stop fitting and the
-        // row used to overflow into the brand. So below that width the glyphs
-        // COLLAPSE to the agent wall — the one surface you actually steer TD
-        // from — plus a `…` that raises the rest as a menu. Nothing is lost, and
-        // the row stops fighting for space it does not have.
-        const HEADER_NARROW: f32 = 720.;
-        let header_vw = f32::from(window.viewport_size().width);
-        let header_narrow = header_vw < HEADER_NARROW;
+        // ---- the chrome's glyph row, and what it becomes on a thin tile ----
+        //
+        // These live at the BOTTOM LEFT now, not the top right. The top row had
+        // become the busiest line in the window — brand, five menu glyphs, the
+        // size scrubber, the split cluster, the window buttons — while the
+        // bottom bezel carried one sentence naming the focused pane, which the
+        // pane's own header already says, in the pane you are looking at. So
+        // the glyphs moved to the quiet row and the sentence went.
+        //
+        // Past `CHROME_NARROW` they stop fitting beside the tab and pane counts
+        // and collapse to a single `…` that raises them as a menu. Nothing is
+        // lost — the same property the old collapse had, which is the only
+        // thing that makes a collapse acceptable rather than a disappearance.
+        const CHROME_NARROW: f32 = 720.;
+        let chrome_vw = f32::from(window.viewport_size().width);
+        let chrome_narrow = chrome_vw < CHROME_NARROW;
 
         let ic_theme = Self::hicon_s(&th, self.theme_menu.is_some(), scale)
             .text_size(px(pane::HICON * scale))
@@ -14767,19 +14953,12 @@ impl Render for Workspace {
                     cx.notify();
                 }),
             );
-        // MCP: the agent wall. This is the glyph that SURVIVES the collapse.
-        let ic_mcp = Self::hicon_s(&th, self.mcp_menu || self.mcp.enabled, scale)
-            .flex()
-            .items_center()
-            .child(pane::robot_icon(th.accent, scale))
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                    cx.stop_propagation();
-                    ws.mcp_menu = true;
-                    cx.notify();
-                }),
-            );
+        // The agent wall has no glyph on the chrome any more. Its door is the
+        // rollup line at the bottom of the left bar — the counter that is a
+        // summary of the wall, so opening the wall from it is one control
+        // instead of two, and the survivor is the one carrying the numbers. The
+        // `…` menu below still lists it, because the left bar can be closed
+        // (ctrl+shift+B) and a surface with no door at all is not a collapse.
         let ic_dead = Self::hicon_s(&th, self.dead_menu, scale)
             .text_size(px(pane::HICON * scale))
             .line_height(px(pane::HICON * scale))
@@ -14818,22 +14997,16 @@ impl Render for Workspace {
                 }),
             );
 
-        let header_icons = div()
+        let chrome_icons = div()
             .flex()
             .flex_row()
             .items_center()
             .gap(px(12. * scale))
             .map(|d| {
-                if header_narrow {
-                    // agent wall, then everything else behind the ellipsis
-                    d.child(ic_mcp).child(ic_more)
+                if chrome_narrow {
+                    d.child(ic_more)
                 } else {
-                    // The agent wall LEADS. It is the surface TD is steered
-                    // from, and it is already the one glyph the narrow collapse
-                    // keeps — leaving it third on the wide row made the two
-                    // layouts disagree about which glyph matters most.
-                    d.child(ic_mcp)
-                        .child(ic_theme)
+                    d.child(ic_theme)
                         .child(ic_osd)
                         .child(ic_dead)
                         .child(ic_plugins)
@@ -14927,14 +15100,17 @@ impl Render for Workspace {
                             ),
                     )
                     .child(
-                        // never compressed or pushed off — the controls are always kept
+                        // never compressed or pushed off — the controls are
+                        // always kept. The menu glyphs used to lead this group;
+                        // they are at the bottom left now, which left this row
+                        // holding only the things that act on the WINDOW: its
+                        // size, its splits, and its frame.
                         div()
                             .flex_none()
                             .flex()
                             .flex_row()
                             .items_center()
                             .gap(px(12. * scale))
-                            .child(header_icons)
                             .child(scrubber)
                             .child(cluster)
                             .child(win_controls),
@@ -14961,16 +15137,28 @@ impl Render for Workspace {
             );
 
         let bezel_bottom = div()
-            .h(px(22. * scale))
+            // min-height, and tall enough for a glyph button: the menu row
+            // lives here now. It used to be a 22px strip carrying one sentence.
+            .min_h(px((pane::HICON + 6.) * scale))
             .flex_none()
             .flex()
             .flex_row()
             .items_center()
             .justify_between()
+            .gap(px(12. * scale))
             .px(px(12. * scale))
             .text_size(px(10.5 * scale))
             .text_color(th.text)
-            .child(div().child(format!("🎨 · {}", focused_title)))
+            // THE MENU ROW. Where the top right's glyphs went, at the size and
+            // in the style they had there — `hicon_s` at the same scale, so
+            // this is a move and not a redesign.
+            //
+            // What was here was `🎨 · <focused pane title>`, and it went
+            // rather than moving: the focused pane draws its own title in its
+            // own header, so the sentence restated, at the far bottom corner of
+            // the window, something already written at the top of the thing you
+            // are looking at.
+            .child(chrome_icons)
             .child(
                 div()
                     .flex()
@@ -15686,7 +15874,7 @@ impl Render for Workspace {
         let lang_picker_overlay = self.render_lang_picker(&th, cx);
         let logo_picker_overlay = self.render_logo_picker(&th, cx);
         let plugins_overlay = self.render_plugins_overlay(&th, cx);
-        let savings_overlay = self.render_savings_overlay(&th, header_vw, cx);
+        let savings_overlay = self.render_savings_overlay(&th, chrome_vw, cx);
 
         // ---- MCP control: the read-only agent-watch surface (the 🤖 button) ----
         let mcp_overlay = self.mcp_menu.then(|| {
@@ -18280,8 +18468,11 @@ impl Render for Workspace {
             };
             let panel = div()
                 .absolute()
-                .top(px(74. * scale))
-                .right(px(12. * scale))
+                // Under its own button, which is at the bottom left now. A menu
+                // that opens at the opposite corner from the thing that raised
+                // it reads as a different control firing.
+                .bottom(px((pane::HICON + 10.) * scale))
+                .left(px(12. * scale))
                 .w(px(230.))
                 .p_2()
                 .rounded_lg()
@@ -18298,6 +18489,20 @@ impl Render for Workspace {
                     MouseButton::Left,
                     cx.listener(|_, _: &MouseDownEvent, _w, cx| cx.stop_propagation()),
                 )
+                // The agent wall LEADS here, and it is the one entry with no
+                // glyph on the chrome at all: its door is the rollup line at
+                // the bottom of the left bar. That bar can be closed, so
+                // without this row a closed bar plus a narrow window would
+                // leave the surface TD is steered from with no door.
+                .child(entry("\u{f06a9}", s.s_amcp, "more-mcp").on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                        cx.stop_propagation();
+                        ws.more_menu = false;
+                        ws.mcp_menu = true;
+                        cx.notify();
+                    }),
+                ))
                 .child(entry("\u{1f3a8}", s.t_theme, "more-theme").on_mouse_down(
                     MouseButton::Left,
                     cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
@@ -20338,9 +20543,36 @@ mod tests {
     fn the_allowance_rows_are_read_at_startup_and_swept_after_that() {
         let src = shipped_src();
         assert!(
-            src.contains("usage_records: usage::read_all(&session::home_dir()),"),
-            "the workspace must read the collectors' cache where it is built, not \
-             wait for somebody to open the </> card"
+            src.contains("ws.adopt_usage_records(usage::read_all(&session::home_dir()));"),
+            "the workspace must read the collectors' cache while it is being \
+             built, not wait for somebody to open the </> card"
+        );
+        // Records and the provider marks travel together — a record's id is
+        // what names its mark file, so a set swapped without re-resolving would
+        // leave the slot drawing the previous provider's logo beside this one's
+        // numbers. One door for both, and every writer goes through it: the
+        // scan is over the file with the door's own body cut out, so the only
+        // `usage_records` left standing should be its declaration.
+        let (at, adopt) = {
+            let at = src.find("    fn adopt_usage_records").expect("the door");
+            let end = src[at..].find("\n    }\n").expect("end of fn");
+            (at, &src[at..at + end])
+        };
+        assert!(
+            adopt.contains("slot::mark_path") && adopt.contains("self.usage_records = records"),
+            "the one door must set the marks and the records together"
+        );
+        let elsewhere = format!("{}{}", &src[..at], &src[at + adopt.len()..]);
+        let stray: Vec<&str> = elsewhere
+            .lines()
+            .map(str::trim)
+            .filter(|l| l.contains("usage_records =") || l.contains("usage_records:"))
+            .filter(|l| !l.contains("Vec<usage::Record>") && !l.contains("Vec::new()"))
+            .collect();
+        assert!(
+            stray.is_empty(),
+            "usage_records is written outside adopt_usage_records, so those \
+             records get the previous set's marks: {stray:?}"
         );
         assert!(
             src.contains("Duration::from_secs(USAGE_SWEEP_SECS)")
@@ -20355,6 +20587,130 @@ mod tests {
             src.contains("Duration::from_secs(USAGE_FIRST_SWEEP_SECS)")
                 && src.contains("wait = Duration::from_secs(USAGE_SWEEP_SECS);"),
             "the sweep must open on the short wait and then settle onto the period"
+        );
+    }
+
+    /// The menu glyphs are at the bottom left, and the bezel names no pane.
+    ///
+    /// Two halves of one move. The top row had become the busiest line in the
+    /// window while the bottom bezel carried a sentence the focused pane's own
+    /// header already says — so the glyphs went down and the sentence went.
+    #[test]
+    fn the_menu_glyphs_live_at_the_bottom_left_and_the_bezel_names_no_pane() {
+        let src = shipped_src();
+        let region = |sig: &str| -> &str {
+            let at = src.find(sig).unwrap_or_else(|| panic!("{sig} not found"));
+            let end = src[at..].find("\n        let ").expect("end of region");
+            &src[at..at + end]
+        };
+        let bottom = region("let bezel_bottom = div()");
+        let top = region("let bezel_top = div()");
+        assert!(
+            bottom.contains(".child(chrome_icons)"),
+            "the menu glyph row belongs to the bottom bezel now"
+        );
+        assert!(
+            !top.contains("chrome_icons"),
+            "…and must not also be up top: two copies of one control is worse \
+             than either place for it"
+        );
+        // The sentence. Spelled in pieces so this test's own source does not
+        // answer the search — see `shipped_src`.
+        let named_pane = format!("{}{}", "\u{1f3a8} · {}", "\", focused_title");
+        assert!(
+            !src.contains(&named_pane),
+            "the bottom bezel must not name the focused pane: its own header \
+             already does, at the top of the thing you are looking at"
+        );
+        // …and the move kept the size and style it had, rather than becoming a
+        // second, smaller design for the same buttons.
+        assert!(
+            src.contains("Self::hicon_s(&th, self.theme_menu.is_some(), scale)"),
+            "the glyphs keep hicon_s at the bar's own scale"
+        );
+        assert!(
+            bottom.contains("pane::HICON"),
+            "and the bezel has to be tall enough to hold one, or the row clips"
+        );
+    }
+
+    /// The agent wall opens from the rollup that summarises it.
+    ///
+    /// It used to open from a robot glyph in the top right — three feet of
+    /// screen from the counter saying the thing you were about to go and look
+    /// at. A rollup that opens the full view is one control instead of two, and
+    /// the survivor is the one carrying the numbers.
+    #[test]
+    fn the_agent_wall_opens_from_the_rollup_it_summarises() {
+        let src = shipped_src();
+        let slot = {
+            let at = src.find("fn render_bar_slot").expect("the slot");
+            let end = src[at..].find("\n    }\n").expect("end of fn");
+            &src[at..at + end]
+        };
+        assert!(
+            slot.contains("slot-agent-rollup") && slot.contains("ws.mcp_menu = true"),
+            "the rollup line must be the wall's door"
+        );
+        // The glyph it replaced is gone from the chrome — needle in pieces.
+        let old_button = ["ic", "mcp"].join("_");
+        assert!(
+            !src.contains(&old_button),
+            "the wall's chrome glyph is gone; the rollup is the door now"
+        );
+        // But not unreachable. The left bar can be closed, and a surface with
+        // no door at all is a disappearance rather than a collapse.
+        let more = {
+            let at = src.find("let more_overlay =").expect("the more menu");
+            let end = src[at..].find("\n        let ").expect("end of region");
+            &src[at..at + end]
+        };
+        assert!(
+            more.contains("more-mcp") && more.contains("ws.mcp_menu = true"),
+            "the … menu must still list the agent wall, for a closed left bar"
+        );
+        assert!(
+            more.contains(".bottom(px(") && more.contains(".left(px("),
+            "and the … panel opens under its own button, which is bottom-left \
+             now — a menu that opens at the far corner reads as a different \
+             control firing"
+        );
+    }
+
+    /// A slot row opens the card on its OWN provider.
+    ///
+    /// The hover says what a row's two windows are; the card says where the
+    /// tokens went. Landing on Codex after clicking the Claude rail is the kind
+    /// of small wrongness that stops people clicking at all.
+    #[test]
+    fn a_slot_row_opens_the_subscription_card_on_its_own_provider() {
+        let src = shipped_src();
+        let slot = {
+            let at = src.find("fn render_bar_slot").expect("the slot");
+            let end = src[at..].find("\n    }\n").expect("end of fn");
+            &src[at..at + end]
+        };
+        assert!(
+            slot.contains("ws.open_usage(cx)") && slot.contains("ws.usage_tab_of(&row_id)"),
+            "a row must open the card AND select its own provider's tab"
+        );
+        // The two lists are not the same list, which is the whole reason the
+        // index is asked for by id rather than carried across.
+        let by_id = {
+            let at = src.find("fn usage_tab_of").expect("the lookup");
+            let end = src[at..].find("\n    }\n").expect("end of fn");
+            &src[at..at + end]
+        };
+        assert!(
+            by_id.contains("has_content()") && by_id.contains("position("),
+            "usage_tab_of must index the DRAWABLE records, since the slot draws \
+             every record and the card draws only the ones with content"
+        );
+        // And the widget's one setting is reachable from the card it belongs to.
+        assert!(
+            src.contains("slot-remaining-toggle") && src.contains("ws.slot_remaining = !ws"),
+            "the card carries the bar's spent/remaining toggle — the slot itself \
+             is four rails in a 200px column with no room for a control"
         );
     }
 
