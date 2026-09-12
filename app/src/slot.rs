@@ -450,9 +450,77 @@ impl Tally {
     }
 }
 
+// ---- the provider's own mark, if the user has one -------------------------
+
+/// Where a mark for provider `id` would be: `<config>/marks/<id>.svg`.
+///
+/// **Why a directory the user fills rather than files this repo ships.** A
+/// vendor's logo is that vendor's trademark, and TD is public and MIT — so the
+/// marks cannot live in the tree, however much better they look than initials.
+/// They also cannot be drawn: the OpenAI blossom is an interlocking knot, and a
+/// hand-approximated version of somebody's logo is worse than no logo, because
+/// it is wrong in a way that looks deliberate.
+///
+/// A directory solves all of it at once. Whoever runs TD drops the mark they
+/// are entitled to use, under the id the collector already publishes, and
+/// [`ProviderRow::initials`] stays as the fallback that ships — which it had to
+/// be anyway, since the provider list is open-ended by construction.
+///
+/// One path segment only: an id is a filename here, so anything that could
+/// climb out of the directory disqualifies it. Rendered by gpui as a
+/// single-colour mask, so a multi-colour file is drawn in one tint and a file
+/// that is not an SVG at all is simply not drawn.
+pub fn mark_path(config: &std::path::Path, id: &str) -> Option<std::path::PathBuf> {
+    if id.is_empty()
+        || id.len() > 64
+        || !id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        return None;
+    }
+    let path = config.join("marks").join(format!("{id}.svg"));
+    path.is_file().then_some(path)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ---- the provider mark directory ------------------------------------
+
+    #[test]
+    fn a_mark_is_found_by_id_and_only_inside_its_own_directory() {
+        let tmp = std::env::temp_dir().join(format!("td-marks-{}", std::process::id()));
+        let marks = tmp.join("marks");
+        std::fs::create_dir_all(&marks).unwrap();
+        std::fs::write(marks.join("claude.svg"), "<svg/>").unwrap();
+        std::fs::write(tmp.join("outside.svg"), "<svg/>").unwrap();
+
+        assert_eq!(mark_path(&tmp, "claude"), Some(marks.join("claude.svg")));
+        // a provider with no mark falls back to initials, which is the whole
+        // reason initials are not optional
+        assert_eq!(mark_path(&tmp, "codex"), None);
+
+        // An id is a FILENAME here. Every one of these reaches a real file if
+        // the id is pasted into the path unchecked, and the first two reach one
+        // that exists in this fixture.
+        for hostile in [
+            "../outside",
+            "..",
+            "marks/../../outside",
+            "/etc/hostname",
+            "a b",
+            "",
+        ] {
+            assert_eq!(
+                mark_path(&tmp, hostile),
+                None,
+                "{hostile:?} must not resolve to a mark"
+            );
+        }
+        std::fs::remove_dir_all(&tmp).ok();
+    }
 
     // ---- the rule the whole module exists for ---------------------------
 
