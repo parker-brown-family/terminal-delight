@@ -10,6 +10,11 @@ use std::path::PathBuf;
 
 const ROBOT: &[u8] = include_bytes!("../assets/img/robot-only.png");
 const BLINKER: &[u8] = include_bytes!("../assets/img/blinker-only.png");
+/// The app's own CRT mark — `favicon.svg` rasterised at 128², which is ~7×
+/// headroom over the ~18px the mother bar draws it at. A raster rather than the
+/// SVG because gpui paints an SVG as a single-colour MASK, and this mark is
+/// three phosphor colours in a bezel: as a mask it is a filled rounded square.
+const MARK: &[u8] = include_bytes!("../assets/img/logo-mark.png");
 
 /// Write an embedded asset to the runtime dir once (size-checked, so a
 /// truncated write from a crashed run heals) and hand back the path.
@@ -33,6 +38,16 @@ pub(crate) fn runtime_asset(name: &str, bytes: &[u8]) -> PathBuf {
 /// the blinking needs-input overlay.
 pub fn robot_png() -> PathBuf {
     runtime_asset("terminal-delight-robot.png", ROBOT)
+}
+
+/// The app's mark, for the mother bar's top-left corner.
+///
+/// It replaced the words `▸ TERMINAL DELIGHT`, which cost the widest slot on
+/// the busiest row to say something that does not change and that the window's
+/// own title already says — and which, on a session whose project happened to
+/// be called Terminal Delight, printed the same three words twice, stacked.
+pub fn mark_png() -> PathBuf {
+    runtime_asset("terminal-delight-mark.png", MARK)
 }
 
 /// The yellow HEY blinker (bulb + rays, transparent elsewhere) — overlaid on

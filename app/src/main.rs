@@ -710,13 +710,13 @@ const SLOT_REMAINING_DEFAULT: bool = true;
 const CHROME_NAME_PT: f32 = 11.0;
 
 /// The chrome's menu glyphs — paint, display, graveyard, plugins — at HALF the
-/// pane header's icon size.
+/// pane header's icon metric.
 ///
-/// They moved to the bottom bezel at the size they had in the top right, and
-/// there they were the loudest thing on a row whose whole job is to be quiet:
-/// four buttons you press occasionally, drawn as big as the things you read
-/// constantly.
-const CHROME_GLYPH: f32 = pane::HICON * 0.5;
+/// Now shared with the pane headers, which were drawing their own glyphs at the
+/// full metric and filling the header edge to edge; see [`pane::CHROME_GLYPH`],
+/// where it lives beside the `HICON` it is half of. One number decides every
+/// glyph a person clicks, in both rows.
+const CHROME_GLYPH: f32 = pane::CHROME_GLYPH;
 
 /// The provider mark in an allowance row, at twice what it was.
 ///
@@ -13178,15 +13178,22 @@ impl Workspace {
             .child(close_x)
     }
 
-    /// The column the heading stands in: exactly as wide as the tree beside it,
-    /// so the branch's name is centred over the rows it names.
+    /// The name of the branch this window is standing in — the active tab's
+    /// initiative, or the project it hangs from, or nothing.
     ///
-    /// Fixed width, not content width. A long branch name truncates inside the
-    /// column rather than pushing the first tab to the right — the tabs' left
-    /// edge is a line shared with the terminals below, and a heading is not
-    /// allowed to move it. With the tree closed the column collapses to nothing
-    /// and the heading takes only what it needs.
-    fn strip_heading(&self, width: f32, cx: &mut Context<Self>) -> gpui::Div {
+    /// It sits in the mother bar's top-left corner now, beside the app's mark,
+    /// where the words `▸ TERMINAL DELIGHT` used to be. That slot was the widest
+    /// on the busiest row and it said something that never changes; this says
+    /// something that does, and it is the fact you most need when a window holds
+    /// several projects' work.
+    ///
+    /// `width: Some(w)` pins it to a column of exactly that width and centres it
+    /// — how it was drawn as the tab strip's heading, so a long branch name
+    /// truncated inside the column rather than pushing the first tab to the
+    /// right. `None` takes only what the name needs, which is what the header
+    /// row wants. Either way it truncates rather than wrapping: gpui wraps text
+    /// by default, and a wrapped name makes the whole mother bar taller.
+    fn place_name(&self, width: Option<f32>, pt: f32, cx: &mut Context<Self>) -> gpui::Div {
         let th = theme::theme(cx);
         let s = theme::outer_choice(cx).grade.scale;
         let mut col = div()
@@ -13197,19 +13204,17 @@ impl Workspace {
             .justify_center()
             .overflow_hidden()
             .px(px(6. * s));
-        if width > 0. {
-            col = col.w(px(width));
+        if let Some(w) = width.filter(|w| *w > 0.) {
+            col = col.w(px(w));
         }
-        // the same key the strip filters by, so the name over the tabs always
-        // describes the tabs
+        // the same key the strip filters by, so the name always describes the
+        // branch whose tabs are on the strip
         let place = self.place_of(self.active);
         match place.initiative {
-            Some(gid) => col.child(self.group_title(gid, cx)),
-            // A loose tab hangs from its project, if it hangs from anything. The
-            // heading says whichever branch of the tree the strip is standing
-            // over, and when that is nothing at all it says nothing — an
-            // unorganised session gets a plain strip, not a label reading
-            // "unfiled" over every tab it has.
+            Some(gid) => col.child(self.group_title(gid, pt, cx)),
+            // A loose tab hangs from its project, if it hangs from anything —
+            // and when that is nothing at all this says nothing. An unorganised
+            // session gets a bare mark, not a label reading "unfiled".
             None => {
                 let project = place
                     .project
@@ -13219,12 +13224,8 @@ impl Workspace {
                     Some((pid, name)) => col.child(
                         div()
                             .min_w_0()
-                            // truncate, not overflow_hidden: gpui wraps text by
-                            // default, and a wrapped heading makes the whole
-                            // mother bar taller — the fixed rail exists so a
-                            // name too long for it costs an ellipsis, never a row
                             .truncate()
-                            .text_size(px(10.5 * s))
+                            .text_size(px(pt))
                             .font_weight(gpui::FontWeight::SEMIBOLD)
                             .text_color(th.faint)
                             .child(name)
@@ -13245,16 +13246,17 @@ impl Workspace {
         }
     }
 
-    /// The strip's heading: the name of the branch it is carrying, standing
-    /// over the tree rather than in the tabs' own row.
+    /// A branch's name, as the mother bar draws it.
     ///
-    /// Not a chip and not coloured. The tree directly below it carries this
-    /// branch's colour key and its name already; a second coloured token on top
-    /// of that was the same fact twice, in the place with the least room for
-    /// it. Still the branch's handle, though — right-click writes over its
-    /// name, ctrl+click opens its menu (colour, fold, disband), and a plain
-    /// click folds it in the tree.
-    fn group_title(&self, gid: u32, cx: &mut Context<Self>) -> gpui::Stateful<gpui::Div> {
+    /// Not a chip and not coloured. The tree carries this branch's colour key
+    /// and its name already; a second coloured token on top of that was the
+    /// same fact twice, in the place with the least room for it. Still the
+    /// branch's handle, though — right-click writes over its name, ctrl+click
+    /// opens its menu (colour, fold, disband), and a plain click folds it in
+    /// the tree. Those gestures came with it from the tab strip's heading to
+    /// the header row, because a name in TD's chrome answers to the same three
+    /// gestures wherever it is drawn.
+    fn group_title(&self, gid: u32, pt: f32, cx: &mut Context<Self>) -> gpui::Stateful<gpui::Div> {
         let th = theme::theme(cx);
         let s = theme::outer_choice(cx).grade.scale;
         // never `name`: a group starts nameless, and a heading that renders
@@ -13277,7 +13279,7 @@ impl Workspace {
             .gap(px(4. * s))
             .px(px(4. * s))
             .cursor_pointer()
-            .text_size(px(10.5 * s))
+            .text_size(px(pt))
             .font_weight(gpui::FontWeight::SEMIBOLD)
             .text_color(th.faint);
         if let Some((_, eb)) = self.group_rename.as_ref().filter(|(rg, _)| *rg == gid) {
@@ -14626,7 +14628,13 @@ impl Render for Workspace {
         // that gap — the moment a control moves into it, the inset stops
         // reading as deliberate and starts reading as that control's margin.
         let strip_void = 14. * scale;
-        let strip_heading = self.strip_heading(strip_indent, cx);
+        // The branch's name used to stand in a column of exactly this width,
+        // centred over the tree. It is in the header row now, beside the mark,
+        // where the words `▸ TERMINAL DELIGHT` were — so what is left here is
+        // the INDENT alone, which is a separate job and still needed: it is
+        // what makes a tab sit over the terminals it opens rather than over the
+        // tree that lists them.
+        let strip_gutter = div().flex_none().w(px(strip_indent));
         let mut tab_strip = div()
             .flex()
             .flex_row()
@@ -15048,11 +15056,25 @@ impl Render for Workspace {
                 }),
             );
 
+        // The glyph row is the left bar's FOOTER, so it takes the bar's width
+        // (95% of it) and spreads its buttons across that, rather than huddling
+        // four small glyphs at the window's corner with a hundred pixels of
+        // nothing beside them. The 5% it gives back is what keeps the row from
+        // reading as an edge-to-edge strip.
+        //
+        // With the bar closed there is no column to be the footer of, so the
+        // row falls back to its natural width and its own gaps.
+        let is_footer = self.left_bar && !chrome_narrow;
         let chrome_icons = div()
             .flex()
             .flex_row()
             .items_center()
-            .gap(px(12. * scale))
+            .when(is_footer, |d| {
+                d.w(px(self.left_bar_w * scale * 0.95))
+                    .justify_between()
+                    .px(px(2. * scale))
+            })
+            .when(!is_footer, |d| d.gap(px(12. * scale)))
             .map(|d| {
                 if chrome_narrow {
                     d.child(ic_more)
@@ -15112,11 +15134,20 @@ impl Render for Workspace {
                     .justify_between()
                     .gap(px(12. * scale))
                     .child(
-                        // LEFT GROUP: the title, and only the title. It used to
-                        // carry a dim `// SUB-TERMINAL` tag beside it, which
-                        // named the category the window belongs to rather than
-                        // anything about this window — a caption on the one row
-                        // where every other glyph is a control.
+                        // LEFT GROUP: the app's MARK, then the name of the
+                        // branch this window is standing in.
+                        //
+                        // This slot used to read `▸ TERMINAL DELIGHT` — the
+                        // widest thing on the busiest row, spent saying
+                        // something that never changes and that the window's
+                        // own title already says. Worse, the strip heading
+                        // below it said the active branch's name, so a session
+                        // whose project is called Terminal Delight printed the
+                        // same three words twice, stacked, in the two most
+                        // prominent places in the window.
+                        //
+                        // The mark says which program this is in 18px. The
+                        // words that follow it now say something that changes.
                         div()
                             .flex_1()
                             .min_w(px(0.))
@@ -15129,8 +15160,8 @@ impl Render for Workspace {
                             .items_center()
                             .gap(px(8. * scale))
                             .child(
-                                // the title on a fixed height, so the row keeps
-                                // its size whatever the brand string is
+                                // A fixed height, so the row keeps its size
+                                // whatever the branch is called.
                                 div()
                                     .flex_none()
                                     .h(px(22. * scale))
@@ -15139,16 +15170,12 @@ impl Render for Workspace {
                                     .items_center()
                                     .gap(px(8. * scale))
                                     .child(
-                                        // The mother TITLE — the complement colour (wheel's
-                                        // `C`; defaults to the accent's / active dynamic's).
-                                        div()
-                                            .flex_none()
-                                            .text_size(px(14. * scale))
-                                            .font_weight(gpui::FontWeight::EXTRA_BOLD)
-                                            .text_color(th.complement)
-                                            .child(format!("▸ {}", s.brand)),
+                                        gpui::img(crate::art::mark_png())
+                                            .w(px(18. * scale))
+                                            .h(px(18. * scale)),
                                     ),
-                            ),
+                            )
+                            .child(self.place_name(None, 13. * scale, cx)),
                     )
                     .child(
                         // never compressed or pushed off. The menu glyphs used
@@ -15182,7 +15209,7 @@ impl Render for Workspace {
                     .flex()
                     .flex_row()
                     .items_center()
-                    .child(strip_heading)
+                    .child(strip_gutter)
                     // the void: no control, no rule, no handle
                     .child(div().flex_none().w(px(strip_void)))
                     .child(tab_strip),
@@ -20322,7 +20349,7 @@ mod tests {
     /// Source-scanned for the same reason the rename sweep is: the wrong
     /// version compiles, renders, and passes everything else.
     #[test]
-    fn the_strip_heading_is_never_blank_and_never_wraps() {
+    fn a_branch_name_in_the_chrome_is_never_blank_and_never_wraps() {
         let src = include_str!("main.rs");
         let body = |sig: &str| -> &str {
             let at = src.find(sig).unwrap_or_else(|| panic!("{sig} not found"));
@@ -20342,8 +20369,8 @@ mod tests {
              name grows the mother bar instead of clipping inside its rail"
         );
         assert!(
-            body("fn strip_heading").contains(".truncate()"),
-            "the project heading must truncate for the same reason"
+            body("fn place_name").contains(".truncate()"),
+            "the project name must truncate for the same reason"
         );
 
         // and the fallback has to actually say something
@@ -20717,6 +20744,65 @@ mod tests {
         );
     }
 
+    /// The header's top-left corner says which PROGRAM this is once, in a mark,
+    /// and then says something that changes.
+    ///
+    /// It used to read `▸ TERMINAL DELIGHT` — the widest thing on the busiest
+    /// row, spent on a string that never changes and that the window title
+    /// already carries. The strip heading below it said the active branch's
+    /// name, so a session whose project is called Terminal Delight printed the
+    /// same three words twice, stacked, in the two most prominent places in the
+    /// window. The mark does the identifying; the words do the informing.
+    #[test]
+    fn the_header_corner_carries_the_mark_and_the_branchs_name() {
+        let src = shipped_src();
+        let region = |sig: &str| -> &str {
+            let at = src.find(sig).unwrap_or_else(|| panic!("{sig} not found"));
+            let end = src[at..].find("\n        let ").expect("end of region");
+            &src[at..at + end]
+        };
+        let top = region("let bezel_top = div()");
+        assert!(
+            top.contains("crate::art::mark_png()"),
+            "the corner draws the app's own mark"
+        );
+        assert!(
+            top.contains("self.place_name(None,"),
+            "…and beside it, the branch this window is standing in, at its \
+             natural width rather than pinned to the tree's column"
+        );
+        // The words are gone. Spelled in pieces so this test's own source does
+        // not answer the search — see `shipped_src`.
+        let brand_text = format!("{}{}", "\u{25b8} {}\", s.", "brand)");
+        assert!(
+            !src.contains(&brand_text),
+            "the header no longer prints the program's name as words"
+        );
+        // The strip keeps the INDENT the heading used to provide — a separate
+        // job, and the thing that makes a tab sit over the terminals it opens
+        // rather than over the tree that lists them.
+        assert!(
+            src.contains("let strip_gutter = div().flex_none().w(px(strip_indent));")
+                && src.contains(".child(strip_gutter)"),
+            "the tab row keeps its indent after losing the heading"
+        );
+        // One name-rendering path, called at two sizes, so the corner and the
+        // strip can never disagree about what the branch is called.
+        let name = {
+            let at = src.find("    fn place_name").expect("place_name");
+            let end = src[at..].find("\n    }\n").expect("end of fn");
+            &src[at..at + end]
+        };
+        assert!(
+            name.contains("width: Option<f32>") && name.contains("pt: f32"),
+            "place_name takes its column width and its size from the caller"
+        );
+        assert!(
+            name.contains("self.group_title(gid, pt, cx)"),
+            "and hands the size on, so a group and a project render alike"
+        );
+    }
+
     /// The two sizes Parker asked for, as ratios rather than loose numbers.
     ///
     /// A glance surface and a click surface were drawn at the same size, which
@@ -20726,10 +20812,29 @@ mod tests {
     #[test]
     fn the_glance_glyphs_are_twice_the_size_and_the_click_glyphs_are_half() {
         let src = shipped_src();
+        let pane_src = include_str!("pane.rs");
+        // The relationship lives where HICON lives, and is DERIVED rather than
+        // typed, or the two drift the first time either is tuned.
         assert!(
-            src.contains("const CHROME_GLYPH: f32 = pane::HICON * 0.5;"),
-            "the chrome's menu glyphs are half the pane header's icon, and \
-             derived from it rather than hardcoded — or the two drift"
+            pane_src.contains("pub const CHROME_GLYPH: f32 = HICON * 0.5;"),
+            "the chrome's glyph metric is half the header bar's icon metric"
+        );
+        assert!(
+            src.contains("const CHROME_GLYPH: f32 = pane::CHROME_GLYPH;"),
+            "…and the window's own menu row uses that same number rather than a \
+             second copy of it — one number for every glyph a person clicks"
+        );
+        // The pane header's glyphs go through it too. They were the complaint:
+        // a palette, an equaliser and a close × at the BAR's metric filled the
+        // header edge to edge, on a pane whose content is the point.
+        assert!(
+            pane_src.contains("let hicon = CHROME_GLYPH * scale;"),
+            "the pane header's glyphs take the chrome metric, not the bar's"
+        );
+        assert!(
+            !pane_src.contains("px(hicon + 10.)"),
+            "the close × keeps its emphasis as a RATIO, not as a fixed offset — \
+             an offset grows to half again as dominant once the glyphs halve"
         );
         assert!(
             src.contains("const SLOT_MARK_PT: f32 = 28.0;")

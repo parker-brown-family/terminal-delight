@@ -236,6 +236,21 @@ fn foreground_mode(master: &std::fs::File, shell_pid: u32) -> PaneMode {
 /// The consistent header icon size (≈2× the old glyphs).
 pub const HICON: f32 = 28.0;
 
+/// Every GLYPH BUTTON in the chrome, whether it sits on a pane's header or at
+/// the bottom left of the window — half [`HICON`], which is the header BAR's
+/// own icon metric rather than a glyph size.
+///
+/// The bar height was right and the glyphs in it were not: a palette, an
+/// equaliser and a close × drawn at the bar's full icon metric filled the
+/// header edge to edge and read as the loudest thing on a pane whose content is
+/// the point. Halving them lands them on the size the window's own menu row
+/// already uses, so one number now decides every glyph a person clicks, and the
+/// two rows stop disagreeing about how big a button is.
+///
+/// [`HICON`] itself is untouched: it still sets the header bar's height budget
+/// and the per-pane logo square, neither of which shrank.
+pub const CHROME_GLYPH: f32 = HICON * 0.5;
+
 /// A small EQ-waveform glyph — a row of bars at varying heights — used as the
 /// consistent monitor/display icon. Drawn (not an emoji) so it can be wider than
 /// a square and read as "the screen / levels" control.
@@ -6959,7 +6974,10 @@ impl Render for TerminalView {
         // the whole header grows/shrinks smoothly as one piece. (0.7..1.6 → a
         // 28..64px tall bar.)
         let header_h = HEADER_H * scale;
-        let hicon = HICON * scale;
+        // The glyph metric for everything in this header a person can click.
+        // NOT `HICON`, which is the bar's own height budget: the bar is the
+        // right size and the glyphs in it were not. See [`CHROME_GLYPH`].
+        let hicon = CHROME_GLYPH * scale;
         let hpad = px(12. * scale); // header horizontal padding / control gap
 
         // solid, reflective header: gradient face + crisp top reflection line
@@ -7254,7 +7272,7 @@ impl Render for TerminalView {
                                 .border_1()
                                 .border_color(th.accent.alpha(0.5))
                                 .cursor_pointer()
-                                .child(eq_icon(th.accent, scale))
+                                .child(eq_icon(th.accent, scale * 0.5))
                                 .on_mouse_down(
                                     MouseButton::Left,
                                     cx.listener(|_, ev: &MouseDownEvent, _w, cx| {
@@ -7306,9 +7324,14 @@ impl Render for TerminalView {
                             .rounded_md()
                             .text_color(bar_fg)
                             .cursor_pointer()
-                            // much bigger than the other header glyphs
-                            .text_size(px(hicon + 10.))
-                            .line_height(px(hicon + 10.))
+                            // Still bigger than the other header glyphs, and by
+                            // exactly as much as it always was — the old
+                            // `hicon + 10` was 1.36× the old glyph metric, so
+                            // the ratio is kept as a ratio rather than as an
+                            // offset that would have grown to half again as
+                            // dominant once the glyphs halved.
+                            .text_size(px(hicon * 1.36))
+                            .line_height(px(hicon * 1.36))
                             .hover(|s| s.bg(bar_fg.alpha(0.18)))
                             .child("×")
                             .on_mouse_down(
