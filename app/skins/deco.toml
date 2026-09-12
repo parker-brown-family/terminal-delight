@@ -1,0 +1,92 @@
+# terminal-delight skin — deco
+#
+# Art deco read as an INSTRUMENT rather than as ornament: the register of a
+# Rapture bathysphere panel, at the density of a working agent dashboard.
+#
+# What deco actually contributes here is not gold leaf. It is four structural
+# habits, and each one is an attentional strategy rather than a flourish:
+#
+#   square corners      a radius says "soft, web, tap me". Their absence says
+#                       "instrument", and it puts every edge on the same grid.
+#   the twin rule       one line between two things reads as adjacency; two
+#                       lines with a gap reads as a BOUNDARY. Deco's signature
+#                       move, and the cheapest way to make regions legible.
+#   the bracket         four corner ticks mark the active row without filling
+#                       it, so a dense list keeps its text contrast. A filled
+#                       pill in a list of twenty is a stripe; a bracket is a
+#                       pointer.
+#   tracked caps        letterspaced small caps for labels only. Deco's voice,
+#                       and it separates furniture from content at a glance.
+#
+# Explicitly NOT here, because the brief was modern and professional: no bezels,
+# no rivets, no gradients, no glow, no sunbursts, no chevrons, no HUD. Every
+# device below is load-bearing.
+#
+# This skin declares no colour it does not have to. It is written as RECIPES, so
+# it works on the brass-on-black deco palette it ships with AND on the green
+# hacker palette, the olive field-command one, or anything an Omarchy theme
+# switch hands it. Shape is the axis; colour stays the palette's business.
+
+name = "deco"
+icon = "◈"
+
+[shape]
+corner   = "square"
+boundary = "double"
+emphasis = "bracket"
+divider  = "double"
+caps     = "tracked"
+
+[metric]
+# Nothing rounds. `radius` still has a value because the inner ring of a double
+# boundary reads it; at square it resolves to zero anyway.
+radius     = 0.0
+radius_lg  = 0.0
+# The gap IS the twin rule. 2px is the smallest that survives a 1x display: at
+# 1px the two lines merge into one fat line and the device is simply lost.
+rule_gap   = 2.0
+hairline   = 1.0
+border     = 1.0
+# Deco breathes. The extra two pixels either side are what stop square corners
+# reading as cramped — this is the one place the look costs real estate.
+pad_x      = 8.0
+pad_y      = 4.0
+chip_px    = 7.0
+chip_py    = 2.0
+gap        = 5.0
+# Long enough to read as a machined corner, short enough not to close into a box.
+bracket    = 6.0
+rail       = 2.0
+label_size = 9.0
+row_h      = 16.0
+
+[ink]
+# The structural lines carry the ACCENT, not a grey. That is the whole
+# difference between deco and flat-dark: the geometry is the ornament, so the
+# geometry has to be visible. Still a recipe — under the brass palette these are
+# gold, under the hacker palette they are green, and both are correct.
+rule_strong = { from = "accent", a = 0.55 }
+rule        = { from = "accent", a = 0.22 }
+edge        = { from = "accent", a = 0.45 }
+
+# The bracket does the marking, so the wash underneath it drops to a whisper —
+# enough to seat the row, not enough to fight the text on it.
+mark_wash   = { from = "accent", a = 0.07 }
+
+# Text ON the accent goes DARK, not white. A brass fill is a light colour — the
+# deco palette puts it at about 53% lightness — so white-on-accent is the low
+# contrast pair and the panel ground is the high one. The default skin's
+# white-at-95% is the right answer for a dark accent and the wrong one here,
+# which is the whole reason this is a token and not a constant.
+ink_on_mark = { from = "bg" }
+
+# Panels sit slightly above the ground rather than on it, so the twin rule has
+# something to be a boundary BETWEEN.
+panel        = { from = "bg" }
+panel_raised = { from = "surface", l = 1.15, max_l = 0.22 }
+btn_face     = { from = "surface", l = 0.9 }
+
+# The second attentional tier. Deco gives the furniture; the running thing gets
+# the palette's complement, which is what keeps a wall of gold from flattening
+# into one texture. (The deco palette points `human` at mint on purpose.)
+live = { from = "human" }

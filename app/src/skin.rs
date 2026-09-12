@@ -1,0 +1,1619 @@
+//! The chrome's SHAPE, as data — the third themeable axis.
+//!
+//! Terminal Delight already separates two axes and hot-reloads both: a
+//! `[colors]` PALETTE (what hue everything is) and `[effects]` TEXTURE (how much
+//! CRT you get). Neither reaches the chrome. The chrome — bars, tabs, the left
+//! bar, chips, rules, panels — computes its colours at the call site (268
+//! `darken(th.surface, 0.3)` / `th.text.alpha(0.45)` expressions over six palette
+//! roles) and compiles in all of its geometry (141 radius calls, 197 border
+//! calls, 62 distinct `px()` literals). So a theme file can RETINT Terminal
+//! Delight and cannot RESTYLE it.
+//!
+//! That gap is what a skin closes. A look like art deco is not a tint: it is
+//! square corners where there were round ones, a twin rule where there was a
+//! hairline, a bracket where there was a filled pill, tracked caps where there
+//! was sentence case. None of that is reachable from a colour.
+//!
+//! Three things live here, in dependency order:
+//!
+//! 1. **Tokens** — [`Inks`] (semantic chrome colours), [`Metrics`] (geometry),
+//!    [`Shapes`] (strategy enums). Data, resolved once per region.
+//! 2. **A vocabulary** — [`Skin::panel`], [`Skin::chip`], [`Skin::rule_h`] and
+//!    friends. Every call site asks for an ELEMENT; the strategy branch happens
+//!    in here, once, never at the call site. That is what makes a second skin a
+//!    file rather than a patch.
+//! 3. **Files** — `app/skins/*.toml`, embedded as builtins and hot-reloaded from
+//!    `$TD_SKIN` / `~/.config/terminal-delight/skin.toml`, exactly like themes.
+//!
+//! ## A skin declares RECIPES, not colours
+//!
+//! The point of `rule = { from = "surface", l = 0.30 }` rather than
+//! `rule = "#1a2226"` is that the first one is still right under a palette the
+//! skin author never saw. Five palettes times two skins is ten working looks,
+//! not ten hand-authored files — and that, not the token list, is what "themeable"
+//! has to mean to be worth the layer.
+//!
+//! ## Absent is not zero
+//!
+//! Every field a file can carry is an `Option`. A skin that says only
+//! `corner = "square"` is a complete, valid skin: every ink it did not mention
+//! resolves to its DEFAULT RECIPE over the live palette. A missing token is never
+//! black, never `0.0`, and never silently the same as a declared one — see
+//! `ink_tokens!` below, where the `None` arm reaches for the recipe rather than
+//! for a default value.
+
+use std::{
+    collections::BTreeMap,
+    fs,
+    path::PathBuf,
+    sync::Arc,
+    time::{Duration, SystemTime},
+};
+
+use gpui::{
+    div, hsla, px, App, Div, Global, Hsla, InteractiveElement, ParentElement, Pixels, Stateful,
+    Styled,
+};
+use serde::Deserialize;
+
+use crate::theme::{self, Theme};
+
+/// Today's chrome, stated as tokens. Must stay pixel-faithful to what main.rs
+/// draws — `default_skin_reproduces_todays_chrome` is the gate.
+pub const DEFAULT_SKIN_TOML: &str = include_str!("../skins/default.toml");
+
+/// (id, embedded toml) for every built-in skin, mirroring `theme::BUILTIN_THEMES`.
+const BUILTIN_SKINS: &[(&str, &str)] = &[
+    ("default", DEFAULT_SKIN_TOML),
+    ("deco", include_str!("../skins/deco.toml")),
+];
+
+// ---------------------------------------------------------------------------
+// Roles — the palette a recipe is allowed to draw from
+// ---------------------------------------------------------------------------
+
+/// A name a recipe can point at. Deliberately only the PALETTE's own roles plus
+/// the two absolutes: a recipe that could point at another ink would let a skin
+/// file build a cycle, and the resolver would have to become a graph walk.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Role {
+    Bg,
+    Surface,
+    Text,
+    Accent,
+    Complement,
+    Human,
+    Faint,
+    Cursor,
+    /// Pure white — the ground of every "lift on hover" tint in the chrome.
+    White,
+    Black,
+    /// One of the sixteen ANSI slots, so state inks (ok/warn/danger) track the
+    /// palette's own idea of green/yellow/red instead of being invented here.
+    Ansi(u8),
+}
+
+impl Role {
+    fn parse(name: &str) -> Option<Self> {
+        Some(match name {
+            "bg" => Role::Bg,
+            "surface" => Role::Surface,
+            "text" => Role::Text,
+            "accent" => Role::Accent,
+            "complement" => Role::Complement,
+            "human" => Role::Human,
+            "faint" => Role::Faint,
+            "cursor" => Role::Cursor,
+            "white" => Role::White,
+            "black" => Role::Black,
+            other => {
+                let n: u8 = other.strip_prefix("ansi")?.parse().ok()?;
+                if n > 15 {
+                    return None;
+                }
+                Role::Ansi(n)
+            }
+        })
+    }
+
+    fn of(self, th: &Theme) -> Hsla {
+        match self {
+            Role::Bg => th.bg,
+            Role::Surface => th.surface,
+            Role::Text => th.text,
+            Role::Accent => th.accent,
+            Role::Complement => th.complement,
+            Role::Human => th.human,
+            Role::Faint => th.faint,
+            Role::Cursor => th.cursor,
+            Role::White => hsla(0., 0., 1., 1.),
+            Role::Black => hsla(0., 0., 0., 1.),
+            Role::Ansi(n) => th.ansi[(n as usize).min(15)],
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Recipes — how an ink is built out of a role
+// ---------------------------------------------------------------------------
+
+/// A small, closed set of operations over one palette role. Closed on purpose:
+/// every operation here already exists at a call site in main.rs (`darken` is
+/// `l`, `brighten` is `l` with `max_l`, `.alpha(x)` is `a`, `mix(a, b, t)` is
+/// `toward`/`t`), so the recipe language is a transcription of what the chrome
+/// was doing by hand rather than a new thing to learn.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Recipe {
+    from: Role,
+    /// Multiply lightness — `darken(c, 0.3)` is `l = 0.3`.
+    l: Option<f32>,
+    /// Multiply saturation.
+    s: Option<f32>,
+    /// SET alpha (not multiply) — `.alpha(0.45)` is `a = 0.45`.
+    a: Option<f32>,
+    /// Ceiling applied after `l`, which is the only thing `brighten` adds over
+    /// `darken`: it refuses to run a colour up into white.
+    max_l: Option<f32>,
+    /// Blend toward a second role by `t`.
+    toward: Option<Role>,
+    t: f32,
+}
+
+impl Recipe {
+    pub fn of(from: Role) -> Self {
+        Self {
+            from,
+            l: None,
+            s: None,
+            a: None,
+            max_l: None,
+            toward: None,
+            t: 0.,
+        }
+    }
+    pub fn l(mut self, v: f32) -> Self {
+        self.l = Some(v);
+        self
+    }
+    pub fn s(mut self, v: f32) -> Self {
+        self.s = Some(v);
+        self
+    }
+    pub fn a(mut self, v: f32) -> Self {
+        self.a = Some(v);
+        self
+    }
+    pub fn max_l(mut self, v: f32) -> Self {
+        self.max_l = Some(v);
+        self
+    }
+    pub fn toward(mut self, r: Role, t: f32) -> Self {
+        self.toward = Some(r);
+        self.t = t;
+        self
+    }
+
+    /// Apply the recipe to a live palette. Order matters and matches the order
+    /// the same expressions run in at the call sites: lighten, then saturate,
+    /// then blend, then alpha last — alpha is a property of the DRAWN thing, so
+    /// blending a half-transparent colour toward an opaque one would otherwise
+    /// quietly restore its opacity.
+    pub fn bake(&self, th: &Theme) -> Hsla {
+        let mut c = self.from.of(th);
+        if let Some(l) = self.l {
+            c.l = (c.l * l).clamp(0., 1.);
+        }
+        if let Some(cap) = self.max_l {
+            c.l = c.l.min(cap);
+        }
+        if let Some(s) = self.s {
+            c.s = (c.s * s).clamp(0., 1.);
+        }
+        if let Some(r) = self.toward {
+            c = crate::mix(c, r.of(th), self.t);
+        }
+        if let Some(a) = self.a {
+            c.a = a.clamp(0., 1.);
+        }
+        c
+    }
+}
+
+/// What a skin file said about one ink: a fixed colour, or a recipe over the
+/// palette. The two are different in the type because they are different claims
+/// — "this look is gold whatever the palette is" versus "this look tracks
+/// whatever accent it is given".
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum InkSpec {
+    Pinned(Hsla),
+    Mixed(Recipe),
+}
+
+impl InkSpec {
+    fn bake(&self, th: &Theme) -> Hsla {
+        match self {
+            InkSpec::Pinned(c) => *c,
+            InkSpec::Mixed(r) => r.bake(th),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The ink token set
+// ---------------------------------------------------------------------------
+
+/// Generates the three parallel shapes from ONE list, so adding a chrome colour
+/// is a single line rather than four edits that can drift apart.
+macro_rules! ink_tokens {
+    ($( $field:ident => $key:literal, $default:expr, $doc:literal; )*) => {
+        /// Every chrome colour, resolved against a live palette.
+        #[derive(Clone, Copy, Debug, PartialEq)]
+        pub struct Inks { $( #[doc = $doc] pub $field: Hsla, )* }
+
+        impl Inks {
+            /// One resolved ink, by its file key. Chrome code reads the field
+            /// directly; this is for the `skin` verb, which has to walk the whole
+            /// set without naming any of it.
+            pub fn by_key(&self, key: &str) -> Option<Hsla> {
+                match key { $( $key => Some(self.$field), )* _ => None }
+            }
+        }
+
+        /// What a skin FILE said. `None` means the file did not say — which
+        /// resolves to the token's default recipe, never to a zero value.
+        #[derive(Clone, Debug, Default, PartialEq)]
+        pub struct InkSpecs { $( pub $field: Option<InkSpec>, )* }
+
+        impl InkSpecs {
+            /// `false` when the key is not an ink — the caller reports it as a
+            /// typo rather than dropping it, because a silently ignored token is
+            /// exactly the failure mode theming systems die of.
+            fn set(&mut self, key: &str, spec: InkSpec) -> bool {
+                match key { $( $key => { self.$field = Some(spec); true } )* _ => false }
+            }
+
+            fn bake(&self, th: &Theme) -> Inks {
+                Inks { $( $field: match &self.$field {
+                    Some(spec) => spec.bake(th),
+                    None => $default.bake(th),
+                }, )* }
+            }
+        }
+
+        /// The default recipe for one ink, by key — what a file gets when it
+        /// stays silent. Reached only from the template-drift test today, which a
+        /// binary crate's dead-code pass cannot see; it is also the lookup any
+        /// future skin validator or editor needs, so it stays public.
+        #[allow(dead_code)]
+        pub fn default_ink(key: &str) -> Option<Recipe> {
+            match key { $( $key => Some($default), )* _ => None }
+        }
+
+        pub const INK_KEYS: &[&str] = &[ $($key,)* ];
+    };
+}
+
+ink_tokens! {
+    // ---- grounds ----
+    panel        => "panel",        Recipe::of(Role::Bg),                          "the ground a chrome region sits on";
+    panel_raised => "panel_raised", Recipe::of(Role::Surface),                     "a surface lifted off the ground: a bar, a card";
+    panel_sunken => "panel_sunken", Recipe::of(Role::Surface).l(0.40),             "a well: a track, an input field, an inset";
+    panel_glass  => "panel_glass",  Recipe::of(Role::Bg).a(0.70),                  "the scrim an overlay lays over the workspace";
+    btn_face     => "btn_face",     Recipe::of(Role::Surface).l(0.80),             "the face of a button at rest";
+
+    // ---- boundaries ----
+    rule         => "rule",         Recipe::of(Role::Faint).a(0.25),               "an ordinary divider inside a region";
+    rule_strong  => "rule_strong",  Recipe::of(Role::Surface).l(0.30),             "the line between two regions — a panel's own edge";
+    edge         => "edge",         Recipe::of(Role::Accent).a(0.35),              "the edge of something interactive";
+    focus        => "focus",        Recipe::of(Role::Accent),                      "the ring on the thing holding the keyboard";
+
+    // ---- text ----
+    ink          => "ink",          Recipe::of(Role::Text),                        "primary chrome text";
+    ink_dim      => "ink_dim",      Recipe::of(Role::Text).a(0.70),                "secondary text: a subtitle, an inactive label";
+    ink_off      => "ink_off",      Recipe::of(Role::Faint),                       "a label that is present but not currently in effect";
+    ink_faint    => "ink_faint",    Recipe::of(Role::Text).a(0.45),                "meta text: counts, ages, paths";
+    ink_ghost    => "ink_ghost",    Recipe::of(Role::Text).a(0.20),                "text that is present but not for reading yet";
+    ink_on_mark  => "ink_on_mark",  Recipe::of(Role::White).a(0.95),               "text drawn ON the accent";
+
+    // ---- the accent, by job ----
+    mark         => "mark",         Recipe::of(Role::Accent),                      "the accent at full strength: what is selected";
+    mark_soft    => "mark_soft",    Recipe::of(Role::Accent).a(0.85),              "the accent carrying text";
+    mark_dim     => "mark_dim",     Recipe::of(Role::Accent).a(0.40),              "the accent at rest";
+    mark_wash    => "mark_wash",    Recipe::of(Role::Accent).a(0.14),              "the accent as a background tint";
+    row_active   => "row_active",   Recipe::of(Role::Accent).a(0.22),              "the ground under the row you are standing on";
+    hover        => "hover",        Recipe::of(Role::White).a(0.12),               "the lift under the pointer";
+
+    // ---- states ----
+    // The BRIGHT ansi slots, not the normal ones. A terminal palette very often
+    // points its accent at one of its own normal colours — field-command's accent
+    // and its `ansi2` are both `#8fa85f` — so `ok = ansi2` would have painted
+    // "healthy" in exactly the colour of the furniture on a theme we already
+    // ship. The brights are both further from the accent and better signals
+    // against a dark ground, and
+    // `no_state_ink_collapses_onto_the_accent_in_any_builtin_pairing` is what
+    // keeps the next palette from reintroducing the collision.
+    live         => "live",         Recipe::of(Role::Complement),                  "something is running right now";
+    ok           => "ok",           Recipe::of(Role::Ansi(10)),                    "finished, healthy, within budget";
+    warn         => "warn",         Recipe::of(Role::Ansi(11)),                    "close to a limit";
+    danger       => "danger",       Recipe::of(Role::Ansi(9)),                     "failed, over, or about to be destroyed";
+}
+
+// ---------------------------------------------------------------------------
+// The metric token set
+// ---------------------------------------------------------------------------
+
+macro_rules! metric_tokens {
+    ($( $field:ident => $key:literal, $default:expr, $doc:literal; )*) => {
+        /// Chrome geometry, in unscaled logical pixels. The window's scale is
+        /// applied once, by [`Skin::px`], rather than at 688 call sites.
+        #[derive(Clone, Copy, Debug, PartialEq)]
+        pub struct Metrics { $( #[doc = $doc] pub $field: f32, )* }
+
+        impl Metrics {
+            /// One resolved metric, by its file key — see [`Inks::by_key`].
+            pub fn by_key(&self, key: &str) -> Option<f32> {
+                match key { $( $key => Some(self.$field), )* _ => None }
+            }
+        }
+
+        #[derive(Clone, Debug, Default, PartialEq)]
+        pub struct MetricSpecs { $( pub $field: Option<f32>, )* }
+
+        impl MetricSpecs {
+            fn set(&mut self, key: &str, v: f32) -> bool {
+                match key { $( $key => { self.$field = Some(v); true } )* _ => false }
+            }
+            fn bake(&self) -> Metrics {
+                Metrics { $( $field: self.$field.unwrap_or($default), )* }
+            }
+        }
+
+        /// The default for one metric, by key — see [`default_ink`].
+        #[allow(dead_code)]
+        pub fn default_metric(key: &str) -> Option<f32> {
+            match key { $( $key => Some($default), )* _ => None }
+        }
+
+        pub const METRIC_KEYS: &[&str] = &[ $($key,)* ];
+    };
+}
+
+metric_tokens! {
+    // gpui's own scale, which today's chrome spells as rounded_sm / _md / _lg.
+    radius      => "radius",      4.0,   "corner radius of a small element (gpui rounded_sm)";
+    radius_lg   => "radius_lg",   10.0,  "corner radius of a whole region — the left bar's own frame";
+    hairline    => "hairline",    1.0,   "the thinnest line the chrome draws";
+    border      => "border",      1.0,   "the width of an element's border";
+    rule_gap    => "rule_gap",    2.0,   "the space between the two lines of a double rule";
+    gap         => "gap",         4.0,   "the space between two things in a row";
+    pad_x       => "pad_x",       6.0,   "horizontal padding inside a region";
+    pad_y       => "pad_y",       4.0,   "vertical padding inside a region";
+    chip_px     => "chip_px",     5.0,   "horizontal padding inside a chip";
+    chip_py     => "chip_py",     1.0,   "vertical padding inside a chip";
+    row_h       => "row_h",       15.0,  "the height of a control on a bar";
+    label_size  => "label_size",  9.0,   "the type size of a small caps label";
+    bracket     => "bracket",     5.0,   "the arm length of a corner bracket";
+    rail        => "rail",        2.0,   "the width of the rail marking an active row";
+}
+
+// ---------------------------------------------------------------------------
+// The shape strategies — the part that makes a LOOK rather than a tint
+// ---------------------------------------------------------------------------
+
+/// How a corner is cut.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum Corner {
+    #[default]
+    Round,
+    /// Deco, and every "serious instrument" look: no radius anywhere. Emphasis
+    /// has to come from the boundary instead, which is the whole point.
+    Square,
+}
+
+/// How the edge of a region is drawn.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum Boundary {
+    #[default]
+    Hairline,
+    /// Two lines with a gap — deco's twin rule. Structural, not decorative: it
+    /// reads as "this is a bounded thing" at a glance where one line reads as
+    /// "these two things are adjacent".
+    Double,
+    /// One line, set in from the edge.
+    Inset,
+    None,
+}
+
+/// How "this one is active" is signalled.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum Emphasis {
+    /// A tinted background. What the chrome does today.
+    #[default]
+    Fill,
+    /// A line under it.
+    Underline,
+    /// Four corner ticks. Marks without filling, so a dense list stays readable.
+    Bracket,
+    /// A bar down the leading edge.
+    Rail,
+}
+
+/// The personality of a horizontal divider.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum Divider {
+    #[default]
+    Line,
+    Double,
+    None,
+}
+
+/// What happens to a label's letters. Layered OVER what the call site asked for,
+/// not instead of it: a site that already draws an uppercase label keeps drawing
+/// one under `Off`, and the skin's only say is whether it is also tracked.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum Caps {
+    /// Leave the string alone — the identity, and what today's chrome does.
+    #[default]
+    Off,
+    /// Uppercase.
+    Upper,
+    /// Uppercase, with a thin space between letters. gpui has no letter-spacing,
+    /// so tracking is done in the string — which is why it lives behind
+    /// [`Skin::caps`] and not at a call site.
+    Tracked,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub struct Shapes {
+    pub corner: Corner,
+    pub boundary: Boundary,
+    pub emphasis: Emphasis,
+    pub divider: Divider,
+    pub caps: Caps,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ShapeSpecs {
+    pub corner: Option<Corner>,
+    pub boundary: Option<Boundary>,
+    pub emphasis: Option<Emphasis>,
+    pub divider: Option<Divider>,
+    pub caps: Option<Caps>,
+}
+
+impl ShapeSpecs {
+    fn bake(&self) -> Shapes {
+        Shapes {
+            corner: self.corner.unwrap_or_default(),
+            boundary: self.boundary.unwrap_or_default(),
+            emphasis: self.emphasis.unwrap_or_default(),
+            divider: self.divider.unwrap_or_default(),
+            caps: self.caps.unwrap_or_default(),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// SkinSpec — what a file says. Skin — what a region draws with.
+// ---------------------------------------------------------------------------
+
+/// A parsed skin file: every token still optional, nothing resolved. This is the
+/// thing that is hot-reloaded and stored; it holds no palette, so one spec
+/// serves every pane whatever theme each pane is wearing.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SkinSpec {
+    pub name: String,
+    pub icon: String,
+    pub ink: InkSpecs,
+    pub metric: MetricSpecs,
+    pub shape: ShapeSpecs,
+    /// Keys the file carried that this build does not know. Kept rather than
+    /// dropped: a misspelled token is the single most common way a theme "does
+    /// nothing" for reasons nobody can see.
+    pub unknown: Vec<String>,
+}
+
+impl Default for SkinSpec {
+    fn default() -> Self {
+        Self {
+            name: "default".into(),
+            icon: "▢".into(),
+            ink: InkSpecs::default(),
+            metric: MetricSpecs::default(),
+            shape: ShapeSpecs::default(),
+            unknown: Vec::new(),
+        }
+    }
+}
+
+/// A skin resolved against one palette at one scale — what chrome code holds
+/// while it builds elements. Cheap to make (about forty float ops); made once
+/// per region per frame, never per element.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Skin {
+    pub name: String,
+    pub icon: String,
+    pub ink: Inks,
+    pub m: Metrics,
+    pub shape: Shapes,
+    /// The window's UI scale, folded in here so no call site multiplies by `s`.
+    pub scale: f32,
+}
+
+impl SkinSpec {
+    pub fn bake(&self, th: &Theme, scale: f32) -> Skin {
+        Skin {
+            name: self.name.clone(),
+            icon: self.icon.clone(),
+            ink: self.ink.bake(th),
+            m: self.metric.bake(),
+            shape: self.shape.bake(),
+            scale,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The element vocabulary
+// ---------------------------------------------------------------------------
+
+/// gpui spells border widths as `border_0` … `border_8` (1px steps) rather than
+/// taking a length, so a token width has to be routed to one of them.
+///
+/// Widths are deliberately NOT multiplied by the UI scale. A hairline that
+/// thickens with the scale stops being a hairline, and today's chrome already
+/// spells every border as an unscaled `border_1()` — scaling them here would be
+/// a look change smuggled in under a refactor.
+fn w8(w: f32) -> u8 {
+    w.round().clamp(0., 8.) as u8
+}
+
+macro_rules! width_router {
+    ($name:ident, $($n:literal => $m:ident),+ $(,)?) => {
+        /// Generic over the element so the vocabulary works on a `Stateful<Div>`
+        /// (anything the chrome gave an id to) as well as a bare `Div`.
+        fn $name<E: Styled>(d: E, w: f32) -> E {
+            match w8(w) { $( $n => d.$m(), )+ _ => d }
+        }
+    };
+}
+
+width_router!(b_all, 0 => border_0, 1 => border_1, 2 => border_2, 3 => border_3,
+    4 => border_4, 5 => border_5, 6 => border_6, 7 => border_7, 8 => border_8);
+width_router!(b_t, 0 => border_t_0, 1 => border_t_1, 2 => border_t_2, 3 => border_t_3,
+    4 => border_t_4, 5 => border_t_5, 6 => border_t_6, 7 => border_t_7, 8 => border_t_8);
+width_router!(b_b, 0 => border_b_0, 1 => border_b_1, 2 => border_b_2, 3 => border_b_3,
+    4 => border_b_4, 5 => border_b_5, 6 => border_b_6, 7 => border_b_7, 8 => border_b_8);
+width_router!(b_l, 0 => border_l_0, 1 => border_l_1, 2 => border_l_2, 3 => border_l_3,
+    4 => border_l_4, 5 => border_l_5, 6 => border_l_6, 7 => border_l_7, 8 => border_l_8);
+width_router!(b_r, 0 => border_r_0, 1 => border_r_1, 2 => border_r_2, 3 => border_r_3,
+    4 => border_r_4, 5 => border_r_5, 6 => border_r_6, 7 => border_r_7, 8 => border_r_8);
+
+/// The vocabulary. Every method here is meant to be called from chrome code, and
+/// adoption is staged one surface at a time (see `docs/plans/chrome-skin/`), so
+/// the ones no surface has reached yet look dead to a binary crate's dead-code
+/// pass. They are not: shipping `bar` without a caller is the point — the next
+/// slice converts a call site rather than designing a primitive under deadline.
+#[allow(dead_code)]
+impl Skin {
+    /// Scale one unscaled metric. The ONLY place the UI scale is applied.
+    pub fn px(&self, v: f32) -> Pixels {
+        px(v * self.scale)
+    }
+
+    /// The radius of a small element, after the corner strategy has had its say.
+    pub fn radius(&self) -> Pixels {
+        match self.shape.corner {
+            Corner::Round => self.px(self.m.radius),
+            Corner::Square => px(0.),
+        }
+    }
+
+    /// The radius of a whole region.
+    pub fn radius_lg(&self) -> Pixels {
+        match self.shape.corner {
+            Corner::Round => self.px(self.m.radius_lg),
+            Corner::Square => px(0.),
+        }
+    }
+
+    /// A pill's radius — the chrome's `rounded_full`, which a square skin flattens
+    /// like everything else.
+    pub fn radius_pill(&self) -> Pixels {
+        match self.shape.corner {
+            Corner::Round => px(9999.),
+            Corner::Square => px(0.),
+        }
+    }
+
+    /// A skin at a different scale — for the handful of controls that already
+    /// draw themselves at `s * 0.85`.
+    pub fn at(&self, factor: f32) -> Skin {
+        let mut s = self.clone();
+        s.scale *= factor;
+        s
+    }
+
+    /// Apply the caps strategy to a label. Pure, so the tracking rule is testable
+    /// without a window.
+    pub fn caps(&self, text: &str) -> String {
+        match self.shape.caps {
+            Caps::Off => text.to_string(),
+            Caps::Upper => text.to_uppercase(),
+            // U+2009 THIN SPACE. A real space would read as word breaks; the
+            // thin space reads as tracking, which is what deco small caps are.
+            Caps::Tracked => text
+                .to_uppercase()
+                .chars()
+                .map(|c| c.to_string())
+                .collect::<Vec<_>>()
+                .join("\u{2009}"),
+        }
+    }
+
+    /// A whole chrome region: its ground, its corner, its edge. `Boundary::Double`
+    /// hangs an inset ring inside it, which is why the returned div is already
+    /// `relative()` — a caller's own absolute children still position against it.
+    pub fn panel(&self) -> Div {
+        let d = div()
+            .relative()
+            .bg(self.ink.panel)
+            .rounded(self.radius_lg());
+        // The inner line of a double/inset boundary is an absolutely positioned
+        // ring rather than a second border, because one div carries one border.
+        // It is added FIRST so a caller's own children paint over it.
+        let ring = |c: Hsla| {
+            let g = self.px(self.m.rule_gap);
+            b_all(
+                div()
+                    .absolute()
+                    .top(g)
+                    .bottom(g)
+                    .left(g)
+                    .right(g)
+                    .rounded(self.radius()),
+                self.m.hairline,
+            )
+            .border_color(c)
+        };
+        match self.shape.boundary {
+            Boundary::None => d,
+            Boundary::Hairline => b_all(d, self.m.border).border_color(self.ink.rule_strong),
+            Boundary::Inset => d.child(ring(self.ink.rule_strong)),
+            Boundary::Double => b_all(d, self.m.border)
+                .border_color(self.ink.rule_strong)
+                .child(ring(self.ink.rule)),
+        }
+    }
+
+    /// A horizontal band across a region — a header, a footer, a toolbar.
+    pub fn bar(&self) -> Div {
+        div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(self.px(self.m.gap))
+            .px(self.px(self.m.pad_x))
+            .py(self.px(self.m.pad_y))
+            .bg(self.ink.panel_raised)
+    }
+
+    /// The divider between two stacked things. Returns a container rather than a
+    /// bare line so `Divider::Double` can be two lines without the call site
+    /// knowing there are two.
+    ///
+    /// Line thickness does NOT take the UI scale, for the same reason border
+    /// widths do not: a hairline is a hairline at every scale, and today's chrome
+    /// already spells this one `px(1.)` next to an `mx(px(6. * s))`.
+    pub fn rule_h(&self) -> Div {
+        let line = |c: Hsla| div().h(px(self.m.hairline)).w_full().bg(c);
+        match self.shape.divider {
+            Divider::None => div().h(px(0.)),
+            Divider::Line => line(self.ink.rule),
+            Divider::Double => div()
+                .flex()
+                .flex_col()
+                .child(line(self.ink.rule_strong))
+                .child(div().h(self.px(self.m.rule_gap)))
+                .child(line(self.ink.rule)),
+        }
+    }
+
+    /// The divider between two side-by-side things.
+    pub fn rule_v(&self) -> Div {
+        let line = |c: Hsla| div().w(px(self.m.hairline)).h_full().bg(c);
+        match self.shape.divider {
+            Divider::None => div().w(px(0.)),
+            Divider::Line => line(self.ink.rule),
+            Divider::Double => div()
+                .flex()
+                .flex_row()
+                .child(line(self.ink.rule_strong))
+                .child(div().w(self.px(self.m.rule_gap)))
+                .child(line(self.ink.rule)),
+        }
+    }
+
+    /// A row of controls that does NOT carry its own ground — a header inside a
+    /// panel, a strip of buttons. Distinct from [`Skin::bar`] on purpose: a deco
+    /// header is banded by the RULE under it, not by a fill, and conflating the
+    /// two would give every header a surface it does not have today.
+    pub fn row(&self) -> Div {
+        div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(self.px(self.m.gap))
+            .px(self.px(self.m.pad_x))
+            .py(self.px(self.m.pad_y))
+    }
+
+    /// A bare glyph target: no ground, no border, a hover lift. The commonest
+    /// control in the chrome and the one most often hand-rolled.
+    ///
+    /// Takes the element id because gpui's `hover` lives on the STATEFUL half of
+    /// the interactive traits — a div has to be identified before it can be said
+    /// to be hovered — and the hover lift is part of what this control IS.
+    pub fn icon_btn(&self, id: &'static str) -> Stateful<Div> {
+        let hover = self.ink.hover;
+        div()
+            .id(id)
+            .flex()
+            .items_center()
+            .justify_center()
+            .h(self.px(self.m.row_h))
+            .rounded(self.radius())
+            .cursor_pointer()
+            .hover(move |st| st.bg(hover))
+    }
+
+    /// A small tag: a status, a scope, a count. `active` routes through the
+    /// emphasis strategy — this is the single branch that turns "selected" from
+    /// a filled pill into a bracket or a rail across the whole app.
+    pub fn chip(&self, active: bool) -> Div {
+        let base = div()
+            .relative()
+            .px(self.px(self.m.chip_px))
+            .py(self.px(self.m.chip_py))
+            .rounded(self.radius())
+            .text_size(self.px(self.m.label_size))
+            .whitespace_nowrap();
+        if !active {
+            return base.text_color(self.ink.ink_off);
+        }
+        match self.shape.emphasis {
+            Emphasis::Fill => base.bg(self.ink.mark_wash).text_color(self.ink.mark),
+            Emphasis::Underline => {
+                b_b(base.text_color(self.ink.mark), self.m.border).border_color(self.ink.mark)
+            }
+            Emphasis::Rail => {
+                b_l(base.text_color(self.ink.mark), self.m.rail).border_color(self.ink.mark)
+            }
+            Emphasis::Bracket => self.brackets(base.text_color(self.ink.mark), self.ink.mark),
+        }
+    }
+
+    /// Four corner ticks around whatever the div holds. One div per corner, each
+    /// carrying two borders — cheaper than eight lines and it reads as a machined
+    /// bracket rather than a box.
+    pub fn brackets<E: Styled + ParentElement>(&self, d: E, tint: Hsla) -> E {
+        let arm = self.px(self.m.bracket);
+        let w = self.m.hairline;
+        let tick = || div().absolute().w(arm).h(arm);
+        d.child(b_t(b_l(tick().left_0().top_0(), w), w).border_color(tint))
+            .child(b_t(b_r(tick().right_0().top_0(), w), w).border_color(tint))
+            .child(b_b(b_l(tick().left_0().bottom_0(), w), w).border_color(tint))
+            .child(b_b(b_r(tick().right_0().bottom_0(), w), w).border_color(tint))
+    }
+
+    /// Mark a ROW as the one you are standing on.
+    ///
+    /// Rows are not chips, and the difference is not decoration: a row is the
+    /// full width of its panel, so a wash light enough to sit under text is too
+    /// light to find at a glance in a list of twenty. Today's chrome answers that
+    /// by pairing the wash with a rail down the leading edge, and `Fill` here
+    /// means that pair — the wash alone was never the whole device.
+    ///
+    /// `Bracket` is the deco answer to the same problem and the reason the
+    /// strategy is worth having: it marks without tinting, so a row whose task
+    /// already carries a colour is not asked to wear two.
+    pub fn active_row<E: Styled + ParentElement>(&self, d: E, active: bool) -> E {
+        if !active {
+            return d;
+        }
+        match self.shape.emphasis {
+            Emphasis::Fill => {
+                b_l(d.bg(self.ink.row_active), self.m.rail).border_color(self.ink.mark)
+            }
+            Emphasis::Rail => b_l(d, self.m.rail).border_color(self.ink.mark),
+            Emphasis::Underline => b_b(d, self.m.border).border_color(self.ink.mark),
+            Emphasis::Bracket => self.brackets(d, self.ink.mark),
+        }
+    }
+
+    /// A pressable control on a bar.
+    pub fn btn(&self, active: bool) -> Div {
+        let base = div()
+            .flex()
+            .items_center()
+            .justify_center()
+            .h(self.px(self.m.row_h))
+            .px(self.px(self.m.chip_px))
+            .rounded(self.radius())
+            .cursor_pointer();
+        if active {
+            b_all(base.bg(self.ink.mark), self.m.border)
+                .text_color(self.ink.ink_on_mark)
+                .border_color(self.ink.mark)
+        } else {
+            b_all(base.bg(self.ink.btn_face), self.m.border)
+                .text_color(self.ink.ink)
+                .border_color(self.ink.edge)
+        }
+    }
+
+    /// A well: an input, a track, anything the chrome means as "recessed".
+    pub fn field(&self) -> Div {
+        b_all(
+            div().bg(self.ink.panel_sunken).rounded(self.radius()),
+            self.m.hairline,
+        )
+        .border_color(self.ink.rule_strong)
+    }
+
+    /// The type treatment of a small meta label. Pair with [`Skin::caps`] for the
+    /// string itself — the two are separate because the caller usually already has
+    /// an owned `String` and should not be made to allocate twice.
+    pub fn label(&self) -> Div {
+        div()
+            .text_size(self.px(self.m.label_size))
+            .text_color(self.ink.ink_faint)
+            .whitespace_nowrap()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Files
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum FileInk {
+    /// `rule = "#1a2226"` — this look is this colour, whatever the palette is.
+    Hex(String),
+    /// `rule = { from = "surface", l = 0.3 }` — this look tracks the palette.
+    Recipe(FileRecipe),
+}
+
+#[derive(Deserialize)]
+struct FileRecipe {
+    from: String,
+    l: Option<f32>,
+    s: Option<f32>,
+    a: Option<f32>,
+    max_l: Option<f32>,
+    toward: Option<String>,
+    t: Option<f32>,
+}
+
+#[derive(Deserialize)]
+struct FileShape {
+    corner: Option<String>,
+    boundary: Option<String>,
+    emphasis: Option<String>,
+    divider: Option<String>,
+    caps: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct SkinFile {
+    name: Option<String>,
+    icon: Option<String>,
+    #[serde(default)]
+    ink: BTreeMap<String, FileInk>,
+    #[serde(default)]
+    metric: BTreeMap<String, f32>,
+    shape: Option<FileShape>,
+}
+
+fn enum_of<T>(
+    value: Option<&String>,
+    table: &[(&str, T)],
+    what: &str,
+    unknown: &mut Vec<String>,
+) -> Option<T>
+where
+    T: Copy,
+{
+    let v = value?;
+    match table.iter().find(|(k, _)| k == &v.as_str()) {
+        Some((_, t)) => Some(*t),
+        None => {
+            unknown.push(format!("{what} = \"{v}\""));
+            None
+        }
+    }
+}
+
+/// The known key nearest to `typo`, when one is near enough to be worth naming.
+///
+/// A bare "no such token" tells an author their file is wrong and nothing about
+/// how; `rule_stong (no such token — did you mean rule_strong?)` ends the
+/// problem on the line where it is read. Levenshtein with a distance cap of 3,
+/// which on a fixed twenty-five-key vocabulary is exact enough and cheap enough
+/// to run only on the failure path.
+fn nearest(typo: &str, keys: &[&'static str]) -> Option<&'static str> {
+    fn distance(a: &str, b: &str) -> usize {
+        let (a, b): (Vec<char>, Vec<char>) = (a.chars().collect(), b.chars().collect());
+        let mut prev: Vec<usize> = (0..=b.len()).collect();
+        let mut cur = vec![0usize; b.len() + 1];
+        for (i, ca) in a.iter().enumerate() {
+            cur[0] = i + 1;
+            for (j, cb) in b.iter().enumerate() {
+                let sub = prev[j] + usize::from(ca != cb);
+                cur[j + 1] = sub.min(prev[j + 1] + 1).min(cur[j] + 1);
+            }
+            std::mem::swap(&mut prev, &mut cur);
+        }
+        prev[b.len()]
+    }
+    keys.iter()
+        .map(|k| (distance(typo, k), *k))
+        .filter(|(d, _)| *d <= 3)
+        .min_by_key(|(d, _)| *d)
+        .map(|(_, k)| k)
+}
+
+fn no_such(kind: &str, key: &str, keys: &[&'static str]) -> String {
+    match nearest(key, keys) {
+        Some(near) => format!("{kind}.{key} (no such token — did you mean {near}?)"),
+        None => format!("{kind}.{key} (no such token)"),
+    }
+}
+
+/// Parse a skin file. Never fails on an unknown token — it collects them, so a
+/// typo shows up as a reported name instead of a look that silently did nothing.
+pub fn parse(source: &str) -> Result<SkinSpec, String> {
+    let f: SkinFile = toml::from_str(source).map_err(|e| e.to_string())?;
+    let mut spec = SkinSpec {
+        name: f.name.unwrap_or_else(|| "unnamed".into()),
+        icon: f.icon.unwrap_or_else(|| "▢".into()),
+        ..SkinSpec::default()
+    };
+
+    for (key, value) in &f.ink {
+        let parsed = match value {
+            FileInk::Hex(h) => match theme::parse_hex(h) {
+                Some(c) => Some(InkSpec::Pinned(c)),
+                None => {
+                    spec.unknown
+                        .push(format!("ink.{key} = \"{h}\" (not a colour)"));
+                    None
+                }
+            },
+            FileInk::Recipe(r) => match Role::parse(&r.from) {
+                None => {
+                    spec.unknown.push(format!(
+                        "ink.{key}.from = \"{}\" (not a palette role)",
+                        r.from
+                    ));
+                    None
+                }
+                Some(from) => {
+                    let mut rec = Recipe::of(from);
+                    if let Some(v) = r.l {
+                        rec = rec.l(v);
+                    }
+                    if let Some(v) = r.s {
+                        rec = rec.s(v);
+                    }
+                    if let Some(v) = r.a {
+                        rec = rec.a(v);
+                    }
+                    if let Some(v) = r.max_l {
+                        rec = rec.max_l(v);
+                    }
+                    if let Some(name) = &r.toward {
+                        match Role::parse(name) {
+                            Some(role) => rec = rec.toward(role, r.t.unwrap_or(0.5)),
+                            None => spec.unknown.push(format!(
+                                "ink.{key}.toward = \"{name}\" (not a palette role)"
+                            )),
+                        }
+                    }
+                    Some(InkSpec::Mixed(rec))
+                }
+            },
+        };
+        if let Some(p) = parsed {
+            if !spec.ink.set(key, p) {
+                spec.unknown.push(no_such("ink", key, INK_KEYS));
+            }
+        }
+    }
+
+    for (key, value) in &f.metric {
+        if !spec.metric.set(key, *value) {
+            spec.unknown.push(no_such("metric", key, METRIC_KEYS));
+        }
+    }
+
+    if let Some(sh) = &f.shape {
+        let u = &mut spec.unknown;
+        spec.shape.corner = enum_of(
+            sh.corner.as_ref(),
+            &[("round", Corner::Round), ("square", Corner::Square)],
+            "shape.corner",
+            u,
+        );
+        spec.shape.boundary = enum_of(
+            sh.boundary.as_ref(),
+            &[
+                ("hairline", Boundary::Hairline),
+                ("double", Boundary::Double),
+                ("inset", Boundary::Inset),
+                ("none", Boundary::None),
+            ],
+            "shape.boundary",
+            u,
+        );
+        spec.shape.emphasis = enum_of(
+            sh.emphasis.as_ref(),
+            &[
+                ("fill", Emphasis::Fill),
+                ("underline", Emphasis::Underline),
+                ("bracket", Emphasis::Bracket),
+                ("rail", Emphasis::Rail),
+            ],
+            "shape.emphasis",
+            u,
+        );
+        spec.shape.divider = enum_of(
+            sh.divider.as_ref(),
+            &[
+                ("line", Divider::Line),
+                ("double", Divider::Double),
+                ("none", Divider::None),
+            ],
+            "shape.divider",
+            u,
+        );
+        spec.shape.caps = enum_of(
+            sh.caps.as_ref(),
+            &[
+                ("off", Caps::Off),
+                ("upper", Caps::Upper),
+                ("tracked", Caps::Tracked),
+            ],
+            "shape.caps",
+            u,
+        );
+    }
+
+    Ok(spec)
+}
+
+// ---------------------------------------------------------------------------
+// Globals, resolution and hot reload — mirroring theme.rs exactly
+// ---------------------------------------------------------------------------
+
+pub struct SkinRegistry {
+    pub builtins: Vec<(String, Arc<SkinSpec>)>,
+    /// The user's own hot-reloaded file.
+    pub custom: Arc<SkinSpec>,
+    /// Which builtin `$TD_SKIN`/the user file resolved to, when it named one.
+    pub active_id: String,
+}
+impl Global for SkinRegistry {}
+
+/// `$TD_SKIN` if set, else `~/.config/terminal-delight/skin.toml`.
+pub fn skin_path() -> PathBuf {
+    if let Ok(p) = std::env::var("TD_SKIN") {
+        return PathBuf::from(p);
+    }
+    crate::instance::config_dir().join("skin.toml")
+}
+
+fn mtime(path: &PathBuf) -> Option<SystemTime> {
+    fs::metadata(path).and_then(|m| m.modified()).ok()
+}
+
+/// The spec a region should draw with. Resolution order, most specific first:
+/// the live user file when it exists, else the builtin the active THEME asked
+/// for (`skin = "deco"` at the top of a theme file), else the default.
+///
+/// A theme naming a skin is how one click changes both axes at once without a
+/// second picker — and a skin file the user edited still wins, because that is
+/// the edit loop they are standing in.
+pub fn spec(cx: &App) -> Arc<SkinSpec> {
+    let reg = cx.global::<SkinRegistry>();
+    if reg.active_id == "custom" {
+        return reg.custom.clone();
+    }
+    let wanted = theme::theme(cx).skin.clone();
+    if let Some(id) = wanted {
+        if let Some((_, s)) = reg.builtins.iter().find(|(k, _)| *k == id) {
+            return s.clone();
+        }
+    }
+    reg.builtins
+        .iter()
+        .find(|(k, _)| k == "default")
+        .map(|(_, s)| s.clone())
+        .unwrap_or_else(|| Arc::new(SkinSpec::default()))
+}
+
+/// The skin a chrome region draws with: the active spec, baked against the
+/// active palette at the window's scale. Call once per region, not per element.
+pub fn skin(cx: &App, scale: f32) -> Skin {
+    let th = theme::theme(cx);
+    spec(cx).bake(&th, scale)
+}
+
+/// Load the skin, start the hot-reload watcher. No first-run seed: an absent
+/// `skin.toml` means "use the theme's skin", which is the right answer for
+/// everyone who has never heard of this file.
+pub fn init(cx: &mut App) {
+    let path = skin_path();
+    let builtins: Vec<(String, Arc<SkinSpec>)> = BUILTIN_SKINS
+        .iter()
+        .map(|(id, src)| {
+            (
+                (*id).to_string(),
+                Arc::new(parse(src).expect("embedded skin parses")),
+            )
+        })
+        .collect();
+    let (custom, active_id) = match fs::read_to_string(&path).ok().map(|s| parse(&s)) {
+        Some(Ok(spec)) => {
+            report_unknown(&path, &spec);
+            (Arc::new(spec), "custom".to_string())
+        }
+        Some(Err(err)) => {
+            eprintln!("skin {}: {err} (using the theme's skin)", path.display());
+            (Arc::new(SkinSpec::default()), "theme".to_string())
+        }
+        None => (Arc::new(SkinSpec::default()), "theme".to_string()),
+    };
+    cx.set_global(SkinRegistry {
+        builtins,
+        custom,
+        active_id,
+    });
+
+    let mut last = mtime(&path);
+    cx.spawn(async move |cx| loop {
+        cx.background_executor()
+            .timer(Duration::from_millis(300))
+            .await;
+        let now = mtime(&path);
+        if now != last {
+            last = now;
+            match fs::read_to_string(&path)
+                .map_err(|e| e.to_string())
+                .and_then(|s| parse(&s))
+            {
+                Ok(spec) => {
+                    report_unknown(&path, &spec);
+                    cx.update(|cx| {
+                        let reg = cx.global_mut::<SkinRegistry>();
+                        reg.custom = Arc::new(spec);
+                        reg.active_id = "custom".to_string();
+                        cx.refresh_windows();
+                    });
+                }
+                // Keeping the skin we have is deliberate: an editor writing a
+                // file in two syscalls would otherwise flash the default look
+                // through every save.
+                Err(err) => eprintln!("skin reload error (keeping current): {err}"),
+            }
+        }
+    })
+    .detach();
+}
+
+// ---------------------------------------------------------------------------
+// The `skin` verb — resolve headlessly and print what came out
+// ---------------------------------------------------------------------------
+
+/// The embedded TOML of one builtin skin, by id.
+pub fn builtin_toml(id: &str) -> Option<&'static str> {
+    BUILTIN_SKINS
+        .iter()
+        .find(|(k, _)| *k == id)
+        .map(|(_, src)| *src)
+}
+
+/// A builtin id, or a path to a file. Ids win, which is why the builtins are
+/// short words and a file has to be spelled with a separator in it anyway.
+fn source_of(arg: &str, builtin: impl Fn(&str) -> Option<&'static str>) -> Result<String, String> {
+    if let Some(src) = builtin(arg) {
+        return Ok(src.to_string());
+    }
+    fs::read_to_string(arg).map_err(|e| format!("{arg}: {e}"))
+}
+
+const SKIN_USAGE: &str =
+    "usage: terminal-delight skin [--skin <id|path>] [--theme <id|path>] [--scale <n>]\n\
+\n\
+Resolve a skin against a palette and print every token it produces.\n\
+Builtin skins: default, deco.  Builtin themes: quiet-command, field-command,\n\
+tactical-overdrive, gamba, deco, hacker.";
+
+/// `terminal-delight skin` — the headless resolver. Exists so a skin can be read
+/// back: every token, as the running app would compute it, without a window.
+pub fn run_cli(args: &[String]) -> i32 {
+    let mut skin_arg = "default".to_string();
+    let mut theme_arg = "hacker".to_string();
+    let mut scale = 1.0f32;
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "--skin" => match it.next() {
+                Some(v) => skin_arg = v.clone(),
+                None => return usage_err("--skin wants a value"),
+            },
+            "--theme" => match it.next() {
+                Some(v) => theme_arg = v.clone(),
+                None => return usage_err("--theme wants a value"),
+            },
+            "--scale" => match it.next().and_then(|v| v.parse().ok()) {
+                Some(v) => scale = v,
+                None => return usage_err("--scale wants a number"),
+            },
+            "-h" | "--help" => {
+                println!("{SKIN_USAGE}");
+                return 0;
+            }
+            other => return usage_err(&format!("unrecognised option `{other}`")),
+        }
+    }
+
+    let th = match source_of(&theme_arg, theme::builtin_toml).and_then(|s| theme::parse(&s)) {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("terminal-delight skin: theme {e}");
+            return 1;
+        }
+    };
+    let spec = match source_of(&skin_arg, builtin_toml).and_then(|s| parse(&s)) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("terminal-delight skin: {e}");
+            return 1;
+        }
+    };
+    // Unknown tokens go to stderr, so a caller piping stdout into a file still
+    // gets valid JSON and a person still gets told their file has a typo in it.
+    for u in &spec.unknown {
+        eprintln!("terminal-delight skin: unknown {u}");
+    }
+
+    let sk = spec.bake(&th, scale);
+    println!("{}", sk.to_json(&theme_arg));
+    0
+}
+
+fn usage_err(msg: &str) -> i32 {
+    eprintln!("terminal-delight skin: {msg}\n\n{SKIN_USAGE}");
+    2
+}
+
+impl Skin {
+    /// Every resolved token, as JSON. Hand-rolled rather than derived because a
+    /// colour has to come out as BOTH a hex string and its alpha — a reader that
+    /// only sees `#c2a34f` cannot tell a rule from a wash, and those are the two
+    /// most common things to get wrong in a skin file.
+    fn to_json(&self, theme_id: &str) -> String {
+        let ink = |name: &str, c: Hsla| {
+            format!(
+                "    \"{name}\": {{ \"hex\": \"{}\", \"a\": {:.3} }}",
+                crate::hsla_to_hex(c),
+                c.a
+            )
+        };
+        let inks = INK_KEYS
+            .iter()
+            .map(|k| ink(k, self.ink.by_key(k).expect("every key resolves")))
+            .collect::<Vec<_>>()
+            .join(",\n");
+        let metrics = METRIC_KEYS
+            .iter()
+            .map(|k| {
+                format!(
+                    "    \"{k}\": {}",
+                    self.m.by_key(k).expect("every key resolves")
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(",\n");
+        format!(
+            "{{\n  \"skin\": \"{}\",\n  \"theme\": \"{theme_id}\",\n  \"scale\": {},\n  \"shape\": {{\n    \"corner\": \"{:?}\",\n    \"boundary\": \"{:?}\",\n    \"emphasis\": \"{:?}\",\n    \"divider\": \"{:?}\",\n    \"caps\": \"{:?}\"\n  }},\n  \"ink\": {{\n{inks}\n  }},\n  \"metric\": {{\n{metrics}\n  }}\n}}",
+            self.name,
+            self.scale,
+            self.shape.corner,
+            self.shape.boundary,
+            self.shape.emphasis,
+            self.shape.divider,
+            self.shape.caps,
+        )
+    }
+}
+
+fn report_unknown(path: &std::path::Path, spec: &SkinSpec) {
+    for u in &spec.unknown {
+        eprintln!("skin {}: unknown {u}", path.display());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn palette() -> Theme {
+        theme::parse(theme::DEFAULT_THEME_TOML).expect("the embedded theme parses")
+    }
+
+    /// The gate on the whole layer. Every ink the shipped default skin resolves
+    /// to must equal the literal the chrome computes today — otherwise adopting
+    /// a token silently restyles the app, and nobody would know which token lied.
+    #[test]
+    fn default_skin_reproduces_todays_chrome() {
+        let th = palette();
+        let sk = parse(DEFAULT_SKIN_TOML).unwrap().bake(&th, 1.0);
+
+        // the left bar's own frame: .bg(th.bg) + border darken(th.surface, 0.3)
+        assert_eq!(sk.ink.panel, th.bg);
+        assert_eq!(sk.ink.rule_strong, crate::darken(th.surface, 0.3));
+        // its divider: th.faint.alpha(0.25)
+        assert_eq!(sk.ink.rule, th.faint.alpha(0.25));
+        // the scope chip: accent text on accent.alpha(0.14)
+        assert_eq!(sk.ink.mark, th.accent);
+        assert_eq!(sk.ink.mark_wash, th.accent.alpha(0.14));
+        // the most-used meta ink in the chrome, 23 call sites
+        assert_eq!(sk.ink.ink_faint, th.text.alpha(0.45));
+        // the hover lift, spelled hsla(0., 0., 1., 0.12) at every site
+        assert_eq!(sk.ink.hover, hsla(0., 0., 1., 0.12));
+        // the scale track's well: darken(th.surface, 0.4)
+        assert_eq!(sk.ink.panel_sunken, crate::darken(th.surface, 0.4));
+
+        // gpui's rounded_sm is rems(0.25) = 4px; the left bar's frame is px(10.)
+        assert_eq!(sk.radius(), px(4.));
+        assert_eq!(sk.radius_lg(), px(10.));
+        assert_eq!(sk.shape, Shapes::default());
+    }
+
+    /// Absent is not zero. A skin that declares one strategy and nothing else is
+    /// complete, and every ink it stayed silent about still tracks the palette.
+    #[test]
+    fn an_undeclared_token_resolves_to_its_recipe_not_to_a_default_value() {
+        let th = palette();
+        let sk = parse("name = \"minimal\"\n[shape]\ncorner = \"square\"\n")
+            .unwrap()
+            .bake(&th, 1.0);
+
+        assert_eq!(sk.shape.corner, Corner::Square);
+        // nothing about colour was said, so colour is exactly the default skin's
+        assert_eq!(sk.ink, parse(DEFAULT_SKIN_TOML).unwrap().bake(&th, 1.0).ink);
+        // and specifically: not black, not transparent
+        assert_eq!(sk.ink.mark, th.accent);
+        assert_ne!(sk.ink.rule.a, 0.);
+    }
+
+    /// The claim that makes the layer worth having: the same skin under a
+    /// different palette produces a different, still-correct set of colours.
+    #[test]
+    fn a_recipe_skin_follows_whatever_palette_it_is_given() {
+        let a = palette();
+        let mut b = palette();
+        b.accent = hsla(0.09, 0.6, 0.55, 1.); // brass
+        b.surface = hsla(0.55, 0.2, 0.09, 1.);
+
+        let spec = parse(DEFAULT_SKIN_TOML).unwrap();
+        let sa = spec.bake(&a, 1.0);
+        let sb = spec.bake(&b, 1.0);
+
+        assert_ne!(sa.ink.mark, sb.ink.mark);
+        assert_eq!(sb.ink.mark, b.accent);
+        assert_eq!(sb.ink.rule_strong, crate::darken(b.surface, 0.3));
+    }
+
+    /// A pinned ink is the other half of the contract: a look that must be gold
+    /// stays gold when the palette is green.
+    #[test]
+    fn a_pinned_ink_ignores_the_palette() {
+        let a = palette();
+        let mut b = palette();
+        b.accent = hsla(0.33, 0.9, 0.5, 1.);
+
+        let spec = parse("[ink]\nmark = \"#c8a44d\"\n").unwrap();
+        assert_eq!(spec.bake(&a, 1.).ink.mark, spec.bake(&b, 1.).ink.mark);
+        assert_eq!(
+            spec.bake(&a, 1.).ink.mark,
+            theme::parse_hex("#c8a44d").unwrap()
+        );
+    }
+
+    #[test]
+    fn the_deco_skin_is_square_bracketed_and_doubled() {
+        let th = palette();
+        let sk = parse(include_str!("../skins/deco.toml"))
+            .unwrap()
+            .bake(&th, 1.0);
+        assert_eq!(sk.shape.corner, Corner::Square);
+        assert_eq!(sk.shape.emphasis, Emphasis::Bracket);
+        assert_eq!(sk.shape.divider, Divider::Double);
+        assert_eq!(sk.radius(), px(0.));
+        assert_eq!(sk.radius_lg(), px(0.));
+        assert_eq!(sk.radius_pill(), px(0.));
+    }
+
+    /// Scale is applied once, here, rather than at 688 call sites.
+    #[test]
+    fn metrics_carry_the_window_scale() {
+        let th = palette();
+        let sk = parse(DEFAULT_SKIN_TOML).unwrap().bake(&th, 2.0);
+        assert_eq!(sk.px(6.), px(12.));
+        assert_eq!(sk.radius(), px(8.));
+        assert_eq!(sk.at(0.5).px(6.), px(6.));
+    }
+
+    #[test]
+    fn tracking_happens_in_the_string_because_gpui_has_no_letter_spacing() {
+        let th = palette();
+        let mut spec = parse(DEFAULT_SKIN_TOML).unwrap();
+        spec.shape.caps = Some(Caps::Tracked);
+        let sk = spec.bake(&th, 1.);
+        assert_eq!(sk.caps("tasks"), "T\u{2009}A\u{2009}S\u{2009}K\u{2009}S");
+
+        spec.shape.caps = Some(Caps::Upper);
+        assert_eq!(spec.bake(&th, 1.).caps("tasks"), "TASKS");
+        spec.shape.caps = Some(Caps::Off);
+        assert_eq!(spec.bake(&th, 1.).caps("tasks"), "tasks");
+    }
+
+    /// A misspelled token is REPORTED, not dropped. The failure this prevents is
+    /// the one every theming system has: a file that looks right, parses fine,
+    /// and does nothing.
+    #[test]
+    fn a_typo_is_collected_rather_than_swallowed() {
+        let spec = parse(
+            "[ink]\nrule_stong = \"#ffffff\"\n[metric]\nradius_xl = 3.0\n[shape]\ncorner = \"bevel\"\n",
+        )
+        .unwrap();
+        assert!(spec.unknown.iter().any(|u| u.contains("rule_stong")));
+        assert!(spec.unknown.iter().any(|u| u.contains("radius_xl")));
+        assert!(spec.unknown.iter().any(|u| u.contains("bevel")));
+        // and the file still resolves to a usable skin
+        assert_eq!(spec.bake(&palette(), 1.).shape.corner, Corner::Round);
+    }
+
+    /// `skins/default.toml` is the template every skin author copies from, and a
+    /// token missing from it is a token nobody will ever know exists. The file
+    /// deliberately carries no live values — the defaults live once, in the macro
+    /// tables — so what has to be guarded is that its COMMENTED listing still
+    /// names every token, and still quotes the right number where it quotes one.
+    #[test]
+    fn the_default_skin_template_documents_every_token_and_quotes_it_correctly() {
+        for key in INK_KEYS {
+            assert!(
+                default_ink(key).is_some(),
+                "{key} is in INK_KEYS but has no default recipe"
+            );
+            assert!(
+                DEFAULT_SKIN_TOML.contains(&format!("# {key} ")),
+                "skins/default.toml documents no `{key}` line"
+            );
+        }
+        for key in METRIC_KEYS {
+            let want = default_metric(key).expect("a metric key has a default");
+            let line = DEFAULT_SKIN_TOML
+                .lines()
+                .find(|l| l.trim_start().starts_with(&format!("# {key} ")))
+                .unwrap_or_else(|| panic!("skins/default.toml documents no `{key}` line"));
+            let quoted: f32 = line
+                .split('=')
+                .nth(1)
+                .and_then(|rhs| rhs.split('#').next())
+                .and_then(|v| v.trim().parse().ok())
+                .unwrap_or_else(|| panic!("`{key}` line quotes no number: {line}"));
+            assert_eq!(quoted, want, "skins/default.toml has drifted on {key}");
+        }
+    }
+
+    #[test]
+    fn a_near_miss_key_is_named_in_the_report() {
+        let spec = parse("[ink]\nrule_stong = \"#ffffff\"\n").unwrap();
+        assert!(
+            spec.unknown[0].contains("did you mean rule_strong"),
+            "{:?}",
+            spec.unknown
+        );
+        // …and something that is not a near miss of anything says so plainly
+        // rather than pointing at whatever happens to be closest.
+        let wild = parse("[metric]\nbanana_split = 3.0\n").unwrap();
+        assert!(
+            !wild.unknown[0].contains("did you mean"),
+            "{:?}",
+            wild.unknown
+        );
+    }
+
+    /// Distance in sRGB, 0..1 — crude, but it is the failure mode this guards
+    /// that matters, not the colour science: two inks that land on the SAME byte
+    /// triple, which is what happens when a state ink resolves from an ANSI slot
+    /// the palette happened to point at its own accent.
+    fn apart(a: Hsla, b: Hsla) -> f32 {
+        let rgb = |c: Hsla| {
+            let hex = crate::hsla_to_hex(c);
+            let n = u32::from_str_radix(&hex[1..], 16).unwrap();
+            [
+                ((n >> 16) & 0xff) as f32,
+                ((n >> 8) & 0xff) as f32,
+                (n & 0xff) as f32,
+            ]
+        };
+        let (x, y) = (rgb(a), rgb(b));
+        ((x[0] - y[0]).powi(2) + (x[1] - y[1]).powi(2) + (x[2] - y[2]).powi(2)).sqrt() / 441.7
+    }
+
+    /// A warning the colour of the furniture is not a warning.
+    ///
+    /// This is not hypothetical. The deco palette's first draft pointed `ansi3`
+    /// at the same brass as its accent, so `warn` resolved to exactly `mark` —
+    /// a pane at 90% of its ceiling would have been painted in the colour of the
+    /// frame around it. `terminal-delight skin --skin deco --theme deco` showed
+    /// it as two identical hex strings; this test is what stops the next palette
+    /// from doing it again, across every combination rather than the one a person
+    /// happened to look at.
+    #[test]
+    fn no_state_ink_collapses_onto_the_accent_in_any_builtin_pairing() {
+        const FLOOR: f32 = 0.08;
+        for (sid, ssrc) in BUILTIN_SKINS {
+            let spec = parse(ssrc).unwrap();
+            for tid in [
+                "quiet-command",
+                "field-command",
+                "tactical-overdrive",
+                "gamba",
+                "deco",
+                "hacker",
+            ] {
+                let th = theme::parse(theme::builtin_toml(tid).expect("a builtin theme")).unwrap();
+                let ink = spec.bake(&th, 1.0).ink;
+                for (name, c) in [
+                    ("ok", ink.ok),
+                    ("warn", ink.warn),
+                    ("danger", ink.danger),
+                    ("live", ink.live),
+                ] {
+                    assert!(
+                        apart(c, ink.mark) > FLOOR,
+                        "{sid}/{tid}: `{name}` is {} and `mark` is {} — the same colour",
+                        crate::hsla_to_hex(c),
+                        crate::hsla_to_hex(ink.mark)
+                    );
+                }
+                assert!(
+                    apart(ink.ok, ink.danger) > FLOOR,
+                    "{sid}/{tid}: healthy and failed are the same colour"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn every_builtin_skin_parses_with_no_unknown_tokens() {
+        for (id, src) in BUILTIN_SKINS {
+            let spec = parse(src).unwrap_or_else(|e| panic!("{id}: {e}"));
+            assert!(spec.unknown.is_empty(), "{id} carries {:?}", spec.unknown);
+        }
+    }
+
+    #[test]
+    fn recipe_alpha_is_set_last_so_a_blend_cannot_restore_opacity() {
+        let th = palette();
+        let r = Recipe::of(Role::Text).a(0.2).toward(Role::Accent, 0.5);
+        assert_eq!(r.bake(&th).a, 0.2);
+    }
+}

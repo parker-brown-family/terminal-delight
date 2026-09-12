@@ -49,6 +49,7 @@ mod pane;
 mod plugins;
 mod recover;
 mod session;
+mod skin;
 mod slot;
 mod socketpty;
 mod sticky;
@@ -12062,162 +12063,161 @@ impl Workspace {
                 .into_any_element();
         }
 
-        div()
-            .id(SharedString::from(format!("bar-task-{i}")))
-            .group(grp.clone())
-            .relative()
-            .pl(step * (depth as f32) + px(4. * s))
-            .pr(px(5. * s))
-            .py(px(2. * s))
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap(px(5. * s))
-            .rounded_sm()
-            .cursor_pointer()
-            .when(is_active, |d| {
-                d.bg(th.accent.alpha(0.22))
-                    .border_l_2()
-                    .border_color(th.accent)
-            })
-            .hover(move |st| st.bg(hsla(0., 0., 1., 0.06)))
-            // the task's own colour, if it has one — the same fill its tab
-            // button wears, so a coloured tab is the same colour in both places
-            .child(
-                div()
-                    .w(px(3. * s))
-                    .h(px(11. * s))
-                    .rounded_sm()
-                    .bg(fill.unwrap_or(th.faint.alpha(0.35))),
-            )
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .overflow_hidden()
-                    .whitespace_nowrap()
-                    .text_size(px(CHROME_NAME_PT * s))
-                    .text_color(text.unwrap_or(if is_active {
-                        th.text
-                    } else {
-                        th.text.alpha(0.8)
-                    }))
-                    .child(label),
-            )
-            // this task's own agent roster, animating exactly as it does on the
-            // strip. The badge key is offset off the strip's range so a tab
-            // showing in both places gets two animations rather than one shared
-            // between them.
-            .children({
-                let badges = self.tab_agent_badges(i, cx);
-                let over = badge_overflow(badges.len());
-                let mut strip: Vec<AnyElement> = badges
-                    .into_iter()
-                    .take(MAX_TAB_BADGES)
-                    .enumerate()
-                    .map(|(slot, badge)| {
-                        Self::agent_badge_el(badge, BAR_BADGE_KEYS + i, slot, s * 0.85)
-                    })
-                    .collect();
-                if over > 0 {
-                    strip.push(
-                        div()
-                            .text_size(px(8.5 * s))
-                            .text_color(th.faint)
-                            .child(format!("+{over}"))
-                            .into_any_element(),
-                    );
-                }
-                strip
-            })
-            .children({
-                let pinned = self.tab_pinned_notes(i, cx);
-                (pinned > 0).then(|| {
-                    div()
-                        .text_size(px(10. * s))
-                        .child(if pinned > 1 {
-                            SharedString::from(format!("📌{pinned}"))
-                        } else {
-                            SharedString::from("📌")
-                        })
-                        .into_any_element()
+        let sk = skin::skin(cx, s);
+        sk.active_row(
+            div()
+                .id(SharedString::from(format!("bar-task-{i}")))
+                .group(grp.clone())
+                .relative()
+                .pl(step * (depth as f32) + px(4. * s))
+                .pr(px(5. * s))
+                .py(px(2. * s))
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(5. * s))
+                .rounded(sk.radius())
+                .cursor_pointer(),
+            is_active,
+        )
+        .hover(move |st| st.bg(hsla(0., 0., 1., 0.06)))
+        // the task's own colour, if it has one — the same fill its tab
+        // button wears, so a coloured tab is the same colour in both places
+        .child(
+            div()
+                .w(px(3. * s))
+                .h(px(11. * s))
+                .rounded_sm()
+                .bg(fill.unwrap_or(th.faint.alpha(0.35))),
+        )
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .overflow_hidden()
+                .whitespace_nowrap()
+                .text_size(px(CHROME_NAME_PT * s))
+                .text_color(text.unwrap_or(if is_active {
+                    th.text
+                } else {
+                    th.text.alpha(0.8)
+                }))
+                .child(label),
+        )
+        // this task's own agent roster, animating exactly as it does on the
+        // strip. The badge key is offset off the strip's range so a tab
+        // showing in both places gets two animations rather than one shared
+        // between them.
+        .children({
+            let badges = self.tab_agent_badges(i, cx);
+            let over = badge_overflow(badges.len());
+            let mut strip: Vec<AnyElement> = badges
+                .into_iter()
+                .take(MAX_TAB_BADGES)
+                .enumerate()
+                .map(|(slot, badge)| {
+                    Self::agent_badge_el(badge, BAR_BADGE_KEYS + i, slot, s * 0.85)
                 })
-            })
-            // how many terminals are inside — the tree's answer to "what is a
-            // task made of". Hidden at one, which is most tasks and says
-            // nothing. A bare number, because every glyph that meant "panes"
-            // was missing from the fallback font (U+25A4 among them).
-            .children((panes > 1).then(|| {
+                .collect();
+            if over > 0 {
+                strip.push(
+                    div()
+                        .text_size(px(8.5 * s))
+                        .text_color(th.faint)
+                        .child(format!("+{over}"))
+                        .into_any_element(),
+                );
+            }
+            strip
+        })
+        .children({
+            let pinned = self.tab_pinned_notes(i, cx);
+            (pinned > 0).then(|| {
                 div()
-                    .text_size(px(8.5 * s))
-                    .text_color(th.faint)
-                    .child(format!("\u{2022}{panes}"))
+                    .text_size(px(10. * s))
+                    .child(if pinned > 1 {
+                        SharedString::from(format!("📌{pinned}"))
+                    } else {
+                        SharedString::from("📌")
+                    })
                     .into_any_element()
-            }))
-            .child(
-                div()
-                    .id(SharedString::from(format!("bar-task-x-{i}")))
-                    .text_size(px(11. * s))
-                    .text_color(hsla(0., 0., 0., 0.))
-                    .group_hover(grp, move |st| st.text_color(th.faint))
-                    .child("×")
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
-                            cx.stop_propagation();
-                            ws.request_close_tab(i, window, cx);
-                        }),
-                    ),
-            )
-            // A task row is a drop target too: dropping one task onto another
-            // takes that task's branch AND its seat, which is the gesture
-            // people try before they aim at a branch header.
-            .child(
-                div().absolute().inset_0().child(
-                    canvas(
-                        move |bounds, _, _| {
-                            store.lock().unwrap().push((tree::RowId::Task(i), bounds));
-                        },
-                        |_, _, _, _| {},
-                    )
-                    .size_full(),
+            })
+        })
+        // how many terminals are inside — the tree's answer to "what is a
+        // task made of". Hidden at one, which is most tasks and says
+        // nothing. A bare number, because every glyph that meant "panes"
+        // was missing from the fallback font (U+25A4 among them).
+        .children((panes > 1).then(|| {
+            div()
+                .text_size(px(8.5 * s))
+                .text_color(th.faint)
+                .child(format!("\u{2022}{panes}"))
+                .into_any_element()
+        }))
+        .child(
+            div()
+                .id(SharedString::from(format!("bar-task-x-{i}")))
+                .text_size(px(11. * s))
+                .text_color(hsla(0., 0., 0., 0.))
+                .group_hover(grp, move |st| st.text_color(th.faint))
+                .child("×")
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
+                        cx.stop_propagation();
+                        ws.request_close_tab(i, window, cx);
+                    }),
                 ),
-            )
-            .children(caret)
-            .on_mouse_down(
-                MouseButton::Right,
-                cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
-                    // right-click writes over the name, the same as on the tab
-                    // itself — one task, two geometries, one gesture.
-                    cx.stop_propagation();
+        )
+        // A task row is a drop target too: dropping one task onto another
+        // takes that task's branch AND its seat, which is the gesture
+        // people try before they aim at a branch header.
+        .child(
+            div().absolute().inset_0().child(
+                canvas(
+                    move |bounds, _, _| {
+                        store.lock().unwrap().push((tree::RowId::Task(i), bounds));
+                    },
+                    |_, _, _, _| {},
+                )
+                .size_full(),
+            ),
+        )
+        .children(caret)
+        .on_mouse_down(
+            MouseButton::Right,
+            cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
+                // right-click writes over the name, the same as on the tab
+                // itself — one task, two geometries, one gesture.
+                cx.stop_propagation();
+                ws.start_tab_rename(i, window, cx);
+            }),
+        )
+        .on_mouse_down(
+            MouseButton::Left,
+            cx.listener(move |ws, ev: &MouseDownEvent, window, cx| {
+                cx.stop_propagation();
+                if ev.modifiers.control {
+                    // ctrl+click → this task's config tray (colour, group,
+                    // project), as on the tab button
+                    ws.open_tab_menu(i, ev.position, cx);
+                    return;
+                }
+                if ev.click_count >= 2 {
                     ws.start_tab_rename(i, window, cx);
-                }),
-            )
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(move |ws, ev: &MouseDownEvent, window, cx| {
-                    cx.stop_propagation();
-                    if ev.modifiers.control {
-                        // ctrl+click → this task's config tray (colour, group,
-                        // project), as on the tab button
-                        ws.open_tab_menu(i, ev.position, cx);
-                        return;
-                    }
-                    if ev.click_count >= 2 {
-                        ws.start_tab_rename(i, window, cx);
-                        return;
-                    }
-                    ws.activate_tab(i, window, cx);
-                    ws.bar_drag = Some(BarDrag {
-                        what: BarDragged::Task(i),
-                        start: ev.position,
-                        at: ev.position,
-                        engaged: false,
-                        over: None,
-                    });
-                }),
-            )
-            .into_any_element()
+                    return;
+                }
+                ws.activate_tab(i, window, cx);
+                ws.bar_drag = Some(BarDrag {
+                    what: BarDragged::Task(i),
+                    start: ev.position,
+                    at: ev.position,
+                    engaged: false,
+                    over: None,
+                });
+            }),
+        )
+        .into_any_element()
     }
 
     /// Is every branch of the tree folded? Drives which way the fold-all
@@ -12730,6 +12730,11 @@ impl Workspace {
         }
         let th = theme::theme(cx);
         let s = theme::outer_choice(cx).grade.scale;
+        // The chrome's shape, resolved once for this whole region. Every element
+        // below asks `sk` for a panel/row/rule/chip rather than spelling a
+        // radius, a border colour or an alpha — which is what lets a skin file
+        // restyle the bar without a line of this function changing.
+        let sk = skin::skin(cx, s);
         // Rebuilt every frame; the drop targets below are pushed back in during
         // paint. Stale boxes from the last frame would file a task into a
         // branch that has since moved.
@@ -12775,31 +12780,26 @@ impl Workspace {
             tree::Scope::Initiative(id) => self.branch_label(BarBranch::Initiative(id)),
         };
         let scoped = self.scope != tree::Scope::All;
-        let header = div()
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap(px(4. * s))
-            .px(px(6. * s))
-            .py(px(4. * s))
+        let header = sk
+            .row()
             .child(
                 // the scope chip: what the mother bar is currently showing, and
-                // the one click back to everything
-                div()
+                // the one click back to everything. `chip` carries the whole
+                // "this one is in effect" decision — a wash under the default
+                // skin, corner brackets under deco — so this call site never
+                // learns which look is running.
+                sk.chip(scoped)
                     .id("bar-scope")
                     .flex_1()
                     .min_w_0()
                     .overflow_hidden()
-                    .whitespace_nowrap()
-                    .px(px(5. * s))
-                    .py(px(1. * s))
-                    .rounded_sm()
-                    .text_size(px(9. * s))
                     .font_weight(gpui::FontWeight::EXTRA_BOLD)
-                    .text_color(if scoped { th.accent } else { th.faint })
-                    .when(scoped, |d| d.bg(th.accent.alpha(0.14)))
                     .cursor_pointer()
-                    .child(scope_label.to_uppercase())
+                    // The call site says "this is a small-caps label"; the skin
+                    // decides whether it is also tracked. Under the default skin
+                    // `caps` is the identity, so this is the uppercase the bar
+                    // has always drawn.
+                    .child(sk.caps(&scope_label.to_uppercase()))
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(|ws, _: &MouseDownEvent, window, cx| {
@@ -12813,23 +12813,15 @@ impl Workspace {
                 // showing the triangle of what pressing it does: pointing down
                 // while anything is open (press to fold), pointing right once
                 // everything is folded (press to open).
-                div()
-                    .id("bar-fold-all")
-                    .w(px(17. * s))
-                    .h(px(15. * s))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .rounded_sm()
-                    .cursor_pointer()
-                    .hover(|st| st.bg(hsla(0., 0., 1., 0.12)))
+                sk.icon_btn("bar-fold-all")
+                    .w(sk.px(17.))
                     .child(Self::triangle(
                         if self.tree_all_folded() {
                             BarDir::Right
                         } else {
                             BarDir::Down
                         },
-                        th.text.alpha(0.75),
+                        sk.ink.ink_dim,
                         s * 1.1,
                     ))
                     .on_mouse_down(
@@ -12869,17 +12861,9 @@ impl Workspace {
                     ),
             )
             .child(
-                div()
-                    .id("bar-hide")
-                    .w(px(15. * s))
-                    .h(px(15. * s))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .rounded_sm()
-                    .cursor_pointer()
-                    .hover(|st| st.bg(hsla(0., 0., 1., 0.12)))
-                    .child(Self::triangle(BarDir::Left, th.text.alpha(0.7), s))
+                sk.icon_btn("bar-hide")
+                    .w(sk.px(sk.m.row_h))
+                    .child(Self::triangle(BarDir::Left, sk.ink.ink_dim, s))
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
@@ -12905,23 +12889,23 @@ impl Workspace {
         }
 
         Some(
-            div()
+            // `panel` is the whole edge treatment: ground, corner and boundary.
+            // Under the default skin that resolves to exactly what this function
+            // spelled by hand — bg, rounded(10), a 1px darken(surface, 0.3)
+            // border. Under deco it is square with a twin rule, and nothing here
+            // had to know.
+            sk.panel()
                 .flex_none()
                 .w(px(self.left_bar_w * s))
                 .h_full()
                 .ml_2()
                 .mt(px(7.))
-                .relative()
                 .flex()
                 .flex_col()
                 .min_h(px(0.))
-                .rounded(px(10.))
                 .overflow_hidden()
-                .bg(th.bg)
-                .border_1()
-                .border_color(darken(th.surface, 0.3))
                 .child(header)
-                .child(div().h(px(1.)).mx(px(6. * s)).bg(th.faint.alpha(0.25)))
+                .child(sk.rule_h().mx(sk.px(sk.m.pad_x)))
                 // The tree keeps a floor. `list` is `flex_1`, so in a tall bar
                 // it takes everything the slot does not — but the slot states
                 // its own height, and a doubled provider mark took that height
@@ -22323,6 +22307,7 @@ mod tests {
             ("agent-vitals", Verb::AgentVitals),
             ("probe", Verb::Probe),
             ("serve", Verb::Serve),
+            ("skin", Verb::Skin),
         ] {
             assert_eq!(dispatch(Some(word), never), Launch::Verb(verb), "{word}");
         }
@@ -23536,6 +23521,7 @@ Usage:
   terminal-delight probe <pid>   report a terminal's cwd + resumable agent session, as JSON
   terminal-delight agent-usage   refresh this machine's AI subscription usage records
   terminal-delight agent-vitals  the three attention bars for one transcript, as JSON
+  terminal-delight skin          resolve a chrome skin against a palette, as JSON
   terminal-delight serve --session <key>
                                  run the session host that owns this session's terminals
 
@@ -23609,6 +23595,14 @@ enum Verb {
     /// them to whichever window is attached. This is the process that outlives
     /// windows, and the reason a crash costs a window rather than a day.
     Serve,
+    /// Resolve a skin against a palette and print every token it produces, as
+    /// JSON. A skin is data, and data nobody can read back is data nobody can
+    /// debug: this is how a themer finds out that `rule` came out invisible
+    /// without squinting at a running window, and it is the ONLY place a
+    /// mockup or a doc may get token values from — anything that recomputes
+    /// the recipes outside this binary is a second implementation waiting to
+    /// disagree with the first.
+    Skin,
 }
 
 impl Verb {
@@ -23621,6 +23615,7 @@ impl Verb {
             "agent-vitals" => Self::AgentVitals,
             "probe" => Self::Probe,
             "serve" => Self::Serve,
+            "skin" => Self::Skin,
             _ => return None,
         })
     }
@@ -23690,6 +23685,7 @@ fn main() {
                 Verb::AgentVitals => vitals::run_cli(&argv[2..]),
                 Verb::Probe => probe_cli(&argv[2..]),
                 Verb::Serve => host::run_cli(&argv[2..]),
+                Verb::Skin => skin::run_cli(&argv[2..]),
             };
             std::process::exit(code);
         }
@@ -23847,6 +23843,10 @@ fn main() {
     application().run(move |cx: &mut App| {
         let host = host.clone();
         theme::init(cx);
+        // The chrome's SHAPE, which is a separate axis from its colour. Follows
+        // theme::init because a skin resolves against whatever palette is live,
+        // and precedes any window because the first frame already draws chrome.
+        skin::init(cx);
         // The desktop's own colour schemes, scanned once. Must follow theme::init
         // (a state restore resolves panes against both) and precede any window.
         palette::init(cx);

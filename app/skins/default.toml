@@ -1,0 +1,101 @@
+# terminal-delight skin — default
+#
+# The chrome exactly as it is today. This file declares NOTHING but its own
+# name, and that is the point: every token's default recipe lives once, in the
+# `ink_tokens!` / `metric_tokens!` tables in app/src/skin.rs, and a file that
+# restated them here would be a second source of truth waiting to drift.
+#
+# So read this file as a TEMPLATE. Every token the chrome has is listed below,
+# commented out, with the value it resolves to. Uncomment one to override it;
+# leave it alone and it tracks whatever palette is loaded.
+#
+#   `default_skin_reproduces_todays_chrome` in app/src/skin.rs is the gate that
+#   keeps this honest — it asserts the resolved default equals the literals
+#   main.rs draws with. If adopting a token ever changes the default look, that
+#   test fails before anyone has to notice by eye.
+
+name = "default"
+icon = "▢"
+
+# ── ink ──────────────────────────────────────────────────────────────────────
+# A value is either a hex colour ("#1a2226" — this look is this colour, whatever
+# the palette) or a RECIPE over a palette role ({ from = "surface", l = 0.3 } —
+# this look tracks whatever palette it is given). Recipes are the reason five
+# palettes times two skins is ten working looks rather than ten files.
+#
+#   from    a palette role: bg surface text accent complement human faint cursor
+#           white black ansi0..ansi15
+#   l       multiply lightness   (darken(c, 0.3)  is  l = 0.3)
+#   s       multiply saturation
+#   a       SET alpha            (c.alpha(0.45)   is  a = 0.45)
+#   max_l   ceiling after `l`    (what brighten() has that darken() does not)
+#   toward  blend toward a second role, by `t`
+
+[ink]
+# grounds
+# panel        = { from = "bg" }                      # the ground a region sits on
+# panel_raised = { from = "surface" }                 # a bar, a card
+# panel_sunken = { from = "surface", l = 0.40 }       # a track, an input well
+# panel_glass  = { from = "bg", a = 0.70 }            # an overlay's scrim
+# btn_face     = { from = "surface", l = 0.80 }       # a button at rest
+
+# boundaries
+# rule         = { from = "faint", a = 0.25 }         # a divider inside a region
+# rule_strong  = { from = "surface", l = 0.30 }       # the line between regions
+# edge         = { from = "accent", a = 0.35 }        # the edge of a control
+# focus        = { from = "accent" }                  # the ring on the keyboard holder
+
+# text
+# ink          = { from = "text" }
+# ink_dim      = { from = "text", a = 0.70 }          # a subtitle, an inactive label
+# ink_off      = { from = "faint" }                   # a label not currently in effect
+# ink_faint    = { from = "text", a = 0.45 }          # counts, ages, paths
+# ink_ghost    = { from = "text", a = 0.20 }
+# ink_on_mark  = { from = "white", a = 0.95 }         # text drawn ON the accent
+
+# the accent, by job
+# mark         = { from = "accent" }                  # what is selected
+# mark_soft    = { from = "accent", a = 0.85 }        # the accent carrying text
+# mark_dim     = { from = "accent", a = 0.40 }        # the accent at rest
+# mark_wash    = { from = "accent", a = 0.14 }        # the accent as a tint
+# row_active   = { from = "accent", a = 0.22 }        # the row you are standing on
+# hover        = { from = "white", a = 0.12 }         # the lift under the pointer
+
+# states
+# live         = { from = "complement" }              # running right now
+# ok           = { from = "ansi10" }
+# warn         = { from = "ansi11" }
+# danger       = { from = "ansi9" }
+
+# ── metric ───────────────────────────────────────────────────────────────────
+# Unscaled logical pixels. The window's UI scale is applied once, by Skin::px,
+# rather than at the 688 call sites that used to spell it `px(9. * s)`.
+# Border WIDTHS are the exception and never scale: a hairline that thickens with
+# the scale stops being a hairline.
+
+[metric]
+# radius     = 4.0    # a small element (what gpui spells rounded_sm)
+# radius_lg  = 10.0   # a whole region — the left bar's own frame
+# hairline   = 1.0
+# border     = 1.0
+# rule_gap   = 2.0    # between the two lines of a double rule
+# gap        = 4.0
+# pad_x      = 6.0
+# pad_y      = 4.0
+# chip_px    = 5.0
+# chip_py    = 1.0
+# row_h      = 15.0
+# label_size = 9.0
+# bracket    = 5.0    # the arm of a corner bracket
+# rail       = 2.0    # the bar marking an active row
+
+# ── shape ────────────────────────────────────────────────────────────────────
+# The strategies. These are what make a LOOK rather than a tint: they change
+# which element a helper builds, not what colour it is painted.
+
+[shape]
+corner   = "round"      # round | square
+boundary = "hairline"   # hairline | double | inset | none
+emphasis = "fill"       # fill | underline | bracket | rail
+divider  = "line"       # line | double | none
+caps     = "off"        # off | upper | tracked
