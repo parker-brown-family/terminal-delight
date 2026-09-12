@@ -1,0 +1,82 @@
+# terminal-delight skin — console
+#
+# The other half of the brief. Where `deco` is the instrument panel — gold rules,
+# brackets, tracked caps — this is the operator console the HumanLayer screenshots
+# are: dark planes, almost no lines, and one rail marking the thing you are on.
+#
+# It exists to make a point that two skins could not: **the third skin is a file.**
+# There is no Rust in it. Everything below is one of the six strategies or a
+# recipe over whatever palette is loaded, and that is the entire claim the skin
+# layer was built to support.
+#
+# The design idea, in one sentence: **separate by space, not by line.**
+#
+#   boundary = none   A region is bounded by the emptiness around it. Once panels
+#                     stop drawing edges, the only lines left on screen are the
+#                     ones that mean something — which is what makes a dense
+#                     dashboard readable rather than merely quiet.
+#   emphasis = rail   A two-pixel bar down the leading edge of the active row.
+#                     It survives a long list better than a fill (which becomes a
+#                     stripe) and better than a bracket (which becomes texture),
+#                     and it is the one device that still reads when the row
+#                     already carries its own colour.
+#   divider  = line   The one place a line is kept: between stacked regions, where
+#                     space alone is ambiguous about which side things belong to.
+#   caps     = upper  Uppercase labels, NOT tracked. Tracking is deco's voice; a
+#                     console wants the label small and out of the way.
+#   corner   = square Square, but the near-invisible kind: with no borders and no
+#                     fills, a corner is mostly a thing you infer.
+#   shine    = flat   Planes do not catch light.
+
+name = "console"
+icon = "▤"
+
+[shape]
+corner   = "square"
+boundary = "none"
+emphasis = "rail"
+divider  = "line"
+caps     = "upper"
+shine    = "flat"
+
+[metric]
+radius     = 0.0
+radius_lg  = 0.0
+# Space is doing the work the borders used to, so it has to be real space. This
+# is the only skin here that buys legibility with room rather than with ink.
+pad_x      = 10.0
+pad_y      = 6.0
+gap        = 6.0
+chip_px    = 6.0
+chip_py    = 2.0
+row_h      = 17.0
+# The rail is the whole emphasis, so it is thicker than deco's — at 2px against
+# no other lines it reads as a scratch rather than as a marker.
+rail       = 3.0
+hairline   = 1.0
+border     = 1.0
+
+[ink]
+# The dividers that remain are quiet to the point of being felt rather than seen.
+# Under a palette with a loud `faint` this is the token to raise.
+rule        = { from = "faint", a = 0.30 }
+rule_strong = { from = "faint", a = 0.45 }
+# No panel borders at all — `boundary = "none"` already means these are unused
+# for regions, but chips and fields still reach for `edge`, and a console wants
+# those to be barely there too.
+edge        = { from = "faint", a = 0.55 }
+edge_strong = { from = "faint", a = 0.70 }
+
+# A raised surface separates by being lighter, since it cannot separate by having
+# an edge. This is the single most important line in the file: with `boundary`
+# off, `panel_raised` is the ONLY thing distinguishing a bar from the ground it
+# sits on, and a palette whose surface equals its bg would render this skin as
+# one flat sheet.
+panel_raised = { from = "surface", l = 1.25, max_l = 0.30 }
+btn_face     = { from = "surface", l = 1.1, max_l = 0.26 }
+
+# The rail and the active row are the accent's entire job here, so the wash under
+# a selected row goes almost to nothing — the rail says it, the tint need not
+# repeat it.
+row_active = { from = "accent", a = 0.10 }
+mark_wash  = { from = "accent", a = 0.10 }

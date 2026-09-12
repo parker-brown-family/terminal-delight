@@ -66,6 +66,7 @@ pub const DEFAULT_SKIN_TOML: &str = include_str!("../skins/default.toml");
 const BUILTIN_SKINS: &[(&str, &str)] = &[
     ("default", DEFAULT_SKIN_TOML),
     ("deco", include_str!("../skins/deco.toml")),
+    ("console", include_str!("../skins/console.toml")),
 ];
 
 // ---------------------------------------------------------------------------
@@ -1303,29 +1304,107 @@ fn mtime(path: &PathBuf) -> Option<SystemTime> {
     fs::metadata(path).and_then(|m| m.modified()).ok()
 }
 
-/// The spec a region should draw with. Resolution order, most specific first:
-/// the live user file when it exists, else the builtin the active THEME asked
-/// for (`skin = "deco"` at the top of a theme file), else the default.
+/// What `active_id` means when nothing has been chosen: follow whatever the
+/// active THEME asks for, and the default when it asks for nothing. Spelled as a
+/// named constant because "theme" is a *state*, not a skin id, and reading it as
+/// one is the mistake waiting to be made.
+pub const FOLLOW_THEME: &str = "theme";
+
+/// The user's own hot-reloaded file, as an `active_id`.
+pub const USER_FILE: &str = "custom";
+
+/// The spec a region should draw with.
+///
+/// Resolution, most specific first: an explicitly selected skin (`ctl skin deco`)
+/// — then the user's own file if that is what is selected — then the builtin the
+/// active THEME asked for (`skin = "deco"` at the top of a theme file), then the
+/// default.
 ///
 /// A theme naming a skin is how one click changes both axes at once without a
-/// second picker — and a skin file the user edited still wins, because that is
-/// the edit loop they are standing in.
+/// picker in the tray. An explicit selection overrides that, and stays overridden
+/// until it is set back to [`FOLLOW_THEME`] — because a person who has just said
+/// "use deco" did not mean "use deco until I change theme".
 pub fn spec(cx: &App) -> Arc<SkinSpec> {
     let reg = cx.global::<SkinRegistry>();
-    if reg.active_id == "custom" {
+    if reg.active_id == USER_FILE {
         return reg.custom.clone();
     }
-    let wanted = theme::theme(cx).skin.clone();
-    if let Some(id) = wanted {
-        if let Some((_, s)) = reg.builtins.iter().find(|(k, _)| *k == id) {
-            return s.clone();
+    let by_id = |id: &str| {
+        reg.builtins
+            .iter()
+            .find(|(k, _)| k == id)
+            .map(|(_, s)| s.clone())
+    };
+    if reg.active_id != FOLLOW_THEME {
+        if let Some(s) = by_id(&reg.active_id) {
+            return s;
         }
     }
-    reg.builtins
-        .iter()
-        .find(|(k, _)| k == "default")
-        .map(|(_, s)| s.clone())
+    theme::theme(cx)
+        .skin
+        .as_deref()
+        .and_then(by_id)
+        .or_else(|| by_id("default"))
         .unwrap_or_else(|| Arc::new(SkinSpec::default()))
+}
+
+/// Every skin that can be selected, as `(id, icon, whether it is active now)`.
+/// `custom` appears only when the user actually has a file.
+pub fn all_skins(cx: &App) -> Vec<(String, String, bool)> {
+    let reg = cx.global::<SkinRegistry>();
+    let active = active_id(cx);
+    let mut out: Vec<(String, String, bool)> = reg
+        .builtins
+        .iter()
+        .map(|(id, s)| (id.clone(), s.icon.clone(), *id == active))
+        .collect();
+    if skin_path().exists() {
+        out.push((
+            USER_FILE.to_string(),
+            reg.custom.icon.clone(),
+            active == USER_FILE,
+        ));
+    }
+    out
+}
+
+/// Which skin is actually drawing — resolving `theme` to the id it follows, so a
+/// status line never answers a question with the word "theme".
+pub fn active_id(cx: &App) -> String {
+    let reg = cx.global::<SkinRegistry>();
+    if reg.active_id != FOLLOW_THEME {
+        return reg.active_id.clone();
+    }
+    theme::theme(cx)
+        .skin
+        .clone()
+        .unwrap_or_else(|| "default".to_string())
+}
+
+/// Choose a skin for the running window. `id` is a builtin, `custom` for the
+/// user's own file, or [`FOLLOW_THEME`] to go back to whatever the theme wants.
+///
+/// Returns the error text for an id that names nothing, rather than silently
+/// falling back — a switch that appears to work and does not is the single most
+/// confusing thing a theming system can do, and the whole layer is built around
+/// refusing to do it.
+pub fn select(cx: &mut App, id: &str) -> Result<String, String> {
+    let known: Vec<String> = all_skins(cx).into_iter().map(|(k, _, _)| k).collect();
+    if id != FOLLOW_THEME && !known.iter().any(|k| k == id) {
+        return Err(format!(
+            "no skin {id:?} — have: {}, {FOLLOW_THEME}",
+            known.join(", ")
+        ));
+    }
+    if id == USER_FILE && !skin_path().exists() {
+        return Err(format!(
+            "no user skin at {} — copy a builtin there first",
+            skin_path().display()
+        ));
+    }
+    cx.global_mut::<SkinRegistry>().active_id = id.to_string();
+    cx.refresh_windows();
+    Ok(active_id(cx))
 }
 
 /// The skin a chrome region draws with: the active spec, baked against the
@@ -1374,13 +1453,13 @@ pub fn init(cx: &mut App) {
                 spec.shape.boundary.unwrap_or_default(),
                 spec.shape.emphasis.unwrap_or_default(),
             );
-            (Arc::new(spec), "custom".to_string())
+            (Arc::new(spec), USER_FILE.to_string())
         }
         Some(Err(err)) => {
             eprintln!("skin {}: {err} (using the theme's skin)", path.display());
-            (Arc::new(SkinSpec::default()), "theme".to_string())
+            (Arc::new(SkinSpec::default()), FOLLOW_THEME.to_string())
         }
-        None => (Arc::new(SkinSpec::default()), "theme".to_string()),
+        None => (Arc::new(SkinSpec::default()), FOLLOW_THEME.to_string()),
     };
     cx.set_global(SkinRegistry {
         builtins,
@@ -1405,7 +1484,15 @@ pub fn init(cx: &mut App) {
                     cx.update(|cx| {
                         let reg = cx.global_mut::<SkinRegistry>();
                         reg.custom = Arc::new(spec);
-                        reg.active_id = "custom".to_string();
+                        // Adopt the file only when nobody has chosen a skin.
+                        // Saving `skin.toml` must not yank the window off a skin
+                        // that was selected explicitly — "use deco" does not mean
+                        // "use deco until I touch an unrelated file", and a
+                        // selection that can be revoked by a background poller is
+                        // not a selection.
+                        if reg.active_id == FOLLOW_THEME {
+                            reg.active_id = USER_FILE.to_string();
+                        }
                         cx.refresh_windows();
                     });
                 }
@@ -1441,11 +1528,80 @@ fn source_of(arg: &str, builtin: impl Fn(&str) -> Option<&'static str>) -> Resul
 }
 
 const SKIN_USAGE: &str =
-    "usage: terminal-delight skin [--skin <id|path>] [--theme <id|path>] [--scale <n>]\n\
+    "usage: terminal-delight skin [--list] [--skin <id|path>] [--theme <id|path>] [--scale <n>]\n\
 \n\
-Resolve a skin against a palette and print every token it produces.\n\
-Builtin skins: default, deco.  Builtin themes: quiet-command, field-command,\n\
-tactical-overdrive, gamba, deco, hacker.";
+  --list     the skins this build carries, and every way one gets chosen\n\
+  (default)  resolve a skin against a palette and print every token, as JSON\n\
+\n\
+To restyle a RUNNING window — no restart, no file editing:\n\
+  terminal-delight ctl skin <name>     switch it now\n\
+  terminal-delight ctl skin theme      go back to following the theme\n\
+  terminal-delight ctl skin status     what is active, and what is available";
+
+/// `--list`. Answers "what skins are there, and how do I pick one" in one screen,
+/// because that is the first question anybody asks a theming system and the
+/// answer was previously spread across a module doc, an env var and a TOML key.
+fn list_skins() -> i32 {
+    println!("skins this build carries:\n");
+    for (id, src) in BUILTIN_SKINS {
+        match parse(src) {
+            Ok(s) => {
+                let sh = s.shape;
+                println!(
+                    "  {:<9} {}  {} corners, {} boundary, {} emphasis, {} dividers, {} caps, {}",
+                    id,
+                    s.icon,
+                    word(sh.corner.map(|v| format!("{v:?}"))),
+                    word(sh.boundary.map(|v| format!("{v:?}"))),
+                    word(sh.emphasis.map(|v| format!("{v:?}"))),
+                    word(sh.divider.map(|v| format!("{v:?}"))),
+                    word(sh.caps.map(|v| format!("{v:?}"))),
+                    word(sh.shine.map(|v| format!("{v:?}"))),
+                );
+            }
+            Err(e) => println!("  {id:<9} !! {e}"),
+        }
+    }
+    let p = skin_path();
+    println!(
+        "\n  {:<9} ✎  {}",
+        USER_FILE,
+        if p.exists() {
+            format!("your own file, hot-reloaded: {}", p.display())
+        } else {
+            format!("not present — create {} to get one", p.display())
+        }
+    );
+    // Printed line by line rather than as one continued literal: a `\` at the end
+    // of a Rust string literal eats the following newline AND its indentation, so
+    // a block written that way silently loses the alignment that makes it a table.
+    println!("\nhow one gets chosen, most specific first:\n");
+    for line in [
+        "  1. terminal-delight ctl skin <name>   an explicit choice, applied to the",
+        "                                        running window now, and kept until",
+        "                                        you say `ctl skin theme`",
+        "  2. $TD_SKIN=<path>                    a file, read at launch",
+        "  3. your own skin.toml                 hot-reloaded on save (path above)",
+        "  4. skin = \"<name>\" in a theme file    so picking a theme moves both axes",
+        "  5. default                            today's chrome, unchanged",
+    ] {
+        println!("{line}");
+    }
+    println!(
+        "\nShape and colour are separate axes on purpose: every skin works on every\n\
+         palette. `terminal-delight skin --skin deco --theme hacker` shows what that\n\
+         means, and `--skin console --theme deco` is the same palette wearing a\n\
+         different look."
+    );
+    0
+}
+
+/// A strategy the file did not state is shown as its default rather than as a
+/// blank — absent is not nothing, it is the default recipe, and a listing that
+/// prints an empty column teaches the opposite.
+fn word(v: Option<String>) -> String {
+    v.unwrap_or_else(|| "default".into()).to_lowercase()
+}
 
 /// `terminal-delight skin` — the headless resolver. Exists so a skin can be read
 /// back: every token, as the running app would compute it, without a window.
@@ -1468,6 +1624,7 @@ pub fn run_cli(args: &[String]) -> i32 {
                 Some(v) => scale = v,
                 None => return usage_err("--scale wants a number"),
             },
+            "--list" | "-l" => return list_skins(),
             "-h" | "--help" => {
                 println!("{SKIN_USAGE}");
                 return 0;
@@ -1640,6 +1797,58 @@ mod tests {
             spec.bake(&a, 1.).ink.mark,
             theme::parse_hex("#c8a44d").unwrap()
         );
+    }
+
+    /// The third skin is a FILE. No Rust was added for `console`, and this test
+    /// is the assertion of that: it checks the look it produces is genuinely a
+    /// different look — not merely a different set of colours — using only
+    /// strategies that already existed.
+    #[test]
+    fn the_console_skin_is_a_third_look_made_of_nothing_but_a_file() {
+        let th = palette();
+        let sk = parse(include_str!("../skins/console.toml"))
+            .unwrap()
+            .bake(&th, 1.0);
+        assert_eq!(sk.shape.boundary, Boundary::None, "regions carry no edge");
+        assert_eq!(sk.shape.emphasis, Emphasis::Rail);
+        assert_eq!(sk.shape.caps, Caps::Upper, "upper, but NOT tracked");
+        assert_eq!(sk.shape.shine, Shine::Flat);
+        assert_eq!(sk.radius(), px(0.));
+
+        // Separating by space rather than by line only works if a raised surface
+        // is actually lighter than the ground. With `boundary = none` this is the
+        // ONLY thing distinguishing a bar from what it sits on.
+        assert!(
+            sk.ink.panel_raised.l > sk.ink.panel.l,
+            "a console's bar must lift off its ground: {:?} vs {:?}",
+            sk.ink.panel_raised,
+            sk.ink.panel
+        );
+        // And its rail has to be thicker than deco's, because it is the only mark
+        // on a screen with no other lines on it.
+        let deco = parse(include_str!("../skins/deco.toml"))
+            .unwrap()
+            .bake(&th, 1.0);
+        assert!(sk.m.rail > deco.m.rail);
+    }
+
+    /// Every builtin is a distinct LOOK, not a restyle of the same one.
+    ///
+    /// Two skins whose strategies all agree are one skin with two names, and the
+    /// only honest thing to do with the second is delete it. The check is cheap
+    /// and it is the one that stops a skin list from becoming a colour list.
+    #[test]
+    fn no_two_builtin_skins_resolve_to_the_same_shape() {
+        let th = palette();
+        let baked: Vec<(&str, Shapes)> = BUILTIN_SKINS
+            .iter()
+            .map(|(id, src)| (*id, parse(src).unwrap().bake(&th, 1.0).shape))
+            .collect();
+        for (i, (a_id, a)) in baked.iter().enumerate() {
+            for (b_id, b) in &baked[i + 1..] {
+                assert_ne!(a, b, "{a_id} and {b_id} are the same look twice");
+            }
+        }
     }
 
     #[test]

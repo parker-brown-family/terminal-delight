@@ -35,7 +35,7 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
-use std::sync::{mpsc, Arc};
+use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
@@ -60,6 +60,9 @@ pub(crate) enum Req {
     Adopt(AdoptReq),
     McpPolicy(McpPolicy),
     Tabs(Vec<TabOp>),
+    /// Choose the chrome skin for this window: a builtin id, `custom` for the
+    /// user's own file, or `theme` to follow whatever the theme asks for.
+    Skin(String),
 }
 
 /// One field of the MCP control-surface policy — the robot panel's toggles,
@@ -266,6 +269,8 @@ enum Cmd {
     McpPolicy(McpPolicy),
     /// A batch of tab-strip edits, verbatim JSON.
     Tabs(Vec<TabOp>),
+    Skin(String),
+    SkinStatus,
 }
 
 // The `mcp status` mirror, refreshed by the ticker each pass (same pattern as
@@ -325,6 +330,7 @@ pub fn socket_path(pid: u32) -> PathBuf {
 /// Everything the grammar accepts, in one place — the usage string and the
 /// unknown-command error both quote it, so they can't drift from the match.
 const USAGE: &str = "ping | paint on|off|toggle|status | \
+     skin <name>|theme|status | \
      mcp status|on|off | mcp writes on|off | mcp expose agents|all | \
      mcp rpc <json> | adopt {\"cwd\":\"/…\",\"run\":\"…\"} | \
      tabs [{\"op\":\"name\",\"pane\":1234,\"name\":\"DEV\"}, …] | \
@@ -357,6 +363,11 @@ fn parse_line(s: &str) -> Result<Cmd, String> {
         ["paint", "off"] => Ok(Cmd::Paint(Req::Set(false))),
         ["paint", "toggle"] => Ok(Cmd::Paint(Req::Toggle)),
         ["paint", "status"] => Ok(Cmd::PaintStatus),
+        ["skin", "status"] => Ok(Cmd::SkinStatus),
+        // Any other single word is a skin id — `theme` and `custom` included,
+        // which is why they are not special-cased here. The window is what knows
+        // which ids exist, so validation happens there and comes back as text.
+        ["skin", name] => Ok(Cmd::Skin((*name).to_string())),
         ["mcp", "status"] => Ok(Cmd::McpStatus),
         ["mcp", "on"] => Ok(Cmd::McpPolicy(McpPolicy::Enabled(true))),
         ["mcp", "off"] => Ok(Cmd::McpPolicy(McpPolicy::Enabled(false))),
@@ -402,10 +413,33 @@ const MCP_NONE: &str = "mcp-none";
 
 /// Serve one connection: read a line, answer a line. Short timeouts on both
 /// directions so a wedged client can never stall the single accept loop.
+/// The skin mirror's payload: the active id, then every id that can be selected.
+///
+/// It exists so the SOCKET THREAD can refuse a misspelled skin name immediately
+/// rather than posting it into the UI queue and replying `ok`. A switch that says
+/// ok and does nothing is the exact failure this whole layer is built to refuse,
+/// and it would have been reintroduced here — at the one surface a person
+/// actually types into — for want of a list.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct SkinMirror {
+    pub active: String,
+    pub known: Vec<String>,
+}
+
+impl SkinMirror {
+    fn line(&self) -> String {
+        if self.known.is_empty() {
+            return "unknown".into();
+        }
+        format!("active={} known={}", self.active, self.known.join(","))
+    }
+}
+
 fn handle_conn(
     stream: UnixStream,
     mirror: &AtomicBool,
     mcp_mirror: &AtomicU8,
+    skin_mirror: &Mutex<SkinMirror>,
     tx: &mpsc::Sender<Req>,
 ) {
     let _ = stream.set_read_timeout(Some(Duration::from_millis(400)));
@@ -455,6 +489,36 @@ fn handle_conn(
                 "ok".into()
             } else {
                 "err ui gone".into()
+            }
+        }
+        Ok(Cmd::SkinStatus) => skin_mirror
+            .lock()
+            .map(|m| m.line())
+            .unwrap_or_else(|_| "unknown".into()),
+        Ok(Cmd::Skin(name)) => {
+            let known = skin_mirror
+                .lock()
+                .map(|m| m.known.clone())
+                .unwrap_or_default();
+            // An empty list means the window has not ticked yet and we genuinely
+            // do not know. Forwarding blind beats refusing a valid name because
+            // startup has not finished — "unknown" and "absent" are not the same
+            // answer, and only one of them justifies a refusal.
+            let unchecked = known.is_empty();
+            let ok = name == crate::skin::FOLLOW_THEME || known.contains(&name);
+            if unchecked || ok {
+                if tx.send(Req::Skin(name.clone())).is_ok() {
+                    format!("ok {name}")
+                } else {
+                    "err ui gone".into()
+                }
+            } else {
+                format!(
+                    "err no skin {:?} — have: {}, {}",
+                    name,
+                    known.join(", "),
+                    crate::skin::FOLLOW_THEME
+                )
             }
         }
         Ok(Cmd::McpPolicy(p)) => {
@@ -517,14 +581,18 @@ pub fn start(cx: &mut Context<Workspace>) {
     let (tx, rx) = mpsc::channel::<Req>();
     let mirror = Arc::new(AtomicBool::new(false));
     let mcp_mirror = Arc::new(AtomicU8::new(0));
+    // Not an atomic: the skin mirror is a name plus a list, and it is read once
+    // per socket connection rather than per frame.
+    let skin_mirror = Arc::new(Mutex::new(SkinMirror::default()));
 
     {
         let mirror = Arc::clone(&mirror);
         let mcp_mirror = Arc::clone(&mcp_mirror);
+        let skin_mirror = Arc::clone(&skin_mirror);
         let _ = thread::Builder::new().name("td-ctl".into()).spawn(move || {
             for conn in listener.incoming() {
                 let Ok(stream) = conn else { continue };
-                handle_conn(stream, &mirror, &mcp_mirror, &tx);
+                handle_conn(stream, &mirror, &mcp_mirror, &skin_mirror, &tx);
             }
         });
     }
@@ -556,6 +624,12 @@ pub fn start(cx: &mut Context<Workspace>) {
                     // The same escalation the robot panel performs, and the same
                     // persistence: a grant made from the CLI shows in the panel
                     // and survives a restart.
+                    // An id the window does not know still gets refused here —
+                    // the socket-side check is a fast path, not the authority.
+                    Req::Skin(id) => match crate::skin::select(cx, &id) {
+                        Ok(now) => eprintln!("terminal-delight: skin -> {now}"),
+                        Err(e) => eprintln!("terminal-delight: {e}"),
+                    },
                     Req::McpPolicy(p) => {
                         match p {
                             McpPolicy::Enabled(v) => ws.mcp.enabled = v,
@@ -575,6 +649,15 @@ pub fn start(cx: &mut Context<Workspace>) {
             }
             mirror.store(theme::paint_mode(cx), Ordering::Relaxed);
             mcp_mirror.store(mcp_bits(&ws.mcp), Ordering::Relaxed);
+            if let Ok(mut m) = skin_mirror.lock() {
+                *m = SkinMirror {
+                    active: crate::skin::active_id(cx),
+                    known: crate::skin::all_skins(cx)
+                        .into_iter()
+                        .map(|(id, _, _)| id)
+                        .collect(),
+                };
+            }
         });
         if applied.is_err() {
             return; // UI gone — the listener thread dies with the process
@@ -1359,6 +1442,17 @@ mod tests {
     #[test]
     fn the_original_six_verbs_still_parse() {
         assert!(matches!(parse_line("ping"), Ok(Cmd::Ping)));
+        // `skin status` is a status read; every other single word is an id, and
+        // that includes `theme` and `custom` — the window owns the list, so this
+        // grammar deliberately knows nothing about which names are valid.
+        assert!(matches!(parse_line("skin status"), Ok(Cmd::SkinStatus)));
+        for name in ["deco", "console", "theme", "custom", "nonsense"] {
+            assert!(
+                matches!(parse_line(&format!("skin {name}")), Ok(Cmd::Skin(ref g)) if g == name),
+                "skin {name} should parse as an id"
+            );
+        }
+        assert!(parse_line("skin").is_err(), "a bare `skin` names nothing");
         assert!(matches!(
             parse_line("paint on"),
             Ok(Cmd::Paint(Req::Set(true)))
@@ -1472,7 +1566,7 @@ mod tests {
             // exactly five connections, in test order
             for _ in 0..5 {
                 let (stream, _) = listener.accept().unwrap();
-                handle_conn(stream, &m2, &mm2, &tx);
+                handle_conn(stream, &m2, &mm2, &Mutex::new(SkinMirror::default()), &tx);
             }
         });
         assert_eq!(send(&sock, "ping").unwrap(), "pong");
@@ -1505,7 +1599,13 @@ mod tests {
         let mcp_mirror = AtomicU8::new(0);
         let server = thread::spawn(move || {
             let (stream, _) = listener.accept().unwrap();
-            handle_conn(stream, &mirror, &mcp_mirror, &tx);
+            handle_conn(
+                stream,
+                &mirror,
+                &mcp_mirror,
+                &Mutex::new(SkinMirror::default()),
+                &tx,
+            );
         });
         assert!(send(&sock, "sudo make me a sandwich")
             .unwrap()
@@ -1526,7 +1626,7 @@ mod tests {
         let server = thread::spawn(move || {
             for _ in 0..4 {
                 let (stream, _) = listener.accept().unwrap();
-                handle_conn(stream, &m2, &mm2, &tx);
+                handle_conn(stream, &m2, &mm2, &Mutex::new(SkinMirror::default()), &tx);
             }
         });
 
