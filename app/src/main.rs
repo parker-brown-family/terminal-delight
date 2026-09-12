@@ -12922,14 +12922,26 @@ impl Workspace {
                 .border_color(darken(th.surface, 0.3))
                 .child(header)
                 .child(div().h(px(1.)).mx(px(6. * s)).bg(th.faint.alpha(0.25)))
-                .child(list)
-                // The bottom slot, under the tree. `list` is `flex_1` and the
-                // slot is `flex_none` with a declared height, so the tree
-                // yields exactly the slot's height and not a pixel more —
-                // whatever the slot is holding.
+                // The tree keeps a floor. `list` is `flex_1`, so in a tall bar
+                // it takes everything the slot does not — but the slot states
+                // its own height, and a doubled provider mark took that height
+                // from 88px to ~142px. In a SHORT window (a thin Hyprland row,
+                // a window dragged down to nothing) a `flex_none` slot that
+                // tall wins outright and the tree collapses to zero: the whole
+                // session's navigation gone, to make room for three allowance
+                // rails. `min_h` plus the slot's `flex_shrink` below reverses
+                // who yields when there is genuinely not enough room.
+                .child(list.min_h(px(72. * s)))
+                // The bottom slot, under the tree. It states its height and
+                // normally gets it exactly, so the tree yields that much and
+                // not a pixel more whatever the slot is holding — but it
+                // shrinks rather than starving the tree when the bar cannot
+                // hold both.
                 .children(self.render_bar_slot(&th, s, cx).map(|slot| {
                     div()
-                        .flex_none()
+                        .flex_shrink(1.)
+                        .min_h(px(0.))
+                        .overflow_hidden()
                         .child(
                             div()
                                 .h(px(1.))
@@ -20735,6 +20747,26 @@ mod tests {
         assert!(
             src.contains("pub const HICON: f32 = 28.0;") || !src.contains("pub const HICON"),
             "HICON itself must not be changed — the pane headers share it"
+        );
+
+        // A taller slot must not be able to eat the tree. Before the mark
+        // doubled, the slot declared 88px; it declares ~142 now, and a
+        // `flex_none` child that tall wins outright in a short bar — the whole
+        // session's navigation gone to make room for three rails.
+        let bar = {
+            let at = src.find("fn render_left_bar").expect("the bar");
+            let end = src[at..].find("\n    }\n").expect("end of fn");
+            &src[at..at + end]
+        };
+        assert!(
+            bar.contains("list.min_h("),
+            "the tree needs a floor, or a short window collapses it to nothing"
+        );
+        assert!(
+            bar.contains(".flex_shrink(1.)")
+                && !bar.contains(".flex_none()\n                        .min_h(px(0.))"),
+            "and the slot has to be the one that yields when the bar cannot \
+             hold both — it states a height, the tree does not"
         );
 
         // One size for every name in the chrome, in both places that draw one.
