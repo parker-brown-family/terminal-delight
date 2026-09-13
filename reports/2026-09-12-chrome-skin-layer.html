@@ -391,16 +391,16 @@ button.more:hover { border-color: var(--s1); color: var(--text-primary); }
 <body>
 <header class="top">
   <div class="wrap">
-    <p class="kicker">terminal-delight &middot; chrome skin layer &middot; 12 Sep 2026 &middot; second pass</p>
+    <p class="kicker">terminal-delight &middot; chrome skin layer &middot; 12 Sep 2026 &middot; built, switchable, cut over</p>
     <h1>The chrome is themeable as data</h1>
-    <p class="verdict">Terminal Delight now has a <b>third themeable axis</b>. Colour and CRT texture were already data; <b>shape</b> is the new one &mdash; 27 chrome inks written as recipes over the palette, 14 metrics, and 6 strategies that decide which element gets built. The shape-carrying half of six surfaces is converted, the shipped default still reproduces today&rsquo;s chrome exactly, and <b>a deco window is open on your desktop right now</b>.</p>
+    <p class="verdict">Terminal Delight now has a <b>third themeable axis</b>. Colour and CRT texture were already data; <b>shape</b> is the new one &mdash; 27 chrome inks written as recipes over the palette, 14 metrics, 6 strategies. Three skins ship, any of them switches on a running window in one command, and <b>your live 20-pane session is running the new build</b>.</p>
     <p class="meta">
       <span>PR <b>#405</b></span>
       <span>branch <b>chrome/skin-tokens</b></span>
       <span>gates <b>approved</b></span>
-      <span>tests <b>797 pass, 16 new</b></span>
+      <span>tests <b>799 pass, 19 new</b></span>
       <span>clippy + fmt <b>clean</b></span>
-      <span>installed <b>td-0122e05</b></span>
+      <span>skins <b>default · deco · console</b></span>
       <span>score <b>opened 8, closed 6</b></span>
     </p>
   </div>
@@ -410,8 +410,11 @@ button.more:hover { border-color: var(--s1); color: var(--text-primary); }
 
 <div class="callout good">
   <span class="lbl">nothing is waiting on a decision</span>
-  <p>All four questions came back <b>agree</b>. What is waiting on you is a <b>look</b>: there is a deco window open on your desktop &mdash; a scratch window, so it claims no session and closing it costs nothing. If it is gone, one line brings it back:</p>
-  <pre><code>TD_SCRATCH=1 TD_SKIN=~/Work/td-skin/app/skins/deco.toml terminal-delight</code></pre>
+  <p>All four questions came back <b>agree</b>. Your live window is on the new build, and what is waiting on you is a <b>look</b>. Try all three, on the real thing:</p>
+  <pre><code>terminal-delight ctl skin deco
+terminal-delight ctl skin console
+terminal-delight ctl skin default</code></pre>
+  <p>Each one restyles the window you are sitting in, immediately. Nothing to relaunch and nothing to edit &mdash; if a look is wrong, it is wrong in a file you can change in ten seconds.</p>
 </div>
 
 <h2 class="sec">Read first</h2>
@@ -600,6 +603,52 @@ button.more:hover { border-color: var(--s1); color: var(--text-primary); }
   <span class="lbl">deliberately absent</span>
   <p>No bezels, no rivets, no gradients, no glow, no sunbursts, no chevrons, no HUD. The <code>deco</code> palette also turns every CRT effect off except a 0.14 vignette, which is a floor rather than an effect &mdash; it stops a flat near-black panel from reading as an unlit region of the desktop.</p>
 </div>
+
+<h2 class="sec">Switching</h2>
+<p>Three skins ship. <code>console</code> is the other reference screenshot &mdash; the operator console: dark planes, <b>no panel borders at all</b>, one rail on the row you are on. Its idea is separate-by-space-not-by-line, and killing every panel edge leaves only the lines that mean something.</p>
+<div class="grid2">
+  <div class="card">
+    <h3>What exists</h3>
+    <table class="wide">
+      <thead><tr><th>skin</th><th>corner</th><th>boundary</th><th>emphasis</th><th>caps</th><th>surface</th></tr></thead>
+      <tbody>
+        <tr><td><b>default</b> ▢</td><td>round</td><td>hairline</td><td>fill</td><td>off</td><td>lit</td></tr>
+        <tr><td><b>deco</b> ◈</td><td>square</td><td>double</td><td>bracket</td><td>tracked</td><td>flat</td></tr>
+        <tr><td><b>console</b> ▤</td><td>square</td><td>none</td><td>rail</td><td>upper</td><td>flat</td></tr>
+      </tbody>
+    </table>
+    <p class="why"><code>terminal-delight skin --list</code> prints this plus every way a skin gets chosen.</p>
+  </div>
+  <div class="card">
+    <h3>How to switch, live</h3>
+<pre><code>terminal-delight ctl skin deco
+terminal-delight ctl skin console
+terminal-delight ctl skin theme
+terminal-delight ctl skin status</code></pre>
+    <p>No relaunch, no file editing. <code>--pid N</code> aims at one window.</p>
+    <p class="why">A misspelling is refused in the socket thread against a mirrored list &mdash; <code>err no skin "decoo" — have: default, deco, console, theme</code> &mdash; rather than queued and answered <code>ok</code>. A switch that reports success and does nothing is the failure this whole layer exists to refuse.</p>
+  </div>
+</div>
+<p><code>console</code> is also the argument the layer has been making, as an artifact: <b>it is a TOML file and nothing else.</b> No Rust was added for it.</p>
+
+<h2 class="sec">The cutover</h2>
+<p>Your live window &mdash; 20 panes, 16 of them agents, one of them the session writing this &mdash; moved onto the new build. Four read-only guards ran first, because the question is not &ldquo;does it work&rdquo; but &ldquo;what does it cost if it does not&rdquo;.</p>
+<table class="wide">
+  <thead><tr><th>guard</th><th>what it rules out</th><th>reading</th></tr></thead>
+  <tbody>
+    <tr><td><b>gridwire identical</b></td><td>The host and client hashing the same grid differently (#387/#388) &mdash; the bug that took diverging panes from 11 to 13 on 11 Sep.</td><td><b>identical</b> to both the host's build and the outgoing client's</td></tr>
+    <tr><td><b>client holds no ptys</b></td><td>Window-owned terminals dying with the window (#377).</td><td><b>0</b> pty fds on the client, 60 on the host</td></tr>
+    <tr><td><b>separate cgroups</b></td><td>Tearing the client down taking the host with it (#372).</td><td>client in <code>wayland-wm@hyprland</code>, host in <code>app-Hyprland-xdg-terminal-exec</code></td></tr>
+    <tr><td><b>pane census by parent</b></td><td>The guarantee that decays: panes opened after the window are window-local.</td><td><b>20 of 20 held by the host, 0 window-owned</b></td></tr>
+  </tbody>
+</table>
+<p><span class="tag v">measured</span> The census is the number that mattered. On 11 Sep the same measurement read 14 hosted against 10 window-owned; today it is 20 against 0, so the bounce could not cost a terminal. The layout file had also been written 5 seconds before the check, so nothing depended on a clean quit saving it.</p>
+<div class="callout">
+  <span class="lbl">the guard that failed, and why it did not matter</span>
+  <p>The fourth guard in the written recipe asserts <code>hyprctl activewindow</code> names the client, because <code>hl.dsp.window.close()</code> takes the ACTIVE window. It failed: the active window was <code>org.omarchy.screensaver</code>, since you were away.</p>
+  <p>That ruled out the compositor route rather than the cutover. A client holding zero ptys can take a plain <b>SIGTERM</b> instead &mdash; TERM, never KILL, so the socket closes and the host sees a detach rather than a disappearance. Relaunch still goes through the compositor, so the new window gets Hyprland's environment and its own scope.</p>
+</div>
+<div id="cutover-result"></div>
 
 <h2 class="sec">Findings</h2>
 <div class="finding">
