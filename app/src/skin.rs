@@ -322,7 +322,11 @@ ink_tokens! {
     mark_soft    => "mark_soft",    Recipe::of(Role::Accent).a(0.85),              "the accent carrying text";
     mark_dim     => "mark_dim",     Recipe::of(Role::Accent).a(0.40),              "the accent at rest";
     mark_wash    => "mark_wash",    Recipe::of(Role::Accent).a(0.14),              "the accent as a background tint";
-    row_active   => "row_active",   Recipe::of(Role::Accent).a(0.22),              "the ground under the row you are standing on";
+    // Was 0.22 — the fill under a selected row. Dropped to a seat rather than a
+    // highlight on 2026-09-12: with the phosphor ring carrying the marking, a
+    // wash that strong is what made a lit row read as a selected list item in a
+    // web page. The focused pane, whose recipe the ring copies, carries none.
+    row_active   => "row_active",   Recipe::of(Role::Accent).a(0.08),              "the ground under the row you are standing on";
     hover        => "hover",        Recipe::of(Role::White).a(0.12),               "the lift under the pointer";
 
     // ---- states ----
@@ -396,8 +400,12 @@ metric_tokens! {
     label_size  => "label_size",  9.0,   "the type size of a small caps label";
     bracket     => "bracket",     5.0,   "the arm length of a corner bracket";
     rail        => "rail",        2.0,   "the width of the rail marking an active row";
-    glow        => "glow",        7.0,   "how far the phosphor ring blooms past its border";
-    glow_a      => "glow_a",      0.55,  "how hot the bloom is, 0..1 — NOT a length";
+    // Taken down 25% from 7.0/0.55 on 2026-09-12, on the running build: the
+    // first numbers were calibrated on a still window and read as haze once the
+    // crisp spread-ring was added beside the halo. Two bright devices need less
+    // of each than one did.
+    glow        => "glow",        5.25,  "how far the phosphor ring blooms past its border";
+    glow_a      => "glow_a",      0.41,  "how hot the bloom is, 0..1 — NOT a length";
 }
 
 // ---------------------------------------------------------------------------
@@ -920,7 +928,11 @@ impl Skin {
                 self.ink.ink_off
             };
             let r = self.ring(base.text_color(ink), active, self.ink.mark);
-            return if active { r.bg(self.ink.mark_wash) } else { r };
+            return if active && self.ink.mark_wash.a > 0.02 {
+                r.bg(self.ink.mark_wash)
+            } else {
+                r
+            };
         }
         if !active {
             return base.text_color(self.ink.ink_off);
@@ -946,22 +958,46 @@ impl Skin {
     /// moves anything by a border width. That reservation is the whole reason
     /// this lives here rather than at a call site.
     ///
-    /// One shadow, no inset. An inset companion was tried and removed: it reads
-    /// as a bevel, and a bevel is the claim that the thing is raised, which is
-    /// the opposite of what a glow says.
+    /// **Two shadows, and no fill.** This is the focused pane's own phosphor
+    /// recipe, scaled down to row size — `render_node` in main.rs lights the
+    /// selected tube with a crisp 1px spread ring at high alpha *plus* a wide
+    /// soft halo, and carries no background tint whatever. That pairing is what
+    /// makes it read as phosphor rather than as a highlight:
+    ///
+    /// - the **crisp ring** (blur 0, spread 1) doubles the border without
+    ///   thickening it, which is what gives the edge its hard bright line;
+    /// - the **halo** (wide blur, lower alpha) is the bloom around it;
+    /// - the **absence of fill** is why the text underneath keeps its contrast.
+    ///
+    /// A first pass used one soft shadow and a background wash. The wash is what
+    /// made it read as a selected row in a web list rather than as a lit edge —
+    /// the glow was doing half the work and the fill was undoing it.
+    ///
+    /// No inset shadow: an inset reads as a bevel, and a bevel claims the thing
+    /// is raised, which is the opposite of what a glow says.
     pub fn ring<E: Styled>(&self, d: E, lit: bool, tint: Hsla) -> E {
         let clear = hsla(0., 0., 0., 0.);
         let d = b_all(d, self.m.border).border_color(if lit { tint } else { clear });
         if !lit {
             return d;
         }
-        d.shadow(vec![gpui::BoxShadow {
-            color: tint.alpha(self.m.glow_a.clamp(0., 1.)),
-            offset: gpui::point(px(0.), px(0.)),
-            blur_radius: px(self.m.glow),
-            spread_radius: px(0.),
-            inset: false,
-        }])
+        let a = self.m.glow_a.clamp(0., 1.);
+        d.shadow(vec![
+            gpui::BoxShadow {
+                color: tint.alpha(a),
+                offset: gpui::point(px(0.), px(0.)),
+                blur_radius: px(0.),
+                spread_radius: px(1.),
+                inset: false,
+            },
+            gpui::BoxShadow {
+                color: tint.alpha(a * 0.6),
+                offset: gpui::point(px(0.), px(0.)),
+                blur_radius: px(self.m.glow),
+                spread_radius: px(0.),
+                inset: false,
+            },
+        ])
     }
 
     /// Four corner ticks around whatever the div holds. One div per corner, each
@@ -989,13 +1025,19 @@ impl Skin {
     /// strategy is worth having: it marks without tinting, so a row whose task
     /// already carries a colour is not asked to wear two.
     pub fn active_row<E: Styled + ParentElement>(&self, d: E, active: bool) -> E {
-        // Glow keeps the wash. A ring alone is enough to FIND the row and not
-        // enough to read it against its neighbours in a list of twenty; the
-        // HumanLayer panels this is taken from tint the active row as well as
-        // ring it, and they are right to.
+        // The ring carries it. An earlier pass added `row_active` underneath on
+        // the theory that a ring alone finds a row without reading it against
+        // twenty neighbours — but the fill is exactly what made the result look
+        // like a selected web row instead of a lit edge, and the focused pane
+        // this recipe comes from carries no fill at all. A tint is still
+        // available to a skin that wants one; it is simply not the default.
         if matches!(self.shape.emphasis, Emphasis::Glow) {
             let r = self.ring(d, active, self.ink.mark);
-            return if active { r.bg(self.ink.row_active) } else { r };
+            return if active && self.ink.row_active.a > 0.02 {
+                r.bg(self.ink.row_active)
+            } else {
+                r
+            };
         }
         if !active {
             return d;
@@ -1966,6 +2008,20 @@ mod tests {
         // border, and a skin that quietly shipped one would look like a bug in
         // the renderer rather than a wrong number in a file.
         assert!(sk.m.glow > 0., "a ring with no bloom is just a border");
+        // The fill is a SEAT, not a highlight. Above about a tenth it stops
+        // reading as a lit edge and starts reading as a selected row in a web
+        // list, which is the specific thing this was corrected away from — the
+        // focused pane whose recipe the ring copies carries no fill at all.
+        assert!(
+            sk.ink.row_active.a <= 0.12,
+            "row_active is back to being a highlight: {}",
+            sk.ink.row_active.a
+        );
+        assert!(
+            sk.ink.mark_wash.a <= 0.16,
+            "mark_wash is drowning the ring: {}",
+            sk.ink.mark_wash.a
+        );
         assert!(
             sk.m.glow_a > 0. && sk.m.glow_a <= 1.,
             "glow_a is an alpha, not a length: {}",

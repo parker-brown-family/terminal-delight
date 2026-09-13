@@ -11866,13 +11866,12 @@ impl Workspace {
                     .child(label.clone()),
             )
             .children(self.roll_badges(&roll, key, s, th))
-            // the task count, so a folded branch still says how much is in it
-            .child(
-                div()
-                    .text_size(px(8.5 * s))
-                    .text_color(th.faint)
-                    .child(format!("{}", roll.tasks)),
-            )
+            // The task count used to sit here, so a folded branch still said how
+            // much was in it. Removed 2026-09-12: on a real tree it is a column
+            // of small numbers down the right edge that nobody reads and every
+            // row pays for in width, and the badges beside it already carry the
+            // only count that changes anything — how many agents are working.
+            // The fold triangle says whether a branch holds anything.
             // the row's own box, for drop hit-testing
             .child(
                 div().absolute().inset_0().child(
@@ -12078,7 +12077,7 @@ impl Workspace {
         .children({
             let badges = self.tab_agent_badges(i, cx);
             let over = badge_overflow(badges.len());
-            let mut strip: Vec<AnyElement> = badges
+            let strip: Vec<AnyElement> = badges
                 .into_iter()
                 .take(MAX_TAB_BADGES)
                 .enumerate()
@@ -12086,15 +12085,13 @@ impl Workspace {
                     Self::agent_badge_el(badge, BAR_BADGE_KEYS + i, slot, s * 0.85)
                 })
                 .collect();
-            if over > 0 {
-                strip.push(
-                    div()
-                        .text_size(px(8.5 * s))
-                        .text_color(th.faint)
-                        .child(format!("+{over}"))
-                        .into_any_element(),
-                );
-            }
+            // The `+N` overflow counter used to go here. Removed 2026-09-12 with
+            // the branch counts, for the same reason: it is a number on the right
+            // edge of a row that is read approximately never, and the badges it
+            // annotates are themselves the signal. `over` is still computed
+            // because `badge_overflow` decides how many glyphs FIT — the count
+            // was only ever the leftover.
+            let _ = over;
             strip
         })
         .children({
@@ -13010,6 +13007,12 @@ impl Workspace {
                 .relative()
                 .px(px(10. * ts))
                 .py(px(3. * ts))
+                // The ring wants a corner. A flat underline never needed one, so
+                // the strip carried no radius at all — which left the lit tab
+                // square against a left bar whose lit row is rounded, and two
+                // different answers to the same question on one screen is worse
+                // than either answer on its own.
+                .rounded(sk.radius())
                 .text_size(px(CHROME_NAME_PT * ts))
                 .cursor_pointer()
                 .text_color(if is_active {
@@ -20275,6 +20278,33 @@ mod tests {
     fn shipped_src() -> &'static str {
         let src = include_str!("main.rs");
         &src[..src.find("\nmod tests {").expect("the test module")]
+    }
+
+    /// The left bar's rows carry no trailing count.
+    ///
+    /// Two numbers used to sit on the right edge of every row — the branch's task
+    /// count and a `+N` agent-badge overflow. On a real tree that is a column of
+    /// small grey digits nobody reads, paid for in width by every row, and it was
+    /// removed on 2026-09-12 after seeing it on a twenty-one-pane screen.
+    ///
+    /// The guard exists because both are one `.child(format!(…))` away from
+    /// coming back, and neither would look wrong in a diff.
+    #[test]
+    fn the_left_bar_rows_carry_no_trailing_count() {
+        let src = shipped_src();
+        let region = |from: &str, to: &str| {
+            let a = src.find(from).unwrap_or_else(|| panic!("missing {from}"));
+            let b = src[a..].find(to).unwrap_or_else(|| panic!("missing {to}"));
+            &src[a..a + b]
+        };
+        assert!(
+            !region("fn branch_row(", "fn bar_drop_marks(").contains("roll.tasks)"),
+            "the branch row is printing its task count again"
+        );
+        assert!(
+            !region("fn task_row(", "fn tree_all_folded(").contains("\"+{over}\""),
+            "the task row is printing its badge overflow again"
+        );
     }
 
     /// The always-visible chrome asks the SKIN for its corners, never gpui.

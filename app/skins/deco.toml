@@ -77,8 +77,8 @@ gap        = 5.0
 # The ring's bloom. Brass on near-black wants a wider, softer halo than a
 # green phosphor does — the hue is already warm, so the glow reads as light
 # rather than as haze.
-glow       = 8.0
-glow_a     = 0.60
+glow       = 6.0
+glow_a     = 0.45
 rail       = 2.0
 label_size = 9.0
 row_h      = 16.0
@@ -94,7 +94,7 @@ edge        = { from = "accent", a = 0.45 }
 
 # The RING does the marking, so the wash underneath it drops to a whisper —
 # enough to seat the row, not enough to fight either the text or the halo.
-mark_wash   = { from = "accent", a = 0.07 }
+mark_wash   = { from = "accent", a = 0.05 }
 
 # Text ON the accent goes DARK, not white. A brass fill is a light colour — the
 # deco palette puts it at about 53% lightness — so white-on-accent is the low

@@ -59,7 +59,7 @@ icon = "▢"
 # mark_soft    = { from = "accent", a = 0.85 }        # the accent carrying text
 # mark_dim     = { from = "accent", a = 0.40 }        # the accent at rest
 # mark_wash    = { from = "accent", a = 0.14 }        # the accent as a tint
-# row_active   = { from = "accent", a = 0.22 }        # the row you are standing on
+# row_active   = { from = "accent", a = 0.08 }        # a seat, not a highlight — the ring marks
 # hover        = { from = "white", a = 0.12 }         # the lift under the pointer
 
 # states
@@ -89,8 +89,8 @@ icon = "▢"
 # label_size = 9.0
 # bracket    = 5.0    # the arm of a corner bracket
 # rail       = 2.0    # the bar marking an active row
-# glow       = 7.0    # how far the phosphor ring blooms past its border
-# glow_a     = 0.55   # how hot the bloom is, 0..1 — NOT a length
+# glow       = 5.25   # how far the phosphor ring blooms past its border
+# glow_a     = 0.41   # how hot the bloom is, 0..1 — NOT a length
 
 # ── shape ────────────────────────────────────────────────────────────────────
 # The strategies. These are what make a LOOK rather than a tint: they change
@@ -106,8 +106,13 @@ boundary = "hairline"   # hairline | double | inset | none
 # already has glow and bloom of its own, so a lit accent edge under a phosphor
 # theme is lit twice — the skin draws the ring and the CRT pass blooms it. Every
 # other emphasis device fights the renderer; this one is the only one that
-# compounds with it. The wash stays underneath on rows, because a ring alone
-# finds a row and does not read it against nineteen neighbours.
+# compounds with it.
+#
+# It is TWO shadows and almost no fill — a crisp 1px spread ring at full alpha,
+# then a wider soft halo at a little over half that — which is exactly what
+# `render_node` does to the focused pane, scaled to row size. The first pass used
+# one soft shadow over a 0.22 wash, and the wash is what made a lit row read as a
+# selected item in a web list rather than as a lit edge.
 emphasis = "glow"       # fill | underline | bracket | rail | glow
 divider  = "line"       # line | double | none
 caps     = "off"        # off | upper | tracked
