@@ -2,8 +2,8 @@
 
 ## Status
 
-**Landed and live, not merged.** Branch `chrome/skin-tokens` at `ffe15b4`, pushed,
-working tree clean, **PR #405** open (15 commits). Installed as
+**MERGED.** `chrome/skin-tokens` merged to `main` as `46fa3f9` on 2026-09-13,
+all four required checks green. PR #405 closed. Installed as
 `td-ffe15b4-skin-tokens` and the live session is running it — session 1, 22 panes,
 cut over four times today.
 
