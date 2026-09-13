@@ -391,9 +391,9 @@ button.more:hover { border-color: var(--s1); color: var(--text-primary); }
 <body>
 <header class="top">
   <div class="wrap">
-    <p class="kicker">terminal-delight &middot; chrome skin layer &middot; 12 Sep 2026 &middot; built, switchable, cut over</p>
+    <p class="kicker">terminal-delight &middot; chrome skin layer &middot; 12 Sep 2026 &middot; built, pickable, cut over twice</p>
     <h1>The chrome is themeable as data</h1>
-    <p class="verdict">Terminal Delight now has a <b>third themeable axis</b>. Colour and CRT texture were already data; <b>shape</b> is the new one &mdash; 27 chrome inks written as recipes over the palette, 14 metrics, 6 strategies. Three skins ship, any of them switches on a running window in one command, and <b>your live 20-pane session is running the new build</b>.</p>
+    <p class="verdict">Terminal Delight now has a <b>third themeable axis</b>. Colour and CRT texture were already data; <b>shape</b> is the new one &mdash; 27 chrome inks written as recipes over the palette, 14 metrics, 6 strategies. Three skins ship, there is a <b>SKIN row in the design tray</b> that restyles the window on a click, and <b>your live 21-pane session is running it</b>.</p>
     <p class="meta">
       <span>PR <b>#405</b></span>
       <span>branch <b>chrome/skin-tokens</b></span>
@@ -401,6 +401,7 @@ button.more:hover { border-color: var(--s1); color: var(--text-primary); }
       <span>tests <b>799 pass, 19 new</b></span>
       <span>clippy + fmt <b>clean</b></span>
       <span>skins <b>default · deco · console</b></span>
+      <span>picker <b>in the design tray</b></span>
       <span>score <b>opened 8, closed 6</b></span>
     </p>
   </div>
@@ -409,12 +410,9 @@ button.more:hover { border-color: var(--s1); color: var(--text-primary); }
 <div class="wrap">
 
 <div class="callout good">
-  <span class="lbl">nothing is waiting on a decision</span>
-  <p>All four questions came back <b>agree</b>. Your live window is on the new build, and what is waiting on you is a <b>look</b>. Try all three, on the real thing:</p>
-  <pre><code>terminal-delight ctl skin deco
-terminal-delight ctl skin console
-terminal-delight ctl skin default</code></pre>
-  <p>Each one restyles the window you are sitting in, immediately. Nothing to relaunch and nothing to edit &mdash; if a look is wrong, it is wrong in a file you can change in ten seconds.</p>
+  <span class="lbl">open the design tray</span>
+  <p>Your live window is on the new build. Under <b>DESIGN</b> there is now a <b>SKIN</b> row &mdash; <code>default</code>, <code>deco</code>, <code>console</code> &mdash; and clicking one restyles the window you are sitting in, immediately.</p>
+  <p>That is the whole thing waiting on you: flip between them on your own twenty-one-pane screen and see which one you can still read. If a look is wrong it is wrong in a TOML file you can change in ten seconds, and nothing needs rebuilding.</p>
 </div>
 
 <h2 class="sec">Read first</h2>
@@ -619,14 +617,19 @@ terminal-delight ctl skin default</code></pre>
     </table>
     <p class="why"><code>terminal-delight skin --list</code> prints this plus every way a skin gets chosen.</p>
   </div>
+  <div class="card rec">
+    <span class="badge">how you actually switch</span>
+    <h3>The SKIN row in the design tray</h3>
+    <p>Open the design tray. Under <b>DESIGN</b> there is now a <b>SKIN</b> row: one button per skin, lit on whichever is drawing. Click one and the window restyles immediately.</p>
+    <p class="why">It sits under DESIGN because they are two halves of one question &mdash; DESIGN is what colour the chrome is, SKIN is what shape it is. OUTER scope only: shape is window-global, and a window whose panes had different corner radii reads as broken rather than as configured.</p>
+    <p class="why">The row iterates the registry rather than naming three skins, so a fourth builtin appears in the tray in the commit that adds it.</p>
+  </div>
   <div class="card">
-    <h3>How to switch, live</h3>
+    <h3>And from a script</h3>
 <pre><code>terminal-delight ctl skin deco
-terminal-delight ctl skin console
 terminal-delight ctl skin theme
 terminal-delight ctl skin status</code></pre>
-    <p>No relaunch, no file editing. <code>--pid N</code> aims at one window.</p>
-    <p class="why">A misspelling is refused in the socket thread against a mirrored list &mdash; <code>err no skin "decoo" — have: default, deco, console, theme</code> &mdash; rather than queued and answered <code>ok</code>. A switch that reports success and does nothing is the failure this whole layer exists to refuse.</p>
+    <p class="why">Same effect, for automation and for an Omarchy theme switch. A misspelling is refused in the socket thread against a mirrored list &mdash; <code>err no skin "decoo" — have: default, deco, console, theme</code> &mdash; rather than queued and answered <code>ok</code>. A switch that reports success and does nothing is the failure this layer exists to refuse.</p>
   </div>
 </div>
 <p><code>console</code> is also the argument the layer has been making, as an artifact: <b>it is a TOML file and nothing else.</b> No Rust was added for it.</p>
@@ -650,13 +653,14 @@ terminal-delight ctl skin status</code></pre>
 </div>
 <h3 style="margin:26px 0 10px;font-size:16px">What it cost</h3>
 <div class="tiles">
-  <div class="tile"><span class="n" style="color:var(--good)">20/20</span><span class="k">panes kept</span></div>
+  <div class="tile"><span class="n" style="color:var(--good)">2</span><span class="k">cutovers run</span></div>
+  <div class="tile"><span class="n" style="color:var(--good)">20→20 · 21→21</span><span class="k">panes kept, each time</span></div>
   <div class="tile"><span class="n" style="color:var(--good)">0</span><span class="k">agent sessions lost</span></div>
   <div class="tile"><span class="n" style="color:var(--good)">0</span><span class="k">ptys on the new client</span></div>
-  <div class="tile"><span class="n">~2s</span><span class="k">window absent</span></div>
   <div class="tile"><span class="n" style="color:var(--warning)">1</span><span class="k">known casualty, below</span></div>
 </div>
-<p><span class="tag v">measured</span> The host held <b>20 children before the TERM, 20 after it, and 20 after the relaunch</b> — it never noticed. Every agent resume line was captured before the bounce and diffed against the list afterwards: <b>identical</b>, so no session was re-rolled. The new client came up on <code>td-b8118b1-skin-tokens</code> holding <b>zero pseudoterminals</b>, which is the proof it attached to the host rather than spawning its own terminals.</p>
+<p><span class="tag v">measured</span> The host held <b>the same number of children before the TERM, after it, and after the relaunch</b> — it never noticed, either time. Every agent resume line was captured before each bounce and diffed against the list afterwards: <b>identical</b>, so no session was re-rolled. Each new client came up holding <b>zero pseudoterminals</b>, which is the proof it attached to the host rather than spawning its own terminals.</p>
+<p>It ran twice because the SKIN picker landed after the first one. The second was the same four guards, the same TERM, the same compositor relaunch — and it being dull the second time is the point: the recipe is a script now rather than a thing to reason about.</p>
 <div class="callout">
   <span class="lbl">the one thing it did cost</span>
   <p>Every already-running agent's <b>MCP relay dropped and does not come back</b> (#391) — <code>mcp__terminal-delight__*</code> went dead mid-task for this session, exactly as the recipe says it will. The window is still reachable over <code>ctl</code>, which is how the pane count and every session id above were read back, and how the note on this pane's glass was posted.</p>
@@ -708,9 +712,10 @@ terminal-delight ctl skin status</code></pre>
     <p class="rec"><b>Revisit when:</b> you have run a 14-pane screen on it for a week and still want it. Not before.</p>
   </div>
   <div class="ask">
-    <h3>2 &middot; No skin picker in the tray</h3>
-    <p>Answered <b>agree</b>. A theme names its skin (<code>skin = "deco"</code>), and <code>$TD_SKIN</code> or <code>~/.config/terminal-delight/skin.toml</code> override it. Two skins is not a choice worth a control.</p>
-    <p class="rec"><b>Revisit at four skins</b> &mdash; that is the trigger, not a date.</p>
+    <h3>2 &middot; No skin picker &mdash; <b>overturned, and the recommendation was wrong</b></h3>
+    <p>Answered <b>agree</b>, on my recommendation of &ldquo;revisit at four skins&rdquo;. Then: <em>&ldquo;ctl skin deco? this doesn&rsquo;t mean anything to me&hellip; I need to change the skin to test!&rdquo;</em></p>
+    <p><b>The criterion was the wrong one.</b> &ldquo;Is a control worth its space&rdquo; is a question about clutter. The question that actually applied was whether a person can evaluate a look they have no way to put on &mdash; and they cannot. Three shell commands are a fine interface for a script and no interface at all for judging whether corner brackets survive a twenty-pane screen, which is the one open question this whole feature is waiting on. A feature that can only be exercised by someone who has read its source has one user.</p>
+    <p class="rec"><b>Built:</b> a SKIN row in the design tray, directly under DESIGN. One button per skin, lit on whichever is drawing, clicking restyles the window at once.</p>
   </div>
   <div class="ask">
     <h3>3 &middot; MVP, then look</h3>
@@ -728,12 +733,8 @@ terminal-delight ctl skin status</code></pre>
 <div class="grill">
   <div class="ask">
     <h3>Does the bracket survive a real screen?</h3>
-    <p>Every mockup here has six rows and four tabs. Your window has <b>twenty panes and a full strip</b>, and the bracket&rsquo;s whole argument is that it <em>scales better than a fill</em> &mdash; a filled pill in a list of twenty is a stripe, a bracket is a pointer. That claim is now testable and still untested.</p>
-    <p>You can settle it in about thirty seconds, on the real thing, without a rebuild:</p>
-<pre><code>terminal-delight ctl skin deco      # brackets
-terminal-delight ctl skin console   # a rail instead
-terminal-delight ctl skin default   # back to today</code></pre>
-    <p class="rec"><b>Recommendation:</b> flip between <code>deco</code> and <code>console</code> on your own twenty-pane screen and see which one you can still read. If the brackets go to texture at that density, <code>console</code> already <em>is</em> the rail answer &mdash; and if you want deco&rsquo;s gold with console&rsquo;s rail, that is one word in <code>deco.toml</code> (<code>emphasis = "rail"</code>), hot-reloaded in 300ms.</p>
+    <p>Every mockup here has six rows and four tabs. Your window has <b>twenty-one panes and a full strip</b>, and the bracket&rsquo;s whole argument is that it <em>scales better than a fill</em> &mdash; a filled pill in a list of twenty is a stripe, a bracket is a pointer. That claim is now one click away and still untested.</p>
+    <p class="rec"><b>Recommendation:</b> open the design tray and flip <code>deco</code> against <code>console</code> on your own screen. If the brackets go to texture at that density, <code>console</code> already <em>is</em> the rail answer &mdash; and if you want deco&rsquo;s gold with console&rsquo;s rail, that is one word in <code>deco.toml</code> (<code>emphasis = "rail"</code>), hot-reloaded in 300ms with no rebuild.</p>
   </div>
 </div>
 
