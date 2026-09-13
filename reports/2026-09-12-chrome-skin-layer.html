@@ -367,18 +367,19 @@ button.more:hover { border-color: var(--s1); color: var(--text-primary); }
 .tdbar .row.act { background: var(--rowa); border-left: var(--rail) solid var(--mk); padding-left: calc(4px - var(--rail)); }
 .tdbar .row.act .nm { color: var(--i); }
 .tdbar .bk { display: none; }
-.tdbar.brk .row.act { background: none; border-left: 0; padding-left: 4px; }
-.tdbar.brk .row.act::before, .tdbar.brk .row.act::after,
-.tdbar.brk .scope .bk::before, .tdbar.brk .scope .bk::after { content: ""; position: absolute; width: var(--bk); height: var(--bk); border: 0 solid var(--mk); }
-.tdbar.brk .row.act::before { left: 0; top: 0; border-width: 1px 0 0 1px; }
-.tdbar.brk .row.act::after { right: 0; bottom: 0; border-width: 0 1px 1px 0; }
-.tdbar.brk .row.act .bk { display: block; position: absolute; top: 0; right: 0; bottom: 0; left: 0; }
-.tdbar.brk .row.act .bk::before { content: ""; position: absolute; right: 0; top: 0; width: var(--bk); height: var(--bk); border: 0 solid var(--mk); border-width: 1px 1px 0 0; }
-.tdbar.brk .row.act .bk::after { content: ""; position: absolute; left: 0; bottom: 0; width: var(--bk); height: var(--bk); border: 0 solid var(--mk); border-width: 0 0 1px 1px; }
-.tdbar.brk .scope { background: none; }
-.tdbar.brk .scope .bk { display: block; position: absolute; top: 0; right: 0; bottom: 0; left: 0; }
-.tdbar.brk .scope::before { content: ""; position: absolute; left: 0; top: 0; width: var(--bk); height: var(--bk); border: 0 solid var(--mk); border-width: 1px 0 0 1px; }
-.tdbar.brk .scope::after { content: ""; position: absolute; right: 0; bottom: 0; width: var(--bk); height: var(--bk); border: 0 solid var(--mk); border-width: 0 1px 1px 0; }
+/* The phosphor ring. Every shipped skin uses it now, so it is on all four
+   mockups — the grid differs by corner, boundary, divider and caps, not by how
+   the active thing is marked. The border is drawn at every state and merely goes
+   transparent when unlit, exactly as `Skin::ring` does, so nothing shifts. */
+.tdbar.ring .row, .tdbar.ring .scope { border: 1px solid transparent; }
+.tdbar.ring .row.act {
+  background: var(--rowa); border: 1px solid var(--mk); padding-left: 4px;
+  box-shadow: 0 0 var(--glow, 7px) var(--mk);
+}
+.tdbar.ring .scope {
+  background: var(--wash); border-color: var(--mk);
+  box-shadow: 0 0 var(--glow, 7px) var(--mk);
+}
 .tdbar .slot { margin: 8px var(--px) 0; padding-top: 6px; border-top: 1px solid var(--ru); position: relative; z-index: 2; }
 .tdbar .pr { display: flex; align-items: center; gap: 5px; padding: 2px 0; }
 .tdbar .pr .who { letter-spacing: var(--trk); }
@@ -391,14 +392,14 @@ button.more:hover { border-color: var(--s1); color: var(--text-primary); }
 <body>
 <header class="top">
   <div class="wrap">
-    <p class="kicker">terminal-delight &middot; chrome skin layer &middot; 12 Sep 2026 &middot; built, pickable, cut over twice</p>
+    <p class="kicker">terminal-delight &middot; chrome skin layer &middot; 12 Sep 2026 &middot; built, pickable, ringed, cut over three times</p>
     <h1>The chrome is themeable as data</h1>
-    <p class="verdict">Terminal Delight now has a <b>third themeable axis</b>. Colour and CRT texture were already data; <b>shape</b> is the new one &mdash; 27 chrome inks written as recipes over the palette, 14 metrics, 6 strategies. Three skins ship, there is a <b>SKIN row in the design tray</b> that restyles the window on a click, and <b>your live 21-pane session is running it</b>.</p>
+    <p class="verdict">Terminal Delight now has a <b>third themeable axis</b>. Colour and CRT texture were already data; <b>shape</b> is the new one &mdash; 27 chrome inks written as recipes over the palette, 14 metrics, 6 strategies. Three skins ship, there is a <b>SKIN row in the design tray</b> that restyles the window on a click, and <b>your live 21-pane session is running it right now</b> — with the phosphor ring on whatever tab you are in.</p>
     <p class="meta">
       <span>PR <b>#405</b></span>
       <span>branch <b>chrome/skin-tokens</b></span>
       <span>gates <b>approved</b></span>
-      <span>tests <b>799 pass, 19 new</b></span>
+      <span>tests <b>800 pass, 20 new</b></span>
       <span>clippy + fmt <b>clean</b></span>
       <span>skins <b>default · deco · console</b></span>
       <span>picker <b>in the design tray</b></span>
@@ -420,9 +421,9 @@ button.more:hover { border-color: var(--s1); color: var(--text-primary); }
   <li>
     <span class="esc-n">1</span>
     <div>
-      <h3>Look at the tab strip before anything else</h3>
-      <p>It is the surface a look gets judged on and the one that moved most: tabs are square now, and the active one is marked by four corner brackets rather than a filled underline. If the brackets read as noise rather than as a pointer, the whole <code>emphasis</code> strategy is the thing to argue with.</p>
-      <p class="take">Second: the buttons. They lost their white glint and their drop shadow. <button class="more" data-dlg="d-bezel">why that is a contradiction, not a preference</button></p>
+      <h3>The active thing wears a phosphor ring now</h3>
+      <p>A lit border that blooms outward, on the active tab, the active row and the scope chip &mdash; in <b>both</b> skins, default included. It replaced corner brackets the same day they shipped, because you photographed them and they were debris.</p>
+      <p class="take">This is the one change your live window will actually show you, since the rest of the default skin is unmoved. <button class="more" data-dlg="d-ring">why the ring and not the brackets</button></p>
     </div>
   </li>
   <li>
@@ -485,11 +486,11 @@ button.more:hover { border-color: var(--s1); color: var(--text-primary); }
 <p>A <code>SkinSpec</code> is what a file says &mdash; every token optional, no palette in it &mdash; so one spec serves every pane whatever theme each pane is wearing. <button class="more" data-dlg="d-rejected">what was rejected, and why</button></p>
 
 <h2 class="sec">One markup, four token sets</h2>
-<p>The left bar, drawn from the values <code>terminal-delight skin</code> actually resolves. Reading across is the skin changing; reading down is the palette changing. The grid is the architecture: neither axis knows about the other.</p>
+<p>The left bar, drawn from the values <code>terminal-delight skin</code> actually resolves. Reading across is the skin changing; reading down is the palette changing. The grid is the architecture: neither axis knows about the other. All four carry the phosphor ring, because every shipped skin now marks the active thing the same way — what differs is corners, boundaries, dividers and caps.</p>
 
 <div class="mocks">
   <figure class="mock">
-    <div class="tdbar fill" style="--p:#03100a;--rs:#020805;--ru:rgba(20,64,31,.25);--i:#86efac;--dim:rgba(134,239,172,.7);--faint:rgba(134,239,172,.45);--off:#14401f;--mk:#22c55e;--wash:rgba(34,197,94,.14);--rowa:rgba(34,197,94,.22);--live:#c52289;--ok:#4ade80;--warn:#fbe08a;--dgr:#ff7b7b;--sunk:#030a06">
+    <div class="tdbar ring" style="--p:#03100a;--rs:#020805;--ru:rgba(20,64,31,.25);--i:#86efac;--dim:rgba(134,239,172,.7);--faint:rgba(134,239,172,.45);--off:#14401f;--mk:#22c55e;--wash:rgba(34,197,94,.14);--rowa:rgba(34,197,94,.22);--live:#c52289;--ok:#4ade80;--warn:#fbe08a;--dgr:#ff7b7b;--sunk:#030a06">
       <div class="hd"><span class="scope"><i class="bk"></i>ALL</span><span class="ib">&#9660;</span><span class="ib">&#9723;</span><span class="ib">+</span><span class="ib">&#9664;</span></div>
       <div class="ru"><i></i><i></i><i></i></div>
       <div class="rows">
@@ -510,7 +511,7 @@ button.more:hover { border-color: var(--s1); color: var(--text-primary); }
   </figure>
 
   <figure class="mock">
-    <div class="tdbar brk dbl dblru" style="--p:#03100a;--rs:rgba(34,197,94,.55);--ru:rgba(34,197,94,.22);--i:#86efac;--dim:rgba(134,239,172,.7);--faint:rgba(134,239,172,.45);--off:#14401f;--mk:#22c55e;--wash:rgba(34,197,94,.07);--rowa:rgba(34,197,94,.22);--live:#e49fcb;--ok:#4ade80;--warn:#fbe08a;--dgr:#ff7b7b;--sunk:#030a06;--r:0px;--rlg:0px;--px:8px;--cpx:7px;--cpy:2px;--gap:5px;--rowh:16px;--bk:6px;--trk:.1em">
+    <div class="tdbar ring dbl dblru" style="--p:#03100a;--rs:rgba(34,197,94,.55);--ru:rgba(34,197,94,.22);--i:#86efac;--dim:rgba(134,239,172,.7);--faint:rgba(134,239,172,.45);--off:#14401f;--mk:#22c55e;--wash:rgba(34,197,94,.07);--rowa:rgba(34,197,94,.22);--live:#e49fcb;--ok:#4ade80;--warn:#fbe08a;--dgr:#ff7b7b;--sunk:#030a06;--r:0px;--rlg:0px;--px:8px;--cpx:7px;--cpy:2px;--gap:5px;--rowh:16px;--bk:6px;--trk:.1em;--glow:8px">
       <div class="hd"><span class="scope"><i class="bk"></i>ALL</span><span class="ib">&#9660;</span><span class="ib">&#9723;</span><span class="ib">+</span><span class="ib">&#9664;</span></div>
       <div class="ru"><i></i><i></i><i></i></div>
       <div class="rows">
@@ -531,7 +532,7 @@ button.more:hover { border-color: var(--s1); color: var(--text-primary); }
   </figure>
 
   <figure class="mock">
-    <div class="tdbar fill" style="--p:#0a0e10;--rs:#060809;--ru:rgba(43,51,56,.25);--i:#e8e4d8;--dim:rgba(232,228,216,.7);--faint:rgba(232,228,216,.45);--off:#2b3338;--mk:#c2a34f;--wash:rgba(194,163,79,.14);--rowa:rgba(194,163,79,.22);--live:#4f6ec2;--ok:#8fc7a9;--warn:#e8b45e;--dgr:#d98476;--sunk:#080a0c">
+    <div class="tdbar ring" style="--p:#0a0e10;--rs:#060809;--ru:rgba(43,51,56,.25);--i:#e8e4d8;--dim:rgba(232,228,216,.7);--faint:rgba(232,228,216,.45);--off:#2b3338;--mk:#c2a34f;--wash:rgba(194,163,79,.14);--rowa:rgba(194,163,79,.22);--live:#4f6ec2;--ok:#8fc7a9;--warn:#e8b45e;--dgr:#d98476;--sunk:#080a0c">
       <div class="hd"><span class="scope"><i class="bk"></i>ALL</span><span class="ib">&#9660;</span><span class="ib">&#9723;</span><span class="ib">+</span><span class="ib">&#9664;</span></div>
       <div class="ru"><i></i><i></i><i></i></div>
       <div class="rows">
@@ -552,7 +553,7 @@ button.more:hover { border-color: var(--s1); color: var(--text-primary); }
   </figure>
 
   <figure class="mock">
-    <div class="tdbar brk dbl dblru" style="--p:#0a0e10;--rs:rgba(194,163,79,.55);--ru:rgba(194,163,79,.22);--i:#e8e4d8;--dim:rgba(232,228,216,.7);--faint:rgba(232,228,216,.45);--off:#2b3338;--mk:#c2a34f;--wash:rgba(194,163,79,.07);--rowa:rgba(194,163,79,.22);--live:#7fd1b9;--ok:#8fc7a9;--warn:#e8b45e;--dgr:#d98476;--sunk:#080a0c;--r:0px;--rlg:0px;--px:8px;--cpx:7px;--cpy:2px;--gap:5px;--rowh:16px;--bk:6px;--trk:.1em">
+    <div class="tdbar ring dbl dblru" style="--p:#0a0e10;--rs:rgba(194,163,79,.55);--ru:rgba(194,163,79,.22);--i:#e8e4d8;--dim:rgba(232,228,216,.7);--faint:rgba(232,228,216,.45);--off:#2b3338;--mk:#c2a34f;--wash:rgba(194,163,79,.07);--rowa:rgba(194,163,79,.22);--live:#7fd1b9;--ok:#8fc7a9;--warn:#e8b45e;--dgr:#d98476;--sunk:#080a0c;--r:0px;--rlg:0px;--px:8px;--cpx:7px;--cpy:2px;--gap:5px;--rowh:16px;--bk:6px;--trk:.1em;--glow:8px">
       <div class="hd"><span class="scope"><i class="bk"></i>ALL</span><span class="ib">&#9660;</span><span class="ib">&#9723;</span><span class="ib">+</span><span class="ib">&#9664;</span></div>
       <div class="ru"><i></i><i></i><i></i></div>
       <div class="rows">
@@ -586,10 +587,11 @@ button.more:hover { border-color: var(--s1); color: var(--text-primary); }
     <p>One line between two things reads as adjacency. Two lines with a gap reads as a boundary. It is deco&rsquo;s signature and the cheapest way to make regions legible.</p>
     <p class="why">The header is banded by the rule under it, not by a fill &mdash; which is why <code>row()</code> and <code>bar()</code> are separate primitives.</p>
   </div>
-  <div class="card">
-    <h3>The bracket</h3>
-    <p>Four corner ticks mark the active row without filling it, so a dense list keeps its text contrast. A filled pill in a list of twenty is a stripe; a bracket is a pointer.</p>
-    <p class="why">It also stops a task that already carries its own colour from being asked to wear two.</p>
+  <div class="card rec">
+    <span class="badge">replaced the bracket</span>
+    <h3>The phosphor ring</h3>
+    <p>A lit border on the active thing, blooming outward. It marks without relying on a fill, so a dense list keeps its text contrast &mdash; and unlike four corner ticks it is <b>one shape</b>, which is what lets it survive being 16 pixels tall.</p>
+    <p class="why">It is also the only emphasis device that compounds with TD's own CRT pass instead of fighting it: the skin draws the ring, the renderer blooms it. That is why it went into the <em>default</em> skin too and not just deco.</p>
   </div>
   <div class="card">
     <h3>Tracked caps</h3>
@@ -653,14 +655,14 @@ terminal-delight ctl skin status</code></pre>
 </div>
 <h3 style="margin:26px 0 10px;font-size:16px">What it cost</h3>
 <div class="tiles">
-  <div class="tile"><span class="n" style="color:var(--good)">2</span><span class="k">cutovers run</span></div>
-  <div class="tile"><span class="n" style="color:var(--good)">20→20 · 21→21</span><span class="k">panes kept, each time</span></div>
+  <div class="tile"><span class="n" style="color:var(--good)">3</span><span class="k">cutovers run</span></div>
+  <div class="tile"><span class="n" style="color:var(--good)">20→20<br>21→21→21</span><span class="k">panes kept, every time</span></div>
   <div class="tile"><span class="n" style="color:var(--good)">0</span><span class="k">agent sessions lost</span></div>
   <div class="tile"><span class="n" style="color:var(--good)">0</span><span class="k">ptys on the new client</span></div>
   <div class="tile"><span class="n" style="color:var(--warning)">1</span><span class="k">known casualty, below</span></div>
 </div>
 <p><span class="tag v">measured</span> The host held <b>the same number of children before the TERM, after it, and after the relaunch</b> — it never noticed, either time. Every agent resume line was captured before each bounce and diffed against the list afterwards: <b>identical</b>, so no session was re-rolled. Each new client came up holding <b>zero pseudoterminals</b>, which is the proof it attached to the host rather than spawning its own terminals.</p>
-<p>It ran twice because the SKIN picker landed after the first one. The second was the same four guards, the same TERM, the same compositor relaunch — and it being dull the second time is the point: the recipe is a script now rather than a thing to reason about.</p>
+<p>It ran three times — the SKIN picker landed after the first, the phosphor ring after the second. The second was the same four guards, the same TERM, the same compositor relaunch — and it being dull the second time is the point: the recipe is a script now rather than a thing to reason about.</p>
 <div class="callout">
   <span class="lbl">the one thing it did cost</span>
   <p>Every already-running agent's <b>MCP relay dropped and does not come back</b> (#391) — <code>mcp__terminal-delight__*</code> went dead mid-task for this session, exactly as the recipe says it will. The window is still reachable over <code>ctl</code>, which is how the pane count and every session id above were read back, and how the note on this pane's glass was posted.</p>
@@ -692,6 +694,11 @@ terminal-delight ctl skin status</code></pre>
   <h3>A helper that can drop its <code>&amp;Theme</code> is the proof the tokens are right</h3>
   <p><code>bezel_btn_s</code> &mdash; the chrome&rsquo;s main button, 32 call sites &mdash; changed its palette parameter to <code>&amp;Skin</code> and lost nothing. Every colour it used (<code>accent</code>, <code>surface</code> brightened, <code>surface</code> darkened, <code>text</code>) was already a token. <code>hicon_s</code> did the same.</p>
   <p><span class="tag v">measured</span> That is a stronger signal than any token count: a vocabulary that can replace the thing it was derived from is complete, and one that cannot is a subset pretending.</p>
+</div>
+<div class="finding">
+  <h3>The rig lied three times before the app did once</h3>
+  <p>Verifying that the ring paints meant launching a window and asking whether it survived. It reported <b>dead three times while it was on screen</b>: <code>pgrep -x terminal-delight</code> never matches, because Linux truncates <code>comm</code> at fifteen characters; and <code>pgrep -f TD_TRAY_DEMO</code> stops matching the moment <code>env</code> execs the binary and replaces the command line. Four windows had quietly accumulated behind those false negatives.</p>
+  <p><span class="tag v">measured</span> Nothing was ever wrong with the skin. The harness now finds the process by its environment, and the general rule earns its keep again: <b>a check that fails identically twice is usually the instrument.</b></p>
 </div>
 <div class="finding">
   <h3>The layer cost two tokens and one strategy across six surfaces</h3>
@@ -729,12 +736,21 @@ terminal-delight ctl skin status</code></pre>
   </div>
 </div>
 
-<h2 class="sec">The one open question</h2>
+<h2 class="sec">Answered by looking</h2>
 <div class="grill">
   <div class="ask">
-    <h3>Does the bracket survive a real screen?</h3>
-    <p>Every mockup here has six rows and four tabs. Your window has <b>twenty-one panes and a full strip</b>, and the bracket&rsquo;s whole argument is that it <em>scales better than a fill</em> &mdash; a filled pill in a list of twenty is a stripe, a bracket is a pointer. That claim is now one click away and still untested.</p>
-    <p class="rec"><b>Recommendation:</b> open the design tray and flip <code>deco</code> against <code>console</code> on your own screen. If the brackets go to texture at that density, <code>console</code> already <em>is</em> the rail answer &mdash; and if you want deco&rsquo;s gold with console&rsquo;s rail, that is one word in <code>deco.toml</code> (<code>emphasis = "rail"</code>), hot-reloaded in 300ms with no rebuild.</p>
+    <h3>Did the bracket survive a real screen? &mdash; <b>no</b></h3>
+    <p>The open question was whether corner brackets scale better than a fill at twenty-one panes. You put the build on screen, photographed the tab strip, and the answer was immediate: at the size a tab label actually is, four disconnected ticks read as <b>debris around the text</b>, not as a bracket around it.</p>
+    <p>The reasoning had been sound and the execution could not survive its own scale. A continuous line is one shape the eye resolves at any size; four ticks are four shapes it has to assemble, and at 16px it does not bother. <b>No amount of looking at mockups would have found that</b> &mdash; every mockup in this document draws them at twice the size they ship at.</p>
+    <p class="rec"><b>Replaced by the ring</b>, in deco and in default. The bracket stays in the code as a strategy nothing uses: it is correct at larger sizes, and a look nobody runs costs one match arm.</p>
+  </div>
+</div>
+<h2 class="sec">Still open</h2>
+<div class="grill">
+  <div class="ask">
+    <h3>Is the bloom the right strength?</h3>
+    <p>The ring has two numbers &mdash; how far it blooms and how hot &mdash; and they are guesses calibrated on a static window rather than on a screen with sixteen agents moving. Deco runs wider and hotter than default (<code>glow 8 / 0.60</code> against <code>7 / 0.55</code>) on the theory that brass on near-black wants a softer halo than green phosphor does. That theory is untested.</p>
+    <p class="rec"><b>Recommendation:</b> live with it for a session before touching it. If it reads as haze rather than as marking, drop <code>glow_a</code> first, not <code>glow</code> &mdash; a tight bright ring reads as deliberate where a wide faint one reads as a rendering artefact. Both are hot-reloaded in 300ms with no rebuild.</p>
   </div>
 </div>
 
@@ -755,6 +771,23 @@ terminal-delight ctl skin status</code></pre>
     <p>There is also a practical asymmetry: the palette is <b>per-pane</b> and shape is not. A window whose panes had different corner radii would read as broken rather than as configured, so the two cannot share a scope even if they shared a file.</p>
     <h4>What it costs</h4>
     <p>A second file to know about, and a resolution order to explain: the user&rsquo;s own <code>skin.toml</code> wins, then the builtin the active theme named, then <code>default</code>. That is one more rule than &ldquo;the theme decides&rdquo;, and it is the price of the axis coming apart.</p>
+  </div>
+</dialog>
+
+<dialog id="d-ring">
+  <div class="dlg-head"><div><h3>The ring, and the bracket it replaced</h3><p class="repo">Emphasis::Glow &middot; app/src/skin.rs</p></div><button class="x" data-close>&times;</button></div>
+  <div class="dlg-body">
+    <h4>Why the bracket failed</h4>
+    <p>The idea was right: mark the active row without filling it, so a dense list keeps its text contrast. A filled pill in a list of twenty is a stripe; a bracket is supposed to be a pointer.</p>
+    <p>It could not survive its own scale. A tab label is about sixteen pixels tall, and four corner ticks at that size are four disconnected marks scattered around the text rather than one enclosure around it. <b>A continuous line is a single shape the eye resolves at any size; four ticks are four shapes it has to assemble</b>, and below a certain size it stops assembling them.</p>
+    <p>Every mockup in this document draws them at roughly twice their shipping size, which is exactly why the mockups said they were fine. The photograph of the running build said otherwise in about a second.</p>
+    <h4>Why the ring is different</h4>
+    <p>One shape, continuous, and it carries a bloom &mdash; so it reads as <em>energised</em> rather than as <em>outlined</em>. Size stops mattering: a lit edge is a lit edge at any scale.</p>
+    <p>And it is the only emphasis device that <b>compounds with the renderer rather than fighting it</b>. Terminal Delight already has glow and bloom in its CRT pass, so a bright accent edge under a phosphor theme is lit twice — the skin draws the ring and the renderer blooms it. That is the argument for putting it in the DEFAULT skin, not just deco: the retro look is the one it was always going to suit best.</p>
+    <h4>The detail that would otherwise be a bug report</h4>
+    <p><code>ring</code> draws its border in <b>every</b> state and merely makes it transparent when unlit. Without that, marking a different tab would shift the entire strip by a border width on every switch — which looks like a layout bug and is very hard to attribute to a skin. The reservation lives in the helper, not at the call site, precisely because it is the kind of thing a later strategy would quietly break.</p>
+    <h4>What the default skin gave up</h4>
+    <p>It is no longer a pure transcription of the old chrome, and the golden test now says so explicitly rather than being relaxed: emphasis is asserted as the one intended departure, and the other five strategies are compared field by field. A second unintended change cannot hide behind the first.</p>
   </div>
 </dialog>
 
