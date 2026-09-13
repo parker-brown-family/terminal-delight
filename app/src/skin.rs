@@ -322,11 +322,20 @@ ink_tokens! {
     mark_soft    => "mark_soft",    Recipe::of(Role::Accent).a(0.85),              "the accent carrying text";
     mark_dim     => "mark_dim",     Recipe::of(Role::Accent).a(0.40),              "the accent at rest";
     mark_wash    => "mark_wash",    Recipe::of(Role::Accent).a(0.14),              "the accent as a background tint";
+    // SELECTION IS NOT THE ACCENT. The accent is the chrome's furniture colour —
+    // rules, edges, the frame — so lighting the selected thing in it means the
+    // one row you are standing on is painted the same colour as everything
+    // around it. `human` is the palette's own answer to "you": the colour your
+    // OWN input is drawn in inside an agent session, derived as the accent's
+    // bright complement when a theme does not state it, and already dialable
+    // live from the wheel's 👤 pip. So the selection colour is adjustable from a
+    // control that exists, without editing a skin file.
+    select       => "select",       Recipe::of(Role::Human),                       "the colour of the thing you have selected";
     // Was 0.22 — the fill under a selected row. Dropped to a seat rather than a
     // highlight on 2026-09-12: with the phosphor ring carrying the marking, a
     // wash that strong is what made a lit row read as a selected list item in a
     // web page. The focused pane, whose recipe the ring copies, carries none.
-    row_active   => "row_active",   Recipe::of(Role::Accent).a(0.08),              "the ground under the row you are standing on";
+    row_active   => "row_active",   Recipe::of(Role::Human).a(0.08),               "the ground under the row you are standing on";
     hover        => "hover",        Recipe::of(Role::White).a(0.12),               "the lift under the pointer";
 
     // ---- states ----
@@ -923,11 +932,11 @@ impl Skin {
         // glow skin is the same size as a lit one.
         if matches!(self.shape.emphasis, Emphasis::Glow) {
             let ink = if active {
-                self.ink.mark
+                self.ink.select
             } else {
                 self.ink.ink_off
             };
-            let r = self.ring(base.text_color(ink), active, self.ink.mark);
+            let r = self.ring(base.text_color(ink), active, self.ink.select);
             return if active && self.ink.mark_wash.a > 0.02 {
                 r.bg(self.ink.mark_wash)
             } else {
@@ -1032,7 +1041,7 @@ impl Skin {
         // this recipe comes from carries no fill at all. A tint is still
         // available to a skin that wants one; it is simply not the default.
         if matches!(self.shape.emphasis, Emphasis::Glow) {
-            let r = self.ring(d, active, self.ink.mark);
+            let r = self.ring(d, active, self.ink.select);
             return if active && self.ink.row_active.a > 0.02 {
                 r.bg(self.ink.row_active)
             } else {
@@ -2237,6 +2246,12 @@ mod tests {
                     ("warn", ink.warn),
                     ("danger", ink.danger),
                     ("live", ink.live),
+                    // `select` matters most of the six. The accent is the
+                    // chrome's furniture — rules, edges, frames — so a selection
+                    // that resolves to it paints the one row you are standing on
+                    // in the colour of everything around it, and the ring stops
+                    // marking anything at all.
+                    ("select", ink.select),
                 ] {
                     assert!(
                         apart(c, ink.mark) > FLOOR,
@@ -2248,6 +2263,17 @@ mod tests {
                 assert!(
                     apart(ink.ok, ink.danger) > FLOOR,
                     "{sid}/{tid}: healthy and failed are the same colour"
+                );
+                // The EVENT inks must also differ from each other, not merely
+                // from the furniture. "this is running" and "this is the one you
+                // are on" are the two things a person tracks on a busy screen,
+                // and painting them the same colour is worse than painting
+                // either of them badly. Caught exactly this way: `select` was
+                // given `human`, and deco had already pinned `live` to `human`.
+                assert!(
+                    apart(ink.select, ink.live) > FLOOR,
+                    "{sid}/{tid}: `select` and `live` are both {}",
+                    crate::hsla_to_hex(ink.select)
                 );
             }
         }

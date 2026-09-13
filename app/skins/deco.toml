@@ -111,5 +111,10 @@ btn_face     = { from = "surface", l = 0.9 }
 
 # The second attentional tier. Deco gives the furniture; the running thing gets
 # the palette's complement, which is what keeps a wall of gold from flattening
-# into one texture. (The deco palette points `human` at mint on purpose.)
-live = { from = "human" }
+# into one texture.
+#
+# This used to say `from = "human"`, pointing `live` at the palette's mint. That
+# became wrong the moment `select` was given `human` as well: "running" and
+# "selected" would have been the same mint, which is the worse of the two
+# collisions this layer guards against — one is furniture, both of these are
+# events. Complement is the default anyway, so the override simply goes.

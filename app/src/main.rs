@@ -11539,13 +11539,29 @@ impl Workspace {
     /// whether or not you can see the task it is waiting in. The quieter states
     /// (finished, blocked, pinned) are counted rather than animated: they are
     /// things that already happened, and a row of pulsing history is noise.
+    /// The cluster a branch shows on its right — but only when it is COLLAPSED.
+    ///
+    /// A roll is an aggregate of everything underneath. When the branch is open,
+    /// everything underneath is on screen carrying its own badges, so the roll
+    /// says the same thing a second time, higher up and less precisely. Opening a
+    /// branch is therefore what hands the glyphs down to the children, and
+    /// closing it is what gathers them back.
+    ///
+    /// It also fixes the thing that made the tree look busy: with every branch on
+    /// the path to a working agent showing that agent, one pinned note could put
+    /// a pin on four rows at once.
     fn roll_badges(
         &self,
         roll: &tree::Roll,
+        collapsed: bool,
         key: usize,
         s: f32,
-        th: &theme::Theme,
+        _th: &theme::Theme,
     ) -> Vec<AnyElement> {
+        // Open branch: the children speak for themselves.
+        if !collapsed {
+            return vec![];
+        }
         // Nothing under here is asking for anything, so the row carries no
         // cluster at all. Size is not news: a branch holding nine silent
         // terminals draws nothing, and a branch holding one pinned note draws
@@ -11561,26 +11577,18 @@ impl Workspace {
             } else {
                 AgentBadge::Working
             };
+            // The badge, and no tally beside it. A count here was a number on the
+            // right edge of a row, which is the thing this column was cleared of.
             out.push(Self::agent_badge_el(badge, key, 0, s * 0.9));
-            if agents > 1 {
-                out.push(
-                    div()
-                        .text_size(px(9. * s))
-                        .text_color(th.text.alpha(0.75))
-                        .child(format!("{agents}"))
-                        .into_any_element(),
-                );
-            }
         }
+        // Glyph only, never a count — "there is finished work in here" is the
+        // news; how much of it is not, and a folded branch is exactly where a
+        // precise number is least actionable.
         let quiet = |glyph: &'static str, n: usize| -> Option<AnyElement> {
             (n > 0).then(|| {
                 div()
                     .text_size(px(10. * s))
-                    .child(if n > 1 {
-                        SharedString::from(format!("{glyph}{n}"))
-                    } else {
-                        SharedString::from(glyph)
-                    })
+                    .child(SharedString::from(glyph))
                     .into_any_element()
             })
         };
@@ -11865,7 +11873,7 @@ impl Workspace {
                     })
                     .child(label.clone()),
             )
-            .children(self.roll_badges(&roll, key, s, th))
+            .children(self.roll_badges(&roll, collapsed, key, s, th))
             // The task count used to sit here, so a folded branch still said how
             // much was in it. Removed 2026-09-12: on a real tree it is a column
             // of small numbers down the right edge that nobody reads and every
@@ -11994,7 +12002,7 @@ impl Workspace {
             .clone()
             .unwrap_or_else(|| format!("{}", i + 1));
         let (fill, text) = self.resolved_tab_colors(i);
-        let panes = self.tab_pane_count(i);
+
         let grp = SharedString::from(format!("bar-task-grp-{i}"));
         let store = self.bar_bounds.clone();
         let (_, caret) = self.bar_drop_marks(tree::RowId::Task(i), th, &sk);
@@ -12063,8 +12071,11 @@ impl Workspace {
                 .overflow_hidden()
                 .whitespace_nowrap()
                 .text_size(px(CHROME_NAME_PT * s))
+                // The selected row's label joins its ring. A task that was given
+                // its own colour keeps it — that was somebody's choice and the
+                // selection has no business overruling it.
                 .text_color(text.unwrap_or(if is_active {
-                    th.text
+                    sk.ink.select
                 } else {
                     th.text.alpha(0.8)
                 }))
@@ -12096,28 +12107,20 @@ impl Workspace {
         })
         .children({
             let pinned = self.tab_pinned_notes(i, cx);
+            // The pin, never a tally of pins. One pinned note and four are the
+            // same news at this size: there is something here you asked to keep.
             (pinned > 0).then(|| {
                 div()
                     .text_size(px(10. * s))
-                    .child(if pinned > 1 {
-                        SharedString::from(format!("📌{pinned}"))
-                    } else {
-                        SharedString::from("📌")
-                    })
+                    .child(SharedString::from("📌"))
                     .into_any_element()
             })
         })
-        // how many terminals are inside — the tree's answer to "what is a
-        // task made of". Hidden at one, which is most tasks and says
-        // nothing. A bare number, because every glyph that meant "panes"
-        // was missing from the fallback font (U+25A4 among them).
-        .children((panes > 1).then(|| {
-            div()
-                .text_size(px(8.5 * s))
-                .text_color(th.faint)
-                .child(format!("\u{2022}{panes}"))
-                .into_any_element()
-        }))
+        // The pane count (`•2`) used to sit here — the tree's answer to "what is
+        // a task made of". Removed 2026-09-12 with the other three counts: on a
+        // real tree it is the last of a column of small digits down the right
+        // edge, and how many terminals a task holds is not something anyone
+        // steers by. The task's own pane strip says it precisely, when asked.
         .child(
             div()
                 .id(SharedString::from(format!("bar-task-x-{i}")))
@@ -12998,7 +13001,7 @@ impl Workspace {
         // underline is enough to say which tab you are in. The rule takes the
         // tab's own colour when it has one, so a deliberately coloured tab
         // still reads as itself.
-        let rule = fill.unwrap_or(sk.ink.mark);
+        let rule = fill.unwrap_or(sk.ink.select);
         // `sk.tab` owns the whole "which one am I on" decision — the underline
         // today, corner brackets under deco — including the trick that keeps the
         // rule's two pixels reserved in every state so the strip never shifts.
@@ -13016,7 +13019,7 @@ impl Workspace {
                 .text_size(px(CHROME_NAME_PT * ts))
                 .cursor_pointer()
                 .text_color(if is_active {
-                    sk.ink.ink
+                    sk.ink.select
                 } else {
                     sk.ink.ink_off
                 })
@@ -20280,30 +20283,62 @@ mod tests {
         &src[..src.find("\nmod tests {").expect("the test module")]
     }
 
-    /// The left bar's rows carry no trailing count.
+    /// The left bar's rows carry no trailing count, anywhere.
     ///
-    /// Two numbers used to sit on the right edge of every row — the branch's task
-    /// count and a `+N` agent-badge overflow. On a real tree that is a column of
-    /// small grey digits nobody reads, paid for in width by every row, and it was
-    /// removed on 2026-09-12 after seeing it on a twenty-one-pane screen.
+    /// FOUR numbers used to sit on the right edge of these rows: a branch's task
+    /// count, a `+N` agent-badge overflow, a `•N` pane count, and numeric
+    /// suffixes on the roll glyphs (`✅3`, `📌2`). Together they were a column of
+    /// small grey digits down the right edge that nobody reads and every row pays
+    /// for in width. Removed 2026-09-12 after seeing them on a real tree.
     ///
-    /// The guard exists because both are one `.child(format!(…))` away from
-    /// coming back, and neither would look wrong in a diff.
+    /// **This test scans the whole left-bar region, not a list of functions**,
+    /// and that is the point. Its first version checked `branch_row` and
+    /// `task_row` by name, passed, and shipped a build with two of the four
+    /// counts still on screen — because they lived in `roll_badges` and in a
+    /// different part of `task_row` than the one that had been named. A guard
+    /// that enumerates call sites only guards the call sites somebody thought of.
     #[test]
     fn the_left_bar_rows_carry_no_trailing_count() {
         let src = shipped_src();
-        let region = |from: &str, to: &str| {
-            let a = src.find(from).unwrap_or_else(|| panic!("missing {from}"));
-            let b = src[a..].find(to).unwrap_or_else(|| panic!("missing {to}"));
-            &src[a..a + b]
-        };
+        let a = src.find("fn roll_badges(").expect("roll_badges");
+        let b = src[a..]
+            .find("fn render_bar_slot(")
+            .expect("render_bar_slot");
+        let bar = &src[a..a + b];
+        for (needle, what) in [
+            ("roll.tasks)", "a branch's task count"),
+            ("\"+{over}\"", "the agent-badge overflow"),
+            ("\\u{2022}{panes}", "the pane count"),
+            ("{glyph}{n}", "a numeric suffix on a roll glyph"),
+            ("📌{pinned}", "a tally of pinned notes"),
+            ("\"{agents}\"", "a tally of working agents"),
+        ] {
+            assert!(
+                !bar.contains(needle),
+                "the left bar is printing {what} again ({needle})"
+            );
+        }
+    }
+
+    /// An OPEN branch hands its glyphs down to its children.
+    ///
+    /// A roll aggregates everything underneath, so on an expanded branch it
+    /// repeats — less precisely, one row higher — what the visible children are
+    /// already saying. One pinned note could put a pin on every branch between it
+    /// and the root. Closing a branch is what gathers the glyphs back.
+    #[test]
+    fn an_open_branch_shows_no_roll_glyphs() {
+        let src = shipped_src();
+        let a = src.find("fn roll_badges(").expect("roll_badges");
+        let b = src[a..].find("fn bar_row(").expect("bar_row");
+        let body = &src[a..a + b];
         assert!(
-            !region("fn branch_row(", "fn bar_drop_marks(").contains("roll.tasks)"),
-            "the branch row is printing its task count again"
+            body.contains("if !collapsed {"),
+            "roll_badges no longer returns early for an open branch"
         );
         assert!(
-            !region("fn task_row(", "fn tree_all_folded(").contains("\"+{over}\""),
-            "the task row is printing its badge overflow again"
+            src.contains("self.roll_badges(&roll, collapsed,"),
+            "the branch row is not passing its collapsed state to roll_badges"
         );
     }
 

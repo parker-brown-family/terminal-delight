@@ -59,7 +59,8 @@ icon = "▢"
 # mark_soft    = { from = "accent", a = 0.85 }        # the accent carrying text
 # mark_dim     = { from = "accent", a = 0.40 }        # the accent at rest
 # mark_wash    = { from = "accent", a = 0.14 }        # the accent as a tint
-# row_active   = { from = "accent", a = 0.08 }        # a seat, not a highlight — the ring marks
+# select       = { from = "human" }                   # the thing you have selected — the 👤 wheel pip
+# row_active   = { from = "human", a = 0.08 }         # a seat under it, not a highlight
 # hover        = { from = "white", a = 0.12 }         # the lift under the pointer
 
 # states
