@@ -1,0 +1,120 @@
+# terminal-delight skin — deco
+#
+# Art deco read as an INSTRUMENT rather than as ornament: the register of a
+# Rapture bathysphere panel, at the density of a working agent dashboard.
+#
+# What deco actually contributes here is not gold leaf. It is four structural
+# habits, and each one is an attentional strategy rather than a flourish:
+#
+#   square corners      a radius says "soft, web, tap me". Their absence says
+#                       "instrument", and it puts every edge on the same grid.
+#   the twin rule       one line between two things reads as adjacency; two
+#                       lines with a gap reads as a BOUNDARY. Deco's signature
+#                       move, and the cheapest way to make regions legible.
+#   the phosphor ring   a lit border on the active thing, blooming outward. It
+#                       replaced corner brackets on 2026-09-12, the same day they
+#                       shipped: at the size a tab label actually is, four
+#                       disconnected ticks read as debris AROUND the text rather
+#                       than as a bracket around it. A continuous line is one
+#                       shape the eye resolves at any size; four ticks are four
+#                       shapes it has to assemble, and at 16px it does not. The
+#                       ring also compounds with TD's own CRT glow, so the edge
+#                       is lit twice — the skin draws it, the renderer blooms it.
+#   tracked caps        letterspaced small caps for labels only. Deco's voice,
+#                       and it separates furniture from content at a glance.
+#
+# Explicitly NOT here, because the brief was modern and professional: no bezels,
+# no rivets, no gradients, no sunbursts, no chevrons, no HUD. Every device below
+# is load-bearing.
+#
+# The ring's bloom is the one exception to "no glow", and it is not decoration:
+# it is the marking. A glow spread over a whole surface is haze; a glow bound to
+# the edge of the ONE thing that is active is a pointer.
+#
+# This skin declares no colour it does not have to. It is written as RECIPES, so
+# it works on the brass-on-black deco palette it ships with AND on the green
+# hacker palette, the olive field-command one, or anything an Omarchy theme
+# switch hands it. Shape is the axis; colour stays the palette's business.
+#
+# THE MISSING DEVICE: there is no chamfer. The cut corner is the deco move a
+# reader pictures first, and gpui cannot draw one — corner styling takes radii
+# only, so a chamfer needs a rendered path behind every element that wants it.
+# `corner = "square"` plus the ring is the substitute. Parked as issue #407,
+# with the cost estimate and the check that would close it as not-worth-doing.
+
+name = "deco"
+icon = "◈"
+
+[shape]
+corner   = "square"
+boundary = "double"
+emphasis = "glow"
+divider  = "double"
+caps     = "tracked"
+# No lit surfaces. A gradient on a header is shine, and shine is the claim that
+# the bar is a physical object catching a light — which is exactly the claim a
+# hard edge has already contradicted. Flat is not an aesthetic here; it is the
+# rest of the skin being consistent with itself.
+shine    = "flat"
+
+[metric]
+# Nothing rounds. `radius` still has a value because the inner ring of a double
+# boundary reads it; at square it resolves to zero anyway.
+radius     = 0.0
+radius_lg  = 0.0
+# The gap IS the twin rule. 2px is the smallest that survives a 1x display: at
+# 1px the two lines merge into one fat line and the device is simply lost.
+rule_gap   = 2.0
+hairline   = 1.0
+border     = 1.0
+# Deco breathes. The extra two pixels either side are what stop square corners
+# reading as cramped — this is the one place the look costs real estate.
+pad_x      = 8.0
+pad_y      = 4.0
+chip_px    = 7.0
+chip_py    = 2.0
+gap        = 5.0
+# The ring's bloom. Brass on near-black wants a wider, softer halo than a
+# green phosphor does — the hue is already warm, so the glow reads as light
+# rather than as haze.
+glow       = 6.0
+glow_a     = 0.45
+rail       = 2.0
+label_size = 9.0
+row_h      = 16.0
+
+[ink]
+# The structural lines carry the ACCENT, not a grey. That is the whole
+# difference between deco and flat-dark: the geometry is the ornament, so the
+# geometry has to be visible. Still a recipe — under the brass palette these are
+# gold, under the hacker palette they are green, and both are correct.
+rule_strong = { from = "accent", a = 0.55 }
+rule        = { from = "accent", a = 0.22 }
+edge        = { from = "accent", a = 0.45 }
+
+# The RING does the marking, so the wash underneath it drops to a whisper —
+# enough to seat the row, not enough to fight either the text or the halo.
+mark_wash   = { from = "accent", a = 0.05 }
+
+# Text ON the accent goes DARK, not white. A brass fill is a light colour — the
+# deco palette puts it at about 53% lightness — so white-on-accent is the low
+# contrast pair and the panel ground is the high one. The default skin's
+# white-at-95% is the right answer for a dark accent and the wrong one here,
+# which is the whole reason this is a token and not a constant.
+ink_on_mark = { from = "bg" }
+
+# Panels sit slightly above the ground rather than on it, so the twin rule has
+# something to be a boundary BETWEEN.
+panel        = { from = "bg" }
+panel_raised = { from = "surface", l = 1.15, max_l = 0.22 }
+btn_face     = { from = "surface", l = 0.9 }
+
+# The second attentional tier. Deco gives the furniture; the running thing gets
+# the palette's complement, which is what keeps a wall of gold from flattening
+# into one texture.
+#
+# This used to say `from = "human"`, pointing `live` at the palette's mint. That
+# became wrong the moment `select` was given `human` as well: "running" and
+# "selected" would have been the same mint, which is the worse of the two
+# collisions this layer guards against — one is furniture, both of these are
+# events. Complement is the default anyway, so the override simply goes.

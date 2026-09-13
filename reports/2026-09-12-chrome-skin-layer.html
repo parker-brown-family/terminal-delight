@@ -1,0 +1,1262 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The chrome is themeable as data</title>
+<style>
+/* decision-brief — surfaces, ink, and the three structural components.
+ *
+ * ONE palette. No theme system, no theme toggle. tps-report shipped four themes and
+ * 165 theme-related rules; nobody ever switched. A brief is read once, quickly, to make
+ * a decision — the reader is not shopping for a skin.
+ *
+ * Categorical colours are the validated dataviz default palette (dark steps), which
+ * clears the CVD, chroma, lightness and contrast gates on the adjacent pairlist.
+ * If you change them, re-run the validator; do not eyeball it.
+ *
+ * What is here: tokens, the modal shell, tables, callouts, code. Everything else —
+ * cards, escalation lists, stat tiles, charts — is the brief's own business.
+ * Build what the material needs.
+ */
+:root {
+  color-scheme: dark;
+
+  --surface-0: #111110;   /* page */
+  --surface-1: #1a1a19;   /* panel */
+  --surface-2: #232321;   /* raised */
+  --surface-3: #2e2e2b;   /* control */
+  --line:      #3a3a36;
+
+  --text-primary:   #ffffff;
+  --text-secondary: #c3c2b7;
+  --text-muted:     #8b8a80;
+
+  /* categorical — assign in fixed order, never cycle */
+  --s1: #3987e5;  --s2: #d95926;  --s3: #199e70;  --s4: #c98500;
+  --s5: #d55181;  --s6: #008300;  --s7: #9085e9;  --s8: #e66767;
+
+  /* status — reserved. Never reuse as "series 5". Always ship with a label. */
+  --good:     #0ca30c;
+  --warning:  #fab219;
+  --serious:  #ec835a;
+  --critical: #d03b3b;
+
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, "JetBrains Mono", Menlo, Consolas, monospace;
+  --sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif;
+}
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  margin: 0; background: var(--surface-0); color: var(--text-primary);
+  font-family: var(--sans); font-size: 15px; line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+.wrap { max-width: 1180px; margin: 0 auto; padding: 0 24px 120px; }
+header.top .wrap { padding-bottom: 0; }   /* the wrap's bottom padding is for the page, not the header */
+
+/* ---- headings ----
+   A heading names the thing. It does not explain it — an em-dash gloss after a
+   heading breaks the heading. The body does the explaining. */
+h1 { font-size: 34px; line-height: 1.18; margin: 0 0 16px; letter-spacing: -.02em; font-weight: 650; }
+h2.sec {
+  font-size: 13px; font-family: var(--mono); letter-spacing: .13em; text-transform: uppercase;
+  color: var(--text-muted); margin: 56px 0 18px; padding-bottom: 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+/* ---- modal shell: where depth lives ---- */
+dialog {
+  border: 1px solid var(--line); border-radius: 12px;
+  background: var(--surface-1); color: var(--text-primary);
+  max-width: 880px; width: calc(100vw - 44px); max-height: 86vh; padding: 0; overflow: hidden;
+}
+dialog::backdrop { background: rgba(0,0,0,.76); backdrop-filter: blur(3px); }
+.dlg-head {
+  position: sticky; top: 0; background: var(--surface-2);
+  border-bottom: 1px solid var(--line); padding: 20px 26px;
+  display: flex; justify-content: space-between; align-items: flex-start; gap: 20px; z-index: 2;
+}
+.dlg-head h3 { margin: 0 0 5px; font-size: 20px; letter-spacing: -.015em; }
+.dlg-head .repo { font-family: var(--mono); font-size: 11.5px; color: var(--text-muted); margin: 0; }
+.x {
+  background: var(--surface-3); border: 1px solid var(--line); color: var(--text-secondary);
+  border-radius: 6px; width: 30px; height: 30px; font-size: 17px; line-height: 1;
+  cursor: pointer; flex: none;
+}
+.x:hover { background: var(--critical); color: #fff; border-color: var(--critical); }
+.dlg-body { padding: 24px 26px 34px; overflow-y: auto; max-height: calc(86vh - 78px); }
+.dlg-body h4 {
+  font-family: var(--mono); font-size: 11.5px; letter-spacing: .12em; text-transform: uppercase;
+  color: var(--text-muted); margin: 30px 0 12px; padding-bottom: 8px;
+  border-bottom: 1px solid var(--line);
+}
+.dlg-body h4:first-child { margin-top: 0; }
+.dlg-body p  { margin: 0 0 13px; color: var(--text-secondary); font-size: 14.5px; }
+.dlg-body ul { margin: 0 0 15px; padding-left: 20px; color: var(--text-secondary); font-size: 14.5px; }
+.dlg-body li { margin-bottom: 8px; }
+.dlg-body strong { color: var(--text-primary); font-weight: 600; }
+
+/* ---- prose furniture ---- */
+code {
+  font-family: var(--mono); font-size: 12.5px; background: var(--surface-3);
+  padding: 1.5px 5px; border-radius: 4px; color: #e8d9a8; word-break: break-word;
+}
+pre {
+  background: var(--surface-0); border: 1px solid var(--line); border-radius: 7px;
+  padding: 15px 17px; overflow-x: auto; margin: 0 0 15px;
+}
+pre code { background: none; padding: 0; color: var(--text-secondary); font-size: 12.5px; line-height: 1.65; }
+
+table { width: 100%; border-collapse: collapse; margin: 0 0 17px; font-size: 13.5px; }
+th, td { text-align: left; padding: 9px 11px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th {
+  font-family: var(--mono); font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase;
+  color: var(--text-muted); font-weight: 500; background: var(--surface-2);
+}
+td { color: var(--text-secondary); }
+td b, td strong { color: var(--text-primary); }
+
+blockquote {
+  margin: 0 0 15px; padding: 12px 18px; border-left: 3px solid var(--s1);
+  background: var(--surface-2); border-radius: 0 7px 7px 0;
+  color: var(--text-secondary); font-size: 14px; font-style: italic;
+}
+
+.callout {
+  border-left: 3px solid var(--warning); background: rgba(250,178,25,.07);
+  padding: 14px 18px; border-radius: 0 7px 7px 0; margin: 0 0 17px;
+}
+.callout.crit { border-color: var(--critical); background: rgba(208,59,59,.08); }
+.callout.good { border-color: var(--good);     background: rgba(12,163,12,.08); }
+.callout p:last-child { margin-bottom: 0; }
+.callout .lbl {
+  font-family: var(--mono); font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase;
+  color: var(--text-muted); margin: 0 0 7px; display: block;
+}
+
+/* ---- confidence labels. Never assert without one. ---- */
+.tag {
+  display: inline-block; font-family: var(--mono); font-size: 10px; letter-spacing: .07em;
+  text-transform: uppercase; padding: 2.5px 7px; border-radius: 4px;
+  margin-right: 6px; font-weight: 600;
+}
+.tag.v { background: rgba(12,163,12,.18);  color: #6cd46c; border: 1px solid rgba(12,163,12,.4); }   /* measured */
+.tag.w { background: rgba(250,178,25,.14); color: #f5c95f; border: 1px solid rgba(250,178,25,.38); } /* inferred */
+.tag.c { background: rgba(208,59,59,.16);  color: #f08a8a; border: 1px solid rgba(208,59,59,.4); }   /* contradicted / hunch */
+
+footer {
+  margin-top: 70px; padding-top: 26px; border-top: 1px solid var(--line);
+  font-family: var(--mono); font-size: 11.5px; color: var(--text-muted);
+}
+footer p { margin: 0 0 7px; }
+
+@media (max-width: 640px) {
+  h1 { font-size: 26px; }
+  .wrap { padding: 0 16px 80px; }
+}
+/* decision-brief — reader notes, styling.
+   Depends on the surface/ink/status custom properties in base.css. */
+
+.notable { position: relative; }
+
+.note-btn {
+  position: absolute; top: 8px; right: 8px; z-index: 6;
+  width: 26px; height: 26px; line-height: 1; padding: 0;
+  background: var(--surface-3); border: 1px solid var(--line); border-radius: 6px;
+  color: var(--text-muted); font-size: 13px; cursor: pointer; opacity: 0;
+  transition: opacity .12s, background .12s, color .12s, border-color .12s;
+}
+/* Hidden until hover: a brief with 130 always-visible affordances reads as a form. */
+.notable:hover > .note-btn,
+.note-btn:focus-visible { opacity: 1; }
+.note-btn:hover { background: var(--warning); border-color: var(--warning); color: var(--surface-1); }
+
+.notable.has-note > .note-btn {
+  opacity: 1; background: var(--warning); border-color: var(--warning);
+  color: var(--surface-1); font-weight: 700;
+}
+.notable.has-note { box-shadow: inset 3px 0 0 var(--warning); }
+tr.notable.has-note > td:first-child { box-shadow: inset 3px 0 0 var(--warning); }
+
+/* Table rows can't host an absolutely-positioned child reliably — inline it. */
+tr.notable .note-btn {
+  position: static; opacity: .35; width: 22px; height: 22px; font-size: 11px;
+  margin-left: 6px; vertical-align: middle; display: inline-block;
+}
+tr.notable:hover .note-btn { opacity: 1; }
+
+/* ---- floating bar ---- */
+.notebar {
+  position: fixed; right: 18px; bottom: 18px; z-index: 900;
+  display: flex; gap: 8px; align-items: center;
+  background: var(--surface-2); border: 1px solid var(--line); border-radius: 10px;
+  padding: 9px 11px; box-shadow: 0 10px 32px rgba(0,0,0,.55);
+  font-family: var(--mono); font-size: 11.5px;
+}
+.notebar .cnt { color: var(--text-muted); padding-right: 4px; }
+.notebar .cnt b { color: var(--warning); font-size: 14px; }
+.notebar button {
+  font-family: var(--mono); font-size: 11px; letter-spacing: .03em; cursor: pointer;
+  background: var(--surface-3); border: 1px solid var(--line); color: var(--text-secondary);
+  border-radius: 6px; padding: 6px 10px;
+  transition: background .12s, color .12s, border-color .12s;
+}
+.notebar button:hover { background: var(--warning); color: var(--surface-1); border-color: var(--warning); }
+.notebar button.primary {
+  background: rgba(250,178,25,.14); border-color: rgba(250,178,25,.45); color: #f5c95f;
+}
+.notebar button:disabled {
+  opacity: .4; cursor: default; background: var(--surface-3);
+  color: var(--text-muted); border-color: var(--line);
+}
+@media (max-width: 640px) {
+  .notebar { right: 8px; bottom: 8px; flex-wrap: wrap; max-width: calc(100vw - 16px); }
+}
+
+/* ---- note dialog ---- */
+dialog#d-note { max-width: 620px; }
+#note-list { margin: 0 0 18px; padding: 0; list-style: none; }
+#note-list li {
+  background: var(--surface-2); border: 1px solid var(--line);
+  border-left: 3px solid var(--warning); border-radius: 0 7px 7px 0;
+  padding: 11px 14px; margin-bottom: 9px; font-size: 14px; color: var(--text-secondary);
+}
+#note-list .nts {
+  font-family: var(--mono); font-size: 10px; color: var(--text-muted);
+  display: flex; justify-content: space-between; gap: 10px; margin-bottom: 6px;
+}
+#note-list .ndel {
+  background: none; border: none; color: var(--text-muted);
+  cursor: pointer; font-size: 11px; padding: 0;
+}
+#note-list .ndel:hover { color: var(--critical); }
+#note-none { color: var(--text-muted); font-size: 13.5px; margin: 0 0 16px; }
+
+#note-text {
+  width: 100%; min-height: 104px; background: var(--surface-0);
+  border: 1px solid var(--line); border-radius: 7px; color: var(--text-primary);
+  padding: 11px 13px; font-family: var(--sans); font-size: 14.5px;
+  resize: vertical; line-height: 1.55;
+}
+#note-text:focus { outline: none; border-color: var(--warning); }
+
+.note-actions { display: flex; gap: 9px; align-items: center; margin-top: 11px; }
+.note-actions button {
+  font-family: var(--mono); font-size: 11.5px; cursor: pointer; border-radius: 6px;
+  padding: 8px 14px; border: 1px solid var(--line);
+  background: var(--surface-3); color: var(--text-secondary);
+}
+.note-actions button.save {
+  background: var(--warning); border-color: var(--warning);
+  color: var(--surface-1); font-weight: 600;
+}
+.note-actions .hintk {
+  font-family: var(--mono); font-size: 10.5px; color: var(--text-muted); margin-left: auto;
+}
+
+/* ---- export dialog ---- */
+dialog#d-export { max-width: 780px; }
+#export-out {
+  width: 100%; min-height: 320px; background: var(--surface-0);
+  border: 1px solid var(--line); border-radius: 7px; color: var(--text-secondary);
+  padding: 13px; font-family: var(--mono); font-size: 12px; line-height: 1.55;
+  resize: vertical; white-space: pre;
+}
+.tokest { font-family: var(--mono); font-size: 11px; color: var(--text-muted); margin: 9px 0 0; }
+/* ---- brief-local components ---- */
+header.top { border-bottom: 1px solid var(--line); background: var(--surface-1); padding: 34px 0 30px; margin-bottom: 8px; }
+.kicker { font-family: var(--mono); font-size: 11px; letter-spacing: .16em; text-transform: uppercase; color: var(--text-muted); margin: 0 0 14px; }
+.verdict { font-size: 19px; line-height: 1.5; color: var(--text-secondary); max-width: 74ch; margin: 0 0 20px; }
+.verdict b { color: var(--text-primary); font-weight: 600; }
+.meta { font-family: var(--mono); font-size: 11.5px; color: var(--text-muted); display: flex; flex-wrap: wrap; gap: 18px; }
+.meta span b { color: var(--text-secondary); font-weight: 500; }
+
+.esc-list { list-style: none; padding: 0; margin: 0; counter-reset: none; }
+.esc-list li { display: grid; grid-template-columns: 32px 1fr; gap: 14px; padding: 15px 0; border-bottom: 1px solid var(--line); }
+.esc-list li:last-child { border-bottom: 0; }
+.esc-n { font-family: var(--mono); font-size: 20px; color: var(--text-muted); line-height: 1.1; }
+.esc-list h3 { margin: 0 0 5px; font-size: 15.5px; font-weight: 600; }
+.esc-list p { margin: 0 0 4px; color: var(--text-secondary); font-size: 14px; }
+.esc-list .take { font-family: var(--mono); font-size: 11.5px; color: var(--text-muted); }
+
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin: 0 0 20px; }
+.tile { background: var(--surface-1); border: 1px solid var(--line); border-radius: 9px; padding: 14px 16px; }
+.tile .n { font-family: var(--mono); font-size: 25px; font-weight: 600; letter-spacing: -.02em; display: block; line-height: 1.1; }
+.tile .k { font-size: 12.5px; color: var(--text-muted); display: block; margin-top: 5px; line-height: 1.35; }
+
+.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
+.card { background: var(--surface-1); border: 1px solid var(--line); border-radius: 10px; padding: 17px 19px; }
+.card h3 { margin: 0 0 8px; font-size: 15.5px; }
+.card p { margin: 0 0 9px; color: var(--text-secondary); font-size: 14px; }
+.card p:last-child { margin-bottom: 0; }
+.card .why { color: var(--text-muted); font-size: 13px; }
+.card.rec { border-color: var(--s3); box-shadow: 0 0 0 1px var(--s3) inset; }
+.card.rec .badge { color: var(--s3); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; font-family: var(--mono); display: block; margin-bottom: 6px; }
+
+.finding { border-left: 3px solid var(--s1); background: var(--surface-1); padding: 14px 18px; border-radius: 0 8px 8px 0; margin: 0 0 12px; }
+.finding h3 { margin: 0 0 6px; font-size: 15px; }
+.finding p { margin: 0 0 8px; color: var(--text-secondary); font-size: 14px; }
+.finding p:last-child { margin-bottom: 0; }
+
+.grill { display: grid; gap: 14px; }
+.ask { background: var(--surface-1); border: 1px solid var(--line); border-left: 3px solid var(--s4); border-radius: 0 9px 9px 0; padding: 16px 19px; }
+.ask h3 { margin: 0 0 7px; font-size: 15.5px; }
+.ask p { margin: 0 0 8px; color: var(--text-secondary); font-size: 14px; }
+.ask p.rec { color: var(--text-primary); font-size: 13.5px; margin-bottom: 0; }
+.ask p.rec b { color: var(--s3); }
+
+button.more { background: var(--surface-3); border: 1px solid var(--line); color: var(--text-secondary); border-radius: 6px; padding: 5px 11px; font-family: var(--mono); font-size: 11px; cursor: pointer; letter-spacing: .04em; }
+button.more:hover { border-color: var(--s1); color: var(--text-primary); }
+
+/* ---- the axes diagram ---- */
+.axes { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 18px; background: var(--surface-1); border: 1px solid var(--line); border-radius: 10px; padding: 20px 22px; margin: 0 0 20px; }
+.axes .col { display: grid; gap: 9px; }
+.ax { border: 1px solid var(--line); border-radius: 7px; padding: 9px 12px; background: var(--surface-2); }
+.ax .t { font-family: var(--mono); font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--text-muted); }
+.ax .d { font-size: 13px; color: var(--text-secondary); }
+.ax.new { border-color: var(--s4); box-shadow: 0 0 0 1px var(--s4) inset; }
+.ax.new .t { color: var(--s4); }
+.axes .arrow { font-family: var(--mono); color: var(--text-muted); font-size: 20px; }
+.axes .out { border: 1px solid var(--s3); border-radius: 7px; padding: 11px 13px; background: rgba(25,158,112,.07); }
+.axes .out code { background: none; padding: 0; color: #7fe0bd; font-size: 12px; }
+@media (max-width: 760px) { .axes { grid-template-columns: 1fr; } .axes .arrow { transform: rotate(90deg); justify-self: center; } }
+
+/* ---- the mockup: one markup, four token sets ---- */
+/* Two columns, always, because the grid IS the argument: across is the skin
+   changing, down is the palette changing. At four-across it stops being a matrix. */
+.mocks { display: grid; grid-template-columns: repeat(2, minmax(240px, 1fr)); gap: 18px 22px; margin: 0 0 14px; }
+@media (max-width: 560px) { .mocks { grid-template-columns: 1fr; } }
+.mock figcaption { font-family: var(--mono); font-size: 11px; color: var(--text-muted); margin: 9px 0 0; letter-spacing: .04em; }
+.mock figcaption b { color: var(--text-secondary); font-weight: 500; }
+.mock { margin: 0; }
+
+.tdbar {
+  --r: 4px; --rlg: 10px; --px: 6px; --py: 4px; --cpx: 5px; --cpy: 1px;
+  --gap: 4px; --rowh: 15px; --bk: 5px; --rail: 2px; --lbl: 9px; --gap2: 2px; --trk: 0;
+  position: relative; overflow: hidden; padding-bottom: 6px;
+  font-family: var(--mono); font-size: 10.5px; line-height: 1.3;
+  background: var(--p); color: var(--i);
+  border: 1px solid var(--rs); border-radius: var(--rlg);
+  min-height: 268px;
+}
+.tdbar.dbl::before { content: ""; position: absolute; top: var(--gap2); right: var(--gap2); bottom: var(--gap2); left: var(--gap2); border: 1px solid var(--ru); border-radius: var(--r); pointer-events: none; z-index: 1; }
+.tdbar .hd { display: flex; align-items: center; gap: var(--gap); padding: var(--py) var(--px); position: relative; z-index: 2; }
+.tdbar .scope { position: relative; flex: 1; min-width: 0; padding: var(--cpy) var(--cpx); border-radius: var(--r); font-size: var(--lbl); font-weight: 800; letter-spacing: var(--trk); white-space: nowrap; overflow: hidden; color: var(--mk); }
+.tdbar.fill .scope { background: var(--wash); }
+.tdbar .ib { flex: none; width: 17px; height: var(--rowh); display: flex; align-items: center; justify-content: center; border-radius: var(--r); color: var(--dim); font-size: 8px; }
+.tdbar .ru { margin: 0 var(--px); position: relative; z-index: 2; }
+.tdbar .ru i { display: block; height: 1px; background: var(--ru); }
+.tdbar.dblru .ru i:first-child { background: var(--rs); }
+.tdbar.dblru .ru i:first-child + i { height: var(--gap2); background: none; }
+.tdbar .rows { padding: 5px 0 0; position: relative; z-index: 2; }
+/* Tracking lands on LABELS only, never on content — in the app that is the
+   difference between a call site that asked for `sk.caps()` and one that did not,
+   and a mockup that tracked every task name would be flattering the look. */
+.tdbar .row { position: relative; display: flex; align-items: center; gap: 5px; padding: 2px var(--px) 2px 4px; border-radius: var(--r); }
+.tdbar .row.prj .nm { letter-spacing: var(--trk); }
+.tdbar .row .dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+.tdbar .row .bar { width: 3px; height: 11px; border-radius: var(--r); flex: none; }
+.tdbar .row .nm { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.tdbar .row.prj { font-weight: 800; font-size: 9.5px; }
+.tdbar .row.prj .nm { color: var(--i); }
+.tdbar .row.tsk .nm { color: var(--dim); }
+.tdbar .row .cnt { color: var(--faint); font-size: 8.5px; flex: none; }
+.tdbar .row .pip { width: 6px; height: 6px; border-radius: 50%; flex: none; }
+.tdbar .row.act { background: var(--rowa); border-left: var(--rail) solid var(--mk); padding-left: calc(4px - var(--rail)); }
+.tdbar .row.act .nm { color: var(--i); }
+.tdbar .bk { display: none; }
+/* The phosphor ring. Every shipped skin uses it now, so it is on all four
+   mockups — the grid differs by corner, boundary, divider and caps, not by how
+   the active thing is marked. The border is drawn at every state and merely goes
+   transparent when unlit, exactly as `Skin::ring` does, so nothing shifts. */
+.tdbar.ring .row, .tdbar.ring .scope { border: 1px solid transparent; }
+/* Two shadows and almost no fill — the focused pane's recipe, scaled to a row.
+   The crisp 0-blur/1px-spread ring doubles the border without thickening it;
+   the wider soft halo blooms around it. The fill is a seat, not a highlight. */
+.tdbar.ring .row.act {
+  background: var(--rowa); border: 1px solid var(--mk); padding-left: 4px;
+  box-shadow: 0 0 0 1px var(--mk), 0 0 var(--glow, 5px) var(--halo, var(--mk));
+}
+.tdbar.ring .scope {
+  background: var(--wash); border-color: var(--mk);
+  box-shadow: 0 0 0 1px var(--mk), 0 0 var(--glow, 5px) var(--halo, var(--mk));
+}
+.tdbar .row .cnt { display: none; }  /* the app stopped drawing these */
+.tdbar .slot { margin: 8px var(--px) 0; padding-top: 6px; border-top: 1px solid var(--ru); position: relative; z-index: 2; }
+.tdbar .pr { display: flex; align-items: center; gap: 5px; padding: 2px 0; }
+.tdbar .pr .who { letter-spacing: var(--trk); }
+.tdbar .pr .who { width: 26px; color: var(--faint); font-size: 8.5px; flex: none; }
+.tdbar .pr .track { flex: 1; height: 3px; background: var(--sunk); border-radius: var(--r); overflow: hidden; }
+.tdbar .pr .track i { display: block; height: 100%; }
+.tdbar .pr .pct { width: 26px; text-align: right; font-size: 8.5px; flex: none; }
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="wrap">
+    <p class="kicker">terminal-delight &middot; chrome skin layer &middot; 12 Sep 2026 &middot; built, pickable, ringed, cut over four times</p>
+    <h1>The chrome is themeable as data</h1>
+    <p class="verdict">Terminal Delight now has a <b>third themeable axis</b>. Colour and CRT texture were already data; <b>shape</b> is the new one &mdash; 27 chrome inks written as recipes over the palette, 14 metrics, 6 strategies. Three skins ship, there is a <b>SKIN row in the design tray</b> that restyles the window on a click, and <b>your live 21-pane session is running it right now</b> — with the phosphor ring on whatever tab you are in.</p>
+    <p class="meta">
+      <span>PR <b>#405</b></span>
+      <span>branch <b>chrome/skin-tokens</b></span>
+      <span>gates <b>approved</b></span>
+      <span>tests <b>801 pass, 21 new</b></span>
+      <span>clippy + fmt <b>clean</b></span>
+      <span>skins <b>default · deco · console</b></span>
+      <span>picker <b>in the design tray</b></span>
+      <span>score <b>opened 8, closed 6</b></span>
+    </p>
+  </div>
+</header>
+
+<div class="wrap">
+
+<div class="callout good">
+  <span class="lbl">open the design tray</span>
+  <p>Your live window is on the new build. Under <b>DESIGN</b> there is now a <b>SKIN</b> row &mdash; <code>default</code>, <code>deco</code>, <code>console</code> &mdash; and clicking one restyles the window you are sitting in, immediately.</p>
+  <p>That is the whole thing waiting on you: flip between them on your own twenty-one-pane screen and see which one you can still read. If a look is wrong it is wrong in a TOML file you can change in ten seconds, and nothing needs rebuilding.</p>
+</div>
+
+<h2 class="sec">Read first</h2>
+<ol class="esc-list">
+  <li>
+    <span class="esc-n">1</span>
+    <div>
+      <h3>The active thing wears a phosphor ring now</h3>
+      <p>A lit border that blooms outward, on the active tab, the active row and the scope chip &mdash; in <b>both</b> skins, default included. It replaced corner brackets the same day they shipped, because you photographed them and they were debris.</p>
+      <p class="take">This is the one change your live window will actually show you, since the rest of the default skin is unmoved. <button class="more" data-dlg="d-ring">why the ring and not the brackets</button></p>
+    </div>
+  </li>
+  <li>
+    <span class="esc-n">2</span>
+    <div>
+      <h3>The seam is deliberate: overlays are still round</h3>
+      <p>Six surfaces are converted &mdash; bar, strip, left bar, rows, pane headers, workspace body. The usage face, the paint tray and the pickers are not, so opening one under deco shows round corners on a square app.</p>
+      <p class="take">That is slices 4&ndash;5, and it is the honest cost of stopping at an MVP. Do not read it as a bug.</p>
+    </div>
+  </li>
+  <li>
+    <span class="esc-n">3</span>
+    <div>
+      <h3>The MVP cut is not &ldquo;slices 1&ndash;3&rdquo;, and that is the interesting part</h3>
+      <p>A surface holds two kinds of literal, and only one decides whether a look lands: <b>shape</b> (radii, boundaries, emphasis, lighting) and <b>layout</b> (padding, gaps, one-off tints). Converting the shape half of six surfaces beats converting all of two, because the question is whether deco looks right and only the shape half answers it.</p>
+      <p class="take"><span class="tag v">measured</span> 99 radius calls, plus the boundary colours, the selection devices and the surface lighting.</p>
+    </div>
+  </li>
+  <li>
+    <span class="esc-n">4</span>
+    <div>
+      <h3>The golden test caught a real one</h3>
+      <p><code>radius()</code> was multiplying by the UI scale. Under the house scale of 0.80 that would have rounded <b>every corner in the app</b> by 0.8px &mdash; inside a change that claimed to alter nothing, and nobody would ever have found it by eye.</p>
+      <p class="take"><span class="tag v">measured</span> Corners are shapes, not lengths. There is now a test asserting that at five scales. <button class="more" data-dlg="d-defects">the other two it caught</button></p>
+    </div>
+  </li>
+  <li>
+    <span class="esc-n">5</span>
+    <div>
+      <h3>Chamfers are filed where you will trip over them</h3>
+      <p>Issue #407, plus the <code>Corner</code> enum&rsquo;s own doc comment and the header of <code>deco.toml</code> &mdash; the three places the people most likely to want one are standing. It carries the cost estimate <em>and</em> the check that would close it as not worth doing.</p>
+      <p class="take">Your words: <em>&ldquo;I do believe it will come up but I will forget!&rdquo;</em></p>
+    </div>
+  </li>
+</ol>
+
+<h2 class="sec">What was in the way</h2>
+<div class="tiles">
+  <div class="tile"><span class="n" style="color:var(--s2)">268</span><span class="k">colour derivations computed at the call site</span></div>
+  <div class="tile"><span class="n" style="color:var(--s2)">59</span><span class="k">distinct alpha values, from six palette roles</span></div>
+  <div class="tile"><span class="n">141</span><span class="k">radius calls, compiled in</span></div>
+  <div class="tile"><span class="n">197</span><span class="k">border calls</span></div>
+  <div class="tile"><span class="n">62</span><span class="k">distinct <code>px()</code> literals</span></div>
+</div>
+<p><span class="tag v">measured</span> Counted on <code>main</code> at <code>ed69a0f</code>. The consequence is one sentence: a theme file could <b>retint</b> Terminal Delight and could not <b>restyle</b> it. Art deco is not a tint &mdash; it is square corners where there were round ones, a twin rule where there was a hairline, a bracket where there was a filled pill. None of that is reachable from a colour.</p>
+
+<h2 class="sec">The three axes</h2>
+<div class="axes">
+  <div class="col">
+    <div class="ax"><span class="t">palette</span><span class="d">what hue everything is &mdash; already data, already separable as <code>$TD_PALETTE</code></span></div>
+    <div class="ax new"><span class="t">skin &middot; new</span><span class="d">what shape everything is &mdash; recipes, metrics, strategies</span></div>
+    <div class="ax"><span class="t">effects</span><span class="d">how much CRT you get &mdash; already data</span></div>
+  </div>
+  <div class="arrow">&rarr;</div>
+  <div class="col">
+    <div class="out"><code>Skin::bake(&amp;Theme, scale)</code><br><span class="d" style="color:var(--text-secondary);font-size:13px">one resolved skin per region per frame &mdash; about forty float ops</span></div>
+    <div class="out"><code>sk.panel() &middot; sk.chip() &middot; sk.rule_h()</code><br><span class="d" style="color:var(--text-secondary);font-size:13px">the call site asks for an element; the strategy branch happens in here, once</span></div>
+  </div>
+</div>
+<p>A <code>SkinSpec</code> is what a file says &mdash; every token optional, no palette in it &mdash; so one spec serves every pane whatever theme each pane is wearing. <button class="more" data-dlg="d-rejected">what was rejected, and why</button></p>
+
+<h2 class="sec">One markup, four token sets</h2>
+<p>The left bar, drawn from the values <code>terminal-delight skin</code> actually resolves. Reading across is the skin changing; reading down is the palette changing. The grid is the architecture: neither axis knows about the other. All four carry the phosphor ring, because every shipped skin now marks the active thing the same way — what differs is corners, boundaries, dividers and caps.</p>
+
+<div class="mocks">
+  <figure class="mock">
+    <div class="tdbar ring" style="--p:#03100a;--rs:#020805;--ru:rgba(20,64,31,.25);--i:#86efac;--dim:rgba(134,239,172,.7);--faint:rgba(134,239,172,.45);--off:#14401f;--mk:#22c55e;--wash:rgba(34,197,94,.08);--rowa:rgba(34,197,94,.08);--live:#c52289;--ok:#4ade80;--warn:#fbe08a;--dgr:#ff7b7b;--sunk:#030a06">
+      <div class="hd"><span class="scope"><i class="bk"></i>ALL</span><span class="ib">&#9660;</span><span class="ib">&#9723;</span><span class="ib">+</span><span class="ib">&#9664;</span></div>
+      <div class="ru"><i></i><i></i><i></i></div>
+      <div class="rows">
+        <div class="row prj"><span class="dot" style="background:var(--mk)"></span><span class="nm">TERMINAL-DELIGHT</span><span class="cnt">6</span></div>
+        <div class="row tsk"><span class="bar" style="background:var(--mk)"></span><span class="nm">chrome skin</span><span class="pip" style="background:var(--live)"></span></div>
+        <div class="row tsk act"><i class="bk"></i><span class="bar" style="background:var(--mk)"></span><span class="nm">skin layer</span><span class="pip" style="background:var(--ok)"></span></div>
+        <div class="row tsk"><span class="bar" style="background:var(--off)"></span><span class="nm">left bar adoption</span></div>
+        <div class="row prj"><span class="dot" style="background:var(--off)"></span><span class="nm">CONCLAVE</span><span class="cnt">3</span></div>
+        <div class="row tsk"><span class="bar" style="background:var(--off)"></span><span class="nm">crossfire refs</span></div>
+      </div>
+      <div class="slot">
+        <div class="pr"><span class="who">CLD</span><span class="track"><i style="width:38%;background:var(--ok)"></i></span><span class="pct" style="color:var(--ok)">38%</span></div>
+        <div class="pr"><span class="who">CDX</span><span class="track"><i style="width:71%;background:var(--warn)"></i></span><span class="pct" style="color:var(--warn)">71%</span></div>
+        <div class="pr"><span class="who">GEM</span><span class="track"><i style="width:94%;background:var(--dgr)"></i></span><span class="pct" style="color:var(--dgr)">94%</span></div>
+      </div>
+    </div>
+    <figcaption><b>default</b> skin &middot; <b>hacker</b> palette &mdash; today, unchanged</figcaption>
+  </figure>
+
+  <figure class="mock">
+    <div class="tdbar ring dbl dblru" style="--p:#03100a;--rs:rgba(34,197,94,.55);--ru:rgba(34,197,94,.22);--i:#86efac;--dim:rgba(134,239,172,.7);--faint:rgba(134,239,172,.45);--off:#14401f;--mk:#22c55e;--wash:rgba(34,197,94,.05);--rowa:rgba(34,197,94,.08);--live:#e49fcb;--ok:#4ade80;--warn:#fbe08a;--dgr:#ff7b7b;--sunk:#030a06;--r:0px;--rlg:0px;--px:8px;--cpx:7px;--cpy:2px;--gap:5px;--rowh:16px;--bk:6px;--trk:.1em;--glow:6px">
+      <div class="hd"><span class="scope"><i class="bk"></i>ALL</span><span class="ib">&#9660;</span><span class="ib">&#9723;</span><span class="ib">+</span><span class="ib">&#9664;</span></div>
+      <div class="ru"><i></i><i></i><i></i></div>
+      <div class="rows">
+        <div class="row prj"><span class="dot" style="background:var(--mk)"></span><span class="nm">TERMINAL-DELIGHT</span><span class="cnt">6</span></div>
+        <div class="row tsk"><span class="bar" style="background:var(--mk)"></span><span class="nm">chrome skin</span><span class="pip" style="background:var(--live)"></span></div>
+        <div class="row tsk act"><i class="bk"></i><span class="bar" style="background:var(--mk)"></span><span class="nm">skin layer</span><span class="pip" style="background:var(--ok)"></span></div>
+        <div class="row tsk"><span class="bar" style="background:var(--off)"></span><span class="nm">left bar adoption</span></div>
+        <div class="row prj"><span class="dot" style="background:var(--off)"></span><span class="nm">CONCLAVE</span><span class="cnt">3</span></div>
+        <div class="row tsk"><span class="bar" style="background:var(--off)"></span><span class="nm">crossfire refs</span></div>
+      </div>
+      <div class="slot">
+        <div class="pr"><span class="who">CLD</span><span class="track"><i style="width:38%;background:var(--ok)"></i></span><span class="pct" style="color:var(--ok)">38%</span></div>
+        <div class="pr"><span class="who">CDX</span><span class="track"><i style="width:71%;background:var(--warn)"></i></span><span class="pct" style="color:var(--warn)">71%</span></div>
+        <div class="pr"><span class="who">GEM</span><span class="track"><i style="width:94%;background:var(--dgr)"></i></span><span class="pct" style="color:var(--dgr)">94%</span></div>
+      </div>
+    </div>
+    <figcaption><b>deco</b> skin &middot; <b>hacker</b> palette &mdash; the same green, restyled</figcaption>
+  </figure>
+
+  <figure class="mock">
+    <div class="tdbar ring" style="--p:#0a0e10;--rs:#060809;--ru:rgba(43,51,56,.25);--i:#e8e4d8;--dim:rgba(232,228,216,.7);--faint:rgba(232,228,216,.45);--off:#2b3338;--mk:#c2a34f;--wash:rgba(194,163,79,.08);--rowa:rgba(194,163,79,.08);--live:#4f6ec2;--ok:#8fc7a9;--warn:#e8b45e;--dgr:#d98476;--sunk:#080a0c">
+      <div class="hd"><span class="scope"><i class="bk"></i>ALL</span><span class="ib">&#9660;</span><span class="ib">&#9723;</span><span class="ib">+</span><span class="ib">&#9664;</span></div>
+      <div class="ru"><i></i><i></i><i></i></div>
+      <div class="rows">
+        <div class="row prj"><span class="dot" style="background:var(--mk)"></span><span class="nm">TERMINAL-DELIGHT</span><span class="cnt">6</span></div>
+        <div class="row tsk"><span class="bar" style="background:var(--mk)"></span><span class="nm">chrome skin</span><span class="pip" style="background:var(--live)"></span></div>
+        <div class="row tsk act"><i class="bk"></i><span class="bar" style="background:var(--mk)"></span><span class="nm">skin layer</span><span class="pip" style="background:var(--ok)"></span></div>
+        <div class="row tsk"><span class="bar" style="background:var(--off)"></span><span class="nm">left bar adoption</span></div>
+        <div class="row prj"><span class="dot" style="background:var(--off)"></span><span class="nm">CONCLAVE</span><span class="cnt">3</span></div>
+        <div class="row tsk"><span class="bar" style="background:var(--off)"></span><span class="nm">crossfire refs</span></div>
+      </div>
+      <div class="slot">
+        <div class="pr"><span class="who">CLD</span><span class="track"><i style="width:38%;background:var(--ok)"></i></span><span class="pct" style="color:var(--ok)">38%</span></div>
+        <div class="pr"><span class="who">CDX</span><span class="track"><i style="width:71%;background:var(--warn)"></i></span><span class="pct" style="color:var(--warn)">71%</span></div>
+        <div class="pr"><span class="who">GEM</span><span class="track"><i style="width:94%;background:var(--dgr)"></i></span><span class="pct" style="color:var(--dgr)">94%</span></div>
+      </div>
+    </div>
+    <figcaption><b>default</b> skin &middot; <b>deco</b> palette &mdash; brass alone is not the look</figcaption>
+  </figure>
+
+  <figure class="mock">
+    <div class="tdbar ring dbl dblru" style="--p:#0a0e10;--rs:rgba(194,163,79,.55);--ru:rgba(194,163,79,.22);--i:#e8e4d8;--dim:rgba(232,228,216,.7);--faint:rgba(232,228,216,.45);--off:#2b3338;--mk:#c2a34f;--wash:rgba(194,163,79,.05);--rowa:rgba(194,163,79,.08);--live:#7fd1b9;--ok:#8fc7a9;--warn:#e8b45e;--dgr:#d98476;--sunk:#080a0c;--r:0px;--rlg:0px;--px:8px;--cpx:7px;--cpy:2px;--gap:5px;--rowh:16px;--bk:6px;--trk:.1em;--glow:6px">
+      <div class="hd"><span class="scope"><i class="bk"></i>ALL</span><span class="ib">&#9660;</span><span class="ib">&#9723;</span><span class="ib">+</span><span class="ib">&#9664;</span></div>
+      <div class="ru"><i></i><i></i><i></i></div>
+      <div class="rows">
+        <div class="row prj"><span class="dot" style="background:var(--mk)"></span><span class="nm">TERMINAL-DELIGHT</span><span class="cnt">6</span></div>
+        <div class="row tsk"><span class="bar" style="background:var(--mk)"></span><span class="nm">chrome skin</span><span class="pip" style="background:var(--live)"></span></div>
+        <div class="row tsk act"><i class="bk"></i><span class="bar" style="background:var(--mk)"></span><span class="nm">skin layer</span><span class="pip" style="background:var(--ok)"></span></div>
+        <div class="row tsk"><span class="bar" style="background:var(--off)"></span><span class="nm">left bar adoption</span></div>
+        <div class="row prj"><span class="dot" style="background:var(--off)"></span><span class="nm">CONCLAVE</span><span class="cnt">3</span></div>
+        <div class="row tsk"><span class="bar" style="background:var(--off)"></span><span class="nm">crossfire refs</span></div>
+      </div>
+      <div class="slot">
+        <div class="pr"><span class="who">CLD</span><span class="track"><i style="width:38%;background:var(--ok)"></i></span><span class="pct" style="color:var(--ok)">38%</span></div>
+        <div class="pr"><span class="who">CDX</span><span class="track"><i style="width:71%;background:var(--warn)"></i></span><span class="pct" style="color:var(--warn)">71%</span></div>
+        <div class="pr"><span class="who">GEM</span><span class="track"><i style="width:94%;background:var(--dgr)"></i></span><span class="pct" style="color:var(--dgr)">94%</span></div>
+      </div>
+    </div>
+    <figcaption><b>deco</b> skin &middot; <b>deco</b> palette &mdash; the look, as asked for</figcaption>
+  </figure>
+</div>
+<p class="meta" style="margin-bottom:22px"><span><span class="tag w">inferred</span> An HTML stand-in, not a screenshot. Every colour and every metric is the literal output of <code>terminal-delight skin</code>; the one honest difference is tracking &mdash; the page uses CSS <code>letter-spacing</code>, and the app inserts U+2009 between letters because gpui has no such property.</span></p>
+
+<h2 class="sec">What deco is made of</h2>
+<div class="grid2">
+  <div class="card">
+    <h3>Square corners</h3>
+    <p>A radius says &ldquo;soft, web, tap me&rdquo;. Its absence says instrument, and it puts every edge on one grid.</p>
+    <p class="why">One strategy value, <code>corner = "square"</code>, and 141 hand-written radius calls stop mattering.</p>
+  </div>
+  <div class="card">
+    <h3>The twin rule</h3>
+    <p>One line between two things reads as adjacency. Two lines with a gap reads as a boundary. It is deco&rsquo;s signature and the cheapest way to make regions legible.</p>
+    <p class="why">The header is banded by the rule under it, not by a fill &mdash; which is why <code>row()</code> and <code>bar()</code> are separate primitives.</p>
+  </div>
+  <div class="card rec">
+    <span class="badge">replaced the bracket</span>
+    <h3>The phosphor ring</h3>
+    <p>A lit border on the active thing, blooming outward. It marks without relying on a fill, so a dense list keeps its text contrast &mdash; and unlike four corner ticks it is <b>one shape</b>, which is what lets it survive being 16 pixels tall.</p>
+    <p class="why">It is also the only emphasis device that compounds with TD's own CRT pass instead of fighting it: the skin draws the ring, the renderer blooms it. That is why it went into the <em>default</em> skin too and not just deco.</p>
+  </div>
+  <div class="card">
+    <h3>Tracked caps</h3>
+    <p>Letterspaced small caps on labels only. Deco&rsquo;s voice, and it separates furniture from content at a glance.</p>
+    <p class="why">Applied over what the call site asked for, never instead of it &mdash; an already-uppercase label stays uppercase under the default skin.</p>
+  </div>
+</div>
+<div class="callout" style="margin-top:16px">
+  <span class="lbl">deliberately absent</span>
+  <p>No bezels, no rivets, no gradients, no glow, no sunbursts, no chevrons, no HUD. The <code>deco</code> palette also turns every CRT effect off except a 0.14 vignette, which is a floor rather than an effect &mdash; it stops a flat near-black panel from reading as an unlit region of the desktop.</p>
+</div>
+
+<h2 class="sec">Switching</h2>
+<p>Three skins ship. <code>console</code> is the other reference screenshot &mdash; the operator console: dark planes, <b>no panel borders at all</b>, one rail on the row you are on. Its idea is separate-by-space-not-by-line, and killing every panel edge leaves only the lines that mean something.</p>
+<div class="grid2">
+  <div class="card">
+    <h3>What exists</h3>
+    <table class="wide">
+      <thead><tr><th>skin</th><th>corner</th><th>boundary</th><th>emphasis</th><th>caps</th><th>surface</th></tr></thead>
+      <tbody>
+        <tr><td><b>default</b> ▢</td><td>round</td><td>hairline</td><td>fill</td><td>off</td><td>lit</td></tr>
+        <tr><td><b>deco</b> ◈</td><td>square</td><td>double</td><td>bracket</td><td>tracked</td><td>flat</td></tr>
+        <tr><td><b>console</b> ▤</td><td>square</td><td>none</td><td>rail</td><td>upper</td><td>flat</td></tr>
+      </tbody>
+    </table>
+    <p class="why"><code>terminal-delight skin --list</code> prints this plus every way a skin gets chosen.</p>
+  </div>
+  <div class="card rec">
+    <span class="badge">how you actually switch</span>
+    <h3>The SKIN row in the design tray</h3>
+    <p>Open the design tray. Under <b>DESIGN</b> there is now a <b>SKIN</b> row: one button per skin, lit on whichever is drawing. Click one and the window restyles immediately.</p>
+    <p class="why">It sits under DESIGN because they are two halves of one question &mdash; DESIGN is what colour the chrome is, SKIN is what shape it is. OUTER scope only: shape is window-global, and a window whose panes had different corner radii reads as broken rather than as configured.</p>
+    <p class="why">The row iterates the registry rather than naming three skins, so a fourth builtin appears in the tray in the commit that adds it.</p>
+  </div>
+  <div class="card">
+    <h3>And from a script</h3>
+<pre><code>terminal-delight ctl skin deco
+terminal-delight ctl skin theme
+terminal-delight ctl skin status</code></pre>
+    <p class="why">Same effect, for automation and for an Omarchy theme switch. A misspelling is refused in the socket thread against a mirrored list &mdash; <code>err no skin "decoo" — have: default, deco, console, theme</code> &mdash; rather than queued and answered <code>ok</code>. A switch that reports success and does nothing is the failure this layer exists to refuse.</p>
+  </div>
+</div>
+<p><code>console</code> is also the argument the layer has been making, as an artifact: <b>it is a TOML file and nothing else.</b> No Rust was added for it.</p>
+
+<h2 class="sec">The cutover</h2>
+<p>Your live window &mdash; 20 panes, 16 of them agents, one of them the session writing this &mdash; moved onto the new build. Four read-only guards ran first, because the question is not &ldquo;does it work&rdquo; but &ldquo;what does it cost if it does not&rdquo;.</p>
+<table class="wide">
+  <thead><tr><th>guard</th><th>what it rules out</th><th>reading</th></tr></thead>
+  <tbody>
+    <tr><td><b>gridwire identical</b></td><td>The host and client hashing the same grid differently (#387/#388) &mdash; the bug that took diverging panes from 11 to 13 on 11 Sep.</td><td><b>identical</b> to both the host's build and the outgoing client's</td></tr>
+    <tr><td><b>client holds no ptys</b></td><td>Window-owned terminals dying with the window (#377).</td><td><b>0</b> pty fds on the client, 60 on the host</td></tr>
+    <tr><td><b>separate cgroups</b></td><td>Tearing the client down taking the host with it (#372).</td><td>client in <code>wayland-wm@hyprland</code>, host in <code>app-Hyprland-xdg-terminal-exec</code></td></tr>
+    <tr><td><b>pane census by parent</b></td><td>The guarantee that decays: panes opened after the window are window-local.</td><td><b>20 of 20 held by the host, 0 window-owned</b></td></tr>
+  </tbody>
+</table>
+<p><span class="tag v">measured</span> The census is the number that mattered. On 11 Sep the same measurement read 14 hosted against 10 window-owned; today it is 20 against 0, so the bounce could not cost a terminal. The layout file had also been written 5 seconds before the check, so nothing depended on a clean quit saving it.</p>
+<div class="callout">
+  <span class="lbl">the guard that failed, and why it did not matter</span>
+  <p>The fourth guard in the written recipe asserts <code>hyprctl activewindow</code> names the client, because <code>hl.dsp.window.close()</code> takes the ACTIVE window. It failed: the active window was <code>org.omarchy.screensaver</code>, since you were away.</p>
+  <p>That ruled out the compositor route rather than the cutover. A client holding zero ptys can take a plain <b>SIGTERM</b> instead &mdash; TERM, never KILL, so the socket closes and the host sees a detach rather than a disappearance. Relaunch still goes through the compositor, so the new window gets Hyprland's environment and its own scope.</p>
+</div>
+<h3 style="margin:26px 0 10px;font-size:16px">What it cost</h3>
+<div class="tiles">
+  <div class="tile"><span class="n" style="color:var(--good)">4</span><span class="k">cutovers run</span></div>
+  <div class="tile"><span class="n" style="color:var(--good)">20→20<br>21 × 3</span><span class="k">panes kept, every time</span></div>
+  <div class="tile"><span class="n" style="color:var(--good)">0</span><span class="k">agent sessions lost</span></div>
+  <div class="tile"><span class="n" style="color:var(--good)">0</span><span class="k">ptys on the new client</span></div>
+  <div class="tile"><span class="n" style="color:var(--warning)">1</span><span class="k">known casualty, below</span></div>
+</div>
+<p><span class="tag v">measured</span> The host held <b>the same number of children before the TERM, after it, and after the relaunch</b> — it never noticed, either time. Every agent resume line was captured before each bounce and diffed against the list afterwards: <b>identical</b>, so no session was re-rolled. Each new client came up holding <b>zero pseudoterminals</b>, which is the proof it attached to the host rather than spawning its own terminals.</p>
+<p>It ran four times — the picker after the first, the ring after the second, and four corrections off a photograph after the third. The second was the same four guards, the same TERM, the same compositor relaunch — and it being dull the second time is the point: the recipe is a script now rather than a thing to reason about.</p>
+<div class="callout">
+  <span class="lbl">the one thing it did cost</span>
+  <p>Every already-running agent's <b>MCP relay dropped and does not come back</b> (#391) — <code>mcp__terminal-delight__*</code> went dead mid-task for this session, exactly as the recipe says it will. The window is still reachable over <code>ctl</code>, which is how the pane count and every session id above were read back, and how the note on this pane's glass was posted.</p>
+  <p>It is a known ticket rather than a surprise, and it is the reason a cutover is still a thing you schedule rather than a thing you do casually.</p>
+</div>
+<div class="callout good">
+  <span class="lbl">left on the default skin, deliberately</span>
+  <p>Your window is on the new binary and it looks <b>exactly as it did before</b>. That is the success criterion for a default-preserving refactor, not an anticlimax: 99 converted radius calls and six restyled surfaces, and you cannot tell.</p>
+  <p>The look is one command away, and the decision to keep deco optional was yours: <code>terminal-delight ctl skin deco</code>.</p>
+</div>
+
+<h2 class="sec">Findings</h2>
+<div class="finding">
+  <h3>Two accents, not one, is what keeps a busy screen from going flat</h3>
+  <p>Brass is structural &mdash; rules, brackets, frames, the colour of the furniture. Mint marks the one thing that is running. A single accent doing both jobs is why most dark themes collapse into one texture the moment a screen gets busy, and it is visible in the mockups above: the running pip is the only cool colour on the panel.</p>
+  <p><span class="tag w">inferred</span> From the reference screenshots and the palettes already in the repo, not from a measurement.</p>
+</div>
+<div class="finding">
+  <h3>Recipes are the requirement; the token list is just bookkeeping</h3>
+  <p>If a skin had to be hand-authored per palette, five palettes times three skins is fifteen files and the system has failed while technically working. Writing a skin as recipes over palette roles is the one product constraint that shaped the architecture &mdash; and it is what the two right-hand mockups above are demonstrating.</p>
+  <p><span class="tag v">measured</span> <code>a_recipe_skin_follows_whatever_palette_it_is_given</code> asserts it; the four mockups are four runs of the real resolver.</p>
+</div>
+<div class="finding">
+  <h3>One default-look change was made on purpose</h3>
+  <p>Two adjacent triangle glyphs in the bar header were drawn at <code>text.alpha(0.75)</code> and <code>text.alpha(0.70)</code>. Both read <code>ink_dim</code> (0.70) now. Preserving a 5% difference between two neighbouring glyphs forever would have been preserving the disease that 59 distinct alphas are.</p>
+  <p><span class="tag v">measured</span> The golden test asserts token values, not call sites, so it stays true &mdash; which is why this is written down here instead of hiding behind it.</p>
+</div>
+<div class="finding">
+  <h3>A helper that can drop its <code>&amp;Theme</code> is the proof the tokens are right</h3>
+  <p><code>bezel_btn_s</code> &mdash; the chrome&rsquo;s main button, 32 call sites &mdash; changed its palette parameter to <code>&amp;Skin</code> and lost nothing. Every colour it used (<code>accent</code>, <code>surface</code> brightened, <code>surface</code> darkened, <code>text</code>) was already a token. <code>hicon_s</code> did the same.</p>
+  <p><span class="tag v">measured</span> That is a stronger signal than any token count: a vocabulary that can replace the thing it was derived from is complete, and one that cannot is a subset pretending.</p>
+</div>
+<div class="finding">
+  <h3>The rig lied three times before the app did once</h3>
+  <p>Verifying that the ring paints meant launching a window and asking whether it survived. It reported <b>dead three times while it was on screen</b>: <code>pgrep -x terminal-delight</code> never matches, because Linux truncates <code>comm</code> at fifteen characters; and <code>pgrep -f TD_TRAY_DEMO</code> stops matching the moment <code>env</code> execs the binary and replaces the command line. Four windows had quietly accumulated behind those false negatives.</p>
+  <p><span class="tag v">measured</span> Nothing was ever wrong with the skin. The harness now finds the process by its environment, and the general rule earns its keep again: <b>a check that fails identically twice is usually the instrument.</b></p>
+</div>
+<div class="finding">
+  <h3>The layer cost two tokens and one strategy across six surfaces</h3>
+  <p>The plan set its own failure line at &ldquo;more than two or three tokens across slices 1&ndash;3&rdquo;. The cut added <code>edge_strong</code> and <code>ink_off</code> &mdash; both transcriptions of expressions that already existed at six and one sites &mdash; plus <code>shine</code>, which was a genuine gap: nothing in the original five strategies could say whether a surface is lit.</p>
+  <p><span class="tag v">measured</span> That is what moved the difficulty score from 8 to an honest 6.</p>
+</div>
+
+<h2 class="sec">What happens next</h2>
+<p>Two surfaces remain unconverted and they are the seam you will see: the <b>overlays</b> (usage, savings, find, plugins, the pickers) and the <b>theme tray</b>. Together they are 495 literals, and they were left last on purpose &mdash; the tray is the most idiosyncratic surface in the app, full of colour disks and swatch grids, and converting it early would have pushed a one-surface token into the shared vocabulary. <button class="more" data-dlg="d-slices">the slice table</button></p>
+<p>Say go and they land in one pass. Nothing else is blocked.</p>
+
+<h2 class="sec">Settled</h2>
+<p>Answered 12 Sep. Recorded here so none of it gets reopened by accident &mdash; and so the two riders, which are where the value in the review actually was, are attached to the decisions they changed.</p>
+<div class="grill">
+  <div class="ask">
+    <h3>1 &middot; Deco is one skin among several, not the house look</h3>
+    <p>Answered <b>agree</b>. So the remaining slices convert to keep the default pixel-identical and nothing more &mdash; no deco-shaped assumptions land in shared code.</p>
+    <p class="rec"><b>Revisit when:</b> you have run a 14-pane screen on it for a week and still want it. Not before.</p>
+  </div>
+  <div class="ask">
+    <h3>2 &middot; No skin picker &mdash; <b>overturned, and the recommendation was wrong</b></h3>
+    <p>Answered <b>agree</b>, on my recommendation of &ldquo;revisit at four skins&rdquo;. Then: <em>&ldquo;ctl skin deco? this doesn&rsquo;t mean anything to me&hellip; I need to change the skin to test!&rdquo;</em></p>
+    <p><b>The criterion was the wrong one.</b> &ldquo;Is a control worth its space&rdquo; is a question about clutter. The question that actually applied was whether a person can evaluate a look they have no way to put on &mdash; and they cannot. Three shell commands are a fine interface for a script and no interface at all for judging whether corner brackets survive a twenty-pane screen, which is the one open question this whole feature is waiting on. A feature that can only be exercised by someone who has read its source has one user.</p>
+    <p class="rec"><b>Built:</b> a SKIN row in the design tray, directly under DESIGN. One button per skin, lit on whichever is drawing, clicking restyles the window at once.</p>
+  </div>
+  <div class="ask">
+    <h3>3 &middot; MVP, then look</h3>
+    <p>Answered <b>agree</b>, with the rider: <em>&ldquo;MVP and look before getting too deep&rdquo;</em>. That reshaped the work &mdash; the shape-carrying half of six surfaces rather than the whole of two &mdash; and it was the better cut. The window is open.</p>
+    <p class="rec"><b>Next:</b> the overlays and the theme tray (slices 4&ndash;5) close the round-on-square seam. Say go and they land in one pass.</p>
+  </div>
+  <div class="ask">
+    <h3>4 &middot; Chamfers parked, loudly</h3>
+    <p>Answered <b>agree</b>, with the rider: <em>&ldquo;make heavy emphasis for a revisit though, I do believe it will come up but I will forget!&rdquo;</em> &rarr; issue #407, the <code>Corner</code> enum doc, and the <code>deco.toml</code> header.</p>
+    <p class="rec"><b>Revisit when:</b> you can point at a corner and say &ldquo;that looks flat, not deco&rdquo;. The issue carries the check that would instead close it <code>invalid</code>.</p>
+  </div>
+</div>
+
+<h2 class="sec">Four corrections from the screen</h2>
+<p>All four came from photographs of the running build, and none of them was findable any other way.</p>
+<table class="wide">
+  <thead><tr><th>what</th><th>was</th><th>now</th><th>why</th></tr></thead>
+  <tbody>
+    <tr><td><b>the ring</b></td><td>one soft shadow over a 0.22 wash</td><td>two shadows, almost no fill</td><td>The app already does this well: <code>render_node</code> lights the focused pane with a crisp 1px spread ring plus a wide soft halo and <b>no tint at all</b>. The crisp ring doubles the border without thickening it; the fill was what made a lit row read as a selected item in a web list.</td></tr>
+    <tr><td><b>the bloom</b></td><td>7.0 blur / 0.55 alpha</td><td>5.25 / 0.41</td><td>25% down. Two bright devices need less of each than one did — the crisp ring adds apparent intensity the original numbers were not budgeting for.</td></tr>
+    <tr><td><b>the lit tab</b></td><td>square</td><td>rounded, like a lit row</td><td>A flat underline never needed a corner, so the strip carried no radius at all. With a ring around it, that left the tab square beside a left bar whose lit row is round — two answers to one question on one screen.</td></tr>
+    <tr><td><b>the numbers</b></td><td>a count on every branch row, <code>+N</code> on task rows</td><td>gone</td><td>On a twenty-one-pane tree it is a column of grey digits down the right edge that nobody reads and every row pays for in width. The fold triangle already says whether a branch holds anything; the badges are themselves the signal.</td></tr>
+  </tbody>
+</table>
+<p><span class="tag v">measured</span> <code>badge_overflow</code> still runs — it decides how many glyphs <em>fit</em>, and the printed number was only ever the leftover. A source-shape test refuses both counts back, because each is one <code>.child(format!(…))</code> from returning and neither would look wrong in a diff.</p>
+
+<h2 class="sec">Answered by looking</h2>
+<div class="grill">
+  <div class="ask">
+    <h3>Did the bracket survive a real screen? &mdash; <b>no</b></h3>
+    <p>The open question was whether corner brackets scale better than a fill at twenty-one panes. You put the build on screen, photographed the tab strip, and the answer was immediate: at the size a tab label actually is, four disconnected ticks read as <b>debris around the text</b>, not as a bracket around it.</p>
+    <p>The reasoning had been sound and the execution could not survive its own scale. A continuous line is one shape the eye resolves at any size; four ticks are four shapes it has to assemble, and at 16px it does not bother. <b>No amount of looking at mockups would have found that</b> &mdash; every mockup in this document draws them at twice the size they ship at.</p>
+    <p class="rec"><b>Replaced by the ring</b>, in deco and in default. The bracket stays in the code as a strategy nothing uses: it is correct at larger sizes, and a look nobody runs costs one match arm.</p>
+  </div>
+</div>
+<h2 class="sec">Still open</h2>
+<div class="grill">
+  <div class="ask">
+    <h3>Is the bloom right NOW?</h3>
+    <p>Down 25% and rebuilt on the pane recipe, so the numbers are no longer a first guess — but they are still <em>a</em> guess, now calibrated against one photograph rather than a session of use. Deco keeps a wider, softer halo than default (<code>glow 6 / 0.45</code> against <code>5.25 / 0.41</code>) on the theory that brass on near-black wants one. That theory is untested.</p>
+    <p class="rec"><b>Recommendation:</b> live with it for a session before touching it. If it reads as haze rather than as marking, drop <code>glow_a</code> first, not <code>glow</code> &mdash; a tight bright ring reads as deliberate where a wide faint one reads as a rendering artefact. Both are hot-reloaded in 300ms with no rebuild.</p>
+  </div>
+</div>
+
+<footer>
+  <p>terminal-delight &middot; branch <code>chrome/skin-tokens</code> &middot; PR #405 &middot; worktree <code>~/Work/td-skin</code></p>
+  <p>Gate record: <code>docs/plans/chrome-skin/</code> &mdash; written without approval because the work was asked for while away, and 00-status.md says so.</p>
+  <p>Annotate anything on this page. Save into file, then: <em>&ldquo;read my notes in 2026-09-12-chrome-skin-layer.html&rdquo;</em>.</p>
+</footer>
+</div>
+
+<dialog id="d-axis">
+  <div class="dlg-head"><div><h3>Why shape is not just more palette</h3><p class="repo">docs/plans/chrome-skin/02-architecture.md</p></div><button class="x" data-close>&times;</button></div>
+  <div class="dlg-body">
+    <h4>The case for folding it in</h4>
+    <p>One file, one reload path, one picker. Themes already carry <code>[colors]</code>, <code>[effects]</code> and <code>[font]</code>; adding <code>[chrome]</code> would be the obvious move, and it would have been less code.</p>
+    <h4>Why it lost</h4>
+    <p>The codebase already made this argument against itself. <code>$TD_PALETTE</code> exists so that an external theme system &mdash; an Omarchy theme switch &mdash; can retint the running terminal <b>without deciding how much CRT you get</b>. That is the same separation, one axis over. Welding shape to colour would mean a deco look could never be had on the green palette, and an Omarchy switch driving colour would silently drag the chrome&rsquo;s shape along with it.</p>
+    <p>There is also a practical asymmetry: the palette is <b>per-pane</b> and shape is not. A window whose panes had different corner radii would read as broken rather than as configured, so the two cannot share a scope even if they shared a file.</p>
+    <h4>What it costs</h4>
+    <p>A second file to know about, and a resolution order to explain: the user&rsquo;s own <code>skin.toml</code> wins, then the builtin the active theme named, then <code>default</code>. That is one more rule than &ldquo;the theme decides&rdquo;, and it is the price of the axis coming apart.</p>
+  </div>
+</dialog>
+
+<dialog id="d-ring">
+  <div class="dlg-head"><div><h3>The ring, and the bracket it replaced</h3><p class="repo">Emphasis::Glow &middot; app/src/skin.rs</p></div><button class="x" data-close>&times;</button></div>
+  <div class="dlg-body">
+    <h4>Why the bracket failed</h4>
+    <p>The idea was right: mark the active row without filling it, so a dense list keeps its text contrast. A filled pill in a list of twenty is a stripe; a bracket is supposed to be a pointer.</p>
+    <p>It could not survive its own scale. A tab label is about sixteen pixels tall, and four corner ticks at that size are four disconnected marks scattered around the text rather than one enclosure around it. <b>A continuous line is a single shape the eye resolves at any size; four ticks are four shapes it has to assemble</b>, and below a certain size it stops assembling them.</p>
+    <p>Every mockup in this document draws them at roughly twice their shipping size, which is exactly why the mockups said they were fine. The photograph of the running build said otherwise in about a second.</p>
+    <h4>Why the ring is different</h4>
+    <p>One shape, continuous, and it carries a bloom &mdash; so it reads as <em>energised</em> rather than as <em>outlined</em>. Size stops mattering: a lit edge is a lit edge at any scale.</p>
+    <p>And it is the only emphasis device that <b>compounds with the renderer rather than fighting it</b>. Terminal Delight already has glow and bloom in its CRT pass, so a bright accent edge under a phosphor theme is lit twice — the skin draws the ring and the renderer blooms it. That is the argument for putting it in the DEFAULT skin, not just deco: the retro look is the one it was always going to suit best.</p>
+    <h4>The detail that would otherwise be a bug report</h4>
+    <p><code>ring</code> draws its border in <b>every</b> state and merely makes it transparent when unlit. Without that, marking a different tab would shift the entire strip by a border width on every switch — which looks like a layout bug and is very hard to attribute to a skin. The reservation lives in the helper, not at the call site, precisely because it is the kind of thing a later strategy would quietly break.</p>
+    <h4>What the default skin gave up</h4>
+    <p>It is no longer a pure transcription of the old chrome, and the golden test now says so explicitly rather than being relaxed: emphasis is asserted as the one intended departure, and the other five strategies are compared field by field. A second unintended change cannot hide behind the first.</p>
+  </div>
+</dialog>
+
+<dialog id="d-bezel">
+  <div class="dlg-head"><div><h3>Why the buttons lost their glint</h3><p class="repo">Skin::bezel &middot; app/src/skin.rs</p></div><button class="x" data-close>&times;</button></div>
+  <div class="dlg-body">
+    <h4>What it was</h4>
+    <p><code>bezel_btn_s</code> is the chrome&rsquo;s main control &mdash; the split buttons, new-tab, the left bar&rsquo;s adopt and <code>+</code>, and twenty-five more sites. It carried two box shadows: a white inset glint along its top-left inside edge, and a dark seat under its bottom-right. Plus a diagonal gradient on the face. That is a raised physical key, and it is a good one.</p>
+    <h4>Why flat is not a preference</h4>
+    <p>A glint is a claim: <em>this object sits above the surface, catching a light from up here.</em> A hard square edge is a different claim: <em>this surface is a plane.</em> A skin that has chosen the second cannot also make the first without the two contradicting each other in the same six pixels &mdash; which is why every serious instrument panel ever built is flat, and not because someone preferred it.</p>
+    <p>So the decision moved into the <code>shine</code> strategy, and the call site stopped having an opinion. Under <code>gradient</code> the button is exactly what it always was; under <code>flat</code> the edge carries the whole state. Eight lit keys in a row read as a texture; eight edged ones read as eight buttons, which is the thing a bar of controls actually needs.</p>
+    <h4>The part worth noticing</h4>
+    <p>The helper&rsquo;s signature changed from <code>&amp;Theme</code> to <code>&amp;Skin</code> &mdash; and nothing was lost, because every colour it used was already a token: the accent at two alphas, the surface brightened, the surface darkened, the text. A helper that can drop its palette parameter entirely is the clearest evidence available that the token set is the right one. <code>hicon_s</code> did the same.</p>
+  </div>
+</dialog>
+
+<dialog id="d-defects">
+  <div class="dlg-head"><div><h3>The two defects the probe found</h3><p class="repo">terminal-delight skin --skin deco --theme deco</p></div><button class="x" data-close>&times;</button></div>
+  <div class="dlg-body">
+    <h4>A warning the colour of the frame</h4>
+    <p>The deco palette&rsquo;s first draft put brass in <code>ansi3</code> &mdash; the natural place for it, since brass <em>is</em> the yellow of that palette. <code>warn</code> resolves from the yellow slot. So a surface at 90% of its ceiling would have been painted in exactly the colour of the rules and brackets around it.</p>
+    <p>Nothing in the code looked wrong. It was two identical hex strings in the probe&rsquo;s output, three lines apart.</p>
+    <h4>The same collision, in a theme we already ship</h4>
+    <p><code>field-command</code> sets <code>accent = "#8fa85f"</code> and <code>ansi[2] = "#8fa85f"</code>. Both olive, deliberately &mdash; it is a military field-kit palette and olive is the whole idea. With <code>ok</code> defaulting to <code>ansi2</code>, &ldquo;healthy&rdquo; was the accent.</p>
+    <p>This one says the <b>recipe</b> was wrong rather than the palette. A terminal palette very often points its accent at one of its own normal colours; asking it to keep those two distinct is asking for something it was never designed to provide.</p>
+    <h4>What changed</h4>
+    <p>State inks now default to the <b>bright</b> ANSI slots (<code>ansi9</code>/<code>ansi10</code>/<code>ansi11</code>) &mdash; further from the accent by construction, and better signals against a dark ground anyway. And <code>no_state_ink_collapses_onto_the_accent_in_any_builtin_pairing</code> checks every skin against every theme, because the version of this bug that matters is the one in the pairing nobody thought to look at.</p>
+  </div>
+</dialog>
+
+<dialog id="d-rejected">
+  <div class="dlg-head"><div><h3>Rejected, with reasons</h3><p class="repo">docs/plans/chrome-skin/02-architecture.md</p></div><button class="x" data-close>&times;</button></div>
+  <div class="dlg-body">
+    <h4>Recipes that can reference other inks</h4>
+    <p>It would let a skin say &ldquo;the rule is my panel, lifted&rdquo; &mdash; genuinely expressive, and it turns resolution into a graph walk with cycles to detect and an error state to report from inside a hot-reload. Roles only. If a skin needs a derived-from-derived colour, it can write the two-step recipe out.</p>
+    <h4>Chamfered corners</h4>
+    <p>The cut corner is what a reader pictures when you say deco. gpui cannot cut a corner off a div &mdash; it needs a rendered path, and a path per chrome element is a rendering change rather than a token. <code>Corner::Square</code> plus <code>brackets()</code> gets most of the read for none of the risk.</p>
+    <h4>Letter-spacing as a style property</h4>
+    <p>gpui has none. <code>Caps::Tracked</code> therefore inserts U+2009 THIN SPACE between letters, in the string, behind <code>Skin::caps</code> &mdash; so exactly one place does it and a test checks it without needing a window. A real space would read as word breaks.</p>
+    <h4>Per-pane skins</h4>
+    <p>The palette is already per-pane, so the machinery exists. But a window whose panes had different corner radii reads as broken, not as configured.</p>
+    <h4>Converting everything in one pass</h4>
+    <p>1,656 literals across two files, in a render function of 7,400 lines, while four other branches were merging into it the same day. Staged adoption is only possible because the default skin is pinned to today&rsquo;s look by a test &mdash; without that gate, a half-converted app would be a drifting one.</p>
+  </div>
+</dialog>
+
+<dialog id="d-slices">
+  <div class="dlg-head"><div><h3>The slices, costed</h3><p class="repo">docs/plans/chrome-skin/03-slices.md</p></div><button class="x" data-close>&times;</button></div>
+  <div class="dlg-body">
+    <p>Counted as <code>px(</code> + <code>rounded_*(</code> + <code>.border_*(</code> + <code>.alpha(</code> + <code>darken(</code> + <code>brighten(</code> + <code>hsla(</code> in each surface&rsquo;s line range on <code>ed69a0f</code>. Not every one becomes a token &mdash; layout padding stays layout &mdash; but it is the honest upper bound.</p>
+    <table class="wide">
+      <thead><tr><th>#</th><th>slice</th><th>literals</th><th>state</th></tr></thead>
+      <tbody>
+        <tr><td>0</td><td>Tracer: left bar frame, header, active row</td><td>&mdash;</td><td><b>built</b></td></tr>
+        <tr><td>1</td><td>Rest of the left bar: branch rows, usage slot</td><td>194</td><td>costed</td></tr>
+        <tr><td>2</td><td>Per-pane header and frame (<code>pane.rs</code>)</td><td>223</td><td>costed</td></tr>
+        <tr><td>3</td><td>Mother bar and tab strip</td><td>117</td><td>costed</td></tr>
+        <tr><td>4</td><td>Overlays: usage, savings, find, plugins, pickers</td><td>180</td><td>costed</td></tr>
+        <tr><td>5</td><td>Theme tray and menus</td><td>315</td><td>costed</td></tr>
+        <tr><td>6</td><td>Workspace body, drag affordances, the rest</td><td>359</td><td>costed</td></tr>
+      </tbody>
+    </table>
+    <h4>Why this order</h4>
+    <p><b>The pane header before the mother bar</b>, even though the mother bar is more visible: the pane header repeats once per pane &mdash; fourteen times on a working screen &mdash; so a shape change reads hardest there, and <code>pane.rs</code> is a far quieter file. Convert where the conflict cost is lowest while the vocabulary is still moving.</p>
+    <p><b>The theme tray late</b>, despite being where a skin picker would live. It is the most idiosyncratic surface in the app &mdash; colour disks, swatch grids, a paint shelf &mdash; and the one most likely to need a token invented for it alone. Doing it early would push a one-surface token into the shared vocabulary.</p>
+    <h4>What would say this was the wrong layer</h4>
+    <ul>
+      <li>Slices 1&ndash;3 add more than two or three tokens between them. The vocabulary was too small, and a token invented per surface is a constant with extra steps.</li>
+      <li>A slice needs a call site to branch on which skin is active. That is the one thing the vocabulary exists to prevent; the fix would be a missing strategy value in <code>skin.rs</code>, never a branch at the call site.</li>
+      <li>Nobody writes a third skin. Two skins is a refactor that paid for itself in tidiness &mdash; the layer was justified on the claim that the third one is cheap.</li>
+    </ul>
+  </div>
+</dialog>
+<div class="notebar" id="notebar">
+  <span class="cnt"><b id="note-count">0</b> notes</span>
+  <button id="btn-export" class="primary" data-note-action="export"
+          title="Anchored note map for pasting into a prompt">&#x1F4CB; copy map</button>
+  <button id="btn-embed" data-note-action="embed"
+          title="Download this file with your notes baked in">&#x1F4BE; save into file</button>
+  <button id="btn-clear" data-note-action="clear" title="Delete every note">&#x2715;</button>
+</div>
+
+<dialog id="d-note">
+  <div class="dlg-head">
+    <div>
+      <h3 id="note-title">Note</h3>
+      <p class="repo" id="note-anchor">&nbsp;</p>
+    </div>
+    <button class="x" data-close>&times;</button>
+  </div>
+  <div class="dlg-body">
+    <ul id="note-list"></ul>
+    <p id="note-none">No notes on this yet.</p>
+    <textarea id="note-text"
+      placeholder="Your note. Saved against this element and readable by an agent once you save into the file."></textarea>
+    <div class="note-actions">
+      <button class="save" data-note-action="add">Add note</button>
+      <button data-close>Close</button>
+      <span class="hintk">Ctrl+Enter to add</span>
+    </div>
+  </div>
+</dialog>
+
+<dialog id="d-export">
+  <div class="dlg-head">
+    <div>
+      <h3>Note map</h3>
+      <p class="repo">Anchored to element ids in this file &middot; paste straight into a prompt</p>
+    </div>
+    <button class="x" data-close>&times;</button>
+  </div>
+  <div class="dlg-body">
+    <p style="margin-bottom:12px">
+      Each line is anchored to an element id, so an agent can locate the passage without you
+      pasting the file. Prompt shape: <em>"read my notes in <code>&lt;filename&gt;</code> and act
+      on them."</em>
+    </p>
+    <textarea id="export-out" readonly></textarea>
+    <p class="tokest" id="export-est"></p>
+    <div class="note-actions">
+      <button class="save" data-note-action="copy">Copy to clipboard</button>
+      <button data-close>Close</button>
+    </div>
+  </div>
+</dialog>
+
+<!-- Seeded with the notes Parker wrote on the first pass, so the second pass opens
+     with his own words still attached to the decisions they settled. notes.js
+     prefers a baked-in island on first load, then localStorage. -->
+<script type="application/json" id="report-notes">{
+ "ask-1-deco-is-one": [
+  { "text": "Agree", "title": "1 · Deco is one skin among several, not the house look", "ts": "2026-09-12 21:06" }
+ ],
+ "ask-2-no-skin-picker": [
+  { "text": "Agree", "title": "2 · No skin picker in the tray", "ts": "2026-09-12 21:06" }
+ ],
+ "ask-3-mvp-then-look": [
+  { "text": "Agree.", "title": "3 · MVP, then look", "ts": "2026-09-12 21:07" },
+  { "text": "MVP and looko before getting too deep", "title": "3 · MVP, then look", "ts": "2026-09-12 21:07" }
+ ],
+ "ask-4-chamfers-parked-loudly": [
+  { "text": "Agree-- make heavy emphasis for a revisit though, I do believe it will come up but I will forget!", "title": "4 · Chamfers parked, loudly", "ts": "2026-09-12 21:07" }
+ ]
+}</script>
+
+<script>
+  /* Set before notes.js runs. Used for the storage key and the download filename. */
+  window.NOTES_FILE = '2026-09-12-chrome-skin-layer.html';
+</script>
+<script>
+document.querySelectorAll('[data-dlg]').forEach(function (b) {
+  b.addEventListener('click', function () {
+    var d = document.getElementById(b.dataset.dlg);
+    if (d) d.showModal();
+  });
+});
+document.querySelectorAll('[data-close]').forEach(function (b) {
+  b.addEventListener('click', function (e) { e.target.closest('dialog').close(); });
+});
+</script>
+<script>
+/* decision-brief — reader notes.
+ *
+ * Drop-in. No build step, no dependencies. Paste this file's contents inline inside a
+ * script element, after the document body — a decision brief must survive being emailed
+ * as one file, so never load it with a src attribute.
+ *
+ * NOTHING IN THIS FILE MAY CONTAIN THE LITERAL CLOSING SCRIPT TAG, not even inside a
+ * comment or a string: an HTML parser ends the script element at the first one it sees,
+ * and everything after it silently becomes page content. Write it broken up, e.g.
+ * "<\/script>", if you ever need to emit one.
+ *
+ * Three outputs, in the order they matter:
+ *   1. copy map    — anchored note map, ~1% of the tokens of the whole document
+ *   2. save into   — bakes notes into a downloadable copy so an agent can READ them
+ *   3. localStorage — live persistence between reloads
+ *
+ * Why the map exists: pasting a whole annotated report into a prompt costs thousands of
+ * tokens; pasting bare notes loses which passage each one is about. The map is the third
+ * option — [element-id] + note, so the agent greps the id and finds the passage itself.
+ *
+ * Configure before this script runs (all optional):
+ *   window.NOTES_FILE    — filename used for the storage key and the download. Default: location basename.
+ *   window.NOTES_TARGETS — [[selector, prefix], ...] overriding what gets an affordance.
+ */
+(function () {
+  'use strict';
+
+  var FILE = window.NOTES_FILE ||
+    (location.pathname.split('/').pop() || 'decision-brief.html');
+  var KEY = 'notes:' + FILE;
+
+  /* Default targets. A prefix keeps exported anchors readable and grouped.
+     Override wholesale with window.NOTES_TARGETS if a brief's shape differs.
+
+     THE GRILL COMES FIRST, AND IT IS NOT OPTIONAL. Until 2026-09-02 this list
+     covered five of the seven components layout.md tells you to build and
+     omitted the grill — so the one section whose entire purpose is a decision
+     the reader has to make was the one section the reader could not comment on.
+     Two briefs shipped that way, each having invented its own class name
+     (`grill-q`, then `q`) because nothing here named one. Both spellings are
+     matched below; `.ask` is the name to use going forward. If you add a
+     component, add it here in the same commit. */
+  var TARGETS = window.NOTES_TARGETS || [
+    ['.grill .q, .grill-q, .ask', 'ask'],
+    ['.card', 'verdict'],
+    ['.esc-list li', 'readfirst'],
+    ['.finding', 'finding'],
+    ['.tile', 'stat'],
+    ['table.wide tr', 'row'],
+    ['.bar-row', 'chart'],
+    ['.callout', 'callout'],
+    ['dialog .dlg-body > h4', 'sub']
+  ];
+
+  /* Notes baked into the file win on first load — a fresh browser should see what the
+     author saved. After that localStorage is the live copy. */
+  var baked = {};
+  try {
+    var island = document.getElementById('report-notes');
+    if (island) baked = JSON.parse(island.textContent || '{}');
+  } catch (e) { /* a malformed island must not break the page */ }
+
+  var N;
+  try { N = JSON.parse(localStorage.getItem(KEY) || 'null') || baked; }
+  catch (e) { N = baked; }
+
+  var active = null, activeTitle = '';
+
+  function save() {
+    try { localStorage.setItem(KEY, JSON.stringify(N)); } catch (e) {}
+  }
+  function esc(s) {
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+  function slug(s) {
+    return String(s || 'x').toLowerCase().replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-|-$/g, '').slice(0, 44) || 'x';
+  }
+  function titleOf(el) {
+    var h = el.querySelector('h2,h3,h4,.bar-lab,.k,.lbl,td:first-child,th:first-child');
+    var t = ((h ? h.textContent : el.textContent) || 'item').replace(/\s+/g, ' ').trim();
+    return t.length > 72 ? t.slice(0, 69) + '…' : t;
+  }
+
+  /* ---- give every target a stable anchor id and a note affordance ---- */
+  function tag() {
+    var used = {};
+    TARGETS.forEach(function (pair) {
+      var sel = pair[0], pre = pair[1];
+      Array.prototype.forEach.call(document.querySelectorAll(sel), function (el, i) {
+        if (el.classList.contains('notable')) return;
+        if (el.tagName === 'TR' && el.querySelector('th')) return;   // header rows
+        if (el.closest('#d-note, #d-export, .notebar')) return;
+
+        /* Numbered lists anchor by position; everything else by a SHORT title slug.
+           Long slugs make the exported map unreadable, which defeats the map. */
+        var id;
+        var num = el.querySelector('.esc-n');
+        if (num) id = pre + '-' + num.textContent.trim();
+        else id = pre + '-' + slug(titleOf(el)).split('-').slice(0, 4).join('-');
+
+        var base = id, n = 2;
+        while (used[id]) id = base + '-' + (n++);
+        used[id] = 1;
+
+        el.classList.add('notable');
+        el.dataset.nid = id;
+        el.dataset.ntitle = titleOf(el);
+        if (!el.id) el.id = id;                      // a real anchor in the file
+
+        var b = document.createElement('button');
+        b.className = 'note-btn';
+        b.type = 'button';
+        b.title = 'Add a note';
+        b.innerHTML = '&#x1F4AC;';
+        b.addEventListener('click', function (ev) {
+          ev.preventDefault(); ev.stopPropagation(); open(el);
+        });
+        el.appendChild(b);
+      });
+    });
+  }
+
+  function badges() {
+    var total = 0;
+    Array.prototype.forEach.call(document.querySelectorAll('.notable'), function (el) {
+      var n = (N[el.dataset.nid] || []).length;
+      total += n;
+      el.classList.toggle('has-note', n > 0);
+      var b = el.querySelector(':scope > .note-btn');
+      if (b) b.innerHTML = n ? String(n) : '&#x1F4AC;';
+    });
+    var c = document.getElementById('note-count');
+    if (c) c.textContent = total;
+    ['btn-export', 'btn-embed', 'btn-clear'].forEach(function (id) {
+      var b = document.getElementById(id);
+      if (b) b.disabled = total === 0;
+    });
+  }
+
+  function render() {
+    var list = N[active] || [];
+    var ul = document.getElementById('note-list');
+    document.getElementById('note-none').style.display = list.length ? 'none' : 'block';
+    ul.innerHTML = list.map(function (n, i) {
+      return '<li><div class="nts"><span>' + esc(n.ts) + '</span>' +
+        '<button class="ndel" data-i="' + i + '">delete</button></div>' + esc(n.text) + '</li>';
+    }).join('');
+    Array.prototype.forEach.call(ul.querySelectorAll('.ndel'), function (b) {
+      b.addEventListener('click', function () { del(+b.dataset.i); });
+    });
+  }
+
+  function open(el) {
+    active = el.dataset.nid;
+    activeTitle = el.dataset.ntitle;
+    document.getElementById('note-title').textContent = activeTitle;
+    document.getElementById('note-anchor').textContent = '#' + active;
+    render();
+    document.getElementById('d-note').showModal();
+    document.getElementById('note-text').focus();
+  }
+
+  function add() {
+    var ta = document.getElementById('note-text');
+    var t = ta.value.trim();
+    if (!t || !active) return;
+    (N[active] = N[active] || []).push({
+      text: t,
+      title: activeTitle,
+      ts: new Date().toISOString().slice(0, 16).replace('T', ' ')
+    });
+    ta.value = '';
+    save(); render(); badges();
+  }
+
+  function del(i) {
+    N[active].splice(i, 1);
+    if (!N[active].length) delete N[active];
+    save(); render(); badges();
+  }
+
+  /* ---- the map: anchored, compact, prompt-ready ---- */
+  function buildMap() {
+    var count = 0, els = 0;
+    for (var k in N) { if (N.hasOwnProperty(k)) { els++; count += N[k].length; } }
+    var out = [
+      'NOTES — ' + FILE,
+      count + ' notes on ' + els + ' elements.',
+      'Each [anchor] is an element id in that file — search it to find the passage.',
+      ''
+    ];
+    /* Document order, not object order: the map should read the way the brief reads. */
+    Array.prototype.forEach.call(document.querySelectorAll('.notable'), function (el) {
+      var list = N[el.dataset.nid];
+      if (!list || !list.length) return;
+      out.push('[' + el.dataset.nid + '] ' + el.dataset.ntitle);
+      list.forEach(function (n) { out.push('  · ' + n.text.replace(/\n+/g, ' ')); });
+      out.push('');
+    });
+    return out.join('\n');
+  }
+
+  function exportNotes() {
+    var txt = buildMap();
+    document.getElementById('export-out').value = txt;
+    var est = document.getElementById('export-est');
+    if (est) {
+      est.textContent = txt.length + ' characters ≈ ' + Math.ceil(txt.length / 4) +
+        ' tokens — versus ~' + Math.ceil(document.body.innerText.length / 4) +
+        ' for the whole document.';
+    }
+    document.getElementById('d-export').showModal();
+  }
+
+  function copyExport(btn) {
+    var ta = document.getElementById('export-out');
+    ta.select();
+    try { document.execCommand('copy'); } catch (e) {}
+    if (btn) {
+      var o = btn.textContent;
+      btn.textContent = 'Copied';
+      setTimeout(function () { btn.textContent = o; }, 1400);
+    }
+  }
+
+  /* ---- bake notes into a downloadable copy of this file ----
+     localStorage is invisible to an agent. This is what makes
+     "read my notes in <file>" work. */
+  function embedNotes() {
+    var doc = document.documentElement.cloneNode(true);
+    Array.prototype.forEach.call(doc.querySelectorAll('.note-btn'), function (n) { n.remove(); });
+    Array.prototype.forEach.call(doc.querySelectorAll('.notable'), function (n) {
+      n.classList.remove('notable', 'has-note');
+    });
+    var island = doc.querySelector('#report-notes');
+    if (island) island.textContent = JSON.stringify(N, null, 1);
+    /* A plain-text mirror as well, so grep and ctx_read find the notes
+       without anyone having to parse JSON out of a script tag. */
+    var body = doc.querySelector('body');
+    if (body) body.appendChild(document.createComment('\nREADER NOTES —\n' + buildMap() + '\n'));
+
+    var blob = new Blob(['<!DOCTYPE html>\n' + doc.outerHTML], { type: 'text/html' });
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = FILE;
+    a.click();
+    setTimeout(function () { URL.revokeObjectURL(a.href); }, 4000);
+
+    var b = document.getElementById('btn-embed');
+    if (b) { var o = b.innerHTML; b.innerHTML = 'saved &#x2713;'; setTimeout(function () { b.innerHTML = o; }, 2200); }
+  }
+
+  function clearNotes() {
+    if (!confirm('Delete every note in this brief?')) return;
+    N = {}; save(); badges();
+  }
+
+  /* ---- wiring ---- */
+  function init() {
+    var ta = document.getElementById('note-text');
+    if (ta) {
+      ta.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); add(); }
+      });
+    }
+    document.addEventListener('click', function (e) {
+      var t = e.target.closest('[data-note-action]');
+      if (!t) return;
+      var a = t.dataset.noteAction;
+      if (a === 'add') add();
+      else if (a === 'export') exportNotes();
+      else if (a === 'embed') embedNotes();
+      else if (a === 'clear') clearNotes();
+      else if (a === 'copy') copyExport(t);
+    });
+    ['d-note', 'd-export'].forEach(function (id) {
+      var d = document.getElementById(id);
+      if (!d) return;
+      Array.prototype.forEach.call(d.querySelectorAll('[data-close]'), function (x) {
+        x.addEventListener('click', function () { d.close(); });
+      });
+      d.addEventListener('click', function (e) { if (e.target === d) d.close(); });
+    });
+    tag();
+    badges();
+  }
+
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
+  else init();
+})();
+</script>
+</body>
+</html>

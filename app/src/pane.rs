@@ -19,11 +19,11 @@ use alacritty_terminal::{
 };
 use futures::StreamExt;
 use gpui::{
-    anchored, canvas, deferred, div, font, linear_color_stop, linear_gradient, point, prelude::*,
-    px, rgb, Animation, AnimationExt, AnyElement, App, Bounds, BoxShadow, ClipboardItem, Context,
-    FocusHandle, Focusable, Font, FontStyle, FontWeight, Hsla, KeyDownEvent, Keystroke,
-    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, ScrollWheelEvent,
-    StyledText, TextRun, UnderlineStyle, Window,
+    anchored, canvas, deferred, div, font, point, prelude::*, px, rgb, Animation, AnimationExt,
+    AnyElement, App, Bounds, BoxShadow, ClipboardItem, Context, FocusHandle, Focusable, Font,
+    FontStyle, FontWeight, Hsla, KeyDownEvent, Keystroke, MouseButton, MouseDownEvent,
+    MouseMoveEvent, MouseUpEvent, Pixels, ScrollWheelEvent, StyledText, TextRun, UnderlineStyle,
+    Window,
 };
 
 /// What the tube is showing — drives the per-pane screen colour.
@@ -6676,6 +6676,10 @@ impl Render for TerminalView {
             .effective(&theme::outer_choice(cx))
             .grade
             .scale;
+        // This pane's chrome shape. Baked against THIS pane's palette rather than
+        // the window's — a pane wearing its own theme has to have its own header
+        // edge, or the two disagree by exactly the amount the pane was retinted.
+        let sk = crate::skin::for_theme(cx, &th, scale);
         self.sync_size(&th, window);
         // Warp curvature is PER-PANE (it rides the grade group): keep this pane's
         // hit-test coefficients in sync with its OWN resolved warp, so clicks land
@@ -6895,7 +6899,7 @@ impl Render for TerminalView {
                     div()
                         .px(px(7.))
                         .py(px(1.))
-                        .rounded_sm()
+                        .rounded(sk.radius())
                         .border_1()
                         .border_color(human.alpha(0.6))
                         .text_color(human)
@@ -7019,7 +7023,7 @@ impl Render for TerminalView {
                 base.w(px(logo_box))
                     .relative()
                     .overflow_hidden()
-                    .rounded(px(4. * scale))
+                    .rounded(sk.rad(4.))
                     .border_1()
                     .border_color(ring.alpha(0.65))
                     .child(
@@ -7047,7 +7051,7 @@ impl Render for TerminalView {
             } else if let Some(path) = self.logo.clone().or_else(|| self.dir_logo.clone()) {
                 base.w(px(logo_box))
                     .overflow_hidden()
-                    .rounded(px(4. * scale))
+                    .rounded(sk.rad(4.))
                     .border_1()
                     .border_color(th.accent.alpha(0.35))
                     .child(
@@ -7061,13 +7065,13 @@ impl Render for TerminalView {
                 // brightens on header hover (shares the per-pane hover group).
                 base.gap_1()
                     .px(px(5. * scale))
-                    .rounded(px(4. * scale))
+                    .rounded(sk.rad(4.))
                     .border_1()
                     .border_color(bar_fg.alpha(0.18))
                     .text_color(bar_fg.alpha(0.4))
                     .group_hover(hdr_grp.clone(), move |s| {
                         s.text_color(bar_fg.alpha(0.85))
-                            .border_color(th.accent.alpha(0.5))
+                            .border_color(sk.ink.edge_strong)
                     })
                     .child(div().text_size(px(13. * scale)).child("\u{ff0b}"))
                     .child(div().text_size(px(9.5 * scale)).child("logo"))
@@ -7083,13 +7087,12 @@ impl Render for TerminalView {
             .items_center()
             .justify_between()
             .px(hpad)
-            .bg(linear_gradient(
-                180.,
-                linear_color_stop(lighter, 0.),
-                linear_color_stop(th.surface, 1.),
-            ))
+            // Lit or flat is the skin's call, not this call site's — see
+            // `Shine`. Both stops are this PANE's, so a retinted pane keeps its
+            // own header rather than borrowing the window's.
+            .bg(sk.ground(lighter, th.surface))
             .border_b_1()
-            .border_color(th.accent.alpha(0.5))
+            .border_color(sk.ink.edge_strong)
             .text_color(bar_fg)
             // the title / status / grid-label text scales with the bar
             .text_size(px(th.font_size * scale))
@@ -7182,7 +7185,7 @@ impl Render for TerminalView {
                         let step = |glyph: &'static str, next: bool, cx: &mut Context<Self>| {
                             div()
                                 .px(px(2.))
-                                .rounded_sm()
+                                .rounded(sk.radius())
                                 .cursor_pointer()
                                 .child(glyph)
                                 .on_mouse_down(
@@ -7200,7 +7203,7 @@ impl Render for TerminalView {
                                 .items_center()
                                 .gap(px(1.))
                                 .px_1()
-                                .rounded_sm()
+                                .rounded(sk.radius())
                                 .border_1()
                                 .border_color(th.human.alpha(0.6))
                                 .text_color(th.human)
@@ -7223,9 +7226,9 @@ impl Render for TerminalView {
                         row.child(
                             div()
                                 .px_1()
-                                .rounded_sm()
+                                .rounded(sk.radius())
                                 .border_1()
-                                .border_color(th.accent.alpha(0.5))
+                                .border_color(sk.ink.edge_strong)
                                 .cursor_pointer()
                                 // the FOCUS lens reads +50% over the other 2× glyphs
                                 .text_size(px(hicon * 1.5))
@@ -7245,9 +7248,9 @@ impl Render for TerminalView {
                         row.child(
                             div()
                                 .px_1()
-                                .rounded_sm()
+                                .rounded(sk.radius())
                                 .border_1()
-                                .border_color(th.accent.alpha(0.5))
+                                .border_color(sk.ink.edge_strong)
                                 .cursor_pointer()
                                 .text_size(px(hicon))
                                 .line_height(px(hicon))
@@ -7268,9 +7271,9 @@ impl Render for TerminalView {
                                 .px_1()
                                 .flex()
                                 .items_center()
-                                .rounded_sm()
+                                .rounded(sk.radius())
                                 .border_1()
-                                .border_color(th.accent.alpha(0.5))
+                                .border_color(sk.ink.edge_strong)
                                 .cursor_pointer()
                                 .child(eq_icon(th.accent, scale * 0.5))
                                 .on_mouse_down(
@@ -7288,9 +7291,9 @@ impl Render for TerminalView {
                         row.child(
                             div()
                                 .px_1()
-                                .rounded_sm()
+                                .rounded(sk.radius())
                                 .border_1()
-                                .border_color(th.accent.alpha(0.5))
+                                .border_color(sk.ink.edge_strong)
                                 .cursor_pointer()
                                 .text_size(px(hicon))
                                 .line_height(px(hicon))
