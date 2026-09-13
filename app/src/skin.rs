@@ -1368,6 +1368,16 @@ pub fn all_skins(cx: &App) -> Vec<(String, String, bool)> {
     out
 }
 
+/// Whether a skin was CHOSEN, as opposed to inherited from the theme.
+///
+/// The distinction is not pedantry: a window that is following its theme and a
+/// window pinned to the skin that theme happens to name look identical and behave
+/// differently the moment the theme changes. It is what decides whether a "back to
+/// the theme" control has anything to undo.
+pub fn is_pinned(cx: &App) -> bool {
+    cx.global::<SkinRegistry>().active_id != FOLLOW_THEME
+}
+
 /// Which skin is actually drawing — resolving `theme` to the id it follows, so a
 /// status line never answers a question with the word "theme".
 pub fn active_id(cx: &App) -> String {

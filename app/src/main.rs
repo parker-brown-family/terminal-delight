@@ -14344,6 +14344,16 @@ impl Render for Workspace {
             self.mcp_menu = true;
             cx.notify();
         }
+        // demo/capture hook (TD_TRAY_DEMO): open the OUTER design tray — DESIGN,
+        // SKIN, the wheel, PROGRAM COLOUR, SYNTAX, ANCHOR — so the panel can be
+        // screenshotted, and so a build that would panic while painting it says
+        // so on startup instead of the first time somebody reaches for a theme.
+        // That is not hypothetical for this surface: it is the densest element
+        // tree in the app and the one a chrome change is most likely to break.
+        if std::env::var("TD_TRAY_DEMO").is_ok() && self.theme_menu.is_none() {
+            self.theme_menu = Some(MenuScope::Outer);
+            cx.notify();
+        }
         // demo/capture hook (TD_SAVINGS_DEMO): open the </> LeanCTX savings overlay
         // with FICTIONAL data (never the real ~/.lean-ctx ledger), so the surface
         // can be screenshotted for the lean-ctx issue without leaking real agent
@@ -15304,6 +15314,59 @@ impl Render for Workspace {
                     }),
                 ));
             }
+            // ---- SKIN: the shape axis, beside DESIGN's colour axis ----
+            // Shape is window-global (a window whose panes had different corner
+            // radii reads as broken, not as configured), so this row is built
+            // only for the OUTER scope — same rule the ANCHOR toggle follows.
+            //
+            // It exists because the feature is untestable without it. The plan
+            // said "no picker until there are four skins", which was a judgement
+            // about whether a control earns its space; the actual trigger was
+            // that a person cannot evaluate a look they have no way to put on.
+            let mut skin_row = div().flex().flex_row().flex_wrap().gap_2();
+            let skin_now = skin::active_id(cx);
+            let skin_pinned = skin::is_pinned(cx);
+            for (id, icon, _) in skin::all_skins(cx) {
+                // Lit when this skin is what is DRAWING — whether it was chosen
+                // here or inherited from the theme. Lighting only explicit
+                // choices would leave the row blank on a fresh window, which
+                // reads as "no skin" rather than as "the default one".
+                let lit = id == skin_now;
+                let click_id = id.clone();
+                skin_row = skin_row.child(
+                    theme_icon_btn(&th, &icon, &id, lit)
+                        .id(SharedString::from(format!("skin-btn-{id}")))
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |_ws, _: &MouseDownEvent, _w, cx| {
+                                cx.stop_propagation();
+                                if let Err(e) = skin::select(cx, &click_id) {
+                                    eprintln!("terminal-delight: {e}");
+                                }
+                                cx.notify();
+                            }),
+                        ),
+                );
+            }
+            // Back to following whatever the theme asks for. Shown only once a
+            // skin has actually been pinned: on a fresh window it would be a
+            // button that undoes nothing, and a control whose press does nothing
+            // is how a panel teaches people to stop reading it.
+            if skin_pinned {
+                skin_row = skin_row.child(
+                    theme_icon_btn(&th, "\u{25ce}", "theme", false)
+                        .id("skin-btn-follow")
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|_ws, _: &MouseDownEvent, _w, cx| {
+                                cx.stop_propagation();
+                                let _ = skin::select(cx, skin::FOLLOW_THEME);
+                                cx.notify();
+                            }),
+                        ),
+                );
+            }
+
             // The three colours live as draggable markers ON the wheel — ◉ seed,
             // T text, C complement. Grab one and drag it around to set it.
             let wheel = self.color_wheel(self.wheel_markers(cx), cx);
@@ -15631,6 +15694,17 @@ impl Render for Workspace {
                 .child(hsep())
                 .child(label(t.t_theme))
                 .child(theme_row)
+                // SKIN sits directly under DESIGN because they are the two halves
+                // of the same question — DESIGN is what colour the chrome is,
+                // SKIN is what shape it is — and separating them across the panel
+                // would hide that they are siblings.
+                //
+                // The heading is a literal rather than a `t.` key, matching
+                // ANCHOR below. Both are untranslated and both belong to the
+                // same gap, tracked as #406.
+                .when(!is_pane, |d| {
+                    d.child(hsep()).child(label("SKIN")).child(skin_row)
+                })
                 .child(hsep())
                 .child(label(t.t_wheel))
                 .child(div().flex().justify_center().py_1().child(wheel))
