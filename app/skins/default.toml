@@ -89,6 +89,8 @@ icon = "▢"
 # label_size = 9.0
 # bracket    = 5.0    # the arm of a corner bracket
 # rail       = 2.0    # the bar marking an active row
+# glow       = 7.0    # how far the phosphor ring blooms past its border
+# glow_a     = 0.55   # how hot the bloom is, 0..1 — NOT a length
 
 # ── shape ────────────────────────────────────────────────────────────────────
 # The strategies. These are what make a LOOK rather than a tint: they change
@@ -97,7 +99,16 @@ icon = "▢"
 [shape]
 corner   = "round"      # round | square
 boundary = "hairline"   # hairline | double | inset | none
-emphasis = "fill"       # fill | underline | bracket | rail
+# THE PHOSPHOR RING. Changed from `fill` on 2026-09-12, at the owner's request,
+# and it is the one place this file is NOT a transcription of the old chrome.
+#
+# It belongs here more than it belongs in deco. Terminal Delight's renderer
+# already has glow and bloom of its own, so a lit accent edge under a phosphor
+# theme is lit twice — the skin draws the ring and the CRT pass blooms it. Every
+# other emphasis device fights the renderer; this one is the only one that
+# compounds with it. The wash stays underneath on rows, because a ring alone
+# finds a row and does not read it against nineteen neighbours.
+emphasis = "glow"       # fill | underline | bracket | rail | glow
 divider  = "line"       # line | double | none
 caps     = "off"        # off | upper | tracked
 shine    = "gradient"   # gradient | flat — whether a raised surface is lit

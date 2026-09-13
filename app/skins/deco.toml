@@ -11,16 +11,25 @@
 #   the twin rule       one line between two things reads as adjacency; two
 #                       lines with a gap reads as a BOUNDARY. Deco's signature
 #                       move, and the cheapest way to make regions legible.
-#   the bracket         four corner ticks mark the active row without filling
-#                       it, so a dense list keeps its text contrast. A filled
-#                       pill in a list of twenty is a stripe; a bracket is a
-#                       pointer.
+#   the phosphor ring   a lit border on the active thing, blooming outward. It
+#                       replaced corner brackets on 2026-09-12, the same day they
+#                       shipped: at the size a tab label actually is, four
+#                       disconnected ticks read as debris AROUND the text rather
+#                       than as a bracket around it. A continuous line is one
+#                       shape the eye resolves at any size; four ticks are four
+#                       shapes it has to assemble, and at 16px it does not. The
+#                       ring also compounds with TD's own CRT glow, so the edge
+#                       is lit twice — the skin draws it, the renderer blooms it.
 #   tracked caps        letterspaced small caps for labels only. Deco's voice,
 #                       and it separates furniture from content at a glance.
 #
 # Explicitly NOT here, because the brief was modern and professional: no bezels,
-# no rivets, no gradients, no glow, no sunbursts, no chevrons, no HUD. Every
-# device below is load-bearing.
+# no rivets, no gradients, no sunbursts, no chevrons, no HUD. Every device below
+# is load-bearing.
+#
+# The ring's bloom is the one exception to "no glow", and it is not decoration:
+# it is the marking. A glow spread over a whole surface is haze; a glow bound to
+# the edge of the ONE thing that is active is a pointer.
 #
 # This skin declares no colour it does not have to. It is written as RECIPES, so
 # it works on the brass-on-black deco palette it ships with AND on the green
@@ -30,7 +39,7 @@
 # THE MISSING DEVICE: there is no chamfer. The cut corner is the deco move a
 # reader pictures first, and gpui cannot draw one — corner styling takes radii
 # only, so a chamfer needs a rendered path behind every element that wants it.
-# `corner = "square"` plus the bracket is the substitute. Parked as issue #407,
+# `corner = "square"` plus the ring is the substitute. Parked as issue #407,
 # with the cost estimate and the check that would close it as not-worth-doing.
 
 name = "deco"
@@ -39,7 +48,7 @@ icon = "◈"
 [shape]
 corner   = "square"
 boundary = "double"
-emphasis = "bracket"
+emphasis = "glow"
 divider  = "double"
 caps     = "tracked"
 # No lit surfaces. A gradient on a header is shine, and shine is the claim that
@@ -65,8 +74,11 @@ pad_y      = 4.0
 chip_px    = 7.0
 chip_py    = 2.0
 gap        = 5.0
-# Long enough to read as a machined corner, short enough not to close into a box.
-bracket    = 6.0
+# The ring's bloom. Brass on near-black wants a wider, softer halo than a
+# green phosphor does — the hue is already warm, so the glow reads as light
+# rather than as haze.
+glow       = 8.0
+glow_a     = 0.60
 rail       = 2.0
 label_size = 9.0
 row_h      = 16.0
@@ -80,8 +92,8 @@ rule_strong = { from = "accent", a = 0.55 }
 rule        = { from = "accent", a = 0.22 }
 edge        = { from = "accent", a = 0.45 }
 
-# The bracket does the marking, so the wash underneath it drops to a whisper —
-# enough to seat the row, not enough to fight the text on it.
+# The RING does the marking, so the wash underneath it drops to a whisper —
+# enough to seat the row, not enough to fight either the text or the halo.
 mark_wash   = { from = "accent", a = 0.07 }
 
 # Text ON the accent goes DARK, not white. A brass fill is a light colour — the

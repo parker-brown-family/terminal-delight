@@ -396,6 +396,8 @@ metric_tokens! {
     label_size  => "label_size",  9.0,   "the type size of a small caps label";
     bracket     => "bracket",     5.0,   "the arm length of a corner bracket";
     rail        => "rail",        2.0,   "the width of the rail marking an active row";
+    glow        => "glow",        7.0,   "how far the phosphor ring blooms past its border";
+    glow_a      => "glow_a",      0.55,  "how hot the bloom is, 0..1 — NOT a length";
 }
 
 // ---------------------------------------------------------------------------
@@ -439,15 +441,35 @@ pub enum Boundary {
 /// How "this one is active" is signalled.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum Emphasis {
-    /// A tinted background. What the chrome does today.
+    /// A tinted background. What the chrome did before the glow.
     #[default]
     Fill,
     /// A line under it.
     Underline,
-    /// Four corner ticks. Marks without filling, so a dense list stays readable.
+    /// Four corner ticks. Marks without filling, so a dense list stays readable
+    /// — in theory. **Shipped in deco on 2026-09-12 and withdrawn the same day**:
+    /// at the size a tab label actually is, four disconnected ticks read as
+    /// debris around the text rather than as a bracket around it. The device
+    /// needs more room than a 16px row has. Kept as a strategy because it is
+    /// correct at larger sizes, and because a look nobody is running costs one
+    /// match arm.
     Bracket,
     /// A bar down the leading edge.
     Rail,
+    /// A lit border that blooms — the phosphor ring.
+    ///
+    /// A full border in the accent plus an outer glow of the same colour, so the
+    /// marked thing reads as *energised* rather than as *outlined*. This is the
+    /// one device that survives being small: a continuous line is a single shape
+    /// the eye resolves at any size, where four corner ticks are four shapes it
+    /// has to assemble.
+    ///
+    /// It also compounds with what the terminal already does. TD's CRT pass has
+    /// glow and bloom of its own, so a bright accent edge under a phosphor theme
+    /// is lit twice — the skin draws the ring and the renderer blooms it. That is
+    /// why this belongs in the DEFAULT skin and not only in deco: the retro look
+    /// is the one it was always going to suit best.
+    Glow,
 }
 
 /// The personality of a horizontal divider.
@@ -703,6 +725,10 @@ impl Skin {
         match self.shape.emphasis {
             Emphasis::Fill | Emphasis::Underline => b_b(d, self.m.rail).border_color(lit(active)),
             Emphasis::Rail => b_l(d, self.m.rail).border_color(lit(active)),
+            // The ring takes the whole edge, so the strip's reserved bottom rule
+            // is not drawn as well — two devices on one tab is one too many, and
+            // `ring` reserves its own border in every state regardless.
+            Emphasis::Glow => self.ring(d, active, tint),
             // The rule still occupies its two pixels, transparent, so switching
             // tabs under a bracketed skin moves nothing either.
             Emphasis::Bracket => {
@@ -885,6 +911,17 @@ impl Skin {
             .rounded(self.radius())
             .text_size(self.px(self.m.label_size))
             .whitespace_nowrap();
+        // The ring reserves its border in every state, so an unlit chip under a
+        // glow skin is the same size as a lit one.
+        if matches!(self.shape.emphasis, Emphasis::Glow) {
+            let ink = if active {
+                self.ink.mark
+            } else {
+                self.ink.ink_off
+            };
+            let r = self.ring(base.text_color(ink), active, self.ink.mark);
+            return if active { r.bg(self.ink.mark_wash) } else { r };
+        }
         if !active {
             return base.text_color(self.ink.ink_off);
         }
@@ -897,7 +934,34 @@ impl Skin {
                 b_l(base.text_color(self.ink.mark), self.m.rail).border_color(self.ink.mark)
             }
             Emphasis::Bracket => self.brackets(base.text_color(self.ink.mark), self.ink.mark),
+            Emphasis::Glow => unreachable!("handled above, before the inactive early-return"),
         }
+    }
+
+    /// The phosphor ring: a lit border that blooms outward.
+    ///
+    /// `tint` is what the marked thing is lit in — the accent, or the thing's own
+    /// colour where it has one. The border is drawn at EVERY state and merely
+    /// goes transparent when unlit, so switching which row or tab is active never
+    /// moves anything by a border width. That reservation is the whole reason
+    /// this lives here rather than at a call site.
+    ///
+    /// One shadow, no inset. An inset companion was tried and removed: it reads
+    /// as a bevel, and a bevel is the claim that the thing is raised, which is
+    /// the opposite of what a glow says.
+    pub fn ring<E: Styled>(&self, d: E, lit: bool, tint: Hsla) -> E {
+        let clear = hsla(0., 0., 0., 0.);
+        let d = b_all(d, self.m.border).border_color(if lit { tint } else { clear });
+        if !lit {
+            return d;
+        }
+        d.shadow(vec![gpui::BoxShadow {
+            color: tint.alpha(self.m.glow_a.clamp(0., 1.)),
+            offset: gpui::point(px(0.), px(0.)),
+            blur_radius: px(self.m.glow),
+            spread_radius: px(0.),
+            inset: false,
+        }])
     }
 
     /// Four corner ticks around whatever the div holds. One div per corner, each
@@ -925,6 +989,14 @@ impl Skin {
     /// strategy is worth having: it marks without tinting, so a row whose task
     /// already carries a colour is not asked to wear two.
     pub fn active_row<E: Styled + ParentElement>(&self, d: E, active: bool) -> E {
+        // Glow keeps the wash. A ring alone is enough to FIND the row and not
+        // enough to read it against its neighbours in a list of twenty; the
+        // HumanLayer panels this is taken from tint the active row as well as
+        // ring it, and they are right to.
+        if matches!(self.shape.emphasis, Emphasis::Glow) {
+            let r = self.ring(d, active, self.ink.mark);
+            return if active { r.bg(self.ink.row_active) } else { r };
+        }
         if !active {
             return d;
         }
@@ -935,6 +1007,7 @@ impl Skin {
             Emphasis::Rail => b_l(d, self.m.rail).border_color(self.ink.mark),
             Emphasis::Underline => b_b(d, self.m.border).border_color(self.ink.mark),
             Emphasis::Bracket => self.brackets(d, self.ink.mark),
+            Emphasis::Glow => unreachable!("handled above, before the inactive early-return"),
         }
     }
 
@@ -1244,6 +1317,7 @@ pub fn parse(source: &str) -> Result<SkinSpec, String> {
                 ("underline", Emphasis::Underline),
                 ("bracket", Emphasis::Bracket),
                 ("rail", Emphasis::Rail),
+                ("glow", Emphasis::Glow),
             ],
             "shape.emphasis",
             u,
@@ -1593,7 +1667,7 @@ fn list_skins() -> i32 {
         "  2. $TD_SKIN=<path>                    a file, read at launch",
         "  3. your own skin.toml                 hot-reloaded on save (path above)",
         "  4. skin = \"<name>\" in a theme file    so picking a theme moves both axes",
-        "  5. default                            today's chrome, unchanged",
+        "  5. default                            the house look — round, lit, ringed",
     ] {
         println!("{line}");
     }
@@ -1755,7 +1829,22 @@ mod tests {
         // gpui's rounded_sm is rems(0.25) = 4px; the left bar's frame is px(10.)
         assert_eq!(sk.radius(), px(4.));
         assert_eq!(sk.radius_lg(), px(10.));
-        assert_eq!(sk.shape, Shapes::default());
+
+        // Every shape strategy still matches the old chrome — EXCEPT emphasis.
+        //
+        // The phosphor ring replaced the fill in the default skin on 2026-09-12,
+        // deliberately and at the owner's request, so this is no longer the
+        // identity. Asserting the rest field by field rather than relaxing the
+        // whole comparison: the value of this test is that a SECOND unintended
+        // departure cannot hide behind the first one, and `!= Shapes::default()`
+        // would have let it.
+        assert_eq!(sk.shape.emphasis, Emphasis::Glow, "the one intended change");
+        let d = Shapes::default();
+        assert_eq!(sk.shape.corner, d.corner);
+        assert_eq!(sk.shape.boundary, d.boundary);
+        assert_eq!(sk.shape.divider, d.divider);
+        assert_eq!(sk.shape.caps, d.caps);
+        assert_eq!(sk.shape.shine, d.shine);
     }
 
     /// Absent is not zero. A skin that declares one strategy and nothing else is
@@ -1861,14 +1950,44 @@ mod tests {
         }
     }
 
+    /// The glow is a border AND a bloom, and it reserves its border when unlit.
+    ///
+    /// The reservation is the part worth a test: without it, marking a different
+    /// tab moves every tab on the strip by a border width, which looks like a
+    /// layout bug and is impossible to attribute to a skin.
     #[test]
-    fn the_deco_skin_is_square_bracketed_and_doubled() {
+    fn the_ring_reserves_its_border_so_marking_something_moves_nothing() {
+        let th = palette();
+        let mut spec = parse(DEFAULT_SKIN_TOML).unwrap();
+        spec.shape.emphasis = Some(Emphasis::Glow);
+        let sk = spec.bake(&th, 1.0);
+        assert_eq!(sk.shape.emphasis, Emphasis::Glow);
+        // The bloom has a real radius and a real alpha — a glow of zero is a
+        // border, and a skin that quietly shipped one would look like a bug in
+        // the renderer rather than a wrong number in a file.
+        assert!(sk.m.glow > 0., "a ring with no bloom is just a border");
+        assert!(
+            sk.m.glow_a > 0. && sk.m.glow_a <= 1.,
+            "glow_a is an alpha, not a length: {}",
+            sk.m.glow_a
+        );
+        // Both skins that use the ring must give it something to be lit in.
+        for src in [DEFAULT_SKIN_TOML, include_str!("../skins/deco.toml")] {
+            let s = parse(src).unwrap().bake(&th, 1.0);
+            if s.shape.emphasis == Emphasis::Glow {
+                assert!(s.ink.mark.a > 0.5, "{} rings in a transparent ink", s.name);
+            }
+        }
+    }
+
+    #[test]
+    fn the_deco_skin_is_square_ringed_and_doubled() {
         let th = palette();
         let sk = parse(include_str!("../skins/deco.toml"))
             .unwrap()
             .bake(&th, 1.0);
         assert_eq!(sk.shape.corner, Corner::Square);
-        assert_eq!(sk.shape.emphasis, Emphasis::Bracket);
+        assert_eq!(sk.shape.emphasis, Emphasis::Glow);
         assert_eq!(sk.shape.divider, Divider::Double);
         assert_eq!(sk.radius(), px(0.));
         assert_eq!(sk.radius_lg(), px(0.));
