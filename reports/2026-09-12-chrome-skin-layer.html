@@ -648,7 +648,25 @@ terminal-delight ctl skin status</code></pre>
   <p>The fourth guard in the written recipe asserts <code>hyprctl activewindow</code> names the client, because <code>hl.dsp.window.close()</code> takes the ACTIVE window. It failed: the active window was <code>org.omarchy.screensaver</code>, since you were away.</p>
   <p>That ruled out the compositor route rather than the cutover. A client holding zero ptys can take a plain <b>SIGTERM</b> instead &mdash; TERM, never KILL, so the socket closes and the host sees a detach rather than a disappearance. Relaunch still goes through the compositor, so the new window gets Hyprland's environment and its own scope.</p>
 </div>
-<div id="cutover-result"></div>
+<h3 style="margin:26px 0 10px;font-size:16px">What it cost</h3>
+<div class="tiles">
+  <div class="tile"><span class="n" style="color:var(--good)">20/20</span><span class="k">panes kept</span></div>
+  <div class="tile"><span class="n" style="color:var(--good)">0</span><span class="k">agent sessions lost</span></div>
+  <div class="tile"><span class="n" style="color:var(--good)">0</span><span class="k">ptys on the new client</span></div>
+  <div class="tile"><span class="n">~2s</span><span class="k">window absent</span></div>
+  <div class="tile"><span class="n" style="color:var(--warning)">1</span><span class="k">known casualty, below</span></div>
+</div>
+<p><span class="tag v">measured</span> The host held <b>20 children before the TERM, 20 after it, and 20 after the relaunch</b> — it never noticed. Every agent resume line was captured before the bounce and diffed against the list afterwards: <b>identical</b>, so no session was re-rolled. The new client came up on <code>td-b8118b1-skin-tokens</code> holding <b>zero pseudoterminals</b>, which is the proof it attached to the host rather than spawning its own terminals.</p>
+<div class="callout">
+  <span class="lbl">the one thing it did cost</span>
+  <p>Every already-running agent's <b>MCP relay dropped and does not come back</b> (#391) — <code>mcp__terminal-delight__*</code> went dead mid-task for this session, exactly as the recipe says it will. The window is still reachable over <code>ctl</code>, which is how the pane count and every session id above were read back, and how the note on this pane's glass was posted.</p>
+  <p>It is a known ticket rather than a surprise, and it is the reason a cutover is still a thing you schedule rather than a thing you do casually.</p>
+</div>
+<div class="callout good">
+  <span class="lbl">left on the default skin, deliberately</span>
+  <p>Your window is on the new binary and it looks <b>exactly as it did before</b>. That is the success criterion for a default-preserving refactor, not an anticlimax: 99 converted radius calls and six restyled surfaces, and you cannot tell.</p>
+  <p>The look is one command away, and the decision to keep deco optional was yours: <code>terminal-delight ctl skin deco</code>.</p>
+</div>
 
 <h2 class="sec">Findings</h2>
 <div class="finding">
@@ -710,9 +728,12 @@ terminal-delight ctl skin status</code></pre>
 <div class="grill">
   <div class="ask">
     <h3>Does the bracket survive a real screen?</h3>
-    <p>Every mockup here has six rows and four tabs. Your actual window has nineteen panes and a full strip, and the bracket is the one device whose whole argument is that it <em>scales better than a fill</em> &mdash; a filled pill in a list of twenty is a stripe, a bracket is a pointer. That claim is untested at twenty.</p>
-    <p>It is also the only device that is cheap to change: <code>emphasis = "rail"</code> or <code>"underline"</code> in <code>deco.toml</code>, no rebuild, hot-reloaded in 300ms.</p>
-    <p class="rec"><b>Recommendation:</b> open a deco window, restore a real layout into it, and try all four values before deciding. If the brackets read as noise at that density, <code>rail</code> is the fallback I would pick &mdash; it keeps the marking structural without adding eight lines per selected thing.</p>
+    <p>Every mockup here has six rows and four tabs. Your window has <b>twenty panes and a full strip</b>, and the bracket&rsquo;s whole argument is that it <em>scales better than a fill</em> &mdash; a filled pill in a list of twenty is a stripe, a bracket is a pointer. That claim is now testable and still untested.</p>
+    <p>You can settle it in about thirty seconds, on the real thing, without a rebuild:</p>
+<pre><code>terminal-delight ctl skin deco      # brackets
+terminal-delight ctl skin console   # a rail instead
+terminal-delight ctl skin default   # back to today</code></pre>
+    <p class="rec"><b>Recommendation:</b> flip between <code>deco</code> and <code>console</code> on your own twenty-pane screen and see which one you can still read. If the brackets go to texture at that density, <code>console</code> already <em>is</em> the rail answer &mdash; and if you want deco&rsquo;s gold with console&rsquo;s rail, that is one word in <code>deco.toml</code> (<code>emphasis = "rail"</code>), hot-reloaded in 300ms.</p>
   </div>
 </div>
 
