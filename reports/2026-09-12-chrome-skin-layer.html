@@ -372,14 +372,18 @@ button.more:hover { border-color: var(--s1); color: var(--text-primary); }
    the active thing is marked. The border is drawn at every state and merely goes
    transparent when unlit, exactly as `Skin::ring` does, so nothing shifts. */
 .tdbar.ring .row, .tdbar.ring .scope { border: 1px solid transparent; }
+/* Two shadows and almost no fill — the focused pane's recipe, scaled to a row.
+   The crisp 0-blur/1px-spread ring doubles the border without thickening it;
+   the wider soft halo blooms around it. The fill is a seat, not a highlight. */
 .tdbar.ring .row.act {
   background: var(--rowa); border: 1px solid var(--mk); padding-left: 4px;
-  box-shadow: 0 0 var(--glow, 7px) var(--mk);
+  box-shadow: 0 0 0 1px var(--mk), 0 0 var(--glow, 5px) var(--halo, var(--mk));
 }
 .tdbar.ring .scope {
   background: var(--wash); border-color: var(--mk);
-  box-shadow: 0 0 var(--glow, 7px) var(--mk);
+  box-shadow: 0 0 0 1px var(--mk), 0 0 var(--glow, 5px) var(--halo, var(--mk));
 }
+.tdbar .row .cnt { display: none; }  /* the app stopped drawing these */
 .tdbar .slot { margin: 8px var(--px) 0; padding-top: 6px; border-top: 1px solid var(--ru); position: relative; z-index: 2; }
 .tdbar .pr { display: flex; align-items: center; gap: 5px; padding: 2px 0; }
 .tdbar .pr .who { letter-spacing: var(--trk); }
@@ -392,14 +396,14 @@ button.more:hover { border-color: var(--s1); color: var(--text-primary); }
 <body>
 <header class="top">
   <div class="wrap">
-    <p class="kicker">terminal-delight &middot; chrome skin layer &middot; 12 Sep 2026 &middot; built, pickable, ringed, cut over three times</p>
+    <p class="kicker">terminal-delight &middot; chrome skin layer &middot; 12 Sep 2026 &middot; built, pickable, ringed, cut over four times</p>
     <h1>The chrome is themeable as data</h1>
     <p class="verdict">Terminal Delight now has a <b>third themeable axis</b>. Colour and CRT texture were already data; <b>shape</b> is the new one &mdash; 27 chrome inks written as recipes over the palette, 14 metrics, 6 strategies. Three skins ship, there is a <b>SKIN row in the design tray</b> that restyles the window on a click, and <b>your live 21-pane session is running it right now</b> — with the phosphor ring on whatever tab you are in.</p>
     <p class="meta">
       <span>PR <b>#405</b></span>
       <span>branch <b>chrome/skin-tokens</b></span>
       <span>gates <b>approved</b></span>
-      <span>tests <b>800 pass, 20 new</b></span>
+      <span>tests <b>801 pass, 21 new</b></span>
       <span>clippy + fmt <b>clean</b></span>
       <span>skins <b>default · deco · console</b></span>
       <span>picker <b>in the design tray</b></span>
@@ -490,7 +494,7 @@ button.more:hover { border-color: var(--s1); color: var(--text-primary); }
 
 <div class="mocks">
   <figure class="mock">
-    <div class="tdbar ring" style="--p:#03100a;--rs:#020805;--ru:rgba(20,64,31,.25);--i:#86efac;--dim:rgba(134,239,172,.7);--faint:rgba(134,239,172,.45);--off:#14401f;--mk:#22c55e;--wash:rgba(34,197,94,.14);--rowa:rgba(34,197,94,.22);--live:#c52289;--ok:#4ade80;--warn:#fbe08a;--dgr:#ff7b7b;--sunk:#030a06">
+    <div class="tdbar ring" style="--p:#03100a;--rs:#020805;--ru:rgba(20,64,31,.25);--i:#86efac;--dim:rgba(134,239,172,.7);--faint:rgba(134,239,172,.45);--off:#14401f;--mk:#22c55e;--wash:rgba(34,197,94,.08);--rowa:rgba(34,197,94,.08);--live:#c52289;--ok:#4ade80;--warn:#fbe08a;--dgr:#ff7b7b;--sunk:#030a06">
       <div class="hd"><span class="scope"><i class="bk"></i>ALL</span><span class="ib">&#9660;</span><span class="ib">&#9723;</span><span class="ib">+</span><span class="ib">&#9664;</span></div>
       <div class="ru"><i></i><i></i><i></i></div>
       <div class="rows">
@@ -511,7 +515,7 @@ button.more:hover { border-color: var(--s1); color: var(--text-primary); }
   </figure>
 
   <figure class="mock">
-    <div class="tdbar ring dbl dblru" style="--p:#03100a;--rs:rgba(34,197,94,.55);--ru:rgba(34,197,94,.22);--i:#86efac;--dim:rgba(134,239,172,.7);--faint:rgba(134,239,172,.45);--off:#14401f;--mk:#22c55e;--wash:rgba(34,197,94,.07);--rowa:rgba(34,197,94,.22);--live:#e49fcb;--ok:#4ade80;--warn:#fbe08a;--dgr:#ff7b7b;--sunk:#030a06;--r:0px;--rlg:0px;--px:8px;--cpx:7px;--cpy:2px;--gap:5px;--rowh:16px;--bk:6px;--trk:.1em;--glow:8px">
+    <div class="tdbar ring dbl dblru" style="--p:#03100a;--rs:rgba(34,197,94,.55);--ru:rgba(34,197,94,.22);--i:#86efac;--dim:rgba(134,239,172,.7);--faint:rgba(134,239,172,.45);--off:#14401f;--mk:#22c55e;--wash:rgba(34,197,94,.05);--rowa:rgba(34,197,94,.08);--live:#e49fcb;--ok:#4ade80;--warn:#fbe08a;--dgr:#ff7b7b;--sunk:#030a06;--r:0px;--rlg:0px;--px:8px;--cpx:7px;--cpy:2px;--gap:5px;--rowh:16px;--bk:6px;--trk:.1em;--glow:6px">
       <div class="hd"><span class="scope"><i class="bk"></i>ALL</span><span class="ib">&#9660;</span><span class="ib">&#9723;</span><span class="ib">+</span><span class="ib">&#9664;</span></div>
       <div class="ru"><i></i><i></i><i></i></div>
       <div class="rows">
@@ -532,7 +536,7 @@ button.more:hover { border-color: var(--s1); color: var(--text-primary); }
   </figure>
 
   <figure class="mock">
-    <div class="tdbar ring" style="--p:#0a0e10;--rs:#060809;--ru:rgba(43,51,56,.25);--i:#e8e4d8;--dim:rgba(232,228,216,.7);--faint:rgba(232,228,216,.45);--off:#2b3338;--mk:#c2a34f;--wash:rgba(194,163,79,.14);--rowa:rgba(194,163,79,.22);--live:#4f6ec2;--ok:#8fc7a9;--warn:#e8b45e;--dgr:#d98476;--sunk:#080a0c">
+    <div class="tdbar ring" style="--p:#0a0e10;--rs:#060809;--ru:rgba(43,51,56,.25);--i:#e8e4d8;--dim:rgba(232,228,216,.7);--faint:rgba(232,228,216,.45);--off:#2b3338;--mk:#c2a34f;--wash:rgba(194,163,79,.08);--rowa:rgba(194,163,79,.08);--live:#4f6ec2;--ok:#8fc7a9;--warn:#e8b45e;--dgr:#d98476;--sunk:#080a0c">
       <div class="hd"><span class="scope"><i class="bk"></i>ALL</span><span class="ib">&#9660;</span><span class="ib">&#9723;</span><span class="ib">+</span><span class="ib">&#9664;</span></div>
       <div class="ru"><i></i><i></i><i></i></div>
       <div class="rows">
@@ -553,7 +557,7 @@ button.more:hover { border-color: var(--s1); color: var(--text-primary); }
   </figure>
 
   <figure class="mock">
-    <div class="tdbar ring dbl dblru" style="--p:#0a0e10;--rs:rgba(194,163,79,.55);--ru:rgba(194,163,79,.22);--i:#e8e4d8;--dim:rgba(232,228,216,.7);--faint:rgba(232,228,216,.45);--off:#2b3338;--mk:#c2a34f;--wash:rgba(194,163,79,.07);--rowa:rgba(194,163,79,.22);--live:#7fd1b9;--ok:#8fc7a9;--warn:#e8b45e;--dgr:#d98476;--sunk:#080a0c;--r:0px;--rlg:0px;--px:8px;--cpx:7px;--cpy:2px;--gap:5px;--rowh:16px;--bk:6px;--trk:.1em;--glow:8px">
+    <div class="tdbar ring dbl dblru" style="--p:#0a0e10;--rs:rgba(194,163,79,.55);--ru:rgba(194,163,79,.22);--i:#e8e4d8;--dim:rgba(232,228,216,.7);--faint:rgba(232,228,216,.45);--off:#2b3338;--mk:#c2a34f;--wash:rgba(194,163,79,.05);--rowa:rgba(194,163,79,.08);--live:#7fd1b9;--ok:#8fc7a9;--warn:#e8b45e;--dgr:#d98476;--sunk:#080a0c;--r:0px;--rlg:0px;--px:8px;--cpx:7px;--cpy:2px;--gap:5px;--rowh:16px;--bk:6px;--trk:.1em;--glow:6px">
       <div class="hd"><span class="scope"><i class="bk"></i>ALL</span><span class="ib">&#9660;</span><span class="ib">&#9723;</span><span class="ib">+</span><span class="ib">&#9664;</span></div>
       <div class="ru"><i></i><i></i><i></i></div>
       <div class="rows">
@@ -655,14 +659,14 @@ terminal-delight ctl skin status</code></pre>
 </div>
 <h3 style="margin:26px 0 10px;font-size:16px">What it cost</h3>
 <div class="tiles">
-  <div class="tile"><span class="n" style="color:var(--good)">3</span><span class="k">cutovers run</span></div>
-  <div class="tile"><span class="n" style="color:var(--good)">20→20<br>21→21→21</span><span class="k">panes kept, every time</span></div>
+  <div class="tile"><span class="n" style="color:var(--good)">4</span><span class="k">cutovers run</span></div>
+  <div class="tile"><span class="n" style="color:var(--good)">20→20<br>21 × 3</span><span class="k">panes kept, every time</span></div>
   <div class="tile"><span class="n" style="color:var(--good)">0</span><span class="k">agent sessions lost</span></div>
   <div class="tile"><span class="n" style="color:var(--good)">0</span><span class="k">ptys on the new client</span></div>
   <div class="tile"><span class="n" style="color:var(--warning)">1</span><span class="k">known casualty, below</span></div>
 </div>
 <p><span class="tag v">measured</span> The host held <b>the same number of children before the TERM, after it, and after the relaunch</b> — it never noticed, either time. Every agent resume line was captured before each bounce and diffed against the list afterwards: <b>identical</b>, so no session was re-rolled. Each new client came up holding <b>zero pseudoterminals</b>, which is the proof it attached to the host rather than spawning its own terminals.</p>
-<p>It ran three times — the SKIN picker landed after the first, the phosphor ring after the second. The second was the same four guards, the same TERM, the same compositor relaunch — and it being dull the second time is the point: the recipe is a script now rather than a thing to reason about.</p>
+<p>It ran four times — the picker after the first, the ring after the second, and four corrections off a photograph after the third. The second was the same four guards, the same TERM, the same compositor relaunch — and it being dull the second time is the point: the recipe is a script now rather than a thing to reason about.</p>
 <div class="callout">
   <span class="lbl">the one thing it did cost</span>
   <p>Every already-running agent's <b>MCP relay dropped and does not come back</b> (#391) — <code>mcp__terminal-delight__*</code> went dead mid-task for this session, exactly as the recipe says it will. The window is still reachable over <code>ctl</code>, which is how the pane count and every session id above were read back, and how the note on this pane's glass was posted.</p>
@@ -736,6 +740,19 @@ terminal-delight ctl skin status</code></pre>
   </div>
 </div>
 
+<h2 class="sec">Four corrections from the screen</h2>
+<p>All four came from photographs of the running build, and none of them was findable any other way.</p>
+<table class="wide">
+  <thead><tr><th>what</th><th>was</th><th>now</th><th>why</th></tr></thead>
+  <tbody>
+    <tr><td><b>the ring</b></td><td>one soft shadow over a 0.22 wash</td><td>two shadows, almost no fill</td><td>The app already does this well: <code>render_node</code> lights the focused pane with a crisp 1px spread ring plus a wide soft halo and <b>no tint at all</b>. The crisp ring doubles the border without thickening it; the fill was what made a lit row read as a selected item in a web list.</td></tr>
+    <tr><td><b>the bloom</b></td><td>7.0 blur / 0.55 alpha</td><td>5.25 / 0.41</td><td>25% down. Two bright devices need less of each than one did — the crisp ring adds apparent intensity the original numbers were not budgeting for.</td></tr>
+    <tr><td><b>the lit tab</b></td><td>square</td><td>rounded, like a lit row</td><td>A flat underline never needed a corner, so the strip carried no radius at all. With a ring around it, that left the tab square beside a left bar whose lit row is round — two answers to one question on one screen.</td></tr>
+    <tr><td><b>the numbers</b></td><td>a count on every branch row, <code>+N</code> on task rows</td><td>gone</td><td>On a twenty-one-pane tree it is a column of grey digits down the right edge that nobody reads and every row pays for in width. The fold triangle already says whether a branch holds anything; the badges are themselves the signal.</td></tr>
+  </tbody>
+</table>
+<p><span class="tag v">measured</span> <code>badge_overflow</code> still runs — it decides how many glyphs <em>fit</em>, and the printed number was only ever the leftover. A source-shape test refuses both counts back, because each is one <code>.child(format!(…))</code> from returning and neither would look wrong in a diff.</p>
+
 <h2 class="sec">Answered by looking</h2>
 <div class="grill">
   <div class="ask">
@@ -748,8 +765,8 @@ terminal-delight ctl skin status</code></pre>
 <h2 class="sec">Still open</h2>
 <div class="grill">
   <div class="ask">
-    <h3>Is the bloom the right strength?</h3>
-    <p>The ring has two numbers &mdash; how far it blooms and how hot &mdash; and they are guesses calibrated on a static window rather than on a screen with sixteen agents moving. Deco runs wider and hotter than default (<code>glow 8 / 0.60</code> against <code>7 / 0.55</code>) on the theory that brass on near-black wants a softer halo than green phosphor does. That theory is untested.</p>
+    <h3>Is the bloom right NOW?</h3>
+    <p>Down 25% and rebuilt on the pane recipe, so the numbers are no longer a first guess — but they are still <em>a</em> guess, now calibrated against one photograph rather than a session of use. Deco keeps a wider, softer halo than default (<code>glow 6 / 0.45</code> against <code>5.25 / 0.41</code>) on the theory that brass on near-black wants one. That theory is untested.</p>
     <p class="rec"><b>Recommendation:</b> live with it for a session before touching it. If it reads as haze rather than as marking, drop <code>glow_a</code> first, not <code>glow</code> &mdash; a tight bright ring reads as deliberate where a wide faint one reads as a rendering artefact. Both are hot-reloaded in 300ms with no rebuild.</p>
   </div>
 </div>
