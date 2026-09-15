@@ -34,6 +34,13 @@ pub enum PaneKind {
     Agent,
     Shell,
     /// The pane exists and nothing could be established about what runs in it.
+    ///
+    /// Not constructed today, and that is the honest state rather than an
+    /// oversight: this process launches its own panes and knows what is in each
+    /// one. It becomes reachable when a client is shown a pane the host owns and
+    /// has not described. Slice 1's rotation synthesised it, which is why the
+    /// dead-code warning only appears now that the rotation is gone.
+    #[allow(dead_code)]
     Unknown,
 }
 
@@ -94,9 +101,18 @@ impl AttentionKind {
 /// The derived order is the sort order: promoted first.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub enum Priority {
+    /// Constructed by Slice 5, when the context menus can set a level. Until
+    /// then every observation is Neutral and the compiler is right that nothing
+    /// builds this — the ordering key landed early with Slice 1 deliberately, so
+    /// the sort is already correct on the day levels arrive. Silenced rather
+    /// than faked: the tracer's rotation used to construct it, and that was the
+    /// only thing keeping this warning quiet.
+    #[allow(dead_code)]
     Promoted,
     #[default]
     Neutral,
+    /// See [`Priority::Promoted`] — same slice, same reason.
+    #[allow(dead_code)]
     Demoted,
 }
 
