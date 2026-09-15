@@ -452,7 +452,6 @@ impl Tally {
     pub fn needs_you(&self) -> bool {
         self.blocked > 0 || self.errored > 0
     }
-
 }
 
 // ---- the provider's own mark, if the user has one -------------------------

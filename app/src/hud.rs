@@ -366,7 +366,9 @@ mod tests {
     /// The three states the issue says must stop being one value.
     #[test]
     fn rest_unreadable_and_working_are_three_different_answers() {
-        let working = parse_status_line(&rows(&["\u{2733} Refactoring\u{2026} (2m \u{b7} esc to interrupt)"]));
+        let working = parse_status_line(&rows(&[
+            "\u{2733} Refactoring\u{2026} (2m \u{b7} esc to interrupt)",
+        ]));
         let unreadable = parse_status_line(&rows(&["wat"]));
         assert_eq!(working.state, AgentState::Working);
         assert_eq!(unreadable.state, AgentState::Unknown);
