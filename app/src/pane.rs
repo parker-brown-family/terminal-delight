@@ -747,7 +747,7 @@ fn session_uses_uwsm() -> bool {
 /// goes through `uwsm-app` so the opened app is scoped to the desktop rather
 /// than to this terminal — closing the pane that printed a link should not be
 /// able to take the PDF it opened with it.
-fn open_with_system(target: &str) {
+pub(crate) fn open_with_system(target: &str) {
     if session_uses_uwsm() {
         spawn_detached("uwsm-app", &["--", "xdg-open", target]);
     } else {
@@ -2025,6 +2025,20 @@ impl gpui::EventEmitter<OpenUsagePanel> for TerminalView {}
 pub struct ToggleLeftBar;
 impl gpui::EventEmitter<ToggleLeftBar> for TerminalView {}
 
+/// Ctrl+Shift+N — open or close the attention rail's queue.
+pub struct ToggleRail;
+impl gpui::EventEmitter<ToggleRail> for TerminalView {}
+
+/// Ctrl+Shift+Z — bring back the most recently closed thing.
+///
+/// Z because the feature is an undo on a close. Not ctrl+shift+T, which this
+/// terminal already spends on a new tab and so does every other one; not plain
+/// ctrl+Z, which belongs to whatever is running in the pane — a terminal that
+/// claims an unshifted control chord takes it away from every program in every
+/// pane, with no way for them to ask for it back.
+pub struct ReopenClosed;
+impl gpui::EventEmitter<ReopenClosed> for TerminalView {}
+
 /// Ctrl+F (`global = false`) / Ctrl+Shift+F (`global = true`) was pressed in this
 /// pane — ask the workspace to open the find panel. In-pane find searches just
 /// this pane (and the panel centres over it); global find searches every pane.
@@ -3067,9 +3081,7 @@ impl TerminalView {
             return crate::hud::AgentStatus::default();
         }
         let mut st = crate::hud::parse_status_line(&self.live_rows());
-        if st.state == crate::hud::AgentState::Idle && self.bell {
-            st.state = crate::hud::AgentState::Finished;
-        }
+        st.state = crate::hud::with_bell(st.state, self.bell);
         st
     }
 
@@ -4321,6 +4333,21 @@ impl TerminalView {
                 // first, so a chord added there would never fire.
                 "b" => {
                     cx.emit(ToggleLeftBar);
+                    return;
+                }
+                // Ctrl+Shift+N → the attention rail's queue. N for "needs me".
+                // Here for the same reason as the arms above: a focused terminal
+                // takes the chord first, so a workspace-level binding would
+                // compile, test green, and do nothing when pressed.
+                "n" => {
+                    cx.emit(ToggleRail);
+                    return;
+                }
+                // Ctrl+Shift+Z → the most recently closed thing comes back.
+                // Same reason as the arms above for living here: the pane has
+                // the keyboard, so this is the only place the chord is seen.
+                "z" => {
+                    cx.emit(ReopenClosed);
                     return;
                 }
                 // Two keys for one panel, and the second is not redundant.

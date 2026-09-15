@@ -12,7 +12,14 @@ usage collectors, compiled into the terminal-delight binary by
 | `omarchy-agent-usage-fireworks` | `omarchy/bin/omarchy-agent-usage-fireworks` |
 
 - **Source:** <https://github.com/basecamp/omarchy>, MIT.
-- **Vendored from:** the `omarchy` package, version `4.0.1-1`, on 2026-09-02.
+- **Vendored from:** the `omarchy` package, version `4.0.1-1`, on 2026-09-02 —
+  except `omarchy-agent-usage-codex`, re-synced on 2026-09-15 from upstream
+  `quattro` at `4cd8a08`, released in `v4.0.2`, which repairs the app-server
+  probe against a current `codex`.
+
+Worth re-checking whenever an agent vendor ships a CLI change: these collectors
+shell out to the agent's own binary, so an argument upstream has already renamed
+goes on failing quietly here until the file is copied across again.
 
 ## Why byte-identical
 

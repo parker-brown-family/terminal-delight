@@ -1,0 +1,79 @@
+# collector-drift-watch — weekly drift report for the vendored usage collectors.
+#
+# The three files in app/src/vendor/ are byte-identical copies of Omarchy's
+# agent usage collectors, and that policy is only as good as somebody running
+# the `cmp`. Nobody was: a renamed `codex` flag left the Codex bars blank for
+# weeks while upstream had already shipped the fix (see the re-sync commit that
+# added this file). This asks the question on a timer instead.
+#
+# Never fails the build — like zed-pin-watch, this is a smoke detector. A
+# divergence is often legitimate for a while; what is not legitimate is nobody
+# knowing about it.
+name: collector-drift-watch
+
+on:
+  schedule:
+    - cron: "41 9 * * 1" # Mondays 09:41 UTC
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  drift:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      UPSTREAM: basecamp/omarchy
+      ISSUE_TITLE: "vendored usage collectors have drifted from Omarchy"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compare each collector with upstream
+        id: cmp
+        run: |
+          set -euo pipefail
+          branch=$(gh api "repos/$UPSTREAM" --jq '.default_branch')
+          drifted=()
+          rows=""
+          for agent in claude codex fireworks; do
+            ours="app/src/vendor/omarchy-agent-usage-$agent"
+            theirs="$RUNNER_TEMP/$agent.upstream"
+            gh api "repos/$UPSTREAM/contents/bin/omarchy-agent-usage-$agent?ref=$branch" \
+              --jq '.content' | base64 -d >"$theirs"
+            if cmp -s "$ours" "$theirs"; then
+              rows="$rows| \`$agent\` | identical |"$'\n'
+            else
+              drifted+=("$agent")
+              n=$(diff -u "$ours" "$theirs" | grep -c '^[-+][^-+]' || true)
+              rows="$rows| \`$agent\` | **differs** ($n changed lines) |"$'\n'
+            fi
+          done
+          {
+            echo "drifted=${drifted[*]:-}"
+            echo "branch=$branch"
+          } >>"$GITHUB_OUTPUT"
+          {
+            echo "## vendored collector drift"
+            echo ""
+            echo "| Collector | Against $UPSTREAM@$branch |"
+            echo "|---|---|"
+            printf '%s' "$rows"
+          } >>"$GITHUB_STEP_SUMMARY"
+
+      - name: Raise (or refresh) the drift issue
+        if: ${{ steps.cmp.outputs.drifted != '' }}
+        run: |
+          set -euo pipefail
+          body="These vendored collectors differ from \`$UPSTREAM@${{ steps.cmp.outputs.branch }}\`: **${{ steps.cmp.outputs.drifted }}**.
+
+          Re-syncing is a \`cp\` — see \`app/src/vendor/README.md\`. Read the upstream diff first: these scripts shell out to each agent's own binary, so an upstream change is often a vendor CLI change that is already failing silently here, which is exactly how the Codex bars went blank.
+
+          Then \`cargo test usage::\` and record in the README which version each file came from."
+          existing=$(gh issue list --state open --search "in:title \"$ISSUE_TITLE\"" --json number --jq '.[0].number // empty')
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body "$body"
+          else
+            gh issue create --title "$ISSUE_TITLE" --label follow-up --body "$body"
+          fi

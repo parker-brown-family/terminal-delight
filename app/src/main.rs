@@ -27,6 +27,7 @@
 //! TODO(os-chrome): client-side window decorations (WindowDecorations::Client).
 
 mod art;
+mod attention;
 mod bell;
 mod crt;
 mod csd;
@@ -83,8 +84,8 @@ use gpui_platform::application;
 use pane::{
     AgentDone, AgentWorkingChanged, CloseFocusRead, ClosePane, DragPaneStart, FocusReadNav,
     OpenAgentPanel, OpenDisplayMenu, OpenFind, OpenFocusRead, OpenHelp, OpenLogoPicker,
-    OpenThemeMenu, OpenUsagePanel, PaintApplied, PaneRenamed, ReadNav, RequestCloseTab,
-    TerminalView, ToggleLeftBar,
+    OpenThemeMenu, OpenUsagePanel, PaintApplied, PaneRenamed, ReadNav, ReopenClosed,
+    RequestCloseTab, TerminalView, ToggleLeftBar, ToggleRail,
 };
 use serde::{Deserialize, Serialize};
 use theme::{PaneTheme, ThemeChoice};
@@ -138,6 +139,17 @@ struct Ghost {
 enum SplitDir {
     Row,
     Col,
+}
+
+/// Which half of a split something sits in.
+///
+/// A split's two children are not interchangeable — `a` is left or top — so a
+/// pane that comes back on the wrong side has moved across the screen without
+/// anybody asking it to.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Side {
+    A,
+    B,
 }
 
 static SPLIT_IDS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
@@ -343,6 +355,79 @@ impl<L: Clone> Tree<L> {
                         b,
                     }),
                 )
+            }
+        }
+    }
+
+    /// Where a leaf sits, described so it can be put back after it has left.
+    ///
+    /// Returns its parent split's direction and ratio, which side of that split
+    /// the leaf is on, and — the load-bearing part — the SIBLING subtree rather
+    /// than the parent. The parent does not survive the removal: `remove_leaf`
+    /// collapses it onto the sibling, so a seat recorded as "inside split 41"
+    /// aims at something that no longer exists by the time anybody asks for it
+    /// back. The sibling is what is still standing there.
+    ///
+    /// `None` when the leaf is the whole tree. That is not a seat, and the
+    /// caller wants the tab-shaped answer instead.
+    fn seat_of<'a>(
+        &'a self,
+        target: &impl Fn(&L) -> bool,
+    ) -> Option<(SplitDir, f32, Side, &'a Tree<L>)> {
+        match self {
+            Tree::Leaf(_) => None,
+            Tree::Split {
+                dir, ratio, a, b, ..
+            } => {
+                if matches!(a.as_ref(), Tree::Leaf(e) if target(e)) {
+                    return Some((*dir, *ratio, Side::A, b));
+                }
+                if matches!(b.as_ref(), Tree::Leaf(e) if target(e)) {
+                    return Some((*dir, *ratio, Side::B, a));
+                }
+                a.seat_of(target).or_else(|| b.seat_of(target))
+            }
+        }
+    }
+
+    /// Put a leaf back beside the subtree it used to share a split with.
+    ///
+    /// The anchor is matched as a whole SUBTREE, not as a leaf, because the
+    /// sibling may itself have been a split — closing one pane of a four-pane
+    /// tab leaves a split holding the other three, and that is the thing the
+    /// returning pane has to sit beside.
+    ///
+    /// Hands the leaf back when the anchor is gone, so the caller can try the
+    /// next-best home rather than having to guess in advance whether this
+    /// would work.
+    fn reseat(
+        &mut self,
+        is_anchor: &impl Fn(&Tree<L>) -> bool,
+        side: Side,
+        dir: SplitDir,
+        ratio: f32,
+        leaf: L,
+    ) -> Option<L> {
+        if is_anchor(self) {
+            let sibling = std::mem::replace(self, Tree::Leaf(leaf.clone()));
+            let (a, b) = match side {
+                Side::A => (Tree::Leaf(leaf), sibling),
+                Side::B => (sibling, Tree::Leaf(leaf)),
+            };
+            *self = Tree::Split {
+                id: next_split_id(),
+                dir,
+                ratio,
+                a: Box::new(a),
+                b: Box::new(b),
+            };
+            return None;
+        }
+        match self {
+            Tree::Leaf(_) => Some(leaf),
+            Tree::Split { a, b, .. } => {
+                let leaf = a.reseat(is_anchor, side, dir, ratio, leaf)?;
+                b.reseat(is_anchor, side, dir, ratio, leaf)
             }
         }
     }
@@ -742,6 +827,28 @@ const SLOT_RAIL_GROWTH: f32 = 1.5;
 /// as reserved, small enough that it never competes with the tree for the
 /// bar's vertical space.
 const BAY_H: f32 = 56.0;
+
+/// Seconds since the process started, for animations that want a phase rather
+/// than a duration.
+///
+/// A free function over a `OnceLock` rather than a field on the workspace: a
+/// flicker wants to know what time it is, not when this particular window was
+/// built, and threading an `Instant` through the constructor to answer that
+/// would put a clock in the state file's neighbourhood for no reason.
+fn anim_clock() -> f32 {
+    static T0: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+    T0.get_or_init(Instant::now).elapsed().as_secs_f32()
+}
+
+/// The left bar's fold triangle: its hit target, and therefore the width a
+/// child row has to clear before it reads as a child.
+///
+/// A branch wears a disclosure triangle and a task does not, so indenting a task
+/// by one step alone puts its label four pixels LEFT of the branch it hangs
+/// from — the indent is spent getting back to where the parent's label already
+/// started. Tasks add this on top, which makes all three layers step by the
+/// same amount from the layer above.
+const FOLD_W: f32 = 15.0;
 
 /// The bin glyph's point size at scale 1.0 — two thirds of the 19pt it shipped
 /// at on the first pass, which read as the subject of the panel rather than as
@@ -1165,10 +1272,22 @@ impl TabGroup {
     /// needs this: without it the strip's heading renders as nothing at all,
     /// which is an invisible control rather than an unnamed one.
     fn label(&self) -> String {
-        self.name
-            .clone()
-            .unwrap_or_else(|| format!("initiative {}", self.id))
+        self.name.clone().unwrap_or_else(|| unnamed_group(self.id))
     }
+}
+
+/// What an unnamed group is called, in the one place that decides it.
+///
+/// "initiative" is the TREE's word for the middle layer and it never reached a
+/// person before: a new group opened straight into its rename box, so the
+/// default was overwritten before it could be read. Now that making a group
+/// leaves it named, the label a person sees has to be the word the menu that
+/// made it used — and every menu says "group".
+///
+/// Four sites spelled this string out separately. A default that four places
+/// decide is a default that eventually disagrees with itself.
+fn unnamed_group(id: u32) -> String {
+    format!("group {id}")
 }
 
 /// A branch that was deleted, holding everything needed to put it back.
@@ -1192,6 +1311,124 @@ struct Deleted {
     /// you were working in should land you back in it.
     held_active: Option<usize>,
 }
+
+/// What one retirement is holding.
+///
+/// Every way of ending something in this application puts one of these in the
+/// trash instead of hanging up: the bay, the ✕, ctrl+w, alt+w, and the two menu
+/// rows. They differ only in how they come back — a branch by its tab indices,
+/// a pane by the split it sat in — which is why this is an enum and not two
+/// trashes.
+///
+/// Dropping this value is what ends the shells it holds. Nothing else does.
+enum Retired {
+    /// A project, a group, or a whole tab: [`Deleted`] already carries all three.
+    Branch(Deleted),
+    /// One pane out of a split.
+    Pane(HeldPane),
+}
+
+/// What a returning pane aims at: the subtree it used to share a split with.
+///
+/// A leaf is named by the terminal inside it and a split by its own id, both of
+/// which outlive the reshaping that happens while the pane is away.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Anchor {
+    Leaf(EntityId),
+    Split(u64),
+}
+
+impl Anchor {
+    fn of(node: &Node) -> Anchor {
+        match node {
+            Tree::Leaf(e) => Anchor::Leaf(e.entity_id()),
+            Tree::Split { id, .. } => Anchor::Split(*id),
+        }
+    }
+
+    fn matches(&self, node: &Node) -> bool {
+        match (self, node) {
+            (Anchor::Leaf(want), Tree::Leaf(e)) => e.entity_id() == *want,
+            (Anchor::Split(want), Tree::Split { id, .. }) => id == want,
+            _ => false,
+        }
+    }
+}
+
+/// One pane, closed and still running, with everywhere it might go back to.
+///
+/// Three homes in descending order of honesty, because a pane is away for up to
+/// an hour and the layout does not hold still: the seat it left, the tab it left,
+/// and a tab of its own. Which one it got is told rather than glossed — "back
+/// where it was" and "back as its own tab" are different facts about a screen
+/// somebody is about to look at.
+struct HeldPane {
+    /// The live terminal. Held here is the whole mechanism keeping it running.
+    leaf: Entity<TerminalView>,
+    /// The subtree it shared a split with, and how they shared it.
+    anchor: Anchor,
+    side: Side,
+    dir: SplitDir,
+    ratio: f32,
+    /// Where its tab sat, and what that tab was — the second and third homes.
+    tab_at: usize,
+    ident: TabIdentity,
+}
+
+/// Which home a returning pane actually got.
+///
+/// Three states rather than a boolean, because "recovered" covering all three
+/// is the sentence that makes a person think their layout is intact when it is
+/// not.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Landed {
+    /// Back in the split it left, same side, same ratio.
+    Seat,
+    /// Its tab is still there, but the seat is gone — split in beside it.
+    Tab,
+    /// The tab is gone too. A new one, wearing the old tab's name and colours.
+    NewTab,
+}
+
+impl Landed {
+    fn says(self) -> &'static str {
+        match self {
+            Landed::Seat => "back where it was",
+            Landed::Tab => "back in its tab, in a new seat",
+            Landed::NewTab => "back as its own tab",
+        }
+    }
+}
+
+/// The one line the bay says out loud, for a few seconds, over its own doors.
+///
+/// Two different messages and not one string, because they are answers to
+/// different questions: what just happened to a thing you closed, and what just
+/// happened to a thing you asked back.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum BaySays {
+    /// Something was held. Said once ever, the first time.
+    Held,
+    /// A pane came back, and which of its three homes it got.
+    Reopened(Landed),
+    /// ctrl+shift+z with nothing to give back. Said out loud rather than
+    /// swallowed: a chord that silently does nothing reads as a chord that is
+    /// broken, and this one is often pressed one time too many.
+    Empty,
+}
+
+impl BaySays {
+    fn line(self) -> String {
+        match self {
+            BaySays::Held => "held \u{2014} ctrl+shift+z brings it back".to_string(),
+            BaySays::Reopened(l) => l.says().to_string(),
+            BaySays::Empty => "nothing left to bring back".to_string(),
+        }
+    }
+}
+
+/// How long the bay keeps saying it.
+const BAY_SAYS_FOR: Duration = Duration::from_secs(6);
 
 /// The outer layer of the left bar's tree: a PROJECT, holding initiatives (tab
 /// groups) and any tasks filed straight under it.
@@ -1448,6 +1685,11 @@ struct StateFile {
     /// absent on pre-feature files, and on every non-Hyprland desktop.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     last_workspace: Option<String>,
+    /// Whether this person has been told, once, that a close can be undone.
+    /// Absent on pre-feature files → not yet told, which is the truth about
+    /// everybody who has never seen the hint.
+    #[serde(default)]
+    undo_hinted: bool,
 }
 
 fn default_warp() -> f32 {
@@ -1495,6 +1737,7 @@ impl Default for StateFile {
             anchor_top: false,
             lang: lang::Lang::default(),
             last_workspace: None,
+            undo_hinted: false,
         }
     }
 }
@@ -1821,6 +2064,10 @@ struct PaneDrag {
     /// True while the cursor is currently outside the window — a release there
     /// tears the pane off into a brand-new window of its own.
     left_window: bool,
+    /// True while the cursor is over the bay at the foot of the left bar. A
+    /// release there retires the pane — the same gesture a branch and a tab
+    /// already have, landing in the same holding.
+    over_bay: bool,
 }
 
 /// An OUTER tab being dragged along the mother bar to reorder it. Distinct from
@@ -2667,12 +2914,20 @@ struct Workspace {
     /// never reused, so a stale reference resolves to nothing instead of to
     /// somebody else's project.
     next_project_id: u32,
-    /// Branches that have been deleted and are still coming back.
+    /// Everything that has been ended and is still coming back — a deleted
+    /// branch, a closed tab, a closed pane. One trash, because they are one
+    /// promise.
     ///
-    /// Holding a [`Deleted`] here is the entire mechanism that keeps its shells
+    /// Holding a [`Retired`] here is the entire mechanism that keeps its shells
     /// running: in window-owned mode a terminal ends when the last reference to
     /// its pane is dropped, and this is that reference. See [`crate::hold`].
-    trash: hold::Trash<Deleted>,
+    trash: hold::Trash<Retired>,
+    /// The one line the bay says out loud, and when it started saying it.
+    bay_says: Option<(BaySays, Instant)>,
+    /// Whether a person has been told once that a close is recoverable.
+    /// Persisted: an undo nobody knows about is an undo nobody uses, and a hint
+    /// that returns every session is furniture.
+    undo_hinted: bool,
     /// The trash can's hangar doors, 0.0 shut to 1.0 open. Driven by whether a
     /// drag is over the footer, and eased per frame rather than stored as a
     /// target, so a drag that leaves mid-open closes from where it got to.
@@ -2793,6 +3048,12 @@ struct Workspace {
     /// the owning tab and focuses the pane. The async notification task can't
     /// touch the Window itself.
     pending_jump: Option<EntityId>,
+    /// The attention rail exists at all. Slice 1 keeps it behind `TD_SPINE=1`,
+    /// so nothing on main grows a right edge before it has been looked at.
+    rail_on: bool,
+    /// The queue is open over the panes. The closed spine is the steady state
+    /// and this never opens itself.
+    rail_open: bool,
     /// On-screen box of the FOCUS reading area (the clip box below the header),
     /// captured each frame. This is the SAME rect registered as the warp tube, so a
     /// click normalises into it and applies the identical barrel map the shader
@@ -2955,9 +3216,22 @@ fn wire_pane(pane: &Entity<TerminalView>, window: &mut Window, cx: &mut Context<
         cx.notify();
     })
     .detach();
+    // ctrl+shift+N in any pane → open or close the attention queue.
+    cx.subscribe(pane, |ws, _pane, _ev: &ToggleRail, cx| {
+        if ws.rail_on {
+            ws.rail_open = !ws.rail_open;
+            cx.notify();
+        }
+    })
+    .detach();
     cx.subscribe(pane, |ws, _pane, _ev: &OpenAgentPanel, cx| {
         ws.mcp_menu = true;
         cx.notify();
+    })
+    .detach();
+    // ctrl+shift+z in any pane → the most recently closed thing comes back.
+    cx.subscribe_in(pane, window, |ws, _pane, _ev: &ReopenClosed, window, cx| {
+        ws.reopen_newest(window, cx);
     })
     .detach();
     // Ctrl+F / Ctrl+Shift+F in a pane → open the find panel (this pane, or global)
@@ -2974,6 +3248,7 @@ fn wire_pane(pane: &Entity<TerminalView>, window: &mut Window, cx: &mut Context<
             at: start,
             engaged: false,
             left_window: false,
+            over_bay: false,
         });
         ws.drop_target = None;
         cx.notify();
@@ -3709,6 +3984,8 @@ impl Workspace {
             projects: Vec::new(),
             next_project_id: 1,
             trash: hold::Trash::new(),
+            bay_says: None,
+            undo_hinted: false,
             bay: 0.,
             confirm_delete: None,
             bar_menu: None,
@@ -3752,6 +4029,8 @@ impl Workspace {
             focus_line_h: 0.0,
             focus_page_h: 0.0,
             pending_jump: None,
+            rail_on: std::env::var("TD_SPINE").is_ok_and(|v| v != "0"),
+            rail_open: false,
             focus_body_bounds: Arc::new(Mutex::new(None)),
             focus_map: Arc::new(Mutex::new(None)),
             focus_sel: None,
@@ -4577,6 +4856,7 @@ impl Workspace {
             // for ranking only — never an identity, so a dragged or renamed
             // workspace costs nothing.
             last_workspace: instance::current_workspace(),
+            undo_hinted: self.undo_hinted,
         }
     }
 
@@ -6807,12 +7087,12 @@ impl Workspace {
             label,
             taken.len(),
             panes,
-            Deleted {
+            Retired::Branch(Deleted {
                 tabs: taken,
                 groups,
                 project,
                 held_active,
-            },
+            }),
             Instant::now(),
         );
         // Here, deliberately: this is where shells end.
@@ -6863,6 +7143,21 @@ impl Workspace {
             .and_then(|t| t.name.clone())
             .unwrap_or_else(|| format!("tab {}", i + 1));
         let was_active = self.active == i;
+
+        // Every tube in the tab goes dark at once, if this is the tab on screen.
+        // The terminals are NOT dying — they go on running in the trash — but
+        // the screen they were on is leaving, and that is what the ghost draws.
+        // A background tab's panes hold stale bounds (see `ghost_of`), so there
+        // is nothing worth animating there.
+        if i == self.active {
+            let mut leaves = vec![];
+            self.tabs[i].root.leaves(&mut leaves);
+            let leaves: Vec<_> = leaves.into_iter().cloned().collect();
+            for e in &leaves {
+                let g = self.ghost_of(e, cx);
+                self.ghosts.extend(g);
+            }
+        }
         let tab = self.tabs.remove(i);
 
         let (_, evicted) = self.trash.take(
@@ -6870,12 +7165,12 @@ impl Workspace {
             label,
             1,
             panes,
-            Deleted {
+            Retired::Branch(Deleted {
                 tabs: vec![(i, tab)],
                 groups: vec![],
                 project: None,
                 held_active: was_active.then_some(0),
-            },
+            }),
             Instant::now(),
         );
         self.end_held(evicted, cx);
@@ -6885,9 +7180,38 @@ impl Workspace {
         self.active = tree::active_after_removal(self.active, &[i], self.tabs.len());
         self.permit_shrink.set(true);
         self.focus_active(window, cx);
+        self.hint_undo_once();
         self.save(cx);
         cx.notify();
         true
+    }
+
+    /// Bring back the most recently closed thing, whatever kind it was.
+    ///
+    /// Newest first, and repeating the chord walks back through the trash — the
+    /// order a person remembers their own closes in. Expired holdings are not
+    /// in `live_items`, so a press after everything has run out says so rather
+    /// than resurrecting the oldest thing still technically on the list.
+    fn reopen_newest(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        let Some(id) = self.trash.live_items(Instant::now()).next().map(|h| h.id) else {
+            self.bay_says = Some((BaySays::Empty, Instant::now()));
+            cx.notify();
+            return false;
+        };
+        self.recover_holding(id, window, cx)
+    }
+
+    /// Say once, the first time anything is held, that it can be had back.
+    ///
+    /// The whole feature is invisible otherwise: a close looks exactly like the
+    /// close that used to end things, and ctrl+shift+z is not a chord anybody
+    /// guesses. Once per person rather than once per session — a hint that
+    /// returns every morning is furniture people learn to look past.
+    fn hint_undo_once(&mut self) {
+        if !self.undo_hinted {
+            self.undo_hinted = true;
+            self.bay_says = Some((BaySays::Held, Instant::now()));
+        }
     }
 
     /// Put a holding back where it came from.
@@ -6908,7 +7232,11 @@ impl Workspace {
             groups,
             project,
             held_active,
-        } = h.payload;
+        } = match h.payload {
+            Retired::Branch(d) => d,
+            // A pane knows where it goes and nothing above it does.
+            Retired::Pane(p) => return self.reopen_pane(p, window, cx),
+        };
 
         if let Some(p) = project {
             if !self.projects.iter().any(|q| q.id == p.id) {
@@ -6955,16 +7283,93 @@ impl Workspace {
     /// [`Self::hangup`] returns immediately when there is no host, so calling
     /// it here is correct in both modes and does nothing in the one you are
     /// probably running.
-    fn end_held(&self, held: Vec<Deleted>, cx: &mut Context<Self>) {
-        for d in &held {
-            let mut leaves = vec![];
-            for (_, tab) in &d.tabs {
-                tab.root.leaves(&mut leaves);
-            }
-            let leaves: Vec<_> = leaves.into_iter().cloned().collect();
+    fn end_held(&self, held: Vec<Retired>, cx: &mut Context<Self>) {
+        for r in &held {
+            let leaves: Vec<Entity<TerminalView>> = match r {
+                Retired::Branch(d) => {
+                    let mut refs = vec![];
+                    for (_, tab) in &d.tabs {
+                        tab.root.leaves(&mut refs);
+                    }
+                    refs.into_iter().cloned().collect()
+                }
+                Retired::Pane(p) => vec![p.leaf.clone()],
+            };
             self.hangup(&leaves, cx);
         }
         drop(held);
+    }
+
+    /// Put one held pane back, and say which of its three homes it got.
+    ///
+    /// The order is the honest one: the seat it left, then its tab, then a tab
+    /// of its own. Each step is tried against the tree as it is NOW — an hour is
+    /// long enough for the layout to have moved, and a seat that has gone is an
+    /// ordinary outcome rather than an error.
+    fn reopen_pane(&mut self, p: HeldPane, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        let HeldPane {
+            leaf,
+            anchor,
+            side,
+            dir,
+            ratio,
+            tab_at,
+            ident,
+        } = p;
+
+        // 1 — the seat. The anchor is the sibling it shared a split with, so
+        // finding it means the split can be rebuilt exactly as it was.
+        let is_anchor = |n: &Node| anchor.matches(n);
+        let mut leaf = Some(leaf);
+        let mut at = None;
+        for (i, tab) in self.tabs.iter_mut().enumerate() {
+            let Some(l) = leaf.take() else { break };
+            match tab.root.reseat(&is_anchor, side, dir, ratio, l) {
+                None => {
+                    at = Some((i, Landed::Seat));
+                    break;
+                }
+                Some(back) => leaf = Some(back),
+            }
+        }
+
+        // 2 — the tab, by identity. Its shape has changed underneath the pane,
+        // so it goes in as a fresh split against whatever is there now.
+        if let Some(l) = leaf.take() {
+            let home = self
+                .tabs
+                .iter()
+                .position(|t| t.name == ident.name && t.group == ident.group)
+                .or_else(|| (tab_at < self.tabs.len()).then_some(tab_at));
+            match home {
+                Some(i) => {
+                    let tab = &mut self.tabs[i];
+                    let old = std::mem::replace(&mut tab.root, Tree::Leaf(l.clone()));
+                    tab.root = Tree::Split {
+                        id: next_split_id(),
+                        dir,
+                        ratio: 0.5,
+                        a: Box::new(old),
+                        b: Box::new(Tree::Leaf(l)),
+                    };
+                    at = Some((i, Landed::Tab));
+                }
+                // 3 — a tab of its own, wearing what the old tab was called.
+                None => {
+                    let i = tab_at.min(self.tabs.len());
+                    self.tabs.insert(i, ident.onto(Tree::Leaf(l)));
+                    at = Some((i, Landed::NewTab));
+                }
+            }
+        }
+
+        if let Some((i, landed)) = at {
+            self.bay_says = Some((BaySays::Reopened(landed), Instant::now()));
+            self.activate_tab(i, window, cx);
+        }
+        self.save(cx);
+        cx.notify();
+        true
     }
 
     /// The chrome every "this ends something" modal wears.
@@ -7184,7 +7589,7 @@ impl Workspace {
                     .map(|h| {
                         (
                             h.id,
-                            format!("Recover \u{201c}{}\u{201d}", h.label),
+                            format!("Recover {} \u{201c}{}\u{201d}", h.kind.noun(), h.label),
                             h.left(now).map(hold::remaining_label).unwrap_or_default(),
                         )
                     })
@@ -7558,9 +7963,12 @@ impl Workspace {
 
     /// A project born holding a terminal of its own, and landed in.
     ///
-    /// The whole gesture, in the order Parker described it: generate, go there,
-    /// then the housekeeping. The rename box opens last so the keyboard is
-    /// already where the naming happens.
+    /// Generate, then go there. It does NOT open the rename box: a gesture that
+    /// grabs the keyboard decides for you that naming the thing is the next
+    /// move, when most of the time the next move is using the terminal it just
+    /// gave you. It opens as `project N` and stays that way until somebody
+    /// double-clicks or right-clicks the row, which is where renaming already
+    /// lives and costs nothing to reach.
     fn new_project_with_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) -> u32 {
         let id = self.new_project(None, cx);
         self.new_tab_in(
@@ -7571,7 +7979,6 @@ impl Workspace {
             window,
             cx,
         );
-        self.start_bar_rename(BarBranch::Project(id), window, cx);
         id
     }
 
@@ -7604,7 +8011,6 @@ impl Workspace {
             window,
             cx,
         );
-        self.start_bar_rename(BarBranch::Initiative(id), window, cx);
         id
     }
 
@@ -7626,10 +8032,17 @@ impl Workspace {
     /// things to tell somebody, and a door that only opens on hover is a door
     /// nobody discovers.
     fn bay_target(&self) -> f32 {
-        match self.bar_drag.as_ref().filter(|d| d.engaged) {
-            Some(d) if d.over_bay => 1.0,
-            Some(_) => 0.34,
-            None => 0.0,
+        // Two kinds of drag can end in the bay — a branch off the left bar and a
+        // pane off its own header — and the doors answer to both. A door that
+        // opens for one of the two gestures teaches that the other one cannot be
+        // dropped there, which is the opposite of what is true.
+        let bar = self.bar_drag.as_ref().filter(|d| d.engaged);
+        let pane = self.drag_pane.as_ref().filter(|d| d.engaged);
+        let over = bar.is_some_and(|d| d.over_bay) || pane.is_some_and(|d| d.over_bay);
+        match (over, bar.is_some() || pane.is_some()) {
+            (true, _) => 1.0,
+            (false, true) => 0.34,
+            (false, false) => 0.0,
         }
     }
 
@@ -7849,7 +8262,7 @@ impl Workspace {
                 .iter()
                 .find(|g| g.id == gid)
                 .map(|g| g.label())
-                .unwrap_or_else(|| format!("initiative {gid}")),
+                .unwrap_or_else(|| unnamed_group(gid)),
             BarBranch::Unfiled => "unfiled".into(),
         }
     }
@@ -10689,6 +11102,21 @@ impl Workspace {
         }
         self.confirm_close = None;
         self.tab_menu = None;
+
+        // A close is a retirement, not an ending. The shells keep running in the
+        // trash until somebody asks for them back or the holding runs out, which
+        // is the same promise the bay makes — one protocol, whichever gesture
+        // got here. `trash_tab` owns the ghosts, the focus and the save.
+        //
+        // Except for the last tab: closing it quits the application, and a
+        // holding lives in this window's memory, so it would be dropped in the
+        // same breath it was made. That case keeps today's explicit hangup,
+        // which at least ends the shells deliberately rather than by accident.
+        // It stops being the exception when a holding outlives its window.
+        if self.tabs.len() > 1 {
+            self.trash_tab(i, window, cx);
+            return;
+        }
         {
             let mut leaves = vec![];
             self.tabs[i].root.leaves(&mut leaves);
@@ -10886,6 +11314,13 @@ impl Workspace {
     /// graveyard, plugins) closes first — a second esc then closes the wall.
     /// Returns whether anything was closed. NEVER touches a terminal pane.
     fn close_popups(&mut self) -> bool {
+        // The attention queue draws over everything and is the cheapest thing to
+        // dismiss, so it goes first: Esc with the queue open should fold the
+        // queue, never the wall underneath it.
+        if self.rail_open {
+            self.rail_open = false;
+            return true;
+        }
         // Overlays that stack ON TOP of the agent wall — peel these first.
         if self.savings_menu {
             self.savings_menu = false;
@@ -11571,10 +12006,15 @@ impl Workspace {
                 .map(|(_, _, w, h)| (w, h))
                 .unwrap_or((0.0, 0.0));
             let outside = engaged && outside_bounds(f32::from(pos.x), f32::from(pos.y), ow, oh);
+            let in_bay = engaged && !outside && self.point_in_bay(pos);
             if let Some(d) = self.drag_pane.as_mut() {
                 d.left_window = outside;
+                d.over_bay = in_bay;
             }
-            self.drop_target = if engaged && !outside {
+            // Over the bay, the pane is being retired rather than moved, so the
+            // in-window landing zones stop being offered: two affordances lit at
+            // once is a release whose outcome nobody can predict.
+            self.drop_target = if engaged && !outside && !in_bay {
                 let id = self.drag_pane.as_ref().unwrap().id;
                 self.resolve_drop(pos, id)
             } else {
@@ -11831,7 +12271,13 @@ impl Workspace {
                     .unwrap_or((0.0, 0.0));
                 let outside = drag.left_window
                     || outside_bounds(f32::from(ev.position.x), f32::from(ev.position.y), ow, oh);
-                if let Some(target) = target {
+                if drag.over_bay {
+                    // Into the incinerator, by the same door everything else
+                    // uses. `close_pane` is the retirement, so a pane dropped
+                    // here and a pane closed with alt+w land in one holding and
+                    // come back the same way.
+                    self.close_pane(drag.id, window, cx);
+                } else if let Some(target) = target {
                     self.perform_drop(drag.id, target, window, cx);
                 } else if outside && self.pane_count() > 1 {
                     // released past the window edge → tear this pane off into a
@@ -11888,23 +12334,31 @@ impl Workspace {
         }) else {
             return;
         };
-        // Take the dying tube's stage before it goes. `remove_leaf` below drops
-        // the Entity, which SIGHUPs the shell — after that there is no pane left
-        // to ask where it was or how bent it was.
-        // A pane the host owns does not die when this window stops watching it,
-        // so closing one has to be said out loud. Said here, before the entity
-        // is dropped: after that there is no pane left to ask which terminal it
-        // was showing.
-        {
-            let mut leaves = vec![];
-            self.tabs[from].root.leaves(&mut leaves);
-            let dying: Vec<_> = leaves
-                .into_iter()
-                .filter(|e| e.entity_id() == id)
-                .cloned()
-                .collect();
-            self.hangup(&dying, cx);
+        // A pane alone in its tab is a tab. Closing it there is the tab-shaped
+        // gesture wearing a different chord, and routing it to one place keeps
+        // the two from drifting into two answers for one act.
+        if self.tab_pane_count(from) <= 1 {
+            self.close_tab(from, window, cx);
+            return;
         }
+
+        // The seat, read BEFORE the pane leaves. `remove_leaf` collapses the
+        // parent split onto the sibling, so a moment from now there is nothing
+        // left in the tree that describes where this pane was — and a pane that
+        // cannot say where it sat comes back somewhere arbitrary, which is worse
+        // than not coming back at all.
+        let seat = {
+            let pred = |e: &Entity<TerminalView>| e.entity_id() == id;
+            self.tabs[from]
+                .root
+                .seat_of(&pred)
+                .map(|(dir, ratio, side, sibling)| (dir, ratio, side, Anchor::of(sibling)))
+        };
+        let label = self
+            .tabs
+            .get(from)
+            .and_then(|t| t.name.clone())
+            .unwrap_or_else(|| format!("pane in tab {}", from + 1));
         if from == self.active {
             let mut leaves = vec![];
             self.tabs[from].root.leaves(&mut leaves);
@@ -11922,15 +12376,40 @@ impl Workspace {
         // The tab survives this; only one of its panes is leaving. It goes back
         // as the same task — same name, same colours, same branch.
         let was = tab.identity();
-        // dropping the taken Entity releases its PTY (SIGHUP) — that's the close
-        let (_taken, remaining) = tab.root.remove_leaf(&pred);
+        let (taken, remaining) = tab.root.remove_leaf(&pred);
         if let Some(root) = remaining {
-            self.tabs.insert(from, was.onto(root));
+            self.tabs.insert(from, was.clone().onto(root));
         }
         if self.tabs.is_empty() {
             cx.quit();
             return;
         }
+
+        // Retired, not hung up. The Entity that came out of the tree is the
+        // terminal's last reference, so the trash holding it is what keeps the
+        // shell running — and letting go of it, on eviction or expiry, is what
+        // finally ends it. There is deliberately no `hangup` on this path.
+        if let (Some(leaf), Some((dir, ratio, side, anchor))) = (taken, seat) {
+            let (_, evicted) = self.trash.take(
+                hold::Kind::Pane,
+                label,
+                0,
+                1,
+                Retired::Pane(HeldPane {
+                    leaf,
+                    anchor,
+                    side,
+                    dir,
+                    ratio,
+                    tab_at: from,
+                    ident: was,
+                }),
+                Instant::now(),
+            );
+            self.end_held(evicted, cx);
+            self.hint_undo_once();
+        }
+
         self.active = self.active.min(self.tabs.len() - 1);
         self.focus_active(window, cx);
         // Closing a pane is an EXPLICIT shrink — allow it past the guard.
@@ -13100,9 +13579,7 @@ impl Workspace {
             } => {
                 let g = self.groups.iter().find(|g| g.id == id);
                 let color = g.map(|g| g.color).unwrap_or(th.faint);
-                let label = g
-                    .map(|g| g.label())
-                    .unwrap_or_else(|| format!("initiative {id}"));
+                let label = g.map(|g| g.label()).unwrap_or_else(|| unnamed_group(id));
                 self.branch_row(
                     BarBranch::Initiative(id),
                     depth,
@@ -13300,8 +13777,8 @@ impl Workspace {
             .child(
                 div()
                     .id(SharedString::from(format!("bar-fold-{key}")))
-                    .w(px(15. * s))
-                    .h(px(15. * s))
+                    .w(px(FOLD_W * s))
+                    .h(px(FOLD_W * s))
                     .flex()
                     .flex_row()
                     .items_center()
@@ -13503,7 +13980,7 @@ impl Workspace {
         // one gesture renames a task wherever it is grabbed from
         if let Some((_, eb)) = self.renaming.as_ref().filter(|(ri, _)| *ri == i) {
             return div()
-                .pl(step * (depth as f32) + px(4. * s))
+                .pl(step * (depth as f32) + px(4. * s) + px(FOLD_W * s))
                 .pr(px(4. * s))
                 .py(px(1. * s))
                 .child(
@@ -13538,7 +14015,11 @@ impl Workspace {
                     .id(SharedString::from(format!("bar-task-{i}")))
                     .group(grp.clone())
                     .relative()
-                    .pl(step * (depth as f32) + px(4. * s))
+                    // Plus the fold's width: a task has no disclosure triangle, and
+                    // without clearing the one its PARENT wears it starts four
+                    // pixels LEFT of the branch label it hangs from. Two levels of
+                    // tree that do not read as two levels — see `FOLD_W`.
+                    .pl(step * (depth as f32) + px(4. * s) + px(FOLD_W * s))
                     .pr(px(5. * s))
                     .py(px(2. * s))
                     .flex()
@@ -13753,6 +14234,7 @@ impl Workspace {
                     hud::AgentState::Error => t.errored += 1,
                     hud::AgentState::Finished => t.finished += 1,
                     hud::AgentState::Idle => t.idle += 1,
+                    hud::AgentState::Unknown => t.unknown += 1,
                 }
             }
         }
@@ -13817,10 +14299,23 @@ impl Workspace {
         let store = self.bay_bounds.clone();
         let open = self.bay.clamp(0., 1.);
         let held = self.trash.live_len(Instant::now());
+        // What the bay is saying out loud right now, if anything. Read rather
+        // than cleared here: `render_bay` takes `&self`, and a message that
+        // expires on a clock nobody is watching would sit there until the next
+        // frame happened to be drawn for some other reason.
+        let says = self
+            .bay_says
+            .filter(|(_, at)| at.elapsed() < BAY_SAYS_FOR)
+            .map(|(what, _)| what.line());
+        // Aimed at the bin, by either gesture that can be.
         let hot = self
             .bar_drag
             .as_ref()
-            .is_some_and(|d| d.engaged && d.over_bay);
+            .is_some_and(|d| d.engaged && d.over_bay)
+            || self
+                .drag_pane
+                .as_ref()
+                .is_some_and(|d| d.engaged && d.over_bay);
 
         // Half the bay's inner width, which is how far each door travels to be
         // fully open. Derived from the bar rather than measured, because a door
@@ -13828,25 +14323,50 @@ impl Workspace {
         let half = (self.left_bar_w * s - 12. * s).max(20.) / 2.;
         let travel = px(open * half);
 
-        let door = |right: bool| {
+        let ember = hsla(0.06, 0.95, 0.55, 1.);
+        let door = move |right: bool| {
             div()
                 .absolute()
                 .top_0()
                 .bottom_0()
-                .w(px(half))
+                // A hair over half, so rounding can never leave a lit seam
+                // between two shut doors. They are opaque; overlapping costs
+                // nothing.
+                .w(px(half + 1.))
                 .when(!right, |d| d.left(-travel))
                 .when(right, |d| d.right(-travel))
-                .bg(th.faint.alpha(0.13))
-                .border_color(th.faint.alpha(0.30))
-                // Only the inner edge is lit: it is the edge that moves, and
-                // the one that makes two panels read as a parting seam rather
-                // than as two unrelated rectangles.
+                // OPAQUE, and the whole point of them. These were painted at
+                // 13% alpha, which is a tint rather than a material: the fire
+                // showed straight through both doors, so the bay read as a lit
+                // panel that never opened and the sliding was invisible. A door
+                // that does not occlude is not a door.
+                .bg(sk.ink.panel)
+                // The inner edge is the one that moves and the one the fire
+                // falls on, so it takes the ember as the gap widens — the doors
+                // are lit BY what is behind them.
+                .border_color(ember.alpha(0.20 + 0.60 * open))
                 .when(!right, |d| d.border_r_1())
                 .when(right, |d| d.border_l_1())
         };
 
         let danger = hsla(0., 0.72, 0.60, 1.);
-        let bin_ink = if hot { danger } else { th.text.alpha(0.55) };
+        // The bin is red because of what it does, not because it is hovered —
+        // it brightens toward danger when you are actually aimed at it.
+        let bin_ink = if hot {
+            danger
+        } else {
+            hsla(0.02, 0.70, 0.52, 0.92)
+        };
+
+        // The fire's breath. Two sine waves whose periods do not divide into one
+        // another, so the flicker never settles into a visible loop the way a
+        // single wave does. Cheap: one `sin` a frame, no state, no timer — the
+        // bay is already repainting while it is open.
+        let flicker = {
+            let t = anim_clock();
+            let wobble = (t * 7.3).sin() * 0.11 + (t * 2.9).sin() * 0.06;
+            (0.86 + wobble).clamp(0., 1.)
+        };
 
         div()
             .id("bar-bay")
@@ -13856,6 +14376,51 @@ impl Workspace {
             .flex_none()
             .overflow_hidden()
             .rounded(sk.radius())
+            // The fire throws light on the bar around it. Same phosphor shape
+            // the delete dialog wears — a crisp rim plus a soft bloom — in ember
+            // rather than danger red, and scaled by how far open the doors are,
+            // so the glow arrives WITH the fire instead of announcing it.
+            // Firelight thrown onto the bar around the bay. Three box shadows:
+            // GPU-rasterised with the element, no per-frame CPU, no extra draw
+            // pass — which is why the answer to "can we glow the surrounding
+            // surface cheaply" is yes, and why it scales with `open` for free.
+            .when(open > 0.02, |d| {
+                d.shadow(vec![
+                    // the rim itself, catching light
+                    BoxShadow {
+                        color: ember.alpha(0.55 * open),
+                        offset: point(px(0.), px(0.)),
+                        blur_radius: px(0.),
+                        spread_radius: px(1.),
+                        inset: false,
+                    },
+                    // the near bloom on the bar's ground
+                    BoxShadow {
+                        color: ember.alpha(0.45 * open),
+                        offset: point(px(0.), px(0.)),
+                        blur_radius: px(26. * open),
+                        spread_radius: px(3.),
+                        inset: false,
+                    },
+                    // and a wider, fainter wash, so the light falls off rather
+                    // than stopping at a hard edge
+                    BoxShadow {
+                        color: ember.alpha(0.22 * open),
+                        offset: point(px(0.), px(-2.)),
+                        blur_radius: px(52. * open),
+                        spread_radius: px(6.),
+                        inset: false,
+                    },
+                    // the light on the inside of the bay's own walls
+                    BoxShadow {
+                        color: ember.alpha(0.30 * open),
+                        offset: point(px(0.), px(0.)),
+                        blur_radius: px(14. * open),
+                        spread_radius: px(0.),
+                        inset: true,
+                    },
+                ])
+            })
             // What is behind the doors. Faded in with the opening rather than
             // switched on, so the reveal is the doors' doing.
             //
@@ -13869,30 +14434,63 @@ impl Workspace {
                 div()
                     .absolute()
                     .inset_0()
-                    .when(hot, |d| d.bg(danger.alpha(0.10)))
+                    // What is behind the doors: an incinerator, not a bonfire.
+                    //
+                    // A full-bleed fire filled the bay and left nothing for the
+                    // doors to reveal that was not already the whole panel. The
+                    // bin IS the thing behind the doors; the fire belongs inside
+                    // the bin, which is also the only place it means anything —
+                    // this is where the thing you drop goes.
+                    // Everything the doors reveal is CENTRED, because the centre
+                    // is the only part they reveal until they are wide open.
+                    // The bin sat in the bottom-right corner — which was right
+                    // when the doors were a 13% tint and the whole panel showed
+                    // at once, and became invisible the moment they started
+                    // occluding: at a third open you saw a lit gap with nothing
+                    // in it. What the doors part to show has to be behind the
+                    // gap, not beside it.
                     .child(
                         div()
                             .absolute()
                             .inset_0()
                             .flex()
+                            .flex_col()
                             .items_center()
                             .justify_center()
-                            .text_size(px(8.5 * s))
-                            .text_color(bin_ink.alpha(bin_ink.a * open * 0.9))
-                            .child(SharedString::from(if hot {
-                                "release to delete".to_string()
-                            } else {
-                                "drop here to delete".to_string()
-                            })),
-                    )
-                    .child(
-                        div()
-                            .absolute()
-                            .right(px(5. * s))
-                            .bottom(px(3. * s))
-                            .text_size(px(BIN_PT * s))
-                            .text_color(bin_ink.alpha(bin_ink.a * open))
-                            .child("\u{1F5D1}"),
+                            .gap(px(1. * s))
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .items_center()
+                                    // The flame sits ON the bin's mouth rather
+                                    // than above it: a negative gap laps it over
+                                    // the rim, so it reads as burning IN there
+                                    // rather than as two glyphs stacked.
+                                    .gap(px(-6. * s))
+                                    .child(
+                                        div()
+                                            .text_size(px(BIN_PT * 0.78 * s))
+                                            .text_color(ember.alpha(flicker * open))
+                                            .child("\u{1F525}"),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_size(px(BIN_PT * s))
+                                            .text_color(bin_ink.alpha(bin_ink.a * open))
+                                            .child("\u{1F5D1}"),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(8. * s))
+                                    .text_color(ember.alpha(0.85 * open))
+                                    .child(SharedString::from(if hot {
+                                        "release to delete".to_string()
+                                    } else {
+                                        "drop here to delete".to_string()
+                                    })),
+                            ),
                     ),
             )
             .child(door(false))
@@ -13910,7 +14508,7 @@ impl Workspace {
                     .w(px(1.))
                     .bg(th.faint.alpha(0.42 * (1. - open))),
             )
-            .when(held > 0 && open < 0.5, |d| {
+            .when(held > 0 && open < 0.5 && says.is_none(), |d| {
                 d.child(
                     div()
                         .absolute()
@@ -13921,6 +14519,24 @@ impl Workspace {
                         .text_size(px(9. * s))
                         .text_color(th.text.alpha(0.42 * (1. - open)))
                         .child(SharedString::from(format!("{held} recoverable"))),
+                )
+            })
+            // What just happened, for a few seconds, in the same place the count
+            // sits — the count is what the bay says at rest, and this is what it
+            // says when something has just moved. Two lines at once in a 56-pixel
+            // box would be neither.
+            .when_some(says, |d, line| {
+                d.child(
+                    div()
+                        .absolute()
+                        .inset_0()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .px(px(4. * s))
+                        .text_size(px(9. * s))
+                        .text_color(ember.alpha(0.92 * (1. - open)))
+                        .child(SharedString::from(line)),
                 )
             })
             .child(
@@ -14249,12 +14865,15 @@ impl Workspace {
         // as blank space, which reads as a broken feature rather than as a
         // missing character. The pause is `U+2016` for the same reason —
         // `U+23F8`, which `hud::AgentState::badge` returns, is absent too.
-        let cells: [(hud::AgentState, u32, &str); 5] = [
+        let cells: [(hud::AgentState, u32, &str); 6] = [
             (hud::AgentState::Working, tally.working, "\u{25b6}"),
             (hud::AgentState::Blocked, tally.blocked, "\u{2016}"),
             (hud::AgentState::Error, tally.errored, "\u{2715}"),
             (hud::AgentState::Finished, tally.finished, "\u{2713}"),
             (hud::AgentState::Idle, tally.idle, "\u{25cb}"),
+            // The bar is on screen constantly, which makes it the one place a
+            // parser gap must not be invisible.
+            (hud::AgentState::Unknown, tally.unknown, "?"),
         ];
         // This line is also the door to the agent wall, which is the surface it
         // is a summary OF. It used to be opened by a robot glyph in the top
@@ -14334,6 +14953,441 @@ impl Workspace {
                 .h(px(rows.len() as f32 * (row_h + 6.0 * s)
                     + counter_h
                     + 11.0 * s)),
+        )
+    }
+
+    /// Slice 1's tracer: real panes, invented states.
+    ///
+    /// The observations are a rotation through the four kinds, so every lane is
+    /// populated without waiting for the parser; the panes are the ones actually
+    /// running, so a row's focus verb exercises the real path rather than a
+    /// mock. Slice 2 replaces the rotation with the HUD parser and the bell and
+    /// nothing else in this file changes.
+    ///
+    /// Origin is the tab's own project and group here. The full resolution —
+    /// nearest explicit setting, the group's project when a tab is grouped — is
+    /// Slice 3's, and doing it half-way in a tracer would be the sort of
+    /// convincing lie the plan refuses.
+    fn rail_rows(
+        &self,
+        cx: &App,
+    ) -> (
+        Vec<attention::AttentionItem>,
+        std::collections::HashMap<u64, EntityId>,
+    ) {
+        use attention::{AttentionKind, Observation, PaneKind, Priority};
+        let mut obs: Vec<Observation> = Vec::new();
+        let mut panes: std::collections::HashMap<u64, EntityId> = std::collections::HashMap::new();
+        let mut n: u64 = 0;
+        for (ti, tab) in self.tabs.iter().enumerate() {
+            let mut leaves = Vec::new();
+            tab.root.leaves(&mut leaves);
+            for leaf in leaves {
+                let view = leaf.read(cx);
+                let agent = view.mode.is_agent();
+                // Every case gets drawn once. A tracer whose fixture only covers
+                // the states that are easy to make is a tracer that finds
+                // nothing, and the unreadable pane is the case this whole plan
+                // exists to stop hiding.
+                let pane_kind = if !agent {
+                    PaneKind::Shell
+                } else if n % 11 == 4 {
+                    PaneKind::Unknown
+                } else {
+                    PaneKind::Agent
+                };
+                let priority = match n % 7 {
+                    1 => Priority::Promoted,
+                    5 => Priority::Demoted,
+                    _ => Priority::Neutral,
+                };
+                let kind = if agent {
+                    match n % 5 {
+                        0 => Some(AttentionKind::Decision),
+                        1 => Some(AttentionKind::Failure),
+                        2 => Some(AttentionKind::ReviewReady),
+                        3 => Some(AttentionKind::Unknown),
+                        _ => None,
+                    }
+                } else {
+                    None
+                };
+                let reason = match kind {
+                    Some(AttentionKind::Decision) => "Waiting on a permission prompt",
+                    Some(AttentionKind::Failure) => "A check came back non-zero",
+                    Some(AttentionKind::ReviewReady) => "Finished, not yet seen",
+                    Some(AttentionKind::Unknown) => "Known agent, state unreadable",
+                    None => "",
+                };
+                // Unknown rows carry no observed time on purpose: the one
+                // case where "we could not read it" includes not knowing when.
+                let observed_at = if matches!(kind, Some(AttentionKind::Unknown)) {
+                    None
+                } else {
+                    Instant::now().checked_sub(Duration::from_secs(60 * (n % 7 + 1)))
+                };
+                // The two shapes a review row is most likely to be handed: a
+                // rendered page and a plan. Both are real files in this
+                // checkout, so the click proves the whole path rather than the
+                // half of it that does not leave the process.
+                let deliverable = match kind {
+                    Some(AttentionKind::ReviewReady) => {
+                        Self::tracer_doc("docs/plans/attention-spine/plan.md").map(|href| {
+                            attention::Deliverable {
+                                label: "Attention spine plan".into(),
+                                href: href.to_string(),
+                            }
+                        })
+                    }
+                    Some(AttentionKind::Decision) => Self::tracer_doc(
+                        "docs/2026-08-31-one-click-copy-affordance.html",
+                    )
+                    .map(|href| attention::Deliverable {
+                        label: "One-click copy affordance".into(),
+                        href: href.to_string(),
+                    }),
+                    _ => None,
+                };
+                obs.push(Observation {
+                    pane: n,
+                    pane_kind,
+                    priority,
+                    kind,
+                    origin: self.rail_origin(ti),
+                    reason: reason.to_string(),
+                    observed_at,
+                    source: "synthetic",
+                    deliverable,
+                });
+                panes.insert(n, leaf.entity_id());
+                n += 1;
+            }
+        }
+        (attention::project(&obs), panes)
+    }
+
+    /// A document that certainly exists, for the tracer to point a deliverable at.
+    ///
+    /// Resolved from the running binary rather than written down, so this works
+    /// in anyone's checkout and points at nothing on a machine where the file is
+    /// missing. A tracer whose link 404s teaches the wrong lesson about the
+    /// click.
+    ///
+    /// **Resolved once per process, and that is not a detail.** The queue is
+    /// built inside the render pass, so the first version of this ran a
+    /// filesystem stat per review row per frame — the exact thing the slot bar's
+    /// own doc forbids two hundred lines up, for the reason it gives: a surface
+    /// that is never not on screen cannot afford to touch the disk while
+    /// painting. Both answers are fixed for the life of the process, so they are
+    /// looked up on first use and kept.
+    fn tracer_doc(rel: &'static str) -> Option<&'static str> {
+        use std::sync::OnceLock;
+        static PLAN: OnceLock<Option<String>> = OnceLock::new();
+        static PAGE: OnceLock<Option<String>> = OnceLock::new();
+
+        fn resolve(rel: &str) -> Option<String> {
+            let exe = std::env::current_exe().ok()?;
+            // <repo>/app/target/<profile>/terminal-delight
+            let root = exe.parent()?.parent()?.parent()?.parent()?;
+            let path = root.join(rel);
+            path.exists().then(|| path.to_string_lossy().into_owned())
+        }
+
+        let cell = if rel.ends_with(".md") { &PLAN } else { &PAGE };
+        cell.get_or_init(|| resolve(rel)).as_deref()
+    }
+
+    /// A tab's `project:initiative`, as far as Slice 1 resolves it.
+    fn rail_origin(&self, i: usize) -> attention::Origin {
+        let Some(tab) = self.tabs.get(i) else {
+            return attention::Origin::default();
+        };
+        attention::Origin {
+            project: tab
+                .project
+                .and_then(|id| self.project_at(id))
+                .and_then(|p| p.name.clone()),
+            initiative: tab
+                .group
+                .map(|g| self.branch_label(BarBranch::Initiative(g))),
+        }
+    }
+
+    fn rail_ink(kind: attention::AttentionKind, sk: &skin::Skin) -> Hsla {
+        match kind {
+            attention::AttentionKind::Decision => hsla(0., 0.72, 0.60, 1.),
+            attention::AttentionKind::Failure => hsla(0.06, 0.74, 0.62, 1.),
+            attention::AttentionKind::ReviewReady => hsla(0.40, 0.60, 0.50, 1.),
+            attention::AttentionKind::Unknown => sk.ink.ink_dim,
+        }
+    }
+
+    /// The closed spine: a narrow strip at the right edge carrying the count and
+    /// one pip per kind present.
+    ///
+    /// It is a flex sibling of the screen, so it costs the terminals its own
+    /// width and nothing more. The queue it opens draws *over* the panes instead
+    /// of pushing them, which is the property the plan's geometry test checks.
+    fn render_spine(&self, cx: &mut Context<Self>) -> Option<gpui::Div> {
+        if !self.rail_on {
+            return None;
+        }
+        let s = theme::outer_choice(cx).grade.scale;
+        let sk = skin::skin(cx, s);
+        let (items, _) = self.rail_rows(cx);
+        let counts = attention::counts(&items);
+
+        // One pip per kind that is actually present, in lane order — not one per
+        // row, which would turn a twenty-five pane fleet into a barcode.
+        let mut kinds: Vec<attention::AttentionKind> = Vec::new();
+        for it in &items {
+            if !kinds.contains(&it.kind) {
+                kinds.push(it.kind);
+            }
+        }
+        let wanting = counts.wanting;
+        let unknown = counts.unknown;
+
+        Some(
+            div()
+                .flex_none()
+                .w(px(20. * s))
+                .ml(px(4. * s))
+                .flex()
+                .flex_col()
+                .items_center()
+                .gap(px(5. * s))
+                .py(px(7. * s))
+                .rounded(sk.radius())
+                .bg(sk.ink.ink.alpha(0.05))
+                .cursor_pointer()
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                        cx.stop_propagation();
+                        ws.rail_open = !ws.rail_open;
+                        cx.notify();
+                    }),
+                )
+                .child(
+                    div()
+                        .text_size(px(11. * s))
+                        .text_color(if wanting > 0 {
+                            hsla(0., 0.72, 0.60, 1.)
+                        } else {
+                            sk.ink.ink_dim
+                        })
+                        .child(format!("{wanting}")),
+                )
+                .children(kinds.into_iter().map(|k| {
+                    div()
+                        .w(px(4. * s))
+                        .h(px(10. * s))
+                        .rounded(px(2. * s))
+                        .bg(Self::rail_ink(k, &sk))
+                }))
+                .when(unknown > 0, |d| {
+                    d.child(
+                        div()
+                            .text_size(px(9. * s))
+                            .text_color(sk.ink.ink_dim)
+                            .child("?"),
+                    )
+                }),
+        )
+    }
+
+    /// The queue, drawn over the right-hand panes.
+    ///
+    /// Overlay rather than reflow: the scrim is `inset_0` and the panel is
+    /// pushed to the right edge by the flex row, so no pane's bounds change when
+    /// this opens. One verb per row, and it is focus — the pane's own focus-in
+    /// edge then acknowledges its bell, which is the seen-state the plan reuses
+    /// rather than inventing.
+    fn render_rail(&self, cx: &mut Context<Self>) -> Option<gpui::Div> {
+        if !self.rail_on || !self.rail_open {
+            return None;
+        }
+        let s = theme::outer_choice(cx).grade.scale;
+        let sk = skin::skin(cx, s);
+        let (items, panes) = self.rail_rows(cx);
+        let now = Instant::now();
+
+        let mut list = div()
+            .flex()
+            .flex_col()
+            .gap(px(4. * s))
+            .p(px(7. * s))
+            .w(px(316. * s));
+
+        list = list.child(
+            div()
+                .flex()
+                .flex_row()
+                .justify_between()
+                .px(px(3. * s))
+                .pb(px(5. * s))
+                .text_size(px(9.5 * s))
+                .text_color(sk.ink.ink_dim)
+                .child(format!(
+                    "NEEDS ME \u{b7} {}",
+                    attention::counts(&items).wanting
+                ))
+                .child("esc"),
+        );
+
+        if items.is_empty() {
+            list = list.child(
+                div()
+                    .px(px(4. * s))
+                    .py(px(8. * s))
+                    .text_size(px(11. * s))
+                    .text_color(sk.ink.ink_dim)
+                    .child("Nothing is waiting on you."),
+            );
+        }
+
+        for it in &items {
+            let ink = Self::rail_ink(it.kind, &sk);
+            let target = panes.get(&it.pane).copied();
+            let head = div()
+                .flex()
+                .flex_row()
+                .gap(px(6. * s))
+                .items_center()
+                .child(
+                    div()
+                        .text_size(px(8.5 * s))
+                        .text_color(ink)
+                        .child(it.kind.label().to_uppercase()),
+                )
+                .child(
+                    div()
+                        .text_size(px(9.5 * s))
+                        .text_color(sk.ink.ink_dim)
+                        .child(it.origin.label()),
+                )
+                .children(it.priority.glyph().map(|g| {
+                    div()
+                        .text_size(px(9.5 * s))
+                        .text_color(match it.priority {
+                            attention::Priority::Promoted => hsla(0.33, 0.70, 0.42, 1.),
+                            _ => hsla(0.58, 0.72, 0.56, 1.),
+                        })
+                        .child(g)
+                }))
+                .child(div().flex_1())
+                .child(
+                    div()
+                        .text_size(px(9.5 * s))
+                        .text_color(sk.ink.ink_dim)
+                        .child(attention::age_label(it.age(now))),
+                );
+            let row = div()
+                .pl(px(7. * s))
+                .pr(px(6. * s))
+                .py(px(5. * s))
+                .border_l(px(2. * s))
+                .border_color(ink)
+                .rounded(sk.radius())
+                .bg(sk.ink.ink.alpha(0.05))
+                .cursor_pointer()
+                .hover(move |st| st.bg(sk.ink.ink.alpha(0.12)))
+                .child(head)
+                .child(
+                    div()
+                        .text_size(px(11. * s))
+                        .text_color(sk.ink.ink)
+                        .child(it.reason.clone()),
+                )
+                // Every fact on the row says where it came from and when it was
+                // seen. A surface that shows a state without its provenance is
+                // asking to be trusted on nothing.
+                .child(
+                    div()
+                        .text_size(px(8.5 * s))
+                        .text_color(sk.ink.ink_dim)
+                        .child(format!(
+                            "{} \u{b7} {}",
+                            it.source,
+                            attention::age_label(it.age(now))
+                        )),
+                )
+                .children(it.deliverable.as_ref().map(|d| {
+                    let href = d.href.clone();
+                    let kind = attention::doc_kind(&href);
+                    div()
+                        .mt(px(4. * s))
+                        .flex()
+                        .flex_row()
+                        .gap(px(6. * s))
+                        .items_center()
+                        .text_size(px(10. * s))
+                        .text_color(hsla(0.58, 0.72, 0.62, 1.))
+                        .cursor_pointer()
+                        .child(
+                            div()
+                                .px(px(4. * s))
+                                .rounded(px(2. * s))
+                                .text_size(px(8. * s))
+                                .text_color(sk.ink.ink_dim)
+                                .bg(sk.ink.ink.alpha(0.10))
+                                .child(kind.label()),
+                        )
+                        .child(d.label.clone())
+                        // Its own click, and it stops there. Opening what a turn
+                        // produced and visiting the terminal that produced it are
+                        // two different acts, and reading never does the second.
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |_ws, _: &MouseDownEvent, _w, cx| {
+                                cx.stop_propagation();
+                                pane::open_with_system(&href);
+                                cx.notify();
+                            }),
+                        )
+                }))
+                .when_some(target, |d, id| {
+                    d.on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                            cx.stop_propagation();
+                            // Park the jump; the next frame activates the owning
+                            // tab, focuses the pane, and the focus-in edge acks
+                            // its bell.
+                            ws.pending_jump = Some(id);
+                            ws.rail_open = false;
+                            cx.notify();
+                        }),
+                    )
+                });
+            list = list.child(row);
+        }
+
+        Some(
+            div()
+                .absolute()
+                .inset_0()
+                .occlude()
+                .flex()
+                .flex_row()
+                .justify_end()
+                .items_start()
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                        cx.stop_propagation();
+                        ws.rail_open = false;
+                        cx.notify();
+                    }),
+                )
+                .child(
+                    sk.panel()
+                        .mt(px(58. * s))
+                        .mr(px(30. * s))
+                        .shadow_lg()
+                        .child(list),
+                ),
         )
     }
 
@@ -14872,7 +15926,7 @@ impl Workspace {
             .iter()
             .find(|g| g.id == gid)
             .map(|g| g.label())
-            .unwrap_or_else(|| format!("initiative {gid}"));
+            .unwrap_or_else(|| unnamed_group(gid));
         let mut chip = div()
             .id(SharedString::from(format!("grp-title-{gid}")))
             .flex()
@@ -15334,6 +16388,8 @@ fn agent_state_glow(th: &theme::Theme, idle: Hsla, state: hud::AgentState) -> Hs
         hud::AgentState::Error => hsla(0., 0.75, 0.60, 1.),
         hud::AgentState::Finished => hsla(0.34, 0.85, 0.58, 1.),
         hud::AgentState::Idle => idle,
+        // An unreadable screen is drawn as quiet, never as activity.
+        hud::AgentState::Unknown => idle,
     }
 }
 
@@ -15835,12 +16891,31 @@ impl Render for Workspace {
         // is built further down this same pass, so it can never draw an offer
         // this sweep would have taken.
         self.sweep_trash(cx);
-        // The bay doors, eased toward wherever the drag says they should be.
-        // Asking for another frame while they are still travelling is what makes
-        // this an animation rather than a jump; once they arrive, nothing here
-        // asks for anything and the window goes quiet again.
-        if self.ease_bay() {
+        // The bay doors, eased toward wherever the drag says they should be —
+        // and the fire behind them.
+        //
+        // The `|| self.bay > 0.0` half is what makes the bonfire burn. gpui
+        // advances a GIF's frame during PAINT and never schedules the next one,
+        // so an animated image in a surface nobody is repainting draws once and
+        // freezes. Easing alone asks for frames only while the doors travel, so
+        // the fire ran for a third of a second and then stood still — a
+        // photograph of a fire, which is the failure that looks most like
+        // success. The bay is only ever open while a drag is in flight, so this
+        // is a bounded burst rather than a window that never sleeps.
+        let travelling = self.ease_bay();
+        if travelling || self.bay > 0.0 {
             cx.notify();
+        }
+        // A line the bay is saying needs frames for the same reason: it expires
+        // on a clock, and a clock nobody repaints for is a message that stays up
+        // until something else happens to redraw. Dropped here, at its deadline,
+        // so the count underneath comes back on its own.
+        if let Some((_, at)) = self.bay_says {
+            if at.elapsed() < BAY_SAYS_FOR {
+                cx.notify();
+            } else {
+                self.bay_says = None;
+            }
         }
         // Tubes still going dark. Aged out here rather than on a timer: a ghost
         // that outlives its animation would keep an overlay tube registered.
@@ -17796,14 +18871,14 @@ impl Render for Workspace {
             // filter domains. Group chips come from tab groups; program chips
             // come from live pane modes; state chips only come from matching
             // agents. ----
-            let (mut n_work, mut n_block, mut n_err, mut n_done, mut n_idle) =
-                (0u32, 0u32, 0u32, 0u32, 0u32);
+            let (mut n_work, mut n_block, mut n_err, mut n_done, mut n_idle, mut n_unknown) =
+                (0u32, 0u32, 0u32, 0u32, 0u32, 0u32);
             let mut turn_tok_total = 0u64;
             let mut sess_tok_total = 0u64;
             let mut total_panes = 0u32;
             let mut visible_agent_total = 0u32;
-            let (mut v_work, mut v_block, mut v_err, mut v_done, mut v_idle) =
-                (0u32, 0u32, 0u32, 0u32, 0u32);
+            let (mut v_work, mut v_block, mut v_err, mut v_done, mut v_idle, mut v_unknown) =
+                (0u32, 0u32, 0u32, 0u32, 0u32, 0u32);
             let mut visible_program_total = 0u32;
             let mut programs_present: Vec<(String, Hsla, u32)> = Vec::new();
             // (group key, display name, band colour, pane count) in first-seen order.
@@ -17844,6 +18919,7 @@ impl Render for Workspace {
                             hud::AgentState::Error => n_err += 1,
                             hud::AgentState::Finished => n_done += 1,
                             hud::AgentState::Idle => n_idle += 1,
+                            hud::AgentState::Unknown => n_unknown += 1,
                         }
                         turn_tok_total += st.turn_tokens.unwrap_or(0);
                         sess_tok_total += p.session_tokens();
@@ -17855,6 +18931,7 @@ impl Render for Workspace {
                                 hud::AgentState::Error => v_err += 1,
                                 hud::AgentState::Finished => v_done += 1,
                                 hud::AgentState::Idle => v_idle += 1,
+                                hud::AgentState::Unknown => v_unknown += 1,
                             }
                         }
                         let state_matches = state_filt.is_none_or(|s| st.state == s);
@@ -18129,6 +19206,10 @@ impl Render for Workspace {
                 (hud::AgentState::Error, v_err),
                 (hud::AgentState::Finished, v_done),
                 (hud::AgentState::Idle, v_idle),
+                // Unknown gets its own chip rather than being folded into idle:
+                // a filter you cannot select is a state you cannot inspect, and
+                // this is the one people will want to inspect first.
+                (hud::AgentState::Unknown, v_unknown),
             ] {
                 if count == 0 {
                     continue;
@@ -18273,7 +19354,7 @@ impl Render for Workspace {
                     // instead, marked with a ❯. Working agents show live output;
                     // fall back to recent output if there's no visible prompt.
                     let feed: Vec<String> = if is_agent {
-                        if status.state == hud::AgentState::Idle {
+                        if status.state.is_quiet() {
                             let mut v = p.last_human_message(3);
                             if v.is_empty() {
                                 p.recent_lines(4)
@@ -18395,7 +19476,7 @@ impl Render for Workspace {
                     } else {
                         theme_col.alpha(0.75)
                     };
-                    let live_glow = is_agent && !matches!(status.state, hud::AgentState::Idle);
+                    let live_glow = is_agent && !status.state.is_quiet();
                     // Parker's "FRAME" = the card's INTERIOR negative space (NOT the
                     // rim): a dark wash of THIS terminal's THEME seed, so every card
                     // body wears its own theme colour. Only when the wall theme is on;
@@ -19282,6 +20363,31 @@ impl Render for Workspace {
                                     }),
                                 ),
                         )
+                        // Panes whose screen matched no rule. Its own chip, so
+                        // the set can be filtered to and looked at — the first
+                        // thing anyone will want when this number is not zero.
+                        .child(
+                            div()
+                                .text_color(th.text.alpha(0.45))
+                                .cursor_pointer()
+                                .px_1()
+                                .rounded(sk.radius())
+                                .when(state_filt == Some(hud::AgentState::Unknown), |d| {
+                                    d.bg(th.text.alpha(0.45).alpha(0.22))
+                                })
+                                .hover(|s| s.bg(th.text.alpha(0.45).alpha(0.12)))
+                                .child(format!("? {n_unknown}"))
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                                        cx.stop_propagation();
+                                        ws.mcp_state_filter = (ws.mcp_state_filter
+                                            != Some(hud::AgentState::Unknown))
+                                        .then_some(hud::AgentState::Unknown);
+                                        cx.notify();
+                                    }),
+                                ),
+                        )
                         .child(div().flex_1().min_w(px(0.)))
                         .child(div().text_color(th.text.alpha(0.7)).child(format!(
                             "\u{0394} {} \u{00b7} \u{03a3} {}",
@@ -20015,19 +21121,43 @@ impl Render for Workspace {
                 .unwrap_or_else(|| format!("tab {}", i + 1));
             let n = self.tab_pane_count(i);
             let danger = hsla(0., 0.72, 0.60, 1.);
-            // Grammar adapts to a single shell vs a multi-pane tab.
-            let (btn_label, body) = if n <= 1 {
-                (
+            // The question this dialog asks changed when the close became a
+            // retirement: it is no longer "are you sure you want to end these
+            // shells" but "are you sure you want this off your screen". Saying
+            // the old sentence over the new behaviour would be the worse of the
+            // two errors — a person declines a close they could have taken back.
+            //
+            // The last tab is still the old sentence, and it is still true: a
+            // holding lives in this window, and closing the last tab closes the
+            // window. Whichever branch is drawn, it matches what `close_tab`
+            // will actually do.
+            let hours = hold::window_for(n).as_secs() / 3600;
+            let last = self.tabs.len() <= 1;
+            let (btn_label, body) = match (last, n) {
+                (true, 1) => (
                     "CLOSE TAB".to_string(),
-                    format!("Closing \u{201c}{name}\u{201d} ends its shell. This can\u{2019}t be undone."),
-                )
-            } else {
-                (
+                    format!(
+                        "\u{201c}{name}\u{201d} is the last tab \u{2014} closing it ends its shell and quits. This can\u{2019}t be undone."
+                    ),
+                ),
+                (true, n) => (
                     format!("CLOSE {n} PANES"),
                     format!(
-                        "\u{201c}{name}\u{201d} holds {n} panes \u{2014} closing it ends all {n} shells. This can\u{2019}t be undone."
+                        "\u{201c}{name}\u{201d} is the last tab \u{2014} closing it ends all {n} shells and quits. This can\u{2019}t be undone."
                     ),
-                )
+                ),
+                (false, 1) => (
+                    "CLOSE TAB".to_string(),
+                    format!(
+                        "\u{201c}{name}\u{201d} goes to the bay. Its shell keeps running, and ctrl+shift+z brings it back for the next {hours}h."
+                    ),
+                ),
+                (false, n) => (
+                    format!("CLOSE {n} PANES"),
+                    format!(
+                        "\u{201c}{name}\u{201d} holds {n} panes. They go to the bay still running, and come back with ctrl+shift+z for the next {hours}h."
+                    ),
+                ),
             };
             let confirm_btn = div()
                 .px_3()
@@ -20454,6 +21584,7 @@ impl Render for Workspace {
                         row(s.k_alt_arrows, s.move_focus_dir),
                         row(s.k_drag_subtab, s.drag_subtab),
                         row(s.k_rclick_tab, s.rclick_tab),
+                        row("Ctrl+Shift+Z", s.reopen_closed),
                     ],
                 ))
                 .child(section(
@@ -21812,7 +22943,8 @@ impl Render for Workspace {
             .flex_1()
             .min_h_0()
             .children(self.render_left_bar(cx))
-            .child(screen);
+            .child(screen)
+            .children(self.render_spine(cx));
 
         let root = div()
             .size_full()
@@ -21903,6 +23035,7 @@ impl Render for Workspace {
                     .children(confirm_overlay)
                     .children(delete_overlay)
                     .children(self.render_bar_menu(&th, scale, cx))
+                    .children(self.render_rail(cx))
                     .children(scale_overlay)
                     .children(more_overlay)
                     .children(help_overlay)
@@ -22013,6 +23146,167 @@ mod tests {
             Workspace::delete_label(None, 0, 0),
             "Delete",
             "an empty branch names no weight, because it has none"
+        );
+    }
+
+    /// An unnamed group is called the same thing everywhere.
+    ///
+    /// Before the rename box stopped opening on creation, nobody ever saw this
+    /// string — the default was overwritten the instant it existed. Now it is
+    /// what a new group is called until somebody renames it, so it has to match
+    /// the word the menus use, and it has to be decided in one place: four
+    /// sites spelled it out separately, which is how a default comes to
+    /// disagree with itself.
+    #[test]
+    fn an_unnamed_group_is_named_the_same_way_everywhere() {
+        assert_eq!(unnamed_group(3), "group 3");
+
+        let src = shipped_src();
+        assert!(
+            !src.contains("format!(\"initiative "),
+            "a hand-spelled `initiative N` label is back — the tree's internal word for the \
+             middle layer, shown to a person by a menu that calls it a group"
+        );
+        let sites = src.matches("unnamed_group(").count();
+        assert!(
+            sites >= 4,
+            "only {sites} site(s) reach the shared label; the others have gone their own way"
+        );
+    }
+
+    /// What the doors reveal is behind the GAP, not beside it.
+    ///
+    /// The doors part from a centre seam, so at anything short of fully open the
+    /// only thing on show is the middle. A bin pinned to the bottom-right corner
+    /// is therefore behind the right-hand door for the entire opening — you get
+    /// a lit, glowing, empty slot, which is exactly what it looked like.
+    ///
+    /// The corner placement was correct *before* the doors occluded, when the
+    /// whole panel showed at once. One change made the other wrong, and nothing
+    /// connected them: two separate right answers that stopped composing.
+    #[test]
+    fn the_bay_puts_what_it_reveals_where_the_doors_part() {
+        let src = shipped_src();
+        let at = src.find("fn render_bay(").expect("render_bay");
+        let end = src[at..]
+            .find("\n    fn ")
+            .map(|e| e + at)
+            .unwrap_or(src.len());
+        // only the layer behind the doors; the seam and the count sit outside it
+        let behind_start = src[at..end]
+            .find("// Everything the doors reveal is CENTRED")
+            .map(|p| p + at)
+            .expect("the revealed layer");
+        let behind_end = src[behind_start..end]
+            .find("            .child(door(false))")
+            .map(|p| p + behind_start)
+            .expect("the doors are drawn after what they hide");
+        let behind = &src[behind_start..behind_end];
+
+        assert!(
+            behind.contains(".justify_center()") && behind.contains(".items_center()"),
+            "the layer behind the doors is not centred, so the doors open on nothing"
+        );
+        for edge in [".right(px(", ".left(px(", ".bottom(px(", ".top(px("] {
+            assert!(
+                !behind.contains(edge),
+                "something behind the bay doors is pinned to an edge ({edge}) — the doors \
+                 part at the CENTRE, so an edge-pinned element stays hidden for the whole \
+                 opening and the bay reveals an empty slot"
+            );
+        }
+    }
+
+    /// The doors are opaque, or they are not doors.
+    ///
+    /// They shipped at `alpha(0.13)` — a tint, not a material. The fire showed
+    /// straight through both of them, so the bay read as a permanently lit panel
+    /// and the sliding was invisible: nothing was ever occluded, and the whole
+    /// reveal was doing no work. Caught by eye on a real tree, which is the only
+    /// way it could have been: every test passed, the asset loaded, the doors
+    /// moved, and the pixels were wrong.
+    #[test]
+    fn the_bay_doors_occlude_what_is_behind_them() {
+        let src = shipped_src();
+        let at = src
+            .find("let door = move |right: bool|")
+            .expect("the bay doors");
+        let end = src[at..]
+            .find("\n        };")
+            .expect("end of the door closure")
+            + at;
+        let body = &src[at..end];
+
+        let bg = body
+            .lines()
+            .find(|l| l.contains(".bg("))
+            .expect("a door with no background paints nothing at all");
+        assert!(
+            !bg.contains("alpha("),
+            "a bay door is painted with an alpha ({}) — it tints the fire instead of hiding \
+             it, and a door that does not occlude is not a door",
+            bg.trim()
+        );
+    }
+
+    /// The bay keeps asking for frames the whole time it is open, or the flame
+    /// stops moving.
+    ///
+    /// The flicker is a function of the clock, so it only advances on a repaint.
+    /// The doors' own easing stops notifying the moment they arrive, which left
+    /// the flame frozen on whatever phase it happened to reach — lit, plausible,
+    /// and still. Nothing else catches that: the glyph is drawn, the colour is
+    /// right, and every test passes. Presence is not motion.
+    ///
+    /// This guard survived the fire being scrapped, because the thing it
+    /// protects was never really the GIF — it is that an animation in a surface
+    /// nobody repaints is a picture.
+    #[test]
+    fn the_bay_asks_for_frames_the_whole_time_it_is_open() {
+        let src = shipped_src();
+        let at = src.find("let travelling = self.ease_bay();").expect(
+            "the bay's frame pump — if this moved, the flame may have stopped moving with it",
+        );
+        let after = &src[at..at + 200];
+        assert!(
+            after.contains("self.bay > 0.0"),
+            "the render pass asks for another frame only while the doors are TRAVELLING. \
+             The flame then freezes at whichever phase the doors finished on, and every \
+             other check still passes"
+        );
+    }
+
+    /// A task row clears the disclosure triangle its parent wears.
+    ///
+    /// Indenting a task by one step alone is not enough: a branch spends
+    /// `FOLD_W` on its fold target before its label starts, so a child indented
+    /// only by `step` lands to the LEFT of the parent it hangs from. Two levels
+    /// of tree that do not read as two levels — which is exactly how it looked
+    /// on a real tree.
+    #[test]
+    fn a_task_is_indented_past_its_parents_fold_triangle() {
+        let src = shipped_src();
+        let at = src.find("fn task_row(").expect("task_row");
+        let end = src[at..]
+            .find("\n    fn ")
+            .map(|e| e + at)
+            .unwrap_or(src.len());
+        let body = &src[at..end];
+
+        let indents = body.matches("step * (depth as f32)").count();
+        assert!(
+            indents >= 2,
+            "expected both task-row indents; found {indents}"
+        );
+        // `px(FOLD_W`, not the bare word: the doc comment beside these lines
+        // names the constant too, so counting the word read 3 against 2 real
+        // uses and failed on correct code. The same trap `shipped_src` exists
+        // for, one level in — a guard matching prose rather than the call.
+        assert_eq!(
+            body.matches("px(FOLD_W").count(),
+            indents,
+            "a task-row indent is missing its FOLD_W: the rename box and the row itself must \
+             line up with each other, and both must clear the parent's triangle"
         );
     }
 
@@ -22190,9 +23484,11 @@ mod tests {
             "a new project must open a terminal of its own"
         );
         assert!(
-            body.find("new_tab_in(") < body.find("start_bar_rename("),
-            "the terminal has to exist before the rename box opens: generate, zip there, \
-             then the housekeeping"
+            !body.contains("start_bar_rename("),
+            "making a project opens its rename box again — the gesture grabs the keyboard \
+             and decides for you that naming it is the next move, when the next move is \
+             usually using the terminal it just gave you. It opens as `project N`; renaming \
+             is double-click or the row's own menu"
         );
 
         // And the tab it builds goes through the identity carrier. `Tab::new`
@@ -24926,6 +26222,7 @@ id = "hacker"
         let state = StateFile {
             panes: 0,
             last_workspace: None,
+            undo_hinted: false,
             active: 0,
             win: Some((12.0, 34.0, 1280.0, 720.0)),
             scale: Some(1.0),
@@ -24979,6 +26276,7 @@ id = "hacker"
         let state = StateFile {
             panes: 0,
             last_workspace: None,
+            undo_hinted: false,
             active: 0,
             win: None,
             scale: None,
@@ -25036,6 +26334,7 @@ id = "hacker"
         let state = StateFile {
             panes: 0,
             last_workspace: None,
+            undo_hinted: false,
             active: 0,
             win: None,
             scale: None,
@@ -25325,6 +26624,146 @@ node = "Leaf"
         assert_eq!(leaf_ids(&rest.unwrap()), vec![9]);
     }
 
+    /// A pane must come back where it left, which means the seat has to be read
+    /// before the removal reshapes the tree around it.
+    #[test]
+    fn a_seat_survives_the_removal_that_erases_it() {
+        // 1 | (2 / 3)
+        let mut t: Tree<u32> = Tree::Leaf(1);
+        t.split_leaf(&|l| *l == 1, SplitDir::Row, 2);
+        t.split_leaf(&|l| *l == 2, SplitDir::Col, 3);
+
+        let (dir, ratio, side, sibling) = t.seat_of(&|l| *l == 2).expect("2 sits in a split");
+        assert!(matches!(dir, SplitDir::Col));
+        assert_eq!(side, Side::A, "2 is the first half of the col split");
+        assert_eq!(leaf_ids(sibling), vec![3], "its sibling is the leaf 3");
+        let anchor = leaf_ids(sibling);
+
+        let (taken, rest) = t.remove_leaf(&|l| *l == 2);
+        let mut rest = rest.expect("1 and 3 remain");
+        assert_eq!(taken, Some(2));
+        assert_eq!(leaf_ids(&rest), vec![1, 3]);
+
+        // Back into the seat: the anchor is the SIBLING, which is what the
+        // collapse left standing where the parent split used to be.
+        let left = rest.reseat(&|n: &Tree<u32>| leaf_ids(n) == anchor, side, dir, ratio, 2);
+        assert!(left.is_none(), "the leaf was placed");
+        assert_eq!(
+            leaf_ids(&rest),
+            vec![1, 2, 3],
+            "same order it had before it left"
+        );
+    }
+
+    /// The anchor is a whole subtree, not a leaf: close one pane of three and
+    /// what is left standing beside it can be a split.
+    #[test]
+    fn a_pane_can_sit_back_down_beside_a_split() {
+        let mut t: Tree<u32> = Tree::Leaf(1);
+        t.split_leaf(&|l| *l == 1, SplitDir::Row, 2);
+        t.split_leaf(&|l| *l == 2, SplitDir::Col, 3);
+        let (dir, ratio, side, sibling) = t.seat_of(&|l| *l == 1).expect("1 sits in a split");
+        assert_eq!(side, Side::A);
+        assert_eq!(
+            leaf_ids(sibling),
+            vec![2, 3],
+            "its sibling is a whole split"
+        );
+        let anchor = leaf_ids(sibling);
+
+        let (_, rest) = t.remove_leaf(&|l| *l == 1);
+        let mut rest = rest.expect("the split survives");
+        let left = rest.reseat(&|n: &Tree<u32>| leaf_ids(n) == anchor, side, dir, ratio, 1);
+        assert!(left.is_none());
+        assert_eq!(leaf_ids(&rest), vec![1, 2, 3]);
+    }
+
+    /// An hour is long enough for the seat to be gone, and a pane that cannot
+    /// find it must be handed back rather than dropped somewhere arbitrary.
+    #[test]
+    fn a_seat_that_is_gone_hands_the_pane_back() {
+        let mut t: Tree<u32> = Tree::Leaf(1);
+        t.split_leaf(&|l| *l == 1, SplitDir::Row, 2);
+        let left = t.reseat(
+            &|n: &Tree<u32>| leaf_ids(n) == vec![99],
+            Side::A,
+            SplitDir::Row,
+            0.5,
+            7,
+        );
+        assert_eq!(left, Some(7), "no anchor, so the caller still has its pane");
+        assert_eq!(leaf_ids(&t), vec![1, 2], "and the tree was not touched");
+    }
+
+    /// The whole tree is not a seat. A lone pane in a tab is a tab, and the
+    /// caller wants the tab-shaped answer rather than a split that never was.
+    #[test]
+    fn a_lone_leaf_has_no_seat() {
+        let t: Tree<u32> = Tree::Leaf(1);
+        assert!(t.seat_of(&|l| *l == 1).is_none());
+    }
+
+    /// Three homes, three sentences. Two of them reading the same loses the
+    /// distinction the type exists for, at the last step before a person reads it.
+    #[test]
+    fn every_landing_says_something_different() {
+        let all = [Landed::Seat, Landed::Tab, Landed::NewTab];
+        for (i, a) in all.iter().enumerate() {
+            for b in &all[i + 1..] {
+                assert_ne!(a.says(), b.says(), "{a:?} and {b:?} read the same");
+            }
+        }
+    }
+
+    /// Every kind names itself in the tray, and no two share a noun — the row
+    /// `Recover "UX"` is four different offers otherwise.
+    #[test]
+    fn every_retirable_kind_has_its_own_noun() {
+        let all = [
+            hold::Kind::Project,
+            hold::Kind::Initiative,
+            hold::Kind::Task,
+            hold::Kind::Pane,
+        ];
+        for (i, a) in all.iter().enumerate() {
+            assert!(!a.noun().is_empty());
+            for b in &all[i + 1..] {
+                assert_ne!(a.noun(), b.noun(), "{a:?} and {b:?} read the same");
+            }
+        }
+    }
+
+    /// The point of the whole change: no close path may end a shell itself.
+    ///
+    /// `hangup` is the one place a terminal dies, and it belongs to `end_held`,
+    /// which runs when a holding is evicted or swept. A close that calls it
+    /// directly has skipped the trash, and that failure is invisible — the app
+    /// looks identical and the pane is simply gone when somebody asks for it.
+    ///
+    /// The last tab is the written exception: closing it quits the application,
+    /// and a holding made in a dying window is dropped in the same breath.
+    #[test]
+    fn a_close_does_not_end_a_shell_itself() {
+        let src = include_str!("main.rs");
+        for f in ["fn close_pane(", "fn trash_tab(", "fn delete_branch("] {
+            let at = src.find(f).unwrap_or_else(|| panic!("{f} must exist"));
+            let body = &src[at..];
+            let end = body.find("\n    fn ").unwrap_or(body.len());
+            assert!(
+                !body[..end].contains("self.hangup("),
+                "{f} hangs up its own panes — the trash is what holds them"
+            );
+        }
+        let at = src.find("fn close_tab(").expect("close_tab must exist");
+        let body = &src[at..];
+        let end = body.find("\n    fn ").unwrap_or(body.len());
+        assert_eq!(
+            body[..end].matches("self.hangup(").count(),
+            1,
+            "close_tab may hang up only the last tab, which quits with it"
+        );
+    }
+
     // load_state() reads $HOME so isn't callable in tests, but its body is
     // `read.ok().and_then(parse.ok()).unwrap_or_default()` — pin that parse
     // contract so a corrupt or old state.toml degrades to a clean boot instead
@@ -25377,6 +26816,7 @@ node = "Leaf"
         let state = StateFile {
             panes: 0,
             last_workspace: None,
+            undo_hinted: false,
             active: 0,
             win: None,
             scale: None,
