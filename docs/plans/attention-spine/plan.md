@@ -174,6 +174,11 @@ worth today. Three values and no more: **promoted**, **neutral**, **demoted**. N
 default and draws nothing, because a tree where every row carries a glyph is a tree where none of
 them mean anything.
 
+The three are not severities, they are where the work sits in your day — **main focus, side task,
+background** — and that is why they outrank everything the agents are doing. Parker, settling it:
+*"human provenance: 'THIS IS IMPORTANTER' is central."* No parser can observe that, and no
+heuristic should be allowed to overrule it.
+
 The context menu already exists on all three rows (`BarMenu::{Project, Initiative, Task}`), so
 this is two rows added to a menu rather than a new gesture to learn.
 
@@ -196,6 +201,12 @@ A green up arrow, a blue down arrow, or nothing, in the row's badge line beside 
 state badges. **An inherited mark draws dimmer than one set on that row**, because otherwise there
 is no way to see which row to right-click to clear it — and a setting you cannot find is a setting
 you cannot undo.
+
+**No numbers in that space, ever.** Parker, on the mark: *"we do not include NUMBERS in the right
+glyph space — that is noisy."* The badge line is glyphs; a quantity belongs on the spine's count or
+the strip's `⋯n` chip, where it is read deliberately rather than scanned past twenty times a
+minute. This is the grain the bar already has — `roll_glyphs` renders a branch's roll-up as a line
+of glyphs rather than a tally — and the level must not be the thing that breaks it.
 
 ### What it does to the queue
 
@@ -247,12 +258,16 @@ Record time-to-correct-pane, unrelated panes opened, missed known events, false 
 4. **Seen lifetime.** *Narrowed, 15 September.* Reuse the existing bell acknowledgement for the
    tracer bullet — it is a real function with a focus-in edge, not a convention to invent.
    Persistence across restarts stays deferred until observation shows it matters.
-5. **Whether level outranks lane.** Preferred rule: yes, and the brief that proposed it draws both
-   orderings side by side so the swap is one line if the answer is no. The risk of the other
-   arrangement is that promotion stops meaning anything the moment any neutral agent hits a rate
-   limit.
-6. **Whether a demoted row still counts.** Preferred rule: yes. Demoting says "not first", and a
-   count that quietly drops work is the same defect as the idle fallback wearing different clothes.
+5. **Whether level outranks lane.** *Settled 15 September: yes.* Both orderings were drawn side by
+   side and the answer was the human-provenance one — main focus beats side work beats background,
+   whatever the agents are doing. A promoted review therefore sits above a neutral decision, and
+   that is intended rather than tolerated.
+6. **Whether a demoted row still counts.** *Settled 15 September: yes.* Demoting says "not first";
+   a count that quietly drops work is the idle fallback wearing different clothes.
+7. **Nearest explicit setting wins.** *Settled 15 September: yes*, so one noisy task can sit
+   demoted inside a promoted project.
+8. **The mark.** *Settled 15 September:* green up, blue down, nothing for neutral, dimmer when
+   inherited — and no numbers in that space.
 
 ## Slices
 

@@ -12,6 +12,9 @@
   **AMENDED 2026-09-15 — attention levels.** Promoted / neutral / demoted, set by right-click on
   any left-bar row, inherited downward with the nearest explicit setting winning, marked in the
   badge line and never rolled up. Level is the outermost sort key, above the lane.
+  **All four questions answered the same day** via the annotated levels brief: level outranks
+  lane, a demoted row still counts, the nearest explicit setting wins, and the badge line takes
+  glyphs and never numbers.
 
 ## Slices
 
