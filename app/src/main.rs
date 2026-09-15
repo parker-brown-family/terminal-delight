@@ -14342,7 +14342,7 @@ impl Workspace {
                         Self::tracer_doc("docs/plans/attention-spine/plan.md").map(|href| {
                             attention::Deliverable {
                                 label: "Attention spine plan".into(),
-                                href,
+                                href: href.to_string(),
                             }
                         })
                     }
@@ -14350,7 +14350,7 @@ impl Workspace {
                         Self::tracer_doc("docs/2026-08-31-one-click-copy-affordance.html").map(
                             |href| attention::Deliverable {
                                 label: "One-click copy affordance".into(),
-                                href,
+                                href: href.to_string(),
                             },
                         )
                     }
@@ -14380,13 +14380,29 @@ impl Workspace {
     /// in anyone's checkout and points at nothing on a machine where the file is
     /// missing. A tracer whose link 404s teaches the wrong lesson about the
     /// click.
-    fn tracer_doc(rel: &str) -> Option<String> {
-        let exe = std::env::current_exe().ok()?;
-        // <repo>/app/target/<profile>/terminal-delight
-        let root = exe.parent()?.parent()?.parent()?.parent()?;
-        let path = root.join(rel);
-        path.exists()
-            .then(|| path.to_string_lossy().into_owned())
+    ///
+    /// **Resolved once per process, and that is not a detail.** The queue is
+    /// built inside the render pass, so the first version of this ran a
+    /// filesystem stat per review row per frame — the exact thing the slot bar's
+    /// own doc forbids two hundred lines up, for the reason it gives: a surface
+    /// that is never not on screen cannot afford to touch the disk while
+    /// painting. Both answers are fixed for the life of the process, so they are
+    /// looked up on first use and kept.
+    fn tracer_doc(rel: &'static str) -> Option<&'static str> {
+        use std::sync::OnceLock;
+        static PLAN: OnceLock<Option<String>> = OnceLock::new();
+        static PAGE: OnceLock<Option<String>> = OnceLock::new();
+
+        fn resolve(rel: &str) -> Option<String> {
+            let exe = std::env::current_exe().ok()?;
+            // <repo>/app/target/<profile>/terminal-delight
+            let root = exe.parent()?.parent()?.parent()?.parent()?;
+            let path = root.join(rel);
+            path.exists().then(|| path.to_string_lossy().into_owned())
+        }
+
+        let cell = if rel.ends_with(".md") { &PLAN } else { &PAGE };
+        cell.get_or_init(|| resolve(rel)).as_deref()
     }
 
     /// A tab's `project:initiative`, as far as Slice 1 resolves it.
