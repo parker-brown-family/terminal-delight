@@ -5002,15 +5002,25 @@ impl Workspace {
     /// `a_hosted_window_makes_no_pane_of_its_own`.
     fn new_tab_in(&mut self, place: tree::Place, window: &mut Window, cx: &mut Context<Self>) {
         let pane = self.make_pane_in_mode(session::PaneRestore::default(), window, cx);
-        let mut tab = Tab::new(Node::Leaf(pane), None);
-        tab.group = place.initiative;
-        // a grouped tab inherits its project from the group and leaves its own
-        // unset, so the two can never disagree — see `place_of`
-        tab.project = place
-            .initiative
-            .is_none()
-            .then_some(place.project)
-            .flatten();
+        // Built through `TabIdentity` rather than `Tab::new` plus two
+        // assignments. This is a genuinely new tab rather than a reshaped one,
+        // so it is not the case `TabIdentity` was written for — but it is the
+        // same shape of bug: a field added to `Tab` later would be set by
+        // neither line here and would silently take the constructor's default.
+        // Going through the carrier makes that a compile error, which is the
+        // whole reason the carrier is a struct and not two arguments.
+        let tab = TabIdentity {
+            group: place.initiative,
+            // a grouped tab inherits its project from the group and leaves its
+            // own unset, so the two can never disagree — see `place_of`
+            project: place
+                .initiative
+                .is_none()
+                .then_some(place.project)
+                .flatten(),
+            ..Default::default()
+        }
+        .onto(Node::Leaf(pane));
         let at = self.branch_end(place);
         self.tabs.insert(at, tab);
         self.active = at;
@@ -21971,6 +21981,24 @@ mod tests {
             body.find("new_tab_in(") < body.find("start_bar_rename("),
             "the terminal has to exist before the rename box opens: generate, zip there, \
              then the housekeeping"
+        );
+
+        // And the tab it builds goes through the identity carrier. `Tab::new`
+        // plus an assignment per field is how a tab came to lose its group when
+        // its pane tree was reshaped (#413); a NEW tab is not that case, but it
+        // is the same shape — a field added to `Tab` later would be set by
+        // neither assignment and take the constructor's default in silence.
+        let at = src.find("fn new_tab_in(&mut self").expect("new_tab_in");
+        let end = src[at..].find("\n    }\n").expect("end of fn") + at;
+        let builder = &src[at..end];
+        assert!(
+            !builder.contains("Tab::new("),
+            "new_tab_in builds its tab with Tab::new again — route it through \
+             TabIdentity::onto so a new Tab field is a compile error here"
+        );
+        assert!(
+            builder.contains("TabIdentity {") && builder.contains(".onto("),
+            "new_tab_in no longer builds through the identity carrier"
         );
     }
 
