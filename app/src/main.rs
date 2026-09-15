@@ -851,6 +851,58 @@ impl Tab {
             project: None,
         }
     }
+
+    /// Everything about this tab that is NOT its pane tree.
+    ///
+    /// Reshaping the tree inside a tab — closing one pane of a split, dragging
+    /// one out — has to consume the root (`remove_leaf` takes it by value), so
+    /// those paths lift the tab out of the list and put a rebuilt one back.
+    /// Rebuilding it with [`Tab::new`] produced a tab holding the same panes
+    /// that was, to the left bar, a different task: no colours, and no branch.
+    /// Since the tree landed that reads as a tab falling out of its group on its
+    /// own — always the one being worked in, because that is the one whose panes
+    /// come and go.
+    fn identity(&self) -> TabIdentity {
+        TabIdentity {
+            name: self.name.clone(),
+            color: self.color,
+            text_color: self.text_color,
+            group: self.group,
+            project: self.project,
+        }
+    }
+}
+
+/// A tab's identity, held while its pane tree is being reshaped.
+///
+/// Every field of [`Tab`] except the tree itself and the transient focus, so a
+/// tab property added later fails to compile here rather than going quietly
+/// missing from the next close.
+#[derive(Clone, Default)]
+struct TabIdentity {
+    name: Option<String>,
+    color: Option<Hsla>,
+    text_color: Option<Hsla>,
+    group: Option<u32>,
+    project: Option<u32>,
+}
+
+impl TabIdentity {
+    /// Put the tab back together around a new root — the same task, holding
+    /// whatever is left of its panes.
+    fn onto(self, root: Node) -> Tab {
+        Tab {
+            root,
+            name: self.name,
+            // re-read from the live focus each render; the pane this pointed at
+            // may be the one that just left
+            focused: None,
+            color: self.color,
+            text_color: self.text_color,
+            group: self.group,
+            project: self.project,
+        }
+    }
 }
 
 /// `true` if `c` counts as part of a "word" for ctrl-arrow navigation.
@@ -10470,11 +10522,13 @@ impl Workspace {
         }
         let pred = |e: &Entity<TerminalView>| e.entity_id() == id;
         let tab = self.tabs.remove(from);
-        let name = tab.name;
+        // The tab survives this; only one of its panes is leaving. It goes back
+        // as the same task — same name, same colours, same branch.
+        let was = tab.identity();
         // dropping the taken Entity releases its PTY (SIGHUP) — that's the close
         let (_taken, remaining) = tab.root.remove_leaf(&pred);
         if let Some(root) = remaining {
-            self.tabs.insert(from, Tab::new(root, name));
+            self.tabs.insert(from, was.onto(root));
         }
         if self.tabs.is_empty() {
             cx.quit();
@@ -10574,17 +10628,19 @@ impl Workspace {
 
         let pred = |e: &Entity<TerminalView>| e.entity_id() == dragged;
         let src = self.tabs.remove(from);
-        let src_name = src.name;
+        // The source tab is not being remade, it is being left behind by one of
+        // its panes — it keeps its name, its colours and its branch.
+        let src_was = src.identity();
         let (taken, remaining) = src.root.remove_leaf(&pred);
         let Some(pane) = taken else {
             if let Some(root) = remaining {
-                self.tabs.insert(from, Tab::new(root, src_name));
+                self.tabs.insert(from, src_was.onto(root));
             }
             return;
         };
         let source_emptied = remaining.is_none();
         if let Some(root) = remaining {
-            self.tabs.insert(from, Tab::new(root, src_name));
+            self.tabs.insert(from, src_was.onto(root));
         }
 
         let landed = match target {
@@ -20517,6 +20573,63 @@ mod tests {
             "make_pane_in_mode must choose between the host and this window by asking which \
              mode the workspace is in"
         );
+    }
+
+    /// A tab that loses a pane is the same tab afterwards.
+    ///
+    /// `remove_leaf` consumes the tree, so every path that takes a pane out of a
+    /// split lifts the tab out of the list and puts a rebuilt one back. Three of
+    /// them rebuilt it with `Tab::new`, which carries the name and nothing else
+    /// — so closing one pane of a split, or dragging one out, silently dropped
+    /// the tab's colours and the branch it hangs from. On the left bar that
+    /// reads as a task falling out of its group by itself, and it lands on the
+    /// tab being worked in, because that is the one whose panes come and go.
+    /// Seen in the session file: `APPLY` was `group = 1` with one pane at 07:32
+    /// on 2026-09-11, and a `Split` with no group by 10:39.
+    ///
+    /// Scanned by REGION rather than by naming the three functions: a guard that
+    /// lists call sites guards those call sites, and the fourth reshaping path
+    /// somebody adds next year is exactly the one that would slip past it.
+    /// Source-scanned rather than exercised because a `Workspace` needs a live
+    /// gpui `Window`, so the broken version compiles and passes everything else.
+    #[test]
+    fn a_reshaped_tab_keeps_its_name_its_colours_and_its_branch() {
+        let src = include_str!("main.rs");
+        // the guard is about the real code, not about this test quoting it
+        // `mod testsync;` is up at the top, so the module has to be matched whole
+        let code = &src[..src.find("\nmod tests {").expect("the test module")];
+
+        let mut regions = 0;
+        for (at, _) in code.match_indices("remove_leaf(&") {
+            regions += 1;
+            let end = (at + 900).min(code.len());
+            let after = &code[at..end];
+            assert!(
+                !after.contains("Tab::new("),
+                "a tab is being rebuilt with Tab::new after losing a pane, which drops its \
+                 colours, its group and its project — put it back with TabIdentity::onto \
+                 instead (near byte {at})"
+            );
+        }
+        assert!(
+            regions >= 2,
+            "expected the pane-removal paths to still be here; found {regions}"
+        );
+
+        // And the carrier has to actually carry. Every field of Tab except the
+        // tree and the transient focus must be written by `onto`.
+        let body = |sig: &str| -> &str {
+            let at = code.find(sig).unwrap_or_else(|| panic!("{sig} not found"));
+            let end = code[at..].find("\n    }\n").expect("end of fn");
+            &code[at..at + end]
+        };
+        let onto = body("fn onto(self, root: Node)");
+        for field in ["name:", "color:", "text_color:", "group:", "project:"] {
+            assert!(
+                onto.contains(field),
+                "TabIdentity::onto drops `{field}` — the field it exists to carry"
+            );
+        }
     }
 
     /// The strip's heading must never be blank, and must never wrap.
