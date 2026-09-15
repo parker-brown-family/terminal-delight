@@ -6126,12 +6126,15 @@ fn keystroke_bytes(ks: &Keystroke) -> Option<Vec<u8>> {
     if m.alt {
         // alt+arrows move pane focus by direction; alt+r opens the FOCUS reader (the 👓 header
         // glyph it replaces is gone); alt+v / alt+h and the ctrl+alt chords
-        // split — all owned by the Workspace. Taking alt+r costs readline's
-        // revert-line, alt+v its page-scroll and alt+h its mark-paragraph —
-        // fair trades for one-hand pane chords.
+        // split; alt+w closes the focused pane — all owned by the Workspace.
+        // Taking alt+r costs readline's revert-line, alt+v its page-scroll,
+        // alt+h its mark-paragraph and alt+w its copy-region-as-kill (the
+        // DESTRUCTIVE ^W werase is ctrl+w, intercepted a layer up in `on_key`
+        // as close-tab, and is untouched here) — fair trades for one-hand pane
+        // chords.
         if matches!(
             ks.key.as_str(),
-            "left" | "right" | "up" | "down" | "r" | "v" | "h"
+            "left" | "right" | "up" | "down" | "r" | "v" | "h" | "w"
         ) || m.control
         {
             return None;
@@ -9336,6 +9339,22 @@ mod tests {
         // alt+v / alt+h are the Workspace's split chords — never PTY bytes.
         assert_eq!(alt_char("v"), None);
         assert_eq!(alt_char("h"), None);
+        // alt+w closes the focused pane, so it is the Workspace's too. Reaching
+        // the PTY it would arrive as ESC w — readline's copy-region-as-kill —
+        // and the pane would stay open: the chord would read as DEAD rather
+        // than as wrong, which is the failure nobody files a bug about.
+        assert_eq!(alt_char("w"), None);
+        // ...and the neighbouring close chord is a DIFFERENT layer: ctrl+w is
+        // intercepted in `on_key` as close-tab and never gets here, so it keeps
+        // its werase encoding. Asserted so the two rungs stay distinguishable.
+        assert_eq!(bytes("ctrl-w"), Some(vec![0x17]));
+        // ctrl+alt+arrows walk the LEFT BAR's tree — the workspace's, and never
+        // PTY bytes. Covered by the blanket `m.control` arm; asserted because
+        // that arm is one word away from being narrowed by a future chord.
+        assert_eq!(bytes("ctrl-alt-up"), None);
+        assert_eq!(bytes("ctrl-alt-down"), None);
+        assert_eq!(bytes("ctrl-alt-left"), None);
+        assert_eq!(bytes("ctrl-alt-right"), None);
         // ...while every OTHER alt+<char> still goes through ESC-prefixed, so
         // alt+b / alt+f keep their readline meaning.
         assert_eq!(alt_char("b"), Some(vec![0x1b, b'b']));
