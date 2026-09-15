@@ -25,8 +25,14 @@
   and the verdict was "I saw the rail and it was great". That closes the first outstanding item,
   and it is the only approval that could: the plan's whole claim is that a person stops sweeping
   panes, and nobody but the person sweeping them can say whether it does.
-  **Still outstanding:** the chord has no help-screen row — that needs a string in eleven
-  languages and belongs to the commit that takes the flag off.
+  **Closed 2026-09-15 — the flag came off.** The rail is on by default and `TD_SPINE=0` (or
+  `false`/`off`) hides it, so the surface is the steady state and the variable only takes it
+  away. `ctrl+shift+N` now has its help-screen row in all nine locales — nine, not the eleven
+  this file claimed; `lang.rs` carries EN, ES, DE, ZH, FR, RU, JA, KO, HI and the number here
+  was never checked against it.
+  **Why an off switch at all**, when Parker's own reaction was "what maniac would ever turn it
+  off": a switch that cannot be thrown is a claim nobody can test, and a demo, a screenshot or
+  a plain disagreement all want the right edge back. It costs one line and one test.
 - [x] **Slice 2, explicit live state — the rotation is gone.** The unknown half landed first
   (#425: `AgentState::Unknown`, the parser stops claiming idle for a screen it cannot read, both
   rollups draw it) along with the regression it exposed (#426: a finish bell promotes any quiet
