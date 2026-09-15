@@ -18,10 +18,18 @@
 
 ## Slices
 
-- [ ] Slice 1, tracer bullet (in progress: spine, overlay, focus verb and deliverable link built
-  behind `TD_SPINE`; the help-screen row waits for the commit that takes the flag off, since it
-  means a new string in eleven languages): synthetic decision, failure, finished, and unknown observations reach the collapsed spine, queue, and existing pane-focus action.
-- [ ] Slice 2, explicit live state: distinguish shell, agent, and unknown pane kinds; preserve unknown agent state through the current HUD parser; stamp the transition instant; derive the kind from `agent_badge`; give blocked a clearing edge.
+- [x] **Slice 1, tracer bullet — merged 2026-09-15 (#424).** Synthetic decision, failure,
+  finished and unknown observations reach the collapsed spine, the overlay queue and the existing
+  pane-focus path, plus a declared deliverable opened by a plain click. Behind `TD_SPINE`.
+  **Outstanding against this slice:** nobody has looked at it on a screen, and the chord has no
+  help-screen row — that needs a string in eleven languages and belongs to the commit that takes
+  the flag off.
+- [~] **Slice 2, explicit live state — started.** The unknown half is in
+  (#425: `AgentState::Unknown`, the parser stops claiming idle for a screen it cannot read, both
+  rollups draw it) along with the regression it exposed (#426: a finish bell promotes any quiet
+  state, not only `Idle`). Still to do: stamp the transition instant, derive the lane from
+  `agent_badge` rather than a second ranking, give blocked a clearing edge, and feed the projector
+  from live panes instead of the rotation. Full text: distinguish shell, agent, and unknown pane kinds; preserve unknown agent state through the current HUD parser; stamp the transition instant; derive the kind from `agent_badge`; give blocked a clearing edge.
 - [ ] Slice 3, queue lifecycle: fixed ordering, per-item evidence, `project:group` from the tree, seen/unseen on the existing bell latch, and keyboard navigation.
 - [ ] Slice 4, review tray: show only sourced changes, checks, and artifacts; render absent evidence as unavailable; carry the declared deliverable as a plain-click link, with focus as a second, explicit action.
 - [ ] Slice 5, attention levels in the tree: promote/demote rows on the project, initiative and task
