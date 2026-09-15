@@ -14313,7 +14313,7 @@ impl Workspace {
                         0 => Some(AttentionKind::Decision),
                         1 => Some(AttentionKind::Failure),
                         2 => Some(AttentionKind::ReviewReady),
-                        3 => Some(AttentionKind::Unclassified),
+                        3 => Some(AttentionKind::Unknown),
                         _ => None,
                     }
                 } else {
@@ -14323,15 +14323,38 @@ impl Workspace {
                     Some(AttentionKind::Decision) => "Waiting on a permission prompt",
                     Some(AttentionKind::Failure) => "A check came back non-zero",
                     Some(AttentionKind::ReviewReady) => "Finished, not yet seen",
-                    Some(AttentionKind::Unclassified) => "Known agent, state unreadable",
+                    Some(AttentionKind::Unknown) => "Known agent, state unreadable",
                     None => "",
                 };
-                // Unclassified rows carry no observed time on purpose: the one
+                // Unknown rows carry no observed time on purpose: the one
                 // case where "we could not read it" includes not knowing when.
-                let observed_at = if matches!(kind, Some(AttentionKind::Unclassified)) {
+                let observed_at = if matches!(kind, Some(AttentionKind::Unknown)) {
                     None
                 } else {
                     Instant::now().checked_sub(Duration::from_secs(60 * (n % 7 + 1)))
+                };
+                // The two shapes a review row is most likely to be handed: a
+                // rendered page and a plan. Both are real files in this
+                // checkout, so the click proves the whole path rather than the
+                // half of it that does not leave the process.
+                let deliverable = match kind {
+                    Some(AttentionKind::ReviewReady) => {
+                        Self::tracer_doc("docs/plans/attention-spine/plan.md").map(|href| {
+                            attention::Deliverable {
+                                label: "Attention spine plan".into(),
+                                href,
+                            }
+                        })
+                    }
+                    Some(AttentionKind::Decision) => {
+                        Self::tracer_doc("docs/2026-08-31-one-click-copy-affordance.html").map(
+                            |href| attention::Deliverable {
+                                label: "One-click copy affordance".into(),
+                                href,
+                            },
+                        )
+                    }
+                    _ => None,
                 };
                 obs.push(Observation {
                     pane: n,
@@ -14342,12 +14365,28 @@ impl Workspace {
                     reason: reason.to_string(),
                     observed_at,
                     source: "synthetic",
+                    deliverable,
                 });
                 panes.insert(n, leaf.entity_id());
                 n += 1;
             }
         }
         (attention::project(&obs), panes)
+    }
+
+    /// A document that certainly exists, for the tracer to point a deliverable at.
+    ///
+    /// Resolved from the running binary rather than written down, so this works
+    /// in anyone's checkout and points at nothing on a machine where the file is
+    /// missing. A tracer whose link 404s teaches the wrong lesson about the
+    /// click.
+    fn tracer_doc(rel: &str) -> Option<String> {
+        let exe = std::env::current_exe().ok()?;
+        // <repo>/app/target/<profile>/terminal-delight
+        let root = exe.parent()?.parent()?.parent()?.parent()?;
+        let path = root.join(rel);
+        path.exists()
+            .then(|| path.to_string_lossy().into_owned())
     }
 
     /// A tab's `project:initiative`, as far as Slice 1 resolves it.
@@ -14369,7 +14408,7 @@ impl Workspace {
             attention::AttentionKind::Decision => hsla(0., 0.72, 0.60, 1.),
             attention::AttentionKind::Failure => hsla(0.06, 0.74, 0.62, 1.),
             attention::AttentionKind::ReviewReady => hsla(0.40, 0.60, 0.50, 1.),
-            attention::AttentionKind::Unclassified => sk.ink.ink_dim,
+            attention::AttentionKind::Unknown => sk.ink.ink_dim,
         }
     }
 
@@ -14397,7 +14436,7 @@ impl Workspace {
             }
         }
         let wanting = counts.wanting;
-        let unclassified = counts.unclassified;
+        let unknown = counts.unknown;
 
         Some(
             div()
@@ -14437,7 +14476,7 @@ impl Workspace {
                         .rounded(px(2. * s))
                         .bg(Self::rail_ink(k, &sk))
                 }))
-                .when(unclassified > 0, |d| {
+                .when(unknown > 0, |d| {
                     d.child(
                         div()
                             .text_size(px(9. * s))
@@ -14561,6 +14600,40 @@ impl Workspace {
                             attention::age_label(it.age(now))
                         )),
                 )
+                .children(it.deliverable.as_ref().map(|d| {
+                    let href = d.href.clone();
+                    let kind = attention::doc_kind(&href);
+                    div()
+                        .mt(px(4. * s))
+                        .flex()
+                        .flex_row()
+                        .gap(px(6. * s))
+                        .items_center()
+                        .text_size(px(10. * s))
+                        .text_color(hsla(0.58, 0.72, 0.62, 1.))
+                        .cursor_pointer()
+                        .child(
+                            div()
+                                .px(px(4. * s))
+                                .rounded(px(2. * s))
+                                .text_size(px(8. * s))
+                                .text_color(sk.ink.ink_dim)
+                                .bg(sk.ink.ink.alpha(0.10))
+                                .child(kind.label()),
+                        )
+                        .child(d.label.clone())
+                        // Its own click, and it stops there. Opening what a turn
+                        // produced and visiting the terminal that produced it are
+                        // two different acts, and reading never does the second.
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |_ws, _: &MouseDownEvent, _w, cx| {
+                                cx.stop_propagation();
+                                pane::open_with_system(&href);
+                                cx.notify();
+                            }),
+                        )
+                }))
                 .when_some(target, |d, id| {
                     d.on_mouse_down(
                         MouseButton::Left,

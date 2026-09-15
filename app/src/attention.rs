@@ -48,18 +48,24 @@ pub enum AttentionKind {
     /// Finished, with the completion not yet acknowledged.
     ReviewReady,
     /// A known agent whose state could not be read. Shown, never counted.
-    Unclassified,
+    ///
+    /// Named `Unknown` rather than `Unclassified` at Parker's instruction —
+    /// shorter, and the word the rest of software already uses. It shares a name
+    /// with [`PaneKind::Unknown`] and means a different thing: that one is "we
+    /// do not know what is in the pane", this one is "we know it is an agent and
+    /// cannot read its state". Both are always written qualified.
+    Unknown,
 }
 
 impl AttentionKind {
     /// Whether this lane contributes to the number on the closed spine.
     ///
-    /// Unclassified deliberately does not: the count answers "how many things
+    /// Unknown deliberately does not: the count answers "how many things
     /// want me", and "we could not tell" is not a yes. It carries its own
     /// neutral marker instead, so the fix for the idle fallback cannot inflate
     /// the red number.
     pub fn counted(self) -> bool {
-        !matches!(self, AttentionKind::Unclassified)
+        !matches!(self, AttentionKind::Unknown)
     }
 
     pub fn label(self) -> &'static str {
@@ -67,7 +73,7 @@ impl AttentionKind {
             AttentionKind::Decision => "decision",
             AttentionKind::Failure => "failed",
             AttentionKind::ReviewReady => "review",
-            AttentionKind::Unclassified => "unclassified",
+            AttentionKind::Unknown => "unknown",
         }
     }
 }
@@ -129,6 +135,63 @@ impl Origin {
     }
 }
 
+/// What a turn produced: the one artifact a person is meant to open.
+///
+/// Declared by the agent, never inferred from a filename — the links an agent
+/// prints mix what it just made with everything it referenced, and guessing
+/// between them is the kind of confident invention this whole surface refuses.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Deliverable {
+    /// What to call it on the row. Short enough for 300 pixels.
+    pub label: String,
+    /// An absolute path or a URL. Opened with the desktop's own handler, so a
+    /// Markdown page goes wherever this machine has been told Markdown goes.
+    pub href: String,
+}
+
+/// What kind of document a deliverable points at.
+///
+/// Only used to label the row — the opening itself is the desktop's decision,
+/// not ours. A terminal that hard-wired its own viewer would override a choice
+/// the person already made in their MIME database.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DocKind {
+    Html,
+    Markdown,
+    Other,
+}
+
+impl DocKind {
+    pub fn label(self) -> &'static str {
+        match self {
+            DocKind::Html => "html",
+            DocKind::Markdown => "md",
+            DocKind::Other => "open",
+        }
+    }
+}
+
+/// Classify by extension, ignoring any query or fragment.
+///
+/// Pure and tested, because the two shapes Parker names — an HTML report and a
+/// Markdown doc — are the two a rail is most likely to be handed, and a row that
+/// mislabels one is a row that lies about what a click will do.
+pub fn doc_kind(href: &str) -> DocKind {
+    let path = href
+        .split(['?', '#'])
+        .next()
+        .unwrap_or(href)
+        .trim_end_matches('/');
+    let lower = path.to_ascii_lowercase();
+    if lower.ends_with(".html") || lower.ends_with(".htm") {
+        DocKind::Html
+    } else if lower.ends_with(".md") || lower.ends_with(".markdown") {
+        DocKind::Markdown
+    } else {
+        DocKind::Other
+    }
+}
+
 /// One thing seen about one pane. Slice 1 synthesises these; slice 2 observes
 /// them.
 #[derive(Debug, Clone)]
@@ -148,6 +211,8 @@ pub struct Observation {
     pub observed_at: Option<Instant>,
     /// Where the fact came from, shown on the row beside its time.
     pub source: &'static str,
+    /// What this turn produced, if the agent declared anything.
+    pub deliverable: Option<Deliverable>,
 }
 
 /// A row in the queue.
@@ -160,6 +225,9 @@ pub struct AttentionItem {
     pub reason: String,
     pub observed_at: Option<Instant>,
     pub source: &'static str,
+    /// Opened by a plain click, and never by focusing the pane. Reading a row
+    /// and visiting its terminal are two different acts.
+    pub deliverable: Option<Deliverable>,
 }
 
 impl AttentionItem {
@@ -180,7 +248,7 @@ pub struct Counts {
     /// that want me".
     pub wanting: usize,
     /// Shown separately, and never folded into the one above.
-    pub unclassified: usize,
+    pub unknown: usize,
 }
 
 /// Turn observations into the ordered queue.
@@ -200,6 +268,7 @@ pub fn project(observations: &[Observation]) -> Vec<AttentionItem> {
                 reason: o.reason.clone(),
                 observed_at: o.observed_at,
                 source: o.source,
+                deliverable: o.deliverable.clone(),
             })
         })
         .collect();
@@ -233,7 +302,7 @@ pub fn counts(items: &[AttentionItem]) -> Counts {
         if it.kind.counted() {
             c.wanting += 1;
         } else {
-            c.unclassified += 1;
+            c.unknown += 1;
         }
     }
     c
@@ -277,6 +346,7 @@ mod tests {
             reason: "because".into(),
             observed_at: secs_ago.map(|s| Instant::now() - Duration::from_secs(s)),
             source: "pane screen",
+            deliverable: None,
         }
     }
 
@@ -344,22 +414,22 @@ mod tests {
     }
 
     #[test]
-    fn unclassified_is_shown_but_never_counted() {
+    fn unknown_is_shown_but_never_counted() {
         let items = project(&[
             obs(1, Some(AttentionKind::Decision), Some(5)),
-            obs(2, Some(AttentionKind::Unclassified), Some(5)),
-            obs(3, Some(AttentionKind::Unclassified), None),
+            obs(2, Some(AttentionKind::Unknown), Some(5)),
+            obs(3, Some(AttentionKind::Unknown), None),
         ]);
         assert_eq!(items.len(), 3, "an unreadable agent still gets a row");
         let c = counts(&items);
         assert_eq!(c.wanting, 1);
-        assert_eq!(c.unclassified, 2, "and it is counted where it cannot inflate");
+        assert_eq!(c.unknown, 2, "and it is counted where it cannot inflate");
     }
 
     #[test]
-    fn unclassified_sits_below_every_real_lane() {
+    fn unknown_sits_below_every_real_lane() {
         let items = project(&[
-            obs(1, Some(AttentionKind::Unclassified), Some(9999)),
+            obs(1, Some(AttentionKind::Unknown), Some(9999)),
             obs(2, Some(AttentionKind::ReviewReady), Some(1)),
         ]);
         assert_eq!(items[0].kind, AttentionKind::ReviewReady);
@@ -367,7 +437,7 @@ mod tests {
 
     #[test]
     fn a_shell_is_not_an_idle_agent() {
-        let mut shell = obs(1, Some(AttentionKind::Unclassified), Some(5));
+        let mut shell = obs(1, Some(AttentionKind::Unknown), Some(5));
         shell.pane_kind = PaneKind::Shell;
         assert!(
             project(&[shell]).is_empty(),
@@ -382,7 +452,7 @@ mod tests {
 
     #[test]
     fn an_unknown_pane_kind_still_gets_its_row() {
-        let mut unknown = obs(1, Some(AttentionKind::Unclassified), Some(5));
+        let mut unknown = obs(1, Some(AttentionKind::Unknown), Some(5));
         unknown.pane_kind = PaneKind::Unknown;
         assert_eq!(project(&[unknown]).len(), 1);
     }
@@ -471,6 +541,44 @@ mod tests {
             vec![2, 1],
             "an hour of waiting does not outrank what he said matters today"
         );
+    }
+
+    #[test]
+    fn a_deliverable_is_labelled_by_what_it_is() {
+        assert_eq!(doc_kind("/home/p/reports/2026-09-15-thing.html"), DocKind::Html);
+        assert_eq!(doc_kind("/home/p/docs/plan.md"), DocKind::Markdown);
+        assert_eq!(doc_kind("/home/p/docs/PLAN.MD"), DocKind::Markdown);
+        assert_eq!(doc_kind("notes.markdown"), DocKind::Markdown);
+        assert_eq!(doc_kind("http://127.0.0.1:8753/a.html?v=2"), DocKind::Html);
+        assert_eq!(doc_kind("http://127.0.0.1:8753/a.html#top"), DocKind::Html);
+        assert_eq!(
+            doc_kind("https://github.com/x/y/pull/419"),
+            DocKind::Other,
+            "a pull request is openable and is not a document we can name"
+        );
+        assert_eq!(doc_kind("/tmp/out.log"), DocKind::Other);
+    }
+
+    #[test]
+    fn a_row_without_a_declared_deliverable_offers_nothing() {
+        let items = project(&[obs(1, Some(AttentionKind::ReviewReady), Some(5))]);
+        assert!(
+            items[0].deliverable.is_none(),
+            "nothing is inferred for a turn that declared nothing"
+        );
+    }
+
+    #[test]
+    fn a_declared_deliverable_survives_the_projection() {
+        let mut o = obs(1, Some(AttentionKind::ReviewReady), Some(5));
+        o.deliverable = Some(Deliverable {
+            label: "The Projection".into(),
+            href: "/home/parker/Work/reports/2026-09-15-slice1-projection.html".into(),
+        });
+        let items = project(&[o]);
+        let d = items[0].deliverable.as_ref().expect("carried through");
+        assert_eq!(d.label, "The Projection");
+        assert_eq!(doc_kind(&d.href), DocKind::Html);
     }
 
     #[test]

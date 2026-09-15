@@ -747,7 +747,7 @@ fn session_uses_uwsm() -> bool {
 /// goes through `uwsm-app` so the opened app is scoped to the desktop rather
 /// than to this terminal — closing the pane that printed a link should not be
 /// able to take the PDF it opened with it.
-fn open_with_system(target: &str) {
+pub(crate) fn open_with_system(target: &str) {
     if session_uses_uwsm() {
         spawn_detached("uwsm-app", &["--", "xdg-open", target]);
     } else {

@@ -32,7 +32,7 @@ under `~/Work/reports`) and came back annotated. Four decisions, in Parker's wor
 
 ### Product contract
 
-1. **Closed:** a narrow right-edge spine shows a known handoff count plus an unclassified marker when present.
+1. **Closed:** a narrow right-edge spine shows a known handoff count plus an unknown marker when present.
 2. **Open:** an overlay lists decision, failure, finished-unseen, then known-agent/unknown-state items. Opening it does not change pane bounds.
 3. **Selected:** a row exposes reason, source, observation time, and `project:group`. Finished work may expose the review tray.
 4. **Pinned:** an opt-in wide-screen mode reserves width. It is never the default.
@@ -69,7 +69,7 @@ enum AttentionKind {
     Decision,
     Failure,
     ReviewReady,
-    Unclassified,
+    Unknown,
 }
 
 struct AttentionItem {
@@ -102,7 +102,7 @@ pane screen + bell + existing labels
     -> focus the existing pane or open sourced review evidence
 ```
 
-The current parser ends every unmatched screen at `Idle`. That state must become explicit before the spine can claim an accurate count. A plain shell, an agent at rest, and an unclassified agent are separate facts.
+The current parser ends every unmatched screen at `Idle`. That state must become explicit before the spine can claim an accurate count. A plain shell, an agent at rest, and an unknown agent are separate facts.
 
 ## Amendments from the code
 
@@ -167,6 +167,30 @@ Four consequences, all of which belong to the review tray in Slice 4:
   anything renders it. It is the cheapest piece of this plan to prove and the only one whose value
   does not depend on the surface shipping.
 
+### Opening one
+
+A deliverable opens on a **plain click**, with no modifier. A terminal pane needs one because a
+click there belongs to the program underneath; the rail is a UI surface and owes the click to
+nobody.
+
+**The desktop opens it, not the terminal.** The row hands the target to the system handler — the
+same `open_with_system` path a clicked link in a pane already uses, which routes through
+`uwsm-app` on a uwsm session so what opens is scoped to the desktop and outlives the pane that
+produced it. A rail that hard-wired its own viewer would override a choice the person has already
+made in their MIME database, and on this machine that database is set deliberately: `.md` resolves
+to `text/markdown` and opens in `markdown-delight`, `.html` opens in the browser.
+
+**The two shapes that matter are HTML and Markdown**, so the row names which it is before you
+click — a rendered report and a plan document behave differently and a row that mislabels one is a
+row lying about what the click will do. Anything else says `open` and nothing more. The
+classification is by extension, query and fragment stripped, and it is a pure function with tests
+rather than a guess at paint time.
+
+**Nothing is inferred.** A turn that declared no deliverable gets a row with no link, not a link to
+the newest file near it. The tracer in Slice 1 proves the path early, with two real documents from
+this repository — the plan below and one of the HTML design notes — so that the click, the handler
+and the two viewers are exercised before any of the declaring machinery exists.
+
 ## Evaluation contract
 
 The baseline is currently unknown and remains unknown until recorded. Before implementation is called successful, replay the same two-pane and eight-or-more-pane event sequences with the current manual sweep and with the spine.
@@ -181,7 +205,7 @@ The spine passes when:
 - every visible fact names its source and observation time, or explicitly says they are unavailable;
 - the spine requires fewer unrelated pane openings than the manual sweep for the same event sequence.
 
-Record time-to-correct-pane, unrelated panes opened, missed known events, false positives, and unclassified observations as separate measurements. Missing measurements stay blank or unknown. If unrelated pane openings do not fall, the attention-surface hypothesis fails even if the UI works.
+Record time-to-correct-pane, unrelated panes opened, missed known events, false positives, and unknown observations as separate measurements. Missing measurements stay blank or unknown. If unrelated pane openings do not fall, the attention-surface hypothesis fails even if the UI works.
 
 ## Least confident decisions
 
@@ -190,7 +214,7 @@ Record time-to-correct-pane, unrelated panes opened, missed known events, false 
    inferred. Rule: resolve `Origin` the way the tree resolves it — the group's project when a tab is
    grouped, the tab's own field when it is not — and keep named, unnamed and absent distinct. The
    earlier worry was right in spirit: no path is ever consulted at render time.
-2. **How unknown enters the count.** Preferred rule: known-agent/unknown-state gets a neutral unclassified row after handoff work; unknown pane kind gets a separate marker and does not inflate the red attention count.
+2. **How unknown enters the count.** Preferred rule: known-agent/unknown-state gets a neutral unknown row after handoff work; unknown pane kind gets a separate marker and does not inflate the red attention count.
 3. **Finished versus review-ready.** The bell can establish finished-unseen today. Changed files, checks, and artifacts require an authoritative source. The review tray must show unavailable fields until that contract exists. A declared deliverable is the one piece of review evidence that needs no new contract, because the agent supplies it.
 4. **Seen lifetime.** *Narrowed, 15 September.* Reuse the existing bell acknowledgement for the
    tracer bullet — it is a real function with a focus-in edge, not a convention to invent.
@@ -198,7 +222,7 @@ Record time-to-correct-pane, unrelated panes opened, missed known events, false 
 
 ## Slices
 
-1. **Tracer bullet:** feed synthetic decision, failure, finished, and unknown observations through the projector into a collapsed spine and overlay; activate a row through TD's existing pane-focus path.
+1. **Tracer bullet:** feed synthetic decision, failure, finished, and unknown observations through the projector into a collapsed spine and overlay; activate a row through TD's existing pane-focus path; and carry a declared deliverable on the rows that would have one, opened by a plain click through the desktop's own handler.
 2. **Explicit live state:** add pane-kind and unknown-state distinctions, then connect the existing HUD parser and bell without changing queue behaviour. Carries amendments 2, 3 and 5: stamp the transition instant, derive the kind from the badge predicate, and give blocked a clearing edge.
 3. **Queue lifecycle:** add fixed ordering, visible reason/source/time, `project:group` resolved per amendment 1, seen/unseen completion on the existing bell latch, and keyboard movement.
 4. **Review tray:** attach sourced change/check/artifact evidence to finished items; unavailable evidence remains visibly unavailable. Carries the declared deliverable, its plain-click open, and the separate focus action.
@@ -215,7 +239,7 @@ Record time-to-correct-pane, unrelated panes opened, missed known events, false 
   when two or more went at once, reopenable with `ctrl+shift+z`. Such an agent has no screen to read
   and no pane to focus, so it reaches none of this plan's observation sources. Version one therefore
   scopes its count to visible panes **and says so on the surface**; a count that is quietly short is
-  the same defect as an unclassified pane reported as idle. Revisit in the slice that builds the
+  the same defect as an unknown pane reported as idle. Revisit in the slice that builds the
   held set, where the data will exist.
 
 Approval of this page permits Slice 1. Until then, the work remains planning only.
