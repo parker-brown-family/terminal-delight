@@ -740,6 +740,28 @@ const SLOT_RAIL_GROWTH: f32 = 1.5;
 /// bar's vertical space.
 const BAY_H: f32 = 56.0;
 
+/// Seconds since the process started, for animations that want a phase rather
+/// than a duration.
+///
+/// A free function over a `OnceLock` rather than a field on the workspace: a
+/// flicker wants to know what time it is, not when this particular window was
+/// built, and threading an `Instant` through the constructor to answer that
+/// would put a clock in the state file's neighbourhood for no reason.
+fn anim_clock() -> f32 {
+    static T0: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+    T0.get_or_init(Instant::now).elapsed().as_secs_f32()
+}
+
+/// The left bar's fold triangle: its hit target, and therefore the width a
+/// child row has to clear before it reads as a child.
+///
+/// A branch wears a disclosure triangle and a task does not, so indenting a task
+/// by one step alone puts its label four pixels LEFT of the branch it hangs
+/// from — the indent is spent getting back to where the parent's label already
+/// started. Tasks add this on top, which makes all three layers step by the
+/// same amount from the layer above.
+const FOLD_W: f32 = 15.0;
+
 /// The bin glyph's point size at scale 1.0 — two thirds of the 19pt it shipped
 /// at on the first pass, which read as the subject of the panel rather than as
 /// something the panel holds.
@@ -1162,10 +1184,22 @@ impl TabGroup {
     /// needs this: without it the strip's heading renders as nothing at all,
     /// which is an invisible control rather than an unnamed one.
     fn label(&self) -> String {
-        self.name
-            .clone()
-            .unwrap_or_else(|| format!("initiative {}", self.id))
+        self.name.clone().unwrap_or_else(|| unnamed_group(self.id))
     }
+}
+
+/// What an unnamed group is called, in the one place that decides it.
+///
+/// "initiative" is the TREE's word for the middle layer and it never reached a
+/// person before: a new group opened straight into its rename box, so the
+/// default was overwritten before it could be read. Now that making a group
+/// leaves it named, the label a person sees has to be the word the menu that
+/// made it used — and every menu says "group".
+///
+/// Four sites spelled this string out separately. A default that four places
+/// decide is a default that eventually disagrees with itself.
+fn unnamed_group(id: u32) -> String {
+    format!("group {id}")
 }
 
 /// A branch that was deleted, holding everything needed to put it back.
@@ -7526,9 +7560,12 @@ impl Workspace {
 
     /// A project born holding a terminal of its own, and landed in.
     ///
-    /// The whole gesture, in the order Parker described it: generate, go there,
-    /// then the housekeeping. The rename box opens last so the keyboard is
-    /// already where the naming happens.
+    /// Generate, then go there. It does NOT open the rename box: a gesture that
+    /// grabs the keyboard decides for you that naming the thing is the next
+    /// move, when most of the time the next move is using the terminal it just
+    /// gave you. It opens as `project N` and stays that way until somebody
+    /// double-clicks or right-clicks the row, which is where renaming already
+    /// lives and costs nothing to reach.
     fn new_project_with_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) -> u32 {
         let id = self.new_project(None, cx);
         self.new_tab_in(
@@ -7539,7 +7576,6 @@ impl Workspace {
             window,
             cx,
         );
-        self.start_bar_rename(BarBranch::Project(id), window, cx);
         id
     }
 
@@ -7572,7 +7608,6 @@ impl Workspace {
             window,
             cx,
         );
-        self.start_bar_rename(BarBranch::Initiative(id), window, cx);
         id
     }
 
@@ -7817,7 +7852,7 @@ impl Workspace {
                 .iter()
                 .find(|g| g.id == gid)
                 .map(|g| g.label())
-                .unwrap_or_else(|| format!("initiative {gid}")),
+                .unwrap_or_else(|| unnamed_group(gid)),
             BarBranch::Unfiled => "unfiled".into(),
         }
     }
@@ -12894,9 +12929,7 @@ impl Workspace {
             } => {
                 let g = self.groups.iter().find(|g| g.id == id);
                 let color = g.map(|g| g.color).unwrap_or(th.faint);
-                let label = g
-                    .map(|g| g.label())
-                    .unwrap_or_else(|| format!("initiative {id}"));
+                let label = g.map(|g| g.label()).unwrap_or_else(|| unnamed_group(id));
                 self.branch_row(
                     BarBranch::Initiative(id),
                     depth,
@@ -13065,8 +13098,8 @@ impl Workspace {
             .child(
                 div()
                     .id(SharedString::from(format!("bar-fold-{key}")))
-                    .w(px(15. * s))
-                    .h(px(15. * s))
+                    .w(px(FOLD_W * s))
+                    .h(px(FOLD_W * s))
                     .flex()
                     .flex_row()
                     .items_center()
@@ -13268,7 +13301,7 @@ impl Workspace {
         // one gesture renames a task wherever it is grabbed from
         if let Some((_, eb)) = self.renaming.as_ref().filter(|(ri, _)| *ri == i) {
             return div()
-                .pl(step * (depth as f32) + px(4. * s))
+                .pl(step * (depth as f32) + px(4. * s) + px(FOLD_W * s))
                 .pr(px(4. * s))
                 .py(px(1. * s))
                 .child(
@@ -13300,7 +13333,11 @@ impl Workspace {
                 .id(SharedString::from(format!("bar-task-{i}")))
                 .group(grp.clone())
                 .relative()
-                .pl(step * (depth as f32) + px(4. * s))
+                // Plus the fold's width: a task has no disclosure triangle, and
+                // without clearing the one its PARENT wears it starts four
+                // pixels LEFT of the branch label it hangs from. Two levels of
+                // tree that do not read as two levels — see `FOLD_W`.
+                .pl(step * (depth as f32) + px(4. * s) + px(FOLD_W * s))
                 .pr(px(5. * s))
                 .py(px(2. * s))
                 .flex()
@@ -13589,25 +13626,50 @@ impl Workspace {
         let half = (self.left_bar_w * s - 12. * s).max(20.) / 2.;
         let travel = px(open * half);
 
-        let door = |right: bool| {
+        let ember = hsla(0.06, 0.95, 0.55, 1.);
+        let door = move |right: bool| {
             div()
                 .absolute()
                 .top_0()
                 .bottom_0()
-                .w(px(half))
+                // A hair over half, so rounding can never leave a lit seam
+                // between two shut doors. They are opaque; overlapping costs
+                // nothing.
+                .w(px(half + 1.))
                 .when(!right, |d| d.left(-travel))
                 .when(right, |d| d.right(-travel))
-                .bg(th.faint.alpha(0.13))
-                .border_color(th.faint.alpha(0.30))
-                // Only the inner edge is lit: it is the edge that moves, and
-                // the one that makes two panels read as a parting seam rather
-                // than as two unrelated rectangles.
+                // OPAQUE, and the whole point of them. These were painted at
+                // 13% alpha, which is a tint rather than a material: the fire
+                // showed straight through both doors, so the bay read as a lit
+                // panel that never opened and the sliding was invisible. A door
+                // that does not occlude is not a door.
+                .bg(sk.ink.panel)
+                // The inner edge is the one that moves and the one the fire
+                // falls on, so it takes the ember as the gap widens — the doors
+                // are lit BY what is behind them.
+                .border_color(ember.alpha(0.20 + 0.60 * open))
                 .when(!right, |d| d.border_r_1())
                 .when(right, |d| d.border_l_1())
         };
 
         let danger = hsla(0., 0.72, 0.60, 1.);
-        let bin_ink = if hot { danger } else { th.text.alpha(0.55) };
+        // The bin is red because of what it does, not because it is hovered —
+        // it brightens toward danger when you are actually aimed at it.
+        let bin_ink = if hot {
+            danger
+        } else {
+            hsla(0.02, 0.70, 0.52, 0.92)
+        };
+
+        // The fire's breath. Two sine waves whose periods do not divide into one
+        // another, so the flicker never settles into a visible loop the way a
+        // single wave does. Cheap: one `sin` a frame, no state, no timer — the
+        // bay is already repainting while it is open.
+        let flicker = {
+            let t = anim_clock();
+            let wobble = (t * 7.3).sin() * 0.11 + (t * 2.9).sin() * 0.06;
+            (0.86 + wobble).clamp(0., 1.)
+        };
 
         div()
             .id("bar-bay")
@@ -13617,6 +13679,51 @@ impl Workspace {
             .flex_none()
             .overflow_hidden()
             .rounded(sk.radius())
+            // The fire throws light on the bar around it. Same phosphor shape
+            // the delete dialog wears — a crisp rim plus a soft bloom — in ember
+            // rather than danger red, and scaled by how far open the doors are,
+            // so the glow arrives WITH the fire instead of announcing it.
+            // Firelight thrown onto the bar around the bay. Three box shadows:
+            // GPU-rasterised with the element, no per-frame CPU, no extra draw
+            // pass — which is why the answer to "can we glow the surrounding
+            // surface cheaply" is yes, and why it scales with `open` for free.
+            .when(open > 0.02, |d| {
+                d.shadow(vec![
+                    // the rim itself, catching light
+                    BoxShadow {
+                        color: ember.alpha(0.55 * open),
+                        offset: point(px(0.), px(0.)),
+                        blur_radius: px(0.),
+                        spread_radius: px(1.),
+                        inset: false,
+                    },
+                    // the near bloom on the bar's ground
+                    BoxShadow {
+                        color: ember.alpha(0.45 * open),
+                        offset: point(px(0.), px(0.)),
+                        blur_radius: px(26. * open),
+                        spread_radius: px(3.),
+                        inset: false,
+                    },
+                    // and a wider, fainter wash, so the light falls off rather
+                    // than stopping at a hard edge
+                    BoxShadow {
+                        color: ember.alpha(0.22 * open),
+                        offset: point(px(0.), px(-2.)),
+                        blur_radius: px(52. * open),
+                        spread_radius: px(6.),
+                        inset: false,
+                    },
+                    // the light on the inside of the bay's own walls
+                    BoxShadow {
+                        color: ember.alpha(0.30 * open),
+                        offset: point(px(0.), px(0.)),
+                        blur_radius: px(14. * open),
+                        spread_radius: px(0.),
+                        inset: true,
+                    },
+                ])
+            })
             // What is behind the doors. Faded in with the opening rather than
             // switched on, so the reveal is the doors' doing.
             //
@@ -13630,30 +13737,63 @@ impl Workspace {
                 div()
                     .absolute()
                     .inset_0()
-                    .when(hot, |d| d.bg(danger.alpha(0.10)))
+                    // What is behind the doors: an incinerator, not a bonfire.
+                    //
+                    // A full-bleed fire filled the bay and left nothing for the
+                    // doors to reveal that was not already the whole panel. The
+                    // bin IS the thing behind the doors; the fire belongs inside
+                    // the bin, which is also the only place it means anything —
+                    // this is where the thing you drop goes.
+                    // Everything the doors reveal is CENTRED, because the centre
+                    // is the only part they reveal until they are wide open.
+                    // The bin sat in the bottom-right corner — which was right
+                    // when the doors were a 13% tint and the whole panel showed
+                    // at once, and became invisible the moment they started
+                    // occluding: at a third open you saw a lit gap with nothing
+                    // in it. What the doors part to show has to be behind the
+                    // gap, not beside it.
                     .child(
                         div()
                             .absolute()
                             .inset_0()
                             .flex()
+                            .flex_col()
                             .items_center()
                             .justify_center()
-                            .text_size(px(8.5 * s))
-                            .text_color(bin_ink.alpha(bin_ink.a * open * 0.9))
-                            .child(SharedString::from(if hot {
-                                "release to delete".to_string()
-                            } else {
-                                "drop here to delete".to_string()
-                            })),
-                    )
-                    .child(
-                        div()
-                            .absolute()
-                            .right(px(5. * s))
-                            .bottom(px(3. * s))
-                            .text_size(px(BIN_PT * s))
-                            .text_color(bin_ink.alpha(bin_ink.a * open))
-                            .child("\u{1F5D1}"),
+                            .gap(px(1. * s))
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .items_center()
+                                    // The flame sits ON the bin's mouth rather
+                                    // than above it: a negative gap laps it over
+                                    // the rim, so it reads as burning IN there
+                                    // rather than as two glyphs stacked.
+                                    .gap(px(-6. * s))
+                                    .child(
+                                        div()
+                                            .text_size(px(BIN_PT * 0.78 * s))
+                                            .text_color(ember.alpha(flicker * open))
+                                            .child("\u{1F525}"),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_size(px(BIN_PT * s))
+                                            .text_color(bin_ink.alpha(bin_ink.a * open))
+                                            .child("\u{1F5D1}"),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(8. * s))
+                                    .text_color(ember.alpha(0.85 * open))
+                                    .child(SharedString::from(if hot {
+                                        "release to delete".to_string()
+                                    } else {
+                                        "drop here to delete".to_string()
+                                    })),
+                            ),
                     ),
             )
             .child(door(false))
@@ -14664,7 +14804,7 @@ impl Workspace {
             .iter()
             .find(|g| g.id == gid)
             .map(|g| g.label())
-            .unwrap_or_else(|| format!("initiative {gid}"));
+            .unwrap_or_else(|| unnamed_group(gid));
         let mut chip = div()
             .id(SharedString::from(format!("grp-title-{gid}")))
             .flex()
@@ -15627,11 +15767,19 @@ impl Render for Workspace {
         // is built further down this same pass, so it can never draw an offer
         // this sweep would have taken.
         self.sweep_trash(cx);
-        // The bay doors, eased toward wherever the drag says they should be.
-        // Asking for another frame while they are still travelling is what makes
-        // this an animation rather than a jump; once they arrive, nothing here
-        // asks for anything and the window goes quiet again.
-        if self.ease_bay() {
+        // The bay doors, eased toward wherever the drag says they should be —
+        // and the fire behind them.
+        //
+        // The `|| self.bay > 0.0` half is what makes the bonfire burn. gpui
+        // advances a GIF's frame during PAINT and never schedules the next one,
+        // so an animated image in a surface nobody is repainting draws once and
+        // freezes. Easing alone asks for frames only while the doors travel, so
+        // the fire ran for a third of a second and then stood still — a
+        // photograph of a fire, which is the failure that looks most like
+        // success. The bay is only ever open while a drag is in flight, so this
+        // is a bounded burst rather than a window that never sleeps.
+        let travelling = self.ease_bay();
+        if travelling || self.bay > 0.0 {
             cx.notify();
         }
         // Tubes still going dark. Aged out here rather than on a timer: a ghost
@@ -21804,6 +21952,167 @@ mod tests {
         );
     }
 
+    /// An unnamed group is called the same thing everywhere.
+    ///
+    /// Before the rename box stopped opening on creation, nobody ever saw this
+    /// string — the default was overwritten the instant it existed. Now it is
+    /// what a new group is called until somebody renames it, so it has to match
+    /// the word the menus use, and it has to be decided in one place: four
+    /// sites spelled it out separately, which is how a default comes to
+    /// disagree with itself.
+    #[test]
+    fn an_unnamed_group_is_named_the_same_way_everywhere() {
+        assert_eq!(unnamed_group(3), "group 3");
+
+        let src = shipped_src();
+        assert!(
+            !src.contains("format!(\"initiative "),
+            "a hand-spelled `initiative N` label is back — the tree's internal word for the \
+             middle layer, shown to a person by a menu that calls it a group"
+        );
+        let sites = src.matches("unnamed_group(").count();
+        assert!(
+            sites >= 4,
+            "only {sites} site(s) reach the shared label; the others have gone their own way"
+        );
+    }
+
+    /// What the doors reveal is behind the GAP, not beside it.
+    ///
+    /// The doors part from a centre seam, so at anything short of fully open the
+    /// only thing on show is the middle. A bin pinned to the bottom-right corner
+    /// is therefore behind the right-hand door for the entire opening — you get
+    /// a lit, glowing, empty slot, which is exactly what it looked like.
+    ///
+    /// The corner placement was correct *before* the doors occluded, when the
+    /// whole panel showed at once. One change made the other wrong, and nothing
+    /// connected them: two separate right answers that stopped composing.
+    #[test]
+    fn the_bay_puts_what_it_reveals_where_the_doors_part() {
+        let src = shipped_src();
+        let at = src.find("fn render_bay(").expect("render_bay");
+        let end = src[at..]
+            .find("\n    fn ")
+            .map(|e| e + at)
+            .unwrap_or(src.len());
+        // only the layer behind the doors; the seam and the count sit outside it
+        let behind_start = src[at..end]
+            .find("// Everything the doors reveal is CENTRED")
+            .map(|p| p + at)
+            .expect("the revealed layer");
+        let behind_end = src[behind_start..end]
+            .find("            .child(door(false))")
+            .map(|p| p + behind_start)
+            .expect("the doors are drawn after what they hide");
+        let behind = &src[behind_start..behind_end];
+
+        assert!(
+            behind.contains(".justify_center()") && behind.contains(".items_center()"),
+            "the layer behind the doors is not centred, so the doors open on nothing"
+        );
+        for edge in [".right(px(", ".left(px(", ".bottom(px(", ".top(px("] {
+            assert!(
+                !behind.contains(edge),
+                "something behind the bay doors is pinned to an edge ({edge}) — the doors \
+                 part at the CENTRE, so an edge-pinned element stays hidden for the whole \
+                 opening and the bay reveals an empty slot"
+            );
+        }
+    }
+
+    /// The doors are opaque, or they are not doors.
+    ///
+    /// They shipped at `alpha(0.13)` — a tint, not a material. The fire showed
+    /// straight through both of them, so the bay read as a permanently lit panel
+    /// and the sliding was invisible: nothing was ever occluded, and the whole
+    /// reveal was doing no work. Caught by eye on a real tree, which is the only
+    /// way it could have been: every test passed, the asset loaded, the doors
+    /// moved, and the pixels were wrong.
+    #[test]
+    fn the_bay_doors_occlude_what_is_behind_them() {
+        let src = shipped_src();
+        let at = src
+            .find("let door = move |right: bool|")
+            .expect("the bay doors");
+        let end = src[at..]
+            .find("\n        };")
+            .expect("end of the door closure")
+            + at;
+        let body = &src[at..end];
+
+        let bg = body
+            .lines()
+            .find(|l| l.contains(".bg("))
+            .expect("a door with no background paints nothing at all");
+        assert!(
+            !bg.contains("alpha("),
+            "a bay door is painted with an alpha ({}) — it tints the fire instead of hiding \
+             it, and a door that does not occlude is not a door",
+            bg.trim()
+        );
+    }
+
+    /// The bay keeps asking for frames the whole time it is open, or the flame
+    /// stops moving.
+    ///
+    /// The flicker is a function of the clock, so it only advances on a repaint.
+    /// The doors' own easing stops notifying the moment they arrive, which left
+    /// the flame frozen on whatever phase it happened to reach — lit, plausible,
+    /// and still. Nothing else catches that: the glyph is drawn, the colour is
+    /// right, and every test passes. Presence is not motion.
+    ///
+    /// This guard survived the fire being scrapped, because the thing it
+    /// protects was never really the GIF — it is that an animation in a surface
+    /// nobody repaints is a picture.
+    #[test]
+    fn the_bay_asks_for_frames_the_whole_time_it_is_open() {
+        let src = shipped_src();
+        let at = src.find("let travelling = self.ease_bay();").expect(
+            "the bay's frame pump — if this moved, the flame may have stopped moving with it",
+        );
+        let after = &src[at..at + 200];
+        assert!(
+            after.contains("self.bay > 0.0"),
+            "the render pass asks for another frame only while the doors are TRAVELLING. \
+             The flame then freezes at whichever phase the doors finished on, and every \
+             other check still passes"
+        );
+    }
+
+    /// A task row clears the disclosure triangle its parent wears.
+    ///
+    /// Indenting a task by one step alone is not enough: a branch spends
+    /// `FOLD_W` on its fold target before its label starts, so a child indented
+    /// only by `step` lands to the LEFT of the parent it hangs from. Two levels
+    /// of tree that do not read as two levels — which is exactly how it looked
+    /// on a real tree.
+    #[test]
+    fn a_task_is_indented_past_its_parents_fold_triangle() {
+        let src = shipped_src();
+        let at = src.find("fn task_row(").expect("task_row");
+        let end = src[at..]
+            .find("\n    fn ")
+            .map(|e| e + at)
+            .unwrap_or(src.len());
+        let body = &src[at..end];
+
+        let indents = body.matches("step * (depth as f32)").count();
+        assert!(
+            indents >= 2,
+            "expected both task-row indents; found {indents}"
+        );
+        // `px(FOLD_W`, not the bare word: the doc comment beside these lines
+        // names the constant too, so counting the word read 3 against 2 real
+        // uses and failed on correct code. The same trap `shipped_src` exists
+        // for, one level in — a guard matching prose rather than the call.
+        assert_eq!(
+            body.matches("px(FOLD_W").count(),
+            indents,
+            "a task-row indent is missing its FOLD_W: the rename box and the row itself must \
+             line up with each other, and both must clear the parent's triangle"
+        );
+    }
+
     /// Nothing destructive in the left bar happens without either a question or
     /// an emptiness check.
     ///
@@ -21978,9 +22287,11 @@ mod tests {
             "a new project must open a terminal of its own"
         );
         assert!(
-            body.find("new_tab_in(") < body.find("start_bar_rename("),
-            "the terminal has to exist before the rename box opens: generate, zip there, \
-             then the housekeeping"
+            !body.contains("start_bar_rename("),
+            "making a project opens its rename box again — the gesture grabs the keyboard \
+             and decides for you that naming it is the next move, when the next move is \
+             usually using the terminal it just gave you. It opens as `project N`; renaming \
+             is double-click or the row's own menu"
         );
 
         // And the tab it builds goes through the identity carrier. `Tab::new`
