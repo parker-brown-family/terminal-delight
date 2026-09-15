@@ -667,23 +667,66 @@ pub fn stops(rows: &[Row]) -> Vec<RowId> {
     rows.iter().filter_map(row_id).collect()
 }
 
-/// One step of the cursor. `None` means the press does nothing: the edges of
-/// the bar are walls, not a wrap-round, matching Alt+arrows over panes — a
-/// blind press at the end of the list must not teleport the cursor to the other
-/// end of the window.
+/// One step of the cursor. The list is a RING: ↓ from the last row lands on the
+/// first, ↑ from the first lands on the last, and `None` now means only that
+/// there was nothing to land on at all.
+///
+/// The walls this replaced were borrowed from Alt+arrows over PANES, where they
+/// are right — panes have a geometry, so "up from the top pane" names a
+/// direction with nothing in it. The left bar is a menu, and a menu closes. With
+/// a wall at each end, the cheapest row to reach from the bottom of a twenty-row
+/// tree is the one at the very top and the dearest is the one directly above it,
+/// which is the opposite of how the bar is read.
 ///
 /// A cursor sitting on a row that no longer exists (its branch was folded away
 /// under it, or its tab closed) re-enters at the near end rather than vanishing.
 pub fn step(rows: &[Row], from: Option<RowId>, down: bool) -> Option<RowId> {
     let stops = stops(rows);
-    let at = from.and_then(|f| stops.iter().position(|s| *s == f));
-    match (at, down) {
-        (Some(i), true) => stops.get(i + 1).copied(),
-        (Some(i), false) => i.checked_sub(1).and_then(|j| stops.get(j)).copied(),
-        // No cursor yet (or a stale one): land at the end the press came from.
-        (None, true) => stops.first().copied(),
-        (None, false) => stops.last().copied(),
+    let n = stops.len();
+    if n == 0 {
+        return None;
     }
+    let at = from.and_then(|f| stops.iter().position(|s| *s == f));
+    Some(match (at, down) {
+        (Some(i), true) => stops[(i + 1) % n],
+        (Some(i), false) => stops[(i + n - 1) % n],
+        // No cursor yet (or a stale one): land at the end the press came from.
+        (None, true) => stops[0],
+        (None, false) => stops[n - 1],
+    })
+}
+
+/// The top-level branches, in draw order — the rows the number keys address.
+///
+/// Depth zero and a branch: every project, then every initiative that hangs
+/// from no project, which is the order [`rows`] lays them out and therefore the
+/// order the eye counts them in. The loose tasks that also sit at depth zero
+/// are NOT included: a number is a jump to a section of the session, and a
+/// task's number would move every time a neighbour was filed. The divider is
+/// never a stop anywhere.
+pub fn top_branches(rows: &[Row]) -> Vec<RowId> {
+    rows.iter()
+        .filter(|r| depth_of(r) == 0)
+        .filter_map(|r| match *r {
+            Row::Project { id, .. } => Some(RowId::Project(id)),
+            Row::Initiative { id, .. } => Some(RowId::Initiative(id)),
+            Row::Task { .. } | Row::Unfiled { .. } => None,
+        })
+        .collect()
+}
+
+/// The branch the digit `n` addresses, counting from one.
+///
+/// Nine and no further. Zero is not a tenth row, and a two-digit number cannot
+/// be typed without the chord pausing on every press to see whether a second
+/// digit is coming — a delay on all nine to buy a shortcut to the tenth. A
+/// tree with a tenth top-level branch is walked to with the arrows, which reach
+/// every row there is.
+pub fn nth_top_branch(rows: &[Row], n: usize) -> Option<RowId> {
+    if !(1..=9).contains(&n) {
+        return None;
+    }
+    top_branches(rows).get(n - 1).copied()
 }
 
 /// The branch a row hangs from: the nearest row above it drawn shallower.
@@ -1594,29 +1637,125 @@ mod tests {
     }
 
     #[test]
-    fn the_cursor_walks_every_drawn_row_top_to_bottom_and_stops_at_the_ends() {
+    fn the_cursor_walks_every_drawn_row_top_to_bottom_and_comes_back_round() {
         let (p, i, t) = bar();
         let rows = rows(&p, &i, &t, Some(0));
+        let order = vec![
+            RowId::Project(1),
+            RowId::Initiative(10),
+            RowId::Task(0),
+            RowId::Task(1),
+            RowId::Project(2),
+            RowId::Task(2),
+        ];
+        // Walk one row at a time for exactly as many presses as there are rows,
+        // then assert the last press landed back at the start — a bounded loop,
+        // because the unbounded one this replaced would now never end.
         let mut seen = vec![];
         let mut at = step(&rows, None, true);
-        while let Some(id) = at {
+        for _ in 0..order.len() {
+            let id = at.expect("the ring always has somewhere to go");
             seen.push(id);
             at = step(&rows, Some(id), true);
         }
+        assert_eq!(seen, order);
         assert_eq!(
-            seen,
+            at,
+            Some(RowId::Project(1)),
+            "↓ off the bottom wraps to the top"
+        );
+        assert_eq!(
+            step(&rows, Some(RowId::Project(1)), false),
+            Some(RowId::Task(2)),
+            "↑ off the top wraps to the bottom"
+        );
+    }
+
+    /// A ring of one is still a ring, and a ring of none is not one at all.
+    /// Both ends of that are reachable in a running window: a session with a
+    /// single tab and nothing filed draws one row, and a window mid-teardown
+    /// draws none.
+    #[test]
+    fn a_ring_of_one_row_stays_put_and_a_ring_of_none_refuses() {
+        let one = rows(&[], &[], &[task(None, None)], Some(0));
+        assert_eq!(stops(&one), vec![RowId::Task(0)]);
+        assert_eq!(step(&one, Some(RowId::Task(0)), true), Some(RowId::Task(0)));
+        assert_eq!(
+            step(&one, Some(RowId::Task(0)), false),
+            Some(RowId::Task(0))
+        );
+        assert_eq!(step(&[], None, true), None);
+        assert_eq!(step(&[], Some(RowId::Task(0)), false), None);
+    }
+
+    /// The numbers count the SECTIONS of the bar, top to bottom: the projects
+    /// in their order, then the initiatives nobody has filed under one. This is
+    /// the shape of Parker's own session — four projects and then a loose
+    /// group — and the count he read off the screen when he asked for it.
+    #[test]
+    fn the_number_keys_address_top_level_branches_in_draw_order() {
+        let projects = vec![project(1, false), project(3, true), project(4, true)];
+        let initiatives = vec![
+            initiative(10, Some(1), false),
+            initiative(20, None, false),
+            initiative(30, None, true),
+        ];
+        let tasks = vec![
+            task(Some(1), Some(10)),
+            task(None, Some(20)),
+            task(None, Some(30)),
+            task(None, None),
+        ];
+        let drawn = rows(&projects, &initiatives, &tasks, Some(0));
+        assert_eq!(
+            top_branches(&drawn),
             vec![
                 RowId::Project(1),
-                RowId::Initiative(10),
-                RowId::Task(0),
-                RowId::Task(1),
-                RowId::Project(2),
-                RowId::Task(2),
-            ]
+                RowId::Project(3),
+                RowId::Project(4),
+                RowId::Initiative(20),
+                RowId::Initiative(30),
+            ],
+            "projects first, then the initiatives that hang from none of them"
         );
-        // The ends are walls, not a wrap-round.
-        assert_eq!(step(&rows, Some(RowId::Task(2)), true), None);
-        assert_eq!(step(&rows, Some(RowId::Project(1)), false), None);
+        assert_eq!(nth_top_branch(&drawn, 1), Some(RowId::Project(1)));
+        assert_eq!(nth_top_branch(&drawn, 4), Some(RowId::Initiative(20)));
+        // Past the end, and past nine, are both nothing rather than a clamp: a
+        // press with no branch under it must not move the cursor somewhere the
+        // person did not aim.
+        assert_eq!(nth_top_branch(&drawn, 6), None);
+        assert_eq!(nth_top_branch(&drawn, 0), None);
+        assert_eq!(nth_top_branch(&drawn, 10), None);
+    }
+
+    /// A folded project is still a section, and a numbered one. Folding the
+    /// tree down to its headings is the state the numbers are MOST useful in,
+    /// so a rule that counted only what is expanded would have withdrawn them
+    /// exactly when they were wanted.
+    #[test]
+    fn folding_changes_no_branch_number() {
+        let (p, i, t) = bar();
+        let open = top_branches(&rows(&p, &i, &t, Some(0)));
+        let shut = top_branches(&rows(
+            &[project(1, true), project(2, true)],
+            &i,
+            &t,
+            // Nothing active, or the active task would force its branch open.
+            None,
+        ));
+        assert_eq!(open, shut);
+        assert_eq!(open.first(), Some(&RowId::Project(1)));
+    }
+
+    /// A task sitting loose at the bottom is at depth zero like a project, and
+    /// is not a section. If it were counted, filing one tab would renumber
+    /// every branch below it.
+    #[test]
+    fn a_loose_task_never_takes_a_number() {
+        let tasks = vec![task(None, Some(7)), task(None, None)];
+        let drawn = rows(&[], &[initiative(7, None, false)], &tasks, Some(0));
+        assert!(drawn.contains(&Row::Task { index: 1, depth: 0 }));
+        assert_eq!(top_branches(&drawn), vec![RowId::Initiative(7)]);
     }
 
     /// The behaviour the whole feature was asked for: a folded branch is ONE

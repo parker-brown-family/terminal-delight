@@ -8000,6 +8000,27 @@ impl Workspace {
         }
     }
 
+    /// Ctrl+Alt+1…9: put the cursor on a top-level branch by its number.
+    ///
+    /// The numbers are positions in the drawn tree, counted over the projects
+    /// and then the initiatives that belong to none of them — the order the eye
+    /// reads down the bar, so a branch's number is how many sections down it is
+    /// and there is nothing to memorise beyond that. Nine of them, because the
+    /// tenth would need a chord that waits for a second digit.
+    ///
+    /// Like the arrows, this moves the HIGHLIGHT and nothing else: a number is
+    /// how you get to a project across a tall session in one press, and
+    /// Ctrl+Alt+→ is still the verb that opens it. A jump that also unfolded
+    /// would rearrange the very list the numbers are counted from, under the
+    /// fingers of someone about to press another one.
+    fn bar_jump(&mut self, n: usize, cx: &mut Context<Self>) {
+        let rows = self.bar_rows(cx);
+        if let Some(to) = tree::nth_top_branch(&rows, n) {
+            self.bar_cursor = Some(to);
+            cx.notify();
+        }
+    }
+
     /// Ctrl+Alt+→: open what the cursor is over, then step into it.
     ///
     /// Two presses, deliberately: the first unfolds a folded branch and leaves
@@ -11299,14 +11320,25 @@ impl Workspace {
                 // then climbs out.
                 //
                 // Only while the bar is open. Bound unconditionally these would
-                // be four keys that do nothing visible with the bar hidden, and
-                // "the binding is broken" is the reasonable thing to conclude
-                // from a press with no feedback.
+                // be keys that do nothing visible with the bar hidden, and "the
+                // binding is broken" is the reasonable thing to conclude from a
+                // press with no feedback.
                 "up" | "down" if self.left_bar => {
                     self.bar_walk(ks.key.as_str() == "down", cx);
                 }
                 "right" if self.left_bar => self.bar_enter(window, cx),
                 "left" if self.left_bar => self.bar_leave(cx),
+                // Ctrl+Alt+1…9 land straight on a top-level branch. The arrows
+                // are a ring now, so every row is reachable from every other
+                // one — but "reachable" in a session with fifty drawn rows can
+                // still be twenty presses, and the numbers make the sections a
+                // flat namespace over the top of the walk.
+                "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" if self.left_bar => {
+                    // The digit is the whole key string, so this cannot be
+                    // anything but one ASCII byte in '1'..='9'.
+                    let n = (ks.key.as_bytes()[0] - b'0') as usize;
+                    self.bar_jump(n, cx);
+                }
                 _ => {}
             }
             return;
@@ -20418,6 +20450,7 @@ impl Render for Workspace {
                         row("Alt+W", s.close_pane),
                         row("Ctrl+W", s.close_tab),
                         row("Ctrl+Alt+↑↓←→", s.walk_tree),
+                        row("Ctrl+Alt+1…9", s.jump_branch),
                         row(s.k_alt_arrows, s.move_focus_dir),
                         row(s.k_drag_subtab, s.drag_subtab),
                         row(s.k_rclick_tab, s.rclick_tab),
