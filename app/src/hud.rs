@@ -82,6 +82,29 @@ impl AgentState {
     }
 }
 
+/// Fold in the one thing the rows cannot show: whether a finish bell is
+/// unacknowledged.
+///
+/// The bell is a pane's own state, so the parser never sees it and the caller
+/// has to apply it. It promotes only a QUIET state, because a bell says a turn
+/// ended and says nothing about a screen that is currently working, blocked or
+/// errored — those are live and outrank a stale finish.
+///
+/// **Why this is a function and not two lines at the call site.** It was two
+/// lines at the call site, comparing against `Idle`, and adding [`AgentState::Unknown`]
+/// made that comparison unreachable: the parser stopped returning `Idle`, so a
+/// finished agent whose screen carried nothing matchable reported `Unknown` and
+/// the done state quietly went to zero. Nothing failed — no test covered the
+/// pairing, because the bell lives on the pane and the parser is pure. Here, it
+/// is testable.
+pub fn with_bell(state: AgentState, bell: bool) -> AgentState {
+    if bell && state.is_quiet() {
+        AgentState::Finished
+    } else {
+        state
+    }
+}
+
 /// One agent pane's live status, parsed from its bottom-of-screen line.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct AgentStatus {
@@ -378,6 +401,42 @@ mod tests {
             "a screen we cannot read must never assert rest"
         );
         assert_eq!(AgentState::default(), AgentState::Idle);
+    }
+
+    #[test]
+    fn a_bell_promotes_a_quiet_state_whatever_kind_of_quiet_it_is() {
+        // The case the Unknown change broke: nothing matched, bell ringing.
+        assert_eq!(
+            with_bell(AgentState::Unknown, true),
+            AgentState::Finished,
+            "an unreadable screen with a finish bell is finished, not unknown"
+        );
+        assert_eq!(with_bell(AgentState::Idle, true), AgentState::Finished);
+    }
+
+    #[test]
+    fn a_bell_never_overrides_something_live() {
+        for live in [AgentState::Working, AgentState::Blocked, AgentState::Error] {
+            assert_eq!(
+                with_bell(live, true),
+                live,
+                "a stale finish must not mask what the screen says now"
+            );
+        }
+    }
+
+    #[test]
+    fn no_bell_changes_nothing() {
+        for st in [
+            AgentState::Working,
+            AgentState::Blocked,
+            AgentState::Error,
+            AgentState::Finished,
+            AgentState::Idle,
+            AgentState::Unknown,
+        ] {
+            assert_eq!(with_bell(st, false), st);
+        }
     }
 
     #[test]

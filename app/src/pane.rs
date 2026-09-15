@@ -3067,9 +3067,7 @@ impl TerminalView {
             return crate::hud::AgentStatus::default();
         }
         let mut st = crate::hud::parse_status_line(&self.live_rows());
-        if st.state == crate::hud::AgentState::Idle && self.bell {
-            st.state = crate::hud::AgentState::Finished;
-        }
+        st.state = crate::hud::with_bell(st.state, self.bell);
         st
     }
 
