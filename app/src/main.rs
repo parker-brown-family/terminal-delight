@@ -5071,6 +5071,11 @@ impl Workspace {
         let at = self.branch_end(place);
         self.tabs.insert(at, tab);
         self.active = at;
+        // A new tab is filed into `place`, which may be a branch that is shut —
+        // the left bar's `+` on a folded project is exactly that gesture. Open
+        // the way down to it, or the terminal it just made is somewhere nothing
+        // on screen is pointing.
+        self.reveal_active_branch();
         self.save(cx);
         cx.notify();
         // Defer the focus: this fires from a mouse-down listener, so the root
