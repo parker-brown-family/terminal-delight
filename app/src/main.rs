@@ -707,13 +707,21 @@ impl<'de> Deserialize<'de> for SavedNode {
 }
 
 impl SavedNode {
-    /// Visit every leaf's captured resume command, in layout order.
-    fn for_each_resume(&mut self, f: &mut impl FnMut(&mut Option<String>)) {
+    /// Visit every leaf's claim on a terminal, in layout order.
+    ///
+    /// A claim is both halves at once — the pane a leaf says it was showing and
+    /// the conversation it says was running there — because they are one
+    /// assertion about one terminal and a repair has to be able to drop either
+    /// half. Visiting them separately is how a file ends up with a leaf whose
+    /// recipe has been taken away and whose pane id has not.
+    fn for_each_claim(&mut self, f: &mut impl FnMut(&mut Option<u64>, &mut Option<String>)) {
         match self {
-            SavedNode::Leaf { resume, .. } => f(resume),
+            SavedNode::Leaf {
+                pane_id, resume, ..
+            } => f(pane_id, resume),
             SavedNode::Split { a, b, .. } => {
-                a.for_each_resume(f);
-                b.for_each_resume(f);
+                a.for_each_claim(f);
+                b.for_each_claim(f);
             }
         }
     }
@@ -734,16 +742,45 @@ impl SavedNode {
     }
 }
 
-/// Two panes sharing a working directory can capture the *same* resume command:
-/// `claude --continue` is cwd-scoped by definition, and an id recovered from
-/// disk is only ever the newest session in that directory. Restoring both would
-/// drop two agents into one conversation, each overwriting the other's turns —
-/// so the first pane keeps the resume and the rest come back as a fresh agent in
-/// the same place, which is what a second pane there was always going to be.
+/// One terminal answers to one leaf, enforced on the way out to disk.
+///
+/// Two claims can collide, and they collide for different reasons:
+///
+/// **The same resume command.** Two panes sharing a working directory can
+/// capture it: `claude --continue` is cwd-scoped by definition, and an id
+/// recovered from disk is only ever the newest session in that directory.
+/// Restoring both would drop two agents into one conversation, each overwriting
+/// the other's turns — so the first pane keeps the resume and the rest come back
+/// as a fresh agent in the same place, which is what a second pane there was
+/// always going to be.
+///
+/// **The same pane id.** A pane id names ONE running terminal, so a second leaf
+/// carrying it is not describing a terminal that exists; it is a copy of a leaf
+/// that does. Left in the file it hands the next restore a tie it can only break
+/// by layout order, and layout order is not evidence: on 2026-09-15 three tabs
+/// carried `pane_id = 4` and the terminal went to the earliest of them, which
+/// was not the tab whose work it was. The other two got shells with an
+/// explanatory note, and the person found out by reading the screen.
+///
+/// Dropping the id rather than the whole leaf is deliberate: a copied leaf still
+/// has a name, colours, a sticky note and a place in the tree, all of which
+/// somebody chose. It comes back as itself, holding a terminal of its own.
+///
+/// This is the write-side half of a loop. The read side repairs the same
+/// collision on restore (see `LeafPlan::Duplicate`), and the host refuses to
+/// widen it on checkpoint (`fill_leaves`). Three independent breaks, because a
+/// layout that has fallen behind its panes can be produced by any of the three
+/// and repaired by whichever one sees it first.
 fn dedupe_resumes(tabs: &mut [SavedTab]) {
     let mut claimed = std::collections::HashSet::new();
+    let mut panes = std::collections::HashSet::new();
     for tab in tabs.iter_mut() {
-        tab.node.for_each_resume(&mut |resume| {
+        tab.node.for_each_claim(&mut |pane_id, resume| {
+            if let Some(id) = *pane_id {
+                if !panes.insert(id) {
+                    *pane_id = None;
+                }
+            }
             if let Some(cmd) = resume.clone() {
                 if !claimed.insert(cmd.clone()) {
                     *resume = bare_agent(&cmd);
@@ -26093,7 +26130,7 @@ mod tests {
         let resumes = |tabs: &mut [SavedTab]| {
             let mut out = vec![];
             for tab in tabs.iter_mut() {
-                tab.node.for_each_resume(&mut |r| out.push(r.clone()));
+                tab.node.for_each_claim(&mut |_, r| out.push(r.clone()));
             }
             out
         };
@@ -26136,6 +26173,130 @@ mod tests {
         );
         assert_eq!(bare_agent("codex resume --last").as_deref(), Some("codex"));
         assert_eq!(bare_agent("").as_deref(), None);
+    }
+
+    /// Only one leaf may say it is a given terminal, and the other claimants
+    /// keep everything that is theirs.
+    ///
+    /// Modelled on the layout this was found in: three tabs — HACKATHON WINNER,
+    /// APPLY and RIGHT MENU — each carried `pane_id = 4` and a sticky note of its
+    /// own, so the restore had one terminal and three claimants and broke the tie
+    /// by layout order. The note is the part that proves the loser is a real tab
+    /// somebody was using rather than a stray: it is what its own agent wrote.
+    #[test]
+    fn only_one_leaf_may_claim_a_terminal() {
+        let note = |text: &str| SavedNote {
+            title: None,
+            text: text.to_string(),
+            seed: 0,
+            pinned: false,
+        };
+        let claim = |pane: Option<u64>, resume: Option<&str>, text: &str| SavedNode::Leaf {
+            appearance: PaneTheme::default(),
+            cwd: Some("/home/me".into()),
+            resume: resume.map(str::to_string),
+            name: None,
+            logo: None,
+            note: Some(note(text)),
+            pane_id: pane,
+        };
+        let tab = |node: SavedNode| SavedTab {
+            name: None,
+            color: None,
+            text_color: None,
+            group: None,
+            node,
+            project: None,
+        };
+        let mut tabs = vec![
+            tab(claim(Some(4), Some("claude --resume 4df48691"), "workflow")),
+            tab(claim(Some(4), None, "NEEDS YOU: INDEED LOGIN")),
+            tab(claim(Some(4), None, "NO COLLISION: slice 1 merges clean")),
+            // a different terminal is nobody's duplicate
+            tab(claim(Some(9), Some("claude --resume 505975dc"), "themes")),
+        ];
+        dedupe_resumes(&mut tabs);
+
+        let mut ids = vec![];
+        let mut notes = vec![];
+        for t in tabs.iter_mut() {
+            t.node.for_each_claim(&mut |pane, _| ids.push(*pane));
+            if let SavedNode::Leaf { note, .. } = &t.node {
+                notes.push(note.as_ref().map(|n| n.text.clone()));
+            }
+        }
+        assert_eq!(
+            ids,
+            vec![Some(4), None, None, Some(9)],
+            "the first claimant keeps the terminal and the copies keep none"
+        );
+        assert_eq!(
+            notes,
+            vec![
+                Some("workflow".to_string()),
+                Some("NEEDS YOU: INDEED LOGIN".to_string()),
+                Some("NO COLLISION: slice 1 merges clean".to_string()),
+                Some("themes".to_string()),
+            ],
+            "a leaf that loses a terminal is still the tab somebody was using"
+        );
+    }
+
+    /// The invariant, stated as itself: whatever goes in, no terminal is claimed
+    /// twice on the way out.
+    ///
+    /// Written as a property rather than a case because the collision arrives
+    /// from three directions — a restore that bound two leaves to one pane, a
+    /// checkpoint that widened a recipe, and a file edited or restored from a
+    /// backup — and a test per direction would miss the fourth.
+    #[test]
+    fn no_terminal_is_claimed_twice_on_the_way_out() {
+        let leaf = |pane: Option<u64>, resume: Option<&str>| SavedNode::Leaf {
+            appearance: PaneTheme::default(),
+            cwd: None,
+            resume: resume.map(str::to_string),
+            name: None,
+            logo: None,
+            note: None,
+            pane_id: pane,
+        };
+        let tab = |node: SavedNode| SavedTab {
+            name: None,
+            color: None,
+            text_color: None,
+            group: None,
+            node,
+            project: None,
+        };
+        let mut tabs = vec![
+            tab(SavedNode::Split {
+                dir: SplitDir::Col,
+                ratio: 0.5,
+                a: Box::new(leaf(Some(7), Some("claude --resume aaa"))),
+                b: Box::new(leaf(Some(7), Some("claude --resume aaa"))),
+            }),
+            tab(leaf(Some(7), Some("claude --resume aaa"))),
+            tab(leaf(None, None)),
+            tab(leaf(Some(8), None)),
+            tab(leaf(Some(8), Some("codex resume 01a0"))),
+        ];
+        dedupe_resumes(&mut tabs);
+
+        let mut seen_panes = std::collections::HashSet::new();
+        let mut seen_work = std::collections::HashSet::new();
+        for t in tabs.iter_mut() {
+            t.node.for_each_claim(&mut |pane, resume| {
+                if let Some(id) = *pane {
+                    assert!(seen_panes.insert(id), "pane {id} is claimed twice");
+                }
+                if let Some(cmd) = resume.clone() {
+                    if named_session(Some(&cmd)).is_some() {
+                        assert!(seen_work.insert(cmd.clone()), "{cmd} is claimed twice");
+                    }
+                }
+            });
+        }
+        assert_eq!(seen_panes.len(), 2, "two real terminals survive");
     }
 
     #[test]
