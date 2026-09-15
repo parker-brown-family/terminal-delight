@@ -1,0 +1,60 @@
+# terminal-delight theme — deco (brass, ivory and jade on a near-black ground)
+#
+# The COLOUR half of the art-deco look; the SHAPE half is app/skins/deco.toml,
+# which the `skin` key below asks for. They are separable on purpose: this
+# palette under the default skin is a perfectly good dark theme, and the deco
+# skin over the hacker palette is a perfectly good green instrument panel.
+#
+# Two accents, deliberately. Brass (`accent`) is STRUCTURAL — it carries the
+# rules, the brackets and the frames, and it is the colour of the furniture.
+# Mint (`human`, which the deco skin points `live` at) is EVENTFUL — it marks
+# the one thing that is running. A single accent doing both jobs is why most
+# dark themes go flat the moment a screen gets busy.
+#
+# Ivory rather than white for text: there is no pure white anywhere on a deco
+# panel, and at 14px the warmth is the whole difference between printed and
+# rendered.
+name = "deco"
+icon = "◈"
+skin = "deco"
+
+[colors]
+bg      = "#0a0e10"
+surface = "#141a1d"
+text    = "#e8e4d8"
+accent  = "#c2a34f"
+faint   = "#2b3338"
+cursor  = "#c2a34f"
+human   = "#7fd1b9"
+# ansi3 is AMBER, not the brass of the accent. `warn` resolves from ansi3, and
+# on the first resolve of this palette it came out `#c2a34f` — the same value as
+# `mark`, so a surface at 90% of its limit would have been painted in exactly the
+# colour of the furniture around it. A warning that is the same colour as the
+# frame is not a warning. (Found by `terminal-delight skin --skin deco --theme
+# deco`, which is what that verb is for.)
+ansi = [
+  "#10161a", "#c05c4c", "#6fae8f", "#d99a3c",
+  "#5f8ca8", "#a1719a", "#7fd1b9", "#ded9cc",
+  "#3a444a", "#d98476", "#8fc7a9", "#e8b45e",
+  "#84aac4", "#bd94b6", "#a3e0cf", "#f3efe4",
+]
+
+# TEXTURE: none. The brief was modern and professional, and every CRT device
+# here is the kind of noise that reads as costume on a working surface. The one
+# exception is a shallow vignette — not an effect so much as a floor, which is
+# what stops a flat near-black panel from looking like an unlit region of the
+# desktop.
+[effects]
+scanline_opacity = 0.0
+vignette         = 0.14
+glow             = 0.03
+bloom            = 0.0
+tracking         = 0.0
+flicker          = 0.0
+jiggle           = 0.0
+screen_glare     = 0.0
+bezel            = 0.0
+
+[font]
+size        = 14.0
+cell_height = 20.0

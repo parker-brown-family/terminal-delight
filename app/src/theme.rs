@@ -40,6 +40,7 @@ const BUILTIN_THEMES: &[(&str, &str)] = &[
         include_str!("../themes/tactical-overdrive.toml"),
     ),
     ("gamba", include_str!("../themes/gamba.toml")),
+    ("deco", include_str!("../themes/deco.toml")),
     ("hacker", DEFAULT_THEME_TOML),
 ];
 
@@ -84,6 +85,11 @@ struct FileFont {
 struct ThemeFile {
     name: Option<String>,
     icon: Option<String>,
+    /// Which CHROME SKIN this theme asks for — `skin = "deco"`. Absent means the
+    /// default skin, which is today's chrome. Colour, texture and shape are three
+    /// axes (see [`crate::skin`]); this key is only a theme's *preference* on the
+    /// third, and the user's own `skin.toml` still overrides it.
+    skin: Option<String>,
     colors: FileColors,
     #[serde(default)]
     effects: FileEffects,
@@ -109,6 +115,10 @@ pub struct Theme {
     pub name: String,
     /// Glyph that stands in for the theme everywhere the UI names it.
     pub icon: String,
+    /// The chrome skin this theme asks for, by builtin id (see [`crate::skin`]).
+    /// `None` is a real answer and not a default: it means this theme has no
+    /// opinion about the chrome's SHAPE, so whatever skin is active stands.
+    pub skin: Option<String>,
     pub bg: Hsla,
     pub surface: Hsla,
     pub text: Hsla,
@@ -1267,6 +1277,15 @@ pub fn parse_hex(value: &str) -> Option<Hsla> {
 /// unedited `custom` file still carries the `>_` glyph it was seeded from
 /// (hacker), so glyph alone can't tell the two apart, but "hacker" vs "custom"
 /// can.
+/// The embedded TOML of one builtin theme, by id. For headless callers (the
+/// `skin` verb) that have no `App` and therefore no [`ThemeRegistry`].
+pub fn builtin_toml(id: &str) -> Option<&'static str> {
+    BUILTIN_THEMES
+        .iter()
+        .find(|(k, _)| *k == id)
+        .map(|(_, src)| *src)
+}
+
 pub fn all_themes(cx: &App) -> Vec<(String, String, String)> {
     let reg = cx.global::<ThemeRegistry>();
     let mut out: Vec<_> = reg
@@ -2454,6 +2473,7 @@ pub(crate) fn parse(source: &str) -> Result<Theme, String> {
     Ok(Theme {
         name,
         icon: file.icon.unwrap_or_else(|| "◈".into()),
+        skin: file.skin,
         bg: c.bg,
         surface: c.surface,
         text: c.text,
@@ -2517,7 +2537,16 @@ mod tests {
             assert_eq!(&th.name, id, "theme file name must match registry id");
             icons.push(th.icon);
         }
-        assert_eq!(BUILTIN_THEMES.len(), 5);
+        assert_eq!(BUILTIN_THEMES.len(), 6);
+        // The tray is glyph-only, so two themes sharing an icon are two themes
+        // nobody can tell apart. This test has always collected the icons; it now
+        // also reads them, which is what its name has always claimed.
+        let distinct: std::collections::HashSet<_> = icons.iter().collect();
+        assert_eq!(
+            distinct.len(),
+            icons.len(),
+            "two builtins share an icon: {icons:?}"
+        );
     }
 
     #[test]

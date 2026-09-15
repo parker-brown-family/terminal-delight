@@ -22,8 +22,19 @@ pub enum AgentState {
     /// Turn finished with an unacknowledged "agent finished" alert.
     Finished,
     /// Agent at rest with nothing pending (or a plain shell).
+    ///
+    /// Reachable only when a caller that KNOWS the pane is not an agent says so.
+    /// The parser cannot claim it: from rows alone, a resting agent and a screen
+    /// this code cannot read are the same picture.
     #[default]
     Idle,
+    /// The pane is an agent and its screen matched no rule here.
+    ///
+    /// This used to be `Idle`, and that conflation is the defect this variant
+    /// exists to end: an attention surface built on it would answer "nothing
+    /// needs you" for a pane it simply could not read. Unknown is shown, is
+    /// never counted as wanting a human, and is never decorated as activity.
+    Unknown,
 }
 
 impl AgentState {
@@ -35,6 +46,7 @@ impl AgentState {
             AgentState::Error => "\u{2715}",    // ✕
             AgentState::Finished => "\u{2713}", // ✓
             AgentState::Idle => "\u{00b7}",     // ·
+            AgentState::Unknown => "?",
         }
     }
 
@@ -45,13 +57,51 @@ impl AgentState {
             AgentState::Error => "error",
             AgentState::Finished => "done",
             AgentState::Idle => "idle",
+            AgentState::Unknown => "unknown",
         }
     }
 
     /// True for the states a human should look at first (the whole point of the
     /// HUD): an agent waiting on you, or one that has errored.
+    ///
+    /// `Unknown` is deliberately not one of them. "We could not tell" is not a
+    /// yes, and a count that treats it as one turns every parser gap into an
+    /// alarm. It is shown with its own mark instead, which is the honest shape:
+    /// visible, and not counted.
     pub fn needs_you(self) -> bool {
         matches!(self, AgentState::Blocked | AgentState::Error)
+    }
+
+    /// Nothing is happening that a person should be shown as movement.
+    ///
+    /// Both resting and unreadable panes are quiet: a glow or a live badge on a
+    /// screen nobody could parse is the interface asserting activity it has not
+    /// observed.
+    pub fn is_quiet(self) -> bool {
+        matches!(self, AgentState::Idle | AgentState::Unknown)
+    }
+}
+
+/// Fold in the one thing the rows cannot show: whether a finish bell is
+/// unacknowledged.
+///
+/// The bell is a pane's own state, so the parser never sees it and the caller
+/// has to apply it. It promotes only a QUIET state, because a bell says a turn
+/// ended and says nothing about a screen that is currently working, blocked or
+/// errored — those are live and outrank a stale finish.
+///
+/// **Why this is a function and not two lines at the call site.** It was two
+/// lines at the call site, comparing against `Idle`, and adding [`AgentState::Unknown`]
+/// made that comparison unreachable: the parser stopped returning `Idle`, so a
+/// finished agent whose screen carried nothing matchable reported `Unknown` and
+/// the done state quietly went to zero. Nothing failed — no test covered the
+/// pairing, because the bell lives on the pane and the parser is pure. Here, it
+/// is testable.
+pub fn with_bell(state: AgentState, bell: bool) -> AgentState {
+    if bell && state.is_quiet() {
+        AgentState::Finished
+    } else {
+        state
     }
 }
 
@@ -149,7 +199,12 @@ pub fn parse_status_line(rows: &[String]) -> AgentStatus {
     } else if lower.iter().any(|l| is_blocked_prompt(l)) {
         AgentState::Blocked
     } else {
-        AgentState::Idle
+        // Nothing matched. That is not the same as an agent at rest, and saying
+        // so was the bug: a queue built on this reported "nothing needs you" for
+        // a pane whose screen it could not read. The caller knows whether this
+        // pane is even an agent; this function only knows what it failed to
+        // recognise.
+        AgentState::Unknown
     };
     st
 }
@@ -310,11 +365,78 @@ mod tests {
         assert_eq!(st.state, AgentState::Error);
     }
 
+    /// The test that used to assert the defect.
+    ///
+    /// It read `idle_when_nothing_matches` and passed a shell prompt, which is
+    /// three different claims wearing one value: a shell, an agent at rest, and
+    /// a screen this parser cannot read. The parser can only honestly make the
+    /// third.
     #[test]
-    fn idle_when_nothing_matches() {
+    fn unknown_when_nothing_matches() {
         let st = parse_status_line(&rows(&["pbrown@host:~/proj$ "]));
-        assert_eq!(st.state, AgentState::Idle);
+        assert_eq!(st.state, AgentState::Unknown);
         assert_eq!(st.turn_tokens, None);
+    }
+
+    #[test]
+    fn an_unreadable_screen_is_not_counted_as_wanting_you() {
+        let st = parse_status_line(&rows(&["\u{2588}\u{2588} garbled \u{2588}\u{2588}"]));
+        assert_eq!(st.state, AgentState::Unknown);
+        assert!(!st.state.needs_you(), "we could not tell is not a yes");
+        assert!(st.state.is_quiet(), "and it is not drawn as movement");
+    }
+
+    /// The three states the issue says must stop being one value.
+    #[test]
+    fn rest_unreadable_and_working_are_three_different_answers() {
+        let working = parse_status_line(&rows(&[
+            "\u{2733} Refactoring\u{2026} (2m \u{b7} esc to interrupt)",
+        ]));
+        let unreadable = parse_status_line(&rows(&["wat"]));
+        assert_eq!(working.state, AgentState::Working);
+        assert_eq!(unreadable.state, AgentState::Unknown);
+        assert_ne!(
+            unreadable.state,
+            AgentState::Idle,
+            "a screen we cannot read must never assert rest"
+        );
+        assert_eq!(AgentState::default(), AgentState::Idle);
+    }
+
+    #[test]
+    fn a_bell_promotes_a_quiet_state_whatever_kind_of_quiet_it_is() {
+        // The case the Unknown change broke: nothing matched, bell ringing.
+        assert_eq!(
+            with_bell(AgentState::Unknown, true),
+            AgentState::Finished,
+            "an unreadable screen with a finish bell is finished, not unknown"
+        );
+        assert_eq!(with_bell(AgentState::Idle, true), AgentState::Finished);
+    }
+
+    #[test]
+    fn a_bell_never_overrides_something_live() {
+        for live in [AgentState::Working, AgentState::Blocked, AgentState::Error] {
+            assert_eq!(
+                with_bell(live, true),
+                live,
+                "a stale finish must not mask what the screen says now"
+            );
+        }
+    }
+
+    #[test]
+    fn no_bell_changes_nothing() {
+        for st in [
+            AgentState::Working,
+            AgentState::Blocked,
+            AgentState::Error,
+            AgentState::Finished,
+            AgentState::Idle,
+            AgentState::Unknown,
+        ] {
+            assert_eq!(with_bell(st, false), st);
+        }
     }
 
     #[test]

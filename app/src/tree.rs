@@ -506,6 +506,34 @@ pub fn land_initiative(
 /// ids, preserving everything else. Used for the project layer, whose order is
 /// its own — unlike initiatives and tasks, which take their order from the tab
 /// list the mother bar draws.
+/// Where the active tab ends up once `removed` indices are lifted out.
+///
+/// `removed` is ascending and indexes the list as it was BEFORE anything was
+/// taken; `left` is how many tabs remain after.
+///
+/// Clamping alone is not enough and looks like it is, which is why this is a
+/// function with tests rather than three lines at each call site. Take
+/// `[A,B,C,D,E]` with `D` active at 3, delete `B` and `C`, and the list becomes
+/// `[A,D,E]` — `D` is now at 1, while `min(3, 2)` says 2, which is `E`. The
+/// window would come back focused on a terminal nobody asked for, in a session
+/// where the one you were working in is still right there. Every index above a
+/// removal shifts down by one per removal below it.
+///
+/// When the active tab was itself removed there is no right answer, only a
+/// sensible one: the position the deleted run occupied, which is where the eye
+/// already is.
+pub fn active_after_removal(active: usize, removed: &[usize], left: usize) -> usize {
+    if left == 0 {
+        return 0;
+    }
+    let last = left - 1;
+    if removed.contains(&active) {
+        return removed.first().copied().unwrap_or(0).min(last);
+    }
+    let below = removed.iter().filter(|&&i| i < active).count();
+    active.saturating_sub(below).min(last)
+}
+
 pub fn reorder(ids: &mut Vec<u32>, moving: u32, neighbour: u32, after: bool) {
     if moving == neighbour {
         return;
@@ -579,46 +607,12 @@ pub fn caret_gap(family: &[usize], slot: usize) -> usize {
     family.iter().take_while(|&&i| i < slot).count()
 }
 
-/// What the strip is NOT showing, summed — the price of narrowing it.
-///
-/// The tree shows this branch by branch, but the tree can be closed, and a
-/// narrowed strip with the tree closed is the one arrangement where an agent
-/// could stop and ask a question with nothing on screen to say so. This is what
-/// the mother bar's own out-of-branch chip reads.
-pub fn roll_outside(tasks: &[TaskRef], shown: &[usize]) -> Roll {
-    let mut roll = Roll::default();
-    for (i, t) in tasks.iter().enumerate() {
-        if !shown.contains(&i) {
-            roll.fold(&t.roll);
-        }
-    }
-    roll
-}
-
-/// What a branch is saying, as one short line of glyphs, loudest first.
-///
-/// Returned as a string rather than elements so the summary can be tested and
-/// so a tooltip, a title bar and a row can all say the same thing.
-pub fn roll_glyphs(roll: &Roll) -> String {
-    let mut out = String::new();
-    let mut push = |glyph: &str, n: usize| {
-        if n == 0 {
-            return;
-        }
-        if !out.is_empty() {
-            out.push(' ');
-        }
-        out.push_str(glyph);
-        if n > 1 {
-            out.push_str(&n.to_string());
-        }
-    };
-    push("🤖", roll.needs_input + roll.working);
-    push("✅", roll.done);
-    push("❌", roll.blocked);
-    push("📌", roll.pins);
-    out
-}
+// `roll_outside` and `roll_glyphs` used to live here: the sum of every branch
+// the strip is not carrying, rendered as one line of glyphs for the mother
+// bar's out-of-branch chip. The chip is gone — the tree states the same rollup
+// branch by branch, and `Workspace::roll_badges` draws it there with the
+// loudest state still animated, which the flattened string could not do. Two
+// implementations of one summary, and the surviving one is the richer.
 
 #[cfg(test)]
 mod tests {
@@ -981,24 +975,6 @@ mod tests {
         assert_eq!(caret_gap(&family, 6), 3);
         // an empty strip has exactly one gap, and it is the end
         assert_eq!(caret_gap(&[], 7), 0);
-    }
-
-    #[test]
-    fn what_the_strip_hides_is_counted_so_the_strip_can_say_so() {
-        // The safety catch on narrowing: an agent that stops to ask a question
-        // in a branch you are not looking at must still be able to interrupt
-        // you.
-        let tasks = vec![
-            loud(Some(1), None, 0),
-            loud(Some(2), None, 1),
-            loud(None, None, 2),
-        ];
-        let hidden = roll_outside(&tasks, &[0]);
-        assert_eq!(hidden.needs_input, 3);
-        assert_eq!(hidden.tasks, 2);
-        // nothing is hidden when nothing is narrowed
-        assert_eq!(roll_outside(&tasks, &[0, 1, 2]), Roll::default());
-        assert!(roll_outside(&tasks, &[0, 1, 2]).quiet());
     }
 
     #[test]
@@ -1430,33 +1406,86 @@ mod tests {
     }
 
     #[test]
-    fn the_roll_up_line_is_loudest_first_and_silent_when_there_is_nothing_to_say() {
-        assert_eq!(roll_glyphs(&Roll::default()), "");
+    fn a_branch_with_nothing_to_say_is_quiet_and_one_with_anything_is_not() {
+        // `quiet` is the gate on drawing a folded branch's badge cluster at
+        // all. Every counted state has to open it — a branch holding only a
+        // pinned note is still saying something.
         assert!(Roll::default().quiet());
-        let roll = Roll {
-            needs_input: 1,
-            working: 2,
-            done: 1,
-            blocked: 0,
-            pins: 3,
-            panes: 9,
-            tasks: 4,
-        };
-        assert_eq!(roll_glyphs(&roll), "🤖3 ✅ 📌3");
-        assert!(!roll.quiet());
+        for roll in [
+            Roll::task(1, 0, 0, 0, 0, 1),
+            Roll::task(0, 1, 0, 0, 0, 1),
+            Roll::task(0, 0, 1, 0, 0, 1),
+            Roll::task(0, 0, 0, 1, 0, 1),
+            Roll::task(0, 0, 0, 0, 1, 1),
+        ] {
+            assert!(!roll.quiet(), "{roll:?} has something to say");
+        }
+        // panes and tasks are size, not news: a branch of nine silent
+        // terminals draws no badges
+        assert!(Roll::task(0, 0, 0, 0, 0, 9).quiet());
+    }
+
+    /// Deleting a branch must not move you to a terminal you never chose.
+    ///
+    /// The case that made this a function: five tabs, the fourth active, the
+    /// second and third deleted. Clamping says index 2 and the honest answer is
+    /// index 1 — one is the tab you were working in and the other is the one
+    /// after it. Both are in range, both look fine, and only one is right.
+    #[test]
+    fn the_active_tab_survives_a_deletion_above_it() {
+        // [A,B,C,D,E], D active, delete B and C -> [A,D,E], D is at 1
+        assert_eq!(active_after_removal(3, &[1, 2], 3), 1);
+        // the clamp-only answer, for contrast: clamping the old index into the
+        // shorter list gives 2, where the honest answer is 1. Written through a
+        // binding because clippy refuses a literal `3.min(2)` as having no
+        // effect — true of the arithmetic, and beside the point of the line.
+        let len_after = 3usize;
+        let clamp_only = 3usize.min(len_after - 1);
+        assert_eq!(clamp_only, 2);
+        assert_ne!(clamp_only, active_after_removal(3, &[1, 2], 3));
     }
 
     #[test]
-    fn a_working_agent_and_a_waiting_one_count_as_agents_not_as_two_kinds_of_row() {
-        // The tab strip draws one badge per agent and lets the loudest state
-        // win per pane. A branch row has no room for four robots, so it counts
-        // them — but it must not drop the waiting one into a different bucket
-        // and report "1 robot" when three are in flight.
-        let roll = Roll {
-            needs_input: 1,
-            working: 2,
-            ..Default::default()
-        };
-        assert_eq!(roll_glyphs(&roll), "🤖3");
+    fn a_deletion_below_the_active_tab_leaves_it_alone() {
+        // [A,B,C,D,E], B active, delete D -> [A,B,C,E], B still at 1
+        assert_eq!(active_after_removal(1, &[3], 4), 1);
+        // [A,B,C], C active, delete nothing
+        assert_eq!(active_after_removal(2, &[], 3), 2);
+    }
+
+    /// Removing the active tab has no right answer, only a sensible one.
+    #[test]
+    fn removing_the_active_tab_lands_where_the_branch_was() {
+        // [A,B,C,D,E], C active, delete B,C,D -> [A,E]; land at 1, which is
+        // where the run was, clamped into the shorter list
+        assert_eq!(active_after_removal(2, &[1, 2, 3], 2), 1);
+        // the run was at the end: clamp back onto the last survivor
+        assert_eq!(active_after_removal(3, &[2, 3], 2), 1);
+        // the run was the whole front of the list
+        assert_eq!(active_after_removal(0, &[0, 1], 1), 0);
+    }
+
+    /// Nothing indexes into an empty list, whatever it was told.
+    #[test]
+    fn an_emptied_list_answers_zero_rather_than_indexing_into_nothing() {
+        assert_eq!(active_after_removal(4, &[0, 1, 2, 3, 4], 0), 0);
+    }
+
+    /// A single removal is the common case and must not need its own reasoning.
+    #[test]
+    fn one_removal_shifts_everything_above_it_down_by_one() {
+        for active in 0..5usize {
+            for gone in 0..5usize {
+                let got = active_after_removal(active, &[gone], 4);
+                let want = if gone == active {
+                    gone.min(3)
+                } else if gone < active {
+                    active - 1
+                } else {
+                    active
+                };
+                assert_eq!(got, want, "active={active} removed={gone}");
+            }
+        }
     }
 }

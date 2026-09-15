@@ -19,11 +19,11 @@ use alacritty_terminal::{
 };
 use futures::StreamExt;
 use gpui::{
-    anchored, canvas, deferred, div, font, linear_color_stop, linear_gradient, point, prelude::*,
-    px, rgb, Animation, AnimationExt, AnyElement, App, Bounds, BoxShadow, ClipboardItem, Context,
-    FocusHandle, Focusable, Font, FontStyle, FontWeight, Hsla, KeyDownEvent, Keystroke,
-    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, ScrollWheelEvent,
-    StyledText, TextRun, UnderlineStyle, Window,
+    anchored, canvas, deferred, div, font, point, prelude::*, px, rgb, Animation, AnimationExt,
+    AnyElement, App, Bounds, BoxShadow, ClipboardItem, Context, FocusHandle, Focusable, Font,
+    FontStyle, FontWeight, Hsla, KeyDownEvent, Keystroke, MouseButton, MouseDownEvent,
+    MouseMoveEvent, MouseUpEvent, Pixels, ScrollWheelEvent, StyledText, TextRun, UnderlineStyle,
+    Window,
 };
 
 /// What the tube is showing — drives the per-pane screen colour.
@@ -236,6 +236,21 @@ fn foreground_mode(master: &std::fs::File, shell_pid: u32) -> PaneMode {
 /// The consistent header icon size (≈2× the old glyphs).
 pub const HICON: f32 = 28.0;
 
+/// Every GLYPH BUTTON in the chrome, whether it sits on a pane's header or at
+/// the bottom left of the window — half [`HICON`], which is the header BAR's
+/// own icon metric rather than a glyph size.
+///
+/// The bar height was right and the glyphs in it were not: a palette, an
+/// equaliser and a close × drawn at the bar's full icon metric filled the
+/// header edge to edge and read as the loudest thing on a pane whose content is
+/// the point. Halving them lands them on the size the window's own menu row
+/// already uses, so one number now decides every glyph a person clicks, and the
+/// two rows stop disagreeing about how big a button is.
+///
+/// [`HICON`] itself is untouched: it still sets the header bar's height budget
+/// and the per-pane logo square, neither of which shrank.
+pub const CHROME_GLYPH: f32 = HICON * 0.5;
+
 /// A small EQ-waveform glyph — a row of bars at varying heights — used as the
 /// consistent monitor/display icon. Drawn (not an emoji) so it can be wider than
 /// a square and read as "the screen / levels" control.
@@ -258,73 +273,6 @@ pub fn eq_icon(accent: gpui::Hsla, scale: f32) -> gpui::Div {
         );
     }
     row
-}
-
-/// A small line-art retro robot — a dish antenna, a boxy head with two round
-/// eyes and a mouth slit. Drawn from divs (deliberately NOT the 🤖 emoji) so it
-/// inherits the accent colour and scales crisply with the menu bar. Marks the
-/// read-only MCP "watch the agents" control on the mother bar.
-pub fn robot_icon(accent: gpui::Hsla, scale: f32) -> gpui::Div {
-    use gpui::{div, px};
-    let s = scale;
-    let eye = || {
-        div()
-            .w(px(3.5 * s))
-            .h(px(3.5 * s))
-            .rounded_full()
-            .bg(accent)
-    };
-    div()
-        .flex()
-        .flex_col()
-        .items_center()
-        .justify_center()
-        .gap(px(1.5 * s))
-        .h(px(HICON * s))
-        .child(
-            // antenna: a dot on a short stem
-            div()
-                .flex()
-                .flex_col()
-                .items_center()
-                .child(
-                    div()
-                        .w(px(3.5 * s))
-                        .h(px(3.5 * s))
-                        .rounded_full()
-                        .bg(accent),
-                )
-                .child(div().w(px(1.5 * s)).h(px(3. * s)).bg(accent.alpha(0.8))),
-        )
-        .child(
-            // head: rounded outline with two eyes over a mouth slit
-            div()
-                .flex()
-                .flex_col()
-                .items_center()
-                .justify_center()
-                .gap(px(2. * s))
-                .w(px(20. * s))
-                .h(px(15. * s))
-                .rounded_md()
-                .border_1()
-                .border_color(accent)
-                .child(
-                    div()
-                        .flex()
-                        .flex_row()
-                        .gap(px(4. * s))
-                        .child(eye())
-                        .child(eye()),
-                )
-                .child(
-                    div()
-                        .w(px(9. * s))
-                        .h(px(1.6 * s))
-                        .rounded_sm()
-                        .bg(accent.alpha(0.85)),
-                ),
-        )
 }
 
 /// The Alt-held copy affordance: one reconstructed logical line and the PAINTED
@@ -799,7 +747,7 @@ fn session_uses_uwsm() -> bool {
 /// goes through `uwsm-app` so the opened app is scoped to the desktop rather
 /// than to this terminal — closing the pane that printed a link should not be
 /// able to take the PDF it opened with it.
-fn open_with_system(target: &str) {
+pub(crate) fn open_with_system(target: &str) {
     if session_uses_uwsm() {
         spawn_detached("uwsm-app", &["--", "xdg-open", target]);
     } else {
@@ -1800,6 +1748,32 @@ struct MirrorDocKey {
     theme_gen: u64,
 }
 
+/// What a WINDOW has decided about a pane, as distinct from what the pane's
+/// terminal is doing.
+///
+/// The split matters exactly once, and it matters a lot there: when a hosted
+/// window throws away a replica that has stopped agreeing with the session host
+/// and builds a new one from a fresh snapshot. The terminal did not change
+/// hands, did not restart, and did not lose a byte — only this window's picture
+/// of its grid was wrong. So the pane's name, its dressing, the note stuck to
+/// its glass and the moment it came into being are all still true of it, and
+/// carrying them across is what makes the repair invisible instead of a pane
+/// that flashes its power-on animation and comes back in the house colours.
+///
+/// Nothing captured from the kernel or from the host belongs here. The pid, the
+/// mode and the grid are the host's to state, and a repaired pane takes them
+/// fresh — that is the point of repairing it.
+#[derive(Clone)]
+pub struct Presentation {
+    born: Instant,
+    name: Option<String>,
+    logo: Option<String>,
+    dir_logo: Option<String>,
+    appearance: PaneTheme,
+    note: Option<crate::sticky::Sticky>,
+    peeled: Option<String>,
+}
+
 pub struct TerminalView {
     focus_handle: FocusHandle,
     session: term::Session,
@@ -2050,6 +2024,20 @@ impl gpui::EventEmitter<OpenUsagePanel> for TerminalView {}
 /// Ctrl+Shift+B — show or hide the left bar (the session's project tree).
 pub struct ToggleLeftBar;
 impl gpui::EventEmitter<ToggleLeftBar> for TerminalView {}
+
+/// Ctrl+Shift+N — open or close the attention rail's queue.
+pub struct ToggleRail;
+impl gpui::EventEmitter<ToggleRail> for TerminalView {}
+
+/// Ctrl+Shift+Z — bring back the most recently closed thing.
+///
+/// Z because the feature is an undo on a close. Not ctrl+shift+T, which this
+/// terminal already spends on a new tab and so does every other one; not plain
+/// ctrl+Z, which belongs to whatever is running in the pane — a terminal that
+/// claims an unshifted control chord takes it away from every program in every
+/// pane, with no way for them to ask for it back.
+pub struct ReopenClosed;
+impl gpui::EventEmitter<ReopenClosed> for TerminalView {}
 
 /// Ctrl+F (`global = false`) / Ctrl+Shift+F (`global = true`) was pressed in this
 /// pane — ask the workspace to open the find panel. In-pane find searches just
@@ -2507,6 +2495,41 @@ impl TerminalView {
     /// The host's durable name for this pane, if it has one.
     pub fn pane_id(&self) -> Option<u64> {
         self.pane_id
+    }
+
+    /// Everything this WINDOW decided about the pane, lifted off it so it can be
+    /// put back on a replacement replica. See [`Presentation`].
+    pub fn presentation(&self) -> Presentation {
+        Presentation {
+            born: self.born,
+            name: self.name.clone(),
+            logo: self.logo.clone(),
+            dir_logo: self.dir_logo.clone(),
+            appearance: self.appearance.clone(),
+            note: self.note.clone(),
+            peeled: self.peeled.clone(),
+        }
+    }
+
+    /// Wear what the pane this one replaces was wearing.
+    ///
+    /// Called on a repaired pane, i.e. one whose replica was thrown away and
+    /// rebuilt from a fresh snapshot because it had stopped agreeing with the
+    /// host. The terminal is the same terminal; only this window's copy of its
+    /// grid was wrong. Everything here is therefore still true, and dropping it
+    /// was the visible half of the repair — a pane that re-fired its ignition
+    /// and came back in the house colours, every couple of minutes, while the
+    /// user watched.
+    pub fn adopt_presentation(&mut self, from: Presentation) {
+        // `born` first and on purpose: it drives the one-shot CRT ignition and
+        // nothing else, so inheriting it is the whole of "this is not a birth".
+        self.born = from.born;
+        self.name = from.name;
+        self.logo = from.logo;
+        self.dir_logo = from.dir_logo;
+        self.appearance = from.appearance;
+        self.note = from.note;
+        self.peeled = from.peeled;
     }
 
     /// Whether this pane has reported an ending that has not been explained yet.
@@ -3058,9 +3081,7 @@ impl TerminalView {
             return crate::hud::AgentStatus::default();
         }
         let mut st = crate::hud::parse_status_line(&self.live_rows());
-        if st.state == crate::hud::AgentState::Idle && self.bell {
-            st.state = crate::hud::AgentState::Finished;
-        }
+        st.state = crate::hud::with_bell(st.state, self.bell);
         st
     }
 
@@ -4312,6 +4333,21 @@ impl TerminalView {
                 // first, so a chord added there would never fire.
                 "b" => {
                     cx.emit(ToggleLeftBar);
+                    return;
+                }
+                // Ctrl+Shift+N → the attention rail's queue. N for "needs me".
+                // Here for the same reason as the arms above: a focused terminal
+                // takes the chord first, so a workspace-level binding would
+                // compile, test green, and do nothing when pressed.
+                "n" => {
+                    cx.emit(ToggleRail);
+                    return;
+                }
+                // Ctrl+Shift+Z → the most recently closed thing comes back.
+                // Same reason as the arms above for living here: the pane has
+                // the keyboard, so this is the only place the chord is seen.
+                "z" => {
+                    cx.emit(ReopenClosed);
                     return;
                 }
                 // Two keys for one panel, and the second is not redundant.
@@ -6667,6 +6703,10 @@ impl Render for TerminalView {
             .effective(&theme::outer_choice(cx))
             .grade
             .scale;
+        // This pane's chrome shape. Baked against THIS pane's palette rather than
+        // the window's — a pane wearing its own theme has to have its own header
+        // edge, or the two disagree by exactly the amount the pane was retinted.
+        let sk = crate::skin::for_theme(cx, &th, scale);
         self.sync_size(&th, window);
         // Warp curvature is PER-PANE (it rides the grade group): keep this pane's
         // hit-test coefficients in sync with its OWN resolved warp, so clicks land
@@ -6886,7 +6926,7 @@ impl Render for TerminalView {
                     div()
                         .px(px(7.))
                         .py(px(1.))
-                        .rounded_sm()
+                        .rounded(sk.radius())
                         .border_1()
                         .border_color(human.alpha(0.6))
                         .text_color(human)
@@ -6965,7 +7005,10 @@ impl Render for TerminalView {
         // the whole header grows/shrinks smoothly as one piece. (0.7..1.6 → a
         // 28..64px tall bar.)
         let header_h = HEADER_H * scale;
-        let hicon = HICON * scale;
+        // The glyph metric for everything in this header a person can click.
+        // NOT `HICON`, which is the bar's own height budget: the bar is the
+        // right size and the glyphs in it were not. See [`CHROME_GLYPH`].
+        let hicon = CHROME_GLYPH * scale;
         let hpad = px(12. * scale); // header horizontal padding / control gap
 
         // solid, reflective header: gradient face + crisp top reflection line
@@ -7007,7 +7050,7 @@ impl Render for TerminalView {
                 base.w(px(logo_box))
                     .relative()
                     .overflow_hidden()
-                    .rounded(px(4. * scale))
+                    .rounded(sk.rad(4.))
                     .border_1()
                     .border_color(ring.alpha(0.65))
                     .child(
@@ -7035,7 +7078,7 @@ impl Render for TerminalView {
             } else if let Some(path) = self.logo.clone().or_else(|| self.dir_logo.clone()) {
                 base.w(px(logo_box))
                     .overflow_hidden()
-                    .rounded(px(4. * scale))
+                    .rounded(sk.rad(4.))
                     .border_1()
                     .border_color(th.accent.alpha(0.35))
                     .child(
@@ -7049,13 +7092,13 @@ impl Render for TerminalView {
                 // brightens on header hover (shares the per-pane hover group).
                 base.gap_1()
                     .px(px(5. * scale))
-                    .rounded(px(4. * scale))
+                    .rounded(sk.rad(4.))
                     .border_1()
                     .border_color(bar_fg.alpha(0.18))
                     .text_color(bar_fg.alpha(0.4))
                     .group_hover(hdr_grp.clone(), move |s| {
                         s.text_color(bar_fg.alpha(0.85))
-                            .border_color(th.accent.alpha(0.5))
+                            .border_color(sk.ink.edge_strong)
                     })
                     .child(div().text_size(px(13. * scale)).child("\u{ff0b}"))
                     .child(div().text_size(px(9.5 * scale)).child("logo"))
@@ -7071,13 +7114,12 @@ impl Render for TerminalView {
             .items_center()
             .justify_between()
             .px(hpad)
-            .bg(linear_gradient(
-                180.,
-                linear_color_stop(lighter, 0.),
-                linear_color_stop(th.surface, 1.),
-            ))
+            // Lit or flat is the skin's call, not this call site's — see
+            // `Shine`. Both stops are this PANE's, so a retinted pane keeps its
+            // own header rather than borrowing the window's.
+            .bg(sk.ground(lighter, th.surface))
             .border_b_1()
-            .border_color(th.accent.alpha(0.5))
+            .border_color(sk.ink.edge_strong)
             .text_color(bar_fg)
             // the title / status / grid-label text scales with the bar
             .text_size(px(th.font_size * scale))
@@ -7170,7 +7212,7 @@ impl Render for TerminalView {
                         let step = |glyph: &'static str, next: bool, cx: &mut Context<Self>| {
                             div()
                                 .px(px(2.))
-                                .rounded_sm()
+                                .rounded(sk.radius())
                                 .cursor_pointer()
                                 .child(glyph)
                                 .on_mouse_down(
@@ -7188,7 +7230,7 @@ impl Render for TerminalView {
                                 .items_center()
                                 .gap(px(1.))
                                 .px_1()
-                                .rounded_sm()
+                                .rounded(sk.radius())
                                 .border_1()
                                 .border_color(th.human.alpha(0.6))
                                 .text_color(th.human)
@@ -7211,9 +7253,9 @@ impl Render for TerminalView {
                         row.child(
                             div()
                                 .px_1()
-                                .rounded_sm()
+                                .rounded(sk.radius())
                                 .border_1()
-                                .border_color(th.accent.alpha(0.5))
+                                .border_color(sk.ink.edge_strong)
                                 .cursor_pointer()
                                 // the FOCUS lens reads +50% over the other 2× glyphs
                                 .text_size(px(hicon * 1.5))
@@ -7233,9 +7275,9 @@ impl Render for TerminalView {
                         row.child(
                             div()
                                 .px_1()
-                                .rounded_sm()
+                                .rounded(sk.radius())
                                 .border_1()
-                                .border_color(th.accent.alpha(0.5))
+                                .border_color(sk.ink.edge_strong)
                                 .cursor_pointer()
                                 .text_size(px(hicon))
                                 .line_height(px(hicon))
@@ -7256,11 +7298,11 @@ impl Render for TerminalView {
                                 .px_1()
                                 .flex()
                                 .items_center()
-                                .rounded_sm()
+                                .rounded(sk.radius())
                                 .border_1()
-                                .border_color(th.accent.alpha(0.5))
+                                .border_color(sk.ink.edge_strong)
                                 .cursor_pointer()
-                                .child(eq_icon(th.accent, scale))
+                                .child(eq_icon(th.accent, scale * 0.5))
                                 .on_mouse_down(
                                     MouseButton::Left,
                                     cx.listener(|_, ev: &MouseDownEvent, _w, cx| {
@@ -7276,9 +7318,9 @@ impl Render for TerminalView {
                         row.child(
                             div()
                                 .px_1()
-                                .rounded_sm()
+                                .rounded(sk.radius())
                                 .border_1()
-                                .border_color(th.accent.alpha(0.5))
+                                .border_color(sk.ink.edge_strong)
                                 .cursor_pointer()
                                 .text_size(px(hicon))
                                 .line_height(px(hicon))
@@ -7312,9 +7354,14 @@ impl Render for TerminalView {
                             .rounded_md()
                             .text_color(bar_fg)
                             .cursor_pointer()
-                            // much bigger than the other header glyphs
-                            .text_size(px(hicon + 10.))
-                            .line_height(px(hicon + 10.))
+                            // Still bigger than the other header glyphs, and by
+                            // exactly as much as it always was — the old
+                            // `hicon + 10` was 1.36× the old glyph metric, so
+                            // the ratio is kept as a ratio rather than as an
+                            // offset that would have grown to half again as
+                            // dominant once the glyphs halved.
+                            .text_size(px(hicon * 1.36))
+                            .line_height(px(hicon * 1.36))
                             .hover(|s| s.bg(bar_fg.alpha(0.18)))
                             .child("×")
                             .on_mouse_down(
