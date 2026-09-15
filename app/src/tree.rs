@@ -1530,8 +1530,14 @@ mod tests {
     fn the_active_tab_survives_a_deletion_above_it() {
         // [A,B,C,D,E], D active, delete B and C -> [A,D,E], D is at 1
         assert_eq!(active_after_removal(3, &[1, 2], 3), 1);
-        // the clamp-only answer, for contrast
-        assert_ne!(3usize.min(2), 1);
+        // the clamp-only answer, for contrast: clamping the old index into the
+        // shorter list gives 2, where the honest answer is 1. Written through a
+        // binding because clippy refuses a literal `3.min(2)` as having no
+        // effect, which is true of the arithmetic and misses the point of it.
+        let len_after = 3usize;
+        let clamp_only = 3usize.min(len_after - 1);
+        assert_eq!(clamp_only, 2);
+        assert_ne!(clamp_only, active_after_removal(3, &[1, 2], 3));
     }
 
     #[test]
