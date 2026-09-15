@@ -24502,6 +24502,231 @@ mod tests {
         }
     }
 
+    /// One restart, modelled: the save-side dedupe, then the plan against what
+    /// the host is actually running, then the layout that comes back out.
+    ///
+    /// Returns the new layout and the new live set, so a caller can run it
+    /// again — which is the only way to catch a restore that is individually
+    /// sane and drifts when repeated.
+    ///
+    /// A respawned leaf gets a NEW pane id here, because that is what happens:
+    /// the host starts a terminal and hands back its id. Modelling it as "no
+    /// pane" instead would make the second restart look stable when the real
+    /// one would respawn all over again.
+    fn restart(
+        mut saved: Vec<SavedTab>,
+        live: &[hostproto::PaneInfo],
+        next_id: &mut u64,
+    ) -> (Vec<SavedTab>, Vec<hostproto::PaneInfo>) {
+        dedupe_resumes(&mut saved);
+        let plan = plan_attach(&saved, live);
+
+        let mut now: Vec<hostproto::PaneInfo> = live.iter().filter(|p| !p.ended).cloned().collect();
+        let mut out = Vec::new();
+        for (tab, leaves) in saved.iter().zip(plan.tabs.iter()) {
+            let mut built: Vec<SavedNode> = Vec::new();
+            for leaf in leaves {
+                built.push(match leaf {
+                    LeafPlan::Bind { pane } => {
+                        let running = now
+                            .iter()
+                            .find(|p| p.pane == *pane)
+                            .expect("a bind names a live pane");
+                        leaf_with(
+                            Some(pane.0),
+                            running.cwd.as_deref().unwrap_or("/work"),
+                            running.resume.as_deref(),
+                        )
+                    }
+                    LeafPlan::Respawn { restore } | LeafPlan::Duplicate { restore } => {
+                        *next_id += 1;
+                        let mut fresh =
+                            running_agent(*next_id, restore.resume.as_deref().unwrap_or(""));
+                        if restore.resume.is_none() {
+                            fresh.resume = None;
+                        }
+                        now.push(fresh);
+                        leaf_with(
+                            Some(*next_id),
+                            restore.cwd.as_deref().unwrap_or("/work"),
+                            restore.resume.as_deref(),
+                        )
+                    }
+                });
+            }
+            // One leaf per tab in these fixtures; a split would fold the same way.
+            let node = built
+                .into_iter()
+                .reduce(|a, b| SavedNode::Split {
+                    dir: SplitDir::Row,
+                    ratio: 0.5,
+                    a: Box::new(a),
+                    b: Box::new(b),
+                })
+                .expect("every tab keeps at least one leaf");
+            out.push(SavedTab {
+                name: tab.name.clone(),
+                ..tab_of(node)
+            });
+        }
+        (out, now)
+    }
+
+    /// What each tab is holding, named by conversation rather than by pane —
+    /// the thing a person recognises, and the thing that moved.
+    ///
+    /// Takes `&mut` rather than cloning the tree: `SavedNode` is not `Clone`,
+    /// and deriving it on a serialised type so a test can read it would be the
+    /// test changing the thing it is measuring.
+    fn by_tab(saved: &mut [SavedTab]) -> Vec<(Option<String>, Vec<Option<String>>)> {
+        saved
+            .iter_mut()
+            .map(|t| {
+                let mut work = vec![];
+                t.node
+                    .for_each_claim(&mut |_, resume| work.push(resume.clone()));
+                (t.name.clone(), work)
+            })
+            .collect()
+    }
+
+    fn named_tab(name: &str, node: SavedNode) -> SavedTab {
+        SavedTab {
+            name: Some(name.to_string()),
+            ..tab_of(node)
+        }
+    }
+
+    /// A restart does not move a conversation from one tab to another.
+    ///
+    /// The composition, which is where this broke in the wild: the dedupe had
+    /// tests, `plan_attach` had tests, and the two of them run back to back had
+    /// none — so a layout could come back with every pane alive, the right
+    /// number of tabs, and the wrong work inside them. That is precisely what
+    /// was reported, from a screen rather than from a failure.
+    #[test]
+    fn a_restart_leaves_every_conversation_in_its_own_tab() {
+        let saved = vec![
+            named_tab(
+                "RIGHT MENU",
+                leaf_with(Some(4), "/work", Some("claude --resume rm")),
+            ),
+            named_tab(
+                "APPLY",
+                leaf_with(Some(5), "/apply", Some("claude --resume ap")),
+            ),
+            named_tab(
+                "HACKATHON",
+                leaf_with(Some(6), "/hack", Some("claude --resume hk")),
+            ),
+            named_tab("DEV", leaf_with(Some(7), "/dev", None)),
+        ];
+        let live = vec![
+            running_agent(4, "claude --resume rm"),
+            running_agent(5, "claude --resume ap"),
+            running_agent(6, "claude --resume hk"),
+            running(7, false),
+        ];
+        let mut saved = saved;
+        let before = by_tab(&mut saved);
+        let mut next = 100;
+        let (mut after, _) = restart(saved, &live, &mut next);
+        assert_eq!(
+            before,
+            by_tab(&mut after),
+            "a restart moved somebody's work"
+        );
+    }
+
+    /// Restarting twice changes nothing the first restart did not.
+    ///
+    /// Drift is the shape of this bug class: each restore looks reasonable and
+    /// the layout walks. Asserting the second pass is a no-op catches a repair
+    /// that keeps repairing, which a single-restart test cannot see.
+    #[test]
+    fn a_second_restart_changes_nothing() {
+        let saved = vec![
+            named_tab(
+                "RIGHT MENU",
+                leaf_with(Some(4), "/work", Some("claude --resume rm")),
+            ),
+            named_tab(
+                "THEMES",
+                leaf_with(Some(5), "/themes", Some("claude --resume th")),
+            ),
+            // a tab whose terminal died while the window was away
+            named_tab(
+                "GONE",
+                leaf_with(Some(6), "/gone", Some("claude --resume go")),
+            ),
+        ];
+        let live = vec![
+            running_agent(4, "claude --resume rm"),
+            running_agent(5, "claude --resume th"),
+        ];
+        let mut next = 100;
+        let (mut once, live_once) = restart(saved, &live, &mut next);
+        let settled = by_tab(&mut once);
+        let (mut twice, _) = restart(once, &live_once, &mut next);
+        assert_eq!(
+            settled,
+            by_tab(&mut twice),
+            "the second restart moved something the first had settled"
+        );
+    }
+
+    /// Three tabs claiming one terminal settle in one restart, and stay settled.
+    ///
+    /// The layout that was actually on disk on 2026-09-15: HACKATHON WINNER,
+    /// APPLY and RIGHT MENU all carrying `pane_id = 4`. One of them keeps the
+    /// conversation — which one is decided by layout order and is not the
+    /// interesting part — and the other two must come back as themselves with
+    /// terminals of their own, and must NOT go on being repaired every restart.
+    #[test]
+    fn three_tabs_claiming_one_terminal_settle_and_stay_settled() {
+        let saved = vec![
+            named_tab(
+                "HACKATHON WINNER",
+                leaf_with(Some(4), "/work", Some("claude --resume rm")),
+            ),
+            named_tab(
+                "APPLY",
+                leaf_with(Some(4), "/work", Some("claude --resume rm")),
+            ),
+            named_tab(
+                "RIGHT MENU",
+                leaf_with(Some(4), "/work", Some("claude --resume rm")),
+            ),
+        ];
+        let live = vec![running_agent(4, "claude --resume rm")];
+        let mut next = 100;
+
+        let (mut once, live_once) = restart(saved, &live, &mut next);
+        let settled = by_tab(&mut once);
+        let holders: Vec<_> = settled
+            .iter()
+            .filter(|(_, work)| {
+                work.iter()
+                    .any(|w| w.as_deref() == Some("claude --resume rm"))
+            })
+            .map(|(name, _)| name.clone())
+            .collect();
+        assert_eq!(holders.len(), 1, "one terminal, one holder: {holders:?}");
+        assert_eq!(once.len(), 3, "the tabs that lost the claim are still tabs");
+
+        let (mut twice, live_twice) = restart(once, &live_once, &mut next);
+        assert_eq!(
+            settled,
+            by_tab(&mut twice),
+            "the repair is still repairing on the second restart"
+        );
+        assert_eq!(
+            live_once.len(),
+            live_twice.len(),
+            "the second restart spawned more terminals for a layout already settled"
+        );
+    }
+
     #[test]
     fn a_leaf_whose_terminal_is_still_running_is_bound_to_it() {
         let saved = vec![tab_of(leaf_with(
