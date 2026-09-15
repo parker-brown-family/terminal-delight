@@ -13575,6 +13575,7 @@ impl Workspace {
                     hud::AgentState::Error => t.errored += 1,
                     hud::AgentState::Finished => t.finished += 1,
                     hud::AgentState::Idle => t.idle += 1,
+                    hud::AgentState::Unknown => t.unknown += 1,
                 }
             }
         }
@@ -14174,12 +14175,15 @@ impl Workspace {
         // as blank space, which reads as a broken feature rather than as a
         // missing character. The pause is `U+2016` for the same reason —
         // `U+23F8`, which `hud::AgentState::badge` returns, is absent too.
-        let cells: [(hud::AgentState, u32, &str); 5] = [
+        let cells: [(hud::AgentState, u32, &str); 6] = [
             (hud::AgentState::Working, tally.working, "\u{25b6}"),
             (hud::AgentState::Blocked, tally.blocked, "\u{2016}"),
             (hud::AgentState::Error, tally.errored, "\u{2715}"),
             (hud::AgentState::Finished, tally.finished, "\u{2713}"),
             (hud::AgentState::Idle, tally.idle, "\u{25cb}"),
+            // The bar is on screen constantly, which makes it the one place a
+            // parser gap must not be invisible.
+            (hud::AgentState::Unknown, tally.unknown, "?"),
         ];
         // This line is also the door to the agent wall, which is the surface it
         // is a summary OF. It used to be opened by a robot glyph in the top
@@ -15725,6 +15729,8 @@ fn agent_state_glow(th: &theme::Theme, idle: Hsla, state: hud::AgentState) -> Hs
         hud::AgentState::Error => hsla(0., 0.75, 0.60, 1.),
         hud::AgentState::Finished => hsla(0.34, 0.85, 0.58, 1.),
         hud::AgentState::Idle => idle,
+        // An unreadable screen is drawn as quiet, never as activity.
+        hud::AgentState::Unknown => idle,
     }
 }
 
@@ -18195,14 +18201,14 @@ impl Render for Workspace {
             // filter domains. Group chips come from tab groups; program chips
             // come from live pane modes; state chips only come from matching
             // agents. ----
-            let (mut n_work, mut n_block, mut n_err, mut n_done, mut n_idle) =
-                (0u32, 0u32, 0u32, 0u32, 0u32);
+            let (mut n_work, mut n_block, mut n_err, mut n_done, mut n_idle, mut n_unknown) =
+                (0u32, 0u32, 0u32, 0u32, 0u32, 0u32);
             let mut turn_tok_total = 0u64;
             let mut sess_tok_total = 0u64;
             let mut total_panes = 0u32;
             let mut visible_agent_total = 0u32;
-            let (mut v_work, mut v_block, mut v_err, mut v_done, mut v_idle) =
-                (0u32, 0u32, 0u32, 0u32, 0u32);
+            let (mut v_work, mut v_block, mut v_err, mut v_done, mut v_idle, mut v_unknown) =
+                (0u32, 0u32, 0u32, 0u32, 0u32, 0u32);
             let mut visible_program_total = 0u32;
             let mut programs_present: Vec<(String, Hsla, u32)> = Vec::new();
             // (group key, display name, band colour, pane count) in first-seen order.
@@ -18243,6 +18249,7 @@ impl Render for Workspace {
                             hud::AgentState::Error => n_err += 1,
                             hud::AgentState::Finished => n_done += 1,
                             hud::AgentState::Idle => n_idle += 1,
+                            hud::AgentState::Unknown => n_unknown += 1,
                         }
                         turn_tok_total += st.turn_tokens.unwrap_or(0);
                         sess_tok_total += p.session_tokens();
@@ -18254,6 +18261,7 @@ impl Render for Workspace {
                                 hud::AgentState::Error => v_err += 1,
                                 hud::AgentState::Finished => v_done += 1,
                                 hud::AgentState::Idle => v_idle += 1,
+                                hud::AgentState::Unknown => v_unknown += 1,
                             }
                         }
                         let state_matches = state_filt.is_none_or(|s| st.state == s);
@@ -18528,6 +18536,10 @@ impl Render for Workspace {
                 (hud::AgentState::Error, v_err),
                 (hud::AgentState::Finished, v_done),
                 (hud::AgentState::Idle, v_idle),
+                // Unknown gets its own chip rather than being folded into idle:
+                // a filter you cannot select is a state you cannot inspect, and
+                // this is the one people will want to inspect first.
+                (hud::AgentState::Unknown, v_unknown),
             ] {
                 if count == 0 {
                     continue;
@@ -18672,7 +18684,7 @@ impl Render for Workspace {
                     // instead, marked with a ❯. Working agents show live output;
                     // fall back to recent output if there's no visible prompt.
                     let feed: Vec<String> = if is_agent {
-                        if status.state == hud::AgentState::Idle {
+                        if status.state.is_quiet() {
                             let mut v = p.last_human_message(3);
                             if v.is_empty() {
                                 p.recent_lines(4)
@@ -18794,7 +18806,7 @@ impl Render for Workspace {
                     } else {
                         theme_col.alpha(0.75)
                     };
-                    let live_glow = is_agent && !matches!(status.state, hud::AgentState::Idle);
+                    let live_glow = is_agent && !status.state.is_quiet();
                     // Parker's "FRAME" = the card's INTERIOR negative space (NOT the
                     // rim): a dark wash of THIS terminal's THEME seed, so every card
                     // body wears its own theme colour. Only when the wall theme is on;
@@ -19677,6 +19689,31 @@ impl Render for Workspace {
                                         ws.mcp_state_filter = (ws.mcp_state_filter
                                             != Some(hud::AgentState::Idle))
                                         .then_some(hud::AgentState::Idle);
+                                        cx.notify();
+                                    }),
+                                ),
+                        )
+                        // Panes whose screen matched no rule. Its own chip, so
+                        // the set can be filtered to and looked at — the first
+                        // thing anyone will want when this number is not zero.
+                        .child(
+                            div()
+                                .text_color(th.text.alpha(0.45))
+                                .cursor_pointer()
+                                .px_1()
+                                .rounded(sk.radius())
+                                .when(state_filt == Some(hud::AgentState::Unknown), |d| {
+                                    d.bg(th.text.alpha(0.45).alpha(0.22))
+                                })
+                                .hover(|s| s.bg(th.text.alpha(0.45).alpha(0.12)))
+                                .child(format!("? {n_unknown}"))
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                                        cx.stop_propagation();
+                                        ws.mcp_state_filter = (ws.mcp_state_filter
+                                            != Some(hud::AgentState::Unknown))
+                                        .then_some(hud::AgentState::Unknown);
                                         cx.notify();
                                     }),
                                 ),
