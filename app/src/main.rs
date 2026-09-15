@@ -740,6 +740,11 @@ const SLOT_RAIL_GROWTH: f32 = 1.5;
 /// bar's vertical space.
 const BAY_H: f32 = 56.0;
 
+/// The bin glyph's point size at scale 1.0 — two thirds of the 19pt it shipped
+/// at on the first pass, which read as the subject of the panel rather than as
+/// something the panel holds.
+const BIN_PT: f32 = 19.0 * 2.0 / 3.0;
+
 const LEFT_BAR_MIN: f32 = 132.;
 /// Past this the tree is stealing the terminals' width, which is the wrong way
 /// round for a terminal.
@@ -13548,24 +13553,25 @@ impl Workspace {
             .rounded(sk.radius())
             // What is behind the doors. Faded in with the opening rather than
             // switched on, so the reveal is the doors' doing.
+            //
+            // The bin sits in the bottom-right corner rather than the middle,
+            // and small. Centred and large it read as the subject of the panel —
+            // a permanent trash can you happen to be able to cover — and the
+            // centre seam drew straight through it on the way open. In the
+            // corner it is what it should be: the thing the bay contains, with
+            // the empty floor of the bay as the place you are aiming at.
             .child(
                 div()
                     .absolute()
                     .inset_0()
-                    .flex()
-                    .flex_col()
-                    .items_center()
-                    .justify_center()
-                    .gap(px(1. * s))
                     .when(hot, |d| d.bg(danger.alpha(0.10)))
                     .child(
                         div()
-                            .text_size(px(19. * s))
-                            .text_color(bin_ink.alpha(bin_ink.a * open))
-                            .child("\u{1F5D1}"),
-                    )
-                    .child(
-                        div()
+                            .absolute()
+                            .inset_0()
+                            .flex()
+                            .items_center()
+                            .justify_center()
                             .text_size(px(8.5 * s))
                             .text_color(bin_ink.alpha(bin_ink.a * open * 0.9))
                             .child(SharedString::from(if hot {
@@ -13573,6 +13579,15 @@ impl Workspace {
                             } else {
                                 "drop here to delete".to_string()
                             })),
+                    )
+                    .child(
+                        div()
+                            .absolute()
+                            .right(px(5. * s))
+                            .bottom(px(3. * s))
+                            .text_size(px(BIN_PT * s))
+                            .text_color(bin_ink.alpha(bin_ink.a * open))
+                            .child("\u{1F5D1}"),
                     ),
             )
             .child(door(false))
