@@ -933,6 +933,31 @@ fn left_bar_visible(saved: Option<bool>, scratch: bool, demo: bool) -> bool {
     saved.unwrap_or(LEFT_BAR_DEFAULT_ON)
 }
 
+/// Whether the attention rail is drawn, given `TD_SPINE`.
+///
+/// **On by default.** The rail shipped behind `TD_SPINE=1` for exactly as long
+/// as that was honest — until a person had looked at it and said it was worth
+/// the right edge. Parker has, so the flag inverts: the surface is the steady
+/// state and the variable only takes it away.
+///
+/// An off switch still exists because a switch that cannot be thrown is a claim
+/// nobody can test — a demo that wants a clean right edge, a screenshot, someone
+/// who simply disagrees. `TD_SPINE=0`, `false` or `off` all do it, because a
+/// person reaching for an off switch should not have to guess which spelling
+/// this particular program chose.
+///
+/// Anything else, including an unset variable, an empty one, or a value nobody
+/// anticipated, leaves the rail on. That asymmetry is deliberate: switching a
+/// surface OFF is the destructive direction, so it requires somebody to have
+/// said so plainly, while a typo fails towards the visible thing a person can
+/// see and turn off themselves.
+fn rail_on(flag: Option<&str>) -> bool {
+    !matches!(
+        flag.map(str::trim).map(str::to_ascii_lowercase).as_deref(),
+        Some("0") | Some("false") | Some("off")
+    )
+}
+
 /// The colour a project takes when nobody has picked one.
 ///
 /// Spread around the wheel by id with an irrational-ish step so consecutive
@@ -3054,8 +3079,8 @@ struct Workspace {
     /// the owning tab and focuses the pane. The async notification task can't
     /// touch the Window itself.
     pending_jump: Option<EntityId>,
-    /// The attention rail exists at all. Slice 1 keeps it behind `TD_SPINE=1`,
-    /// so nothing on main grows a right edge before it has been looked at.
+    /// The attention rail exists at all. On by default since it was looked at
+    /// and kept; `TD_SPINE=0` takes it away. See [`rail_on`].
     rail_on: bool,
     /// The queue is open over the panes. The closed spine is the steady state
     /// and this never opens itself.
@@ -4182,7 +4207,7 @@ impl Workspace {
             focus_line_h: 0.0,
             focus_page_h: 0.0,
             pending_jump: None,
-            rail_on: std::env::var("TD_SPINE").is_ok_and(|v| v != "0"),
+            rail_on: rail_on(std::env::var("TD_SPINE").ok().as_deref()),
             rail_open: false,
             focus_body_bounds: Arc::new(Mutex::new(None)),
             focus_map: Arc::new(Mutex::new(None)),
@@ -21632,6 +21657,7 @@ impl Render for Workspace {
                         row(s.k_rclick_note, s.sticky_pin),
                         row(s.k_wheel_key, s.pan_focus),
                         row(s.k_input_colour, s.input_colour),
+                        row("Ctrl+Shift+N", s.rail),
                         row(&format!("🤖 {}", s.k_mother_bar), s.mcp),
                         row("Ctrl+Shift+A", s.mcp),
                         row("Ctrl+Shift+U / Y", s.usage),
@@ -25343,6 +25369,54 @@ mod tests {
             rail_kind(Some(AgentBadge::Working), AgentState::Unknown),
             None
         );
+    }
+
+    /// The rail is on unless somebody plainly said otherwise, and "plainly"
+    /// covers the three spellings a person actually reaches for.
+    ///
+    /// The asymmetry is the point: turning a surface off is the destructive
+    /// direction, so it takes a clear instruction, while `TD_SPINE=maybe` — or
+    /// an empty value, which is what a shell gives you for `TD_SPINE=` — fails
+    /// towards the visible thing somebody can see and switch off themselves.
+    #[test]
+    fn only_a_plain_no_takes_the_rail_away() {
+        // off, in the spellings a person reaches for
+        for off in ["0", "false", "off", "OFF", "False", "  off  "] {
+            assert!(!rail_on(Some(off)), "{off:?} should turn the rail off");
+        }
+        // on: unset, empty, and anything unanticipated
+        for on in [
+            None,
+            Some(""),
+            Some("1"),
+            Some("yes"),
+            Some("maybe"),
+            Some("no"),
+        ] {
+            assert!(rail_on(on), "{on:?} should leave the rail on");
+        }
+    }
+
+    /// Every locale answers for the rail's help row. A sheet that silently drops
+    /// to English for one language is worse than one that never had the row:
+    /// the gap is invisible to whoever added the string.
+    #[test]
+    fn every_locale_has_the_rail_row() {
+        assert!(!lang::EN.rail.is_empty(), "English has no rail string");
+        let translated = [
+            ("es", lang::ES.rail),
+            ("de", lang::DE.rail),
+            ("fr", lang::FR.rail),
+            ("ru", lang::RU.rail),
+            ("zh", lang::ZH.rail),
+            ("ja", lang::JA.rail),
+            ("ko", lang::KO.rail),
+            ("hi", lang::HI.rail),
+        ];
+        for (code, s) in translated {
+            assert!(!s.is_empty(), "{code} has no rail string");
+            assert_ne!(s, lang::EN.rail, "{code} still carries the English string");
+        }
     }
 
     /// The strip is capped so a tab full of agents can't crowd out its own
