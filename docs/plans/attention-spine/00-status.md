@@ -21,15 +21,44 @@
 - [x] **Slice 1, tracer bullet — merged 2026-09-15 (#424).** Synthetic decision, failure,
   finished and unknown observations reach the collapsed spine, the overlay queue and the existing
   pane-focus path, plus a declared deliverable opened by a plain click. Behind `TD_SPINE`.
-  **Outstanding against this slice:** nobody has looked at it on a screen, and the chord has no
-  help-screen row — that needs a string in eleven languages and belongs to the commit that takes
-  the flag off.
-- [~] **Slice 2, explicit live state — started.** The unknown half is in
+  **Looked at on a screen 2026-09-15** — Parker ran a window with `TD_SPINE=1`, opened the queue,
+  and the verdict was "I saw the rail and it was great". That closes the first outstanding item,
+  and it is the only approval that could: the plan's whole claim is that a person stops sweeping
+  panes, and nobody but the person sweeping them can say whether it does.
+  **Still outstanding:** the chord has no help-screen row — that needs a string in eleven
+  languages and belongs to the commit that takes the flag off.
+- [x] **Slice 2, explicit live state — the rotation is gone.** The unknown half landed first
   (#425: `AgentState::Unknown`, the parser stops claiming idle for a screen it cannot read, both
   rollups draw it) along with the regression it exposed (#426: a finish bell promotes any quiet
-  state, not only `Idle`). Still to do: stamp the transition instant, derive the lane from
-  `agent_badge` rather than a second ranking, give blocked a clearing edge, and feed the projector
-  from live panes instead of the rotation. Full text: distinguish shell, agent, and unknown pane kinds; preserve unknown agent state through the current HUD parser; stamp the transition instant; derive the kind from `agent_badge`; give blocked a clearing edge.
+  state, not only `Idle`). The rest lands here, carrying all three amendments:
+  - **The lane derives from `agent_badge`**, so the rail and the tab strip read one precedence
+    rather than two. The badge's own names are false friends and the mapping says so out loud:
+    `AgentBadge::Blocked` is a finish that rang against a wall and takes the FAILURE lane;
+    the live prompt is `NeedsInput` and takes DECISION. The whole badge precedence table is
+    driven through the mapping in a test, so the two surfaces cannot drift apart silently.
+  - **The transition instant has a producer.** The 120ms scan recomputes the lane once and stamps
+    an instant only when it *changes*. A pane's first sighting stamps nothing — we know what its
+    lane is, not when it became that — so `observed_at` stays `None` and the row draws a dash
+    rather than claiming every pane changed the moment TD started.
+  - **Blocked has a clearing edge.** A keystroke records the screen it was typed at, and the
+    needs-you flag cannot re-arm while that exact screen is still showing. Keyed on the screen and
+    not on a clock, because a stale prompt and a fresh one are the same thing to a timer. It is
+    self-healing: an arrow key that moves a picker's selection changes the screen and re-arms on
+    the next tick.
+
+  **What Slice 2 deliberately took away.** Three fields the tracer synthesised now render as
+  absent, because a slice whose claim is "explicit live state" cannot keep the props: the
+  deliverable link is `None` until Slice 4 gives it a real source (a deliverable is something the
+  agent *declared*, not a document this file picked out), every row is `Priority::Neutral` until
+  Slice 5 puts levels on the tree, and `PaneKind::Unknown` is no longer constructed at all — this
+  process launches its panes and knows what is in them. Removing the rotation is what exposed that
+  those three had no other producer, and the compiler said so.
+
+  **A divergence found on the way, not worked around.** `agent_badge` has no error arm, while
+  `hud::needs_you` counts `AgentState::Error` — so a live rate limit that has not yet rung is a
+  needs-you to the parser and nothing to the badge. Widening the rail's mapping would have hidden
+  that behind the second ranking this slice exists to remove, so it is filed against the badge
+  instead.
 - [ ] Slice 3, queue lifecycle: fixed ordering, per-item evidence, `project:group` from the tree, seen/unseen on the existing bell latch, and keyboard navigation.
 - [ ] Slice 4, review tray: show only sourced changes, checks, and artifacts; render absent evidence as unavailable; carry the declared deliverable as a plain-click link, with focus as a second, explicit action.
 - [ ] Slice 5, attention levels in the tree: promote/demote rows on the project, initiative and task

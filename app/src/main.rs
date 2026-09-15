@@ -14717,18 +14717,33 @@ impl Workspace {
         )
     }
 
-    /// Slice 1's tracer: real panes, invented states.
+    /// Slice 2: real panes, observed states.
     ///
-    /// The observations are a rotation through the four kinds, so every lane is
-    /// populated without waiting for the parser; the panes are the ones actually
-    /// running, so a row's focus verb exercises the real path rather than a
-    /// mock. Slice 2 replaces the rotation with the HUD parser and the bell and
-    /// nothing else in this file changes.
+    /// The rotation is gone. Every lane on every row now comes from the badge
+    /// that pane's own tab is showing — see [`rail_kind`], which is the single
+    /// precedence both surfaces read — and every age comes from an instant the
+    /// 120ms scan stamped when the lane actually changed.
     ///
-    /// Origin is the tab's own project and group here. The full resolution —
+    /// **Three fields are deliberately absent rather than invented**, because a
+    /// slice whose whole claim is "explicit live state" cannot carry the
+    /// tracer's props:
+    ///
+    /// - **Deliverable is `None`.** Slice 1 pointed every review row at a
+    ///   document this file picked out. That was honest as a tracer and is a lie
+    ///   here: a deliverable is something the AGENT declared, and there is no
+    ///   source for one until Slice 4. A row with nothing to open now offers
+    ///   nothing, which is the shape the plan asks for.
+    /// - **Priority is Neutral for every row.** Levels live on the tree and
+    ///   land in Slice 5. `Priority` already sorts above the lane, so the key is
+    ///   in place and simply has one value until somebody can set it.
+    /// - **`PaneKind::Unknown` is never produced.** This process launched the
+    ///   pane and knows what is in it. The variant exists for a pane whose kind
+    ///   genuinely cannot be established — one a client is only being told about
+    ///   — and synthesising it here would be the rotation again under a new name.
+    ///
+    /// Origin is still the tab's own project and group. The full resolution —
     /// nearest explicit setting, the group's project when a tab is grouped — is
-    /// Slice 3's, and doing it half-way in a tracer would be the sort of
-    /// convincing lie the plan refuses.
+    /// Slice 3's.
     fn rail_rows(
         &self,
         cx: &App,
@@ -14746,79 +14761,49 @@ impl Workspace {
             for leaf in leaves {
                 let view = leaf.read(cx);
                 let agent = view.mode.is_agent();
-                // Every case gets drawn once. A tracer whose fixture only covers
-                // the states that are easy to make is a tracer that finds
-                // nothing, and the unreadable pane is the case this whole plan
-                // exists to stop hiding.
-                let pane_kind = if !agent {
-                    PaneKind::Shell
-                } else if n % 11 == 4 {
-                    PaneKind::Unknown
-                } else {
+                let pane_kind = if agent {
                     PaneKind::Agent
-                };
-                let priority = match n % 7 {
-                    1 => Priority::Promoted,
-                    5 => Priority::Demoted,
-                    _ => Priority::Neutral,
-                };
-                let kind = if agent {
-                    match n % 5 {
-                        0 => Some(AttentionKind::Decision),
-                        1 => Some(AttentionKind::Failure),
-                        2 => Some(AttentionKind::ReviewReady),
-                        3 => Some(AttentionKind::Unknown),
-                        _ => None,
-                    }
                 } else {
-                    None
+                    PaneKind::Shell
                 };
+                // The same four signals the tab strip ranks, ranked once.
+                let badge = agent_badge(
+                    view.needs_input(),
+                    view.agent_working(),
+                    view.has_bell(),
+                    view.bell_blocked(),
+                );
+                let kind = rail_kind(badge, view.rail_state());
+                // Said in the badge's terms, not the parser's, so the words on
+                // the row match the glyph the tab is wearing.
                 let reason = match kind {
-                    Some(AttentionKind::Decision) => "Waiting on a permission prompt",
-                    Some(AttentionKind::Failure) => "A check came back non-zero",
+                    Some(AttentionKind::Decision) => "Stopped at a prompt",
+                    Some(AttentionKind::Failure) => "Finished against a wall",
                     Some(AttentionKind::ReviewReady) => "Finished, not yet seen",
-                    Some(AttentionKind::Unknown) => "Known agent, state unreadable",
+                    Some(AttentionKind::Unknown) => "Agent running, screen unreadable",
                     None => "",
                 };
-                // Unknown rows carry no observed time on purpose: the one
-                // case where "we could not read it" includes not knowing when.
-                let observed_at = if matches!(kind, Some(AttentionKind::Unknown)) {
-                    None
-                } else {
-                    Instant::now().checked_sub(Duration::from_secs(60 * (n % 7 + 1)))
-                };
-                // The two shapes a review row is most likely to be handed: a
-                // rendered page and a plan. Both are real files in this
-                // checkout, so the click proves the whole path rather than the
-                // half of it that does not leave the process.
-                let deliverable = match kind {
-                    Some(AttentionKind::ReviewReady) => {
-                        Self::tracer_doc("docs/plans/attention-spine/plan.md").map(|href| {
-                            attention::Deliverable {
-                                label: "Attention spine plan".into(),
-                                href: href.to_string(),
-                            }
-                        })
-                    }
-                    Some(AttentionKind::Decision) => Self::tracer_doc(
-                        "docs/2026-08-31-one-click-copy-affordance.html",
-                    )
-                    .map(|href| attention::Deliverable {
-                        label: "One-click copy affordance".into(),
-                        href: href.to_string(),
-                    }),
-                    _ => None,
+                // Where the fact came from, shown beside its age. Three
+                // different instruments, and a row that says which one read it
+                // is a row somebody can argue with.
+                let source = match kind {
+                    Some(AttentionKind::Decision) => "prompt",
+                    Some(AttentionKind::Failure) | Some(AttentionKind::ReviewReady) => "bell",
+                    Some(AttentionKind::Unknown) => "parser",
+                    None => "",
                 };
                 obs.push(Observation {
                     pane: n,
                     pane_kind,
-                    priority,
+                    priority: Priority::Neutral,
                     kind,
                     origin: self.rail_origin(ti),
                     reason: reason.to_string(),
-                    observed_at,
-                    source: "synthetic",
-                    deliverable,
+                    // None until this pane's lane has been SEEN to change. The
+                    // row draws a dash, and never an age it did not measure.
+                    observed_at: view.attention_since(),
+                    source,
+                    deliverable: None,
                 });
                 panes.insert(n, leaf.entity_id());
                 n += 1;
@@ -14827,7 +14812,13 @@ impl Workspace {
         (attention::project(&obs), panes)
     }
 
-    /// A document that certainly exists, for the tracer to point a deliverable at.
+    /// A document that certainly exists, for a tracer to point a deliverable at.
+    ///
+    /// **Kept, unused, on purpose** — Slice 4 needs the resolution rule this
+    /// encodes (resolve from the running binary, offer nothing when the file is
+    /// absent) the moment a declared deliverable arrives from an agent, and the
+    /// paragraph below about not touching the disk while painting is the
+    /// expensive half of what was learned building it.
     ///
     /// Resolved from the running binary rather than written down, so this works
     /// in anyone's checkout and points at nothing on a machine where the file is
@@ -14841,6 +14832,7 @@ impl Workspace {
     /// that is never not on screen cannot afford to touch the disk while
     /// painting. Both answers are fixed for the life of the process, so they are
     /// looked up on first use and kept.
+    #[allow(dead_code)]
     fn tracer_doc(rel: &'static str) -> Option<&'static str> {
         use std::sync::OnceLock;
         static PLAN: OnceLock<Option<String>> = OnceLock::new();
@@ -24868,6 +24860,81 @@ mod tests {
         }
     }
 
+    /// The rail reads the SAME table the tab strip does, so the two cannot
+    /// drift. Every row of the badge precedence is driven through the lane
+    /// mapping here, which is what makes "one precedence function, not two"
+    /// an enforced property rather than a comment. It also pins the two false
+    /// friends: a finish that rang against a wall is a FAILURE, and only the
+    /// live prompt is a DECISION.
+    #[test]
+    fn the_rail_lane_follows_the_badge_and_never_ranks_a_second_time() {
+        use attention::AttentionKind;
+        use hud::AgentState;
+        // (needs_input, working, bell, blocked) → the lane the rail draws
+        let cases = [
+            ((false, false, false, false), None),
+            // mid-turn wants nothing from anybody
+            ((false, true, false, false), None),
+            ((true, false, false, false), Some(AttentionKind::Decision)),
+            (
+                (false, false, true, false),
+                Some(AttentionKind::ReviewReady),
+            ),
+            // rang with the wall still on screen — the badge calls this
+            // Blocked and it is a failure, not a question
+            ((false, false, true, true), Some(AttentionKind::Failure)),
+            // asking AND holding an unread finish is asking
+            ((true, false, true, true), Some(AttentionKind::Decision)),
+            // back at work with last turn's bell still latched: working
+            ((false, true, true, false), None),
+            ((true, true, false, false), Some(AttentionKind::Decision)),
+            // `blocked` without a bell is stale classification — say nothing
+            ((false, false, false, true), None),
+        ];
+        for ((needs, working, bell, blocked), want) in cases {
+            let badge = agent_badge(needs, working, bell, blocked);
+            assert_eq!(
+                rail_kind(badge, AgentState::Idle),
+                want,
+                "needs={needs} working={working} bell={bell} blocked={blocked}"
+            );
+        }
+    }
+
+    /// An agent whose screen could not be read earns no badge, and that is a
+    /// different answer from an agent with nothing to say. It takes the Unknown
+    /// lane, which `counted()` keeps out of the red number — the distinction
+    /// #425 put in the parser and #426 stopped the bell erasing.
+    #[test]
+    fn an_unreadable_agent_takes_the_unknown_lane_and_a_resting_one_takes_none() {
+        use attention::AttentionKind;
+        use hud::AgentState;
+        assert_eq!(
+            rail_kind(None, AgentState::Unknown),
+            Some(AttentionKind::Unknown)
+        );
+        assert_eq!(rail_kind(None, AgentState::Idle), None);
+        assert!(!AttentionKind::Unknown.counted());
+    }
+
+    /// The badge decides the lane even when the parser disagrees about the same
+    /// pane, because the alternative is two rankings again. Pinned in both
+    /// directions so a later "improvement" that consults the state first turns
+    /// this red instead of quietly forking the two surfaces.
+    #[test]
+    fn the_badge_decides_the_lane_even_when_the_parser_disagrees() {
+        use attention::AttentionKind;
+        use hud::AgentState;
+        assert_eq!(
+            rail_kind(Some(AgentBadge::Done), AgentState::Unknown),
+            Some(AttentionKind::ReviewReady)
+        );
+        assert_eq!(
+            rail_kind(Some(AgentBadge::Working), AgentState::Unknown),
+            None
+        );
+    }
+
     /// The strip is capped so a tab full of agents can't crowd out its own
     /// name, and the overflow keeps the COUNT the glyphs had to drop. A tab
     /// holds at most LEGACY_PANE_CEILING agents, so the chip never has to say more.
@@ -26713,6 +26780,54 @@ pub fn agent_badge(
         })
     } else {
         None
+    }
+}
+
+/// The lane a pane belongs in, read off the badge its tab already shows.
+///
+/// [`agent_badge`] is the precedence, and this reads its answer instead of
+/// ranking the same four signals a second time. Two rankings of one pane is a
+/// defect: the tab strip is what a person's eye checks first, and a rail that
+/// disagreed with it would be arguing with the thing it is supposed to save you
+/// from sweeping.
+///
+/// **Two of the badge's names point the wrong way, so the mapping is written
+/// down once here rather than inline.** [`AgentBadge::Blocked`] is not a
+/// question — it is a finish that rang with an error banner still on screen, so
+/// it takes the FAILURE lane. The question is [`AgentBadge::NeedsInput`], the
+/// live prompt, and that is the DECISION lane. Spelling those two out is the
+/// whole reason this function exists as a function.
+///
+/// `state` is consulted for exactly one thing the badge cannot carry: an agent
+/// whose screen could not be read earns no badge, and that is not the same as an
+/// agent with nothing to say. It takes the Unknown lane — shown, never counted —
+/// which is the distinction #425 put into the parser and #426 stopped the bell
+/// from erasing.
+///
+/// **Known consequence, deliberately not worked around.** A live error that has
+/// not yet rung produces no row: `looks_blocked` is only consulted at bell time,
+/// so the wall becomes visible when the turn ends. `AgentState::Error` is live
+/// and `hud::needs_you` already counts it, so the parser and the badge disagree
+/// about that pane today. Widening the mapping here would hide that divergence
+/// behind a second ranking — the exact defect the amendment forbids — so it is
+/// filed against the badge instead.
+pub fn rail_kind(
+    badge: Option<AgentBadge>,
+    state: hud::AgentState,
+) -> Option<attention::AttentionKind> {
+    use attention::AttentionKind;
+    match badge {
+        Some(AgentBadge::NeedsInput) => Some(AttentionKind::Decision),
+        Some(AgentBadge::Blocked) => Some(AttentionKind::Failure),
+        Some(AgentBadge::Done) => Some(AttentionKind::ReviewReady),
+        // Mid-turn wants nothing. The person is not the bottleneck yet, and a
+        // queue that lists every working agent is the pane sweep with extra
+        // steps.
+        Some(AgentBadge::Working) => None,
+        None => match state {
+            hud::AgentState::Unknown => Some(AttentionKind::Unknown),
+            _ => None,
+        },
     }
 }
 
