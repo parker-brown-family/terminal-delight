@@ -9,6 +9,12 @@
   same day: held panes are out of version one, the five code amendments are written into the
   slices that own them, and a turn's **declared deliverable** becomes the review row's primary
   object with focus as a separate action.
+  **AMENDED 2026-09-15 — attention levels.** Promoted / neutral / demoted, set by right-click on
+  any left-bar row, inherited downward with the nearest explicit setting winning, marked in the
+  badge line and never rolled up. Level is the outermost sort key, above the lane.
+  **All four questions answered the same day** via the annotated levels brief: level outranks
+  lane, a demoted row still counts, the nearest explicit setting wins, and the badge line takes
+  glyphs and never numbers.
 
 ## Slices
 
@@ -16,7 +22,11 @@
 - [ ] Slice 2, explicit live state: distinguish shell, agent, and unknown pane kinds; preserve unknown agent state through the current HUD parser; stamp the transition instant; derive the kind from `agent_badge`; give blocked a clearing edge.
 - [ ] Slice 3, queue lifecycle: fixed ordering, per-item evidence, `project:group` from the tree, seen/unseen on the existing bell latch, and keyboard navigation.
 - [ ] Slice 4, review tray: show only sourced changes, checks, and artifacts; render absent evidence as unavailable; carry the declared deliverable as a plain-click link, with focus as a second, explicit action.
-- [ ] Slice 5, responsive behaviour and evaluation: overlay by default, opt-in pinning, geometry checks, and recorded comparison against manual pane sweeping.
+- [ ] Slice 5, attention levels in the tree: promote/demote rows on the project, initiative and task
+  context menus; the level persisted in the layout; downward resolution with the nearest explicit
+  setting winning; a green up or blue down mark in the badge line, drawn dimmer when inherited and
+  never rolled up onto a collapsed parent. The projector's ordering key landed early with Slice 1.
+- [ ] Slice 6, responsive behaviour and evaluation: overlay by default, opt-in pinning, geometry checks, and recorded comparison against manual pane sweeping.
 
 ## Prerequisite
 
