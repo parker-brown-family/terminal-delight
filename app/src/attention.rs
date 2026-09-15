@@ -72,6 +72,40 @@ impl AttentionKind {
     }
 }
 
+/// A thumb on the scale: what the human has said matters today, independent of
+/// what the agents are doing.
+///
+/// Set by right-clicking a project, an initiative or a task in the left bar, and
+/// **inherited downward** — a promoted project promotes everything under it until
+/// a nearer row says otherwise. It never travels up: `tree::Roll` carries agent
+/// state from panes to tabs to projects, and this goes the other way and does not
+/// roll at all, so a branch's arrow says what *it* is set to and never that
+/// something inside it was promoted.
+///
+/// Resolution happens in the tree, before an observation is made. By the time a
+/// pane reaches this module its effective level is a fact, not a search.
+///
+/// The derived order is the sort order: promoted first.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
+pub enum Priority {
+    Promoted,
+    #[default]
+    Neutral,
+    Demoted,
+}
+
+impl Priority {
+    /// The mark in a row's badge line. Neutral draws nothing — a tree where every
+    /// row carries a glyph is a tree where none of them mean anything.
+    pub fn glyph(self) -> Option<&'static str> {
+        match self {
+            Priority::Promoted => Some("\u{25b2}"),
+            Priority::Demoted => Some("\u{25bc}"),
+            Priority::Neutral => None,
+        }
+    }
+}
+
 /// Where the work came from, read from the tree rather than guessed from a path.
 ///
 /// Both halves are optional and they are optional for different reasons: a tab
@@ -101,6 +135,8 @@ impl Origin {
 pub struct Observation {
     pub pane: u64,
     pub pane_kind: PaneKind,
+    /// Already resolved through the tree — see [`Priority`].
+    pub priority: Priority,
     /// `None` for a pane that wants nothing — a working agent, a resting one, a
     /// shell. Such an observation produces no row.
     pub kind: Option<AttentionKind>,
@@ -118,6 +154,7 @@ pub struct Observation {
 #[derive(Debug, Clone)]
 pub struct AttentionItem {
     pub pane: u64,
+    pub priority: Priority,
     pub kind: AttentionKind,
     pub origin: Origin,
     pub reason: String,
@@ -157,6 +194,7 @@ pub fn project(observations: &[Observation]) -> Vec<AttentionItem> {
         .filter_map(|o| {
             o.kind.map(|kind| AttentionItem {
                 pane: o.pane,
+                priority: o.priority,
                 kind,
                 origin: o.origin.clone(),
                 reason: o.reason.clone(),
@@ -166,11 +204,17 @@ pub fn project(observations: &[Observation]) -> Vec<AttentionItem> {
         })
         .collect();
 
-    // Lane first. Then oldest first — and an item with no observed time sorts
-    // after every item that has one, because we cannot claim it has waited.
+    // What the human promoted comes first, then the lane, then the oldest — and
+    // an item with no observed time sorts after every item that has one, because
+    // we cannot claim it has waited.
+    //
+    // Priority sits ABOVE the lane deliberately: promoting a project is a person
+    // saying "this is what I am doing today", and a surface that then buries it
+    // under someone else's rate limit has overruled him with a heuristic.
     items.sort_by(|a, b| {
-        a.kind
-            .cmp(&b.kind)
+        a.priority
+            .cmp(&b.priority)
+            .then_with(|| a.kind.cmp(&b.kind))
             .then_with(|| match (a.observed_at, b.observed_at) {
                 (Some(x), Some(y)) => x.cmp(&y),
                 (Some(_), None) => std::cmp::Ordering::Less,
@@ -195,6 +239,27 @@ pub fn counts(items: &[AttentionItem]) -> Counts {
     c
 }
 
+/// How long a row says it has waited, or a dash.
+///
+/// The dash is the point: a row whose transition was never observed renders an
+/// absence, not a zero. Every caller goes through here so no surface can invent
+/// one.
+pub fn age_label(d: Option<Duration>) -> String {
+    match d {
+        None => "\u{2014}".to_string(),
+        Some(d) => {
+            let secs = d.as_secs();
+            if secs < 60 {
+                format!("{secs}s")
+            } else if secs < 3600 {
+                format!("{}m", secs / 60)
+            } else {
+                format!("{}h", secs / 3600)
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -203,6 +268,7 @@ mod tests {
         Observation {
             pane,
             pane_kind: PaneKind::Agent,
+            priority: Priority::Neutral,
             kind,
             origin: Origin {
                 project: Some("td".into()),
@@ -347,5 +413,79 @@ mod tests {
             obs(3, Some(AttentionKind::Decision), None),
         ]);
         assert_eq!(items.iter().map(|i| i.pane).collect::<Vec<_>>(), vec![3, 7]);
+    }
+
+    fn at(pane: u64, p: Priority, kind: AttentionKind, secs_ago: u64) -> Observation {
+        let mut o = obs(pane, Some(kind), Some(secs_ago));
+        o.priority = p;
+        o
+    }
+
+    #[test]
+    fn a_promoted_review_outranks_a_neutral_decision() {
+        let items = project(&[
+            at(1, Priority::Neutral, AttentionKind::Decision, 60),
+            at(2, Priority::Promoted, AttentionKind::ReviewReady, 60),
+        ]);
+        assert_eq!(
+            items.iter().map(|i| i.pane).collect::<Vec<_>>(),
+            vec![2, 1],
+            "what the human promoted comes before what the heuristic ranked highest"
+        );
+    }
+
+    #[test]
+    fn a_demoted_decision_sinks_below_a_neutral_review() {
+        let items = project(&[
+            at(1, Priority::Demoted, AttentionKind::Decision, 60),
+            at(2, Priority::Neutral, AttentionKind::ReviewReady, 60),
+        ]);
+        assert_eq!(items.iter().map(|i| i.pane).collect::<Vec<_>>(), vec![2, 1]);
+    }
+
+    #[test]
+    fn a_demoted_row_is_still_shown_and_still_counted() {
+        let items = project(&[at(1, Priority::Demoted, AttentionKind::Decision, 60)]);
+        assert_eq!(items.len(), 1, "demoting is an ordering, never a mute");
+        assert_eq!(counts(&items).wanting, 1);
+    }
+
+    #[test]
+    fn inside_one_level_the_lane_order_still_holds() {
+        let items = project(&[
+            at(1, Priority::Promoted, AttentionKind::ReviewReady, 60),
+            at(2, Priority::Promoted, AttentionKind::Decision, 60),
+            at(3, Priority::Promoted, AttentionKind::Failure, 60),
+        ]);
+        assert_eq!(items.iter().map(|i| i.pane).collect::<Vec<_>>(), vec![2, 3, 1]);
+    }
+
+    #[test]
+    fn priority_orders_before_age_within_one_lane() {
+        let items = project(&[
+            at(1, Priority::Neutral, AttentionKind::Decision, 3600),
+            at(2, Priority::Promoted, AttentionKind::Decision, 5),
+        ]);
+        assert_eq!(
+            items.iter().map(|i| i.pane).collect::<Vec<_>>(),
+            vec![2, 1],
+            "an hour of waiting does not outrank what he said matters today"
+        );
+    }
+
+    #[test]
+    fn an_unobserved_row_renders_a_dash_and_never_a_zero() {
+        assert_eq!(age_label(None), "\u{2014}");
+        assert_eq!(age_label(Some(Duration::from_secs(0))), "0s");
+        assert_eq!(age_label(Some(Duration::from_secs(41 * 60))), "41m");
+        assert_eq!(age_label(Some(Duration::from_secs(2 * 3600))), "2h");
+    }
+
+    #[test]
+    fn neutral_is_the_default_and_changes_nothing() {
+        assert_eq!(Priority::default(), Priority::Neutral);
+        assert_eq!(Priority::Neutral.glyph(), None, "a neutral row carries no mark");
+        assert!(Priority::Promoted.glyph().is_some());
+        assert!(Priority::Demoted.glyph().is_some());
     }
 }

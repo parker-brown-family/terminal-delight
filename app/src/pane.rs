@@ -2025,6 +2025,10 @@ impl gpui::EventEmitter<OpenUsagePanel> for TerminalView {}
 pub struct ToggleLeftBar;
 impl gpui::EventEmitter<ToggleLeftBar> for TerminalView {}
 
+/// Ctrl+Shift+N — open or close the attention rail's queue.
+pub struct ToggleRail;
+impl gpui::EventEmitter<ToggleRail> for TerminalView {}
+
 /// Ctrl+F (`global = false`) / Ctrl+Shift+F (`global = true`) was pressed in this
 /// pane — ask the workspace to open the find panel. In-pane find searches just
 /// this pane (and the panel centres over it); global find searches every pane.
@@ -4321,6 +4325,14 @@ impl TerminalView {
                 // first, so a chord added there would never fire.
                 "b" => {
                     cx.emit(ToggleLeftBar);
+                    return;
+                }
+                // Ctrl+Shift+N → the attention rail's queue. N for "needs me".
+                // Here for the same reason as the arms above: a focused terminal
+                // takes the chord first, so a workspace-level binding would
+                // compile, test green, and do nothing when pressed.
+                "n" => {
+                    cx.emit(ToggleRail);
                     return;
                 }
                 // Two keys for one panel, and the second is not redundant.
