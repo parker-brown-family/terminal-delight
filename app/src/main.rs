@@ -24,11 +24,6 @@
 //! TODO(os-chrome): client-side window decorations (WindowDecorations::Client).
 
 mod art;
-// Slice 1 of the attention spine: the projection lands before the surface that
-// renders it, so nothing calls it yet. This allow comes off with the same commit
-// that draws the spine — if it is still here when the rail ships, the rail is
-// computing its rows somewhere else.
-#[allow(dead_code)]
 mod attention;
 mod bell;
 mod crt;
@@ -10775,6 +10770,13 @@ impl Workspace {
     /// graveyard, plugins) closes first — a second esc then closes the wall.
     /// Returns whether anything was closed. NEVER touches a terminal pane.
     fn close_popups(&mut self) -> bool {
+        // The attention queue draws over everything and is the cheapest thing to
+        // dismiss, so it goes first: Esc with the queue open should fold the
+        // queue, never the wall underneath it.
+        if self.rail_open {
+            self.rail_open = false;
+            return true;
+        }
         // Overlays that stack ON TOP of the agent wall — peel these first.
         if self.savings_menu {
             self.savings_menu = false;
@@ -14290,6 +14292,22 @@ impl Workspace {
             for leaf in leaves {
                 let view = leaf.read(cx);
                 let agent = view.mode.is_agent();
+                // Every case gets drawn once. A tracer whose fixture only covers
+                // the states that are easy to make is a tracer that finds
+                // nothing, and the unreadable pane is the case this whole plan
+                // exists to stop hiding.
+                let pane_kind = if !agent {
+                    PaneKind::Shell
+                } else if n % 11 == 4 {
+                    PaneKind::Unknown
+                } else {
+                    PaneKind::Agent
+                };
+                let priority = match n % 7 {
+                    1 => Priority::Promoted,
+                    5 => Priority::Demoted,
+                    _ => Priority::Neutral,
+                };
                 let kind = if agent {
                     match n % 5 {
                         0 => Some(AttentionKind::Decision),
@@ -14317,12 +14335,8 @@ impl Workspace {
                 };
                 obs.push(Observation {
                     pane: n,
-                    pane_kind: if agent {
-                        PaneKind::Agent
-                    } else {
-                        PaneKind::Shell
-                    },
-                    priority: Priority::Neutral,
+                    pane_kind,
+                    priority,
                     kind,
                     origin: self.rail_origin(ti),
                     reason: reason.to_string(),
@@ -14501,6 +14515,15 @@ impl Workspace {
                         .text_color(sk.ink.ink_dim)
                         .child(it.origin.label()),
                 )
+                .children(it.priority.glyph().map(|g| {
+                    div()
+                        .text_size(px(9.5 * s))
+                        .text_color(match it.priority {
+                            attention::Priority::Promoted => hsla(0.33, 0.70, 0.42, 1.),
+                            _ => hsla(0.58, 0.72, 0.56, 1.),
+                        })
+                        .child(g)
+                }))
                 .child(div().flex_1())
                 .child(
                     div()
@@ -14524,6 +14547,19 @@ impl Workspace {
                         .text_size(px(11. * s))
                         .text_color(sk.ink.ink)
                         .child(it.reason.clone()),
+                )
+                // Every fact on the row says where it came from and when it was
+                // seen. A surface that shows a state without its provenance is
+                // asking to be trusted on nothing.
+                .child(
+                    div()
+                        .text_size(px(8.5 * s))
+                        .text_color(sk.ink.ink_dim)
+                        .child(format!(
+                            "{} \u{b7} {}",
+                            it.source,
+                            attention::age_label(it.age(now))
+                        )),
                 )
                 .when_some(target, |d, id| {
                     d.on_mouse_down(
@@ -22171,6 +22207,7 @@ impl Render for Workspace {
                     .children(confirm_overlay)
                     .children(delete_overlay)
                     .children(self.render_bar_menu(&th, scale, cx))
+                    .children(self.render_rail(cx))
                     .children(scale_overlay)
                     .children(more_overlay)
                     .children(help_overlay)
