@@ -40,6 +40,7 @@ mod doc;
 mod fav;
 mod gamba;
 mod gridwire;
+mod hold;
 mod host;
 mod hostctl;
 mod hostproto;
@@ -739,6 +740,39 @@ const SLOT_MARK_PT: f32 = 28.0;
 /// the space, and rails that thick start competing with the tree above them.
 const SLOT_RAIL_GROWTH: f32 = 1.5;
 
+/// The bay's height at scale 1.0 — about two thirds of the allowance slot
+/// below it, which is the proportion Parker asked for: present enough to read
+/// as reserved, small enough that it never competes with the tree for the
+/// bar's vertical space.
+const BAY_H: f32 = 56.0;
+
+/// Seconds since the process started, for animations that want a phase rather
+/// than a duration.
+///
+/// A free function over a `OnceLock` rather than a field on the workspace: a
+/// flicker wants to know what time it is, not when this particular window was
+/// built, and threading an `Instant` through the constructor to answer that
+/// would put a clock in the state file's neighbourhood for no reason.
+fn anim_clock() -> f32 {
+    static T0: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+    T0.get_or_init(Instant::now).elapsed().as_secs_f32()
+}
+
+/// The left bar's fold triangle: its hit target, and therefore the width a
+/// child row has to clear before it reads as a child.
+///
+/// A branch wears a disclosure triangle and a task does not, so indenting a task
+/// by one step alone puts its label four pixels LEFT of the branch it hangs
+/// from — the indent is spent getting back to where the parent's label already
+/// started. Tasks add this on top, which makes all three layers step by the
+/// same amount from the layer above.
+const FOLD_W: f32 = 15.0;
+
+/// The bin glyph's point size at scale 1.0 — two thirds of the 19pt it shipped
+/// at on the first pass, which read as the subject of the panel rather than as
+/// something the panel holds.
+const BIN_PT: f32 = 19.0 * 2.0 / 3.0;
+
 const LEFT_BAR_MIN: f32 = 132.;
 /// Past this the tree is stealing the terminals' width, which is the wrong way
 /// round for a terminal.
@@ -1156,10 +1190,44 @@ impl TabGroup {
     /// needs this: without it the strip's heading renders as nothing at all,
     /// which is an invisible control rather than an unnamed one.
     fn label(&self) -> String {
-        self.name
-            .clone()
-            .unwrap_or_else(|| format!("initiative {}", self.id))
+        self.name.clone().unwrap_or_else(|| unnamed_group(self.id))
     }
+}
+
+/// What an unnamed group is called, in the one place that decides it.
+///
+/// "initiative" is the TREE's word for the middle layer and it never reached a
+/// person before: a new group opened straight into its rename box, so the
+/// default was overwritten before it could be read. Now that making a group
+/// leaves it named, the label a person sees has to be the word the menu that
+/// made it used — and every menu says "group".
+///
+/// Four sites spelled this string out separately. A default that four places
+/// decide is a default that eventually disagrees with itself.
+fn unnamed_group(id: u32) -> String {
+    format!("group {id}")
+}
+
+/// A branch that was deleted, holding everything needed to put it back.
+///
+/// The tabs travel with their ORIGINAL indices so a recover can seat them where
+/// they were rather than at the end. The indices are advisory — tabs opened
+/// while the branch sat in the trash will have shifted everything — so the
+/// restore clamps rather than trusting them, and keeps the run contiguous,
+/// which is the property the tree actually depends on.
+///
+/// Dropping this value is what ends the shells it holds. Nothing else does.
+struct Deleted {
+    /// Each tab with the index it sat at, ascending.
+    tabs: Vec<(usize, Tab)>,
+    /// The groups that went with it. A deleted project takes its groups;
+    /// a deleted group is one entry; a deleted tab is none.
+    groups: Vec<TabGroup>,
+    /// Present only when a whole project was deleted.
+    project: Option<Project>,
+    /// Whether the active tab was inside. A recover that puts back the branch
+    /// you were working in should land you back in it.
+    held_active: Option<usize>,
 }
 
 /// The outer layer of the left bar's tree: a PROJECT, holding initiatives (tab
@@ -1833,6 +1901,33 @@ enum BarBranch {
     Unfiled,
 }
 
+/// How a menu row reads: ordinary, unavailable, or about to end something.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum MenuTone {
+    Plain,
+    /// Present but inert — "Remove from group" on a tab that is in no group.
+    /// Drawn rather than hidden so the menu does not change shape row to row,
+    /// which is what makes a menu learnable.
+    Quiet,
+    Danger,
+}
+
+/// Which left-bar context menu is open.
+///
+/// One overlay with four contents rather than four overlays, because they share
+/// every rule that matters — where they are placed, what dismisses them, that
+/// only one can be open — and four copies of those rules is four chances for
+/// them to drift apart.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum BarMenu {
+    /// The header strip, or the bay: what you can make, and what you can get
+    /// back.
+    Header,
+    Project(u32),
+    Initiative(u32),
+    Task(usize),
+}
+
 /// Which way a drawn triangle points. Used for the fold disclosures and for the
 /// handles that hide and show the bar, which are the same shape turned around.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -1863,6 +1958,11 @@ struct BarDrag {
     engaged: bool,
     /// What a release right now would do, resolved on every move.
     over: Option<tree::Drop>,
+    /// The cursor is over the bay at the foot of the bar, so a release deletes
+    /// rather than files. Kept beside `over` rather than folded into it because
+    /// they are different vocabularies: `over` is a place in the tree, and the
+    /// bay is not in the tree.
+    over_bay: bool,
 }
 
 /// What a [`BarDrag`] is carrying.
@@ -2590,6 +2690,20 @@ struct Workspace {
     /// never reused, so a stale reference resolves to nothing instead of to
     /// somebody else's project.
     next_project_id: u32,
+    /// Branches that have been deleted and are still coming back.
+    ///
+    /// Holding a [`Deleted`] here is the entire mechanism that keeps its shells
+    /// running: in window-owned mode a terminal ends when the last reference to
+    /// its pane is dropped, and this is that reference. See [`crate::hold`].
+    trash: hold::Trash<Deleted>,
+    /// The trash can's hangar doors, 0.0 shut to 1.0 open. Driven by whether a
+    /// drag is over the footer, and eased per frame rather than stored as a
+    /// target, so a drag that leaves mid-open closes from where it got to.
+    bay: f32,
+    /// A delete waiting on a yes. `None` while nothing is being confirmed.
+    confirm_delete: Option<BarBranch>,
+    /// The open left-bar context menu, and where to draw it.
+    bar_menu: Option<(BarMenu, Point<Pixels>)>,
     /// The left bar is showing. Toggled with ctrl+shift+B (intercepted in the
     /// pane, which is what has focus) and persisted per session.
     left_bar: bool,
@@ -2615,6 +2729,10 @@ struct Workspace {
     bar_drag: Option<BarDrag>,
     /// Live per-row boxes for drop hit-testing while a bar drag is in flight.
     bar_bounds: BarBoxes,
+    /// Where the bay was drawn this frame, for the same hit-testing. Separate
+    /// from `bar_bounds` because the bay is not a tree row and must never be
+    /// reachable by the code that walks rows looking for a place to file into.
+    bay_bounds: Arc<Mutex<Option<Bounds<Pixels>>>>,
     /// Which tab's config pane is open, if any (right-click / ctrl+click a tab).
     tab_menu: Option<usize>,
     /// Window-space anchor for the open tab config pane.
@@ -3613,6 +3731,10 @@ impl Workspace {
             next_group_id: 1,
             projects: Vec::new(),
             next_project_id: 1,
+            trash: hold::Trash::new(),
+            bay: 0.,
+            confirm_delete: None,
+            bar_menu: None,
             left_bar: left_bar_visible(saved.left_bar, scratch, demo),
             left_bar_w: saved
                 .left_bar_w
@@ -3627,6 +3749,7 @@ impl Workspace {
             bar_rename: None,
             bar_drag: None,
             bar_bounds: Arc::new(Mutex::new(Vec::new())),
+            bay_bounds: Arc::new(Mutex::new(None)),
             tab_menu: None,
             tab_menu_at: None,
             group_menu: None,
@@ -4909,7 +5032,6 @@ impl Workspace {
         if std::env::var("TD_KEYDEBUG").is_ok() {
             eprintln!("new_tab");
         }
-        let pane = self.make_pane_in_mode(session::PaneRestore::default(), window, cx);
         // A new tab joins the branch you are in, and lands beside its siblings
         // rather than at the end of the window, so a branch stays one run in tab
         // order. The strip shows one branch and the tree shows the rest, so a
@@ -4918,28 +5040,65 @@ impl Workspace {
         // tab is still possible, by dragging one out of its branch, which is
         // where a deliberate choice belongs; it is no longer what a `+` does by
         // accident.
-        let place = self.place_of(self.active);
-        let mut tab = Tab::new(Node::Leaf(pane), None);
-        tab.group = place.initiative;
-        // a grouped tab inherits its project from the group and leaves its own
-        // unset, so the two can never disagree — see `place_of`
-        tab.project = place
-            .initiative
-            .is_none()
-            .then_some(place.project)
-            .flatten();
+        self.new_tab_in(self.place_of(self.active), window, cx);
+    }
+
+    /// Open a fresh terminal as a new tab in `place`, seated at that branch's
+    /// end.
+    ///
+    /// Split out from [`Self::new_tab`] so a branch that has just been created
+    /// can be handed a terminal of its own rather than being handed one that
+    /// was already running somewhere else. The left bar's `+` used to seed a
+    /// new project with the ACTIVE task, which reads as the bar reaching into
+    /// the window and taking the thing you were working on — a move nobody
+    /// asked for, and one that leaves the branch you came from a tab lighter.
+    ///
+    /// This is the only place a new tab is built, so the hosted-mode invariant
+    /// has one site to hold rather than two. See
+    /// `a_hosted_window_makes_no_pane_of_its_own`.
+    fn new_tab_in(&mut self, place: tree::Place, window: &mut Window, cx: &mut Context<Self>) {
+        let pane = self.make_pane_in_mode(session::PaneRestore::default(), window, cx);
+        // Built through `TabIdentity` rather than `Tab::new` plus two
+        // assignments. This is a genuinely new tab rather than a reshaped one,
+        // so it is not the case `TabIdentity` was written for — but it is the
+        // same shape of bug: a field added to `Tab` later would be set by
+        // neither line here and would silently take the constructor's default.
+        // Going through the carrier makes that a compile error, which is the
+        // whole reason the carrier is a struct and not two arguments.
+        let tab = TabIdentity {
+            group: place.initiative,
+            // a grouped tab inherits its project from the group and leaves its
+            // own unset, so the two can never disagree — see `place_of`
+            project: place
+                .initiative
+                .is_none()
+                .then_some(place.project)
+                .flatten(),
+            ..Default::default()
+        }
+        .onto(Node::Leaf(pane));
         let at = self.branch_end(place);
         self.tabs.insert(at, tab);
         self.active = at;
         self.save(cx);
         cx.notify();
-        // Defer the focus: new_tab fires from a mother-bar mouse-down listener, so
-        // the root container's tracked focus handle would grab focus back as the
-        // event bubbles (same race as activate_tab/split). A synchronous
-        // focus_active here never sticks — the new terminal opens unfocused. Running
-        // after the event settles makes the fresh pane light up as the active
-        // terminal so the very next keystroke lands in it.
-        cx.defer_in(window, |ws, window, cx| ws.focus_active(window, cx));
+        // Defer the focus: this fires from a mouse-down listener, so the root
+        // container's tracked focus handle would grab focus back as the event
+        // bubbles (same race as activate_tab/split). A synchronous focus_active
+        // here never sticks — the new terminal opens unfocused. Running after the
+        // event settles makes the fresh pane light up as the active terminal so
+        // the very next keystroke lands in it.
+        //
+        // Unless something else legitimately owns the keyboard by then. The bar's
+        // `+` opens the new project's rename box in the same gesture, and a defer
+        // that fires afterwards would hand the keyboard to the terminal while the
+        // name editor is still on screen waiting to be typed into.
+        cx.defer_in(window, |ws, window, cx| {
+            if ws.overlay_owns_keyboard() {
+                return;
+            }
+            ws.focus_active(window, cx)
+        });
     }
 
     /// Bring a dead agent back: open a fresh tab whose shell resumes its saved
@@ -6539,6 +6698,1032 @@ impl Workspace {
         self.groups.retain(|g| live.contains(&g.id));
     }
 
+    /// Drop projects nothing hangs from any more.
+    ///
+    /// The mirror of [`Self::prune_groups`], which has always existed. Projects
+    /// went without one because until deletes arrived nothing could empty a
+    /// project except dragging every child out of it one at a time, and an
+    /// empty project you emptied by hand is one you can see. A cascade delete
+    /// empties one in a single gesture, and a project row left behind with
+    /// nothing under it reads as a delete that half worked.
+    ///
+    /// A project is live if any GROUP claims it or any TAB claims it directly —
+    /// the two ways to be in a project, and the reason this cannot just look at
+    /// tabs.
+    fn prune_projects(&mut self) {
+        let mut live: std::collections::HashSet<u32> =
+            self.groups.iter().filter_map(|g| g.project).collect();
+        live.extend(self.tabs.iter().filter_map(|t| t.project));
+        self.projects.retain(|p| live.contains(&p.id));
+    }
+
+    /// Everything under a branch, as indices into `self.tabs`, ascending.
+    fn tabs_under(&self, branch: BarBranch) -> Vec<usize> {
+        (0..self.tabs.len())
+            .filter(|&i| {
+                let place = self.place_of(i);
+                match branch {
+                    BarBranch::Project(id) => place.project == Some(id),
+                    BarBranch::Initiative(id) => place.initiative == Some(id),
+                    BarBranch::Unfiled => place.unfiled(),
+                }
+            })
+            .collect()
+    }
+
+    /// How many tabs and how many panes a delete would take.
+    ///
+    /// The numbers the menu line and the confirmation both quote. Computed in
+    /// one place so the sentence a person reads and the thing that happens can
+    /// never disagree about the size of it.
+    fn branch_weight(&self, branch: BarBranch) -> (usize, usize) {
+        let tabs = self.tabs_under(branch);
+        let panes = tabs.iter().map(|&i| self.tab_pane_count(i)).sum();
+        (tabs.len(), panes)
+    }
+
+    /// Delete a branch and everything under it, keeping it recoverable.
+    ///
+    /// The shells are NOT ended. The tabs move into [`Self::trash`], which is
+    /// the only thing still referencing their panes, and they keep running
+    /// there until somebody recovers them or the holding runs out of time. The
+    /// eviction and expiry payloads come back from the trash so they are
+    /// dropped HERE, at a call site that knows what dropping one means, rather
+    /// than inside a container that would be quietly ending processes.
+    ///
+    /// Returns false when there was nothing to delete, so a caller can leave
+    /// the menu open rather than flashing it shut over a no-op.
+    fn delete_branch(
+        &mut self,
+        branch: BarBranch,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let (kind, label) = match branch {
+            BarBranch::Project(id) => (
+                hold::Kind::Project,
+                self.project_at(id).map(|p| p.label()).unwrap_or_default(),
+            ),
+            BarBranch::Initiative(id) => (
+                hold::Kind::Initiative,
+                self.groups
+                    .iter()
+                    .find(|g| g.id == id)
+                    .map(|g| g.label())
+                    .unwrap_or_default(),
+            ),
+            // The loose bucket is not a branch. There is nothing to name, and
+            // "delete everything unfiled" is not a gesture anybody asked for.
+            BarBranch::Unfiled => return false,
+        };
+
+        let doomed = self.tabs_under(branch);
+        let panes: usize = doomed.iter().map(|&i| self.tab_pane_count(i)).sum();
+
+        // Deleting the last branch would leave a window with no tabs, which is
+        // how this application quits. Losing the whole session to a delete
+        // gesture is not a recoverable mistake, whatever the trash says.
+        if doomed.len() == self.tabs.len() && !doomed.is_empty() {
+            return false;
+        }
+
+        let held_active = doomed.iter().position(|&i| i == self.active);
+
+        // Lift the tabs out back-to-front so each removal cannot shift an index
+        // still to be used, then restore ascending order for the payload.
+        let mut taken: Vec<(usize, Tab)> = doomed
+            .iter()
+            .rev()
+            .map(|&i| (i, self.tabs.remove(i)))
+            .collect();
+        taken.reverse();
+
+        let groups: Vec<TabGroup> = match branch {
+            BarBranch::Project(id) => {
+                let mine: Vec<TabGroup> = self
+                    .groups
+                    .iter()
+                    .filter(|g| g.project == Some(id))
+                    .cloned()
+                    .collect();
+                self.groups.retain(|g| g.project != Some(id));
+                mine
+            }
+            BarBranch::Initiative(id) => {
+                let mine: Vec<TabGroup> =
+                    self.groups.iter().filter(|g| g.id == id).cloned().collect();
+                self.groups.retain(|g| g.id != id);
+                mine
+            }
+            BarBranch::Unfiled => vec![],
+        };
+        let project = match branch {
+            BarBranch::Project(id) => {
+                let p = self.project_at(id).cloned();
+                self.projects.retain(|q| q.id != id);
+                p
+            }
+            _ => None,
+        };
+
+        let (_, evicted) = self.trash.take(
+            kind,
+            label,
+            taken.len(),
+            panes,
+            Deleted {
+                tabs: taken,
+                groups,
+                project,
+                held_active,
+            },
+            Instant::now(),
+        );
+        // Here, deliberately: this is where shells end.
+        self.end_held(evicted, cx);
+
+        // A delete can strand the scope on a branch that no longer exists, and
+        // a strip scoped to nothing draws nothing.
+        let gone = match branch {
+            BarBranch::Project(id) => self.scope == tree::Scope::Project(id),
+            BarBranch::Initiative(id) => self.scope == tree::Scope::Initiative(id),
+            BarBranch::Unfiled => false,
+        };
+        if gone {
+            self.scope = tree::Scope::All;
+        }
+
+        self.prune_groups();
+        self.prune_projects();
+        self.active = tree::active_after_removal(self.active, &doomed, self.tabs.len());
+        self.permit_shrink.set(true);
+        self.focus_active(window, cx);
+        self.save(cx);
+        cx.notify();
+        true
+    }
+
+    /// Take one tab into the bay, keeping it recoverable.
+    ///
+    /// The single-tab shape of [`Self::delete_branch`], and it shares the
+    /// reasons: the tab is lifted rather than dropped, so its shells go on
+    /// running, and the eviction payload comes back here to be let go of.
+    ///
+    /// No confirmation. A tab is one thing, a drag into the bay is deliberate,
+    /// and the holding is an hour long — asking about it would be the
+    /// confirmation habit rather than a real question. Parker's rule for the
+    /// confirmations that do exist was that they guard somebody else's work,
+    /// and one tab you just dragged is in your hand.
+    fn trash_tab(&mut self, i: usize, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        if i >= self.tabs.len() || self.tabs.len() <= 1 {
+            // The last tab is the window. Losing a session to a drag is not
+            // something four hours of recovery makes acceptable.
+            return false;
+        }
+        let panes = self.tab_pane_count(i);
+        let label = self
+            .tabs
+            .get(i)
+            .and_then(|t| t.name.clone())
+            .unwrap_or_else(|| format!("tab {}", i + 1));
+        let was_active = self.active == i;
+        let tab = self.tabs.remove(i);
+
+        let (_, evicted) = self.trash.take(
+            hold::Kind::Task,
+            label,
+            1,
+            panes,
+            Deleted {
+                tabs: vec![(i, tab)],
+                groups: vec![],
+                project: None,
+                held_active: was_active.then_some(0),
+            },
+            Instant::now(),
+        );
+        self.end_held(evicted, cx);
+
+        self.prune_groups();
+        self.prune_projects();
+        self.active = tree::active_after_removal(self.active, &[i], self.tabs.len());
+        self.permit_shrink.set(true);
+        self.focus_active(window, cx);
+        self.save(cx);
+        cx.notify();
+        true
+    }
+
+    /// Put a holding back where it came from.
+    ///
+    /// The project and groups go back first so the tabs have something to hang
+    /// from — restoring tabs into a project that no longer exists would file
+    /// them against a dead id, which `place_of` resolves to unfiled, and the
+    /// branch would come back as a pile of loose tabs.
+    fn recover_holding(&mut self, id: u64, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        let hold::Recovered::Ok(h) = self.trash.recover(id, Instant::now()) else {
+            // Expired or unknown. Both mean the offer is stale; the tray is
+            // rebuilt from the trash every frame, so it will already be gone.
+            cx.notify();
+            return false;
+        };
+        let Deleted {
+            tabs,
+            groups,
+            project,
+            held_active,
+        } = h.payload;
+
+        if let Some(p) = project {
+            if !self.projects.iter().any(|q| q.id == p.id) {
+                self.next_project_id = self.next_project_id.max(p.id + 1);
+                self.projects.push(p);
+            }
+        }
+        for g in groups {
+            if !self.groups.iter().any(|x| x.id == g.id) {
+                self.next_group_id = self.next_group_id.max(g.id + 1);
+                self.groups.push(g);
+            }
+        }
+
+        // Seat them at their old indices where those still exist, clamped, and
+        // keep the run contiguous: each tab after the first goes immediately
+        // after the one before it, so a branch comes back as one run however
+        // much the tab list moved underneath it.
+        let mut landed: Vec<usize> = Vec::with_capacity(tabs.len());
+        let mut at = tabs.first().map(|(i, _)| *i).unwrap_or(self.tabs.len());
+        for (_, tab) in tabs {
+            at = at.min(self.tabs.len());
+            self.tabs.insert(at, tab);
+            landed.push(at);
+            at += 1;
+        }
+
+        if let Some(k) = held_active.and_then(|k| landed.get(k).copied()) {
+            self.activate_tab(k, window, cx);
+        } else if let Some(&first) = landed.first() {
+            self.activate_tab(first, window, cx);
+        }
+
+        self.save(cx);
+        cx.notify();
+        true
+    }
+
+    /// Let go of held tabs, which ends their shells.
+    ///
+    /// One function so every place that destroys a holding reads the same and
+    /// so the hosted case has a single site to grow into: without a host the
+    /// drop is the whole story, and with one the host is told as well. Today
+    /// [`Self::hangup`] returns immediately when there is no host, so calling
+    /// it here is correct in both modes and does nothing in the one you are
+    /// probably running.
+    fn end_held(&self, held: Vec<Deleted>, cx: &mut Context<Self>) {
+        for d in &held {
+            let mut leaves = vec![];
+            for (_, tab) in &d.tabs {
+                tab.root.leaves(&mut leaves);
+            }
+            let leaves: Vec<_> = leaves.into_iter().cloned().collect();
+            self.hangup(&leaves, cx);
+        }
+        drop(held);
+    }
+
+    /// The chrome every "this ends something" modal wears.
+    ///
+    /// A solid danger banner over a dark body, framed against the outer bar.
+    /// Shared rather than copied because the two dialogs that use it — closing a
+    /// tab, deleting a branch — make the same promise to a person, and a promise
+    /// worded and coloured two different ways is two promises.
+    #[allow(clippy::too_many_arguments)]
+    fn danger_panel(
+        sk: &skin::Skin,
+        th: &theme::Theme,
+        title: &str,
+        body: String,
+        hint: &str,
+        cancel_btn: gpui::Div,
+        confirm_btn: gpui::Div,
+        cx: &mut Context<Self>,
+    ) -> gpui::Div {
+        let danger = hsla(0., 0.72, 0.60, 1.);
+        div()
+            .w(px(400.))
+            .rounded(sk.rad_raw(8.))
+            .overflow_hidden()
+            .border_2()
+            .border_color(danger.alpha(0.9))
+            .bg(darken(th.surface, 0.62))
+            .shadow(float_shadows(danger))
+            .text_color(th.text)
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|_, _: &MouseDownEvent, _w, cx| cx.stop_propagation()),
+            )
+            .child(
+                div()
+                    .w_full()
+                    .px_4()
+                    .py_2()
+                    .bg(danger.alpha(0.18))
+                    .border_b_1()
+                    .border_color(danger.alpha(0.55))
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_2()
+                    .child(div().text_size(px(18.)).child("\u{26a0}"))
+                    .child(
+                        div()
+                            .text_size(px(15.))
+                            .font_weight(gpui::FontWeight::EXTRA_BOLD)
+                            .text_color(danger)
+                            .child(SharedString::from(title.to_string())),
+                    ),
+            )
+            .child(
+                div()
+                    .p_4()
+                    .flex()
+                    .flex_col()
+                    .gap_3()
+                    .child(
+                        div()
+                            .text_size(px(12.))
+                            .text_color(th.text.alpha(0.85))
+                            .child(body),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .justify_between()
+                            .child(
+                                div()
+                                    .text_size(px(10.))
+                                    .text_color(th.text.alpha(0.45))
+                                    .child(SharedString::from(hint.to_string())),
+                            )
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_row()
+                                    .gap_2()
+                                    .child(cancel_btn)
+                                    .child(confirm_btn),
+                            ),
+                    ),
+            )
+    }
+
+    /// Open a left-bar context menu at `at`.
+    fn open_bar_menu(&mut self, which: BarMenu, at: Point<Pixels>, cx: &mut Context<Self>) {
+        self.bar_menu = Some((which, at));
+        self.bar_drag = None;
+        cx.notify();
+    }
+
+    /// The header's tray, also reachable by clicking the bay.
+    fn open_bar_tray(&mut self, at: Point<Pixels>, cx: &mut Context<Self>) {
+        self.open_bar_menu(BarMenu::Header, at, cx);
+    }
+
+    fn close_bar_menu(&mut self, cx: &mut Context<Self>) {
+        self.bar_menu = None;
+        cx.notify();
+    }
+
+    /// One row of a left-bar menu.
+    fn bar_menu_row(
+        sk: &skin::Skin,
+        s: f32,
+        label: impl Into<SharedString>,
+        tone: MenuTone,
+    ) -> gpui::Div {
+        let danger = hsla(0., 0.72, 0.60, 1.);
+        let (ink, bg) = match tone {
+            MenuTone::Plain => (sk.ink.ink, gpui::transparent_black()),
+            MenuTone::Quiet => (sk.ink.ink_dim, gpui::transparent_black()),
+            MenuTone::Danger => (danger, danger.alpha(0.10)),
+        };
+        div()
+            .px(px(9. * s))
+            .py(px(4. * s))
+            .rounded(sk.radius())
+            .text_size(px(11.5 * s))
+            .text_color(ink)
+            .bg(bg)
+            .when(!matches!(tone, MenuTone::Quiet), |d| {
+                d.cursor_pointer().hover(move |st| {
+                    st.bg(if matches!(tone, MenuTone::Danger) {
+                        danger.alpha(0.24)
+                    } else {
+                        sk.ink.ink.alpha(0.10)
+                    })
+                })
+            })
+            .child(label.into())
+    }
+
+    fn bar_menu_rule(th: &theme::Theme, s: f32) -> gpui::Div {
+        div()
+            .h(px(1.))
+            .my(px(3. * s))
+            .mx(px(4. * s))
+            .bg(th.faint.alpha(0.28))
+    }
+
+    /// The open context menu, if any.
+    ///
+    /// Every destructive line states its own weight — "Delete — 4 tabs, 6
+    /// panes" — computed from the same [`Self::branch_weight`] the confirmation
+    /// reads, so the number you press and the number you are asked about are
+    /// one number.
+    fn render_bar_menu(
+        &self,
+        th: &theme::Theme,
+        s: f32,
+        cx: &mut Context<Self>,
+    ) -> Option<gpui::Div> {
+        let (which, at) = self.bar_menu?;
+        let sk = skin::skin(cx, s);
+        let now = Instant::now();
+
+        let mut items = div()
+            .flex()
+            .flex_col()
+            .gap(px(1. * s))
+            .p(px(4. * s))
+            .min_w(px(176. * s));
+
+        match which {
+            BarMenu::Header => {
+                items = items
+                    .child(
+                        Self::bar_menu_row(&sk, s, "New project", MenuTone::Plain).on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|ws, _: &MouseDownEvent, window, cx| {
+                                cx.stop_propagation();
+                                ws.bar_menu = None;
+                                ws.new_project_with_terminal(window, cx);
+                            }),
+                        ),
+                    )
+                    .child(
+                        Self::bar_menu_row(&sk, s, "New group", MenuTone::Plain).on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|ws, _: &MouseDownEvent, window, cx| {
+                                cx.stop_propagation();
+                                ws.bar_menu = None;
+                                ws.new_group_with_terminal(None, window, cx);
+                            }),
+                        ),
+                    )
+                    .child(
+                        Self::bar_menu_row(
+                            &sk,
+                            s,
+                            "Adopt loose tabs into their directories",
+                            MenuTone::Plain,
+                        )
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                                cx.stop_propagation();
+                                ws.bar_menu = None;
+                                ws.adopt_projects_from_dirs(cx);
+                            }),
+                        ),
+                    );
+
+                // Only what is still real. A holding past its window is never
+                // offered, which is the whole reason the tray reads the trash
+                // live instead of keeping a list of its own.
+                let live: Vec<(u64, String, String)> = self
+                    .trash
+                    .live_items(now)
+                    .map(|h| {
+                        (
+                            h.id,
+                            format!("Recover \u{201c}{}\u{201d}", h.label),
+                            h.left(now).map(hold::remaining_label).unwrap_or_default(),
+                        )
+                    })
+                    .collect();
+
+                if live.is_empty() {
+                    items = items
+                        .child(Self::bar_menu_rule(th, s))
+                        .child(Self::bar_menu_row(
+                            &sk,
+                            s,
+                            "Nothing to recover",
+                            MenuTone::Quiet,
+                        ));
+                } else {
+                    items = items.child(Self::bar_menu_rule(th, s));
+                    for (id, label, left) in live {
+                        items = items.child(
+                            Self::bar_menu_row(
+                                &sk,
+                                s,
+                                SharedString::from(format!("{label} \u{2014} {left}")),
+                                MenuTone::Plain,
+                            )
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
+                                    cx.stop_propagation();
+                                    ws.bar_menu = None;
+                                    ws.recover_holding(id, window, cx);
+                                }),
+                            ),
+                        );
+                    }
+                    items = items.child(
+                        Self::bar_menu_row(&sk, s, "Empty the trash", MenuTone::Danger)
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                                    cx.stop_propagation();
+                                    ws.bar_menu = None;
+                                    let all = ws.trash.empty();
+                                    ws.end_held(all, cx);
+                                    cx.notify();
+                                }),
+                            ),
+                    );
+                }
+            }
+
+            BarMenu::Project(id) => {
+                let branch = BarBranch::Project(id);
+                let (tabs, panes) = self.branch_weight(branch);
+                let groups = self.groups.iter().filter(|g| g.project == Some(id)).count();
+                items = items
+                    .child(
+                        Self::bar_menu_row(&sk, s, "New tab here", MenuTone::Plain).on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
+                                cx.stop_propagation();
+                                ws.bar_menu = None;
+                                ws.new_tab_in(
+                                    tree::Place {
+                                        project: Some(id),
+                                        initiative: None,
+                                    },
+                                    window,
+                                    cx,
+                                );
+                            }),
+                        ),
+                    )
+                    .child(
+                        Self::bar_menu_row(&sk, s, "New group here", MenuTone::Plain)
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
+                                    cx.stop_propagation();
+                                    ws.bar_menu = None;
+                                    ws.new_group_with_terminal(Some(id), window, cx);
+                                }),
+                            ),
+                    )
+                    .child(Self::bar_menu_rule(th, s))
+                    .child(
+                        Self::bar_menu_row(&sk, s, "Rename", MenuTone::Plain).on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
+                                cx.stop_propagation();
+                                ws.bar_menu = None;
+                                ws.start_bar_rename(BarBranch::Project(id), window, cx);
+                            }),
+                        ),
+                    )
+                    .child(
+                        Self::bar_menu_row(&sk, s, "Fold everything beneath", MenuTone::Plain)
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                                    cx.stop_propagation();
+                                    ws.bar_menu = None;
+                                    ws.fold_beneath(id, cx);
+                                }),
+                            ),
+                    )
+                    .child(Self::bar_menu_rule(th, s))
+                    .child(
+                        Self::bar_menu_row(
+                            &sk,
+                            s,
+                            SharedString::from(Self::delete_label(Some(groups), tabs, panes)),
+                            // Drawn inert when this branch is the whole session:
+                            // the bar will refuse it, and a live-looking row
+                            // that refuses is how people learn to distrust the
+                            // rest of the menu.
+                            if self.would_empty_window(branch) {
+                                MenuTone::Quiet
+                            } else {
+                                MenuTone::Danger
+                            },
+                        )
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
+                                cx.stop_propagation();
+                                ws.bar_menu = None;
+                                ws.ask_delete(BarBranch::Project(id), window, cx);
+                            }),
+                        ),
+                    );
+            }
+
+            BarMenu::Initiative(id) => {
+                let (tabs, panes) = self.branch_weight(BarBranch::Initiative(id));
+                items = items
+                    .child(
+                        Self::bar_menu_row(&sk, s, "New tab here", MenuTone::Plain).on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
+                                cx.stop_propagation();
+                                ws.bar_menu = None;
+                                ws.new_tab_in(
+                                    tree::Place {
+                                        project: None,
+                                        initiative: Some(id),
+                                    },
+                                    window,
+                                    cx,
+                                );
+                            }),
+                        ),
+                    )
+                    .child(Self::bar_menu_rule(th, s))
+                    .child(
+                        Self::bar_menu_row(&sk, s, "Rename", MenuTone::Plain).on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
+                                cx.stop_propagation();
+                                ws.bar_menu = None;
+                                ws.start_bar_rename(BarBranch::Initiative(id), window, cx);
+                            }),
+                        ),
+                    )
+                    .child(
+                        Self::bar_menu_row(&sk, s, "Colour\u{2026}", MenuTone::Plain)
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |ws, ev: &MouseDownEvent, _w, cx| {
+                                    cx.stop_propagation();
+                                    ws.bar_menu = None;
+                                    ws.open_group_menu(id, ev.position, cx);
+                                }),
+                            ),
+                    )
+                    .child(Self::bar_menu_rule(th, s))
+                    .child(
+                        Self::bar_menu_row(
+                            &sk,
+                            s,
+                            SharedString::from(Self::delete_label(None, tabs, panes)),
+                            if self.would_empty_window(BarBranch::Initiative(id)) {
+                                MenuTone::Quiet
+                            } else {
+                                MenuTone::Danger
+                            },
+                        )
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
+                                cx.stop_propagation();
+                                ws.bar_menu = None;
+                                ws.ask_delete(BarBranch::Initiative(id), window, cx);
+                            }),
+                        ),
+                    );
+            }
+
+            BarMenu::Task(i) => {
+                let panes = self.tab_pane_count(i);
+                let grouped = self.tabs.get(i).is_some_and(|t| t.group.is_some());
+                items = items
+                    .child(
+                        Self::bar_menu_row(&sk, s, "New tab beside this", MenuTone::Plain)
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
+                                    cx.stop_propagation();
+                                    ws.bar_menu = None;
+                                    ws.new_tab_in(ws.place_of(i), window, cx);
+                                }),
+                            ),
+                    )
+                    .child(
+                        Self::bar_menu_row(&sk, s, "Rename", MenuTone::Plain).on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
+                                cx.stop_propagation();
+                                ws.bar_menu = None;
+                                ws.start_tab_rename(i, window, cx);
+                            }),
+                        ),
+                    )
+                    .child(
+                        Self::bar_menu_row(
+                            &sk,
+                            s,
+                            "Remove from group",
+                            if grouped {
+                                MenuTone::Plain
+                            } else {
+                                MenuTone::Quiet
+                            },
+                        )
+                        .when(grouped, |d| {
+                            d.on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                                    cx.stop_propagation();
+                                    ws.bar_menu = None;
+                                    ws.remove_from_group(i, cx);
+                                }),
+                            )
+                        }),
+                    )
+                    .child(
+                        Self::bar_menu_row(
+                            &sk,
+                            s,
+                            SharedString::from(if panes <= 1 {
+                                "Close".to_string()
+                            } else {
+                                format!("Close \u{2014} {panes} panes")
+                            }),
+                            MenuTone::Danger,
+                        )
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
+                                cx.stop_propagation();
+                                ws.bar_menu = None;
+                                ws.ask_close_tab(i, window, cx);
+                            }),
+                        ),
+                    );
+            }
+        }
+
+        // A scrim that eats the click that dismisses, so closing the menu never
+        // also presses whatever was underneath it.
+        Some(
+            div()
+                .absolute()
+                .inset_0()
+                .occlude()
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                        cx.stop_propagation();
+                        ws.close_bar_menu(cx);
+                    }),
+                )
+                .on_mouse_down(
+                    MouseButton::Right,
+                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                        cx.stop_propagation();
+                        ws.close_bar_menu(cx);
+                    }),
+                )
+                .child(
+                    sk.panel()
+                        .absolute()
+                        .left(at.x)
+                        .top(at.y)
+                        .shadow_lg()
+                        .child(items),
+                ),
+        )
+    }
+
+    /// "Delete — 3 groups, 11 tabs, 14 panes", with the parts that are zero
+    /// left out.
+    ///
+    /// A line that says "0 groups" is a line that makes somebody stop and work
+    /// out whether that matters.
+    fn delete_label(groups: Option<usize>, tabs: usize, panes: usize) -> String {
+        let mut parts: Vec<String> = Vec::new();
+        if let Some(g) = groups.filter(|g| *g > 0) {
+            parts.push(format!("{g} group{}", if g == 1 { "" } else { "s" }));
+        }
+        if tabs > 0 {
+            parts.push(format!("{tabs} tab{}", if tabs == 1 { "" } else { "s" }));
+        }
+        if panes > 0 {
+            parts.push(format!("{panes} pane{}", if panes == 1 { "" } else { "s" }));
+        }
+        if parts.is_empty() {
+            "Delete".to_string()
+        } else {
+            format!("Delete \u{2014} {}", parts.join(", "))
+        }
+    }
+
+    /// Would deleting this branch leave the window with no tabs at all?
+    ///
+    /// Deleting the last tab is how this application quits, so a branch holding
+    /// every tab in the session is one the bar refuses. Asked ahead of the
+    /// confirmation rather than only inside the delete, because a dialog that
+    /// promises to remove eleven tabs and then does nothing is worse than no
+    /// dialog — it teaches people their confirmations are decorative.
+    fn would_empty_window(&self, branch: BarBranch) -> bool {
+        let n = self.tabs_under(branch).len();
+        n > 0 && n == self.tabs.len()
+    }
+
+    /// Ask before deleting a branch that holds anything; just do it when empty.
+    fn ask_delete(&mut self, branch: BarBranch, window: &mut Window, cx: &mut Context<Self>) {
+        if self.would_empty_window(branch) {
+            return;
+        }
+        let (tabs, _) = self.branch_weight(branch);
+        if tabs == 0 {
+            self.delete_branch(branch, window, cx);
+        } else {
+            self.confirm_delete = Some(branch);
+            cx.notify();
+        }
+    }
+
+    /// Close a tab, asking first when it holds more than one shell — the rule
+    /// the strip's own close button already follows.
+    fn ask_close_tab(&mut self, i: usize, window: &mut Window, cx: &mut Context<Self>) {
+        if self.tab_pane_count(i) <= 1 {
+            self.close_tab(i, window, cx);
+        } else {
+            self.confirm_close = Some(i);
+            cx.notify();
+        }
+    }
+
+    /// Fold a project and every group under it.
+    fn fold_beneath(&mut self, id: u32, cx: &mut Context<Self>) {
+        if let Some(p) = self.projects.iter_mut().find(|p| p.id == id) {
+            p.collapsed = true;
+        }
+        for g in self.groups.iter_mut().filter(|g| g.project == Some(id)) {
+            g.collapsed = true;
+        }
+        self.save(cx);
+        cx.notify();
+    }
+
+    /// A project born holding a terminal of its own, and landed in.
+    ///
+    /// Generate, then go there. It does NOT open the rename box: a gesture that
+    /// grabs the keyboard decides for you that naming the thing is the next
+    /// move, when most of the time the next move is using the terminal it just
+    /// gave you. It opens as `project N` and stays that way until somebody
+    /// double-clicks or right-clicks the row, which is where renaming already
+    /// lives and costs nothing to reach.
+    fn new_project_with_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) -> u32 {
+        let id = self.new_project(None, cx);
+        self.new_tab_in(
+            tree::Place {
+                project: Some(id),
+                initiative: None,
+            },
+            window,
+            cx,
+        );
+        id
+    }
+
+    /// The same thing one layer down: a group holding a fresh terminal,
+    /// optionally inside a project.
+    fn new_group_with_terminal(
+        &mut self,
+        project: Option<u32>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> u32 {
+        let id = self.next_group_id;
+        self.next_group_id += 1;
+        self.groups.push(TabGroup {
+            id,
+            name: None,
+            color: hsla(0.47, 0.5, 0.5, 1.0),
+            text_color: None,
+            collapsed: false,
+            project,
+        });
+        // The terminal comes before the rename for the same reason it does one
+        // layer up — and before anything prunes, because a group with no tabs
+        // is exactly what `prune_groups` exists to remove.
+        self.new_tab_in(
+            tree::Place {
+                project: None,
+                initiative: Some(id),
+            },
+            window,
+            cx,
+        );
+        id
+    }
+
+    /// Is this point inside the bay at the foot of the bar?
+    fn point_in_bay(&self, p: Point<Pixels>) -> bool {
+        self.bay_bounds
+            .lock()
+            .unwrap()
+            .map(|b| b.contains(&p))
+            .unwrap_or(false)
+    }
+
+    /// How far open the doors should be right now.
+    ///
+    /// Shut when nothing is being dragged; ajar the moment a drag engages, so
+    /// the bay announces itself without being aimed at; wide when the cursor is
+    /// actually over it. Three states rather than two, because "there is a
+    /// place to drop this" and "you are about to drop it here" are different
+    /// things to tell somebody, and a door that only opens on hover is a door
+    /// nobody discovers.
+    fn bay_target(&self) -> f32 {
+        match self.bar_drag.as_ref().filter(|d| d.engaged) {
+            Some(d) if d.over_bay => 1.0,
+            Some(_) => 0.34,
+            None => 0.0,
+        }
+    }
+
+    /// Ease the doors toward where they should be, and say whether they moved.
+    ///
+    /// Returns true while still travelling, which the render pass turns into
+    /// another frame. Easing toward a target rather than storing one means a
+    /// drag that leaves mid-open closes from wherever it got to instead of
+    /// snapping shut — the difference between a door and a light switch.
+    fn ease_bay(&mut self) -> bool {
+        let want = self.bay_target();
+        let d = want - self.bay;
+        if d.abs() < 0.004 {
+            self.bay = want;
+            return false;
+        }
+        self.bay += d * 0.28;
+        true
+    }
+
+    /// A drag was released over the bay.
+    ///
+    /// A branch holding anything asks first. Parker's rule, and the same one
+    /// closing a tab already follows: a gesture that ends other people's work
+    /// says what it is about to take. An EMPTY branch skips the question —
+    /// there is nothing to lose and nothing to read.
+    fn drop_in_bay(&mut self, what: BarDragged, window: &mut Window, cx: &mut Context<Self>) {
+        let branch = match what {
+            BarDragged::Project(id) => BarBranch::Project(id),
+            BarDragged::Initiative(id) => BarBranch::Initiative(id),
+            // A tab dropped in the bay is held like anything else dropped
+            // there. It does NOT become a close: the ✕ and ctrl+w keep today's
+            // immediate meaning, which the client-server plan is explicit about
+            // until the reopen key lands. What the bay means is recoverable, and
+            // one gesture meaning recoverable-here and permanent-there would be
+            // the confusing half of both.
+            BarDragged::Task(i) => {
+                self.trash_tab(i, window, cx);
+                return;
+            }
+        };
+        if self.would_empty_window(branch) {
+            cx.notify();
+            return;
+        }
+        let (tabs, _) = self.branch_weight(branch);
+        if tabs == 0 {
+            self.delete_branch(branch, window, cx);
+        } else {
+            self.confirm_delete = Some(branch);
+            cx.notify();
+        }
+    }
+
+    /// Let go of anything whose window has run out.
+    ///
+    /// Called from the render pass, which is the only clock this workspace has.
+    /// That makes expiry lazy — a holding dies the next time a frame is drawn
+    /// after its deadline rather than on the second — and lazy is the right
+    /// shape here: nothing observes a holding except the tray, which is drawn
+    /// in that same pass, so it can never offer one that this sweep would have
+    /// taken.
+    fn sweep_trash(&mut self, cx: &mut Context<Self>) {
+        let dead = self.trash.sweep(Instant::now());
+        if !dead.is_empty() {
+            self.end_held(dead, cx);
+        }
+    }
+
     /// Start a fresh single-member group from tab `i`, seeded with its current
     /// fill (or a default teal). Switches the pane's wheel to the Group scope.
     fn new_group_from(&mut self, i: usize, cx: &mut Context<Self>) {
@@ -6689,7 +7874,7 @@ impl Workspace {
                 .iter()
                 .find(|g| g.id == gid)
                 .map(|g| g.label())
-                .unwrap_or_else(|| format!("initiative {gid}")),
+                .unwrap_or_else(|| unnamed_group(gid)),
             BarBranch::Unfiled => "unfiled".into(),
         }
     }
@@ -9451,6 +10636,8 @@ impl Workspace {
             || self.bar_rename.is_some()
             || self.group_rename.is_some()
             || self.confirm_close.is_some()
+            || self.confirm_delete.is_some()
+            || self.bar_menu.is_some()
             || self.theme_menu.is_some()
             || self.osd_menu.is_some()
             || self.tab_menu.is_some()
@@ -9603,6 +10790,8 @@ impl Workspace {
         }
         // Standalone modals (only one is ever open at a time; order is moot).
         if self.confirm_close.take().is_some()
+            || self.confirm_delete.take().is_some()
+            || self.bar_menu.take().is_some()
             || self.find.take().is_some()
             || self.lang_picker.take().is_some()
             || self.logo_picker.take().is_some()
@@ -9897,6 +11086,31 @@ impl Workspace {
             cx.notify();
             return;
         }
+        // A left-bar menu is dismissed by Esc like every other overlay, and by
+        // nothing else — a menu that ate arrow keys would be claiming a
+        // navigation model it does not have.
+        if self.bar_menu.is_some() && ks.key.as_str() == "escape" {
+            self.close_bar_menu(cx);
+            return;
+        }
+        // The delete confirmation, on the same terms as the close one below it.
+        // Both are serious and both are fully keyboard-drivable, because a
+        // dialog you can only answer with the mouse is one people answer without
+        // reading.
+        if let Some(branch) = self.confirm_delete {
+            match ks.key.as_str() {
+                "escape" => {
+                    self.confirm_delete = None;
+                    cx.notify();
+                }
+                "enter" => {
+                    self.confirm_delete = None;
+                    self.delete_branch(branch, window, cx);
+                }
+                _ => {}
+            }
+            return;
+        }
         // The close-tab confirmation owns the keyboard while up: Esc cancels,
         // Enter confirms (so the serious dialog is fully keyboard-drivable).
         if let Some(i) = self.confirm_close {
@@ -10088,6 +11302,7 @@ impl Workspace {
             }
             let pos = ev.position;
             let over = self.resolve_bar_drop(pos);
+            let in_bay = self.point_in_bay(pos);
             if let Some(d) = self.bar_drag.as_mut() {
                 d.at = pos;
                 if !d.engaged {
@@ -10097,7 +11312,12 @@ impl Workspace {
                         d.engaged = true;
                     }
                 }
-                d.over = d.engaged.then_some(over).flatten();
+                d.over_bay = d.engaged && in_bay;
+                // The bay wins outright. A tree row drawn under the open doors
+                // would otherwise leave one gesture meaning two things, and the
+                // one it would silently pick is the one that does not delete —
+                // so a deliberate drop into the bay would quietly file instead.
+                d.over = (d.engaged && !in_bay).then_some(over).flatten();
             }
             cx.notify();
             return;
@@ -10366,6 +11586,12 @@ impl Workspace {
         // cursor. A drag that never engaged was a click, and the click has
         // already done its work (activate / scope) on the way down.
         if let Some(drag) = self.bar_drag.take() {
+            self.bay = 0.;
+            if drag.engaged && drag.over_bay {
+                self.drop_in_bay(drag.what, window, cx);
+                cx.notify();
+                return;
+            }
             if drag.engaged {
                 if let Some(drop) = drag.over {
                     if self.apply_bar_drop(drag.what, drop, cx) {
@@ -11725,9 +12951,7 @@ impl Workspace {
             } => {
                 let g = self.groups.iter().find(|g| g.id == id);
                 let color = g.map(|g| g.color).unwrap_or(th.faint);
-                let label = g
-                    .map(|g| g.label())
-                    .unwrap_or_else(|| format!("initiative {id}"));
+                let label = g.map(|g| g.label()).unwrap_or_else(|| unnamed_group(id));
                 self.branch_row(
                     BarBranch::Initiative(id),
                     depth,
@@ -11896,8 +13120,8 @@ impl Workspace {
             .child(
                 div()
                     .id(SharedString::from(format!("bar-fold-{key}")))
-                    .w(px(15. * s))
-                    .h(px(15. * s))
+                    .w(px(FOLD_W * s))
+                    .h(px(FOLD_W * s))
                     .flex()
                     .flex_row()
                     .items_center()
@@ -11972,10 +13196,19 @@ impl Workspace {
             )
             .on_mouse_down(
                 MouseButton::Right,
-                cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
-                    // right-click → write over the branch name in place
+                cx.listener(move |ws, ev: &MouseDownEvent, _w, cx| {
+                    // right-click → this branch's own menu. Rename moved to
+                    // double-click, which already did it, so the gesture that
+                    // used to live here is not lost — it is the one people
+                    // reach for anyway, and right-click is now where a layer
+                    // says what it can do that the other layer cannot.
                     cx.stop_propagation();
-                    ws.start_bar_rename(branch, window, cx);
+                    let which = match branch {
+                        BarBranch::Project(id) => BarMenu::Project(id),
+                        BarBranch::Initiative(id) => BarMenu::Initiative(id),
+                        BarBranch::Unfiled => return,
+                    };
+                    ws.open_bar_menu(which, ev.position, cx);
                 }),
             )
             .on_mouse_down(
@@ -12004,6 +13237,7 @@ impl Workspace {
                                 at: ev.position,
                                 engaged: false,
                                 over: None,
+                                over_bay: false,
                             });
                         }
                         None => {
@@ -12089,7 +13323,7 @@ impl Workspace {
         // one gesture renames a task wherever it is grabbed from
         if let Some((_, eb)) = self.renaming.as_ref().filter(|(ri, _)| *ri == i) {
             return div()
-                .pl(step * (depth as f32) + px(4. * s))
+                .pl(step * (depth as f32) + px(4. * s) + px(FOLD_W * s))
                 .pr(px(4. * s))
                 .py(px(1. * s))
                 .child(
@@ -12121,7 +13355,11 @@ impl Workspace {
                 .id(SharedString::from(format!("bar-task-{i}")))
                 .group(grp.clone())
                 .relative()
-                .pl(step * (depth as f32) + px(4. * s))
+                // Plus the fold's width: a task has no disclosure triangle, and
+                // without clearing the one its PARENT wears it starts four
+                // pixels LEFT of the branch label it hangs from. Two levels of
+                // tree that do not read as two levels — see `FOLD_W`.
+                .pl(step * (depth as f32) + px(4. * s) + px(FOLD_W * s))
                 .pr(px(5. * s))
                 .py(px(2. * s))
                 .flex()
@@ -12231,11 +13469,12 @@ impl Workspace {
         .children(caret)
         .on_mouse_down(
             MouseButton::Right,
-            cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
-                // right-click writes over the name, the same as on the tab
-                // itself — one task, two geometries, one gesture.
+            cx.listener(move |ws, ev: &MouseDownEvent, _w, cx| {
+                // right-click opens this task's menu. Rename is still one
+                // gesture in both geometries — it is double-click now, on the
+                // row and on the tab button alike.
                 cx.stop_propagation();
-                ws.start_tab_rename(i, window, cx);
+                ws.open_bar_menu(BarMenu::Task(i), ev.position, cx);
             }),
         )
         .on_mouse_down(
@@ -12259,6 +13498,7 @@ impl Workspace {
                     at: ev.position,
                     engaged: false,
                     over: None,
+                    over_bay: false,
                 });
             }),
         )
@@ -12375,6 +13615,259 @@ impl Workspace {
     /// not publish has none — so the alternative to the hatch is not a pale bar
     /// but a confident empty one, which reads as "you are out" for a
     /// subscription nobody has ever collected.
+    /// The bay at the foot of the bar: two doors, and what is behind them.
+    ///
+    /// Reserved space that stays blank — until a drag engages, when the doors
+    /// part from their centre seam and the bin behind them comes into view.
+    /// Drop a branch in and it goes, with everything under it. Click it and the
+    /// tray of what is still recoverable opens.
+    ///
+    /// The doors are the affordance. A trash can that is always on screen is a
+    /// permanent invitation to an irreversible gesture sitting at the bottom of
+    /// a list people scroll; one that only exists while something is in your
+    /// hand cannot be hit by accident, and announces itself exactly when it
+    /// becomes relevant.
+    fn render_bay(
+        &self,
+        th: &theme::Theme,
+        s: f32,
+        cx: &mut Context<Self>,
+    ) -> gpui::Stateful<gpui::Div> {
+        let sk = skin::skin(cx, s);
+        let store = self.bay_bounds.clone();
+        let open = self.bay.clamp(0., 1.);
+        let held = self.trash.live_len(Instant::now());
+        let hot = self
+            .bar_drag
+            .as_ref()
+            .is_some_and(|d| d.engaged && d.over_bay);
+
+        // Half the bay's inner width, which is how far each door travels to be
+        // fully open. Derived from the bar rather than measured, because a door
+        // has to know where it is going before the frame it is drawn in.
+        let half = (self.left_bar_w * s - 12. * s).max(20.) / 2.;
+        let travel = px(open * half);
+
+        let ember = hsla(0.06, 0.95, 0.55, 1.);
+        let door = move |right: bool| {
+            div()
+                .absolute()
+                .top_0()
+                .bottom_0()
+                // A hair over half, so rounding can never leave a lit seam
+                // between two shut doors. They are opaque; overlapping costs
+                // nothing.
+                .w(px(half + 1.))
+                .when(!right, |d| d.left(-travel))
+                .when(right, |d| d.right(-travel))
+                // OPAQUE, and the whole point of them. These were painted at
+                // 13% alpha, which is a tint rather than a material: the fire
+                // showed straight through both doors, so the bay read as a lit
+                // panel that never opened and the sliding was invisible. A door
+                // that does not occlude is not a door.
+                .bg(sk.ink.panel)
+                // The inner edge is the one that moves and the one the fire
+                // falls on, so it takes the ember as the gap widens — the doors
+                // are lit BY what is behind them.
+                .border_color(ember.alpha(0.20 + 0.60 * open))
+                .when(!right, |d| d.border_r_1())
+                .when(right, |d| d.border_l_1())
+        };
+
+        let danger = hsla(0., 0.72, 0.60, 1.);
+        // The bin is red because of what it does, not because it is hovered —
+        // it brightens toward danger when you are actually aimed at it.
+        let bin_ink = if hot {
+            danger
+        } else {
+            hsla(0.02, 0.70, 0.52, 0.92)
+        };
+
+        // The fire's breath. Two sine waves whose periods do not divide into one
+        // another, so the flicker never settles into a visible loop the way a
+        // single wave does. Cheap: one `sin` a frame, no state, no timer — the
+        // bay is already repainting while it is open.
+        let flicker = {
+            let t = anim_clock();
+            let wobble = (t * 7.3).sin() * 0.11 + (t * 2.9).sin() * 0.06;
+            (0.86 + wobble).clamp(0., 1.)
+        };
+
+        div()
+            .id("bar-bay")
+            .relative()
+            .h(px(BAY_H * s))
+            .w_full()
+            .flex_none()
+            .overflow_hidden()
+            .rounded(sk.radius())
+            // The fire throws light on the bar around it. Same phosphor shape
+            // the delete dialog wears — a crisp rim plus a soft bloom — in ember
+            // rather than danger red, and scaled by how far open the doors are,
+            // so the glow arrives WITH the fire instead of announcing it.
+            // Firelight thrown onto the bar around the bay. Three box shadows:
+            // GPU-rasterised with the element, no per-frame CPU, no extra draw
+            // pass — which is why the answer to "can we glow the surrounding
+            // surface cheaply" is yes, and why it scales with `open` for free.
+            .when(open > 0.02, |d| {
+                d.shadow(vec![
+                    // the rim itself, catching light
+                    BoxShadow {
+                        color: ember.alpha(0.55 * open),
+                        offset: point(px(0.), px(0.)),
+                        blur_radius: px(0.),
+                        spread_radius: px(1.),
+                        inset: false,
+                    },
+                    // the near bloom on the bar's ground
+                    BoxShadow {
+                        color: ember.alpha(0.45 * open),
+                        offset: point(px(0.), px(0.)),
+                        blur_radius: px(26. * open),
+                        spread_radius: px(3.),
+                        inset: false,
+                    },
+                    // and a wider, fainter wash, so the light falls off rather
+                    // than stopping at a hard edge
+                    BoxShadow {
+                        color: ember.alpha(0.22 * open),
+                        offset: point(px(0.), px(-2.)),
+                        blur_radius: px(52. * open),
+                        spread_radius: px(6.),
+                        inset: false,
+                    },
+                    // the light on the inside of the bay's own walls
+                    BoxShadow {
+                        color: ember.alpha(0.30 * open),
+                        offset: point(px(0.), px(0.)),
+                        blur_radius: px(14. * open),
+                        spread_radius: px(0.),
+                        inset: true,
+                    },
+                ])
+            })
+            // What is behind the doors. Faded in with the opening rather than
+            // switched on, so the reveal is the doors' doing.
+            //
+            // The bin sits in the bottom-right corner rather than the middle,
+            // and small. Centred and large it read as the subject of the panel —
+            // a permanent trash can you happen to be able to cover — and the
+            // centre seam drew straight through it on the way open. In the
+            // corner it is what it should be: the thing the bay contains, with
+            // the empty floor of the bay as the place you are aiming at.
+            .child(
+                div()
+                    .absolute()
+                    .inset_0()
+                    // What is behind the doors: an incinerator, not a bonfire.
+                    //
+                    // A full-bleed fire filled the bay and left nothing for the
+                    // doors to reveal that was not already the whole panel. The
+                    // bin IS the thing behind the doors; the fire belongs inside
+                    // the bin, which is also the only place it means anything —
+                    // this is where the thing you drop goes.
+                    // Everything the doors reveal is CENTRED, because the centre
+                    // is the only part they reveal until they are wide open.
+                    // The bin sat in the bottom-right corner — which was right
+                    // when the doors were a 13% tint and the whole panel showed
+                    // at once, and became invisible the moment they started
+                    // occluding: at a third open you saw a lit gap with nothing
+                    // in it. What the doors part to show has to be behind the
+                    // gap, not beside it.
+                    .child(
+                        div()
+                            .absolute()
+                            .inset_0()
+                            .flex()
+                            .flex_col()
+                            .items_center()
+                            .justify_center()
+                            .gap(px(1. * s))
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .items_center()
+                                    // The flame sits ON the bin's mouth rather
+                                    // than above it: a negative gap laps it over
+                                    // the rim, so it reads as burning IN there
+                                    // rather than as two glyphs stacked.
+                                    .gap(px(-6. * s))
+                                    .child(
+                                        div()
+                                            .text_size(px(BIN_PT * 0.78 * s))
+                                            .text_color(ember.alpha(flicker * open))
+                                            .child("\u{1F525}"),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_size(px(BIN_PT * s))
+                                            .text_color(bin_ink.alpha(bin_ink.a * open))
+                                            .child("\u{1F5D1}"),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(8. * s))
+                                    .text_color(ember.alpha(0.85 * open))
+                                    .child(SharedString::from(if hot {
+                                        "release to delete".to_string()
+                                    } else {
+                                        "drop here to delete".to_string()
+                                    })),
+                            ),
+                    ),
+            )
+            .child(door(false))
+            .child(door(true))
+            // The seam, and the only thing the shut bay ever says. A count sits
+            // on it when something is recoverable: a trash nobody can see the
+            // contents of is a trash nobody opens, and the whole point of the
+            // holding window is that somebody comes back for it.
+            .child(
+                div()
+                    .absolute()
+                    .top_0()
+                    .bottom_0()
+                    .left(px(half - 0.5))
+                    .w(px(1.))
+                    .bg(th.faint.alpha(0.42 * (1. - open))),
+            )
+            .when(held > 0 && open < 0.5, |d| {
+                d.child(
+                    div()
+                        .absolute()
+                        .inset_0()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .text_size(px(9. * s))
+                        .text_color(th.text.alpha(0.42 * (1. - open)))
+                        .child(SharedString::from(format!("{held} recoverable"))),
+                )
+            })
+            .child(
+                div().absolute().inset_0().child(
+                    canvas(
+                        move |bounds, _, _| {
+                            *store.lock().unwrap() = Some(bounds);
+                        },
+                        |_, _, _, _| {},
+                    )
+                    .size_full(),
+                ),
+            )
+            .when(held > 0, |d| {
+                d.cursor_pointer().on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|ws, ev: &MouseDownEvent, _w, cx| {
+                        cx.stop_propagation();
+                        ws.open_bar_tray(ev.position, cx);
+                    }),
+                )
+            })
+    }
+
     fn render_bar_slot(
         &self,
         th: &theme::Theme,
@@ -13142,6 +14635,17 @@ impl Workspace {
         let scoped = self.scope != tree::Scope::All;
         let header = sk
             .row()
+            // Right-click anywhere on the strip opens the tray — what you can
+            // make, and what you can still get back. The buttons keep their
+            // left-click meanings, so the fast path stays one press and the
+            // discoverable path is the gesture people already tried.
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(|ws, ev: &MouseDownEvent, _w, cx| {
+                    cx.stop_propagation();
+                    ws.open_bar_tray(ev.position, cx);
+                }),
+            )
             .child(
                 // the scope chip: what the mother bar is currently showing, and
                 // the one click back to everything. `chip` carries the whole
@@ -13193,30 +14697,28 @@ impl Workspace {
                     ),
             )
             .child(
-                // adopt: file every loose task under the project its terminal is
-                // actually sitting in
-                Self::bezel_btn_s(&sk, "\u{1F4C1}", false, s * 0.85)
-                    .id("bar-adopt")
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                            cx.stop_propagation();
-                            ws.adopt_projects_from_dirs(cx);
-                        }),
-                    ),
-            )
-            .child(
+                // The folder and the + used to sit side by side: one adopted
+                // loose tabs into projects, the other made a project. Two
+                // controls a few pixels apart, both about "project", and the
+                // folder drew itself in the inactive tone every time — a dead
+                // glyph beside a live one, which is how it read. Adopt now lives
+                // in the tray on this strip's right-click, where the rest of the
+                // making-and-filing verbs are, and the + is the one button.
                 Self::bezel_btn_s(&sk, "+", false, s * 0.85)
                     .id("bar-new-project")
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(|ws, _: &MouseDownEvent, window, cx| {
                             cx.stop_propagation();
-                            // seeded with the task you are in: a project born
-                            // holding the thing you were looking at
-                            let seed = Some(BarDragged::Task(ws.active));
-                            let id = ws.new_project(seed, cx);
-                            ws.start_bar_rename(BarBranch::Project(id), window, cx);
+                            // A new project opens holding a terminal of its own.
+                            // It used to open holding the task you were working
+                            // in, which moved that tab out of the branch it
+                            // belonged to as a side effect of asking for
+                            // somewhere new to put things — the bar reaching
+                            // into the window and taking what was on screen.
+                            // Filing an existing task into a project is a drag,
+                            // which is where the deliberate version belongs.
+                            ws.new_project_with_terminal(window, cx);
                         }),
                     ),
             )
@@ -13276,6 +14778,15 @@ impl Workspace {
                 // rails. `min_h` plus the slot's `flex_shrink` below reverses
                 // who yields when there is genuinely not enough room.
                 .child(list.min_h(px(72. * s)))
+                // The bay sits between the tree and the allowance slot: below
+                // everything you can drag, above everything you only read.
+                .child(
+                    div()
+                        .flex_none()
+                        .px(px(6. * s))
+                        .pb(px(4. * s))
+                        .child(self.render_bay(&th, s, cx)),
+                )
                 // The bottom slot, under the tree. It states its height and
                 // normally gets it exactly, so the tree yields that much and
                 // not a pixel more whatever the slot is holding — but it
@@ -13624,7 +15135,7 @@ impl Workspace {
             .iter()
             .find(|g| g.id == gid)
             .map(|g| g.label())
-            .unwrap_or_else(|| format!("initiative {gid}"));
+            .unwrap_or_else(|| unnamed_group(gid));
         let mut chip = div()
             .id(SharedString::from(format!("grp-title-{gid}")))
             .flex()
@@ -14582,6 +16093,26 @@ fn td_anchor_top_forced() -> bool {
 impl Render for Workspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.reap(window, cx);
+        // Holdings past their window, let go of here because the render pass is
+        // the only clock a workspace has — and because the tray that offers them
+        // is built further down this same pass, so it can never draw an offer
+        // this sweep would have taken.
+        self.sweep_trash(cx);
+        // The bay doors, eased toward wherever the drag says they should be —
+        // and the fire behind them.
+        //
+        // The `|| self.bay > 0.0` half is what makes the bonfire burn. gpui
+        // advances a GIF's frame during PAINT and never schedules the next one,
+        // so an animated image in a surface nobody is repainting draws once and
+        // freezes. Easing alone asks for frames only while the doors travel, so
+        // the fire ran for a third of a second and then stood still — a
+        // photograph of a fire, which is the failure that looks most like
+        // success. The bay is only ever open while a drag is in flight, so this
+        // is a bounded burst rather than a window that never sleeps.
+        let travelling = self.ease_bay();
+        if travelling || self.bay > 0.0 {
+            cx.notify();
+        }
         // Tubes still going dark. Aged out here rather than on a timer: a ghost
         // that outlives its animation would keep an overlay tube registered.
         self.ghosts
@@ -14684,6 +16215,8 @@ impl Render for Workspace {
                 || self.dead_menu
                 || self.group_menu.is_some()
                 || self.confirm_close.is_some()
+                || self.confirm_delete.is_some()
+                || self.bar_menu.is_some()
                 || self.help_open
                 || self.tab_menu.is_some()
                 || self.find.is_some()
@@ -18795,76 +20328,16 @@ impl Render for Workspace {
                     cx.notify();
                 }),
             );
-            // A serious modal, framed against the outer bar (th.surface + an accent
-            // halo): a solid danger warning banner over a dark body.
-            let panel = div()
-                .w(px(400.))
-                .rounded(sk.rad_raw(8.))
-                .overflow_hidden()
-                .border_2()
-                .border_color(danger.alpha(0.9))
-                .bg(darken(th.surface, 0.62))
-                .shadow(float_shadows(danger))
-                .text_color(th.text)
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(|_, _: &MouseDownEvent, _w, cx| cx.stop_propagation()),
-                )
-                .child(
-                    div()
-                        .w_full()
-                        .px_4()
-                        .py_2()
-                        .bg(danger.alpha(0.18))
-                        .border_b_1()
-                        .border_color(danger.alpha(0.55))
-                        .flex()
-                        .flex_row()
-                        .items_center()
-                        .gap_2()
-                        .child(div().text_size(px(18.)).child("\u{26a0}"))
-                        .child(
-                            div()
-                                .text_size(px(15.))
-                                .font_weight(gpui::FontWeight::EXTRA_BOLD)
-                                .text_color(danger)
-                                .child("CLOSE TAB?"),
-                        ),
-                )
-                .child(
-                    div()
-                        .p_4()
-                        .flex()
-                        .flex_col()
-                        .gap_3()
-                        .child(
-                            div()
-                                .text_size(px(12.))
-                                .text_color(th.text.alpha(0.85))
-                                .child(body),
-                        )
-                        .child(
-                            div()
-                                .flex()
-                                .flex_row()
-                                .items_center()
-                                .justify_between()
-                                .child(
-                                    div()
-                                        .text_size(px(10.))
-                                        .text_color(th.text.alpha(0.45))
-                                        .child("Enter to close \u{00b7} Esc to cancel"),
-                                )
-                                .child(
-                                    div()
-                                        .flex()
-                                        .flex_row()
-                                        .gap_2()
-                                        .child(cancel_btn)
-                                        .child(confirm_btn),
-                                ),
-                        ),
-                );
+            let panel = Self::danger_panel(
+                &sk,
+                &th,
+                "CLOSE TAB?",
+                body,
+                "Enter to close \u{00b7} Esc to cancel",
+                cancel_btn,
+                confirm_btn,
+                cx,
+            );
             // full-window dim scrim; click outside cancels
             Some(
                 div()
@@ -18878,6 +20351,75 @@ impl Render for Workspace {
                         MouseButton::Left,
                         cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
                             ws.confirm_close = None;
+                            cx.notify();
+                        }),
+                    )
+                    .child(panel),
+            )
+        });
+
+        // ---- deleting a branch: the same promise the close dialog makes, with
+        // the one difference that matters — this one is reversible, and says so,
+        // because a warning that overstates what it is about to do trains people
+        // to stop reading warnings.
+        let delete_overlay = self.confirm_delete.and_then(|branch| {
+            let (tabs, panes) = self.branch_weight(branch);
+            let (noun, name) = match branch {
+                BarBranch::Project(id) => ("project", self.project_at(id)?.label()),
+                BarBranch::Initiative(id) => {
+                    ("group", self.groups.iter().find(|g| g.id == id)?.label())
+                }
+                BarBranch::Unfiled => return None,
+            };
+            let window_label = hold::remaining_label(hold::window_for(panes));
+            let body = format!(
+                "Deleting the {noun} \u{201c}{name}\u{201d} takes {tabs} tab{} and {panes} pane{} \
+                 with it. The shells keep running \u{2014} it is recoverable from the trash at the \
+                 foot of the bar for {}, or until this window closes.",
+                if tabs == 1 { "" } else { "s" },
+                if panes == 1 { "" } else { "s" },
+                window_label.trim_end_matches(" left"),
+            );
+            let confirm_btn =
+                Self::bezel_btn(&sk, &format!("DELETE {}", noun.to_uppercase()), false)
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
+                            cx.stop_propagation();
+                            ws.confirm_delete = None;
+                            ws.delete_branch(branch, window, cx);
+                        }),
+                    );
+            let cancel_btn = Self::bezel_btn(&sk, "CANCEL", false).on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                    cx.stop_propagation();
+                    ws.confirm_delete = None;
+                    cx.notify();
+                }),
+            );
+            let panel = Self::danger_panel(
+                &sk,
+                &th,
+                &format!("DELETE {}?", noun.to_uppercase()),
+                body,
+                "Enter to delete \u{00b7} Esc to cancel",
+                cancel_btn,
+                confirm_btn,
+                cx,
+            );
+            Some(
+                div()
+                    .absolute()
+                    .inset_0()
+                    .bg(hsla(0., 0., 0., 0.62))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                            ws.confirm_delete = None;
                             cx.notify();
                         }),
                     )
@@ -20627,6 +22169,8 @@ impl Render for Workspace {
                     .children(plugins_overlay)
                     .children(savings_overlay)
                     .children(confirm_overlay)
+                    .children(delete_overlay)
+                    .children(self.render_bar_menu(&th, scale, cx))
                     .children(scale_overlay)
                     .children(more_overlay)
                     .children(help_overlay)
@@ -20706,6 +22250,399 @@ mod tests {
                 "the left bar is printing {what} again ({needle})"
             );
         }
+    }
+
+    /// The destructive line says what it is about to take, and leaves out the
+    /// parts that are nothing.
+    ///
+    /// A menu row reading "Delete — 0 groups, 3 tabs, 0 panes" makes a person
+    /// stop and work out whether the zeros matter. They never do.
+    #[test]
+    fn a_delete_line_counts_only_what_is_actually_there() {
+        assert_eq!(
+            Workspace::delete_label(Some(3), 11, 14),
+            "Delete \u{2014} 3 groups, 11 tabs, 14 panes"
+        );
+        assert_eq!(
+            Workspace::delete_label(Some(0), 4, 6),
+            "Delete \u{2014} 4 tabs, 6 panes",
+            "a project with no groups must not advertise zero of them"
+        );
+        assert_eq!(
+            Workspace::delete_label(None, 4, 6),
+            "Delete \u{2014} 4 tabs, 6 panes"
+        );
+        assert_eq!(
+            Workspace::delete_label(Some(1), 1, 1),
+            "Delete \u{2014} 1 group, 1 tab, 1 pane",
+            "singulars, or the most common case reads as broken"
+        );
+        assert_eq!(
+            Workspace::delete_label(None, 0, 0),
+            "Delete",
+            "an empty branch names no weight, because it has none"
+        );
+    }
+
+    /// An unnamed group is called the same thing everywhere.
+    ///
+    /// Before the rename box stopped opening on creation, nobody ever saw this
+    /// string — the default was overwritten the instant it existed. Now it is
+    /// what a new group is called until somebody renames it, so it has to match
+    /// the word the menus use, and it has to be decided in one place: four
+    /// sites spelled it out separately, which is how a default comes to
+    /// disagree with itself.
+    #[test]
+    fn an_unnamed_group_is_named_the_same_way_everywhere() {
+        assert_eq!(unnamed_group(3), "group 3");
+
+        let src = shipped_src();
+        assert!(
+            !src.contains("format!(\"initiative "),
+            "a hand-spelled `initiative N` label is back — the tree's internal word for the \
+             middle layer, shown to a person by a menu that calls it a group"
+        );
+        let sites = src.matches("unnamed_group(").count();
+        assert!(
+            sites >= 4,
+            "only {sites} site(s) reach the shared label; the others have gone their own way"
+        );
+    }
+
+    /// What the doors reveal is behind the GAP, not beside it.
+    ///
+    /// The doors part from a centre seam, so at anything short of fully open the
+    /// only thing on show is the middle. A bin pinned to the bottom-right corner
+    /// is therefore behind the right-hand door for the entire opening — you get
+    /// a lit, glowing, empty slot, which is exactly what it looked like.
+    ///
+    /// The corner placement was correct *before* the doors occluded, when the
+    /// whole panel showed at once. One change made the other wrong, and nothing
+    /// connected them: two separate right answers that stopped composing.
+    #[test]
+    fn the_bay_puts_what_it_reveals_where_the_doors_part() {
+        let src = shipped_src();
+        let at = src.find("fn render_bay(").expect("render_bay");
+        let end = src[at..]
+            .find("\n    fn ")
+            .map(|e| e + at)
+            .unwrap_or(src.len());
+        // only the layer behind the doors; the seam and the count sit outside it
+        let behind_start = src[at..end]
+            .find("// Everything the doors reveal is CENTRED")
+            .map(|p| p + at)
+            .expect("the revealed layer");
+        let behind_end = src[behind_start..end]
+            .find("            .child(door(false))")
+            .map(|p| p + behind_start)
+            .expect("the doors are drawn after what they hide");
+        let behind = &src[behind_start..behind_end];
+
+        assert!(
+            behind.contains(".justify_center()") && behind.contains(".items_center()"),
+            "the layer behind the doors is not centred, so the doors open on nothing"
+        );
+        for edge in [".right(px(", ".left(px(", ".bottom(px(", ".top(px("] {
+            assert!(
+                !behind.contains(edge),
+                "something behind the bay doors is pinned to an edge ({edge}) — the doors \
+                 part at the CENTRE, so an edge-pinned element stays hidden for the whole \
+                 opening and the bay reveals an empty slot"
+            );
+        }
+    }
+
+    /// The doors are opaque, or they are not doors.
+    ///
+    /// They shipped at `alpha(0.13)` — a tint, not a material. The fire showed
+    /// straight through both of them, so the bay read as a permanently lit panel
+    /// and the sliding was invisible: nothing was ever occluded, and the whole
+    /// reveal was doing no work. Caught by eye on a real tree, which is the only
+    /// way it could have been: every test passed, the asset loaded, the doors
+    /// moved, and the pixels were wrong.
+    #[test]
+    fn the_bay_doors_occlude_what_is_behind_them() {
+        let src = shipped_src();
+        let at = src
+            .find("let door = move |right: bool|")
+            .expect("the bay doors");
+        let end = src[at..]
+            .find("\n        };")
+            .expect("end of the door closure")
+            + at;
+        let body = &src[at..end];
+
+        let bg = body
+            .lines()
+            .find(|l| l.contains(".bg("))
+            .expect("a door with no background paints nothing at all");
+        assert!(
+            !bg.contains("alpha("),
+            "a bay door is painted with an alpha ({}) — it tints the fire instead of hiding \
+             it, and a door that does not occlude is not a door",
+            bg.trim()
+        );
+    }
+
+    /// The bay keeps asking for frames the whole time it is open, or the flame
+    /// stops moving.
+    ///
+    /// The flicker is a function of the clock, so it only advances on a repaint.
+    /// The doors' own easing stops notifying the moment they arrive, which left
+    /// the flame frozen on whatever phase it happened to reach — lit, plausible,
+    /// and still. Nothing else catches that: the glyph is drawn, the colour is
+    /// right, and every test passes. Presence is not motion.
+    ///
+    /// This guard survived the fire being scrapped, because the thing it
+    /// protects was never really the GIF — it is that an animation in a surface
+    /// nobody repaints is a picture.
+    #[test]
+    fn the_bay_asks_for_frames_the_whole_time_it_is_open() {
+        let src = shipped_src();
+        let at = src.find("let travelling = self.ease_bay();").expect(
+            "the bay's frame pump — if this moved, the flame may have stopped moving with it",
+        );
+        let after = &src[at..at + 200];
+        assert!(
+            after.contains("self.bay > 0.0"),
+            "the render pass asks for another frame only while the doors are TRAVELLING. \
+             The flame then freezes at whichever phase the doors finished on, and every \
+             other check still passes"
+        );
+    }
+
+    /// A task row clears the disclosure triangle its parent wears.
+    ///
+    /// Indenting a task by one step alone is not enough: a branch spends
+    /// `FOLD_W` on its fold target before its label starts, so a child indented
+    /// only by `step` lands to the LEFT of the parent it hangs from. Two levels
+    /// of tree that do not read as two levels — which is exactly how it looked
+    /// on a real tree.
+    #[test]
+    fn a_task_is_indented_past_its_parents_fold_triangle() {
+        let src = shipped_src();
+        let at = src.find("fn task_row(").expect("task_row");
+        let end = src[at..]
+            .find("\n    fn ")
+            .map(|e| e + at)
+            .unwrap_or(src.len());
+        let body = &src[at..end];
+
+        let indents = body.matches("step * (depth as f32)").count();
+        assert!(
+            indents >= 2,
+            "expected both task-row indents; found {indents}"
+        );
+        // `px(FOLD_W`, not the bare word: the doc comment beside these lines
+        // names the constant too, so counting the word read 3 against 2 real
+        // uses and failed on correct code. The same trap `shipped_src` exists
+        // for, one level in — a guard matching prose rather than the call.
+        assert_eq!(
+            body.matches("px(FOLD_W").count(),
+            indents,
+            "a task-row indent is missing its FOLD_W: the rename box and the row itself must \
+             line up with each other, and both must clear the parent's triangle"
+        );
+    }
+
+    /// Nothing destructive in the left bar happens without either a question or
+    /// an emptiness check.
+    ///
+    /// `delete_branch` ends nothing by itself — it parks the tabs — but it is
+    /// still the gesture that takes a person's whole working set off the screen,
+    /// and the trash is a second net rather than a licence to skip the first.
+    /// Scanned because every one of these paths needs a live gpui `Window`.
+    ///
+    /// **Invalidation:** if a future caller of `delete_branch` performs its own
+    /// equivalent guard inline rather than routing through `ask_delete`, this
+    /// test is wrong and should be widened to recognise that guard, not deleted.
+    #[test]
+    fn a_branch_is_never_deleted_without_being_asked_about_or_being_empty() {
+        let src = shipped_src();
+
+        // Checked by what guards the call, not by which function it sits in.
+        // An allowlist of function names says `render` is fine, and `render` is
+        // four thousand lines — so the first version of this test would have
+        // waved through a delete added anywhere inside it. A call is legitimate
+        // when it is the confirmation's own yes (the dialog is being taken
+        // down) or when the caller has just established the branch is empty.
+        let mut sites = 0;
+        for (at, _) in src.match_indices("self.delete_branch(") {
+            sites += 1;
+            let back = &src[at.saturating_sub(320)..at];
+            let confirmed = back.contains("confirm_delete = None");
+            let empty = back.contains("tabs == 0");
+            assert!(
+                confirmed || empty,
+                "a delete_branch call near byte {at} is guarded by neither a confirmation \
+                 nor an emptiness check:\n...{back}"
+            );
+        }
+        assert!(
+            sites >= 3,
+            "expected the confirmed-yes, the keyboard yes and the empty fast-paths to reach \
+             delete_branch; found {sites}"
+        );
+
+        // And both guarded entry points must actually branch on the weight.
+        for guard in ["fn ask_delete(", "fn drop_in_bay("] {
+            let at = src.find(guard).unwrap_or_else(|| panic!("{guard} missing"));
+            let end = src[at..].find("\n    }\n").expect("end of fn") + at;
+            let body = &src[at..end];
+            assert!(
+                body.contains("branch_weight(") && body.contains("confirm_delete"),
+                "{guard} must weigh the branch and raise a confirmation for a non-empty one"
+            );
+        }
+    }
+
+    /// The menus carry what Parker asked for and nothing he cut.
+    ///
+    /// Three rows were removed on review — "Release contents" from the project
+    /// menu, "Release tabs" from the group menu, and the colour wheel from the
+    /// tab row — each for the same reason: a second, vaguer door to something
+    /// another surface already does better. They are the sort of thing that
+    /// creeps back in the next time somebody is adding a row nearby.
+    #[test]
+    fn the_left_bar_menus_carry_no_row_that_was_cut() {
+        let src = shipped_src();
+        let at = src.find("fn render_bar_menu(").expect("render_bar_menu");
+        let end = src[at..]
+            .find("\n    /// \"Delete \u{2014}")
+            .expect("end of render_bar_menu");
+        let menus = &src[at..at + end];
+
+        for (needle, why) in [
+            ("Release contents", "the project row's release"),
+            ("Release tabs", "the group row's release"),
+        ] {
+            assert!(
+                !menus.contains(needle),
+                "{why} is back in the left-bar menus; it was cut as unclear and low utility"
+            );
+        }
+
+        // The colour wheel belongs to the group (and to the tab's own ctrl+click
+        // tray), not to the tab row. Checked inside the Task arm specifically,
+        // because the group arm legitimately has one.
+        let task_at = menus.find("BarMenu::Task(i) => {").expect("the task arm");
+        let task_arm = &menus[task_at..];
+        assert!(
+            !task_arm.contains("Colour"),
+            "the tab row grew a colour option again \u{2014} too much proliferation of \
+             colours and options"
+        );
+        for row in [
+            "New tab beside this",
+            "Rename",
+            "Remove from group",
+            "Close",
+        ] {
+            assert!(task_arm.contains(row), "the tab row lost its {row:?} row");
+        }
+    }
+
+    /// The tray never offers a holding that has run out.
+    ///
+    /// The whole reason it reads the trash live rather than keeping a list: an
+    /// offer that fails when pressed is worse than no offer, and "contextually
+    /// shown, so it does not show truly stale and dead groups" was the
+    /// requirement in Parker's own words.
+    #[test]
+    fn the_recovery_tray_reads_the_trash_live() {
+        let src = shipped_src();
+        let at = src.find("BarMenu::Header => {").expect("the header arm");
+        let end = src[at..]
+            .find("BarMenu::Project(id) => {")
+            .expect("the next arm");
+        let header = &src[at..at + end];
+        // Matched on the call, not on the receiver chain: rustfmt breaks
+        // `self.trash.live_items(now)` across three lines the moment the
+        // binding's type annotation grows, and a guard that fails when the
+        // formatter reflows it is a guard people delete.
+        assert!(
+            header.contains(".live_items(now)"),
+            "the tray must build its offers from live_items, which filters expired holdings"
+        );
+        assert!(
+            !header.contains(".items.iter()"),
+            "the tray is reading the raw item list, which includes holdings past their window"
+        );
+    }
+
+    /// A new project opens holding a terminal of its own, never the one you are
+    /// working in.
+    ///
+    /// The bar's `+` used to pass `BarDragged::Task(ws.active)` to
+    /// `new_project`, which files the active tab into the project it has just
+    /// made. Asking for somewhere new to put things took the thing that was on
+    /// screen and moved it out of the branch it belonged to, so the gesture cost
+    /// you the tab you were in and left its old branch a tab lighter.
+    ///
+    /// Scanned rather than exercised because the listener needs a live gpui
+    /// `Window`: the wrong version compiles and renders. The region is bounded
+    /// by the two ids either side of it rather than by a function name, because
+    /// `render_left_bar` is one expression and there is no smaller function to
+    /// name.
+    #[test]
+    fn the_bars_plus_makes_a_project_holding_a_fresh_terminal() {
+        let src = shipped_src();
+        let a = src.find("\"bar-new-project\"").expect("the + button");
+        let b = src[a..].find("\"bar-hide\"").expect("the hide handle");
+        let plus = &src[a..a + b];
+
+        assert!(
+            !plus.contains("BarDragged::Task"),
+            "the bar's + is seeding the new project with a task again — it takes the tab you \
+             are working in and moves it out of its branch"
+        );
+        assert!(
+            plus.contains("new_project_with_terminal("),
+            "the bar's + no longer reaches the shared make-a-project gesture"
+        );
+
+        // And that gesture is where the invariant actually lives, since the
+        // header menu's "New project" row reaches the same function. Asserted
+        // here rather than in its own test so the two halves — the button, and
+        // what the button does — cannot drift apart silently.
+        let at = src
+            .find("fn new_project_with_terminal(")
+            .expect("new_project_with_terminal");
+        let end = src[at..].find("\n    }\n").expect("end of fn") + at;
+        let body = &src[at..end];
+        assert!(
+            body.contains("new_project(None, cx)"),
+            "a new project must start empty rather than seeded with a task"
+        );
+        assert!(
+            body.contains("new_tab_in("),
+            "a new project must open a terminal of its own"
+        );
+        assert!(
+            !body.contains("start_bar_rename("),
+            "making a project opens its rename box again — the gesture grabs the keyboard \
+             and decides for you that naming it is the next move, when the next move is \
+             usually using the terminal it just gave you. It opens as `project N`; renaming \
+             is double-click or the row's own menu"
+        );
+
+        // And the tab it builds goes through the identity carrier. `Tab::new`
+        // plus an assignment per field is how a tab came to lose its group when
+        // its pane tree was reshaped (#413); a NEW tab is not that case, but it
+        // is the same shape — a field added to `Tab` later would be set by
+        // neither assignment and take the constructor's default in silence.
+        let at = src.find("fn new_tab_in(&mut self").expect("new_tab_in");
+        let end = src[at..].find("\n    }\n").expect("end of fn") + at;
+        let builder = &src[at..end];
+        assert!(
+            !builder.contains("Tab::new("),
+            "new_tab_in builds its tab with Tab::new again — route it through \
+             TabIdentity::onto so a new Tab field is a compile error here"
+        );
+        assert!(
+            builder.contains("TabIdentity {") && builder.contains(".onto("),
+            "new_tab_in no longer builds through the identity carrier"
+        );
     }
 
     /// An OPEN branch hands its glyphs down to its children.
@@ -20879,7 +22816,7 @@ mod tests {
         // `split_leaf` three thousand lines earlier, and a source scan that
         // silently reads the wrong function is worse than no scan.
         for gesture in [
-            "fn new_tab(&mut self",
+            "fn new_tab_in(&mut self",
             "fn adopt_pane(",
             "fn split(&mut self, dir: SplitDir",
         ] {
@@ -20894,6 +22831,21 @@ mod tests {
                 "{gesture} still reaches a window-owned builder directly"
             );
         }
+
+        // `new_tab` delegates rather than building, so the list above names the
+        // one site that does. If a pane build ever grows back into `new_tab`
+        // itself there are two again, and the swap above would have quietly
+        // stopped covering the gesture people actually press.
+        let delegating = body("fn new_tab(&mut self");
+        assert!(
+            !delegating.contains("make_pane"),
+            "new_tab builds a pane again instead of delegating to new_tab_in; the scan above \
+             is now checking the wrong function"
+        );
+        assert!(
+            delegating.contains("self.new_tab_in("),
+            "new_tab no longer reaches new_tab_in"
+        );
 
         // And the chokepoint has to actually branch on the mode rather than
         // being a rename of one of the two paths.

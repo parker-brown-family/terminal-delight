@@ -506,6 +506,34 @@ pub fn land_initiative(
 /// ids, preserving everything else. Used for the project layer, whose order is
 /// its own — unlike initiatives and tasks, which take their order from the tab
 /// list the mother bar draws.
+/// Where the active tab ends up once `removed` indices are lifted out.
+///
+/// `removed` is ascending and indexes the list as it was BEFORE anything was
+/// taken; `left` is how many tabs remain after.
+///
+/// Clamping alone is not enough and looks like it is, which is why this is a
+/// function with tests rather than three lines at each call site. Take
+/// `[A,B,C,D,E]` with `D` active at 3, delete `B` and `C`, and the list becomes
+/// `[A,D,E]` — `D` is now at 1, while `min(3, 2)` says 2, which is `E`. The
+/// window would come back focused on a terminal nobody asked for, in a session
+/// where the one you were working in is still right there. Every index above a
+/// removal shifts down by one per removal below it.
+///
+/// When the active tab was itself removed there is no right answer, only a
+/// sensible one: the position the deleted run occupied, which is where the eye
+/// already is.
+pub fn active_after_removal(active: usize, removed: &[usize], left: usize) -> usize {
+    if left == 0 {
+        return 0;
+    }
+    let last = left - 1;
+    if removed.contains(&active) {
+        return removed.first().copied().unwrap_or(0).min(last);
+    }
+    let below = removed.iter().filter(|&&i| i < active).count();
+    active.saturating_sub(below).min(last)
+}
+
 pub fn reorder(ids: &mut Vec<u32>, moving: u32, neighbour: u32, after: bool) {
     if moving == neighbour {
         return;
@@ -1395,5 +1423,63 @@ mod tests {
         // panes and tasks are size, not news: a branch of nine silent
         // terminals draws no badges
         assert!(Roll::task(0, 0, 0, 0, 0, 9).quiet());
+    }
+
+    /// Deleting a branch must not move you to a terminal you never chose.
+    ///
+    /// The case that made this a function: five tabs, the fourth active, the
+    /// second and third deleted. Clamping says index 2 and the honest answer is
+    /// index 1 — one is the tab you were working in and the other is the one
+    /// after it. Both are in range, both look fine, and only one is right.
+    #[test]
+    fn the_active_tab_survives_a_deletion_above_it() {
+        // [A,B,C,D,E], D active, delete B and C -> [A,D,E], D is at 1
+        assert_eq!(active_after_removal(3, &[1, 2], 3), 1);
+        // the clamp-only answer, for contrast
+        assert_ne!(3usize.min(2), 1);
+    }
+
+    #[test]
+    fn a_deletion_below_the_active_tab_leaves_it_alone() {
+        // [A,B,C,D,E], B active, delete D -> [A,B,C,E], B still at 1
+        assert_eq!(active_after_removal(1, &[3], 4), 1);
+        // [A,B,C], C active, delete nothing
+        assert_eq!(active_after_removal(2, &[], 3), 2);
+    }
+
+    /// Removing the active tab has no right answer, only a sensible one.
+    #[test]
+    fn removing_the_active_tab_lands_where_the_branch_was() {
+        // [A,B,C,D,E], C active, delete B,C,D -> [A,E]; land at 1, which is
+        // where the run was, clamped into the shorter list
+        assert_eq!(active_after_removal(2, &[1, 2, 3], 2), 1);
+        // the run was at the end: clamp back onto the last survivor
+        assert_eq!(active_after_removal(3, &[2, 3], 2), 1);
+        // the run was the whole front of the list
+        assert_eq!(active_after_removal(0, &[0, 1], 1), 0);
+    }
+
+    /// Nothing indexes into an empty list, whatever it was told.
+    #[test]
+    fn an_emptied_list_answers_zero_rather_than_indexing_into_nothing() {
+        assert_eq!(active_after_removal(4, &[0, 1, 2, 3, 4], 0), 0);
+    }
+
+    /// A single removal is the common case and must not need its own reasoning.
+    #[test]
+    fn one_removal_shifts_everything_above_it_down_by_one() {
+        for active in 0..5usize {
+            for gone in 0..5usize {
+                let got = active_after_removal(active, &[gone], 4);
+                let want = if gone == active {
+                    gone.min(3)
+                } else if gone < active {
+                    active - 1
+                } else {
+                    active
+                };
+                assert_eq!(got, want, "active={active} removed={gone}");
+            }
+        }
     }
 }
