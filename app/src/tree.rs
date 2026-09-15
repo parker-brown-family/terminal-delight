@@ -231,23 +231,19 @@ pub enum Row {
 ///
 /// Two rules earn their keep here:
 ///
-/// - **The active task's branches force-expand.** A fold that hides the task
-///   you are in is a window that has lost your place, and the mother bar's tab
-///   groups already made this promise for the same reason.
+/// - **A fold is a fold.** Every `collapsed` flag is obeyed, including on the
+///   branch holding the task you are in. This module used to force-expand the
+///   active task's branches on every frame, which kept the window from losing
+///   your place but made the fold gesture DEAD on the one branch a person is
+///   most likely to want shut — the one they are working in. The promise is
+///   kept where the scope's identical promise is kept, in
+///   `Workspace::reveal_active_branch`: opened when the active task CHANGES,
+///   not while you are looking at it. See [`Scope::widened_for`], which is the
+///   strip's half of exactly the same decision.
 /// - **The unfiled divider is suppressed when the tree has no other sections.**
 ///   A session that has never been organised is a flat list of tasks, and
 ///   labelling it "unfiled" says nothing while costing a line.
-pub fn rows(
-    projects: &[ProjectRef],
-    initiatives: &[InitiativeRef],
-    tasks: &[TaskRef],
-    active: Option<usize>,
-) -> Vec<Row> {
-    // Branches the active task hangs from never fold.
-    let active_place = active.and_then(|i| tasks.get(i)).map(|t| t.place);
-    let pinned_project = active_place.and_then(|p| p.project);
-    let pinned_initiative = active_place.and_then(|p| p.initiative);
-
+pub fn rows(projects: &[ProjectRef], initiatives: &[InitiativeRef], tasks: &[TaskRef]) -> Vec<Row> {
     let live_projects: Vec<u32> = projects.iter().map(|p| p.id).collect();
     let known = |p: Option<u32>| p.filter(|id| live_projects.contains(id));
     let live_initiatives: Vec<u32> = initiatives.iter().map(|i| i.id).collect();
@@ -265,7 +261,7 @@ pub fn rows(
 
     let push_initiative = |out: &mut Vec<Row>, ini: &InitiativeRef, depth: u8| {
         let roll = roll_of(&|pl: &Place| pl.initiative == Some(ini.id));
-        let collapsed = ini.collapsed && pinned_initiative != Some(ini.id);
+        let collapsed = ini.collapsed;
         out.push(Row::Initiative {
             id: ini.id,
             depth,
@@ -287,7 +283,7 @@ pub fn rows(
 
     for p in projects {
         let roll = roll_of(&|pl: &Place| pl.project == Some(p.id));
-        let collapsed = p.collapsed && pinned_project != Some(p.id);
+        let collapsed = p.collapsed;
         out.push(Row::Project {
             id: p.id,
             depth: 0,
@@ -794,7 +790,7 @@ mod tests {
         // that greeted it with an "UNFILED" header over a list of every tab
         // would be labelling the whole window as a mistake.
         let tasks = vec![task(None, None), task(None, None), task(None, None)];
-        let rows = rows(&[], &[], &tasks, Some(0));
+        let rows = rows(&[], &[], &tasks);
         assert_eq!(
             rows,
             vec![
@@ -810,7 +806,7 @@ mod tests {
         // A session with groups but no projects — every session that has ever
         // used the colour bands. The tree must be recognisable as the strip.
         let tasks = vec![task(None, Some(7)), task(None, Some(7)), task(None, None)];
-        let rows = rows(&[], &[initiative(7, None, false)], &tasks, Some(0));
+        let rows = rows(&[], &[initiative(7, None, false)], &tasks);
         assert_eq!(
             rows,
             vec![
@@ -843,7 +839,6 @@ mod tests {
             &[project(1, false), project(2, false)],
             &[initiative(10, Some(1), false)],
             &tasks,
-            Some(0),
         );
         let shape: Vec<(&str, u8)> = rows
             .iter()
@@ -876,7 +871,6 @@ mod tests {
             &[project(1, true)],
             &[initiative(10, Some(1), false)],
             &tasks,
-            None,
         );
         assert_eq!(
             rows,
@@ -895,49 +889,40 @@ mod tests {
     }
 
     #[test]
-    fn the_branch_holding_the_active_task_refuses_to_fold() {
-        // Both layers, together: a folded project inside which sits a folded
-        // initiative holding the task you are in. Neither fold may apply, or
-        // the window has lost your place.
+    fn the_branch_holding_the_active_task_folds_like_any_other() {
+        // The behaviour Parker asked for by name: Ctrl+Alt+← on a collapsible
+        // row collapses it, including the branch he is working in. This module
+        // used to overrule that fold on every frame — the flag was written and
+        // the row was drawn open anyway — so the gesture was dead on exactly
+        // the two rows nearest the work. The active task is kept reachable by
+        // `Workspace::reveal_active_branch` when it is ACTIVATED, and by the
+        // mother bar, which is still showing it while the tree is shut.
         let tasks = vec![task(Some(1), Some(10))];
         let rows = rows(
             &[project(1, true)],
             &[initiative(10, Some(1), true)],
             &tasks,
-            Some(0),
         );
         assert_eq!(
             rows,
-            vec![
-                Row::Project {
-                    id: 1,
-                    depth: 0,
-                    roll: Roll {
-                        panes: 1,
-                        tasks: 1,
-                        ..Default::default()
-                    },
-                    collapsed: false,
+            vec![Row::Project {
+                id: 1,
+                depth: 0,
+                roll: Roll {
+                    panes: 1,
+                    tasks: 1,
+                    ..Default::default()
                 },
-                Row::Initiative {
-                    id: 10,
-                    depth: 1,
-                    roll: Roll {
-                        panes: 1,
-                        tasks: 1,
-                        ..Default::default()
-                    },
-                    collapsed: false,
-                },
-                Row::Task { index: 0, depth: 2 },
-            ]
+                collapsed: true,
+            }],
+            "a folded project draws one row whoever is active inside it"
         );
     }
 
     #[test]
-    fn a_fold_elsewhere_still_folds_while_the_active_branch_stays_open() {
+    fn folds_apply_one_branch_at_a_time() {
         let tasks = vec![task(Some(1), None), task(Some(2), None)];
-        let rows = rows(&[project(1, true), project(2, true)], &[], &tasks, Some(1));
+        let rows = rows(&[project(1, true), project(2, false)], &[], &tasks);
         let folded: Vec<(u32, bool)> = rows
             .iter()
             .filter_map(|r| match r {
@@ -954,7 +939,7 @@ mod tests {
         // group's project id is filtered against the live list, exactly as the
         // restore path filters a tab's group id.
         let tasks = vec![task(None, Some(10))];
-        let rows = rows(&[], &[initiative(10, Some(99), false)], &tasks, None);
+        let rows = rows(&[], &[initiative(10, Some(99), false)], &tasks);
         assert_eq!(
             rows.first(),
             Some(&Row::Initiative {
@@ -991,7 +976,6 @@ mod tests {
                 initiative(12, None, false),
             ],
             &tasks,
-            None,
         );
         let mut seen: Vec<usize> = rows
             .iter()
@@ -1337,7 +1321,25 @@ mod tests {
                     initiative(12, Some(77), false),
                 ];
                 for active in [None, Some(0), Some(tasks.len() - 1)] {
-                    let rows = rows(&projects, &inis, &tasks, active);
+                    // What `Workspace::reveal_active_branch` does when a task
+                    // is activated, modelled on the row builder's own inputs:
+                    // open the branches it hangs from, then draw. Drawing
+                    // without it is the other half of the sweep, one line up in
+                    // `across_every_shape_each_task_is_listed_once_or_folded_away`.
+                    let mut opened = projects;
+                    let mut opened_inis = inis;
+                    if let Some(place) = active.and_then(|i| tasks.get(i)).map(|t| t.place) {
+                        for p in opened.iter_mut().filter(|p| Some(p.id) == place.project) {
+                            p.collapsed = false;
+                        }
+                        for g in opened_inis
+                            .iter_mut()
+                            .filter(|g| Some(g.id) == place.initiative)
+                        {
+                            g.collapsed = false;
+                        }
+                    }
+                    let rows = rows(&opened, &opened_inis, &tasks);
                     check(&rows, &tasks, active);
                 }
             }
@@ -1379,7 +1381,12 @@ mod tests {
     }
 
     #[test]
-    fn across_every_shape_the_active_task_is_always_on_screen() {
+    fn across_every_shape_activating_a_task_puts_it_on_screen() {
+        // The promise, restated where it now lives: a fold may hide the task
+        // you are in, but ACTIVATING one always opens its way down to it. The
+        // sweep applies the reveal before drawing (see `sweep`), so this fails
+        // if opening a task's project and initiative is ever not enough — a
+        // third layer, say, or a task filed under a branch it does not name.
         sweep(|rows, _, active| {
             let Some(active) = active else { return };
             let shown = rows
@@ -1387,7 +1394,7 @@ mod tests {
                 .any(|r| matches!(r, Row::Task { index, .. } if *index == active));
             assert!(
                 shown,
-                "the active task {active} was folded away — the window has lost your place: {rows:?}"
+                "activating task {active} left it folded away: {rows:?}"
             );
         });
     }
@@ -1639,7 +1646,7 @@ mod tests {
     #[test]
     fn the_cursor_walks_every_drawn_row_top_to_bottom_and_comes_back_round() {
         let (p, i, t) = bar();
-        let rows = rows(&p, &i, &t, Some(0));
+        let rows = rows(&p, &i, &t);
         let order = vec![
             RowId::Project(1),
             RowId::Initiative(10),
@@ -1677,7 +1684,7 @@ mod tests {
     /// draws none.
     #[test]
     fn a_ring_of_one_row_stays_put_and_a_ring_of_none_refuses() {
-        let one = rows(&[], &[], &[task(None, None)], Some(0));
+        let one = rows(&[], &[], &[task(None, None)]);
         assert_eq!(stops(&one), vec![RowId::Task(0)]);
         assert_eq!(step(&one, Some(RowId::Task(0)), true), Some(RowId::Task(0)));
         assert_eq!(
@@ -1706,7 +1713,7 @@ mod tests {
             task(None, Some(30)),
             task(None, None),
         ];
-        let drawn = rows(&projects, &initiatives, &tasks, Some(0));
+        let drawn = rows(&projects, &initiatives, &tasks);
         assert_eq!(
             top_branches(&drawn),
             vec![
@@ -1735,14 +1742,8 @@ mod tests {
     #[test]
     fn folding_changes_no_branch_number() {
         let (p, i, t) = bar();
-        let open = top_branches(&rows(&p, &i, &t, Some(0)));
-        let shut = top_branches(&rows(
-            &[project(1, true), project(2, true)],
-            &i,
-            &t,
-            // Nothing active, or the active task would force its branch open.
-            None,
-        ));
+        let open = top_branches(&rows(&p, &i, &t));
+        let shut = top_branches(&rows(&[project(1, true), project(2, true)], &i, &t));
         assert_eq!(open, shut);
         assert_eq!(open.first(), Some(&RowId::Project(1)));
     }
@@ -1753,7 +1754,7 @@ mod tests {
     #[test]
     fn a_loose_task_never_takes_a_number() {
         let tasks = vec![task(None, Some(7)), task(None, None)];
-        let drawn = rows(&[], &[initiative(7, None, false)], &tasks, Some(0));
+        let drawn = rows(&[], &[initiative(7, None, false)], &tasks);
         assert!(drawn.contains(&Row::Task { index: 1, depth: 0 }));
         assert_eq!(top_branches(&drawn), vec![RowId::Initiative(7)]);
     }
@@ -1765,8 +1766,7 @@ mod tests {
     fn a_folded_branch_is_stepped_over_whole_not_walked_into() {
         let (mut p, i, t) = bar();
         p[0] = project(1, true);
-        // Task 2 is active, so nothing force-expands project 1 underneath us.
-        let drawn = rows(&p, &i, &t, Some(2));
+        let drawn = rows(&p, &i, &t);
         assert_eq!(
             step(&drawn, Some(RowId::Project(1)), true),
             Some(RowId::Project(2)),
@@ -1774,7 +1774,7 @@ mod tests {
         );
         // ...and the rows it skipped really are the ones that would otherwise
         // have been there — otherwise this test passes against an empty tree.
-        let open = rows(&[project(1, false), project(2, false)], &i, &t, Some(2));
+        let open = rows(&[project(1, false), project(2, false)], &i, &t);
         assert_eq!(
             step(&open, Some(RowId::Project(1)), true),
             Some(RowId::Initiative(10))
@@ -1789,7 +1789,7 @@ mod tests {
     fn a_cursor_on_a_row_that_is_no_longer_drawn_re_enters_the_list() {
         let (mut p, i, t) = bar();
         p[0] = project(1, true);
-        let rows = rows(&p, &i, &t, Some(2));
+        let rows = rows(&p, &i, &t);
         assert_eq!(
             step(&rows, Some(RowId::Task(0)), true),
             Some(RowId::Project(1))
@@ -1803,7 +1803,7 @@ mod tests {
     #[test]
     fn the_unfiled_hairline_is_scenery_and_never_takes_the_cursor() {
         let tasks = vec![task(None, Some(7)), task(None, None)];
-        let rows = rows(&[], &[initiative(7, None, false)], &tasks, Some(0));
+        let rows = rows(&[], &[initiative(7, None, false)], &tasks);
         assert!(rows.contains(&Row::Unfiled { depth: 0 }));
         assert_eq!(
             stops(&rows),
@@ -1818,7 +1818,7 @@ mod tests {
     fn only_a_branch_answers_whether_it_is_folded() {
         let (mut p, i, t) = bar();
         p[1] = project(2, true);
-        let rows = rows(&p, &i, &t, Some(0));
+        let rows = rows(&p, &i, &t);
         assert_eq!(folded(&rows, RowId::Project(1)), Some(false));
         assert_eq!(folded(&rows, RowId::Project(2)), Some(true));
         assert_eq!(folded(&rows, RowId::Initiative(10)), Some(false));
@@ -1828,7 +1828,7 @@ mod tests {
     #[test]
     fn parent_and_first_child_read_off_what_is_drawn() {
         let (p, i, t) = bar();
-        let drawn = rows(&p, &i, &t, Some(0));
+        let drawn = rows(&p, &i, &t);
         assert_eq!(parent(&drawn, RowId::Task(0)), Some(RowId::Initiative(10)));
         assert_eq!(
             parent(&drawn, RowId::Initiative(10)),
@@ -1849,7 +1849,7 @@ mod tests {
         // sibling drawn after it.
         assert_eq!(first_child(&drawn, RowId::Task(0)), None);
         assert_eq!(first_child(&drawn, RowId::Project(2)), Some(RowId::Task(2)));
-        let empty = rows(&[project(1, false), project(2, false)], &[], &[], None);
+        let empty = rows(&[project(1, false), project(2, false)], &[], &[]);
         assert_eq!(first_child(&empty, RowId::Project(1)), None);
     }
 
@@ -1860,7 +1860,7 @@ mod tests {
     fn a_folded_branch_offers_no_child_to_step_into() {
         let (mut p, i, t) = bar();
         p[0] = project(1, true);
-        let rows = rows(&p, &i, &t, Some(2));
+        let rows = rows(&p, &i, &t);
         assert_eq!(first_child(&rows, RowId::Project(1)), None);
     }
 }
