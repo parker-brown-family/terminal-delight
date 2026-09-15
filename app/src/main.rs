@@ -3269,6 +3269,39 @@ enum LeafPlan {
     /// Nothing of it is left. Start one the way a restore always has: the
     /// recipe on disk, cwd and resume command included.
     Respawn { restore: session::PaneRestore },
+    /// An earlier leaf of this same layout already claimed this leaf's
+    /// terminal — by pane id, or by naming the identical resume recipe.
+    ///
+    /// **One terminal cannot be two panes.** It has one pseudoterminal with one
+    /// winsize, and one sink: two panes of different widths take turns
+    /// SIGWINCHing it to their own size, and the second to attach supersedes
+    /// the first's byte stream. The loser is then frozen on the snapshot it
+    /// took at attach, and the winner holds a replica of a shape the host's
+    /// grid never had, which `gridwire::grid_hash` can never agree with. Both
+    /// paint whatever was on the glass before the disagreement — on a restored
+    /// agent pane, the echoed `claude --resume <id>` and nothing after it.
+    /// Which reads exactly like a session that failed to start, and is not one:
+    /// the agent is running, in a pane nothing on screen is showing correctly.
+    ///
+    /// So the duplicate is repaired here rather than honoured. The leaf keeps
+    /// its place in the tree, its cwd, its logo and its note, and gets a plain
+    /// shell. Resuming the id a second time is the two-agents-on-one-transcript
+    /// failure #339 closed, arriving through the layout file instead of through
+    /// a race.
+    ///
+    /// **It carries no recipe at all, and that is what makes the repair work on
+    /// a host this window did not bring with it.** `dedupe_resumes` answers the
+    /// same collision on the way OUT to disk by demoting the line to bare
+    /// `claude`, and demoting to match it here looks like the tidier answer
+    /// until you count: a layout holding four duplicates asks the host for four
+    /// `claude`s in the same breath, and a host whose `HostPane::runs` still
+    /// compares recipe TEXT answers the second, third and fourth with the pane
+    /// it made for the first. Four leaves, one terminal — this bug again, in
+    /// new tabs, produced by its own repair. The `runs` fix is in this branch
+    /// and cannot help: the host only picks it up when a host restarts, while
+    /// the window picks this up on a bounce. A pane asked for with no recipe
+    /// never reaches that check, on any host, of any age.
+    Duplicate { restore: session::PaneRestore },
 }
 
 /// The whole of a hosted restore, decided before a single pane is built.
@@ -3288,6 +3321,62 @@ struct AttachPlan {
     orphans: Vec<hostproto::PaneInfo>,
 }
 
+/// The conversation a recipe names, if it names one.
+///
+/// `claude --resume <id>` and `codex resume <id>` are identities: two panes on
+/// one of those are two agents writing one transcript. `claude`, `claude
+/// --continue` and `codex resume --last` name nothing — they are a request for
+/// an agent, and two leaves carrying one are two agents that were always going
+/// to be two.
+fn named_session(recipe: Option<&str>) -> Option<String> {
+    recipe.and_then(session::resume_session_id)
+}
+
+/// Which of the terminals behind `closing` are losing their last pane, given
+/// every pane id `shown` still names somewhere in the window.
+///
+/// Pure, because this is the decision that kills a shell and it must be
+/// answerable without a window. A terminal some remaining leaf is still showing
+/// survives being closed *here*; it dies when the leaf still showing it goes.
+///
+/// **`shown` is the window WITHOUT what is closing.** Both callers arrange
+/// that: `end_held` asks about leaves already moved into the trash, and
+/// `close_tab`'s last-tab exception reads its leaves before removing the tab
+/// and asks afterwards. A caller that asked while its leaves were still in the
+/// tree would be told every one of them is still shown, and would hang up
+/// nothing at all.
+fn hangups_of(shown: &[u64], closing: &[u64]) -> Vec<u64> {
+    let mut dying: Vec<u64> = vec![];
+    for pane in closing {
+        if !shown.contains(pane) && !dying.contains(pane) {
+            dying.push(*pane);
+        }
+    }
+    dying
+}
+
+/// What a repaired duplicate leaf says on its glass when it has nothing else
+/// to say.
+///
+/// A pane that quietly became an empty shell is a pane whose owner concludes
+/// the restore lost his conversation. It did not — the conversation is one tab
+/// over — and this note is the only thing in the path that can tell him so. A
+/// leaf that already carries a note keeps it: somebody's own words are not
+/// ours to overwrite to make room for ours.
+///
+/// One fixed seed, where a hand-written note draws its own. The wobble exists
+/// so two notes on ONE screen are not the same quadrilateral, and two of these
+/// are never on one screen — they are the leaves of a duplicate, which is a
+/// tab apart by definition.
+fn duplicate_leaf_note() -> sticky::Saved {
+    sticky::Saved {
+        title: Some("DUPLICATE TAB".into()),
+        text: "Two tabs named one conversation. The first kept it; this is a fresh shell.".into(),
+        seed: 0,
+        pinned: false,
+    }
+}
+
 /// Match a saved layout against what is actually running.
 ///
 /// Pure, and deliberately so: this is the decision that a restore either gets
@@ -3298,6 +3387,23 @@ fn plan_attach(saved: &[SavedTab], live: &[hostproto::PaneInfo]) -> AttachPlan {
     // still be sitting in the saved layout; binding to it would show a window
     // full of nothing where a shell used to be.
     let mut unclaimed: Vec<&hostproto::PaneInfo> = live.iter().filter(|p| !p.ended).collect();
+    // Every CONVERSATION this plan has already spoken for, whether by binding
+    // the terminal running it or by scheduling a respawn of it.
+    //
+    // Taking a pane out of `unclaimed` is not enough on its own, and that gap
+    // is what put two tabs on one terminal on 2026-09-15. A second leaf naming
+    // the same recipe finds nothing unclaimed, falls through to `Respawn`, and
+    // the host answers a recipe it is already running with the pane that is
+    // running it — `Started::Already`, which exists to stop a second agent and
+    // here hands back a terminal that already has a pane. The refusal has to
+    // happen in the plan, which is the only place that knows what it promised.
+    //
+    // Keyed on the session id inside the recipe, never on the recipe text: a
+    // line that names no conversation — `claude`, `claude --continue`, `codex
+    // resume --last` — is not an identity, and two leaves carrying one are two
+    // agents that were always going to be two. Deduping those would quietly
+    // turn the repair `dedupe_resumes` writes into a pane that starts nothing.
+    let mut spoken_for: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut tabs = Vec::with_capacity(saved.len());
     for tab in saved {
         let mut leaves = vec![];
@@ -3343,22 +3449,54 @@ fn plan_attach(saved: &[SavedTab], live: &[hostproto::PaneInfo]) -> AttachPlan {
                     .position(|p| p.resume.as_deref() == Some(want)),
                 _ => None,
             };
-            let bound = by_id.or(by_work).map(|at| unclaimed.remove(at).pane);
+            let bound = by_id.or(by_work).map(|at| {
+                let taken = unclaimed.remove(at);
+                // Both recipes, because the two can differ: the file's line is
+                // what this leaf asked for, the host's is what the terminal is
+                // actually running, and a later leaf naming either conversation
+                // is asking for this same terminal.
+                spoken_for.extend(named_session(taken.resume.as_deref()));
+                spoken_for.extend(named_session(resume.as_deref()));
+                taken.pane
+            });
+            let saved_note = || {
+                note.as_ref().map(|n| sticky::Saved {
+                    title: n.title.clone(),
+                    text: n.text.clone(),
+                    seed: n.seed,
+                    pinned: n.pinned,
+                })
+            };
             plans.push(match bound {
                 Some(pane) => LeafPlan::Bind { pane },
-                None => LeafPlan::Respawn {
-                    restore: session::PaneRestore {
-                        cwd: cwd.clone(),
-                        resume: resume.clone(),
-                        logo: logo.clone(),
-                        note: note.as_ref().map(|n| sticky::Saved {
-                            title: n.title.clone(),
-                            text: n.text.clone(),
-                            seed: n.seed,
-                            pinned: n.pinned,
-                        }),
-                    },
-                },
+                // Nothing left to bind, and the conversation is one this plan
+                // has already promised to an earlier leaf. See
+                // `LeafPlan::Duplicate`.
+                None if named_session(resume.as_deref())
+                    .is_some_and(|id| spoken_for.contains(&id)) =>
+                {
+                    LeafPlan::Duplicate {
+                        restore: session::PaneRestore {
+                            cwd: cwd.clone(),
+                            // No recipe at all, and that is the load-bearing
+                            // part rather than a preference. See below.
+                            resume: None,
+                            logo: logo.clone(),
+                            note: saved_note().or_else(|| Some(duplicate_leaf_note())),
+                        },
+                    }
+                }
+                None => {
+                    spoken_for.extend(named_session(resume.as_deref()));
+                    LeafPlan::Respawn {
+                        restore: session::PaneRestore {
+                            cwd: cwd.clone(),
+                            resume: resume.clone(),
+                            logo: logo.clone(),
+                            note: saved_note(),
+                        },
+                    }
+                }
             });
         }
         tabs.push(plans);
@@ -3714,6 +3852,16 @@ fn build_node_attached(
                     None => make_pane_host_spawned(restore.clone(), ctx, window, cx),
                 },
                 Some(LeafPlan::Respawn { restore }) => {
+                    make_pane_host_spawned(restore, ctx, window, cx)
+                }
+                // A plain shell, and the recipe deliberately absent: the
+                // terminal this leaf named belongs to a leaf built before it.
+                Some(LeafPlan::Duplicate { restore }) => {
+                    eprintln!(
+                        "terminal-delight: two saved leaves named one terminal; the second \
+                         gets a fresh shell rather than a second view of a pane that can \
+                         only have one size"
+                    );
                     make_pane_host_spawned(restore, ctx, window, cx)
                 }
                 None => make_pane_host_spawned(restore.clone(), ctx, window, cx),
@@ -4736,12 +4884,34 @@ impl Workspace {
     /// merely stops watching a pane leaves it running on purpose. So this is
     /// called from the two places a person means it — closing a pane, closing a
     /// tab — and from nowhere that is merely tidying up.
+    ///
+    /// A terminal another leaf is still showing is not hung up, however plainly
+    /// the person meant to close *this* one. Where a layout has put two leaves
+    /// on one pane, closing either of them used to kill the terminal both were
+    /// showing — a running agent, closed by tidying away the blank decoy of
+    /// itself. See [`hangups_of`] for the arithmetic and what it cannot see.
     fn hangup(&self, leaves: &[Entity<TerminalView>], cx: &App) {
         let Some(ctx) = &self.attach else { return };
-        for leaf in leaves {
-            let Some(pane) = leaf.read(cx).pane_id() else {
-                continue;
-            };
+        let mut shown = vec![];
+        for tab in &self.tabs {
+            let mut held = vec![];
+            tab.root.leaves(&mut held);
+            shown.extend(held.iter().filter_map(|leaf| leaf.read(cx).pane_id()));
+        }
+        let closing: Vec<u64> = leaves
+            .iter()
+            .filter_map(|leaf| leaf.read(cx).pane_id())
+            .collect();
+        let dying = hangups_of(&shown, &closing);
+        for pane in &closing {
+            if !dying.contains(pane) {
+                eprintln!(
+                    "terminal-delight: pane {pane} is still shown by another leaf of this \
+                     window; closing this one leaves the terminal running"
+                );
+            }
+        }
+        for pane in dying {
             if let Err(err) = ctx.link.close_pane(hostproto::PaneId(pane)) {
                 eprintln!("terminal-delight: the session host would not close pane {pane}: {err}");
             }
@@ -10949,12 +11119,14 @@ impl Workspace {
             self.trash_tab(i, window, cx);
             return;
         }
-        {
+        // Read before the tab goes, hung up after it. `hangup` answers with
+        // what the window is still showing, and the answer has to be the window
+        // without this tab in it — see [`hangups_of`].
+        let dying: Vec<_> = {
             let mut leaves = vec![];
             self.tabs[i].root.leaves(&mut leaves);
-            let leaves: Vec<_> = leaves.into_iter().cloned().collect();
-            self.hangup(&leaves, cx);
-        }
+            leaves.into_iter().cloned().collect()
+        };
         // Every tube in the tab goes dark at once — but only if this tab is the
         // one on screen; a background tab's panes hold stale bounds (see
         // `ghost_of`), and there is no point animating a screen nobody saw.
@@ -10968,6 +11140,7 @@ impl Workspace {
             }
         }
         self.tabs.remove(i);
+        self.hangup(&dying, cx);
         if self.tabs.is_empty() {
             cx.quit();
             return;
@@ -24382,6 +24555,11 @@ mod tests {
         // A layout edited by hand, or written wrong. The first leaf gets the
         // terminal; the second gets its own rather than a second view of the
         // same one, which is the only reading that loses nothing.
+        //
+        // Neither leaf carries a recipe, which is the half of the case that was
+        // always safe: a shell is started, a new pane comes back, and the two
+        // leaves end up on two terminals. The half that was not safe is the one
+        // a real saved layout has, and it is the test below this one.
         let saved = vec![tab_of(SavedNode::Split {
             dir: SplitDir::Row,
             ratio: 0.5,
@@ -24397,6 +24575,201 @@ mod tests {
         );
         assert!(matches!(plan.tabs[0][1], LeafPlan::Respawn { .. }));
         assert!(plan.orphans.is_empty(), "5 was claimed, once");
+    }
+
+    #[test]
+    fn a_second_leaf_naming_the_same_agent_does_not_get_a_second_view_of_it() {
+        // The shape a real duplicate has, and the one that reached a screen on
+        // 2026-09-15: two leaves, one pane id, and the SAME resume line under
+        // both of them. Dropping the second through to `Respawn` is not a
+        // repair here — the host refuses to start a recipe it is already
+        // running and answers with the pane that is running it, so the window
+        // builds a second pane onto the first one's terminal. One winsize and
+        // one sink between them, and both paint nothing but the echoed
+        // launch command.
+        let recipe = "claude --resume b040fc0f-e7ab-4a78-a77c-fa191152536c";
+        let saved = vec![
+            tab_of(leaf_with(Some(3), "/work", Some(recipe))),
+            tab_of(SavedNode::Split {
+                dir: SplitDir::Row,
+                ratio: 0.5,
+                a: Box::new(leaf_with(Some(3), "/work", Some(recipe))),
+                b: Box::new(leaf_with(Some(12), "/work", Some("claude --resume other"))),
+            }),
+        ];
+        let plan = plan_attach(
+            &saved,
+            &[
+                running_agent(3, recipe),
+                running_agent(12, "claude --resume other"),
+            ],
+        );
+        assert_eq!(
+            plan.tabs[0][0],
+            LeafPlan::Bind {
+                pane: hostproto::PaneId(3)
+            },
+            "the first leaf to name it keeps the terminal"
+        );
+        let LeafPlan::Duplicate { restore } = &plan.tabs[1][0] else {
+            panic!(
+                "the second leaf must be repaired, got {:?}",
+                plan.tabs[1][0]
+            );
+        };
+        assert_eq!(
+            restore.resume, None,
+            "no recipe at all: resuming the id twice is two agents on one transcript, and \
+             asking a host for bare `claude` is how four repaired leaves collapse back onto \
+             one terminal"
+        );
+        assert_eq!(restore.cwd.as_deref(), Some("/work"), "its place is kept");
+        assert!(
+            restore.note.is_some(),
+            "and it says why it is a shell, or its owner reads the restore as a loss"
+        );
+        assert_eq!(
+            plan.tabs[1][1],
+            LeafPlan::Bind {
+                pane: hostproto::PaneId(12)
+            },
+            "the leaf beside it is unaffected"
+        );
+    }
+
+    #[test]
+    fn a_duplicate_leaf_keeps_the_note_its_owner_wrote() {
+        // The explanation is for a leaf with nothing on its glass. A leaf that
+        // already carries a note keeps it: overwriting somebody's own words to
+        // make room for ours costs more than the explanation is worth.
+        let recipe = "claude --resume x";
+        let mut theirs = leaf_with(Some(3), "/work", Some(recipe));
+        if let SavedNode::Leaf { note, .. } = &mut theirs {
+            *note = Some(SavedNote {
+                title: Some("NEEDS YOU".into()),
+                text: "sign in before this can continue".into(),
+                seed: 99,
+                pinned: true,
+            });
+        }
+        let saved = vec![
+            tab_of(leaf_with(Some(3), "/work", Some(recipe))),
+            tab_of(theirs),
+        ];
+        let plan = plan_attach(&saved, &[running_agent(3, recipe)]);
+        let LeafPlan::Duplicate { restore } = &plan.tabs[1][0] else {
+            panic!("expected a repaired duplicate, got {:?}", plan.tabs[1][0]);
+        };
+        let note = restore.note.as_ref().expect("the note survives");
+        assert_eq!(note.title.as_deref(), Some("NEEDS YOU"));
+        assert!(note.pinned, "including its pin");
+    }
+
+    #[test]
+    fn two_leaves_asking_for_an_agent_rather_than_a_conversation_both_get_one() {
+        // The repair `dedupe_resumes` writes on the way out to disk, read back
+        // in. A recipe with no session id in it is not an identity — it is a
+        // request for an agent — and two leaves carrying one were always going
+        // to be two agents. Deduping those would turn the repair into a pane
+        // that starts nothing, which is the same blank tab by another road.
+        let saved = vec![
+            tab_of(leaf_with(Some(3), "/a", Some("claude"))),
+            tab_of(leaf_with(Some(4), "/b", Some("claude"))),
+        ];
+        let plan = plan_attach(&saved, &[]);
+        for (tab, plan) in plan.tabs.iter().enumerate() {
+            let LeafPlan::Respawn { restore } = &plan[0] else {
+                panic!("tab {tab} should start its own agent, got {:?}", plan[0]);
+            };
+            assert_eq!(restore.resume.as_deref(), Some("claude"));
+        }
+    }
+
+    #[test]
+    fn two_leaves_naming_one_recipe_with_no_pane_ids_still_start_it_once() {
+        // The same collision reached by the other door: a layout written before
+        // pane ids existed, or one whose ids have gone stale, where both leaves
+        // fall through to the recipe. The host would answer the second spawn
+        // with the pane it made for the first, which is the duplicate again.
+        let recipe = "codex resume 01a086f7";
+        let saved = vec![
+            tab_of(leaf_with(None, "/a", Some(recipe))),
+            tab_of(leaf_with(None, "/b", Some(recipe))),
+        ];
+        let plan = plan_attach(&saved, &[]);
+        assert!(
+            matches!(plan.tabs[0][0], LeafPlan::Respawn { .. }),
+            "the first starts it"
+        );
+        assert!(
+            matches!(plan.tabs[1][0], LeafPlan::Duplicate { .. }),
+            "the second must not ask for it again, got {:?}",
+            plan.tabs[1][0]
+        );
+    }
+
+    #[test]
+    fn a_recipe_running_in_two_real_terminals_is_bound_twice() {
+        // The check is on what this plan has promised, never on the recipe
+        // being unusual. If the session really is holding two terminals on one
+        // recipe — which #339 exists to prevent and a restored backup can still
+        // produce — then there are two terminals, and showing both of them is
+        // the only answer that loses nothing.
+        let recipe = "claude --resume x";
+        let saved = vec![
+            tab_of(leaf_with(Some(3), "/a", Some(recipe))),
+            tab_of(leaf_with(Some(9), "/b", Some(recipe))),
+        ];
+        let plan = plan_attach(
+            &saved,
+            &[running_agent(3, recipe), running_agent(9, recipe)],
+        );
+        assert_eq!(
+            plan.tabs[0][0],
+            LeafPlan::Bind {
+                pane: hostproto::PaneId(3)
+            }
+        );
+        assert_eq!(
+            plan.tabs[1][0],
+            LeafPlan::Bind {
+                pane: hostproto::PaneId(9)
+            }
+        );
+    }
+
+    // ---- which closes actually hang a terminal up ---------------------------
+
+    #[test]
+    fn closing_the_only_leaf_showing_a_terminal_hangs_it_up() {
+        // The leaf is already out of the window by the time this is asked, so
+        // `shown` is what is left. Nothing left names 7.
+        assert_eq!(hangups_of(&[8], &[7]), vec![7]);
+    }
+
+    #[test]
+    fn closing_one_of_two_leaves_on_one_terminal_leaves_it_running() {
+        // The damage half of the duplicate. Three tabs held pane 16 on
+        // 2026-09-11; closing the blank decoys hung up the terminal the working
+        // tab was legitimately showing, and three shells doing real work died
+        // inside four minutes.
+        assert_eq!(hangups_of(&[16, 4], &[16]), Vec::<u64>::new());
+    }
+
+    #[test]
+    fn closing_both_leaves_on_one_terminal_does_hang_it_up() {
+        // Not a rule against closing it — a rule against closing it early. A
+        // tab holding both views of one terminal takes the terminal with it,
+        // and says so once rather than twice.
+        assert_eq!(hangups_of(&[4], &[16, 16]), vec![16]);
+    }
+
+    #[test]
+    fn letting_go_of_a_held_tab_hangs_up_what_nothing_else_shows() {
+        // `end_held` asks about leaves that are already out of the tree, so the
+        // window's count never held them. A pane nothing on screen names is a
+        // pane whose last leaf has gone.
+        assert_eq!(hangups_of(&[1, 2], &[5]), vec![5]);
     }
 
     #[test]
@@ -24576,7 +24949,7 @@ mod tests {
             .iter()
             .map(|p| match p {
                 LeafPlan::Bind { pane } => pane.0,
-                LeafPlan::Respawn { .. } => 0,
+                LeafPlan::Respawn { .. } | LeafPlan::Duplicate { .. } => 0,
             })
             .collect();
         assert_eq!(bound, vec![1, 2, 3]);

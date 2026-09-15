@@ -292,8 +292,18 @@ impl HostPane {
     /// A pane whose child has gone is not running anything, whatever it was
     /// started to run — its leaf wants a fresh terminal, not a binding to a
     /// corpse.
+    ///
+    /// Only a recipe that names a CONVERSATION can be run twice in a way that
+    /// costs anything, so only one of those suppresses a spawn. `claude`,
+    /// `claude --continue` and `codex resume --last` name none: they are a
+    /// request for an agent, and refusing the second of them hands one pane's
+    /// terminal to two leaves — which is the failure this check exists to
+    /// prevent, reached by the check itself. It bit the client's own repair for
+    /// this, which rewrites a repeated recipe down to bare `claude` and then
+    /// asked for two of them.
     fn runs(&self, recipe: &str) -> bool {
-        !self.ended.load(Ordering::SeqCst)
+        crate::session::resume_session_id(recipe).is_some()
+            && !self.ended.load(Ordering::SeqCst)
             && self.runtime.lock().expect("runtime lock").resume.as_deref() == Some(recipe)
     }
 
@@ -1422,21 +1432,39 @@ fn merge_capture_into_layout(
     let Some(tabs) = merged.get_mut("tabs").and_then(|tabs| tabs.as_array_mut()) else {
         return merged;
     };
+    // One reading per terminal, to the first leaf that names it.
+    //
+    // The client strips a repeated resume line before it sends the tree
+    // (`dedupe_resumes` in `main.rs`) precisely so two panes cannot come back
+    // onto one conversation. Filling every leaf that names a pane id puts it
+    // straight back: two leaves saying `pane_id = 3` both received pane 3's
+    // recipe, the client's repair was undone on every checkpoint, and the
+    // duplicate outlived restart after restart. Found in a real session file on
+    // 2026-09-15, where one agent was named by two tabs and neither could draw.
+    let mut filled: std::collections::HashSet<u64> = std::collections::HashSet::new();
     for tab in tabs.iter_mut() {
         if let Some(node) = tab.get_mut("node") {
-            fill_leaves(node, live);
+            fill_leaves(node, live, &mut filled);
         }
     }
     merged
 }
 
 /// The recursive half: a node is a `Leaf` table or a `Split` holding two more.
-fn fill_leaves(node: &mut toml::Value, live: &std::collections::BTreeMap<u64, PaneRuntime>) {
+fn fill_leaves(
+    node: &mut toml::Value,
+    live: &std::collections::BTreeMap<u64, PaneRuntime>,
+    filled: &mut std::collections::HashSet<u64>,
+) {
     if let Some(leaf) = node.get_mut("Leaf").and_then(|leaf| leaf.as_table_mut()) {
         let Some(runtime) = leaf
             .get("pane_id")
             .and_then(toml::Value::as_integer)
             .and_then(|id| u64::try_from(id).ok())
+            // A second leaf naming a terminal an earlier leaf already took is
+            // not a pane to describe — it is the duplicate, and it keeps
+            // whatever the client decided to send for it.
+            .filter(|id| filled.insert(*id))
             .and_then(|id| live.get(&id))
         else {
             return;
@@ -1452,7 +1480,7 @@ fn fill_leaves(node: &mut toml::Value, live: &std::collections::BTreeMap<u64, Pa
     if let Some(split) = node.get_mut("Split") {
         for side in ["a", "b"] {
             if let Some(child) = split.get_mut(side) {
-                fill_leaves(child, live);
+                fill_leaves(child, live, filled);
             }
         }
     }
@@ -2974,6 +3002,29 @@ mod owning {
     }
 
     #[test]
+    fn asking_for_an_agent_twice_is_two_agents() {
+        // The check is against running one CONVERSATION twice, and a recipe
+        // that names none is not one: `claude`, `claude --continue`, `codex
+        // resume --last` are each a request for an agent. Refusing the second
+        // hands one terminal to two leaves, which is the failure the check
+        // exists to prevent, arriving through the check.
+        //
+        // It is the client's own repair for a duplicate that asks this:
+        // `dedupe_resumes` rewrites a repeated line down to bare `claude`, and
+        // a layout holding two of those wants two agents.
+        let host = Host::with_shell("test", Some("/bin/cat".into()));
+        let first = spawn_agent(&host, "claude");
+        assert!(first.started);
+        let second = spawn_agent(&host, "claude");
+        assert!(
+            second.started,
+            "a second agent was refused a terminal over a recipe that names no conversation"
+        );
+        assert_ne!(second.info.pane, first.info.pane);
+        assert_eq!(host.pane_count(), 2);
+    }
+
+    #[test]
     fn a_pane_with_no_recipe_is_deduplicated_against_nothing() {
         // An ordinary terminal has no identity to be the same as. Two of them
         // are two of them, which is what asking for a second one means.
@@ -3777,6 +3828,54 @@ cwd = "/somebody-elses-terminal"
         }
         std::fs::create_dir_all(path.parent().expect("a parent")).expect("dir");
         std::fs::write(path, body).expect("write a session");
+    }
+
+    #[test]
+    fn only_the_first_leaf_naming_a_terminal_is_told_what_it_is_running() {
+        // The client strips a repeated resume line before it sends the tree
+        // (`dedupe_resumes`), so that two panes cannot come back onto one
+        // conversation. Writing the reading into every leaf that names the pane
+        // id undoes that on every checkpoint — which is how a duplicate in a
+        // real session file survived restart after restart on 2026-09-15, both
+        // of its leaves carrying `claude --resume b040fc0f…` and neither able
+        // to draw.
+        let layout: toml::Value = r#"
+active = 0
+
+[[tabs]]
+name = "the tab that has it"
+
+[tabs.node.Leaf]
+pane_id = 1
+cwd = "/stale"
+
+[[tabs]]
+name = "the duplicate"
+
+[tabs.node.Leaf]
+pane_id = 1
+cwd = "/stale"
+resume = "claude"
+"#
+        .parse()
+        .expect("a layout");
+        let merged = merge_capture_into_layout(&layout, &live_panes());
+
+        let first = &merged["tabs"][0]["node"]["Leaf"];
+        assert_eq!(first["cwd"].as_str(), Some("/where-it-is-now"));
+        assert_eq!(first["resume"].as_str(), Some("claude --resume 4a1c"));
+
+        let second = &merged["tabs"][1]["node"]["Leaf"];
+        assert_eq!(
+            second["resume"].as_str(),
+            Some("claude"),
+            "the duplicate keeps what the client sent for it"
+        );
+        assert_eq!(
+            second["cwd"].as_str(),
+            Some("/stale"),
+            "and is not described as the terminal it does not have"
+        );
     }
 
     #[test]
