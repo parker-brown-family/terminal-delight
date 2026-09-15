@@ -12,6 +12,7 @@ Every environment flag Terminal Delight reads, grouped by purpose. Demo flags st
 | `TD_ANCHOR_TOP` | Inverted read: prompt on top, recent→older down | off |
 | `TD_SCRATCH` | Boot a scratch window (no master lock) | off |
 | `TD_SEED_CWD` / `TD_SEED_RESUME` | Seed a single pane's cwd / resume command | none |
+| `TD_SPINE` | Show the attention rail at the right edge — closed spine, `ctrl+shift+N` opens its queue. Slice 1 draws **synthetic** states over the real panes | off |
 
 ## Agentic / MCP
 

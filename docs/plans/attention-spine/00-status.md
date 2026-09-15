@@ -18,7 +18,9 @@
 
 ## Slices
 
-- [ ] Slice 1, tracer bullet: synthetic decision, failure, finished, and unknown observations reach the collapsed spine, queue, and existing pane-focus action.
+- [ ] Slice 1, tracer bullet (in progress: spine, overlay, focus verb and deliverable link built
+  behind `TD_SPINE`; the help-screen row waits for the commit that takes the flag off, since it
+  means a new string in eleven languages): synthetic decision, failure, finished, and unknown observations reach the collapsed spine, queue, and existing pane-focus action.
 - [ ] Slice 2, explicit live state: distinguish shell, agent, and unknown pane kinds; preserve unknown agent state through the current HUD parser; stamp the transition instant; derive the kind from `agent_badge`; give blocked a clearing edge.
 - [ ] Slice 3, queue lifecycle: fixed ordering, per-item evidence, `project:group` from the tree, seen/unseen on the existing bell latch, and keyboard navigation.
 - [ ] Slice 4, review tray: show only sourced changes, checks, and artifacts; render absent evidence as unavailable; carry the declared deliverable as a plain-click link, with focus as a second, explicit action.

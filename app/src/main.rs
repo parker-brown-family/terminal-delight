@@ -24,6 +24,7 @@
 //! TODO(os-chrome): client-side window decorations (WindowDecorations::Client).
 
 mod art;
+mod attention;
 mod bell;
 mod crt;
 mod csd;
@@ -81,7 +82,7 @@ use pane::{
     AgentDone, AgentWorkingChanged, CloseFocusRead, ClosePane, DragPaneStart, FocusReadNav,
     OpenAgentPanel, OpenDisplayMenu, OpenFind, OpenFocusRead, OpenHelp, OpenLogoPicker,
     OpenThemeMenu, OpenUsagePanel, PaintApplied, PaneRenamed, ReadNav, RequestCloseTab,
-    TerminalView, ToggleLeftBar,
+    TerminalView, ToggleLeftBar, ToggleRail,
 };
 use serde::{Deserialize, Serialize};
 use theme::{PaneTheme, ThemeChoice};
@@ -2796,6 +2797,12 @@ struct Workspace {
     /// the owning tab and focuses the pane. The async notification task can't
     /// touch the Window itself.
     pending_jump: Option<EntityId>,
+    /// The attention rail exists at all. Slice 1 keeps it behind `TD_SPINE=1`,
+    /// so nothing on main grows a right edge before it has been looked at.
+    rail_on: bool,
+    /// The queue is open over the panes. The closed spine is the steady state
+    /// and this never opens itself.
+    rail_open: bool,
     /// On-screen box of the FOCUS reading area (the clip box below the header),
     /// captured each frame. This is the SAME rect registered as the warp tube, so a
     /// click normalises into it and applies the identical barrel map the shader
@@ -2956,6 +2963,14 @@ fn wire_pane(pane: &Entity<TerminalView>, window: &mut Window, cx: &mut Context<
         ws.left_bar = !ws.left_bar;
         ws.save(cx);
         cx.notify();
+    })
+    .detach();
+    // ctrl+shift+N in any pane → open or close the attention queue.
+    cx.subscribe(pane, |ws, _pane, _ev: &ToggleRail, cx| {
+        if ws.rail_on {
+            ws.rail_open = !ws.rail_open;
+            cx.notify();
+        }
     })
     .detach();
     cx.subscribe(pane, |ws, _pane, _ev: &OpenAgentPanel, cx| {
@@ -3754,6 +3769,8 @@ impl Workspace {
             focus_line_h: 0.0,
             focus_page_h: 0.0,
             pending_jump: None,
+            rail_on: std::env::var("TD_SPINE").is_ok_and(|v| v != "0"),
+            rail_open: false,
             focus_body_bounds: Arc::new(Mutex::new(None)),
             focus_map: Arc::new(Mutex::new(None)),
             focus_sel: None,
@@ -10753,6 +10770,13 @@ impl Workspace {
     /// graveyard, plugins) closes first — a second esc then closes the wall.
     /// Returns whether anything was closed. NEVER touches a terminal pane.
     fn close_popups(&mut self) -> bool {
+        // The attention queue draws over everything and is the cheapest thing to
+        // dismiss, so it goes first: Esc with the queue open should fold the
+        // queue, never the wall underneath it.
+        if self.rail_open {
+            self.rail_open = false;
+            return true;
+        }
         // Overlays that stack ON TOP of the agent wall — peel these first.
         if self.savings_menu {
             self.savings_menu = false;
@@ -14239,6 +14263,441 @@ impl Workspace {
                 .h(px(rows.len() as f32 * (row_h + 6.0 * s)
                     + counter_h
                     + 11.0 * s)),
+        )
+    }
+
+    /// Slice 1's tracer: real panes, invented states.
+    ///
+    /// The observations are a rotation through the four kinds, so every lane is
+    /// populated without waiting for the parser; the panes are the ones actually
+    /// running, so a row's focus verb exercises the real path rather than a
+    /// mock. Slice 2 replaces the rotation with the HUD parser and the bell and
+    /// nothing else in this file changes.
+    ///
+    /// Origin is the tab's own project and group here. The full resolution —
+    /// nearest explicit setting, the group's project when a tab is grouped — is
+    /// Slice 3's, and doing it half-way in a tracer would be the sort of
+    /// convincing lie the plan refuses.
+    fn rail_rows(
+        &self,
+        cx: &App,
+    ) -> (
+        Vec<attention::AttentionItem>,
+        std::collections::HashMap<u64, EntityId>,
+    ) {
+        use attention::{AttentionKind, Observation, PaneKind, Priority};
+        let mut obs: Vec<Observation> = Vec::new();
+        let mut panes: std::collections::HashMap<u64, EntityId> = std::collections::HashMap::new();
+        let mut n: u64 = 0;
+        for (ti, tab) in self.tabs.iter().enumerate() {
+            let mut leaves = Vec::new();
+            tab.root.leaves(&mut leaves);
+            for leaf in leaves {
+                let view = leaf.read(cx);
+                let agent = view.mode.is_agent();
+                // Every case gets drawn once. A tracer whose fixture only covers
+                // the states that are easy to make is a tracer that finds
+                // nothing, and the unreadable pane is the case this whole plan
+                // exists to stop hiding.
+                let pane_kind = if !agent {
+                    PaneKind::Shell
+                } else if n % 11 == 4 {
+                    PaneKind::Unknown
+                } else {
+                    PaneKind::Agent
+                };
+                let priority = match n % 7 {
+                    1 => Priority::Promoted,
+                    5 => Priority::Demoted,
+                    _ => Priority::Neutral,
+                };
+                let kind = if agent {
+                    match n % 5 {
+                        0 => Some(AttentionKind::Decision),
+                        1 => Some(AttentionKind::Failure),
+                        2 => Some(AttentionKind::ReviewReady),
+                        3 => Some(AttentionKind::Unknown),
+                        _ => None,
+                    }
+                } else {
+                    None
+                };
+                let reason = match kind {
+                    Some(AttentionKind::Decision) => "Waiting on a permission prompt",
+                    Some(AttentionKind::Failure) => "A check came back non-zero",
+                    Some(AttentionKind::ReviewReady) => "Finished, not yet seen",
+                    Some(AttentionKind::Unknown) => "Known agent, state unreadable",
+                    None => "",
+                };
+                // Unknown rows carry no observed time on purpose: the one
+                // case where "we could not read it" includes not knowing when.
+                let observed_at = if matches!(kind, Some(AttentionKind::Unknown)) {
+                    None
+                } else {
+                    Instant::now().checked_sub(Duration::from_secs(60 * (n % 7 + 1)))
+                };
+                // The two shapes a review row is most likely to be handed: a
+                // rendered page and a plan. Both are real files in this
+                // checkout, so the click proves the whole path rather than the
+                // half of it that does not leave the process.
+                let deliverable = match kind {
+                    Some(AttentionKind::ReviewReady) => {
+                        Self::tracer_doc("docs/plans/attention-spine/plan.md").map(|href| {
+                            attention::Deliverable {
+                                label: "Attention spine plan".into(),
+                                href: href.to_string(),
+                            }
+                        })
+                    }
+                    Some(AttentionKind::Decision) => Self::tracer_doc(
+                        "docs/2026-08-31-one-click-copy-affordance.html",
+                    )
+                    .map(|href| attention::Deliverable {
+                        label: "One-click copy affordance".into(),
+                        href: href.to_string(),
+                    }),
+                    _ => None,
+                };
+                obs.push(Observation {
+                    pane: n,
+                    pane_kind,
+                    priority,
+                    kind,
+                    origin: self.rail_origin(ti),
+                    reason: reason.to_string(),
+                    observed_at,
+                    source: "synthetic",
+                    deliverable,
+                });
+                panes.insert(n, leaf.entity_id());
+                n += 1;
+            }
+        }
+        (attention::project(&obs), panes)
+    }
+
+    /// A document that certainly exists, for the tracer to point a deliverable at.
+    ///
+    /// Resolved from the running binary rather than written down, so this works
+    /// in anyone's checkout and points at nothing on a machine where the file is
+    /// missing. A tracer whose link 404s teaches the wrong lesson about the
+    /// click.
+    ///
+    /// **Resolved once per process, and that is not a detail.** The queue is
+    /// built inside the render pass, so the first version of this ran a
+    /// filesystem stat per review row per frame — the exact thing the slot bar's
+    /// own doc forbids two hundred lines up, for the reason it gives: a surface
+    /// that is never not on screen cannot afford to touch the disk while
+    /// painting. Both answers are fixed for the life of the process, so they are
+    /// looked up on first use and kept.
+    fn tracer_doc(rel: &'static str) -> Option<&'static str> {
+        use std::sync::OnceLock;
+        static PLAN: OnceLock<Option<String>> = OnceLock::new();
+        static PAGE: OnceLock<Option<String>> = OnceLock::new();
+
+        fn resolve(rel: &str) -> Option<String> {
+            let exe = std::env::current_exe().ok()?;
+            // <repo>/app/target/<profile>/terminal-delight
+            let root = exe.parent()?.parent()?.parent()?.parent()?;
+            let path = root.join(rel);
+            path.exists().then(|| path.to_string_lossy().into_owned())
+        }
+
+        let cell = if rel.ends_with(".md") { &PLAN } else { &PAGE };
+        cell.get_or_init(|| resolve(rel)).as_deref()
+    }
+
+    /// A tab's `project:initiative`, as far as Slice 1 resolves it.
+    fn rail_origin(&self, i: usize) -> attention::Origin {
+        let Some(tab) = self.tabs.get(i) else {
+            return attention::Origin::default();
+        };
+        attention::Origin {
+            project: tab
+                .project
+                .and_then(|id| self.project_at(id))
+                .and_then(|p| p.name.clone()),
+            initiative: tab
+                .group
+                .map(|g| self.branch_label(BarBranch::Initiative(g))),
+        }
+    }
+
+    fn rail_ink(kind: attention::AttentionKind, sk: &skin::Skin) -> Hsla {
+        match kind {
+            attention::AttentionKind::Decision => hsla(0., 0.72, 0.60, 1.),
+            attention::AttentionKind::Failure => hsla(0.06, 0.74, 0.62, 1.),
+            attention::AttentionKind::ReviewReady => hsla(0.40, 0.60, 0.50, 1.),
+            attention::AttentionKind::Unknown => sk.ink.ink_dim,
+        }
+    }
+
+    /// The closed spine: a narrow strip at the right edge carrying the count and
+    /// one pip per kind present.
+    ///
+    /// It is a flex sibling of the screen, so it costs the terminals its own
+    /// width and nothing more. The queue it opens draws *over* the panes instead
+    /// of pushing them, which is the property the plan's geometry test checks.
+    fn render_spine(&self, cx: &mut Context<Self>) -> Option<gpui::Div> {
+        if !self.rail_on {
+            return None;
+        }
+        let s = theme::outer_choice(cx).grade.scale;
+        let sk = skin::skin(cx, s);
+        let (items, _) = self.rail_rows(cx);
+        let counts = attention::counts(&items);
+
+        // One pip per kind that is actually present, in lane order — not one per
+        // row, which would turn a twenty-five pane fleet into a barcode.
+        let mut kinds: Vec<attention::AttentionKind> = Vec::new();
+        for it in &items {
+            if !kinds.contains(&it.kind) {
+                kinds.push(it.kind);
+            }
+        }
+        let wanting = counts.wanting;
+        let unknown = counts.unknown;
+
+        Some(
+            div()
+                .flex_none()
+                .w(px(20. * s))
+                .ml(px(4. * s))
+                .flex()
+                .flex_col()
+                .items_center()
+                .gap(px(5. * s))
+                .py(px(7. * s))
+                .rounded(sk.radius())
+                .bg(sk.ink.ink.alpha(0.05))
+                .cursor_pointer()
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                        cx.stop_propagation();
+                        ws.rail_open = !ws.rail_open;
+                        cx.notify();
+                    }),
+                )
+                .child(
+                    div()
+                        .text_size(px(11. * s))
+                        .text_color(if wanting > 0 {
+                            hsla(0., 0.72, 0.60, 1.)
+                        } else {
+                            sk.ink.ink_dim
+                        })
+                        .child(format!("{wanting}")),
+                )
+                .children(kinds.into_iter().map(|k| {
+                    div()
+                        .w(px(4. * s))
+                        .h(px(10. * s))
+                        .rounded(px(2. * s))
+                        .bg(Self::rail_ink(k, &sk))
+                }))
+                .when(unknown > 0, |d| {
+                    d.child(
+                        div()
+                            .text_size(px(9. * s))
+                            .text_color(sk.ink.ink_dim)
+                            .child("?"),
+                    )
+                }),
+        )
+    }
+
+    /// The queue, drawn over the right-hand panes.
+    ///
+    /// Overlay rather than reflow: the scrim is `inset_0` and the panel is
+    /// pushed to the right edge by the flex row, so no pane's bounds change when
+    /// this opens. One verb per row, and it is focus — the pane's own focus-in
+    /// edge then acknowledges its bell, which is the seen-state the plan reuses
+    /// rather than inventing.
+    fn render_rail(&self, cx: &mut Context<Self>) -> Option<gpui::Div> {
+        if !self.rail_on || !self.rail_open {
+            return None;
+        }
+        let s = theme::outer_choice(cx).grade.scale;
+        let sk = skin::skin(cx, s);
+        let (items, panes) = self.rail_rows(cx);
+        let now = Instant::now();
+
+        let mut list = div()
+            .flex()
+            .flex_col()
+            .gap(px(4. * s))
+            .p(px(7. * s))
+            .w(px(316. * s));
+
+        list = list.child(
+            div()
+                .flex()
+                .flex_row()
+                .justify_between()
+                .px(px(3. * s))
+                .pb(px(5. * s))
+                .text_size(px(9.5 * s))
+                .text_color(sk.ink.ink_dim)
+                .child(format!(
+                    "NEEDS ME \u{b7} {}",
+                    attention::counts(&items).wanting
+                ))
+                .child("esc"),
+        );
+
+        if items.is_empty() {
+            list = list.child(
+                div()
+                    .px(px(4. * s))
+                    .py(px(8. * s))
+                    .text_size(px(11. * s))
+                    .text_color(sk.ink.ink_dim)
+                    .child("Nothing is waiting on you."),
+            );
+        }
+
+        for it in &items {
+            let ink = Self::rail_ink(it.kind, &sk);
+            let target = panes.get(&it.pane).copied();
+            let head = div()
+                .flex()
+                .flex_row()
+                .gap(px(6. * s))
+                .items_center()
+                .child(
+                    div()
+                        .text_size(px(8.5 * s))
+                        .text_color(ink)
+                        .child(it.kind.label().to_uppercase()),
+                )
+                .child(
+                    div()
+                        .text_size(px(9.5 * s))
+                        .text_color(sk.ink.ink_dim)
+                        .child(it.origin.label()),
+                )
+                .children(it.priority.glyph().map(|g| {
+                    div()
+                        .text_size(px(9.5 * s))
+                        .text_color(match it.priority {
+                            attention::Priority::Promoted => hsla(0.33, 0.70, 0.42, 1.),
+                            _ => hsla(0.58, 0.72, 0.56, 1.),
+                        })
+                        .child(g)
+                }))
+                .child(div().flex_1())
+                .child(
+                    div()
+                        .text_size(px(9.5 * s))
+                        .text_color(sk.ink.ink_dim)
+                        .child(attention::age_label(it.age(now))),
+                );
+            let row = div()
+                .pl(px(7. * s))
+                .pr(px(6. * s))
+                .py(px(5. * s))
+                .border_l(px(2. * s))
+                .border_color(ink)
+                .rounded(sk.radius())
+                .bg(sk.ink.ink.alpha(0.05))
+                .cursor_pointer()
+                .hover(move |st| st.bg(sk.ink.ink.alpha(0.12)))
+                .child(head)
+                .child(
+                    div()
+                        .text_size(px(11. * s))
+                        .text_color(sk.ink.ink)
+                        .child(it.reason.clone()),
+                )
+                // Every fact on the row says where it came from and when it was
+                // seen. A surface that shows a state without its provenance is
+                // asking to be trusted on nothing.
+                .child(
+                    div()
+                        .text_size(px(8.5 * s))
+                        .text_color(sk.ink.ink_dim)
+                        .child(format!(
+                            "{} \u{b7} {}",
+                            it.source,
+                            attention::age_label(it.age(now))
+                        )),
+                )
+                .children(it.deliverable.as_ref().map(|d| {
+                    let href = d.href.clone();
+                    let kind = attention::doc_kind(&href);
+                    div()
+                        .mt(px(4. * s))
+                        .flex()
+                        .flex_row()
+                        .gap(px(6. * s))
+                        .items_center()
+                        .text_size(px(10. * s))
+                        .text_color(hsla(0.58, 0.72, 0.62, 1.))
+                        .cursor_pointer()
+                        .child(
+                            div()
+                                .px(px(4. * s))
+                                .rounded(px(2. * s))
+                                .text_size(px(8. * s))
+                                .text_color(sk.ink.ink_dim)
+                                .bg(sk.ink.ink.alpha(0.10))
+                                .child(kind.label()),
+                        )
+                        .child(d.label.clone())
+                        // Its own click, and it stops there. Opening what a turn
+                        // produced and visiting the terminal that produced it are
+                        // two different acts, and reading never does the second.
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |_ws, _: &MouseDownEvent, _w, cx| {
+                                cx.stop_propagation();
+                                pane::open_with_system(&href);
+                                cx.notify();
+                            }),
+                        )
+                }))
+                .when_some(target, |d, id| {
+                    d.on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                            cx.stop_propagation();
+                            // Park the jump; the next frame activates the owning
+                            // tab, focuses the pane, and the focus-in edge acks
+                            // its bell.
+                            ws.pending_jump = Some(id);
+                            ws.rail_open = false;
+                            cx.notify();
+                        }),
+                    )
+                });
+            list = list.child(row);
+        }
+
+        Some(
+            div()
+                .absolute()
+                .inset_0()
+                .occlude()
+                .flex()
+                .flex_row()
+                .justify_end()
+                .items_start()
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                        cx.stop_propagation();
+                        ws.rail_open = false;
+                        cx.notify();
+                    }),
+                )
+                .child(
+                    sk.panel()
+                        .mt(px(58. * s))
+                        .mr(px(30. * s))
+                        .shadow_lg()
+                        .child(list),
+                ),
         )
     }
 
@@ -21785,7 +22244,8 @@ impl Render for Workspace {
             .flex_1()
             .min_h_0()
             .children(self.render_left_bar(cx))
-            .child(screen);
+            .child(screen)
+            .children(self.render_spine(cx));
 
         let root = div()
             .size_full()
@@ -21876,6 +22336,7 @@ impl Render for Workspace {
                     .children(confirm_overlay)
                     .children(delete_overlay)
                     .children(self.render_bar_menu(&th, scale, cx))
+                    .children(self.render_rail(cx))
                     .children(scale_overlay)
                     .children(more_overlay)
                     .children(help_overlay)

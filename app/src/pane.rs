@@ -747,7 +747,7 @@ fn session_uses_uwsm() -> bool {
 /// goes through `uwsm-app` so the opened app is scoped to the desktop rather
 /// than to this terminal — closing the pane that printed a link should not be
 /// able to take the PDF it opened with it.
-fn open_with_system(target: &str) {
+pub(crate) fn open_with_system(target: &str) {
     if session_uses_uwsm() {
         spawn_detached("uwsm-app", &["--", "xdg-open", target]);
     } else {
@@ -2024,6 +2024,10 @@ impl gpui::EventEmitter<OpenUsagePanel> for TerminalView {}
 /// Ctrl+Shift+B — show or hide the left bar (the session's project tree).
 pub struct ToggleLeftBar;
 impl gpui::EventEmitter<ToggleLeftBar> for TerminalView {}
+
+/// Ctrl+Shift+N — open or close the attention rail's queue.
+pub struct ToggleRail;
+impl gpui::EventEmitter<ToggleRail> for TerminalView {}
 
 /// Ctrl+F (`global = false`) / Ctrl+Shift+F (`global = true`) was pressed in this
 /// pane — ask the workspace to open the find panel. In-pane find searches just
@@ -4321,6 +4325,14 @@ impl TerminalView {
                 // first, so a chord added there would never fire.
                 "b" => {
                     cx.emit(ToggleLeftBar);
+                    return;
+                }
+                // Ctrl+Shift+N → the attention rail's queue. N for "needs me".
+                // Here for the same reason as the arms above: a focused terminal
+                // takes the chord first, so a workspace-level binding would
+                // compile, test green, and do nothing when pressed.
+                "n" => {
+                    cx.emit(ToggleRail);
                     return;
                 }
                 // Two keys for one panel, and the second is not redundant.
