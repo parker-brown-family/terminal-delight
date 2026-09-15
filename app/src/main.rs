@@ -81,8 +81,8 @@ use gpui_platform::application;
 use pane::{
     AgentDone, AgentWorkingChanged, CloseFocusRead, ClosePane, DragPaneStart, FocusReadNav,
     OpenAgentPanel, OpenDisplayMenu, OpenFind, OpenFocusRead, OpenHelp, OpenLogoPicker,
-    OpenThemeMenu, OpenUsagePanel, PaintApplied, PaneRenamed, ReadNav, RequestCloseTab,
-    TerminalView, ToggleLeftBar, ToggleRail,
+    OpenThemeMenu, OpenUsagePanel, PaintApplied, PaneRenamed, ReadNav, ReopenClosed,
+    RequestCloseTab, TerminalView, ToggleLeftBar, ToggleRail,
 };
 use serde::{Deserialize, Serialize};
 use theme::{PaneTheme, ThemeChoice};
@@ -136,6 +136,17 @@ struct Ghost {
 enum SplitDir {
     Row,
     Col,
+}
+
+/// Which half of a split something sits in.
+///
+/// A split's two children are not interchangeable — `a` is left or top — so a
+/// pane that comes back on the wrong side has moved across the screen without
+/// anybody asking it to.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Side {
+    A,
+    B,
 }
 
 static SPLIT_IDS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
@@ -341,6 +352,79 @@ impl<L: Clone> Tree<L> {
                         b,
                     }),
                 )
+            }
+        }
+    }
+
+    /// Where a leaf sits, described so it can be put back after it has left.
+    ///
+    /// Returns its parent split's direction and ratio, which side of that split
+    /// the leaf is on, and — the load-bearing part — the SIBLING subtree rather
+    /// than the parent. The parent does not survive the removal: `remove_leaf`
+    /// collapses it onto the sibling, so a seat recorded as "inside split 41"
+    /// aims at something that no longer exists by the time anybody asks for it
+    /// back. The sibling is what is still standing there.
+    ///
+    /// `None` when the leaf is the whole tree. That is not a seat, and the
+    /// caller wants the tab-shaped answer instead.
+    fn seat_of<'a>(
+        &'a self,
+        target: &impl Fn(&L) -> bool,
+    ) -> Option<(SplitDir, f32, Side, &'a Tree<L>)> {
+        match self {
+            Tree::Leaf(_) => None,
+            Tree::Split {
+                dir, ratio, a, b, ..
+            } => {
+                if matches!(a.as_ref(), Tree::Leaf(e) if target(e)) {
+                    return Some((*dir, *ratio, Side::A, b));
+                }
+                if matches!(b.as_ref(), Tree::Leaf(e) if target(e)) {
+                    return Some((*dir, *ratio, Side::B, a));
+                }
+                a.seat_of(target).or_else(|| b.seat_of(target))
+            }
+        }
+    }
+
+    /// Put a leaf back beside the subtree it used to share a split with.
+    ///
+    /// The anchor is matched as a whole SUBTREE, not as a leaf, because the
+    /// sibling may itself have been a split — closing one pane of a four-pane
+    /// tab leaves a split holding the other three, and that is the thing the
+    /// returning pane has to sit beside.
+    ///
+    /// Hands the leaf back when the anchor is gone, so the caller can try the
+    /// next-best home rather than having to guess in advance whether this
+    /// would work.
+    fn reseat(
+        &mut self,
+        is_anchor: &impl Fn(&Tree<L>) -> bool,
+        side: Side,
+        dir: SplitDir,
+        ratio: f32,
+        leaf: L,
+    ) -> Option<L> {
+        if is_anchor(self) {
+            let sibling = std::mem::replace(self, Tree::Leaf(leaf.clone()));
+            let (a, b) = match side {
+                Side::A => (Tree::Leaf(leaf), sibling),
+                Side::B => (sibling, Tree::Leaf(leaf)),
+            };
+            *self = Tree::Split {
+                id: next_split_id(),
+                dir,
+                ratio,
+                a: Box::new(a),
+                b: Box::new(b),
+            };
+            return None;
+        }
+        match self {
+            Tree::Leaf(_) => Some(leaf),
+            Tree::Split { a, b, .. } => {
+                let leaf = a.reseat(is_anchor, side, dir, ratio, leaf)?;
+                b.reseat(is_anchor, side, dir, ratio, leaf)
             }
         }
     }
@@ -1225,6 +1309,124 @@ struct Deleted {
     held_active: Option<usize>,
 }
 
+/// What one retirement is holding.
+///
+/// Every way of ending something in this application puts one of these in the
+/// trash instead of hanging up: the bay, the ✕, ctrl+w, alt+w, and the two menu
+/// rows. They differ only in how they come back — a branch by its tab indices,
+/// a pane by the split it sat in — which is why this is an enum and not two
+/// trashes.
+///
+/// Dropping this value is what ends the shells it holds. Nothing else does.
+enum Retired {
+    /// A project, a group, or a whole tab: [`Deleted`] already carries all three.
+    Branch(Deleted),
+    /// One pane out of a split.
+    Pane(HeldPane),
+}
+
+/// What a returning pane aims at: the subtree it used to share a split with.
+///
+/// A leaf is named by the terminal inside it and a split by its own id, both of
+/// which outlive the reshaping that happens while the pane is away.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Anchor {
+    Leaf(EntityId),
+    Split(u64),
+}
+
+impl Anchor {
+    fn of(node: &Node) -> Anchor {
+        match node {
+            Tree::Leaf(e) => Anchor::Leaf(e.entity_id()),
+            Tree::Split { id, .. } => Anchor::Split(*id),
+        }
+    }
+
+    fn matches(&self, node: &Node) -> bool {
+        match (self, node) {
+            (Anchor::Leaf(want), Tree::Leaf(e)) => e.entity_id() == *want,
+            (Anchor::Split(want), Tree::Split { id, .. }) => id == want,
+            _ => false,
+        }
+    }
+}
+
+/// One pane, closed and still running, with everywhere it might go back to.
+///
+/// Three homes in descending order of honesty, because a pane is away for up to
+/// an hour and the layout does not hold still: the seat it left, the tab it left,
+/// and a tab of its own. Which one it got is told rather than glossed — "back
+/// where it was" and "back as its own tab" are different facts about a screen
+/// somebody is about to look at.
+struct HeldPane {
+    /// The live terminal. Held here is the whole mechanism keeping it running.
+    leaf: Entity<TerminalView>,
+    /// The subtree it shared a split with, and how they shared it.
+    anchor: Anchor,
+    side: Side,
+    dir: SplitDir,
+    ratio: f32,
+    /// Where its tab sat, and what that tab was — the second and third homes.
+    tab_at: usize,
+    ident: TabIdentity,
+}
+
+/// Which home a returning pane actually got.
+///
+/// Three states rather than a boolean, because "recovered" covering all three
+/// is the sentence that makes a person think their layout is intact when it is
+/// not.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Landed {
+    /// Back in the split it left, same side, same ratio.
+    Seat,
+    /// Its tab is still there, but the seat is gone — split in beside it.
+    Tab,
+    /// The tab is gone too. A new one, wearing the old tab's name and colours.
+    NewTab,
+}
+
+impl Landed {
+    fn says(self) -> &'static str {
+        match self {
+            Landed::Seat => "back where it was",
+            Landed::Tab => "back in its tab, in a new seat",
+            Landed::NewTab => "back as its own tab",
+        }
+    }
+}
+
+/// The one line the bay says out loud, for a few seconds, over its own doors.
+///
+/// Two different messages and not one string, because they are answers to
+/// different questions: what just happened to a thing you closed, and what just
+/// happened to a thing you asked back.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum BaySays {
+    /// Something was held. Said once ever, the first time.
+    Held,
+    /// A pane came back, and which of its three homes it got.
+    Reopened(Landed),
+    /// ctrl+shift+z with nothing to give back. Said out loud rather than
+    /// swallowed: a chord that silently does nothing reads as a chord that is
+    /// broken, and this one is often pressed one time too many.
+    Empty,
+}
+
+impl BaySays {
+    fn line(self) -> String {
+        match self {
+            BaySays::Held => "held \u{2014} ctrl+shift+z brings it back".to_string(),
+            BaySays::Reopened(l) => l.says().to_string(),
+            BaySays::Empty => "nothing left to bring back".to_string(),
+        }
+    }
+}
+
+/// How long the bay keeps saying it.
+const BAY_SAYS_FOR: Duration = Duration::from_secs(6);
+
 /// The outer layer of the left bar's tree: a PROJECT, holding initiatives (tab
 /// groups) and any tasks filed straight under it.
 ///
@@ -1480,6 +1682,11 @@ struct StateFile {
     /// absent on pre-feature files, and on every non-Hyprland desktop.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     last_workspace: Option<String>,
+    /// Whether this person has been told, once, that a close can be undone.
+    /// Absent on pre-feature files → not yet told, which is the truth about
+    /// everybody who has never seen the hint.
+    #[serde(default)]
+    undo_hinted: bool,
 }
 
 fn default_warp() -> f32 {
@@ -1527,6 +1734,7 @@ impl Default for StateFile {
             anchor_top: false,
             lang: lang::Lang::default(),
             last_workspace: None,
+            undo_hinted: false,
         }
     }
 }
@@ -1853,6 +2061,10 @@ struct PaneDrag {
     /// True while the cursor is currently outside the window — a release there
     /// tears the pane off into a brand-new window of its own.
     left_window: bool,
+    /// True while the cursor is over the bay at the foot of the left bar. A
+    /// release there retires the pane — the same gesture a branch and a tab
+    /// already have, landing in the same holding.
+    over_bay: bool,
 }
 
 /// An OUTER tab being dragged along the mother bar to reorder it. Distinct from
@@ -2685,12 +2897,20 @@ struct Workspace {
     /// never reused, so a stale reference resolves to nothing instead of to
     /// somebody else's project.
     next_project_id: u32,
-    /// Branches that have been deleted and are still coming back.
+    /// Everything that has been ended and is still coming back — a deleted
+    /// branch, a closed tab, a closed pane. One trash, because they are one
+    /// promise.
     ///
-    /// Holding a [`Deleted`] here is the entire mechanism that keeps its shells
+    /// Holding a [`Retired`] here is the entire mechanism that keeps its shells
     /// running: in window-owned mode a terminal ends when the last reference to
     /// its pane is dropped, and this is that reference. See [`crate::hold`].
-    trash: hold::Trash<Deleted>,
+    trash: hold::Trash<Retired>,
+    /// The one line the bay says out loud, and when it started saying it.
+    bay_says: Option<(BaySays, Instant)>,
+    /// Whether a person has been told once that a close is recoverable.
+    /// Persisted: an undo nobody knows about is an undo nobody uses, and a hint
+    /// that returns every session is furniture.
+    undo_hinted: bool,
     /// The trash can's hangar doors, 0.0 shut to 1.0 open. Driven by whether a
     /// drag is over the footer, and eased per frame rather than stored as a
     /// target, so a drag that leaves mid-open closes from where it got to.
@@ -2978,6 +3198,11 @@ fn wire_pane(pane: &Entity<TerminalView>, window: &mut Window, cx: &mut Context<
         cx.notify();
     })
     .detach();
+    // ctrl+shift+z in any pane → the most recently closed thing comes back.
+    cx.subscribe_in(pane, window, |ws, _pane, _ev: &ReopenClosed, window, cx| {
+        ws.reopen_newest(window, cx);
+    })
+    .detach();
     // Ctrl+F / Ctrl+Shift+F in a pane → open the find panel (this pane, or global)
     cx.subscribe_in(pane, window, |ws, pane, ev: &OpenFind, window, cx| {
         ws.open_find(pane.entity_id(), ev.global, window, cx);
@@ -2992,6 +3217,7 @@ fn wire_pane(pane: &Entity<TerminalView>, window: &mut Window, cx: &mut Context<
             at: start,
             engaged: false,
             left_window: false,
+            over_bay: false,
         });
         ws.drop_target = None;
         cx.notify();
@@ -3727,6 +3953,8 @@ impl Workspace {
             projects: Vec::new(),
             next_project_id: 1,
             trash: hold::Trash::new(),
+            bay_says: None,
+            undo_hinted: false,
             bay: 0.,
             confirm_delete: None,
             bar_menu: None,
@@ -4596,6 +4824,7 @@ impl Workspace {
             // for ranking only — never an identity, so a dragged or renamed
             // workspace costs nothing.
             last_workspace: instance::current_workspace(),
+            undo_hinted: self.undo_hinted,
         }
     }
 
@@ -6826,12 +7055,12 @@ impl Workspace {
             label,
             taken.len(),
             panes,
-            Deleted {
+            Retired::Branch(Deleted {
                 tabs: taken,
                 groups,
                 project,
                 held_active,
-            },
+            }),
             Instant::now(),
         );
         // Here, deliberately: this is where shells end.
@@ -6882,6 +7111,21 @@ impl Workspace {
             .and_then(|t| t.name.clone())
             .unwrap_or_else(|| format!("tab {}", i + 1));
         let was_active = self.active == i;
+
+        // Every tube in the tab goes dark at once, if this is the tab on screen.
+        // The terminals are NOT dying — they go on running in the trash — but
+        // the screen they were on is leaving, and that is what the ghost draws.
+        // A background tab's panes hold stale bounds (see `ghost_of`), so there
+        // is nothing worth animating there.
+        if i == self.active {
+            let mut leaves = vec![];
+            self.tabs[i].root.leaves(&mut leaves);
+            let leaves: Vec<_> = leaves.into_iter().cloned().collect();
+            for e in &leaves {
+                let g = self.ghost_of(e, cx);
+                self.ghosts.extend(g);
+            }
+        }
         let tab = self.tabs.remove(i);
 
         let (_, evicted) = self.trash.take(
@@ -6889,12 +7133,12 @@ impl Workspace {
             label,
             1,
             panes,
-            Deleted {
+            Retired::Branch(Deleted {
                 tabs: vec![(i, tab)],
                 groups: vec![],
                 project: None,
                 held_active: was_active.then_some(0),
-            },
+            }),
             Instant::now(),
         );
         self.end_held(evicted, cx);
@@ -6904,9 +7148,38 @@ impl Workspace {
         self.active = tree::active_after_removal(self.active, &[i], self.tabs.len());
         self.permit_shrink.set(true);
         self.focus_active(window, cx);
+        self.hint_undo_once();
         self.save(cx);
         cx.notify();
         true
+    }
+
+    /// Bring back the most recently closed thing, whatever kind it was.
+    ///
+    /// Newest first, and repeating the chord walks back through the trash — the
+    /// order a person remembers their own closes in. Expired holdings are not
+    /// in `live_items`, so a press after everything has run out says so rather
+    /// than resurrecting the oldest thing still technically on the list.
+    fn reopen_newest(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        let Some(id) = self.trash.live_items(Instant::now()).next().map(|h| h.id) else {
+            self.bay_says = Some((BaySays::Empty, Instant::now()));
+            cx.notify();
+            return false;
+        };
+        self.recover_holding(id, window, cx)
+    }
+
+    /// Say once, the first time anything is held, that it can be had back.
+    ///
+    /// The whole feature is invisible otherwise: a close looks exactly like the
+    /// close that used to end things, and ctrl+shift+z is not a chord anybody
+    /// guesses. Once per person rather than once per session — a hint that
+    /// returns every morning is furniture people learn to look past.
+    fn hint_undo_once(&mut self) {
+        if !self.undo_hinted {
+            self.undo_hinted = true;
+            self.bay_says = Some((BaySays::Held, Instant::now()));
+        }
     }
 
     /// Put a holding back where it came from.
@@ -6927,7 +7200,11 @@ impl Workspace {
             groups,
             project,
             held_active,
-        } = h.payload;
+        } = match h.payload {
+            Retired::Branch(d) => d,
+            // A pane knows where it goes and nothing above it does.
+            Retired::Pane(p) => return self.reopen_pane(p, window, cx),
+        };
 
         if let Some(p) = project {
             if !self.projects.iter().any(|q| q.id == p.id) {
@@ -6974,16 +7251,93 @@ impl Workspace {
     /// [`Self::hangup`] returns immediately when there is no host, so calling
     /// it here is correct in both modes and does nothing in the one you are
     /// probably running.
-    fn end_held(&self, held: Vec<Deleted>, cx: &mut Context<Self>) {
-        for d in &held {
-            let mut leaves = vec![];
-            for (_, tab) in &d.tabs {
-                tab.root.leaves(&mut leaves);
-            }
-            let leaves: Vec<_> = leaves.into_iter().cloned().collect();
+    fn end_held(&self, held: Vec<Retired>, cx: &mut Context<Self>) {
+        for r in &held {
+            let leaves: Vec<Entity<TerminalView>> = match r {
+                Retired::Branch(d) => {
+                    let mut refs = vec![];
+                    for (_, tab) in &d.tabs {
+                        tab.root.leaves(&mut refs);
+                    }
+                    refs.into_iter().cloned().collect()
+                }
+                Retired::Pane(p) => vec![p.leaf.clone()],
+            };
             self.hangup(&leaves, cx);
         }
         drop(held);
+    }
+
+    /// Put one held pane back, and say which of its three homes it got.
+    ///
+    /// The order is the honest one: the seat it left, then its tab, then a tab
+    /// of its own. Each step is tried against the tree as it is NOW — an hour is
+    /// long enough for the layout to have moved, and a seat that has gone is an
+    /// ordinary outcome rather than an error.
+    fn reopen_pane(&mut self, p: HeldPane, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        let HeldPane {
+            leaf,
+            anchor,
+            side,
+            dir,
+            ratio,
+            tab_at,
+            ident,
+        } = p;
+
+        // 1 — the seat. The anchor is the sibling it shared a split with, so
+        // finding it means the split can be rebuilt exactly as it was.
+        let is_anchor = |n: &Node| anchor.matches(n);
+        let mut leaf = Some(leaf);
+        let mut at = None;
+        for (i, tab) in self.tabs.iter_mut().enumerate() {
+            let Some(l) = leaf.take() else { break };
+            match tab.root.reseat(&is_anchor, side, dir, ratio, l) {
+                None => {
+                    at = Some((i, Landed::Seat));
+                    break;
+                }
+                Some(back) => leaf = Some(back),
+            }
+        }
+
+        // 2 — the tab, by identity. Its shape has changed underneath the pane,
+        // so it goes in as a fresh split against whatever is there now.
+        if let Some(l) = leaf.take() {
+            let home = self
+                .tabs
+                .iter()
+                .position(|t| t.name == ident.name && t.group == ident.group)
+                .or_else(|| (tab_at < self.tabs.len()).then_some(tab_at));
+            match home {
+                Some(i) => {
+                    let tab = &mut self.tabs[i];
+                    let old = std::mem::replace(&mut tab.root, Tree::Leaf(l.clone()));
+                    tab.root = Tree::Split {
+                        id: next_split_id(),
+                        dir,
+                        ratio: 0.5,
+                        a: Box::new(old),
+                        b: Box::new(Tree::Leaf(l)),
+                    };
+                    at = Some((i, Landed::Tab));
+                }
+                // 3 — a tab of its own, wearing what the old tab was called.
+                None => {
+                    let i = tab_at.min(self.tabs.len());
+                    self.tabs.insert(i, ident.onto(Tree::Leaf(l)));
+                    at = Some((i, Landed::NewTab));
+                }
+            }
+        }
+
+        if let Some((i, landed)) = at {
+            self.bay_says = Some((BaySays::Reopened(landed), Instant::now()));
+            self.activate_tab(i, window, cx);
+        }
+        self.save(cx);
+        cx.notify();
+        true
     }
 
     /// The chrome every "this ends something" modal wears.
@@ -7203,7 +7557,7 @@ impl Workspace {
                     .map(|h| {
                         (
                             h.id,
-                            format!("Recover \u{201c}{}\u{201d}", h.label),
+                            format!("Recover {} \u{201c}{}\u{201d}", h.kind.noun(), h.label),
                             h.left(now).map(hold::remaining_label).unwrap_or_default(),
                         )
                     })
@@ -7646,10 +8000,17 @@ impl Workspace {
     /// things to tell somebody, and a door that only opens on hover is a door
     /// nobody discovers.
     fn bay_target(&self) -> f32 {
-        match self.bar_drag.as_ref().filter(|d| d.engaged) {
-            Some(d) if d.over_bay => 1.0,
-            Some(_) => 0.34,
-            None => 0.0,
+        // Two kinds of drag can end in the bay — a branch off the left bar and a
+        // pane off its own header — and the doors answer to both. A door that
+        // opens for one of the two gestures teaches that the other one cannot be
+        // dropped there, which is the opposite of what is true.
+        let bar = self.bar_drag.as_ref().filter(|d| d.engaged);
+        let pane = self.drag_pane.as_ref().filter(|d| d.engaged);
+        let over = bar.is_some_and(|d| d.over_bay) || pane.is_some_and(|d| d.over_bay);
+        match (over, bar.is_some() || pane.is_some()) {
+            (true, _) => 1.0,
+            (false, true) => 0.34,
+            (false, false) => 0.0,
         }
     }
 
@@ -10573,6 +10934,21 @@ impl Workspace {
         }
         self.confirm_close = None;
         self.tab_menu = None;
+
+        // A close is a retirement, not an ending. The shells keep running in the
+        // trash until somebody asks for them back or the holding runs out, which
+        // is the same promise the bay makes — one protocol, whichever gesture
+        // got here. `trash_tab` owns the ghosts, the focus and the save.
+        //
+        // Except for the last tab: closing it quits the application, and a
+        // holding lives in this window's memory, so it would be dropped in the
+        // same breath it was made. That case keeps today's explicit hangup,
+        // which at least ends the shells deliberately rather than by accident.
+        // It stops being the exception when a holding outlives its window.
+        if self.tabs.len() > 1 {
+            self.trash_tab(i, window, cx);
+            return;
+        }
         {
             let mut leaves = vec![];
             self.tabs[i].root.leaves(&mut leaves);
@@ -11424,10 +11800,15 @@ impl Workspace {
                 .map(|(_, _, w, h)| (w, h))
                 .unwrap_or((0.0, 0.0));
             let outside = engaged && outside_bounds(f32::from(pos.x), f32::from(pos.y), ow, oh);
+            let in_bay = engaged && !outside && self.point_in_bay(pos);
             if let Some(d) = self.drag_pane.as_mut() {
                 d.left_window = outside;
+                d.over_bay = in_bay;
             }
-            self.drop_target = if engaged && !outside {
+            // Over the bay, the pane is being retired rather than moved, so the
+            // in-window landing zones stop being offered: two affordances lit at
+            // once is a release whose outcome nobody can predict.
+            self.drop_target = if engaged && !outside && !in_bay {
                 let id = self.drag_pane.as_ref().unwrap().id;
                 self.resolve_drop(pos, id)
             } else {
@@ -11684,7 +12065,13 @@ impl Workspace {
                     .unwrap_or((0.0, 0.0));
                 let outside = drag.left_window
                     || outside_bounds(f32::from(ev.position.x), f32::from(ev.position.y), ow, oh);
-                if let Some(target) = target {
+                if drag.over_bay {
+                    // Into the incinerator, by the same door everything else
+                    // uses. `close_pane` is the retirement, so a pane dropped
+                    // here and a pane closed with alt+w land in one holding and
+                    // come back the same way.
+                    self.close_pane(drag.id, window, cx);
+                } else if let Some(target) = target {
                     self.perform_drop(drag.id, target, window, cx);
                 } else if outside && self.pane_count() > 1 {
                     // released past the window edge → tear this pane off into a
@@ -11741,23 +12128,31 @@ impl Workspace {
         }) else {
             return;
         };
-        // Take the dying tube's stage before it goes. `remove_leaf` below drops
-        // the Entity, which SIGHUPs the shell — after that there is no pane left
-        // to ask where it was or how bent it was.
-        // A pane the host owns does not die when this window stops watching it,
-        // so closing one has to be said out loud. Said here, before the entity
-        // is dropped: after that there is no pane left to ask which terminal it
-        // was showing.
-        {
-            let mut leaves = vec![];
-            self.tabs[from].root.leaves(&mut leaves);
-            let dying: Vec<_> = leaves
-                .into_iter()
-                .filter(|e| e.entity_id() == id)
-                .cloned()
-                .collect();
-            self.hangup(&dying, cx);
+        // A pane alone in its tab is a tab. Closing it there is the tab-shaped
+        // gesture wearing a different chord, and routing it to one place keeps
+        // the two from drifting into two answers for one act.
+        if self.tab_pane_count(from) <= 1 {
+            self.close_tab(from, window, cx);
+            return;
         }
+
+        // The seat, read BEFORE the pane leaves. `remove_leaf` collapses the
+        // parent split onto the sibling, so a moment from now there is nothing
+        // left in the tree that describes where this pane was — and a pane that
+        // cannot say where it sat comes back somewhere arbitrary, which is worse
+        // than not coming back at all.
+        let seat = {
+            let pred = |e: &Entity<TerminalView>| e.entity_id() == id;
+            self.tabs[from]
+                .root
+                .seat_of(&pred)
+                .map(|(dir, ratio, side, sibling)| (dir, ratio, side, Anchor::of(sibling)))
+        };
+        let label = self
+            .tabs
+            .get(from)
+            .and_then(|t| t.name.clone())
+            .unwrap_or_else(|| format!("pane in tab {}", from + 1));
         if from == self.active {
             let mut leaves = vec![];
             self.tabs[from].root.leaves(&mut leaves);
@@ -11775,15 +12170,40 @@ impl Workspace {
         // The tab survives this; only one of its panes is leaving. It goes back
         // as the same task — same name, same colours, same branch.
         let was = tab.identity();
-        // dropping the taken Entity releases its PTY (SIGHUP) — that's the close
-        let (_taken, remaining) = tab.root.remove_leaf(&pred);
+        let (taken, remaining) = tab.root.remove_leaf(&pred);
         if let Some(root) = remaining {
-            self.tabs.insert(from, was.onto(root));
+            self.tabs.insert(from, was.clone().onto(root));
         }
         if self.tabs.is_empty() {
             cx.quit();
             return;
         }
+
+        // Retired, not hung up. The Entity that came out of the tree is the
+        // terminal's last reference, so the trash holding it is what keeps the
+        // shell running — and letting go of it, on eviction or expiry, is what
+        // finally ends it. There is deliberately no `hangup` on this path.
+        if let (Some(leaf), Some((dir, ratio, side, anchor))) = (taken, seat) {
+            let (_, evicted) = self.trash.take(
+                hold::Kind::Pane,
+                label,
+                0,
+                1,
+                Retired::Pane(HeldPane {
+                    leaf,
+                    anchor,
+                    side,
+                    dir,
+                    ratio,
+                    tab_at: from,
+                    ident: was,
+                }),
+                Instant::now(),
+            );
+            self.end_held(evicted, cx);
+            self.hint_undo_once();
+        }
+
         self.active = self.active.min(self.tabs.len() - 1);
         self.focus_active(window, cx);
         // Closing a pane is an EXPLICIT shrink — allow it past the guard.
@@ -13640,10 +14060,23 @@ impl Workspace {
         let store = self.bay_bounds.clone();
         let open = self.bay.clamp(0., 1.);
         let held = self.trash.live_len(Instant::now());
+        // What the bay is saying out loud right now, if anything. Read rather
+        // than cleared here: `render_bay` takes `&self`, and a message that
+        // expires on a clock nobody is watching would sit there until the next
+        // frame happened to be drawn for some other reason.
+        let says = self
+            .bay_says
+            .filter(|(_, at)| at.elapsed() < BAY_SAYS_FOR)
+            .map(|(what, _)| what.line());
+        // Aimed at the bin, by either gesture that can be.
         let hot = self
             .bar_drag
             .as_ref()
-            .is_some_and(|d| d.engaged && d.over_bay);
+            .is_some_and(|d| d.engaged && d.over_bay)
+            || self
+                .drag_pane
+                .as_ref()
+                .is_some_and(|d| d.engaged && d.over_bay);
 
         // Half the bay's inner width, which is how far each door travels to be
         // fully open. Derived from the bar rather than measured, because a door
@@ -13836,7 +14269,7 @@ impl Workspace {
                     .w(px(1.))
                     .bg(th.faint.alpha(0.42 * (1. - open))),
             )
-            .when(held > 0 && open < 0.5, |d| {
+            .when(held > 0 && open < 0.5 && says.is_none(), |d| {
                 d.child(
                     div()
                         .absolute()
@@ -13847,6 +14280,24 @@ impl Workspace {
                         .text_size(px(9. * s))
                         .text_color(th.text.alpha(0.42 * (1. - open)))
                         .child(SharedString::from(format!("{held} recoverable"))),
+                )
+            })
+            // What just happened, for a few seconds, in the same place the count
+            // sits — the count is what the bay says at rest, and this is what it
+            // says when something has just moved. Two lines at once in a 56-pixel
+            // box would be neither.
+            .when_some(says, |d, line| {
+                d.child(
+                    div()
+                        .absolute()
+                        .inset_0()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .px(px(4. * s))
+                        .text_size(px(9. * s))
+                        .text_color(ember.alpha(0.92 * (1. - open)))
+                        .child(SharedString::from(line)),
                 )
             })
             .child(
@@ -16246,6 +16697,17 @@ impl Render for Workspace {
         let travelling = self.ease_bay();
         if travelling || self.bay > 0.0 {
             cx.notify();
+        }
+        // A line the bay is saying needs frames for the same reason: it expires
+        // on a clock, and a clock nobody repaints for is a message that stays up
+        // until something else happens to redraw. Dropped here, at its deadline,
+        // so the count underneath comes back on its own.
+        if let Some((_, at)) = self.bay_says {
+            if at.elapsed() < BAY_SAYS_FOR {
+                cx.notify();
+            } else {
+                self.bay_says = None;
+            }
         }
         // Tubes still going dark. Aged out here rather than on a timer: a ghost
         // that outlives its animation would keep an overlay tube registered.
@@ -20451,19 +20913,43 @@ impl Render for Workspace {
                 .unwrap_or_else(|| format!("tab {}", i + 1));
             let n = self.tab_pane_count(i);
             let danger = hsla(0., 0.72, 0.60, 1.);
-            // Grammar adapts to a single shell vs a multi-pane tab.
-            let (btn_label, body) = if n <= 1 {
-                (
+            // The question this dialog asks changed when the close became a
+            // retirement: it is no longer "are you sure you want to end these
+            // shells" but "are you sure you want this off your screen". Saying
+            // the old sentence over the new behaviour would be the worse of the
+            // two errors — a person declines a close they could have taken back.
+            //
+            // The last tab is still the old sentence, and it is still true: a
+            // holding lives in this window, and closing the last tab closes the
+            // window. Whichever branch is drawn, it matches what `close_tab`
+            // will actually do.
+            let hours = hold::window_for(n).as_secs() / 3600;
+            let last = self.tabs.len() <= 1;
+            let (btn_label, body) = match (last, n) {
+                (true, 1) => (
                     "CLOSE TAB".to_string(),
-                    format!("Closing \u{201c}{name}\u{201d} ends its shell. This can\u{2019}t be undone."),
-                )
-            } else {
-                (
+                    format!(
+                        "\u{201c}{name}\u{201d} is the last tab \u{2014} closing it ends its shell and quits. This can\u{2019}t be undone."
+                    ),
+                ),
+                (true, n) => (
                     format!("CLOSE {n} PANES"),
                     format!(
-                        "\u{201c}{name}\u{201d} holds {n} panes \u{2014} closing it ends all {n} shells. This can\u{2019}t be undone."
+                        "\u{201c}{name}\u{201d} is the last tab \u{2014} closing it ends all {n} shells and quits. This can\u{2019}t be undone."
                     ),
-                )
+                ),
+                (false, 1) => (
+                    "CLOSE TAB".to_string(),
+                    format!(
+                        "\u{201c}{name}\u{201d} goes to the bay. Its shell keeps running, and ctrl+shift+z brings it back for the next {hours}h."
+                    ),
+                ),
+                (false, n) => (
+                    format!("CLOSE {n} PANES"),
+                    format!(
+                        "\u{201c}{name}\u{201d} holds {n} panes. They go to the bay still running, and come back with ctrl+shift+z for the next {hours}h."
+                    ),
+                ),
             };
             let confirm_btn = div()
                 .px_3()
@@ -20886,6 +21372,7 @@ impl Render for Workspace {
                         row(s.k_alt_arrows, s.move_focus_dir),
                         row(s.k_drag_subtab, s.drag_subtab),
                         row(s.k_rclick_tab, s.rclick_tab),
+                        row("Ctrl+Shift+Z", s.reopen_closed),
                     ],
                 ))
                 .child(section(
@@ -25523,6 +26010,7 @@ id = "hacker"
         let state = StateFile {
             panes: 0,
             last_workspace: None,
+            undo_hinted: false,
             active: 0,
             win: Some((12.0, 34.0, 1280.0, 720.0)),
             scale: Some(1.0),
@@ -25576,6 +26064,7 @@ id = "hacker"
         let state = StateFile {
             panes: 0,
             last_workspace: None,
+            undo_hinted: false,
             active: 0,
             win: None,
             scale: None,
@@ -25633,6 +26122,7 @@ id = "hacker"
         let state = StateFile {
             panes: 0,
             last_workspace: None,
+            undo_hinted: false,
             active: 0,
             win: None,
             scale: None,
@@ -25922,6 +26412,146 @@ node = "Leaf"
         assert_eq!(leaf_ids(&rest.unwrap()), vec![9]);
     }
 
+    /// A pane must come back where it left, which means the seat has to be read
+    /// before the removal reshapes the tree around it.
+    #[test]
+    fn a_seat_survives_the_removal_that_erases_it() {
+        // 1 | (2 / 3)
+        let mut t: Tree<u32> = Tree::Leaf(1);
+        t.split_leaf(&|l| *l == 1, SplitDir::Row, 2);
+        t.split_leaf(&|l| *l == 2, SplitDir::Col, 3);
+
+        let (dir, ratio, side, sibling) = t.seat_of(&|l| *l == 2).expect("2 sits in a split");
+        assert!(matches!(dir, SplitDir::Col));
+        assert_eq!(side, Side::A, "2 is the first half of the col split");
+        assert_eq!(leaf_ids(sibling), vec![3], "its sibling is the leaf 3");
+        let anchor = leaf_ids(sibling);
+
+        let (taken, rest) = t.remove_leaf(&|l| *l == 2);
+        let mut rest = rest.expect("1 and 3 remain");
+        assert_eq!(taken, Some(2));
+        assert_eq!(leaf_ids(&rest), vec![1, 3]);
+
+        // Back into the seat: the anchor is the SIBLING, which is what the
+        // collapse left standing where the parent split used to be.
+        let left = rest.reseat(&|n: &Tree<u32>| leaf_ids(n) == anchor, side, dir, ratio, 2);
+        assert!(left.is_none(), "the leaf was placed");
+        assert_eq!(
+            leaf_ids(&rest),
+            vec![1, 2, 3],
+            "same order it had before it left"
+        );
+    }
+
+    /// The anchor is a whole subtree, not a leaf: close one pane of three and
+    /// what is left standing beside it can be a split.
+    #[test]
+    fn a_pane_can_sit_back_down_beside_a_split() {
+        let mut t: Tree<u32> = Tree::Leaf(1);
+        t.split_leaf(&|l| *l == 1, SplitDir::Row, 2);
+        t.split_leaf(&|l| *l == 2, SplitDir::Col, 3);
+        let (dir, ratio, side, sibling) = t.seat_of(&|l| *l == 1).expect("1 sits in a split");
+        assert_eq!(side, Side::A);
+        assert_eq!(
+            leaf_ids(sibling),
+            vec![2, 3],
+            "its sibling is a whole split"
+        );
+        let anchor = leaf_ids(sibling);
+
+        let (_, rest) = t.remove_leaf(&|l| *l == 1);
+        let mut rest = rest.expect("the split survives");
+        let left = rest.reseat(&|n: &Tree<u32>| leaf_ids(n) == anchor, side, dir, ratio, 1);
+        assert!(left.is_none());
+        assert_eq!(leaf_ids(&rest), vec![1, 2, 3]);
+    }
+
+    /// An hour is long enough for the seat to be gone, and a pane that cannot
+    /// find it must be handed back rather than dropped somewhere arbitrary.
+    #[test]
+    fn a_seat_that_is_gone_hands_the_pane_back() {
+        let mut t: Tree<u32> = Tree::Leaf(1);
+        t.split_leaf(&|l| *l == 1, SplitDir::Row, 2);
+        let left = t.reseat(
+            &|n: &Tree<u32>| leaf_ids(n) == vec![99],
+            Side::A,
+            SplitDir::Row,
+            0.5,
+            7,
+        );
+        assert_eq!(left, Some(7), "no anchor, so the caller still has its pane");
+        assert_eq!(leaf_ids(&t), vec![1, 2], "and the tree was not touched");
+    }
+
+    /// The whole tree is not a seat. A lone pane in a tab is a tab, and the
+    /// caller wants the tab-shaped answer rather than a split that never was.
+    #[test]
+    fn a_lone_leaf_has_no_seat() {
+        let t: Tree<u32> = Tree::Leaf(1);
+        assert!(t.seat_of(&|l| *l == 1).is_none());
+    }
+
+    /// Three homes, three sentences. Two of them reading the same loses the
+    /// distinction the type exists for, at the last step before a person reads it.
+    #[test]
+    fn every_landing_says_something_different() {
+        let all = [Landed::Seat, Landed::Tab, Landed::NewTab];
+        for (i, a) in all.iter().enumerate() {
+            for b in &all[i + 1..] {
+                assert_ne!(a.says(), b.says(), "{a:?} and {b:?} read the same");
+            }
+        }
+    }
+
+    /// Every kind names itself in the tray, and no two share a noun — the row
+    /// `Recover "UX"` is four different offers otherwise.
+    #[test]
+    fn every_retirable_kind_has_its_own_noun() {
+        let all = [
+            hold::Kind::Project,
+            hold::Kind::Initiative,
+            hold::Kind::Task,
+            hold::Kind::Pane,
+        ];
+        for (i, a) in all.iter().enumerate() {
+            assert!(!a.noun().is_empty());
+            for b in &all[i + 1..] {
+                assert_ne!(a.noun(), b.noun(), "{a:?} and {b:?} read the same");
+            }
+        }
+    }
+
+    /// The point of the whole change: no close path may end a shell itself.
+    ///
+    /// `hangup` is the one place a terminal dies, and it belongs to `end_held`,
+    /// which runs when a holding is evicted or swept. A close that calls it
+    /// directly has skipped the trash, and that failure is invisible — the app
+    /// looks identical and the pane is simply gone when somebody asks for it.
+    ///
+    /// The last tab is the written exception: closing it quits the application,
+    /// and a holding made in a dying window is dropped in the same breath.
+    #[test]
+    fn a_close_does_not_end_a_shell_itself() {
+        let src = include_str!("main.rs");
+        for f in ["fn close_pane(", "fn trash_tab(", "fn delete_branch("] {
+            let at = src.find(f).unwrap_or_else(|| panic!("{f} must exist"));
+            let body = &src[at..];
+            let end = body.find("\n    fn ").unwrap_or(body.len());
+            assert!(
+                !body[..end].contains("self.hangup("),
+                "{f} hangs up its own panes — the trash is what holds them"
+            );
+        }
+        let at = src.find("fn close_tab(").expect("close_tab must exist");
+        let body = &src[at..];
+        let end = body.find("\n    fn ").unwrap_or(body.len());
+        assert_eq!(
+            body[..end].matches("self.hangup(").count(),
+            1,
+            "close_tab may hang up only the last tab, which quits with it"
+        );
+    }
+
     // load_state() reads $HOME so isn't callable in tests, but its body is
     // `read.ok().and_then(parse.ok()).unwrap_or_default()` — pin that parse
     // contract so a corrupt or old state.toml degrades to a clean boot instead
@@ -25974,6 +26604,7 @@ node = "Leaf"
         let state = StateFile {
             panes: 0,
             last_workspace: None,
+            undo_hinted: false,
             active: 0,
             win: None,
             scale: None,

@@ -2029,6 +2029,16 @@ impl gpui::EventEmitter<ToggleLeftBar> for TerminalView {}
 pub struct ToggleRail;
 impl gpui::EventEmitter<ToggleRail> for TerminalView {}
 
+/// Ctrl+Shift+Z — bring back the most recently closed thing.
+///
+/// Z because the feature is an undo on a close. Not ctrl+shift+T, which this
+/// terminal already spends on a new tab and so does every other one; not plain
+/// ctrl+Z, which belongs to whatever is running in the pane — a terminal that
+/// claims an unshifted control chord takes it away from every program in every
+/// pane, with no way for them to ask for it back.
+pub struct ReopenClosed;
+impl gpui::EventEmitter<ReopenClosed> for TerminalView {}
+
 /// Ctrl+F (`global = false`) / Ctrl+Shift+F (`global = true`) was pressed in this
 /// pane — ask the workspace to open the find panel. In-pane find searches just
 /// this pane (and the panel centres over it); global find searches every pane.
@@ -4331,6 +4341,13 @@ impl TerminalView {
                 // compile, test green, and do nothing when pressed.
                 "n" => {
                     cx.emit(ToggleRail);
+                    return;
+                }
+                // Ctrl+Shift+Z → the most recently closed thing comes back.
+                // Same reason as the arms above for living here: the pane has
+                // the keyboard, so this is the only place the chord is seen.
+                "z" => {
+                    cx.emit(ReopenClosed);
                     return;
                 }
                 // Two keys for one panel, and the second is not redundant.
