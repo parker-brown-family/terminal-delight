@@ -24,6 +24,12 @@
 //! TODO(os-chrome): client-side window decorations (WindowDecorations::Client).
 
 mod art;
+// Slice 1 of the attention spine: the projection lands before the surface that
+// renders it, so nothing calls it yet. This allow comes off with the same commit
+// that draws the spine — if it is still here when the rail ships, the rail is
+// computing its rows somewhere else.
+#[allow(dead_code)]
+mod attention;
 mod bell;
 mod crt;
 mod csd;
