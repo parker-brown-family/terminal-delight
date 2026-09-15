@@ -4,6 +4,9 @@
 //! other pane keeps its exact place. ctrl+shift+t / [+]: new tab · ctrl+shift+u|y: Σ usage ·
 //! ctrl+pgup/pgdn: switch · right-click tab: rename · alt+arrows: pane focus
 //! by direction · ctrl+arrows: word-jump in the shell · alt+v / alt+h: split ↔ / ↕
+//! alt+w: close the focused PANE (ctrl+w closes the whole tab) ·
+//! ctrl+alt+arrows: walk the left bar's tree (→ opens a branch, then steps in;
+//! ← closes it, then climbs out) ·
 //! drag a tab to reorder · ctrl+click a tab: set its binder-divider colour
 //! 👓 on a sub-tab header: FOCUS — mirror that pane big, rest dimmed, esc closes
 //! (alt+↑/↓ jumps between your messages in a claude/codex pane) ·
@@ -74,8 +77,8 @@ use gpui::{
     canvas, div, fill, hsla, linear_color_stop, linear_gradient, point, prelude::*, px, size,
     white, Animation, AnimationExt, AnyElement, App, Bounds, BoxShadow, ClipboardItem, Context,
     Decorations, Entity, EntityId, Focusable, Hsla, KeyDownEvent, MouseButton, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, Pixels, Point, ScrollWheelEvent, SharedString, TitlebarOptions,
-    Window, WindowBounds, WindowDecorations, WindowOptions,
+    MouseMoveEvent, MouseUpEvent, Pixels, Point, ScrollHandle, ScrollWheelEvent, SharedString,
+    TitlebarOptions, Window, WindowBounds, WindowDecorations, WindowOptions,
 };
 use gpui_platform::application;
 use pane::{
@@ -2170,6 +2173,20 @@ enum BarBranch {
     Unfiled,
 }
 
+impl From<tree::RowId> for BarBranch {
+    /// A row as a branch gesture's target. A TASK row has no branch of its own,
+    /// and answers `Unfiled` — which every branch verb already treats as "there
+    /// is nothing here to do", so folding or scoping a task is inert rather
+    /// than wrong.
+    fn from(row: tree::RowId) -> Self {
+        match row {
+            tree::RowId::Project(id) => BarBranch::Project(id),
+            tree::RowId::Initiative(id) => BarBranch::Initiative(id),
+            tree::RowId::Task(_) | tree::RowId::Unfiled => BarBranch::Unfiled,
+        }
+    }
+}
+
 /// How a menu row reads: ordinary, unavailable, or about to end something.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum MenuTone {
@@ -2997,6 +3014,30 @@ struct Workspace {
     bar_resize: Option<(f32, f32)>,
     /// Which branch the MOTHER BAR is narrowed to. The tree never narrows.
     scope: tree::Scope,
+    /// Where the left bar's KEYBOARD cursor is (Ctrl+Alt+arrows), if it has
+    /// been put anywhere this session.
+    ///
+    /// `None` is not "the first row" — it is *the keyboard has not been used on
+    /// the bar*, which is why no row is highlighted until it has. Defaulting it
+    /// to the top would put a highlight on a window nobody has touched and make
+    /// the bar look like it had an opinion about where to start.
+    ///
+    /// Deliberately NOT persisted: a cursor is where you are looking right now,
+    /// and restoring a highlight onto a session reopened tomorrow would be a
+    /// claim about attention that the state file cannot make. It can also point
+    /// at a row that no longer exists — a closed tab, a folded-away branch —
+    /// and `tree::step` re-enters the list rather than trusting it.
+    bar_cursor: Option<tree::RowId>,
+    /// The bar list's scroll position, held only so the keyboard can bring the
+    /// cursor's row into view.
+    ///
+    /// The bar scrolls, and in any session big enough to want a tree it is
+    /// taller than the window — so without this a cursor is free to walk off
+    /// the bottom edge and every further press does something invisible. That
+    /// is the same failure the bar's chords are gated on `left_bar` to avoid,
+    /// arriving by a different road. Not persisted, for the reason the cursor
+    /// is not: it is where you are looking right now.
+    bar_scroll: ScrollHandle,
     /// Inline rename in the left bar: which branch row is being edited, and its
     /// buffer. Tasks are renamed with the strip's own editor (`renaming`), so
     /// this only ever holds a project or an initiative.
@@ -4179,6 +4220,8 @@ impl Workspace {
             slot_remaining: saved.slot_remaining.unwrap_or(SLOT_REMAINING_DEFAULT),
             bar_resize: None,
             scope: saved.scope.map(tree::Scope::from).unwrap_or_default(),
+            bar_cursor: None,
+            bar_scroll: ScrollHandle::new(),
             bar_rename: None,
             bar_drag: None,
             bar_bounds: Arc::new(Mutex::new(Vec::new())),
@@ -4545,6 +4588,10 @@ impl Workspace {
         }
         self.prune_groups();
         self.active = saved.active.min(self.tabs.len().saturating_sub(1));
+        // A session can be saved with the active tab's branch folded; opening
+        // the window is an activation like any other, so reveal it here rather
+        // than leaving the first frame disagreeing with the file.
+        self.reveal_active_branch();
         self.focus_active(window, cx);
         // Write the layout down now, while what it says is true.
         //
@@ -5536,6 +5583,11 @@ impl Workspace {
         let at = self.branch_end(place);
         self.tabs.insert(at, tab);
         self.active = at;
+        // A new tab is filed into `place`, which may be a branch that is shut —
+        // the left bar's `+` on a folded project is exactly that gesture. Open
+        // the way down to it, or the terminal it just made is somewhere nothing
+        // on screen is pointing.
+        self.reveal_active_branch();
         self.save(cx);
         cx.notify();
         // Defer the focus: this fires from a mouse-down listener, so the root
@@ -5596,6 +5648,7 @@ impl Workspace {
         let pane = self.make_pane_in_mode(restore, window, cx);
         self.tabs.push(Tab::new(Node::Leaf(pane), None));
         self.active = self.tabs.len() - 1;
+        self.reveal_active_branch();
         self.save(cx);
         cx.notify();
         cx.defer_in(window, |ws, window, cx| ws.focus_active(window, cx));
@@ -8554,6 +8607,208 @@ impl Workspace {
         }
     }
 
+    /// The left bar's lines, in draw order — the one place the tree is
+    /// flattened.
+    ///
+    /// Extracted out of `render_left_bar` when the keyboard cursor arrived: the
+    /// arrows step over exactly what is on screen, so they must ask the same
+    /// question the renderer asks, from the same code. Two flattenings would
+    /// have drifted the first time either grew a rule, and the symptom would
+    /// have been a cursor landing on a row that is not drawn.
+    fn bar_rows(&self, cx: &App) -> Vec<tree::Row> {
+        let projects: Vec<tree::ProjectRef> = self
+            .projects
+            .iter()
+            .map(|p| tree::ProjectRef {
+                id: p.id,
+                collapsed: p.collapsed,
+            })
+            .collect();
+        // Initiatives are listed in the order their tasks appear on the strip,
+        // not in the order the groups happen to sit in memory. That is what
+        // makes dragging one up or down mean something: reordering an
+        // initiative slides its whole run of tabs, and the tree has to show the
+        // same answer the mother bar does.
+        let mut initiatives: Vec<tree::InitiativeRef> = self
+            .groups
+            .iter()
+            .map(|g| tree::InitiativeRef {
+                id: g.id,
+                project: g.project,
+                collapsed: g.collapsed,
+            })
+            .collect();
+        let first_task_of = |gid: u32| {
+            self.tabs
+                .iter()
+                .position(|t| t.group == Some(gid))
+                .unwrap_or(usize::MAX)
+        };
+        initiatives.sort_by_key(|i| first_task_of(i.id));
+        let tasks = self.task_refs(cx);
+        tree::rows(&projects, &initiatives, &tasks)
+    }
+
+    /// Ctrl+Alt+↑/↓: walk the left bar one drawn row.
+    ///
+    /// The cursor is a HIGHLIGHT, not a selection that acts. Moving it opens
+    /// nothing, closes nothing and switches to no tab, which is what lets it
+    /// travel the whole session without disturbing it — Ctrl+Alt+→ is the verb.
+    /// Activating on every press would also fight the tree's own rule that the
+    /// active task's branches never fold, so arrowing through a folded project
+    /// would have unfolded it on the way past: the opposite of maintaining
+    /// visual state.
+    fn bar_walk(&mut self, down: bool, cx: &mut Context<Self>) {
+        let rows = self.bar_rows(cx);
+        if let Some(to) = tree::step(&rows, self.bar_cursor, down) {
+            self.bar_cursor = Some(to);
+            self.bar_reveal(&rows);
+            cx.notify();
+        }
+    }
+
+    /// Open whatever the active task is hanging under, so activating a task
+    /// always shows you the task.
+    ///
+    /// The tree used to do this while DRAWING — `tree::rows` force-expanded the
+    /// active task's branches on every frame — and that is why Ctrl+Alt+← and a
+    /// click on the header were both dead on the branch a person is most likely
+    /// to fold: the one they are working in. The flag was written and then
+    /// overruled, for ever, with nothing on screen to say so.
+    ///
+    /// Moved here it keeps the promise that matters (activate a task and you
+    /// can see it) and lets a deliberate fold stand, which is the same shape as
+    /// `ensure_scope_shows` beside it in `activate_tab`: the window corrects
+    /// itself when you MOVE, never while you are looking at it.
+    ///
+    /// Called from the paths where a DIFFERENT tab becomes active — activation,
+    /// a new tab, a click into a pane, and restore. Deliberately not from the
+    /// reorder and removal paths: there the active tab keeps its identity (or
+    /// inherits a neighbour's seat), and re-opening a branch there would undo a
+    /// fold the person just made, behind their back.
+    fn reveal_active_branch(&mut self) {
+        let place = self.place_of(self.active);
+        if let Some(g) = place.initiative {
+            if let Some(i) = self.group_index(g) {
+                self.groups[i].collapsed = false;
+            }
+        }
+        if let Some(p) = place.project {
+            if let Some(q) = self.projects.iter_mut().find(|q| q.id == p) {
+                q.collapsed = false;
+            }
+        }
+    }
+
+    /// Scroll the bar until the row under the cursor is on screen.
+    ///
+    /// `ix` is the cursor's index in the flattened row list, which is also its
+    /// index among the list element's children — `render_left_bar` draws one
+    /// child per row, and both walk the same `bar_rows` output. gpui scrolls
+    /// the minimum needed to make the child fully visible, so a cursor already
+    /// on screen moves nothing: the bar does not lurch on every press.
+    ///
+    /// Silent when the cursor is on a row that is not drawn. That is a real
+    /// state (a branch folded away under the cursor) and the arrows recover
+    /// from it by re-entering the list on the next press.
+    fn bar_reveal(&self, rows: &[tree::Row]) {
+        let Some(at) = self.bar_cursor else { return };
+        if let Some(ix) = rows.iter().position(|r| tree::row_id(r) == Some(at)) {
+            self.bar_scroll.scroll_to_item(ix);
+        }
+    }
+
+    /// Ctrl+Alt+1…9: put the cursor on a top-level branch by its number.
+    ///
+    /// The numbers are positions in the drawn tree, counted over the projects
+    /// and then the initiatives that belong to none of them — the order the eye
+    /// reads down the bar, so a branch's number is how many sections down it is
+    /// and there is nothing to memorise beyond that. Nine of them, because the
+    /// tenth would need a chord that waits for a second digit.
+    ///
+    /// Like the arrows, this moves the HIGHLIGHT and nothing else: a number is
+    /// how you get to a project across a tall session in one press, and
+    /// Ctrl+Alt+→ is still the verb that opens it. A jump that also unfolded
+    /// would rearrange the very list the numbers are counted from, under the
+    /// fingers of someone about to press another one.
+    fn bar_jump(&mut self, n: usize, cx: &mut Context<Self>) {
+        let rows = self.bar_rows(cx);
+        if let Some(to) = tree::nth_top_branch(&rows, n) {
+            self.bar_cursor = Some(to);
+            self.bar_reveal(&rows);
+            cx.notify();
+        }
+    }
+
+    /// Ctrl+Alt+→: open what the cursor is over, then step into it.
+    ///
+    /// Two presses, deliberately: the first unfolds a folded branch and leaves
+    /// the cursor where it is, so the eye can see what appeared before moving;
+    /// the second (or the first, on a branch already open) goes to its first
+    /// child. On a task — a leaf — → activates it, because "go in" is the only
+    /// meaning left and a cursor with no way to commit is a tour with no door.
+    fn bar_enter(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let rows = self.bar_rows(cx);
+        let Some(at) = self.bar_cursor.or_else(|| tree::step(&rows, None, true)) else {
+            return;
+        };
+        self.bar_cursor = Some(at);
+        match tree::folded(&rows, at) {
+            // A folded branch: open it and stop. `toggle_branch` saves + notifies.
+            Some(true) => {
+                self.toggle_branch(BarBranch::from(at), cx);
+                return;
+            }
+            // An open branch: step onto the first thing under it. A branch with
+            // nothing under it has nowhere to go, and the press is a no-op
+            // rather than a jump to the next sibling, which would read as ↓.
+            Some(false) => {
+                if let Some(child) = tree::first_child(&rows, at) {
+                    self.bar_cursor = Some(child);
+                    self.bar_reveal(&rows);
+                }
+            }
+            // A leaf (or the divider): activate the task.
+            None => {
+                if let tree::RowId::Task(i) = at {
+                    self.activate_tab(i, window, cx);
+                }
+            }
+        }
+        cx.notify();
+    }
+
+    /// Ctrl+Alt+←: close what the cursor is over, else climb out of it.
+    ///
+    /// The mirror of →, and the same two-press shape read backwards: an open
+    /// branch folds where it stands; anything else (a folded branch, a task)
+    /// moves the cursor up to the branch it hangs from. A top-level row with
+    /// nothing above it and nothing to close is a wall, like the ends of the list.
+    fn bar_leave(&mut self, cx: &mut Context<Self>) {
+        let rows = self.bar_rows(cx);
+        // → lands a cursor from nothing; ← could not, so the very first press
+        // of it in a window did nothing at all and read as a dead binding. It
+        // seeds the same way, and stops: a first press that folded whatever
+        // happened to be at the top would be a gesture nobody aimed.
+        let Some(at) = self.bar_cursor else {
+            if let Some(first) = tree::step(&rows, None, true) {
+                self.bar_cursor = Some(first);
+                self.bar_reveal(&rows);
+                cx.notify();
+            }
+            return;
+        };
+        if tree::folded(&rows, at) == Some(false) {
+            self.toggle_branch(BarBranch::from(at), cx);
+            return;
+        }
+        if let Some(up) = tree::parent(&rows, at) {
+            self.bar_cursor = Some(up);
+            self.bar_reveal(&rows);
+            cx.notify();
+        }
+    }
+
     /// Fold / unfold a branch of the tree.
     fn toggle_branch(&mut self, branch: BarBranch, cx: &mut Context<Self>) {
         match branch {
@@ -11052,6 +11307,8 @@ impl Workspace {
             // tab it lands on. A narrowed mother bar that does not show the
             // active tab is a window lying about where you are.
             self.ensure_scope_shows(i);
+            // ...and the tree must be open down to it, for the same reason.
+            self.reveal_active_branch();
             // Visiting the tab IS reading its finish badges: clear every
             // latched ✅/❌ in it. The focus-in edge alone can miss — a bell
             // that latched while this pane already held (idle) keyboard focus
@@ -11815,6 +12072,32 @@ impl Workspace {
             match ks.key.as_str() {
                 "r" => self.split(SplitDir::Row, window, cx),
                 "d" => self.split(SplitDir::Col, window, cx),
+                // Ctrl+Alt+arrows drive the LEFT BAR, one layer out from
+                // Alt+arrows, which move pane focus inside the tab. Same
+                // geometry, one modifier further from the terminal: ↑/↓ walk the
+                // tree, → opens a branch and then steps into it, ← closes it and
+                // then climbs out.
+                //
+                // Only while the bar is open. Bound unconditionally these would
+                // be keys that do nothing visible with the bar hidden, and "the
+                // binding is broken" is the reasonable thing to conclude from a
+                // press with no feedback.
+                "up" | "down" if self.left_bar => {
+                    self.bar_walk(ks.key.as_str() == "down", cx);
+                }
+                "right" if self.left_bar => self.bar_enter(window, cx),
+                "left" if self.left_bar => self.bar_leave(cx),
+                // Ctrl+Alt+1…9 land straight on a top-level branch. The arrows
+                // are a ring now, so every row is reachable from every other
+                // one — but "reachable" in a session with fifty drawn rows can
+                // still be twenty presses, and the numbers make the sections a
+                // flat namespace over the top of the walk.
+                "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" if self.left_bar => {
+                    // The digit is the whole key string, so this cannot be
+                    // anything but one ASCII byte in '1'..='9'.
+                    let n = (ks.key.as_bytes()[0] - b'0') as usize;
+                    self.bar_jump(n, cx);
+                }
                 _ => {}
             }
             return;
@@ -11843,6 +12126,18 @@ impl Workspace {
                 .iter()
                 .position(|p| p.focus_handle(cx).is_focused(window))
                 .unwrap_or(0);
+            // Alt+W closes the FOCUSED PANE — the rung that was missing from
+            // the middle of the close ladder. Ctrl+W already closed the whole
+            // tab and Super+W closes the tile in Omarchy, but the one unit
+            // Terminal Delight owns by itself had no chord at all, only the
+            // header ×. Same path as that ×: one shell ends, the split collapses
+            // onto its sibling, and the last pane of the last tab quits.
+            if ks.key.as_str() == "w" {
+                if let Some(id) = leaves.get(cur).map(|p| p.entity_id()) {
+                    self.close_pane(id, window, cx);
+                }
+                return;
+            }
             // Alt+R opens the FOCUS reader on the focused pane — it replaces the
             // 👓 header glyph, which is retired (see SHOW_FOCUS_GLYPH in pane.rs).
             if ks.key.as_str() == "r" {
@@ -13680,6 +13975,30 @@ impl Workspace {
         }
     }
 
+    /// The keyboard cursor's ring, for whichever row it is on.
+    ///
+    /// Drawn as an INSET shadow plus a tint rather than a border, because a
+    /// border joins the layout: a 1px ring appearing on the row under the
+    /// cursor would push every row below it down by a pixel on each press, and
+    /// a list that twitches as you arrow through it is worse than no highlight.
+    ///
+    /// It is deliberately a different signal from the active task's ring
+    /// (`skin::active_row`) and from the scoped branch's lit bar — three
+    /// different facts, and a person arrowing past the active task must be able
+    /// to see both at once, on the same row, without either disappearing.
+    fn bar_cursor_ring<E: Styled>(&self, row: tree::RowId, th: &theme::Theme, d: E) -> E {
+        if self.bar_cursor != Some(row) {
+            return d;
+        }
+        d.bg(th.cursor.alpha(0.14)).shadow(vec![BoxShadow {
+            color: th.cursor.alpha(0.85),
+            offset: point(px(0.), px(0.)),
+            blur_radius: px(0.),
+            spread_radius: px(1.),
+            inset: true,
+        }])
+    }
+
     /// A PROJECT or INITIATIVE row. One function for both layers: they differ
     /// in their mark and their label's weight, and in nothing a person does to
     /// them.
@@ -13750,7 +14069,7 @@ impl Workspace {
         }
 
         let grp = SharedString::from(format!("bar-grp-{key}"));
-        div()
+        let d = div()
             .id(row_id)
             .group(grp)
             .relative()
@@ -13768,7 +14087,12 @@ impl Workspace {
             .when(scoped, |d| {
                 d.bg(color.alpha(0.20)).border_l_2().border_color(th.accent)
             })
-            .when(drop_hi, |d| d.bg(th.accent.alpha(0.28)))
+            .when(drop_hi, |d| d.bg(th.accent.alpha(0.28)));
+        // The keyboard ring goes on LAST of the three backgrounds — a row that
+        // is scoped, being dropped onto and under the cursor all at once still
+        // shows where the keyboard is, which is the only one of the three a
+        // person cannot otherwise locate.
+        self.bar_cursor_ring(row_id_kind, th, d)
             .hover(move |st| st.bg(color.alpha(0.12)))
             .children(caret)
             // The fold: its own target, wide enough to hit without aiming, so
@@ -14007,25 +14331,29 @@ impl Workspace {
                 .into_any_element();
         }
 
-        sk.active_row(
-            div()
-                .id(SharedString::from(format!("bar-task-{i}")))
-                .group(grp.clone())
-                .relative()
-                // Plus the fold's width: a task has no disclosure triangle, and
-                // without clearing the one its PARENT wears it starts four
-                // pixels LEFT of the branch label it hangs from. Two levels of
-                // tree that do not read as two levels — see `FOLD_W`.
-                .pl(step * (depth as f32) + px(4. * s) + px(FOLD_W * s))
-                .pr(px(5. * s))
-                .py(px(2. * s))
-                .flex()
-                .flex_row()
-                .items_center()
-                .gap(px(5. * s))
-                .rounded(sk.radius())
-                .cursor_pointer(),
-            is_active,
+        self.bar_cursor_ring(
+            tree::RowId::Task(i),
+            th,
+            sk.active_row(
+                div()
+                    .id(SharedString::from(format!("bar-task-{i}")))
+                    .group(grp.clone())
+                    .relative()
+                    // Plus the fold's width: a task has no disclosure triangle, and
+                    // without clearing the one its PARENT wears it starts four
+                    // pixels LEFT of the branch label it hangs from. Two levels of
+                    // tree that do not read as two levels — see `FOLD_W`.
+                    .pl(step * (depth as f32) + px(4. * s) + px(FOLD_W * s))
+                    .pr(px(5. * s))
+                    .py(px(2. * s))
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(5. * s))
+                    .rounded(sk.radius())
+                    .cursor_pointer(),
+                is_active,
+            ),
         )
         .hover(move |st| st.bg(hsla(0., 0., 1., 0.06)))
         // the task's own colour, if it has one — the same fill its tab
@@ -15403,38 +15731,7 @@ impl Workspace {
         // branch that has since moved.
         self.bar_bounds.lock().unwrap().clear();
 
-        let projects: Vec<tree::ProjectRef> = self
-            .projects
-            .iter()
-            .map(|p| tree::ProjectRef {
-                id: p.id,
-                collapsed: p.collapsed,
-            })
-            .collect();
-        // Initiatives are listed in the order their tasks appear on the strip,
-        // not in the order the groups happen to sit in memory. That is what
-        // makes dragging one up or down mean something: reordering an
-        // initiative slides its whole run of tabs, and the tree has to show the
-        // same answer the mother bar does.
-        let mut initiatives: Vec<tree::InitiativeRef> = self
-            .groups
-            .iter()
-            .map(|g| tree::InitiativeRef {
-                id: g.id,
-                project: g.project,
-                collapsed: g.collapsed,
-            })
-            .collect();
-        let first_task_of = |gid: u32| {
-            self.tabs
-                .iter()
-                .position(|t| t.group == Some(gid))
-                .unwrap_or(usize::MAX)
-        };
-        initiatives.sort_by_key(|i| first_task_of(i.id));
-        let tasks = self.task_refs(cx);
-        let rows = tree::rows(&projects, &initiatives, &tasks, Some(self.active));
-
+        let rows = self.bar_rows(cx);
         let scope_label = match self.scope {
             // bb calls the unnarrowed view "All Threads"; the same word does the
             // job here, and it is three ASCII letters no font can fail to draw.
@@ -15552,6 +15849,10 @@ impl Workspace {
             .flex_1()
             .min_h(px(0.))
             .overflow_y_scroll()
+            // Tracked so `bar_reveal` can scroll a keyboard-chosen row into
+            // view. The child indices it addresses are the indices of `rows`,
+            // which holds because this loop draws exactly one child per row.
+            .track_scroll(&self.bar_scroll)
             .flex()
             .flex_col()
             .gap(px(1. * s))
@@ -16997,6 +17298,7 @@ impl Render for Workspace {
             });
             if let Some((idx, target)) = hit {
                 self.active = idx;
+                self.reveal_active_branch();
                 window.focus(&target.read(cx).focus_handle(cx), cx);
             }
         }
@@ -21596,6 +21898,10 @@ impl Render for Workspace {
                         row("Ctrl+PgUp / PgDn", s.switch_tabs),
                         row("Ctrl+Shift+PgUp / PgDn", s.move_tab),
                         row("Alt+V / H · Ctrl+Alt+R / D", s.split),
+                        row("Alt+W", s.close_pane),
+                        row("Ctrl+W", s.close_tab),
+                        row("Ctrl+Alt+↑↓←→", s.walk_tree),
+                        row("Ctrl+Alt+1…9", s.jump_branch),
                         row(s.k_alt_arrows, s.move_focus_dir),
                         row(s.k_drag_subtab, s.drag_subtab),
                         row(s.k_rclick_tab, s.rclick_tab),
