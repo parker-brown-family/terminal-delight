@@ -4835,7 +4835,6 @@ impl Workspace {
         if std::env::var("TD_KEYDEBUG").is_ok() {
             eprintln!("new_tab");
         }
-        let pane = self.make_pane_in_mode(session::PaneRestore::default(), window, cx);
         // A new tab joins the branch you are in, and lands beside its siblings
         // rather than at the end of the window, so a branch stays one run in tab
         // order. The strip shows one branch and the tree shows the rest, so a
@@ -4844,7 +4843,24 @@ impl Workspace {
         // tab is still possible, by dragging one out of its branch, which is
         // where a deliberate choice belongs; it is no longer what a `+` does by
         // accident.
-        let place = self.place_of(self.active);
+        self.new_tab_in(self.place_of(self.active), window, cx);
+    }
+
+    /// Open a fresh terminal as a new tab in `place`, seated at that branch's
+    /// end.
+    ///
+    /// Split out from [`Self::new_tab`] so a branch that has just been created
+    /// can be handed a terminal of its own rather than being handed one that
+    /// was already running somewhere else. The left bar's `+` used to seed a
+    /// new project with the ACTIVE task, which reads as the bar reaching into
+    /// the window and taking the thing you were working on — a move nobody
+    /// asked for, and one that leaves the branch you came from a tab lighter.
+    ///
+    /// This is the only place a new tab is built, so the hosted-mode invariant
+    /// has one site to hold rather than two. See
+    /// `a_hosted_window_makes_no_pane_of_its_own`.
+    fn new_tab_in(&mut self, place: tree::Place, window: &mut Window, cx: &mut Context<Self>) {
+        let pane = self.make_pane_in_mode(session::PaneRestore::default(), window, cx);
         let mut tab = Tab::new(Node::Leaf(pane), None);
         tab.group = place.initiative;
         // a grouped tab inherits its project from the group and leaves its own
@@ -4859,13 +4875,23 @@ impl Workspace {
         self.active = at;
         self.save(cx);
         cx.notify();
-        // Defer the focus: new_tab fires from a mother-bar mouse-down listener, so
-        // the root container's tracked focus handle would grab focus back as the
-        // event bubbles (same race as activate_tab/split). A synchronous
-        // focus_active here never sticks — the new terminal opens unfocused. Running
-        // after the event settles makes the fresh pane light up as the active
-        // terminal so the very next keystroke lands in it.
-        cx.defer_in(window, |ws, window, cx| ws.focus_active(window, cx));
+        // Defer the focus: this fires from a mouse-down listener, so the root
+        // container's tracked focus handle would grab focus back as the event
+        // bubbles (same race as activate_tab/split). A synchronous focus_active
+        // here never sticks — the new terminal opens unfocused. Running after the
+        // event settles makes the fresh pane light up as the active terminal so
+        // the very next keystroke lands in it.
+        //
+        // Unless something else legitimately owns the keyboard by then. The bar's
+        // `+` opens the new project's rename box in the same gesture, and a defer
+        // that fires afterwards would hand the keyboard to the terminal while the
+        // name editor is still on screen waiting to be typed into.
+        cx.defer_in(window, |ws, window, cx| {
+            if ws.overlay_owns_keyboard() {
+                return;
+            }
+            ws.focus_active(window, cx)
+        });
     }
 
     /// Bring a dead agent back: open a fresh tab whose shell resumes its saved
@@ -12825,10 +12851,20 @@ impl Workspace {
                         MouseButton::Left,
                         cx.listener(|ws, _: &MouseDownEvent, window, cx| {
                             cx.stop_propagation();
-                            // seeded with the task you are in: a project born
-                            // holding the thing you were looking at
-                            let seed = Some(BarDragged::Task(ws.active));
-                            let id = ws.new_project(seed, cx);
+                            // A new project opens holding a terminal of its own.
+                            // It used to open holding the task you were working
+                            // in, which moved that tab out of the branch it
+                            // belonged to as a side effect of asking for
+                            // somewhere new to put things — the bar reaching
+                            // into the window and taking what was on screen.
+                            // Filing an existing task into a project is a drag,
+                            // which is where the deliberate version belongs.
+                            let id = ws.new_project(None, cx);
+                            let place = tree::Place {
+                                project: Some(id),
+                                initiative: None,
+                            };
+                            ws.new_tab_in(place, window, cx);
                             ws.start_bar_rename(BarBranch::Project(id), window, cx);
                         }),
                     ),
@@ -20320,6 +20356,42 @@ mod tests {
         }
     }
 
+    /// A new project opens holding a terminal of its own, never the one you are
+    /// working in.
+    ///
+    /// The bar's `+` used to pass `BarDragged::Task(ws.active)` to
+    /// `new_project`, which files the active tab into the project it has just
+    /// made. Asking for somewhere new to put things took the thing that was on
+    /// screen and moved it out of the branch it belonged to, so the gesture cost
+    /// you the tab you were in and left its old branch a tab lighter.
+    ///
+    /// Scanned rather than exercised because the listener needs a live gpui
+    /// `Window`: the wrong version compiles and renders. The region is bounded
+    /// by the two ids either side of it rather than by a function name, because
+    /// `render_left_bar` is one expression and there is no smaller function to
+    /// name.
+    #[test]
+    fn the_bars_plus_makes_a_project_holding_a_fresh_terminal() {
+        let src = shipped_src();
+        let a = src.find("\"bar-new-project\"").expect("the + button");
+        let b = src[a..].find("\"bar-hide\"").expect("the hide handle");
+        let plus = &src[a..a + b];
+
+        assert!(
+            !plus.contains("BarDragged::Task"),
+            "the bar's + is seeding the new project with a task again — it takes the tab you \
+             are working in and moves it out of its branch"
+        );
+        assert!(
+            plus.contains("ws.new_project(None, cx)"),
+            "the bar's + no longer makes an empty project"
+        );
+        assert!(
+            plus.contains("ws.new_tab_in(place, window, cx)"),
+            "the bar's + makes a project with nothing in it — it must open a terminal there"
+        );
+    }
+
     /// An OPEN branch hands its glyphs down to its children.
     ///
     /// A roll aggregates everything underneath, so on an expanded branch it
@@ -20491,7 +20563,7 @@ mod tests {
         // `split_leaf` three thousand lines earlier, and a source scan that
         // silently reads the wrong function is worse than no scan.
         for gesture in [
-            "fn new_tab(&mut self",
+            "fn new_tab_in(&mut self",
             "fn adopt_pane(",
             "fn split(&mut self, dir: SplitDir",
         ] {
@@ -20506,6 +20578,21 @@ mod tests {
                 "{gesture} still reaches a window-owned builder directly"
             );
         }
+
+        // `new_tab` delegates rather than building, so the list above names the
+        // one site that does. If a pane build ever grows back into `new_tab`
+        // itself there are two again, and the swap above would have quietly
+        // stopped covering the gesture people actually press.
+        let delegating = body("fn new_tab(&mut self");
+        assert!(
+            !delegating.contains("make_pane"),
+            "new_tab builds a pane again instead of delegating to new_tab_in; the scan above \
+             is now checking the wrong function"
+        );
+        assert!(
+            delegating.contains("self.new_tab_in("),
+            "new_tab no longer reaches new_tab_in"
+        );
 
         // And the chokepoint has to actually branch on the mode rather than
         // being a rename of one of the two paths.
