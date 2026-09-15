@@ -14283,8 +14283,7 @@ impl Workspace {
     ) {
         use attention::{AttentionKind, Observation, PaneKind, Priority};
         let mut obs: Vec<Observation> = Vec::new();
-        let mut panes: std::collections::HashMap<u64, EntityId> =
-            std::collections::HashMap::new();
+        let mut panes: std::collections::HashMap<u64, EntityId> = std::collections::HashMap::new();
         let mut n: u64 = 0;
         for (ti, tab) in self.tabs.iter().enumerate() {
             let mut leaves = Vec::new();
@@ -14346,14 +14345,13 @@ impl Workspace {
                             }
                         })
                     }
-                    Some(AttentionKind::Decision) => {
-                        Self::tracer_doc("docs/2026-08-31-one-click-copy-affordance.html").map(
-                            |href| attention::Deliverable {
-                                label: "One-click copy affordance".into(),
-                                href: href.to_string(),
-                            },
-                        )
-                    }
+                    Some(AttentionKind::Decision) => Self::tracer_doc(
+                        "docs/2026-08-31-one-click-copy-affordance.html",
+                    )
+                    .map(|href| attention::Deliverable {
+                        label: "One-click copy affordance".into(),
+                        href: href.to_string(),
+                    }),
                     _ => None,
                 };
                 obs.push(Observation {
@@ -14415,7 +14413,9 @@ impl Workspace {
                 .project
                 .and_then(|id| self.project_at(id))
                 .and_then(|p| p.name.clone()),
-            initiative: tab.group.map(|g| self.branch_label(BarBranch::Initiative(g))),
+            initiative: tab
+                .group
+                .map(|g| self.branch_label(BarBranch::Initiative(g))),
         }
     }
 
@@ -14535,7 +14535,10 @@ impl Workspace {
                 .pb(px(5. * s))
                 .text_size(px(9.5 * s))
                 .text_color(sk.ink.ink_dim)
-                .child(format!("NEEDS ME \u{b7} {}", attention::counts(&items).wanting))
+                .child(format!(
+                    "NEEDS ME \u{b7} {}",
+                    attention::counts(&items).wanting
+                ))
                 .child("esc"),
         );
 

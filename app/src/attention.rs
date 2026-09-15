@@ -376,7 +376,10 @@ mod tests {
             obs(2, Some(AttentionKind::Decision), Some(2400)),
             obs(3, Some(AttentionKind::Decision), Some(600)),
         ]);
-        assert_eq!(items.iter().map(|i| i.pane).collect::<Vec<_>>(), vec![2, 3, 1]);
+        assert_eq!(
+            items.iter().map(|i| i.pane).collect::<Vec<_>>(),
+            vec![2, 3, 1]
+        );
     }
 
     /// Three rows, and both input orders, deliberately.
@@ -527,7 +530,10 @@ mod tests {
             at(2, Priority::Promoted, AttentionKind::Decision, 60),
             at(3, Priority::Promoted, AttentionKind::Failure, 60),
         ]);
-        assert_eq!(items.iter().map(|i| i.pane).collect::<Vec<_>>(), vec![2, 3, 1]);
+        assert_eq!(
+            items.iter().map(|i| i.pane).collect::<Vec<_>>(),
+            vec![2, 3, 1]
+        );
     }
 
     #[test]
@@ -545,7 +551,10 @@ mod tests {
 
     #[test]
     fn a_deliverable_is_labelled_by_what_it_is() {
-        assert_eq!(doc_kind("/home/p/reports/2026-09-15-thing.html"), DocKind::Html);
+        assert_eq!(
+            doc_kind("/home/p/reports/2026-09-15-thing.html"),
+            DocKind::Html
+        );
         assert_eq!(doc_kind("/home/p/docs/plan.md"), DocKind::Markdown);
         assert_eq!(doc_kind("/home/p/docs/PLAN.MD"), DocKind::Markdown);
         assert_eq!(doc_kind("notes.markdown"), DocKind::Markdown);
@@ -592,7 +601,11 @@ mod tests {
     #[test]
     fn neutral_is_the_default_and_changes_nothing() {
         assert_eq!(Priority::default(), Priority::Neutral);
-        assert_eq!(Priority::Neutral.glyph(), None, "a neutral row carries no mark");
+        assert_eq!(
+            Priority::Neutral.glyph(),
+            None,
+            "a neutral row carries no mark"
+        );
         assert!(Priority::Promoted.glyph().is_some());
         assert!(Priority::Demoted.glyph().is_some());
     }
