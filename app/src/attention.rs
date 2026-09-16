@@ -128,25 +128,43 @@ impl Priority {
     }
 }
 
-/// Where the work came from, read from the tree rather than guessed from a path.
+/// Which task this row is about, and what it hangs from — read from the tree
+/// rather than guessed from a path.
 ///
-/// Both halves are optional and they are optional for different reasons: a tab
-/// may belong to no project at all, and a project may exist without having been
-/// named yet. Neither renders as an empty string.
+/// **`parent:task`, where the parent is simply the NEAREST one.** It was
+/// `project:initiative`, which named two branches and never the task itself, so
+/// a review row on the SKYTRAC tab under the JOB group read `—:JOB` — a dash
+/// for a project that tab does not have, the group in the slot after it, and no
+/// mention of the thing that actually finished. It now reads `JOB:SKYTRAC`.
+///
+/// Nearest, rather than a fixed rung, because the tree has three levels and a
+/// task may hang from either of the two above it. A grouped task's parent is its
+/// group; an ungrouped one's is its project. Asking for a specific rung means
+/// picking a dash whenever the task does not use that rung, which is how the
+/// first version came to print one so often.
+///
+/// Both halves stay optional, for different reasons: a task may hang from
+/// nothing at all, and a task may simply not have been named. Neither renders as
+/// an empty string, and an unnamed task shows a dash rather than its position —
+/// a number in a name's place is a claim about identity that moves when somebody
+/// reorders the strip.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Origin {
-    pub project: Option<String>,
-    pub initiative: Option<String>,
+    /// The nearest branch above the task: its initiative, or its project when it
+    /// belongs to no initiative.
+    pub parent: Option<String>,
+    /// The task's own name.
+    pub task: Option<String>,
 }
 
 impl Origin {
-    /// `td:client-server`, `td:—`, `—:—`. Three states, never a blank.
+    /// `JOB:SKYTRAC`, `JOB:—`, `—:—`. Three states, never a blank.
     pub fn label(&self) -> String {
         let dash = "\u{2014}";
         format!(
             "{}:{}",
-            self.project.as_deref().unwrap_or(dash),
-            self.initiative.as_deref().unwrap_or(dash)
+            self.parent.as_deref().unwrap_or(dash),
+            self.task.as_deref().unwrap_or(dash)
         )
     }
 }
@@ -356,8 +374,8 @@ mod tests {
             priority: Priority::Neutral,
             kind,
             origin: Origin {
-                project: Some("td".into()),
-                initiative: Some("client-server".into()),
+                parent: Some("td".into()),
+                task: Some("client-server".into()),
             },
             reason: "because".into(),
             observed_at: secs_ago.map(|s| Instant::now() - Duration::from_secs(s)),
@@ -479,18 +497,23 @@ mod tests {
     #[test]
     fn origin_renders_three_states_and_never_a_blank() {
         let named = Origin {
-            project: Some("td".into()),
-            initiative: Some("left-bar".into()),
+            parent: Some("JOB".into()),
+            task: Some("SKYTRAC".into()),
         };
-        let no_initiative = Origin {
-            project: Some("td".into()),
-            initiative: None,
+        let unnamed_task = Origin {
+            parent: Some("JOB".into()),
+            task: None,
         };
         let neither = Origin::default();
-        assert_eq!(named.label(), "td:left-bar");
-        assert_eq!(no_initiative.label(), "td:\u{2014}");
+        assert_eq!(named.label(), "JOB:SKYTRAC");
+        assert_eq!(
+            unnamed_task.label(),
+            "JOB:\u{2014}",
+            "an unnamed task shows a dash, never its position — a number in a \
+             name's place moves when somebody reorders the strip"
+        );
         assert_eq!(neither.label(), "\u{2014}:\u{2014}");
-        for o in [&named, &no_initiative, &neither] {
+        for o in [&named, &unnamed_task, &neither] {
             assert!(!o.label().contains("::"), "no half is ever empty");
         }
     }

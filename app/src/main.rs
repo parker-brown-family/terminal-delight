@@ -15507,10 +15507,10 @@ impl Workspace {
     fn rail_demo_rows(&self) -> Vec<attention::AttentionItem> {
         use attention::{AttentionKind, Deliverable, Origin, Priority};
 
-        fn origin(project: &str, initiative: Option<&str>) -> Origin {
+        fn origin(parent: &str, task: Option<&str>) -> Origin {
             Origin {
-                project: Some(project.to_string()),
-                initiative: initiative.map(|s| s.to_string()),
+                parent: Some(parent.to_string()),
+                task: task.map(|s| s.to_string()),
             }
         }
         let ago = |secs: u64| Instant::now().checked_sub(Duration::from_secs(secs));
@@ -15695,18 +15695,29 @@ impl Workspace {
     }
 
     /// A tab's `project:initiative`, as far as Slice 1 resolves it.
+    /// `parent:task` for a row — the NEAREST branch above the tab, and the tab.
+    ///
+    /// The parent is resolved through [`Workspace::place_of`] rather than read
+    /// off the tab, because a grouped tab carries no project of its own: it
+    /// inherits its group's, and `place_of` is where that rule already lives.
+    /// Reading `tab.project` directly — which is what this did — returns `None`
+    /// for every grouped tab and prints a dash for a project the task really is
+    /// in.
+    ///
+    /// Nearest means the initiative when there is one, else the project. Both
+    /// ids are already filtered against what exists by `place_of`, so a dangling
+    /// reference resolves to no parent rather than to a branch that is not
+    /// there.
     fn rail_origin(&self, i: usize) -> attention::Origin {
         let Some(tab) = self.tabs.get(i) else {
             return attention::Origin::default();
         };
         attention::Origin {
-            project: tab
-                .project
-                .and_then(|id| self.project_at(id))
-                .and_then(|p| p.name.clone()),
-            initiative: tab
-                .group
-                .map(|g| self.branch_label(BarBranch::Initiative(g))),
+            parent: self.place_of(i).nearest().map(|n| match n {
+                tree::Nearest::Initiative(g) => self.branch_label(BarBranch::Initiative(g)),
+                tree::Nearest::Project(p) => self.branch_label(BarBranch::Project(p)),
+            }),
+            task: tab.name.clone(),
         }
     }
 
