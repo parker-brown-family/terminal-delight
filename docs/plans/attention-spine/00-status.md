@@ -1,7 +1,8 @@
 # Status: Attention Spine
 
 **Difficulty: 4/10:** one optional surface over an existing pane wall; false confidence in the attention model could survive unnoticed, while the UI remains cheap to unwind → one combined gate.
-**Turned out to be:** pending implementation and evaluation.
+**Turned out to be:** all six slices built and merged; the evaluation is the one piece that
+cannot be done as written, because its baseline expired when the rail came off its flag.
 
 - Combined gate, Product + Architecture + Program Design + Slices: **APPROVED 2026-09-15** — via
   annotated brief (`reports/2026-09-15-attention-spine-groundwork.html` under `~/Work/reports`,
@@ -65,13 +66,68 @@
   needs-you to the parser and nothing to the badge. Widening the rail's mapping would have hidden
   that behind the second ranking this slice exists to remove, so it is filed against the badge
   instead.
-- [ ] Slice 3, queue lifecycle: fixed ordering, per-item evidence, `project:group` from the tree, seen/unseen on the existing bell latch, and keyboard navigation.
-- [ ] Slice 4, review tray: show only sourced changes, checks, and artifacts; render absent evidence as unavailable; carry the declared deliverable as a plain-click link, with focus as a second, explicit action.
-- [ ] Slice 5, attention levels in the tree: promote/demote rows on the project, initiative and task
-  context menus; the level persisted in the layout; downward resolution with the nearest explicit
-  setting winning; a green up or blue down mark in the badge line, drawn dimmer when inherited and
-  never rolled up onto a collapsed parent. The projector's ordering key landed early with Slice 1.
-- [ ] Slice 6, responsive behaviour and evaluation: overlay by default, opt-in pinning, geometry checks, and recorded comparison against manual pane sweeping.
+- [x] **Slice 3, queue lifecycle — the queue holds still while you read it.** Fixed ordering
+  (frozen on open, arrivals appended at the bottom, released on close), per-item evidence (the
+  screen line the classifier matched, quoted at the scan that matched it), seen/unseen on the
+  bell's own acknowledgement contract, and keyboard movement (up/down or j/k, 1-9, enter to the
+  pane, `o` to open the deliverable, esc to fold).
+  - **The order is held as KEYS, not rows.** A held row still ticks its age and still leaves the
+    queue the moment it stops wanting anything; only the sequence is frozen. Arrivals append rather
+    than insert where their urgency says, because a row that jumped in above the cursor is the
+    defect the freeze exists to prevent.
+  - **Evidence comes from the predicate, not from a second scan.** `wants_human` and `looks_blocked`
+    are defined in terms of `wants_human_row` and `blocked_row`, so one walk produces the flag and
+    the quote and they cannot disagree — they would only have disagreed on screens carrying two
+    candidates, which are the ambiguous ones. A clean finish matches nothing, stores nothing, and
+    the row omits the quote.
+  - **Seen is keyed on pane AND lane**, so a reviewed pane that then blocks is unseen again, and the
+    mark is taken when the queue CLOSES, from what the painter drew.
+  - **Two defects found building it.** The pane key was a positional counter that shifted whenever
+    any pane to its left opened or closed — harmless until a held order and a seen-mark were keyed
+    off it, then a transfer of both to a neighbour; it is the pane's `EntityId` now. And the scrim
+    click set the flag directly, skipping the seen-mark and the order release.
+- [x] **Slice 4, review tray — and the deliverable finally has a channel.** `declare_deliverable`
+  is a new MCP verb beside `leave_note`: an agent names the one artifact its turn produced and it
+  becomes a plain click on that pane's row, with focus still a separate act. The tray opens on the
+  cursor's row and shows deliverable / changes / checks / read-by.
+  - **Three of the four fields say `unavailable` and that is the honest state.** Changed files and
+    checks need an authoritative source that does not exist — a terminal sees a screen, not a
+    working tree — so they are `Option` to the renderer and print the word at reduced strength.
+    Shown missing rather than omitted, because an omitted row leaves a hole a reader fills in.
+  - **Validation refuses what would ship working and be wrong.** A relative target is refused with
+    its reason (it would resolve against the TERMINAL's directory, not the agent's); `javascript:`
+    and `data:` are refused as not-documents. A label is optional and defaults to the target's last
+    segment; a target is not optional.
+  - The link measures its own hit band now. The old one was the bottom 38% of a row, which stopped
+    holding the moment the tray opened under the cursor and pushed the link four lines down.
+- [x] **Slice 5, attention levels in the tree.** Promote and Demote are the first two rows of the
+  project, initiative and task context menus, in the same slot on all three. The level marks its row
+  green-up or blue-down, travels downward with the nearest explicit setting winning, is persisted in
+  the layout, and is the outermost key the queue sorts by — the ordering key that landed with Slice 1
+  finally has a producer.
+  - **Unset and neutral are different states** all the way to disk: unset inherits, neutral is a
+    person clearing one task inside a promoted project. Pressing Promote on an already-promoted row
+    clears it, which is how unset is reachable without a third menu row.
+  - **The mark never rolls up.** Everything else on a bar row gathers upward; this one does not, or
+    two rows would claim one instruction. Inherited is the same glyph at half strength.
+  - `TabIdentity` caught one: it derives `Default`, so answering the compiler with `level: None`
+    would have satisfied it while breaking the promise in its own doc — a task closing its last pane
+    silently losing its level.
+- [x] **Slice 6, responsive behaviour — the queue can dock.** `p` in the open queue docks it as a
+  flex sibling between the panes and the spine; the preference persists and is separate from the
+  fit, so tiling a window draws the overlay and widening it gives the dock back. Below 1280 logical
+  pixels the pin is drawn inert rather than hidden.
+  - **The geometry contract is structural now.** The overlay is not in the row that lays out the
+    terminals at all, so "opening the queue does not resize a pane" is true by construction; the
+    docked path is in that row, so it provably does cost them width.
+  - The threshold was checked against this machine's real widths: 968 (a tiled pane) falls on the
+    overlay side deliberately.
+  - **The evaluation half is NOT done and cannot be.** It called for a recorded comparison against
+    manual pane sweeping with the baseline taken before the rail became habit. The rail came off its
+    flag on 15 September and has been on since, so that baseline no longer exists to take. Filed as
+    `461 — The attention spine's evaluation baseline expired before anyone recorded it` rather than
+    fudged, with the three invalidation criteria that would close it — one of which is Parker simply
+    deciding the premise is settled by having used the thing.
 
 ## Prerequisite
 

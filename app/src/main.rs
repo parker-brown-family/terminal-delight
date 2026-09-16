@@ -165,7 +165,15 @@ struct RailHit {
     top: f32,
     bottom: f32,
     left: f32,
-    /// The deliverable line inside the row, when the row has one.
+    /// The deliverable line's own band inside the row, when the row has one.
+    ///
+    /// **Measured, not a fraction of the row.** It was the bottom 38% — which
+    /// held only while every row was the same fixed shape, and stopped holding
+    /// the moment the review tray opened on the cursor's row and pushed the
+    /// link four lines further down. A click aimed at the link would then have
+    /// landed on the tray above it and focused the pane instead of opening the
+    /// document: the wrong verb, from a hit box that was still confidently
+    /// returning an answer.
     deliverable: Option<(f32, f32)>,
 }
 
@@ -1061,6 +1069,28 @@ fn left_bar_visible(saved: Option<bool>, scratch: bool, demo: bool) -> bool {
 /// surface OFF is the destructive direction, so it requires somebody to have
 /// said so plainly, while a typo fails towards the visible thing a person can
 /// see and turn off themselves.
+/// The narrowest window that may dock the queue beside the panes.
+///
+/// The panel is 316 logical pixels plus its margins, and docking spends every
+/// one of them out of the terminal grid. Below this the trade stops being worth
+/// making: Parker's tiled panes are 968 wide, and a docked queue there would
+/// take a third of a terminal he is actually working in — so that width
+/// deliberately falls on the overlay side of this line rather than just inside
+/// it.
+const RAIL_PIN_MIN_W: f32 = 1280.0;
+
+/// Is this window wide enough to dock the queue?
+///
+/// Pure, and tested at the two widths that matter: a tiled pane, and a full
+/// screen. The preference is separate from the fit — see [`Workspace::rail_pinned`]
+/// — so this answers only "would it fit", never "does he want it".
+fn rail_pin_fits(window_w: Option<f32>) -> bool {
+    // A window that has not reported its size yet is NOT wide enough. Unknown
+    // is not a yes: guessing wide would dock the queue for one frame on every
+    // cold start and take the width out of the panes before anyone asked.
+    window_w.is_some_and(|w| w >= RAIL_PIN_MIN_W)
+}
+
 fn rail_on(flag: Option<&str>) -> bool {
     !matches!(
         flag.map(str::trim).map(str::to_ascii_lowercase).as_deref(),
@@ -1128,11 +1158,19 @@ struct Tab {
     /// leaves this `None`, so the two can never disagree about which project a
     /// task is in — see [`Workspace::place_of`]. Persisted.
     project: Option<u32>,
+    /// What the person has said this task is worth today, if anything.
+    ///
+    /// `None` is unset and inherits from the branch above; `Some(Neutral)` is a
+    /// person clearing this one task inside a promoted project, which is a
+    /// different instruction and must not fall back through. See
+    /// [`attention::resolve_level`]. Persisted.
+    level: Option<attention::Priority>,
 }
 
 impl Tab {
     fn new(root: Node, name: Option<String>) -> Self {
         Self {
+            level: None,
             root,
             name,
             focused: None,
@@ -1160,6 +1198,7 @@ impl Tab {
             text_color: self.text_color,
             group: self.group,
             project: self.project,
+            level: self.level,
         }
     }
 }
@@ -1176,6 +1215,9 @@ struct TabIdentity {
     text_color: Option<Hsla>,
     group: Option<u32>,
     project: Option<u32>,
+    /// A task closing its last pane has not stopped being the thing somebody
+    /// promoted this morning.
+    level: Option<attention::Priority>,
 }
 
 impl TabIdentity {
@@ -1183,6 +1225,7 @@ impl TabIdentity {
     /// whatever is left of its panes.
     fn onto(self, root: Node) -> Tab {
         Tab {
+            level: self.level,
             root,
             name: self.name,
             // re-read from the live focus each render; the pane this pointed at
@@ -1433,6 +1476,9 @@ struct TabGroup {
     /// belongs to no project sits at the top level of the tree — which is every
     /// group in a session written before the tree existed. Persisted.
     project: Option<u32>,
+    /// This initiative's attention level, inherited downward by its tasks unless
+    /// one of them says otherwise. See [`Tab::level`]. Persisted.
+    level: Option<attention::Priority>,
 }
 
 impl TabGroup {
@@ -1616,6 +1662,9 @@ struct Project {
     color: Hsla,
     /// Folded away. Never honoured for the project holding the active task.
     collapsed: bool,
+    /// This project's attention level, inherited by everything under it unless a
+    /// nearer row says otherwise. See [`Tab::level`]. Persisted.
+    level: Option<attention::Priority>,
 }
 
 impl Project {
@@ -1819,6 +1868,11 @@ struct StateFile {
     /// dragged. `None` = the default width.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     left_bar_w: Option<f32>,
+    /// Whether the attention queue docks beside the panes instead of floating
+    /// over them. Absent = nobody has chosen, which resolves to the overlay —
+    /// the presentation that costs the terminals nothing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    rail_pinned: Option<bool>,
     /// Whether the bottom slot's allowance rows read as what is left rather
     /// than what is spent. A display flip computed at paint — the record's own
     /// `percent` is always the fraction *spent*, so no config change can ever
@@ -1886,6 +1940,9 @@ impl Default for StateFile {
         Self {
             active: 0,
             panes: 0,
+            // Nobody has chosen, which is not the same as choosing the overlay
+            // — it simply resolves to it at load. See the field.
+            rail_pinned: None,
             win: None,
             scale: None,
             theme: None,
@@ -1930,6 +1987,9 @@ struct SavedTab {
     /// which is how an old session opens as one unfiled list.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     project: Option<u32>,
+    /// Absent = nobody set a level on this task, so it inherits.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    level: Option<SavedLevel>,
     node: SavedNode,
 }
 
@@ -1947,6 +2007,47 @@ struct SavedGroup {
     /// The project this group hangs from in the left bar. Absent = top level.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     project: Option<u32>,
+    /// Absent = nobody set a level on this initiative, so it inherits.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    level: Option<SavedLevel>,
+}
+
+/// The persisted form of [`attention::Priority`] — a person's thumb on the
+/// scale, written down so it survives a restart.
+///
+/// Its own type for the same reason [`SavedScope`] is: a state file that
+/// serialised the projection's enum would break the moment a lane was renamed
+/// for a reason that has nothing to do with disk.
+///
+/// Absent means UNSET and inherits; present means a person said this, including
+/// when what they said was neutral. `Option<SavedLevel>` therefore carries three
+/// states and is written with `skip_serializing_if`, so a file from before this
+/// feature says nothing rather than saying neutral about everything.
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
+enum SavedLevel {
+    Promoted,
+    Neutral,
+    Demoted,
+}
+
+impl From<attention::Priority> for SavedLevel {
+    fn from(p: attention::Priority) -> Self {
+        match p {
+            attention::Priority::Promoted => SavedLevel::Promoted,
+            attention::Priority::Neutral => SavedLevel::Neutral,
+            attention::Priority::Demoted => SavedLevel::Demoted,
+        }
+    }
+}
+
+impl From<SavedLevel> for attention::Priority {
+    fn from(l: SavedLevel) -> Self {
+        match l {
+            SavedLevel::Promoted => attention::Priority::Promoted,
+            SavedLevel::Neutral => attention::Priority::Neutral,
+            SavedLevel::Demoted => attention::Priority::Demoted,
+        }
+    }
 }
 
 /// The persisted form of [`tree::Scope`]. Its own type so the state file is
@@ -1989,6 +2090,10 @@ struct SavedProject {
     color: String,
     #[serde(default)]
     collapsed: bool,
+    /// Absent = nobody set a level on this project, so everything under it is
+    /// neutral unless told otherwise nearer down.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    level: Option<SavedLevel>,
 }
 
 fn load_state() -> StateFile {
@@ -3233,6 +3338,31 @@ struct Workspace {
     /// The queue is open over the panes. The closed spine is the steady state
     /// and this never opens itself.
     rail_open: bool,
+    /// The queue is docked beside the panes rather than floating over them.
+    ///
+    /// **Opt-in, and a wide-screen choice.** The terminal grid keeps priority —
+    /// that is the plan's own line — so the steady state is an overlay that
+    /// costs the panes nothing and goes away. A person with the width to spare
+    /// can spend it, and only they can say whether they have it.
+    ///
+    /// A preference, not a state: a window narrowed below [`RAIL_PIN_MIN_W`]
+    /// draws the queue as an overlay while this stays true, and gets the dock
+    /// back when it is widened. Clearing it on a resize would silently discard
+    /// somebody's setting because they dragged a window.
+    rail_pinned: bool,
+    /// The row order the person is currently looking at, held while they look.
+    ///
+    /// Empty whenever the queue is shut, which is what "released" means — the
+    /// live projection is the truth again the moment nobody is reading a
+    /// snapshot of it. See [`attention::hold_order`] for why a list of keys and
+    /// not a list of rows.
+    rail_order: Vec<u64>,
+    /// Which rows have already been looked at. Survives the queue closing, and
+    /// is the queue's half of the bell's own acknowledgement contract.
+    rail_seen: attention::Seen,
+    /// The keyboard cursor over the waiting rows, clamped against the live
+    /// length every frame because a row can leave between two keystrokes.
+    rail_cursor: usize,
     /// The queue's painted rect, captured each frame. This is the SAME rect
     /// registered as its warp tube, so a click normalises into it and applies
     /// the identical barrel map the shader gathers with — the curve-aware
@@ -3243,6 +3373,19 @@ struct Workspace {
     /// compared: what the pointer is asked about is the plain box, exactly as
     /// the sticky note does it.
     rail_hits: Arc<Mutex<Vec<RailHit>>>,
+    /// The rows the painter last drew, as (pane, lane) pairs — what the person
+    /// actually had in front of them, which is what "seen" is a claim about.
+    /// Written each frame by the renderer, read once when the queue closes.
+    rail_shown: Arc<Mutex<Vec<(u64, attention::AttentionKind)>>>,
+    /// Each deliverable link's own measured band, as `(row, top, bottom)`.
+    ///
+    /// Written by a canvas inside the link itself and read by the row's canvas
+    /// one frame later, which is why it survives between frames rather than
+    /// being cleared with the hits: gpui paints children before the parent's
+    /// overlay in some orders and after in others, and a band read one frame
+    /// stale is a link whose hit box lags a single repaint. A band computed
+    /// from a guess is a link whose hit box is wrong forever.
+    rail_band: Arc<Mutex<Vec<(usize, f32, f32)>>>,
     /// On-screen box of the FOCUS reading area (the clip box below the header),
     /// captured each frame. This is the SAME rect registered as the warp tube, so a
     /// click normalises into it and applies the identical barrel map the shader
@@ -3408,7 +3551,7 @@ fn wire_pane(pane: &Entity<TerminalView>, window: &mut Window, cx: &mut Context<
     // ctrl+shift+N in any pane → open or close the attention queue.
     cx.subscribe(pane, |ws, _pane, _ev: &ToggleRail, cx| {
         if ws.rail_on {
-            ws.rail_open = !ws.rail_open;
+            ws.rail_toggle(cx);
             cx.notify();
         }
     })
@@ -4327,6 +4470,9 @@ impl Workspace {
             confirm_delete: None,
             bar_menu: None,
             left_bar: left_bar_visible(saved.left_bar, scratch, demo),
+            // Absent means nobody has chosen, and the choice that costs the
+            // terminals nothing is the one an unasked question gets.
+            rail_pinned: saved.rail_pinned.unwrap_or(false),
             left_bar_w: saved
                 .left_bar_w
                 .unwrap_or(LEFT_BAR_W)
@@ -4368,9 +4514,26 @@ impl Workspace {
             focus_page_h: 0.0,
             pending_jump: None,
             rail_on: rail_on(std::env::var("TD_SPINE").ok().as_deref()),
-            rail_open: false,
+            // **The demo opens the queue itself, and only the demo does.**
+            //
+            // The queue never opens on its own in a real window — that is a
+            // standing rule of this surface — but a demo of a queue that is not
+            // showing demonstrates a twenty-pixel badge. It also makes the
+            // surface capturable without synthetic input, which matters more
+            // than it sounds: `ctrl+shift+N` is read by the focused PANE, and a
+            // `wtype`-sent chord arrives with a shifted keysym that the match on
+            // `"n"` does not accept. So the one gesture that opens this thing is
+            // the one gesture a screenshot script cannot perform, and without
+            // this flag the only way to photograph the queue is to ask a person
+            // to press a key.
+            rail_open: std::env::var("TD_SPINE_DEMO").is_ok_and(|v| v != "0"),
+            rail_order: Vec::new(),
+            rail_seen: attention::Seen::default(),
+            rail_cursor: 0,
             rail_bounds: Arc::new(Mutex::new(None)),
             rail_hits: Arc::new(Mutex::new(Vec::new())),
+            rail_shown: Arc::new(Mutex::new(Vec::new())),
+            rail_band: Arc::new(Mutex::new(Vec::new())),
             focus_body_bounds: Arc::new(Mutex::new(None)),
             focus_map: Arc::new(Mutex::new(None)),
             focus_sel: None,
@@ -4446,6 +4609,7 @@ impl Workspace {
                 // drop a dangling group ref (a group that failed to parse / vanished)
                 tab.group = t.group.filter(|g| live.contains(g));
                 tab.project = t.project.filter(|p| live_projects.contains(p));
+                tab.level = t.level.map(attention::Priority::from);
                 ws.tabs.push(tab);
             }
             ws.prune_groups();
@@ -4680,6 +4844,7 @@ impl Workspace {
             built.text_color = tab.text_color.as_deref().and_then(theme::parse_hex);
             built.group = tab.group.filter(|g| live_groups.contains(g));
             built.project = tab.project.filter(|p| live_projects.contains(p));
+            built.level = tab.level.map(attention::Priority::from);
             self.tabs.push(built);
         }
 
@@ -5029,6 +5194,7 @@ impl Workspace {
             .projects
             .iter()
             .map(|p| Project {
+                level: p.level.map(attention::Priority::from),
                 id: p.id,
                 name: p.name.clone(),
                 // Same reasoning as a group's colour: never drop a project
@@ -5046,6 +5212,7 @@ impl Workspace {
             .groups
             .iter()
             .map(|g| TabGroup {
+                level: g.level.map(attention::Priority::from),
                 id: g.id,
                 name: g.name.clone(),
                 // A group pointing at a project that is no longer in the file
@@ -5184,6 +5351,7 @@ impl Workspace {
                     // A grouped task's project is its group's; writing it here
                     // too would be a second copy of one fact, free to rot.
                     project: t.project.filter(|_| t.group.is_none()),
+                    level: t.level.map(SavedLevel::from),
                     node: t.root.to_saved(cx),
                 })
                 .collect(),
@@ -5197,6 +5365,7 @@ impl Workspace {
                     text_color: g.text_color.map(hsla_to_hex),
                     collapsed: g.collapsed,
                     project: g.project,
+                    level: g.level.map(SavedLevel::from),
                 })
                 .collect(),
             projects: self
@@ -5207,9 +5376,11 @@ impl Workspace {
                     name: p.name.clone(),
                     color: hsla_to_hex(p.color),
                     collapsed: p.collapsed,
+                    level: p.level.map(SavedLevel::from),
                 })
                 .collect(),
             left_bar: Some(self.left_bar),
+            rail_pinned: Some(self.rail_pinned),
             left_bar_w: Some(self.left_bar_w),
             slot_remaining: Some(self.slot_remaining),
             scope: Some(self.scope.into()),
@@ -5609,6 +5780,25 @@ impl Workspace {
                                                     *pin,
                                                     cx,
                                                 );
+                                            }
+                                        }
+                                        // And the declared deliverable, on the
+                                        // same pipeline for the same reasons.
+                                        match &patch.deliverable {
+                                            None => {}
+                                            Some(mcp::DeliverableChange::Clear) => {
+                                                view.declare_deliverable(None);
+                                            }
+                                            Some(mcp::DeliverableChange::Declare {
+                                                label,
+                                                href,
+                                            }) => {
+                                                view.declare_deliverable(Some(
+                                                    attention::Deliverable {
+                                                        label: label.clone(),
+                                                        href: href.clone(),
+                                                    },
+                                                ));
                                             }
                                         }
                                         cx.notify();
@@ -8017,6 +8207,14 @@ impl Workspace {
                 let (tabs, panes) = self.branch_weight(branch);
                 let groups = self.groups.iter().filter(|g| g.project == Some(id)).count();
                 items = items
+                    // The level goes FIRST on every branch menu, and in the same
+                    // slot on all three. It is the row a person reaches for
+                    // daily — this is what I am on today, this is not — while
+                    // the rest of the menu is for things that happen once to a
+                    // branch. A row in the same place on every rung is a row
+                    // somebody reaches for without reading the menu.
+                    .children(self.level_rows(which, &sk, s, cx))
+                    .child(Self::bar_menu_rule(th, s))
                     .child(
                         Self::bar_menu_row(&sk, s, "New tab here", MenuTone::Plain).on_mouse_down(
                             MouseButton::Left,
@@ -8097,6 +8295,8 @@ impl Workspace {
             BarMenu::Initiative(id) => {
                 let (tabs, panes) = self.branch_weight(BarBranch::Initiative(id));
                 items = items
+                    .children(self.level_rows(which, &sk, s, cx))
+                    .child(Self::bar_menu_rule(th, s))
                     .child(
                         Self::bar_menu_row(&sk, s, "New tab here", MenuTone::Plain).on_mouse_down(
                             MouseButton::Left,
@@ -8163,6 +8363,8 @@ impl Workspace {
                 let panes = self.tab_pane_count(i);
                 let grouped = self.tabs.get(i).is_some_and(|t| t.group.is_some());
                 items = items
+                    .children(self.level_rows(which, &sk, s, cx))
+                    .child(Self::bar_menu_rule(th, s))
                     .child(
                         Self::bar_menu_row(&sk, s, "New tab beside this", MenuTone::Plain)
                             .on_mouse_down(
@@ -8365,6 +8567,7 @@ impl Workspace {
         let id = self.next_group_id;
         self.next_group_id += 1;
         self.groups.push(TabGroup {
+            level: None,
             id,
             name: None,
             color: hsla(0.47, 0.5, 0.5, 1.0),
@@ -8495,6 +8698,7 @@ impl Workspace {
         // two tasks inside a project does not quietly lift them out of it.
         let project = self.place_of(i).project;
         self.groups.push(TabGroup {
+            level: None,
             id,
             name: None,
             color,
@@ -8666,6 +8870,7 @@ impl Workspace {
         let id = self.next_project_id;
         self.next_project_id += 1;
         self.projects.push(Project {
+            level: None,
             id,
             name: None,
             color: project_hue(id),
@@ -9062,6 +9267,7 @@ impl Workspace {
                     let id = self.next_project_id;
                     self.next_project_id += 1;
                     self.projects.push(Project {
+                        level: None,
                         id,
                         name: Some(name.clone()),
                         color: project_hue(id),
@@ -9254,6 +9460,7 @@ impl Workspace {
         let id = self.next_group_id;
         self.next_group_id += 1;
         self.groups.push(TabGroup {
+            level: None,
             id,
             name: (!want.is_empty()).then(|| want.to_string()),
             color: color.unwrap_or_else(|| hsla(0.47, 0.5, 0.5, 1.0)),
@@ -11761,7 +11968,7 @@ impl Workspace {
         // dismiss, so it goes first: Esc with the queue open should fold the
         // queue, never the wall underneath it.
         if self.rail_open {
-            self.rail_open = false;
+            self.rail_close();
             return true;
         }
         // Overlays that stack ON TOP of the agent wall — peel these first.
@@ -13059,6 +13266,11 @@ impl Workspace {
                 // name, colour overrides, and where it sits in the tree all
                 // survive a reap
                 t.root.reap(cx).map(|root| Tab {
+                    // A reap rebuilds the tab around its surviving panes and
+                    // must carry every part of its identity across, this
+                    // included: a task that loses a pane has not stopped being
+                    // the thing the person promoted this morning.
+                    level: t.level,
                     root,
                     name: t.name,
                     focused: t.focused,
@@ -13973,6 +14185,68 @@ impl Workspace {
         out
     }
 
+    /// The attention mark for a row's badge line: a green up or a blue down,
+    /// drawn dimmer when the row was told rather than set.
+    ///
+    /// **It never rolls up.** Every other mark on these rows travels upward —
+    /// `tree::Roll` gathers what is happening in a branch onto the branch — and
+    /// this one deliberately goes the other way. A project showing an arrow
+    /// because something inside it was promoted would be the branch claiming a
+    /// setting nobody made on it, and the person who set that one task would
+    /// have no way to see, from the tree, which row actually carries the
+    /// instruction.
+    ///
+    /// Neutral draws nothing at all, explicit or inherited. A tree where every
+    /// row carries a glyph is a tree where none of them mean anything, and the
+    /// question these answer is "which of these did I single out".
+    fn level_mark(level: attention::Level, s: f32) -> Option<AnyElement> {
+        let glyph = level.glyph()?;
+        // Green up, blue down — settled with the plan's eighth question, and the
+        // two hues are deliberately NOT the lane colours: a lane says what an
+        // agent is doing and a level says what a person decided, so borrowing
+        // red here would make somebody's priority read as a failure.
+        let ink = match level.priority {
+            attention::Priority::Promoted => hsla(0.33, 0.70, 0.42, 1.),
+            _ => hsla(0.58, 0.72, 0.56, 1.),
+        };
+        Some(
+            div()
+                .text_size(px(8.5 * s))
+                // Inherited is the same mark at half strength rather than a
+                // different mark: it says the same thing, one rung further
+                // away, and a second glyph would be a second thing to learn for
+                // a distinction that only matters when you are about to change
+                // it.
+                .text_color(if level.inherited {
+                    ink.alpha(0.45)
+                } else {
+                    ink
+                })
+                .child(SharedString::from(glyph))
+                .into_any_element(),
+        )
+    }
+
+    /// A branch's own level — explicit only, never resolved downward from above.
+    ///
+    /// A branch shows what IT is set to. Inheritance is a fact about the rows
+    /// below, and drawing an inherited arrow on the initiative that received it
+    /// would put two rows in the tree claiming one instruction.
+    fn branch_level_mark(&self, branch: BarBranch, s: f32) -> Option<AnyElement> {
+        let which = match branch {
+            BarBranch::Project(id) => BarMenu::Project(id),
+            BarBranch::Initiative(id) => BarMenu::Initiative(id),
+            BarBranch::Unfiled => return None,
+        };
+        Self::level_mark(
+            attention::Level {
+                priority: self.branch_level(which)?,
+                inherited: false,
+            },
+            s,
+        )
+    }
+
     /// One row of the left bar, whatever layer it is on.
     ///
     /// Every row is the same shape — indent, disclosure, colour mark, label,
@@ -14275,6 +14549,7 @@ impl Workspace {
                     })
                     .child(label.clone()),
             )
+            .children(self.branch_level_mark(branch, s))
             .children(self.roll_badges(&roll, collapsed, key, s, th))
             // The task count used to sit here, so a folded branch still said how
             // much was in it. Removed 2026-09-12: on a real tree it is a column
@@ -14501,6 +14776,11 @@ impl Workspace {
                 }))
                 .child(label),
         )
+        // What the person said this task is worth — its own setting at full
+        // strength, or its branch's at half. Ahead of the agent badges because
+        // it is a fact about the task rather than about what is happening in
+        // it, and the two must not read as one cluster.
+        .children(Self::level_mark(self.level_of(i), s))
         // this task's own agent roster, animating exactly as it does on the
         // strip. The badge key is offset off the strip's range so a tab
         // showing in both places gets two animations rather than one shared
@@ -15455,10 +15735,9 @@ impl Workspace {
             }
             return (items, panes);
         }
-        use attention::{AttentionKind, Observation, PaneKind, Priority};
+        use attention::{AttentionKind, Observation, PaneKind};
         let mut obs: Vec<Observation> = Vec::new();
         let mut panes: std::collections::HashMap<u64, EntityId> = std::collections::HashMap::new();
-        let mut n: u64 = 0;
         for (ti, tab) in self.tabs.iter().enumerate() {
             let mut leaves = Vec::new();
             tab.root.leaves(&mut leaves);
@@ -15496,10 +15775,21 @@ impl Workspace {
                     Some(AttentionKind::Unknown) => "parser",
                     None => "",
                 };
+                // **The pane's own identity, not its position in a walk.**
+                // This was a counter incremented over tabs and leaves, so every
+                // key shifted the moment a pane anywhere to the left of it
+                // opened or closed — and Slice 3 keys a held order and a seen
+                // mark off it. A row's identity moving when an unrelated pane
+                // closes would silently transfer both to its neighbour.
+                let key = leaf.entity_id().as_u64();
                 obs.push(Observation {
-                    pane: n,
+                    pane: key,
                     pane_kind,
-                    priority: Priority::Neutral,
+                    // Resolved through the tree before the projection sees it,
+                    // so by the time a row is sorted its level is a fact rather
+                    // than a search. Slice 1 landed the ordering key with every
+                    // row at Neutral; this is the producer it was waiting for.
+                    priority: self.level_of(ti).priority,
                     kind,
                     origin: self.rail_origin(ti),
                     reason: reason.to_string(),
@@ -15507,10 +15797,17 @@ impl Workspace {
                     // row draws a dash, and never an age it did not measure.
                     observed_at: view.attention_since(),
                     source,
-                    deliverable: None,
+                    // The line behind the lane, quoted by the pane at the scan
+                    // that classified it. Unknown and clean-finish rows have
+                    // none, and say so by being absent.
+                    evidence: view.attention_evidence(),
+                    // Declared through the MCP verb by the agent in this pane,
+                    // or absent. Slice 4's channel: the tracer pointed at a
+                    // file this code picked out, which is a document we chose
+                    // rather than one a turn produced.
+                    deliverable: view.deliverable(),
                 });
-                panes.insert(n, leaf.entity_id());
-                n += 1;
+                panes.insert(key, leaf.entity_id());
             }
         }
         (attention::project(&obs), panes)
@@ -15545,15 +15842,24 @@ impl Workspace {
         let plan = Self::tracer_doc("docs/plans/attention-spine/plan.md");
         let page = Self::tracer_doc("docs/2026-08-31-one-click-copy-affordance.html");
 
+        // The seventh field is the QUOTED LINE — invented like everything else
+        // here and in the same house style: no real prompt, path or business.
+        //
+        // Two rows carry none, and those are as deliberate as the five that do.
+        // A clean finish matches no line, so a review-ready row has nothing to
+        // quote; an unreadable screen is precisely what could not be read. A
+        // demo that quoted something on every row would teach the opposite of
+        // what the field means.
         let rows = vec![
             (
                 1u64,
                 Priority::Promoted,
                 AttentionKind::Decision,
                 origin("atlas", Some("ingest")),
-                "Choose the token migration path",
-                "pane screen",
+                "Stopped at a prompt",
+                "prompt",
                 ago(41 * 60),
+                Some("Do you want to proceed? \u{276f} 1. Rotate now  2. Stage first"),
                 None,
             ),
             (
@@ -15561,9 +15867,10 @@ impl Workspace {
                 Priority::Neutral,
                 AttentionKind::Decision,
                 origin("ledger", Some("invoices")),
-                "Overwrite the July export?",
-                "pane screen",
+                "Stopped at a prompt",
+                "prompt",
                 ago(9 * 60),
+                Some("Overwrite the existing export? (esc to cancel)"),
                 None,
             ),
             (
@@ -15571,9 +15878,10 @@ impl Workspace {
                 Priority::Promoted,
                 AttentionKind::Failure,
                 origin("atlas", Some("packaging")),
-                "AppImage smoke, exit 1",
-                "check",
+                "Finished against a wall",
+                "bell",
                 ago(6 * 60),
+                Some("API Error: 429 rate_limit_error \u{b7} retry after 1m"),
                 None,
             ),
             (
@@ -15584,6 +15892,9 @@ impl Workspace {
                 "Finished, not yet seen",
                 "bell",
                 ago(12 * 60),
+                // A clean finish matched nothing, so there is nothing to quote
+                // and the row simply omits it.
+                None,
                 page.map(|href| Deliverable {
                     label: "One-click copy affordance".into(),
                     href: href.to_string(),
@@ -15597,6 +15908,7 @@ impl Workspace {
                 "Finished, not yet seen",
                 "bell",
                 ago(40 * 60),
+                None,
                 plan.map(|href| Deliverable {
                     label: "Attention spine plan".into(),
                     href: href.to_string(),
@@ -15607,9 +15919,10 @@ impl Workspace {
                 Priority::Demoted,
                 AttentionKind::Failure,
                 origin("relay", Some("nightly")),
-                "Connection lost, retrying",
-                "check",
+                "Finished against a wall",
+                "bell",
                 ago(2 * 60),
+                Some("API Error: request timed out after 600s"),
                 None,
             ),
             (
@@ -15617,8 +15930,11 @@ impl Workspace {
                 Priority::Neutral,
                 AttentionKind::Unknown,
                 origin("relay", None),
-                "Known agent, state unreadable",
-                "pane screen",
+                "Screen could not be read",
+                "parser",
+                None,
+                // Nothing to quote, by definition: this row exists BECAUSE the
+                // screen could not be read.
                 None,
                 None,
             ),
@@ -15627,7 +15943,17 @@ impl Workspace {
         let obs: Vec<attention::Observation> = rows
             .into_iter()
             .map(
-                |(pane, priority, kind, origin, reason, source, observed_at, deliverable)| {
+                |(
+                    pane,
+                    priority,
+                    kind,
+                    origin,
+                    reason,
+                    source,
+                    observed_at,
+                    evidence,
+                    deliverable,
+                )| {
                     attention::Observation {
                         pane,
                         pane_kind: attention::PaneKind::Agent,
@@ -15637,12 +15963,165 @@ impl Workspace {
                         reason: reason.to_string(),
                         observed_at,
                         source,
+                        evidence: evidence.map(str::to_string),
                         deliverable,
                     }
                 },
             )
             .collect();
         attention::project(&obs)
+    }
+
+    /// Open or shut the queue, and run the lifecycle either way.
+    ///
+    /// **One door, because the lifecycle is three things and a call site that
+    /// remembers two is a bug that looks like a working feature.** Opening
+    /// freezes the order and parks the cursor at the top; closing marks what was
+    /// on screen as seen, forgets panes that have left the queue entirely, and
+    /// releases the order back to the live projection. There were four places
+    /// that flipped the flag before this existed, and the hit test is about to
+    /// add a fifth.
+    fn rail_toggle(&mut self, cx: &mut Context<Self>) {
+        if self.rail_open {
+            self.rail_close();
+        } else {
+            let (items, _) = self.rail_rows(cx);
+            self.rail_order = attention::order_of(&items);
+            self.rail_cursor = 0;
+            self.rail_open = true;
+        }
+    }
+
+    /// Shut the queue, marking everything that was ON SCREEN as looked at.
+    ///
+    /// Marking on the way OUT rather than on the way in is deliberate: the rows
+    /// that were on screen for the duration are the ones that were seen, and a
+    /// row that arrived while the panel was open is one of them. Marking on open
+    /// would mean a row that appeared a frame later stayed "new" forever after
+    /// sitting in front of somebody for a minute.
+    ///
+    /// **From what the painter drew, not from a fresh projection.** The two
+    /// differ by a frame, and the difference is entirely rows that appeared in
+    /// the instant between the last paint and the Esc — which nobody saw. This
+    /// also keeps the whole lifecycle free of `cx`, so `close_popups` can run it
+    /// on the same terms as every other overlay's dismissal.
+    fn rail_close(&mut self) {
+        if !self.rail_open {
+            return;
+        }
+        let shown = self
+            .rail_shown
+            .lock()
+            .map(|s| s.clone())
+            .unwrap_or_default();
+        self.rail_seen.mark(&shown);
+        self.rail_seen.retain_live(&shown);
+        self.rail_order.clear();
+        self.rail_open = false;
+    }
+
+    /// The queue as it is currently drawn: projected live, then reordered onto
+    /// whatever order the reader is looking at.
+    ///
+    /// Everything that needs to agree about "row 3" goes through here — the
+    /// painter, the cursor, the hit test and the key handler — so a click and a
+    /// keystroke on the same row cannot reach two different panes.
+    fn rail_queue(
+        &self,
+        cx: &App,
+    ) -> (
+        Vec<attention::AttentionItem>,
+        std::collections::HashMap<u64, EntityId>,
+    ) {
+        let (items, panes) = self.rail_rows(cx);
+        (attention::hold_order(&self.rail_order, items), panes)
+    }
+
+    /// The rows the queue actually lists, which is everything except the
+    /// unknown lane — that collapses to one unclickable line at the bottom.
+    ///
+    /// The cursor, the number keys and the hit test all index THIS list, so the
+    /// collapse cannot make row 4 on screen mean row 9 in the projection.
+    fn rail_waiting(
+        &self,
+        cx: &App,
+    ) -> (
+        Vec<attention::AttentionItem>,
+        std::collections::HashMap<u64, EntityId>,
+    ) {
+        let (items, panes) = self.rail_queue(cx);
+        (
+            items
+                .into_iter()
+                .filter(|it| it.kind != attention::AttentionKind::Unknown)
+                .collect(),
+            panes,
+        )
+    }
+
+    /// Act on the cursor's row: go to its pane, or open what it produced.
+    ///
+    /// Returns false when there is nothing under the cursor, so the key handler
+    /// can decline the keystroke rather than swallow it.
+    fn rail_activate(&mut self, open_deliverable: bool, cx: &mut Context<Self>) -> bool {
+        let (items, panes) = self.rail_waiting(cx);
+        let Some(it) = items.get(self.rail_cursor) else {
+            return false;
+        };
+        if open_deliverable {
+            let Some(d) = it.deliverable.as_ref() else {
+                return false;
+            };
+            pane::open_with_system(&d.href);
+            return true;
+        }
+        let Some(id) = panes.get(&it.pane).copied() else {
+            return false;
+        };
+        self.pending_jump = Some(id);
+        self.rail_close();
+        true
+    }
+
+    /// The queue owns the keyboard while it is open. Returns whether the press
+    /// was ours — the caller stops propagation on a yes, so no navigation key
+    /// ever reaches the terminal underneath.
+    ///
+    /// Esc is NOT handled here: it goes through `close_popups` with every other
+    /// overlay in the window, so the one dismissal path stays one path.
+    fn rail_key(&mut self, key: &str, cx: &mut Context<Self>) -> bool {
+        if !self.rail_on || !self.rail_open {
+            return false;
+        }
+        let len = self.rail_waiting(cx).0.len();
+        // Clamp first: rows leave the queue between keystrokes, and a cursor
+        // parked past the end would make `end` a no-op and `up` jump two.
+        self.rail_cursor = self.rail_cursor.min(len.saturating_sub(1));
+        match key {
+            "enter" => self.rail_activate(false, cx),
+            // A second verb for the second act. The plan is explicit that
+            // reading what a turn produced and visiting the terminal that
+            // produced it are different, so they do not share a key.
+            "o" => self.rail_activate(true, cx),
+            // Dock or undock. Refused rather than silently ignored on a window
+            // with no room: the press answers false, so it falls through to the
+            // pane instead of being eaten by a control that is not on offer.
+            "p" => {
+                if !rail_pin_fits(self.last_win.map(|(_, _, w, _)| w)) {
+                    return false;
+                }
+                self.rail_pinned = !self.rail_pinned;
+                self.save(cx);
+                true
+            }
+            _ => match attention::move_cursor(self.rail_cursor, len, key) {
+                Some(next) => {
+                    self.rail_cursor = next;
+                    true
+                }
+                None => false,
+            },
+        }
     }
 
     /// Which part of the queue a click landed on, once the curve is undone.
@@ -15735,6 +16214,133 @@ impl Workspace {
     /// ids are already filtered against what exists by `place_of`, so a dangling
     /// reference resolves to no parent rather than to a branch that is not
     /// there.
+    /// A task's effective attention level, and whether it was inherited.
+    ///
+    /// Resolved through [`Workspace::place_of`] for exactly the reason
+    /// `rail_origin` is: a grouped task carries no project of its own, so
+    /// reading `tab.project` would skip the project rung entirely for the tasks
+    /// most likely to be filed under one.
+    ///
+    /// A task set on a branch that has since been deleted resolves to whatever
+    /// its surviving branches say, because `place_of` filters dangling ids
+    /// first. Nothing here has to know about deletion.
+    fn level_of(&self, i: usize) -> attention::Level {
+        let place = self.place_of(i);
+        attention::resolve_level(
+            self.tabs.get(i).and_then(|t| t.level),
+            place
+                .initiative
+                .and_then(|g| self.groups.iter().find(|x| x.id == g))
+                .and_then(|g| g.level),
+            place
+                .project
+                .and_then(|p| self.projects.iter().find(|x| x.id == p))
+                .and_then(|p| p.level),
+        )
+    }
+
+    /// Read or write the explicit level of any branch of the tree.
+    ///
+    /// One function for all three rungs, because the menu row that sets a level
+    /// is the same row on a project, an initiative and a task, and three copies
+    /// of "toggle it off if it is already that" is three chances for one of them
+    /// to behave differently from the others.
+    fn branch_level(&self, which: BarMenu) -> Option<attention::Priority> {
+        match which {
+            BarMenu::Project(id) => self
+                .projects
+                .iter()
+                .find(|p| p.id == id)
+                .and_then(|p| p.level),
+            BarMenu::Initiative(id) => self
+                .groups
+                .iter()
+                .find(|g| g.id == id)
+                .and_then(|g| g.level),
+            BarMenu::Task(i) => self.tabs.get(i).and_then(|t| t.level),
+            BarMenu::Header => None,
+        }
+    }
+
+    /// Set a branch's level, or clear it when it already holds that level.
+    ///
+    /// **Pressing promote on an already-promoted row clears it**, which is the
+    /// gesture every toggle in this bar already has and the only way to get back
+    /// to *unset* — as distinct from neutral — without a third menu row that
+    /// says "inherit". The distinction is real: unset follows the project, and
+    /// neutral deliberately does not.
+    fn set_branch_level(
+        &mut self,
+        which: BarMenu,
+        level: attention::Priority,
+        cx: &mut Context<Self>,
+    ) {
+        let next = (self.branch_level(which) != Some(level)).then_some(level);
+        match which {
+            BarMenu::Project(id) => {
+                if let Some(p) = self.projects.iter_mut().find(|p| p.id == id) {
+                    p.level = next;
+                }
+            }
+            BarMenu::Initiative(id) => {
+                if let Some(g) = self.groups.iter_mut().find(|g| g.id == id) {
+                    g.level = next;
+                }
+            }
+            BarMenu::Task(i) => {
+                if let Some(t) = self.tabs.get_mut(i) {
+                    t.level = next;
+                }
+            }
+            BarMenu::Header => {}
+        }
+        self.save(cx);
+        cx.notify();
+    }
+
+    /// The two level rows every branch menu carries, in one place.
+    ///
+    /// Drawn on all three rungs because the level means the same thing on each,
+    /// and a menu whose rows move between levels is a menu somebody has to read
+    /// rather than reach for. The row that is already in force is marked, so the
+    /// menu says what the branch currently is as well as what it can be.
+    fn level_rows(
+        &self,
+        which: BarMenu,
+        sk: &skin::Skin,
+        s: f32,
+        cx: &mut Context<Self>,
+    ) -> [gpui::Div; 2] {
+        let now = self.branch_level(which);
+        [attention::Priority::Promoted, attention::Priority::Demoted].map(|level| {
+            let on = now == Some(level);
+            let word = if matches!(level, attention::Priority::Promoted) {
+                "Promote"
+            } else {
+                "Demote"
+            };
+            let glyph = level.glyph().unwrap_or("");
+            Self::bar_menu_row(
+                sk,
+                s,
+                // The mark on the left is the same glyph the badge line draws,
+                // so the menu teaches the tree's vocabulary rather than adding
+                // a second one. A tick would have been a third symbol meaning
+                // "this one", for a row that already has a symbol of its own.
+                format!("{glyph} {word}{}", if on { "  \u{2713}" } else { "" }),
+                MenuTone::Plain,
+            )
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                    cx.stop_propagation();
+                    ws.bar_menu = None;
+                    ws.set_branch_level(which, level, cx);
+                }),
+            )
+        })
+    }
+
     fn rail_origin(&self, i: usize) -> attention::Origin {
         let Some(tab) = self.tabs.get(i) else {
             return attention::Origin::default();
@@ -15795,6 +16401,17 @@ impl Workspace {
 
         let wanting = counts.wanting;
         let unknown = counts.unknown;
+        // How many of those numbers are things that have arrived since the last
+        // look. Counted over the COUNTED lanes only, matching the numbers it
+        // sits under: the unknown lane has its own mark and is never a claim
+        // that something wants you.
+        let unseen = self.rail_seen.unseen_count(
+            &items
+                .iter()
+                .filter(|it| it.kind.counted())
+                .cloned()
+                .collect::<Vec<_>>(),
+        );
 
         // Two divs, not one, and the split is what stops the spine being a
         // full-height stripe.
@@ -15839,7 +16456,7 @@ impl Workspace {
                             MouseButton::Left,
                             cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
                                 cx.stop_propagation();
-                                ws.rail_open = !ws.rail_open;
+                                ws.rail_toggle(cx);
                                 cx.notify();
                             }),
                         )
@@ -15867,6 +16484,25 @@ impl Workspace {
                                     .text_color(sk.ink.ink_dim)
                                     .child("?"),
                             )
+                        })
+                        // A dot under the numbers whenever something in them has
+                        // not been looked at yet. Not a second number: the
+                        // question the closed spine answers is "is there
+                        // anything NEW", and a person who wants the breakdown is
+                        // one click from the rows themselves, each of which
+                        // carries its own dot.
+                        //
+                        // It disappears the moment the queue is closed again,
+                        // because closing it IS the look — the same contract the
+                        // finish bell has always had.
+                        .when(unseen > 0, |d| {
+                            d.child(
+                                div()
+                                    .mt(px(1. * s))
+                                    .text_size(px(8. * s))
+                                    .text_color(sk.ink.ink)
+                                    .child("\u{25cf}"),
+                            )
                         }),
                 ),
         )
@@ -15879,13 +16515,53 @@ impl Workspace {
     /// this opens. One verb per row, and it is focus — the pane's own focus-in
     /// edge then acknowledges its bell, which is the seen-state the plan reuses
     /// rather than inventing.
-    fn render_rail(&self, cx: &mut Context<Self>) -> Option<gpui::Div> {
-        if !self.rail_on || !self.rail_open {
+    /// Is the queue docked right now — the preference AND the room for it?
+    ///
+    /// Two conditions, never collapsed into one flag. The preference is a
+    /// person's decision and survives a narrow window; the fit is a fact about
+    /// this frame. Storing the conjunction would mean a resize silently erasing
+    /// the decision.
+    fn rail_docked(&self) -> bool {
+        self.rail_pinned && rail_pin_fits(self.last_win.map(|(_, _, w, _)| w))
+    }
+
+    /// The queue, docked beside the panes: a flex sibling that costs the
+    /// terminals its width, the way the spine already does.
+    ///
+    /// No scrim, no `absolute`, no occlude — a docked panel is part of the
+    /// layout rather than over it, so clicking a terminal beside it does not
+    /// dismiss it. That is the whole difference between the two presentations
+    /// and the reason this is a separate function rather than a flag inside the
+    /// overlay: an overlay that "just" stopped being absolute would keep the
+    /// scrim's dismissal behaviour, and a docked panel that vanishes when you
+    /// click a pane is a docked panel nobody can use.
+    fn render_rail_docked(&self, cx: &mut Context<Self>) -> Option<gpui::Div> {
+        if !self.rail_on || !self.rail_open || !self.rail_docked() {
             return None;
         }
         let s = theme::outer_choice(cx).grade.scale;
+        Some(
+            div()
+                .flex_none()
+                .pt(px(8. * s))
+                .pl(px(4. * s))
+                .child(self.rail_panel(cx)),
+        )
+    }
+
+    /// The queue panel itself — chrome, rows, hit recording, one click handler
+    /// and the bounds canvas the hit test resolves against.
+    ///
+    /// Identical whether it floats or docks, which is the point of it being one
+    /// function: the two presentations differ only in what WRAPS it, and a
+    /// second copy of four hundred lines of rows would drift the moment either
+    /// was touched.
+    fn rail_panel(&self, cx: &mut Context<Self>) -> gpui::Div {
+        let fits = rail_pin_fits(self.last_win.map(|(_, _, w, _)| w));
+        let pinned = self.rail_docked();
+        let s = theme::outer_choice(cx).grade.scale;
         let sk = skin::skin(cx, s);
-        let (items, _panes) = self.rail_rows(cx);
+        let (items, _panes) = self.rail_queue(cx);
         let now = Instant::now();
         let th = theme::theme(cx);
         let rail_bounds = self.rail_bounds.clone();
@@ -15921,7 +16597,46 @@ impl Workspace {
                     "NEEDS ME \u{b7} {}",
                     attention::counts(&items).wanting
                 ))
-                .child("esc"),
+                // The keys, on the surface that has them. A chord nobody can
+                // discover is a chord nobody uses, and there is room for six
+                // characters beside the word esc.
+                .child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .gap(px(6. * s))
+                        .child("\u{2191}\u{2193} go")
+                        .child("\u{21b5} pane")
+                        .child("o open")
+                        // The pin, drawn inert on a window too narrow to dock
+                        // in rather than hidden. A control that disappears at
+                        // some width is a control nobody knows exists; one that
+                        // is visibly unavailable says both that it is there and
+                        // why it is not on offer.
+                        .child(
+                            div()
+                                .when(fits, |d| {
+                                    d.cursor_pointer().on_mouse_down(
+                                        MouseButton::Left,
+                                        cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                                            cx.stop_propagation();
+                                            ws.rail_pinned = !ws.rail_pinned;
+                                            ws.save(cx);
+                                            cx.notify();
+                                        }),
+                                    )
+                                })
+                                .text_color(if !fits {
+                                    sk.ink.ink_dim.alpha(0.4)
+                                } else if pinned {
+                                    th.accent
+                                } else {
+                                    sk.ink.ink_dim
+                                })
+                                .child(if pinned { "p unpin" } else { "p pin" }),
+                        )
+                        .child("esc"),
+                ),
         );
 
         // **The unknown lane collapses to one line, and this is the only place
@@ -15956,13 +16671,42 @@ impl Workspace {
         }
 
         self.rail_hits.lock().map(|mut h| h.clear()).ok();
+        // `rail_band` is deliberately NOT cleared here. It is written by a
+        // canvas inside each link and read by the row's own canvas, and gpui
+        // gives no ordering guarantee between the two within one paint — so
+        // clearing it every frame would leave the reader looking at an empty list
+        // every time the child happened to paint second. Entries are replaced
+        // in place instead, and a row with no link ignores whatever is there.
+        // What the person is looking at, for the seen-mark taken when this
+        // closes. Recorded from the rows actually drawn, and only the drawn
+        // ones: the unknown lane collapses to a count below and was never put
+        // in front of anybody as a row.
+        let drawn: Vec<attention::AttentionItem> = waiting.iter().map(|it| (*it).clone()).collect();
+        self.rail_shown
+            .lock()
+            .map(|mut s| *s = attention::shown_keys(&drawn))
+            .ok();
+        let cursor = self.rail_cursor.min(waiting.len().saturating_sub(1));
         for (row_index, it) in waiting.iter().enumerate() {
             let ink = Self::rail_ink(it.kind, &sk);
+            let on_cursor = row_index == cursor;
+            let unseen = self.rail_seen.is_unseen(it);
             let head = div()
                 .flex()
                 .flex_row()
                 .gap(px(6. * s))
                 .items_center()
+                // A row nobody has looked at yet wears a filled dot in its own
+                // lane colour; one already looked at leaves the space empty
+                // rather than drawing a hollow one. Two glyphs would make the
+                // reader learn a vocabulary to read a list of four things.
+                .child(
+                    div()
+                        .w(px(7. * s))
+                        .text_size(px(9. * s))
+                        .text_color(ink)
+                        .child(if unseen { "\u{25cf}" } else { "" }),
+                )
                 .child(
                     div()
                         .text_size(px(8.5 * s))
@@ -15995,10 +16739,19 @@ impl Workspace {
                 .pl(px(7. * s))
                 .pr(px(6. * s))
                 .py(px(5. * s))
-                .border_l(px(2. * s))
+                // The cursor is a thicker edge in the lane's own colour plus a
+                // lifted fill — never a second accent hue, which on a surface
+                // whose colours already MEAN something would read as a fifth
+                // lane. A person can point at the selected row from across the
+                // desk, which is the whole requirement.
+                .border_l(px(if on_cursor { 4. * s } else { 2. * s }))
                 .border_color(ink)
                 .rounded(sk.radius())
-                .bg(sk.ink.ink.alpha(0.05))
+                .bg(if on_cursor {
+                    sk.ink.ink.alpha(0.16)
+                } else {
+                    sk.ink.ink.alpha(0.05)
+                })
                 .cursor_pointer()
                 .hover(move |st| st.bg(sk.ink.ink.alpha(0.12)))
                 .child(head)
@@ -16008,6 +16761,23 @@ impl Workspace {
                         .text_color(sk.ink.ink)
                         .child(it.reason.clone()),
                 )
+                // The line the classifier read, quoted. `reason` is our words
+                // for what happened; this is the agent's own, and it is what
+                // turns a row somebody has to trust into a row somebody can
+                // check. Absent where nothing matched — a clean finish has no
+                // single line that is the reason — and the row simply omits it
+                // rather than printing a placeholder sentence.
+                .children(it.evidence.as_ref().map(|q| {
+                    div()
+                        .mt(px(2. * s))
+                        .px(px(4. * s))
+                        .py(px(2. * s))
+                        .rounded(px(2. * s))
+                        .bg(sk.ink.ink.alpha(0.06))
+                        .text_size(px(9.5 * s))
+                        .text_color(sk.ink.ink_dim)
+                        .child(format!("\u{201c}{q}\u{201d}"))
+                }))
                 // Every fact on the row says where it came from and when it was
                 // seen. A surface that shows a state without its provenance is
                 // asking to be trusted on nothing.
@@ -16021,10 +16791,88 @@ impl Workspace {
                             attention::age_label(it.age(now))
                         )),
                 )
+                // **The review tray, open on the cursor's row and shut on the
+                // rest.** A queue where every row carries four lines of
+                // evidence is a queue you scroll instead of glance at, and the
+                // rail's whole claim is the glance. Following the cursor rather
+                // than a per-row disclosure means the detail is where the
+                // attention already is, and arrives with no extra gesture — the
+                // keyboard opens it by moving.
+                //
+                // Three of its four fields read `unavailable` on every row in
+                // this build, and that is the honest state rather than a stub:
+                // changed files and checks need an authoritative source that
+                // does not exist yet. Shown missing, so nobody mistakes an empty
+                // tray for a clean one.
+                .when(on_cursor, |row| {
+                    row.child(
+                        div()
+                            .mt(px(4. * s))
+                            .pt(px(4. * s))
+                            .border_t(px(1.))
+                            .border_color(sk.ink.ink.alpha(0.12))
+                            .flex()
+                            .flex_col()
+                            .gap(px(1. * s))
+                            .children(attention::review_evidence(it).into_iter().map(|e| {
+                                let missing = e.value.is_none();
+                                div()
+                                    .flex()
+                                    .flex_row()
+                                    .gap(px(6. * s))
+                                    .text_size(px(9. * s))
+                                    .child(
+                                        div()
+                                            .w(px(64. * s))
+                                            .text_color(sk.ink.ink_dim)
+                                            .child(e.label),
+                                    )
+                                    .child(
+                                        div()
+                                            // An unavailable field is drawn
+                                            // dimmer than a known one and says
+                                            // the word. Two signals for one
+                                            // fact, because this is the fact
+                                            // the tray most needs not to be
+                                            // misread.
+                                            .text_color(if missing {
+                                                sk.ink.ink_dim.alpha(0.55)
+                                            } else {
+                                                sk.ink.ink
+                                            })
+                                            .child(e.text().to_string()),
+                                    )
+                            })),
+                    )
+                })
                 .children(it.deliverable.as_ref().map(|d| {
                     let href = d.href.clone();
                     let kind = attention::doc_kind(&href);
+                    let band = self.rail_band.clone();
                     div()
+                        .relative()
+                        // Its own band, written down where it is actually drawn.
+                        // The row's canvas cannot know this: the tray above the
+                        // link opens and shuts under the cursor, so the link's
+                        // offset inside the row is not a constant.
+                        .child(
+                            div().absolute().inset_0().child(
+                                gpui::canvas(
+                                    move |bounds, _window, _cx| {
+                                        let top = f32::from(bounds.origin.y);
+                                        let h = f32::from(bounds.size.height);
+                                        if let Ok(mut b) = band.lock() {
+                                            match b.iter_mut().find(|(i, _, _)| *i == row_index) {
+                                                Some(slot) => *slot = (row_index, top, top + h),
+                                                None => b.push((row_index, top, top + h)),
+                                            }
+                                        }
+                                    },
+                                    |_, _, _, _| {},
+                                )
+                                .size_full(),
+                            ),
+                        )
                         .mt(px(4. * s))
                         .flex()
                         .flex_row()
@@ -16060,6 +16908,9 @@ impl Workspace {
             // rows ARE and the curve is where the rows LOOK.
             let hits = self.rail_hits.clone();
             let idx = row_index;
+            let band = self.rail_band.clone();
+            // A row with nothing to open never consults the band, so a stale
+            // entry left by a row that used to have a link cannot resurrect it.
             let has_deliverable = it.deliverable.is_some();
             let row = row.child(
                 div().absolute().inset_0().child(
@@ -16068,12 +16919,19 @@ impl Workspace {
                             let top = f32::from(bounds.origin.y);
                             let bottom = top + f32::from(bounds.size.height);
                             let left = f32::from(bounds.origin.x);
-                            // The deliverable sits on the row's last line; its
-                            // band is the bottom third, which is enough to tell
-                            // "open this" from "go there" and needs no second
-                            // canvas inside the row.
-                            let deliverable =
-                                has_deliverable.then_some((top + (bottom - top) * 0.62, bottom));
+                            // The deliverable's band was measured by its own
+                            // canvas inside this row — see `RailHit`. Read here
+                            // rather than computed, so a row whose shape changes
+                            // (the review tray opening under the cursor) cannot
+                            // put the link's hit box where the link is not.
+                            let deliverable = has_deliverable
+                                .then(|| {
+                                    band.lock()
+                                        .ok()
+                                        .and_then(|b| b.iter().find(|(i, _, _)| *i == idx).copied())
+                                        .map(|(_, t, bt)| (t, bt))
+                                })
+                                .flatten();
                             if let Ok(mut h) = hits.lock() {
                                 h.push(RailHit {
                                     index: idx,
@@ -16113,6 +16971,88 @@ impl Workspace {
             );
         }
 
+        sk.panel()
+            .child(list)
+            // One click for the whole queue, resolved against the
+            // flat boxes after the curve is undone.
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|ws, ev: &MouseDownEvent, _w, cx| {
+                    cx.stop_propagation();
+                    // A click moves the cursor to the row it landed
+                    // on before acting, so the keyboard carries on
+                    // from where the hand left off rather than from
+                    // wherever it was three rows ago. The two
+                    // gestures drive one selection.
+                    //
+                    // Both go through `rail_activate`, which reads
+                    // the same held, unknown-filtered list the hit
+                    // boxes were built from — the click's index and
+                    // the cursor's index are the same index.
+                    match ws.rail_hit_at(ev.position) {
+                        Some(RailAction::Open(i)) => {
+                            ws.rail_cursor = i;
+                            ws.rail_activate(true, cx);
+                        }
+                        Some(RailAction::Focus(i)) => {
+                            ws.rail_cursor = i;
+                            ws.rail_activate(false, cx);
+                        }
+                        None => {}
+                    }
+                    cx.notify();
+                }),
+            )
+            // **The queue is a MENU, and menus float flat above the
+            // glass.** This registered a warp tube once, on the
+            // reasoning that a surface lying on bent glass should
+            // bend with it. Put in front of Parker it was worse, not
+            // better: the rows sheared into parallelograms and the
+            // stack fanned out like a venetian blind, because a tall
+            // list of thin rectangles shows every bit of a barrel map
+            // that a single compact panel hides.
+            //
+            // The precedent is the menu-bar scale popup and every
+            // other menu in this file — `.absolute()`, a real border,
+            // an opaque darkened fill, a float shadow, no tube. Flat
+            // only reads as "a sticker stuck on" when the chrome does
+            // not say *floating*; give it the border and the shadow
+            // and the eye reads it as a panel held above the screen,
+            // which is what it is.
+            //
+            // The canvas stays, because the click path still needs the
+            // painted rect — it just records it now instead of
+            // registering it.
+            .child(
+                div().absolute().inset_0().child(
+                    gpui::canvas(
+                        move |bounds, _window, _cx| {
+                            // The same rect the click normalises into.
+                            if let Ok(mut b) = rail_bounds.lock() {
+                                *b = Some(bounds);
+                            }
+                        },
+                        |_, _, _, _| {},
+                    )
+                    .size_full(),
+                ),
+            )
+    }
+
+    /// The queue as an OVERLAY: drawn over the right-hand panes, dismissed by
+    /// clicking beside it.
+    ///
+    /// Overlay rather than reflow is the steady state, and the geometry test
+    /// that matters is that no pane's bounds change when this opens — the scrim
+    /// is `inset_0` and the panel is pushed to the right edge by the flex row,
+    /// so the terminals underneath are not resized, only covered.
+    fn render_rail(&self, cx: &mut Context<Self>) -> Option<gpui::Div> {
+        // Docked draws in the stage row instead; two presentations, one panel,
+        // and never both at once.
+        if !self.rail_on || !self.rail_open || self.rail_docked() {
+            return None;
+        }
+        let s = theme::outer_choice(cx).grade.scale;
         Some(
             div()
                 .absolute()
@@ -16124,81 +17064,27 @@ impl Workspace {
                 .items_start()
                 .on_mouse_down(
                     MouseButton::Left,
+                    // Clicking off the panel dismisses it, and dismissing is the
+                    // same act however it is spelt: this skipped the seen-mark
+                    // and the order release when it set the flag itself, so a
+                    // queue closed by clicking the scrim left every row still
+                    // wearing its unseen dot.
+                    //
+                    // A DOCKED queue has no scrim at all, deliberately: it is
+                    // part of the layout, so clicking a terminal beside it must
+                    // not fold it away.
                     cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
                         cx.stop_propagation();
-                        ws.rail_open = false;
+                        ws.rail_close();
                         cx.notify();
                     }),
                 )
                 .child(
-                    sk.panel()
+                    div()
                         .mt(px(58. * s))
                         .mr(px(30. * s))
                         .shadow_lg()
-                        .child(list)
-                        // One click for the whole queue, resolved against the
-                        // flat boxes after the curve is undone.
-                        .on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(|ws, ev: &MouseDownEvent, _w, cx| {
-                                cx.stop_propagation();
-                                match ws.rail_hit_at(ev.position) {
-                                    Some(RailAction::Open(i)) => {
-                                        let (items, _) = ws.rail_rows(cx);
-                                        if let Some(d) =
-                                            items.get(i).and_then(|it| it.deliverable.as_ref())
-                                        {
-                                            pane::open_with_system(&d.href);
-                                        }
-                                    }
-                                    Some(RailAction::Focus(i)) => {
-                                        let (items, panes) = ws.rail_rows(cx);
-                                        if let Some(id) =
-                                            items.get(i).and_then(|it| panes.get(&it.pane)).copied()
-                                        {
-                                            ws.pending_jump = Some(id);
-                                            ws.rail_open = false;
-                                        }
-                                    }
-                                    None => {}
-                                }
-                                cx.notify();
-                            }),
-                        )
-                        // **The queue is a MENU, and menus float flat above the
-                        // glass.** This registered a warp tube once, on the
-                        // reasoning that a surface lying on bent glass should
-                        // bend with it. Put in front of Parker it was worse, not
-                        // better: the rows sheared into parallelograms and the
-                        // stack fanned out like a venetian blind, because a tall
-                        // list of thin rectangles shows every bit of a barrel map
-                        // that a single compact panel hides.
-                        //
-                        // The precedent is the menu-bar scale popup and every
-                        // other menu in this file — `.absolute()`, a real border,
-                        // an opaque darkened fill, a float shadow, no tube. Flat
-                        // only reads as "a sticker stuck on" when the chrome does
-                        // not say *floating*; give it the border and the shadow
-                        // and the eye reads it as a panel held above the screen,
-                        // which is what it is.
-                        //
-                        // The canvas stays, because the click path still needs the
-                        // painted rect — it just records it now instead of
-                        // registering it.
-                        .child(
-                            div().absolute().inset_0().child(
-                                gpui::canvas(
-                                    move |bounds, _window, _cx| {
-                                        // The same rect the click normalises into.
-                                        if let Ok(mut b) = rail_bounds.lock() {
-                                            *b = Some(bounds);
-                                        }
-                                    },
-                                    |_, _, _, _| {},
-                                )
-                                .size_full(),
-                            ),
-                        ),
+                        .child(self.rail_panel(cx)),
                 ),
         )
     }
@@ -23770,6 +24656,13 @@ impl Render for Workspace {
             .min_h_0()
             .children(self.render_left_bar(cx))
             .child(screen)
+            // A DOCKED queue sits here, between the panes and the spine, and is
+            // a flex sibling like the left bar — so it costs the terminals its
+            // width and nothing more. The overlay presentation is not in this
+            // row at all; it is laid over the whole root below, which is what
+            // makes "opening the queue does not resize a pane" true by
+            // construction rather than by measurement.
+            .children(self.render_rail_docked(cx))
             .children(self.render_spine(cx));
 
         let root = div()
@@ -23788,6 +24681,22 @@ impl Render for Workspace {
                 if ev.keystroke.key.as_str() == "escape" && ws.close_popups() {
                     cx.stop_propagation();
                     cx.notify();
+                    return;
+                }
+                // The attention queue owns the keyboard while it is open, and it
+                // has to own it in the CAPTURE phase for the same reason Esc
+                // does: a terminal pane holds the focus, and an arrow key that
+                // reaches it is an arrow key sent to somebody's shell. The
+                // handler answers false for anything that is not its own, so
+                // ordinary typing still falls through to the pane — which is
+                // what makes this safe to leave armed over a live terminal.
+                let m = &ev.keystroke.modifiers;
+                if !m.control && !m.alt && !m.platform {
+                    let key = ev.keystroke.key.as_str();
+                    if ws.rail_key(key, cx) {
+                        cx.stop_propagation();
+                        cx.notify();
+                    }
                 }
             }))
             .on_key_down(cx.listener(Self::on_key))
@@ -24646,6 +25555,7 @@ mod tests {
 
         // and the fallback has to actually say something
         let nameless = TabGroup {
+            level: None,
             id: 7,
             name: None,
             color: white(),
@@ -25309,6 +26219,7 @@ mod tests {
 
     fn tab_of(node: SavedNode) -> SavedTab {
         SavedTab {
+            level: None,
             name: None,
             color: None,
             text_color: None,
@@ -26138,6 +27049,7 @@ mod tests {
     #[test]
     fn a_leafs_pane_id_survives_a_round_trip_and_an_old_file_reads_absent() {
         let with_id = SavedTab {
+            level: None,
             name: None,
             color: None,
             text_color: None,
@@ -26334,12 +27246,14 @@ mod tests {
     fn the_left_bar_tree_survives_a_round_trip_through_the_state_file() {
         let state = StateFile {
             projects: vec![SavedProject {
+                level: None,
                 id: 3,
                 name: Some("terminal-delight".into()),
                 color: "#4d8fa8".into(),
                 collapsed: true,
             }],
             groups: vec![SavedGroup {
+                level: None,
                 id: 7,
                 name: Some("left bar".into()),
                 color: "#3a8f4d".into(),
@@ -26349,6 +27263,7 @@ mod tests {
             }],
             tabs: vec![
                 SavedTab {
+                    level: None,
                     name: Some("build".into()),
                     color: None,
                     text_color: None,
@@ -26357,6 +27272,7 @@ mod tests {
                     node: leaf_with(None, "/work", None),
                 },
                 SavedTab {
+                    level: None,
                     name: Some("loose".into()),
                     color: None,
                     text_color: None,
@@ -26627,6 +27543,392 @@ mod tests {
         assert_eq!(
             rail_kind(Some(AgentBadge::Working), AgentState::Unknown),
             None
+        );
+    }
+
+    /// A pane's evidence is the line its own predicate matched, and the two
+    /// cannot disagree because there is only one walk.
+    ///
+    /// The pair matters more than either half: a surface that shows a quote
+    /// chosen by a second scan is a surface that will eventually quote one line
+    /// while the flag was set by another, and it would show up only on the
+    /// screens carrying two candidates — the ambiguous ones, where being right
+    /// matters most.
+    #[test]
+    fn the_quote_on_a_row_is_the_line_that_set_the_flag() {
+        let screen: Vec<String> = vec![
+            "  I'll refactor the parser now.".into(),
+            "╭──────────────────────────────╮".into(),
+            "│ Do you want to proceed?      │".into(),
+            "│ ❯ 1. Yes                     │".into(),
+            "╰──────────────────────────────╯".into(),
+        ];
+        assert!(pane::wants_human(&screen));
+        assert_eq!(
+            pane::wants_human_row(&screen).map(pane::clip_evidence),
+            Some("Do you want to proceed?".to_string()),
+            "the frame is furniture; the question is the evidence"
+        );
+        // And the absence is real: a screen with no prompt quotes nothing.
+        let quiet: Vec<String> = vec!["all done".into()];
+        assert!(!pane::wants_human(&quiet));
+        assert_eq!(pane::wants_human_row(&quiet), None);
+    }
+
+    /// The LAST match wins, because an agent TUI prints downward and a stale
+    /// question above a live picker is not the thing being asked.
+    #[test]
+    fn the_lower_of_two_prompts_is_the_live_one() {
+        let screen: Vec<String> = vec![
+            "Do you trust the files in this folder?".into(),
+            "  yes".into(),
+            "Do you want to proceed?".into(),
+        ];
+        assert_eq!(
+            pane::wants_human_row(&screen),
+            Some("Do you want to proceed?")
+        );
+    }
+
+    /// A wall quotes itself; a clean finish quotes nothing and says so by
+    /// being absent rather than by printing a sentence nobody wrote.
+    #[test]
+    fn a_clean_finish_has_no_quote_and_that_is_the_honest_answer() {
+        let wall: Vec<String> = vec!["  API Error: 429 rate_limit_error".into()];
+        assert!(pane::looks_blocked(&wall));
+        assert_eq!(
+            pane::blocked_row(&wall).map(pane::clip_evidence),
+            Some("API Error: 429 rate_limit_error".to_string())
+        );
+        let clean: Vec<String> = vec!["  Done. 3 files changed.".into()];
+        assert!(!pane::looks_blocked(&clean));
+        assert_eq!(pane::blocked_row(&clean), None);
+    }
+
+    /// A quote is clipped at capture, and a clipped quote is visibly clipped.
+    ///
+    /// Silent truncation is the failure that matters here: a row showing the
+    /// first ninety characters of an error, with no mark, reads as the whole
+    /// error — and somebody will act on the half they were shown.
+    #[test]
+    fn a_long_quote_is_clipped_and_says_that_it_was() {
+        let long = "x".repeat(400);
+        let out = pane::clip_evidence(&long);
+        assert!(out.chars().count() <= 96, "clipped to the row's width");
+        assert!(out.ends_with('\u{2026}'), "and marked as clipped");
+        // A short one is returned whole, with no ellipsis to misread.
+        assert_eq!(pane::clip_evidence("  two   spaces  "), "two spaces");
+    }
+
+    /// One list, indexed by the cursor, the number keys and the hit test alike.
+    ///
+    /// The queue collapses the unknown lane into a single line at the bottom, so
+    /// "row 4 on screen" and "row 4 in the projection" are different rows the
+    /// moment anything is unreadable — which on Parker's fleet is most panes.
+    /// Both the click path and the key path therefore go through
+    /// `rail_waiting`, and this is the check that keeps them there: a future
+    /// edit that reaches for `rail_rows` or `rail_queue` in either place turns
+    /// this red rather than silently focusing a neighbour's terminal.
+    #[test]
+    fn the_cursor_and_the_click_resolve_a_row_through_the_same_list() {
+        let src = include_str!("main.rs");
+        let at = src
+            .find("fn rail_activate(")
+            .expect("the one place a row is acted on");
+        let body = &src[at..at + src[at..].find("\n    }\n").expect("end of rail_activate")];
+        assert!(
+            body.contains("self.rail_waiting(cx)"),
+            "rail_activate must resolve rows through the drawn, unknown-filtered list"
+        );
+        assert!(
+            !body.contains("self.rail_rows(cx)"),
+            "the raw projection includes unknown rows the queue never draws"
+        );
+        // And the click handler must not re-resolve its own list either.
+        let click = src
+            .find("Some(RailAction::Focus(i)) => {")
+            .expect("the queue's click handler");
+        let arm = &src[click..click + 400];
+        assert!(
+            arm.contains("rail_activate"),
+            "a click goes through the same verb the keyboard does"
+        );
+    }
+
+    /// Opening and closing the queue is one function, because the lifecycle is
+    /// three things and a call site that remembers two is a bug that looks like
+    /// a working feature.
+    #[test]
+    fn nothing_flips_the_queue_open_without_running_its_lifecycle() {
+        // Counted over the PRODUCT half of the file only. A scan of the whole
+        // source counts this test's own two mentions of the string it is
+        // looking for, and a check that matches itself is a check whose number
+        // means nothing — it passes at four whether the fourth is a real call
+        // site or a comment somebody wrote about it.
+        let src = include_str!("main.rs");
+        let product = &src[..src.find("\nmod tests {").expect("the test module")];
+        let assignments = product.matches("rail_open = ").count();
+        assert_eq!(
+            assignments,
+            2,
+            "expected only the two inside rail_toggle/rail_close; a third \
+             `rail_open = …` is a call site that skips the order freeze, the \
+             seen-mark or the cursor reset. Found:\n{}",
+            product
+                .lines()
+                .filter(|l| l.contains("rail_open = "))
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
+    }
+
+    /// A level written to the state file comes back as the same level, and a
+    /// file that never had one comes back as UNSET rather than as neutral.
+    ///
+    /// The three-state field is the whole feature: unset inherits, neutral
+    /// deliberately does not, and a `#[serde(default)]` that produced neutral
+    /// for an old file would silently pin every task in every existing session
+    /// against its project.
+    #[test]
+    fn an_absent_level_is_unset_and_not_a_neutral_one() {
+        let old: StateFile = toml::from_str(
+            "active = 0\npanes = 1\n\
+             [[tabs]]\n[tabs.node.Leaf]\ncwd = \"/work\"\n",
+        )
+        .expect("a file written before levels existed");
+        assert_eq!(old.tabs[0].level, None, "nobody said anything about this");
+
+        let set: StateFile = toml::from_str(
+            "active = 0\npanes = 1\n\
+             [[tabs]]\nlevel = \"Demoted\"\n[tabs.node.Leaf]\ncwd = \"/work\"\n",
+        )
+        .expect("a file that carries a level");
+        assert_eq!(set.tabs[0].level, Some(SavedLevel::Demoted));
+        assert_eq!(
+            attention::Priority::from(set.tabs[0].level.unwrap()),
+            attention::Priority::Demoted
+        );
+    }
+
+    /// Both directions of the conversion, so a level cannot come back as a
+    /// different one after a restart.
+    #[test]
+    fn every_level_survives_the_round_trip_to_disk() {
+        for p in [
+            attention::Priority::Promoted,
+            attention::Priority::Neutral,
+            attention::Priority::Demoted,
+        ] {
+            assert_eq!(attention::Priority::from(SavedLevel::from(p)), p);
+        }
+    }
+
+    /// A tab's identity carries its level, so closing the last pane in a task
+    /// does not quietly clear what somebody set on it this morning.
+    ///
+    /// `TabIdentity`'s own doc promises that a new `Tab` field "fails to compile
+    /// here rather than going quietly missing from the next close" — and it
+    /// nearly did not, because the carrier derives `Default` and a mechanical
+    /// `level: None` in `onto` would have satisfied the compiler while breaking
+    /// exactly what the doc promises. The comment needed a test under it.
+    #[test]
+    fn a_reshaped_tab_keeps_the_level_it_was_given() {
+        let id = TabIdentity {
+            name: Some("skytrac".into()),
+            level: Some(attention::Priority::Promoted),
+            ..Default::default()
+        };
+        let src = include_str!("main.rs");
+        let at = src
+            .find("fn onto(self, root: Node) -> Tab {")
+            .expect("onto");
+        let body = &src[at..at + src[at..].find("\n    }\n").expect("end of onto")];
+        assert!(
+            body.contains("level: self.level,"),
+            "onto must carry the level across, not default it"
+        );
+        assert_eq!(id.level, Some(attention::Priority::Promoted));
+    }
+
+    /// The mark goes DOWN the tree and never up.
+    ///
+    /// Every other mark on a bar row rolls upward — `roll_badges` gathers what
+    /// is happening under a branch onto the branch — so this is the one that has
+    /// to be checked by reading the code: a branch resolves only its OWN
+    /// explicit level, and a task resolves through `level_of`, which walks
+    /// upward for INHERITANCE and never reports a child's setting on a parent.
+    #[test]
+    fn a_branchs_mark_is_its_own_setting_and_never_a_childs() {
+        let src = include_str!("main.rs");
+        let at = src
+            .find("fn branch_level_mark(")
+            .expect("the branch's own mark");
+        let body = &src[at..at + src[at..].find("\n    }\n").expect("end of it")];
+        assert!(
+            body.contains("self.branch_level(which)"),
+            "a branch draws the level set ON it"
+        );
+        assert!(
+            !body.contains("level_of") && !body.contains("resolve_level"),
+            "resolution is for rows BELOW a setting; a branch that resolved \
+             would draw an arrow for a setting made somewhere else"
+        );
+    }
+
+    /// A tiled pane is not wide enough to dock the queue in, and a full screen
+    /// is.
+    ///
+    /// The two widths are the real ones, not round numbers: Parker works in
+    /// 968-wide tiled panes, and a docked 316-pixel queue there would take a
+    /// third of a terminal he is using. That width has to fall on the OVERLAY
+    /// side of the line, and a threshold picked without checking it is a
+    /// threshold that quietly does the wrong thing on the machine it was
+    /// written for.
+    #[test]
+    fn a_tiled_pane_is_too_narrow_to_dock_the_queue_in() {
+        assert!(!rail_pin_fits(Some(968.0)), "Parker's tiled pane width");
+        assert!(!rail_pin_fits(Some(390.0)), "a phone-width window");
+        assert!(rail_pin_fits(Some(1920.0)), "a full screen");
+        assert!(rail_pin_fits(Some(RAIL_PIN_MIN_W)), "exactly at the line");
+        assert!(!rail_pin_fits(Some(RAIL_PIN_MIN_W - 1.0)));
+    }
+
+    /// A window that has not reported a size yet is not wide enough.
+    ///
+    /// Unknown is not a yes. Guessing wide would dock the queue for one frame
+    /// on every cold start and take that width out of the panes before anybody
+    /// asked for it.
+    #[test]
+    fn an_unmeasured_window_is_not_treated_as_a_wide_one() {
+        assert!(!rail_pin_fits(None));
+    }
+
+    /// The preference survives a narrow window; only the behaviour changes.
+    ///
+    /// Read from the code because the conjunction is the whole point: a person
+    /// who docks the queue and then tiles their window must get the dock back
+    /// when they widen it, and a `rail_pinned` that had been cleared on resize
+    /// is a setting deleted by a window drag.
+    #[test]
+    fn narrowing_a_window_never_clears_the_pin_preference() {
+        let src = include_str!("main.rs");
+        let at = src.find("fn rail_docked(").expect("rail_docked");
+        let body = &src[at..at + src[at..].find("\n    }\n").expect("end")];
+        assert!(
+            body.contains("self.rail_pinned && rail_pin_fits"),
+            "docked must be preference AND fit, computed per frame"
+        );
+        let product = &src[..src.find("\nmod tests {").expect("the test module")];
+        // The only writes to the preference are the two toggles — the pin
+        // control and its key — plus the load. Nothing may clear it on a
+        // resize.
+        let writes = product.matches("rail_pinned = ").count();
+        assert_eq!(
+            writes,
+            2,
+            "expected only the pin control and the `p` key to write it; found:\n{}",
+            product
+                .lines()
+                .filter(|l| l.contains("rail_pinned = "))
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
+    }
+
+    /// Opening the queue does not resize a pane, and docking it does.
+    ///
+    /// That is the plan's geometry contract and it holds by CONSTRUCTION here,
+    /// which is what this checks: the overlay is laid over the root and is not
+    /// in the stage row at all, while the docked panel is a flex sibling in the
+    /// row beside the screen — so an overlay cannot take width from a terminal
+    /// even if somebody later changes its size.
+    #[test]
+    fn the_overlay_is_not_in_the_row_that_sizes_the_panes() {
+        let src = include_str!("main.rs");
+        let at = src.find("let stage = div()").expect("the stage row");
+        let stage = &src[at..at + src[at..].find(";\n").expect("end of stage")];
+        assert!(
+            stage.contains("self.render_rail_docked(cx)"),
+            "the docked queue is a flex sibling and costs the panes its width"
+        );
+        assert!(
+            !stage.contains("self.render_rail(cx)"),
+            "the overlay must NOT be in the row that lays out the terminals"
+        );
+        // And the overlay is absolute over the whole root.
+        let ov = src.find("fn render_rail(&self").expect("render_rail");
+        let body = &src[ov..ov + src[ov..].find("\n    }\n").expect("end")];
+        assert!(
+            body.contains(".absolute()") && body.contains(".inset_0()"),
+            "an overlay covers, it does not reflow"
+        );
+    }
+
+    /// A docked queue has no dismissing scrim.
+    ///
+    /// The scrim is what makes an overlay go away when you click a terminal
+    /// beside it, and that behaviour on a docked panel would make the dock
+    /// unusable: every click in the pane you were sent to would fold the queue
+    /// you were working through.
+    #[test]
+    fn a_docked_queue_does_not_vanish_when_you_click_a_pane() {
+        let src = include_str!("main.rs");
+        let at = src
+            .find("fn render_rail_docked(")
+            .expect("render_rail_docked");
+        let body = &src[at..at + src[at..].find("\n    }\n").expect("end")];
+        assert!(
+            !body.contains("occlude") && !body.contains("rail_close"),
+            "a docked panel is part of the layout, not over it"
+        );
+    }
+
+    /// Both presentations draw the same panel, and never both at once.
+    #[test]
+    fn the_two_presentations_share_one_panel_and_exclude_each_other() {
+        let src = include_str!("main.rs");
+        for f in ["fn render_rail(&self", "fn render_rail_docked("] {
+            let at = src.find(f).expect(f);
+            let body = &src[at..at + src[at..].find("\n    }\n").expect("end")];
+            assert!(
+                body.contains("self.rail_panel(cx)"),
+                "{f} must draw the shared panel rather than its own copy"
+            );
+            assert!(
+                body.contains("self.rail_docked()"),
+                "{f} must check which presentation is in force"
+            );
+        }
+    }
+
+    /// The queue's keys do not eat anything that is not its own.
+    ///
+    /// This is the focus half of Slice 6: the handler is armed in the CAPTURE
+    /// phase over a live terminal, so every key it claims is a key that never
+    /// reaches somebody's shell. It claims navigation and two verbs; a letter
+    /// that is not one of them must fall through, or the queue being open would
+    /// silently swallow typing.
+    #[test]
+    fn an_open_queue_only_claims_the_keys_it_uses() {
+        // The movement half is pure and already tested in `attention`; this
+        // pins the two verbs and the refusals at the workspace's own boundary.
+        for key in ["a", "z", "left", "right", "f1", "0", "space"] {
+            assert_eq!(
+                attention::move_cursor(0, 5, key),
+                None,
+                "{key} must not move the cursor"
+            );
+        }
+        // And the keys it does claim are exactly these.
+        let src = include_str!("main.rs");
+        let at = src.find("fn rail_key(").expect("rail_key");
+        let body = &src[at..at + src[at..].find("\n    }\n").expect("end")];
+        for claimed in ["\"enter\"", "\"o\"", "\"p\""] {
+            assert!(body.contains(claimed), "{claimed} should be handled");
+        }
+        assert!(
+            body.contains("return false") || body.contains("=> false"),
+            "an unclaimed key must answer false so it falls through to the pane"
         );
     }
 
@@ -27468,6 +28770,7 @@ mod tests {
             out
         };
         let tab = |node: SavedNode| SavedTab {
+            level: None,
             name: None,
             color: None,
             text_color: None,
@@ -27534,6 +28837,7 @@ mod tests {
             pane_id: pane,
         };
         let tab = |node: SavedNode| SavedTab {
+            level: None,
             name: None,
             color: None,
             text_color: None,
@@ -27610,6 +28914,7 @@ mod tests {
             pane_id: pane,
         };
         let tab = |node: SavedNode| SavedTab {
+            level: None,
             name: None,
             color: None,
             text_color: None,
@@ -27668,6 +28973,7 @@ mod tests {
             pane_id: pane,
         };
         let tab = |node: SavedNode| SavedTab {
+            level: None,
             name: None,
             color: None,
             text_color: None,
@@ -27866,6 +29172,7 @@ mod tests {
             "custom name lost on save"
         );
         let toml = toml::to_string(&SavedTab {
+            level: None,
             name: None,
             color: None,
             text_color: None,
@@ -28030,6 +29337,7 @@ id = "hacker"
             warp: theme::WARP_DEFAULT,
             track: None,
             tabs: vec![SavedTab {
+                level: None,
                 name: None,
                 color: None,
                 text_color: None,
@@ -28080,6 +29388,7 @@ id = "hacker"
             warp: theme::WARP_DEFAULT,
             track: None,
             tabs: vec![SavedTab {
+                level: None,
                 name: Some("agents".into()),
                 color: None,
                 text_color: None,
@@ -28139,6 +29448,7 @@ id = "hacker"
             track: None,
             tabs: vec![
                 SavedTab {
+                    level: None,
                     name: Some("HOME".into()),
                     color: Some("#aa3344".into()),
                     text_color: Some("#ffffff".into()),
@@ -28147,6 +29457,7 @@ id = "hacker"
                     project: None,
                 },
                 SavedTab {
+                    level: None,
                     name: Some("loose".into()),
                     color: None,
                     text_color: None,
@@ -28156,6 +29467,7 @@ id = "hacker"
                 },
             ],
             groups: vec![SavedGroup {
+                level: None,
                 id: 7,
                 name: Some("WORK".into()),
                 color: "#2d8f4d".into(),
@@ -28620,6 +29932,7 @@ node = "Leaf"
             warp: theme::WARP_DEFAULT,
             track: None,
             tabs: vec![SavedTab {
+                level: None,
                 name: None,
                 color: None,
                 text_color: None,

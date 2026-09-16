@@ -184,6 +184,113 @@ pub struct ConfigPatch {
     /// note write shares the one writes gate, the one pane lookup, and the one
     /// GUI-thread apply with every other pane mutation. Pane targets only.
     pub note: Option<NoteChange>,
+    /// Declare (or withdraw) what this turn produced — the one artifact a person
+    /// is meant to open. Filled in by `declare_deliverable`, already validated;
+    /// rides the same pipeline as the note for the same reasons. Pane targets
+    /// only.
+    pub deliverable: Option<DeliverableChange>,
+}
+
+/// A validated deliverable declaration on its way to the GUI thread.
+#[derive(Clone, PartialEq, Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DeliverableChange {
+    /// Withdraw it. What a turn produced stops being true when the agent says
+    /// it does, not when somebody guesses it has gone stale.
+    Clear,
+    Declare {
+        label: String,
+        href: String,
+    },
+}
+
+/// The longest label a 300-pixel queue row can carry.
+pub const DELIVERABLE_LABEL_MAX_CHARS: usize = 48;
+
+/// Check a declared deliverable, and say why not in words the agent can act on.
+///
+/// **The target must be absolute.** A relative path is resolved against
+/// whatever the OPENER's working directory happens to be, which is this window's
+/// and not the agent's — so `report.html` would open a different file, or
+/// nothing, and the row would have lied about what a click does. An agent that
+/// knows its own cwd can make it absolute; this cannot do it for them without
+/// guessing, and guessing is the thing the whole surface refuses.
+///
+/// Schemes are allowed through unexamined beyond the list: the desktop's own
+/// handler decides what opens a `file://` or an `https://`, and a terminal that
+/// second-guessed the MIME database would override a choice the person already
+/// made. What is refused is the shapes that are not targets at all — a
+/// `javascript:` URL is not a document, and `data:` is a payload pretending to
+/// be one.
+pub fn validate_deliverable(
+    label: Option<&str>,
+    href: Option<&str>,
+    clear: bool,
+) -> Result<DeliverableChange, String> {
+    let label = label.map(str::trim).filter(|t| !t.is_empty());
+    let href = href.map(str::trim).filter(|t| !t.is_empty());
+    if clear || (label.is_none() && href.is_none()) {
+        return Ok(DeliverableChange::Clear);
+    }
+    let Some(href) = href else {
+        return Err("a deliverable needs an `href` — a label with nothing to \
+                    open is a row that lies about what a click does"
+            .to_string());
+    };
+    let lower = href.to_ascii_lowercase();
+    if lower.starts_with("javascript:") || lower.starts_with("data:") {
+        return Err(format!(
+            "{href:?} is not a document. A deliverable is a thing a person \
+             opens and reads — a file, a page, a pull request."
+        ));
+    }
+    let absolute = href.starts_with('/')
+        || lower.starts_with("file://")
+        || lower.starts_with("http://")
+        || lower.starts_with("https://");
+    if !absolute {
+        return Err(format!(
+            "{href:?} is relative. It would be resolved against the TERMINAL's \
+             working directory rather than yours, so give an absolute path or a \
+             full URL."
+        ));
+    }
+    // A label is optional and defaults to the target's own last segment, which
+    // is what the person would have called it anyway.
+    let label = label
+        .map(str::to_string)
+        .unwrap_or_else(|| deliverable_fallback_label(href));
+    let chars = label.chars().count();
+    if chars > DELIVERABLE_LABEL_MAX_CHARS {
+        return Err(format!(
+            "label is {chars} characters; keep it under \
+             {DELIVERABLE_LABEL_MAX_CHARS} — it sits on a narrow row beside the \
+             reason, so name the thing rather than describing it"
+        ));
+    }
+    Ok(DeliverableChange::Declare {
+        label,
+        href: href.to_string(),
+    })
+}
+
+/// What to call a deliverable nobody labelled: the target's last segment.
+///
+/// Derived rather than left blank, because a row with a link and no name is a
+/// row that cannot be read out loud. It is not a guess about CONTENT — the agent
+/// still chose the target — only about what to call the thing it already named.
+pub fn deliverable_fallback_label(href: &str) -> String {
+    let path = href.split(['?', '#']).next().unwrap_or(href);
+    let seg = path
+        .trim_end_matches('/')
+        .rsplit('/')
+        .next()
+        .unwrap_or(path);
+    if seg.is_empty() {
+        href.to_string()
+    } else {
+        seg.chars().take(DELIVERABLE_LABEL_MAX_CHARS).collect()
+    }
 }
 
 /// A validated note write on its way to the GUI thread.
@@ -651,6 +758,34 @@ fn tool_defs() -> Value {
             }
         },
         {
+            "name": "declare_deliverable",
+            "description":
+                "Name the ONE artifact this turn produced — the thing a person \
+                 is meant to open and read — so it appears as a click on your \
+                 pane's row in the attention rail. A report, a page, a plan, a \
+                 pull request: `label` is what to call it (a name, not a \
+                 sentence) and `href` is an absolute path or a full URL. It is \
+                 opened by the desktop's own handler, so a Markdown file goes \
+                 wherever this machine sends Markdown. Declare it when you \
+                 finish something worth opening; it is DECLARED and never \
+                 inferred, which is why nothing appears unless you say so. Call \
+                 again to replace it, `clear: true` to withdraw it. Point it at \
+                 what the reader can open AND understand — a page explaining \
+                 what you did beats the source file you changed. Requires the \
+                 writes toggle (TD_MCP_WRITE).",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "pid": { "type": "integer", "description": "pid of the pane that produced it, from list_panes — usually your own" },
+                    "label": { "type": "string", "description": "what to call it, up to 48 characters (\"Slice ledger\", \"PR 460\"); defaults to the target's filename" },
+                    "href": { "type": "string", "description": "absolute path (/home/you/report.html) or full URL (https://…). Relative paths are refused: they would resolve against the terminal's directory, not yours." },
+                    "clear": { "type": "boolean", "description": "withdraw the current declaration instead of making one" }
+                },
+                "required": ["pid"],
+                "additionalProperties": false
+            }
+        },
+        {
             "name": "grep",
             "description": "Search the recent scrollback of every EXPOSED pane for an exact, case-insensitive substring. Returns, per matching pane, its identity (pid/tab/title/mode) and the matching lines with the match column. Read-only — it reads on-screen text, never writes. Use it to find where something is across the whole window (an error, a path, a TODO, a value).",
             "inputSchema": {
@@ -695,6 +830,7 @@ where
         "get_pane_config" => Ok(get_pane_config(&args, snap)),
         "set_pane_config" => Ok(set_pane_config(&args, snap, apply)),
         "leave_note" => Ok(leave_note(&args, snap, apply)),
+        "declare_deliverable" => Ok(declare_deliverable(&args, snap, apply)),
         "grep" => Ok(grep(&args, snap, search)),
         other => Err((-32602, format!("unknown tool: {other}"))),
     }
@@ -1048,6 +1184,64 @@ where
     }
 }
 
+/// `declare_deliverable` — record what a turn produced, so the rail can offer it
+/// as a click instead of the person going to look.
+///
+/// The same gate, lookup and apply as `leave_note`, deliberately: a declaration
+/// is a pane mutation and there is one pipeline for those. What differs is the
+/// meaning — a note is a message to a human, and this is a pointer to an
+/// artifact — so the two are separate verbs rather than one overloaded one.
+fn declare_deliverable<G>(args: &Value, snap: &Snapshot, apply: &G) -> Value
+where
+    G: Fn(&[ConfigUpdate]) -> Vec<ApplyOutcome>,
+{
+    if !snap.config.enabled {
+        return tool_err("MCP exposure is disabled. Enable it in the MCP CONTROL panel.");
+    }
+    if !snap.config.writable {
+        return tool_err(
+            "MCP writes are disabled. This server is a read-only watch surface \
+             until you opt in: enable \"writes\" in the MCP CONTROL panel (or set \
+             TD_MCP_WRITE=1) to let an agent declare a deliverable.",
+        );
+    }
+    let Some(pid) = args.get("pid").and_then(Value::as_u64) else {
+        return tool_err("declare_deliverable requires a `pid` (an integer, from list_panes).");
+    };
+    let change = match validate_deliverable(
+        args.get("label").and_then(Value::as_str),
+        args.get("href").and_then(Value::as_str),
+        args.get("clear").and_then(Value::as_bool).unwrap_or(false),
+    ) {
+        Ok(c) => c,
+        Err(e) => return tool_err(&e),
+    };
+    let cleared = matches!(change, DeliverableChange::Clear);
+    let said = match &change {
+        DeliverableChange::Declare { label, .. } => label.clone(),
+        DeliverableChange::Clear => String::new(),
+    };
+    let patch = ConfigPatch {
+        deliverable: Some(change),
+        ..Default::default()
+    };
+    match apply(&[(Target::Pane(pid as u32), patch)])
+        .into_iter()
+        .next()
+    {
+        Some((_, Ok(_))) => {
+            let line = if cleared {
+                format!("withdrawn — pane {pid} declares no deliverable")
+            } else {
+                format!("declared — {said:?} is on pane {pid}'s row in the rail")
+            };
+            tool_ok(line, json!({ "pid": pid, "declared": !cleared }))
+        }
+        Some((_, Err(e))) => tool_err(&e),
+        None => tool_err("the window did not answer the deliverable write"),
+    }
+}
+
 fn tool_ok(text: String, structured: Value) -> Value {
     json!({ "content": [{ "type": "text", "text": text }], "structuredContent": structured })
 }
@@ -1248,6 +1442,7 @@ pub fn encode_notification(n: &Notification) -> String {
 }
 
 #[cfg(test)]
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -1358,6 +1553,123 @@ mod tests {
             ..GradeReport::default()
         };
         s
+    }
+
+    /// A relative target is refused, and the message says WHY rather than just
+    /// no — the agent can act on "give me an absolute path" and cannot act on
+    /// "invalid".
+    ///
+    /// This is the one that would otherwise ship working and be wrong: a
+    /// relative href resolves against whatever directory the OPENER is in,
+    /// which is this window's, so the click would open a different file or
+    /// nothing at all while the row confidently claimed otherwise.
+    #[test]
+    fn a_relative_target_is_refused_with_the_reason() {
+        let err = validate_deliverable(Some("report"), Some("report.html"), false)
+            .expect_err("relative must not be accepted");
+        assert!(err.contains("relative"), "{err}");
+        assert!(
+            err.contains("working directory"),
+            "say what would go wrong: {err}"
+        );
+        // …and each absolute shape is accepted.
+        for ok in [
+            "/home/parker/report.html",
+            "file:///home/parker/report.html",
+            "https://github.com/x/y/pull/1",
+        ] {
+            assert!(
+                validate_deliverable(Some("r"), Some(ok), false).is_ok(),
+                "{ok} should be accepted"
+            );
+        }
+    }
+
+    /// Things that are not documents are refused. A `javascript:` URL is not an
+    /// artifact and `data:` is a payload pretending to be one; neither is
+    /// something a person opens and reads.
+    #[test]
+    fn a_target_that_is_not_a_document_is_refused() {
+        for bad in ["javascript:alert(1)", "data:text/html,<b>x"] {
+            assert!(
+                validate_deliverable(Some("x"), Some(bad), false).is_err(),
+                "{bad} should be refused"
+            );
+        }
+    }
+
+    /// A label is optional; a target is not. A row with a name and nothing to
+    /// open lies about what a click does.
+    #[test]
+    fn a_label_without_a_target_is_refused_and_a_target_alone_is_named() {
+        assert!(validate_deliverable(Some("just a name"), None, false).is_err());
+        let d = validate_deliverable(None, Some("/home/parker/2026-09-16-ledger.html"), false)
+            .expect("a bare target is fine");
+        assert_eq!(
+            d,
+            DeliverableChange::Declare {
+                label: "2026-09-16-ledger.html".into(),
+                href: "/home/parker/2026-09-16-ledger.html".into(),
+            },
+            "named by its own last segment rather than left blank"
+        );
+    }
+
+    /// Nothing at all, or an explicit clear, withdraws the declaration.
+    #[test]
+    fn nothing_said_is_a_withdrawal_rather_than_an_error() {
+        assert_eq!(
+            validate_deliverable(None, None, false).unwrap(),
+            DeliverableChange::Clear
+        );
+        assert_eq!(
+            validate_deliverable(Some("r"), Some("/tmp/r.html"), true).unwrap(),
+            DeliverableChange::Clear,
+            "clear wins over a declaration in the same call"
+        );
+    }
+
+    /// The label is capped, because it shares a 300-pixel row with the reason.
+    #[test]
+    fn an_essay_is_not_a_label() {
+        let long = "a".repeat(DELIVERABLE_LABEL_MAX_CHARS + 1);
+        assert!(validate_deliverable(Some(&long), Some("/tmp/x.html"), false).is_err());
+    }
+
+    /// The tool is refused while writes are off, in the same words as every
+    /// other write — one gate, not a second one somebody has to find.
+    #[test]
+    fn declaring_needs_the_writes_toggle() {
+        let readonly = snap(true, false, vec![agent_pane(1, true)]);
+        let refuse = |_: &[ConfigUpdate]| -> Vec<ApplyOutcome> {
+            panic!("must not reach the window with writes off")
+        };
+        let out = declare_deliverable(
+            &json!({ "pid": 1, "label": "r", "href": "/tmp/r.html" }),
+            &readonly,
+            &refuse,
+        );
+        assert_eq!(out.get("isError").and_then(Value::as_bool), Some(true));
+        assert!(
+            out["content"][0]["text"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("TD_MCP_WRITE"),
+            "name the toggle, so the reader can turn it on"
+        );
+    }
+
+    /// It is listed, so an agent can find it without being told it exists.
+    #[test]
+    fn the_verb_is_advertised_in_the_tool_list() {
+        let defs = tool_defs();
+        let names: Vec<&str> = defs
+            .as_array()
+            .expect("tools")
+            .iter()
+            .filter_map(|t| t.get("name").and_then(Value::as_str))
+            .collect();
+        assert!(names.contains(&"declare_deliverable"), "{names:?}");
     }
 
     fn no_tail(_: &PaneInfo, _: usize) -> Vec<ToolEvent> {

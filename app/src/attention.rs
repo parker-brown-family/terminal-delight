@@ -128,6 +128,73 @@ impl Priority {
     }
 }
 
+/// An effective level, and whether the row was told it or set it.
+///
+/// The two travel together because the mark is drawn differently for each —
+/// dimmer when inherited — and a caller holding only the level would have to
+/// re-derive the second half from the same three inputs, which is where the two
+/// would eventually disagree.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Level {
+    pub priority: Priority,
+    /// True when this row carries a level set on a branch ABOVE it.
+    pub inherited: bool,
+}
+
+impl Level {
+    /// The mark to draw, or nothing. Neutral draws nothing however it was
+    /// arrived at: "explicitly neutral" and "nobody said" look identical on a
+    /// row, and they should — the row is not promoted either way.
+    pub fn glyph(self) -> Option<&'static str> {
+        self.priority.glyph()
+    }
+}
+
+impl Default for Level {
+    fn default() -> Self {
+        Level {
+            priority: Priority::Neutral,
+            inherited: false,
+        }
+    }
+}
+
+/// Resolve a row's level from the explicit settings above it: **nearest wins**.
+///
+/// Settled with the plan's fourth question: one noisy task can sit demoted
+/// inside a promoted project, so a nearer setting overrules a further one rather
+/// than combining with it. There is no arithmetic here on purpose — promoted
+/// inside promoted is not doubly promoted, and a scheme where it were would
+/// make a person's two deliberate statements produce a third they never made.
+///
+/// **Downward only.** A project that is promoted promotes what is under it; a
+/// promoted task says nothing about its project. `tree::Roll` carries agent
+/// state the other way, and mixing the two directions in one tree is how a
+/// branch ends up claiming something nobody set on it.
+///
+/// Each argument is `Option<Priority>` and `None` means *unset*, which is a
+/// different thing from `Some(Neutral)`: a person who explicitly neutralises a
+/// task inside a promoted project is asking for that task to sit at neutral, and
+/// an unset task is asking for nothing at all. Collapsing the two would make
+/// "clear this" impossible to express.
+pub fn resolve_level(
+    task: Option<Priority>,
+    initiative: Option<Priority>,
+    project: Option<Priority>,
+) -> Level {
+    match (task, initiative, project) {
+        (Some(p), _, _) => Level {
+            priority: p,
+            inherited: false,
+        },
+        (None, Some(p), _) | (None, None, Some(p)) => Level {
+            priority: p,
+            inherited: true,
+        },
+        (None, None, None) => Level::default(),
+    }
+}
+
 /// Which task this row is about, and what it hangs from — read from the tree
 /// rather than guessed from a path.
 ///
@@ -245,6 +312,8 @@ pub struct Observation {
     pub observed_at: Option<Instant>,
     /// Where the fact came from, shown on the row beside its time.
     pub source: &'static str,
+    /// The line the classifier actually read. See [`AttentionItem::evidence`].
+    pub evidence: Option<String>,
     /// What this turn produced, if the agent declared anything.
     pub deliverable: Option<Deliverable>,
 }
@@ -259,6 +328,20 @@ pub struct AttentionItem {
     pub reason: String,
     pub observed_at: Option<Instant>,
     pub source: &'static str,
+    /// The line on the pane's screen that the classifier matched, captured at
+    /// the moment it matched.
+    ///
+    /// `source` names the instrument; this is what the instrument read. A row
+    /// saying "prompt · 4m" asks to be believed; a row that also shows
+    /// `Do you want to proceed?` can be checked, and checked against the wrong
+    /// pane is how a person catches a misfire in a second rather than by opening
+    /// the terminal.
+    ///
+    /// `None` is a real answer and stays one. The unknown lane has no matched
+    /// line by definition — the screen is precisely what could not be read — and
+    /// a bell that rang on a clean finish matched no failure phrase either. The
+    /// renderer draws the absence and never a placeholder sentence.
+    pub evidence: Option<String>,
     /// Opened by a plain click, and never by focusing the pane. Reading a row
     /// and visiting its terminal are two different acts.
     pub deliverable: Option<Deliverable>,
@@ -302,6 +385,7 @@ pub fn project(observations: &[Observation]) -> Vec<AttentionItem> {
                 reason: o.reason.clone(),
                 observed_at: o.observed_at,
                 source: o.source,
+                evidence: o.evidence.clone(),
                 deliverable: o.deliverable.clone(),
             })
         })
@@ -369,6 +453,218 @@ pub fn lane_counts(items: &[AttentionItem]) -> Vec<(AttentionKind, usize)> {
     lanes
 }
 
+/// One line of review evidence: what it is called, and what it says.
+///
+/// **A field with no source says `unavailable` on its face.** That is the whole
+/// design of this struct: the plan's third open question is that changed files,
+/// checks and artifacts need an authoritative source and do not have one yet, so
+/// the tray must show them missing rather than show nothing, and must never show
+/// a zero. "0 files changed" and "nobody has told us how many files changed" are
+/// different claims, and only one of them is true today.
+///
+/// So the value is an `Option` and stays one to the edge. The renderer decides
+/// how absence is drawn — dimmed, in italics, as the word itself — because that
+/// is a presentation choice a person can see and argue with; collapsing it here
+/// would hand every later reader a confident number nobody measured.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Evidence {
+    pub label: &'static str,
+    /// `None` means no source has told us. Never a zero standing in for it.
+    pub value: Option<String>,
+}
+
+impl Evidence {
+    pub fn known(label: &'static str, value: impl Into<String>) -> Self {
+        Evidence {
+            label,
+            value: Some(value.into()),
+        }
+    }
+
+    pub fn unavailable(label: &'static str) -> Self {
+        Evidence { label, value: None }
+    }
+
+    /// What the tray prints in the value slot.
+    ///
+    /// One word, and it is about the INSTRUMENT rather than the subject: not
+    /// "no changes" (a measurement) but "unavailable" (an admission). A reader
+    /// who sees it knows to go and look, which is the correct next move and the
+    /// opposite of what a zero would suggest.
+    pub fn text(&self) -> &str {
+        self.value.as_deref().unwrap_or("unavailable")
+    }
+}
+
+/// What the review tray can say about a finished row, today.
+///
+/// Three of the four fields have no authoritative source in this build and are
+/// therefore `unavailable` on every row — which is the point of shipping the
+/// tray now rather than waiting: the shape is visible, the gap is visible, and
+/// nobody can mistake an empty tray for a clean one.
+pub fn review_evidence(it: &AttentionItem) -> Vec<Evidence> {
+    vec![
+        // The one field that HAS a source: the agent declared it. Everything
+        // else here is waiting on a contract that does not exist yet.
+        match it.deliverable.as_ref() {
+            Some(d) => Evidence::known("deliverable", d.label.clone()),
+            None => Evidence::unavailable("deliverable"),
+        },
+        // No source. A terminal can see a screen; it cannot see a working tree,
+        // and asking git from a render pass would be both wrong and slow.
+        Evidence::unavailable("changes"),
+        // No source. A check result belongs to whatever ran it, and nothing
+        // reports one to this window.
+        Evidence::unavailable("checks"),
+        // The lane's own instrument, which we do have — so the tray says where
+        // its one certain fact came from rather than leaving the row sourceless.
+        match it.source {
+            "" => Evidence::unavailable("read by"),
+            s => Evidence::known("read by", s),
+        },
+    ]
+}
+
+/// The order a person is currently looking at, held still while they look.
+///
+/// **The projection re-sorts every frame, and that is right until somebody is
+/// reading it.** A queue ordered by urgency and age is a queue whose rows move:
+/// a bell three panes away re-sorts the list under a cursor, and the row that
+/// was second when the hand started moving is fourth when the key lands. The
+/// ordering is not wrong — the moment to apply it is.
+///
+/// So the order is frozen when the queue opens and released when it closes.
+/// While held, rows keep their positions, rows that leave simply vanish from
+/// their slot, and **arrivals are appended at the bottom** rather than inserted
+/// where their urgency says they belong. A row that jumped in above the cursor
+/// would be exactly the defect this exists to prevent, and appending is visible:
+/// a new decision at the bottom of a held list is one keystroke away and
+/// obviously new, where a silently reordered list is neither.
+///
+/// `frozen` is a list of pane keys, not of rows: the queue re-projects from live
+/// panes every frame and the held thing is the *sequence*, never a stale copy of
+/// what the rows said. A held row therefore still ticks its age, still changes
+/// lane, and still disappears the instant it stops wanting anything.
+pub fn hold_order(frozen: &[u64], items: Vec<AttentionItem>) -> Vec<AttentionItem> {
+    if frozen.is_empty() {
+        return items;
+    }
+    let mut held: Vec<AttentionItem> = Vec::with_capacity(items.len());
+    let mut rest: Vec<AttentionItem> = Vec::new();
+    let mut pool: Vec<Option<AttentionItem>> = items.into_iter().map(Some).collect();
+    for key in frozen {
+        if let Some(slot) = pool
+            .iter_mut()
+            .find(|s| s.as_ref().is_some_and(|it| it.pane == *key))
+        {
+            held.push(slot.take().expect("just matched a present slot"));
+        }
+    }
+    rest.extend(pool.into_iter().flatten());
+    held.extend(rest);
+    held
+}
+
+/// The keys of a queue, in the order it is currently drawn.
+pub fn order_of(items: &[AttentionItem]) -> Vec<u64> {
+    items.iter().map(|it| it.pane).collect()
+}
+
+/// What the painter records about the rows it drew: which pane, in which lane.
+pub fn shown_keys(items: &[AttentionItem]) -> Vec<(u64, AttentionKind)> {
+    items.iter().map(|it| (it.pane, it.kind)).collect()
+}
+
+/// Which rows the person has already looked at, and which arrived since.
+///
+/// **The bell's own contract, extended to the queue rather than duplicated.** A
+/// finish bell is acknowledged by looking at the pane, because looking IS the
+/// acknowledgement; a queue row is acknowledged by the queue having been open
+/// while the row was in it, for the same reason and with the same failure mode
+/// if we chose otherwise. A second, cleverer notion of seen — dwell time, a
+/// hover, a scroll position — would be a claim about attention that a terminal
+/// has no instrument to make.
+///
+/// Seen is keyed by **pane and lane together**, so a pane that was reviewed and
+/// then blocks is unseen again. The pane has not changed; what it wants has, and
+/// the row is about what it wants.
+#[derive(Debug, Clone, Default)]
+pub struct Seen {
+    marks: std::collections::HashMap<u64, AttentionKind>,
+}
+
+impl Seen {
+    /// Has this row arrived, or changed what it wants, since the last look?
+    pub fn is_unseen(&self, it: &AttentionItem) -> bool {
+        self.marks.get(&it.pane) != Some(&it.kind)
+    }
+
+    /// How many of these rows the person has not looked at yet.
+    pub fn unseen_count(&self, items: &[AttentionItem]) -> usize {
+        items.iter().filter(|it| self.is_unseen(it)).count()
+    }
+
+    /// Record every row here as looked at. Called when the queue closes, not
+    /// when it opens: the rows that were on screen for the duration are the ones
+    /// that were seen, and a row that arrived while the panel was open is one of
+    /// them.
+    ///
+    /// Takes the pairs the painter recorded rather than projected rows, because
+    /// what was on screen is the claim being made. See `Workspace::rail_close`.
+    pub fn mark(&mut self, shown: &[(u64, AttentionKind)]) {
+        for (pane, kind) in shown {
+            self.marks.insert(*pane, *kind);
+        }
+    }
+
+    /// Forget panes that are no longer anywhere in the queue.
+    ///
+    /// Without this the map grows for the life of the window, and — worse than
+    /// the memory — a pane that leaves the queue and comes back hours later
+    /// returns already marked seen, so a genuinely new finish arrives wearing
+    /// yesterday's acknowledgement. Called on the same edge as [`Self::mark`].
+    pub fn retain_live(&mut self, shown: &[(u64, AttentionKind)]) {
+        let live: std::collections::HashSet<u64> = shown.iter().map(|(p, _)| *p).collect();
+        self.marks.retain(|k, _| live.contains(k));
+    }
+}
+
+/// Where a key press moves the cursor, or `None` when the key is not ours.
+///
+/// **No wrapping, deliberately.** The list is ordered by what it costs to leave
+/// a thing alone, so down from the last row landing on the first is the surface
+/// quietly telling a person they have reached the end when they have reached the
+/// beginning. A cursor that stops is a cursor you can hold a key against.
+///
+/// `end` on an empty queue is 0 rather than an underflow, and every caller
+/// clamps against the live length anyway: the queue re-projects between
+/// keystrokes and a row can leave it between one press and the next.
+pub fn move_cursor(cursor: usize, len: usize, key: &str) -> Option<usize> {
+    if len == 0 {
+        return None;
+    }
+    let last = len - 1;
+    let next = match key {
+        "down" | "j" | "tab" => cursor.saturating_add(1).min(last),
+        "up" | "k" => cursor.saturating_sub(1),
+        "home" => 0,
+        "end" => last,
+        // 1..9 jump straight to a row, the way the left bar's number keys do.
+        // Out of range is ignored rather than clamped: pressing 7 on a queue of
+        // three meant a row that is not there, and moving to the last one is a
+        // different instruction than the one given.
+        d if d.len() == 1 && d.chars().next().is_some_and(|c| ('1'..='9').contains(&c)) => {
+            let i = d.chars().next().unwrap() as usize - '1' as usize;
+            if i > last {
+                return None;
+            }
+            i
+        }
+        _ => return None,
+    };
+    Some(next)
+}
+
 /// How long a row says it has waited, or a dash.
 ///
 /// The dash is the point: a row whose transition was never observed renders an
@@ -407,8 +703,278 @@ mod tests {
             reason: "because".into(),
             observed_at: secs_ago.map(|s| Instant::now() - Duration::from_secs(s)),
             source: "pane screen",
+            evidence: None,
             deliverable: None,
         }
+    }
+
+    /// A projected row, built straight rather than through an observation —
+    /// the lifecycle functions take items and care about two fields.
+    fn row(pane: u64, kind: AttentionKind) -> AttentionItem {
+        AttentionItem {
+            pane,
+            priority: Priority::Neutral,
+            kind,
+            origin: Origin::default(),
+            reason: String::new(),
+            observed_at: None,
+            source: "",
+            evidence: None,
+            deliverable: None,
+        }
+    }
+
+    #[test]
+    fn a_held_order_survives_a_reprojection_that_would_resort_it() {
+        let frozen = vec![7, 3, 9];
+        // The projection hands them back in its own order; the hold wins.
+        let fresh = vec![
+            row(9, AttentionKind::Decision),
+            row(3, AttentionKind::Failure),
+            row(7, AttentionKind::ReviewReady),
+        ];
+        assert_eq!(order_of(&hold_order(&frozen, fresh)), vec![7, 3, 9]);
+    }
+
+    #[test]
+    fn a_row_that_arrives_while_the_queue_is_open_lands_at_the_bottom() {
+        let frozen = vec![7, 3];
+        let fresh = vec![
+            // A decision outranks everything and would sort first.
+            row(1, AttentionKind::Decision),
+            row(3, AttentionKind::ReviewReady),
+            row(7, AttentionKind::ReviewReady),
+        ];
+        assert_eq!(
+            order_of(&hold_order(&frozen, fresh)),
+            vec![7, 3, 1],
+            "an arrival must never insert itself above the cursor"
+        );
+    }
+
+    #[test]
+    fn a_row_that_leaves_vacates_its_slot_and_moves_nobody_above_it() {
+        let frozen = vec![7, 3, 9];
+        let fresh = vec![
+            row(7, AttentionKind::Decision),
+            row(9, AttentionKind::Decision),
+        ];
+        assert_eq!(order_of(&hold_order(&frozen, fresh)), vec![7, 9]);
+    }
+
+    #[test]
+    fn nothing_frozen_leaves_the_projection_exactly_as_it_came() {
+        let fresh = vec![
+            row(4, AttentionKind::Decision),
+            row(2, AttentionKind::Failure),
+        ];
+        assert_eq!(order_of(&hold_order(&[], fresh)), vec![4, 2]);
+    }
+
+    #[test]
+    fn a_frozen_key_for_a_pane_that_is_gone_is_simply_skipped() {
+        // The pane closed while the queue was open. It must not leave a hole,
+        // and it must not resurrect as an empty row.
+        let frozen = vec![7, 42, 3];
+        let fresh = vec![
+            row(3, AttentionKind::Decision),
+            row(7, AttentionKind::Decision),
+        ];
+        assert_eq!(order_of(&hold_order(&frozen, fresh)), vec![7, 3]);
+    }
+
+    #[test]
+    fn everything_is_unseen_before_the_first_look() {
+        let seen = Seen::default();
+        let items = vec![
+            row(1, AttentionKind::Decision),
+            row(2, AttentionKind::Failure),
+        ];
+        assert_eq!(seen.unseen_count(&items), 2);
+    }
+
+    #[test]
+    fn marking_a_queue_makes_its_rows_seen_and_nothing_else() {
+        let mut seen = Seen::default();
+        let items = vec![row(1, AttentionKind::Decision)];
+        seen.mark(&shown_keys(&items));
+        assert!(!seen.is_unseen(&items[0]));
+        assert!(
+            seen.is_unseen(&row(2, AttentionKind::Decision)),
+            "a pane nobody has looked at is not seen because a neighbour was"
+        );
+    }
+
+    #[test]
+    fn a_seen_pane_that_changes_lane_is_unseen_again() {
+        let mut seen = Seen::default();
+        seen.mark(&shown_keys(&[row(1, AttentionKind::ReviewReady)]));
+        assert!(
+            seen.is_unseen(&row(1, AttentionKind::Failure)),
+            "the pane is the same; what it wants is not, and the row is about what it wants"
+        );
+    }
+
+    #[test]
+    fn a_pane_that_leaves_the_queue_entirely_comes_back_unseen() {
+        let mut seen = Seen::default();
+        let looked_at = vec![
+            row(1, AttentionKind::ReviewReady),
+            row(2, AttentionKind::Decision),
+        ];
+        seen.mark(&shown_keys(&looked_at));
+        // Pane 1 was dealt with and dropped out; only pane 2 is still queued.
+        seen.retain_live(&shown_keys(&looked_at[1..]));
+        assert!(
+            seen.is_unseen(&row(1, AttentionKind::ReviewReady)),
+            "an hour later this is a new finish, not the one already acknowledged"
+        );
+        assert!(!seen.is_unseen(&looked_at[1]));
+    }
+
+    #[test]
+    fn the_cursor_stops_at_both_ends_rather_than_wrapping() {
+        assert_eq!(move_cursor(0, 3, "up"), Some(0));
+        assert_eq!(move_cursor(2, 3, "down"), Some(2));
+        assert_eq!(move_cursor(0, 3, "down"), Some(1));
+        assert_eq!(move_cursor(2, 3, "up"), Some(1));
+    }
+
+    #[test]
+    fn the_cursor_declines_every_key_that_is_not_its_own() {
+        for key in ["a", "left", "right", "f1", "enter", "escape", "0"] {
+            assert_eq!(
+                move_cursor(1, 5, key),
+                None,
+                "{key} is not a navigation key"
+            );
+        }
+    }
+
+    #[test]
+    fn a_number_key_jumps_to_that_row_and_is_ignored_past_the_end() {
+        assert_eq!(move_cursor(0, 5, "3"), Some(2));
+        assert_eq!(move_cursor(0, 5, "1"), Some(0));
+        assert_eq!(
+            move_cursor(0, 3, "7"),
+            None,
+            "7 on a queue of three named a row that is not there — do not clamp it to the last"
+        );
+    }
+
+    #[test]
+    fn an_empty_queue_takes_no_cursor_at_all() {
+        for key in ["down", "up", "home", "end", "1"] {
+            assert_eq!(move_cursor(0, 0, key), None, "{key} on an empty queue");
+        }
+    }
+
+    #[test]
+    fn an_unsourced_review_field_says_unavailable_and_never_zero() {
+        let ev = review_evidence(&row(1, AttentionKind::ReviewReady));
+        let changes = ev.iter().find(|e| e.label == "changes").expect("changes");
+        assert_eq!(changes.value, None, "nothing reports this to the window");
+        assert_eq!(
+            changes.text(),
+            "unavailable",
+            "an admission about the instrument, not a measurement of the subject — \
+             '0 files changed' would be a number nobody took"
+        );
+        // Every field is present in the tray whether or not it has a source: an
+        // omitted row leaves no hole, and a hole is what a reader fills in.
+        for want in ["deliverable", "changes", "checks", "read by"] {
+            assert!(
+                ev.iter().any(|e| e.label == want),
+                "{want} must be shown, even unavailable"
+            );
+        }
+    }
+
+    #[test]
+    fn a_declared_deliverable_is_the_one_field_the_tray_can_answer() {
+        let mut it = row(1, AttentionKind::ReviewReady);
+        it.deliverable = Some(Deliverable {
+            label: "Slice ledger".into(),
+            href: "/home/parker/Work/reports/ledger.html".into(),
+        });
+        it.source = "bell";
+        let ev = review_evidence(&it);
+        assert_eq!(
+            ev[0],
+            Evidence::known("deliverable", "Slice ledger"),
+            "declared by the agent — the one piece of review evidence that \
+             needs no new contract"
+        );
+        assert_eq!(ev[3], Evidence::known("read by", "bell"));
+    }
+
+    #[test]
+    fn the_nearest_explicit_level_wins_over_every_further_one() {
+        use Priority::*;
+        // A noisy task, demoted, inside a project the person promoted.
+        let lvl = resolve_level(Some(Demoted), None, Some(Promoted));
+        assert_eq!(lvl.priority, Demoted);
+        assert!(!lvl.inherited, "the task was told to be this, by name");
+        // And an initiative beats the project above it.
+        assert_eq!(
+            resolve_level(None, Some(Demoted), Some(Promoted)).priority,
+            Demoted
+        );
+    }
+
+    #[test]
+    fn a_level_travels_down_and_is_marked_as_inherited() {
+        use Priority::*;
+        let lvl = resolve_level(None, None, Some(Promoted));
+        assert_eq!(lvl.priority, Promoted);
+        assert!(lvl.inherited, "nobody set this on the task itself");
+        let from_group = resolve_level(None, Some(Promoted), None);
+        assert!(from_group.inherited);
+    }
+
+    #[test]
+    fn nothing_set_anywhere_is_neutral_and_not_inherited() {
+        let lvl = resolve_level(None, None, None);
+        assert_eq!(lvl.priority, Priority::Neutral);
+        assert!(!lvl.inherited);
+        assert_eq!(lvl.glyph(), None, "a neutral row carries no mark");
+    }
+
+    #[test]
+    fn an_explicit_neutral_is_not_the_same_as_unset() {
+        use Priority::*;
+        // The person cleared this one task inside a promoted project. That is an
+        // instruction, and it must not fall through to the project's level.
+        let cleared = resolve_level(Some(Neutral), None, Some(Promoted));
+        assert_eq!(cleared.priority, Neutral);
+        assert!(!cleared.inherited);
+        // Where nobody said anything, the project's level does travel.
+        let unset = resolve_level(None, None, Some(Promoted));
+        assert_eq!(unset.priority, Promoted);
+    }
+
+    #[test]
+    fn levels_do_not_compound_when_two_rungs_agree() {
+        use Priority::*;
+        // Promoted inside promoted is promoted. There is no louder state, and
+        // inventing one would make two deliberate statements produce a third.
+        assert_eq!(
+            resolve_level(Some(Promoted), Some(Promoted), Some(Promoted)).priority,
+            Promoted
+        );
+    }
+
+    #[test]
+    fn the_two_marks_are_the_two_levels_and_neutral_draws_nothing() {
+        assert_eq!(Priority::Promoted.glyph(), Some("\u{25b2}"));
+        assert_eq!(Priority::Demoted.glyph(), Some("\u{25bc}"));
+        assert_eq!(Priority::Neutral.glyph(), None);
+    }
+
+    #[test]
+    fn home_and_end_reach_the_ends_of_a_long_queue() {
+        assert_eq!(move_cursor(9, 40, "home"), Some(0));
+        assert_eq!(move_cursor(9, 40, "end"), Some(39));
     }
 
     #[test]
