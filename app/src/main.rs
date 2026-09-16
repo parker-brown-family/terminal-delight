@@ -49,6 +49,7 @@ mod mcp;
 mod mcp_tail;
 mod mcp_transport;
 mod notify;
+mod paint;
 mod palette;
 mod pane;
 mod plugins;
@@ -12116,14 +12117,52 @@ impl Workspace {
         // With nothing that way — a lone pane, or the edge of the layout — the
         // press is simply eaten. It must NOT fall through to the terminal: the
         // pane is behind a modal and cannot be typed into.
-        if theme::paint_mode(cx)
-            && !m.control
-            && !m.alt
-            && !m.shift
-            && matches!(ks.key.as_str(), "left" | "right" | "up" | "down")
-        {
-            self.focus_dir(ks.key.as_str(), window, cx);
-            return;
+        if theme::paint_mode(cx) && !m.control && !m.alt && !m.shift {
+            let key = ks.key.as_str();
+            if matches!(key, "left" | "right" | "up" | "down") {
+                match paint::arrow(theme::paint_target(cx), key) {
+                    paint::Arrow::Walk => {
+                        self.focus_dir(key, window, cx);
+                    }
+                    // The cabinet's card HANGS above the wall, so the gesture
+                    // that reaches it is the one that runs out of wall going up
+                    // — no new chord for a surface that is already in the
+                    // direction you would point at it.
+                    paint::Arrow::WalkThenOuter => {
+                        if !self.focus_dir("up", window, cx) {
+                            theme::set_paint_target(cx, theme::Target::Outer);
+                        }
+                    }
+                    paint::Arrow::AimWall => {
+                        theme::set_paint_target(cx, theme::Target::Pane);
+                    }
+                    paint::Arrow::Nothing => {}
+                }
+                return;
+            }
+            // The overlay's keyboard is normally run by the FOCUSED PANE, which
+            // is what makes "the letter paints the selected terminal" true with
+            // no selection state to keep. With the cabinet aimed there may be no
+            // pane holding focus at all (a click on the chrome, a window whose
+            // panes have all gone), and a card you cannot paint from is worse
+            // than no card — so the same three verbs and the same chord table
+            // are answered here too.
+            if theme::paint_target(cx) == theme::Target::Outer {
+                if key.eq_ignore_ascii_case("z") {
+                    theme::cycle_paint_shelf(cx, 1);
+                    return;
+                }
+                if key.eq_ignore_ascii_case("f") {
+                    theme::set_paint_shelf(cx, theme::Shelf::Favourites);
+                    return;
+                }
+                let worn = paint::outer_wearing(cx);
+                if let Some(pick) = paint::chord(cx, key, theme::paint_shelf(cx), &worn) {
+                    paint::apply_outer(cx, &pick);
+                    self.save(cx);
+                    return;
+                }
+            }
         }
         // Esc closes whatever popup (modal or menu) is open — one consistent path
         // for the whole app. A capture-phase handler (see render) catches it even
@@ -17072,6 +17111,151 @@ impl Workspace {
                     .size_full(),
                 ),
             )
+    }
+
+    /// The OUTER's paint card — the cabinet's own tiles, hanging from the top
+    /// edge of the window whenever the paint overlay is up.
+    ///
+    /// It HANGS, and that is the whole geometry. The cabinet IS the window, so a
+    /// card centred over the wall would be sitting on the very thing it paints,
+    /// in the one place every pane has already put a card of its own. Hung from
+    /// the top edge it lands on the mother bar — chrome, over chrome, painting
+    /// chrome — and leaves the left bar, the status bar and the bezel in plain
+    /// sight to recolour under it as the letters land.
+    ///
+    /// Dimmed until it is aimed, exactly as an unselected pane's card is: the
+    /// wall and the cabinet are one overlay with one spotlight, and two lit
+    /// targets would be a lie about where the next letter goes.
+    fn render_paint_outer(&self, cx: &mut Context<Self>) -> Option<gpui::Div> {
+        if !theme::paint_mode(cx) {
+            return None;
+        }
+        let th = theme::theme(cx);
+        let scale = theme::outer_choice(cx).grade.scale;
+        let sk = skin::skin(cx, scale);
+        let aimed = theme::paint_target(cx) == theme::Target::Outer;
+        let shelf = theme::paint_shelf(cx);
+        let shelves = theme::shelves(cx);
+        // What the cabinet wears — which tile is lit, where a letter-cycle
+        // starts, and whether `⇧F` has anything to star.
+        let worn = paint::outer_wearing(cx);
+        let mut grid = div()
+            .flex()
+            .flex_row()
+            .flex_wrap()
+            .justify_center()
+            .items_start()
+            .gap(px(paint::TILE_GAP))
+            .max_w(px(paint::grid_w(self.last_win.map(|(_, _, w, _)| w))));
+        for e in paint::entries(cx, shelf, &worn, "EFAULT") {
+            let pick = e.pick.clone();
+            grid = grid.child(paint::tile(&e, &th).on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                    // A click is unambiguous about which surface it means, so it
+                    // takes the aim with it — the keyboard follows the mouse
+                    // instead of painting somewhere else on the next letter.
+                    theme::set_paint_target(cx, theme::Target::Outer);
+                    paint::apply_outer(cx, &pick);
+                    ws.save(cx);
+                    cx.stop_propagation();
+                }),
+            ));
+        }
+        let mut head = div()
+            .flex()
+            .flex_row()
+            .flex_wrap()
+            .items_center()
+            .justify_center()
+            .gap(px(6.))
+            .child(
+                div()
+                    .text_size(px(11.))
+                    .font_weight(if aimed {
+                        gpui::FontWeight::EXTRA_BOLD
+                    } else {
+                        gpui::FontWeight::NORMAL
+                    })
+                    .text_color(th.text)
+                    // "OUTER" is the theme tray's own word for this scope
+                    // (`lang::Strings::scope_outer`); the overlay says it in the
+                    // same English the wall's card does.
+                    .child("PAINT THE OUTER"),
+            );
+        // The shelf pills ride in the header rather than on their own row: this
+        // card is a shade pulled over the chrome, and every row it costs is a
+        // row of the window it covers.
+        if shelves.len() > 1 {
+            for s in shelves.iter().copied() {
+                head = head.child(paint::pill(s, s == shelf, &th).on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |_ws, _: &MouseDownEvent, _w, cx| {
+                        theme::set_paint_shelf(cx, s);
+                        cx.stop_propagation();
+                    }),
+                ));
+            }
+        }
+        let legend = if aimed {
+            paint::legend(cx, &["↓ panes"], "d default", &worn)
+        } else {
+            // Un-aimed it teaches the one gesture that aims it, and nothing
+            // else: a legend of keys that would currently land on a PANE is
+            // worse than no legend at all.
+            "↑ aims here · a click paints".to_string()
+        };
+        let card = div()
+            .occlude()
+            .flex()
+            .flex_col()
+            .items_center()
+            .gap(px(6.))
+            .px(px(12.))
+            .pt(px(7.))
+            .pb(px(9.))
+            .rounded_bl(sk.rad_raw(12.))
+            .rounded_br(sk.rad_raw(12.))
+            .border_2()
+            .border_t_0()
+            .border_color(if aimed {
+                th.accent.alpha(0.9)
+            } else {
+                th.accent.alpha(0.35)
+            })
+            .bg(darken(th.surface, 0.45))
+            .shadow(float_shadows(if aimed {
+                th.accent
+            } else {
+                th.accent.alpha(0.3)
+            }))
+            .opacity(if aimed { 1.0 } else { 0.45 })
+            .font_family(th.font_family.clone())
+            .child(head)
+            .child(grid)
+            .child(div().text_size(px(9.)).text_color(th.faint).child(legend))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|_ws, _: &MouseDownEvent, _w, cx| {
+                    // A click that MISSED a tile still says which surface the
+                    // person means, so it aims — and it must not fall through to
+                    // the mother bar underneath, which would open a menu behind
+                    // a modal overlay.
+                    theme::set_paint_target(cx, theme::Target::Outer);
+                    cx.stop_propagation();
+                }),
+            );
+        Some(
+            div()
+                .absolute()
+                .top_0()
+                .left_0()
+                .w_full()
+                .flex()
+                .flex_row()
+                .justify_center()
+                .child(card),
+        )
     }
 
     /// The queue as an OVERLAY: drawn over the right-hand panes, dismissed by
@@ -24821,6 +25005,10 @@ impl Render for Workspace {
                     .children(lang_picker_overlay)
                     // the per-pane logo picker rides on top too (its scrim locks input)
                     .children(logo_picker_overlay)
+                    // the cabinet's own paint card, hung from the top edge —
+                    // over every pane's card, because the surface it paints is
+                    // the one all of them sit in
+                    .children(self.render_paint_outer(cx))
                     // a tube going dark rides over everything: it is drawn on
                     // space that no longer belongs to any pane
                     .children(shutdown_ghosts),
