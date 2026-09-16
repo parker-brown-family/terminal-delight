@@ -1,29 +1,49 @@
 //! The attention projection: of everything happening, what wants a human.
 //!
-//! Slice 1 of `docs/plans/attention-spine`. This module is the projection and
-//! nothing else — it holds no UI, reads no pane, and opens no file. It takes
-//! observations and returns the ordered list the right-edge rail renders, so the
-//! ordering is a product decision with tests on it rather than a detail buried in
-//! a paint function.
+//! The model behind the right-edge rail. **Start at `docs/attention-spine.md`**
+//! — it maps the whole surface across the five files it spans, lists the
+//! invariants beside the tests that enforce them, and carries the ledger of what
+//! has already gone wrong here. This header is the part you need to have read
+//! before editing *this* file.
 //!
-//! Three rules from the plan live here, and each one is a test below:
+//! ## What this module is
+//!
+//! The projection and nothing else: it holds no UI, reads no pane, and opens no
+//! file. Observations go in, the ordered list the rail draws comes out. That
+//! boundary is the reason the ordering is a product decision with tests on it
+//! rather than a detail buried in a paint function — and it is why a rule
+//! belongs here if it can possibly live here.
+//!
+//! ## The four rules, each a test below
 //!
 //! - **Unknown is not idle, and not zero.** An agent whose screen could not be
-//!   read is its own kind, it is shown, and it never enters the count that says
+//!   read is its own lane, it is shown, and it never enters the count that says
 //!   how many things want you. A shell is not an idle agent and produces nothing.
-//! - **Unknown age is not zero age.** An item whose transition was never observed
-//!   sorts *after* every item whose was, inside its own lane. It is not the
+//! - **Unknown age is not zero age.** A row whose transition was never observed
+//!   sorts *after* every row whose was, inside its own lane. It is not the
 //!   newest and it is certainly not the oldest.
 //! - **Lane before age.** A six-second failure outranks a forty-minute
 //!   review-ready, because the lanes are ordered by what it costs to leave them
 //!   alone.
+//! - **A person before both.** [`Priority`] sorts above the lane: somebody
+//!   saying *this is what I am on today* is not overruled by a heuristic.
 //!
-//! **What slice 2 must not do here.** The `kind` arrives already decided.
-//! `agent_badge` in `main.rs` is the predicate that resolves needs-input,
-//! working, bell and blocked into one answer, and it has the awkward cases in its
-//! test table. Slice 2 feeds this module *from* that function. Adding a second
-//! classifier in here would give one pane two rankings, and the tab badge is the
-//! one a person's eye checks first.
+//! ## The `kind` arrives already decided
+//!
+//! `agent_badge` in `main.rs` resolves needs-input, working, bell and blocked
+//! into one answer, and it holds the awkward cases in its test table;
+//! `rail_kind` maps that answer to a lane. **Adding a second classifier in here
+//! would give one pane two rankings**, and the tab badge is the one an eye
+//! checks first. If the badge cannot express something, widen the badge.
+//!
+//! ## A note on what is a field and what is a function
+//!
+//! [`AttentionKind::reason`] and [`AttentionKind::source`] were stored fields
+//! for three slices, assigned by a `match` on the lane in two separate places.
+//! They were the lane wearing different words — an allocation per row per frame
+//! to say something the row already knew, and two chances for a caption to
+//! disagree with the colour beside it. Before adding a field here, ask whether
+//! it is a function of one that already exists.
 
 use std::time::{Duration, Instant};
 
@@ -81,6 +101,44 @@ impl AttentionKind {
             AttentionKind::Failure => "failed",
             AttentionKind::ReviewReady => "review",
             AttentionKind::Unknown => "unknown",
+        }
+    }
+
+    /// Why a row in this lane exists, in words a person reads.
+    ///
+    /// **A function of the lane, not a field on the row.** These two lines used
+    /// to be stored on every observation and every item, assigned by a `match`
+    /// on exactly this value in two different places — so they were a copy of
+    /// the lane wearing different words, free to disagree with it, and costing a
+    /// `String` allocation per row per frame to say something the row already
+    /// knew. A surface whose rule is *say where a fact came from* cannot also be
+    /// a surface where the caption and the colour are set independently.
+    ///
+    /// Said in the BADGE's terms rather than the parser's, so the words on the
+    /// row match the glyph its tab is wearing.
+    pub fn reason(self) -> &'static str {
+        match self {
+            AttentionKind::Decision => "Stopped at a prompt",
+            AttentionKind::Failure => "Finished against a wall",
+            AttentionKind::ReviewReady => "Finished, not yet seen",
+            // Never "agent running, screen unreadable" — that asserts the agent
+            // is running, which is precisely what could not be determined.
+            AttentionKind::Unknown => "Screen could not be read",
+        }
+    }
+
+    /// Which instrument read this lane's state — shown on the row beside its
+    /// age, so a person can argue with the reading rather than take it.
+    ///
+    /// Three instruments, and the mapping is the lane's, for the same reason
+    /// [`AttentionKind::reason`] is.
+    pub fn source(self) -> &'static str {
+        match self {
+            AttentionKind::Decision => "prompt",
+            // A finish and a finish-against-a-wall are the same bell; what
+            // separates them is the screen it rang against.
+            AttentionKind::Failure | AttentionKind::ReviewReady => "bell",
+            AttentionKind::Unknown => "parser",
         }
     }
 }
@@ -305,13 +363,9 @@ pub struct Observation {
     /// shell. Such an observation produces no row.
     pub kind: Option<AttentionKind>,
     pub origin: Origin,
-    /// Why this row exists, in words a person reads rather than a code.
-    pub reason: String,
     /// When the state was seen to change. `None` means nothing has been seen to
     /// change yet, which is a different claim from "it changed just now".
     pub observed_at: Option<Instant>,
-    /// Where the fact came from, shown on the row beside its time.
-    pub source: &'static str,
     /// The line the classifier actually read. See [`AttentionItem::evidence`].
     pub evidence: Option<String>,
     /// What this turn produced, if the agent declared anything.
@@ -325,13 +379,12 @@ pub struct AttentionItem {
     pub priority: Priority,
     pub kind: AttentionKind,
     pub origin: Origin,
-    pub reason: String,
     pub observed_at: Option<Instant>,
-    pub source: &'static str,
     /// The line on the pane's screen that the classifier matched, captured at
     /// the moment it matched.
     ///
-    /// `source` names the instrument; this is what the instrument read. A row
+    /// [`AttentionKind::source`] names the instrument; this is what the
+    /// instrument read. A row
     /// saying "prompt · 4m" asks to be believed; a row that also shows
     /// `Do you want to proceed?` can be checked, and checked against the wrong
     /// pane is how a person catches a misfire in a second rather than by opening
@@ -382,9 +435,7 @@ pub fn project(observations: &[Observation]) -> Vec<AttentionItem> {
                 priority: o.priority,
                 kind,
                 origin: o.origin.clone(),
-                reason: o.reason.clone(),
                 observed_at: o.observed_at,
-                source: o.source,
                 evidence: o.evidence.clone(),
                 deliverable: o.deliverable.clone(),
             })
@@ -518,10 +569,9 @@ pub fn review_evidence(it: &AttentionItem) -> Vec<Evidence> {
         Evidence::unavailable("checks"),
         // The lane's own instrument, which we do have — so the tray says where
         // its one certain fact came from rather than leaving the row sourceless.
-        match it.source {
-            "" => Evidence::unavailable("read by"),
-            s => Evidence::known("read by", s),
-        },
+        // Never unavailable: a row exists BECAUSE some instrument read
+        // something, so there is always an honest answer here.
+        Evidence::known("read by", it.kind.source()),
     ]
 }
 
@@ -571,8 +621,15 @@ pub fn order_of(items: &[AttentionItem]) -> Vec<u64> {
 }
 
 /// What the painter records about the rows it drew: which pane, in which lane.
-pub fn shown_keys(items: &[AttentionItem]) -> Vec<(u64, AttentionKind)> {
-    items.iter().map(|it| (it.pane, it.kind)).collect()
+///
+/// Takes anything that yields borrowed rows, because the painter holds
+/// `Vec<&AttentionItem>` (the unknown lane is split off with `partition`) and
+/// the previous signature forced a deep copy of every row — origin strings,
+/// evidence, deliverable and all — to read two `Copy` fields back out of it.
+pub fn shown_keys<'a>(
+    items: impl IntoIterator<Item = &'a AttentionItem>,
+) -> Vec<(u64, AttentionKind)> {
+    items.into_iter().map(|it| (it.pane, it.kind)).collect()
 }
 
 /// Which rows the person has already looked at, and which arrived since.
@@ -700,9 +757,7 @@ mod tests {
                 parent: Some("td".into()),
                 task: Some("client-server".into()),
             },
-            reason: "because".into(),
             observed_at: secs_ago.map(|s| Instant::now() - Duration::from_secs(s)),
-            source: "pane screen",
             evidence: None,
             deliverable: None,
         }
@@ -716,9 +771,7 @@ mod tests {
             priority: Priority::Neutral,
             kind,
             origin: Origin::default(),
-            reason: String::new(),
             observed_at: None,
-            source: "",
             evidence: None,
             deliverable: None,
         }
@@ -897,7 +950,6 @@ mod tests {
             label: "Slice ledger".into(),
             href: "/home/parker/Work/reports/ledger.html".into(),
         });
-        it.source = "bell";
         let ev = review_evidence(&it);
         assert_eq!(
             ev[0],
@@ -969,6 +1021,121 @@ mod tests {
         assert_eq!(Priority::Promoted.glyph(), Some("\u{25b2}"));
         assert_eq!(Priority::Demoted.glyph(), Some("\u{25bc}"));
         assert_eq!(Priority::Neutral.glyph(), None);
+    }
+
+    /// The caption and the instrument are the lane's, and every lane has both.
+    ///
+    /// These were two stored fields, assigned by a `match` on `kind` in two
+    /// separate places, so a row could in principle carry a caption its colour
+    /// disagreed with. They are functions now, and this is the check that keeps
+    /// them total: a lane added later without words is a compile error in the
+    /// match and a failure here if somebody reaches for a placeholder.
+    #[test]
+    fn every_lane_has_words_and_an_instrument_and_they_are_its_own() {
+        use AttentionKind::*;
+        let lanes = [Decision, Failure, ReviewReady, Unknown];
+        for k in lanes {
+            assert!(!k.reason().is_empty(), "{k:?} needs words");
+            assert!(!k.source().is_empty(), "{k:?} needs an instrument");
+        }
+        // The words are distinct per lane — a shared caption would make two
+        // lanes read the same on the one surface built to tell them apart.
+        let mut seen: Vec<&str> = lanes.iter().map(|k| k.reason()).collect();
+        seen.sort_unstable();
+        seen.dedup();
+        assert_eq!(seen.len(), 4, "each lane says something of its own");
+
+        // The unknown lane must never claim the agent is doing anything. This
+        // exact wording was a defect once: "agent running, screen unreadable"
+        // asserts the half that could not be determined.
+        let u = Unknown.reason().to_ascii_lowercase();
+        assert!(
+            !u.contains("running") && !u.contains("idle") && !u.contains("rest"),
+            "the unknown lane may not assert what the agent is doing: {u:?}"
+        );
+
+        // A finish and a finish-against-a-wall are one bell read two ways.
+        assert_eq!(Failure.source(), ReviewReady.source());
+        assert_ne!(Decision.source(), Failure.source());
+    }
+
+    #[test]
+    fn age_label_turns_over_at_the_minute_and_the_hour() {
+        // The boundaries, which is where an off-by-one lives. 59s is still
+        // seconds; 60s is one minute and not "60s"; 3599s is still minutes.
+        assert_eq!(age_label(Some(Duration::from_secs(59))), "59s");
+        assert_eq!(age_label(Some(Duration::from_secs(60))), "1m");
+        assert_eq!(age_label(Some(Duration::from_secs(3599))), "59m");
+        assert_eq!(age_label(Some(Duration::from_secs(3600))), "1h");
+        // And the absence stays an absence at every scale.
+        assert_eq!(age_label(None), "\u{2014}");
+    }
+
+    #[test]
+    fn a_documents_kind_survives_a_query_string_and_a_trailing_slash() {
+        // A deliverable may be a URL, and a URL carries furniture a filename
+        // does not. Misreading it mislabels the chip, which is a row lying
+        // about what a click will do.
+        assert_eq!(doc_kind("https://x.test/report.html?v=2"), DocKind::Html);
+        assert_eq!(
+            doc_kind("https://x.test/plan.md#section"),
+            DocKind::Markdown
+        );
+        assert_eq!(doc_kind("/home/p/report.html/"), DocKind::Html);
+        // A pull request is not a document with an extension, and says so.
+        assert_eq!(doc_kind("https://github.com/o/r/pull/460"), DocKind::Other);
+        assert_eq!(DocKind::Other.label(), "open");
+    }
+
+    #[test]
+    fn a_queue_of_one_takes_a_cursor_that_cannot_move() {
+        // The degenerate length: every key must be answered, and none of them
+        // may move off the only row there is.
+        for key in ["down", "up", "home", "end", "j", "k"] {
+            assert_eq!(move_cursor(0, 1, key), Some(0), "{key} on a queue of one");
+        }
+        assert_eq!(move_cursor(0, 1, "1"), Some(0));
+        assert_eq!(move_cursor(0, 1, "2"), None, "there is no second row");
+    }
+
+    #[test]
+    fn a_queue_that_empties_forgets_every_mark() {
+        // The queue drained — everything was dealt with. Nothing may stay
+        // marked seen, or each of those panes returns wearing an acknowledgement
+        // from a finish that is now hours old.
+        let mut seen = Seen::default();
+        let had = vec![
+            row(1, AttentionKind::ReviewReady),
+            row(2, AttentionKind::Failure),
+        ];
+        seen.mark(&shown_keys(&had));
+        seen.retain_live(&[]);
+        for it in &had {
+            assert!(seen.is_unseen(it), "an emptied queue keeps no marks");
+        }
+    }
+
+    #[test]
+    fn an_unknown_row_names_the_parser_and_offers_nothing_else() {
+        // Unknown rows never reach the tray today — the painter collapses them
+        // to a count first — but `review_evidence` is public and the lane is
+        // real, so its answer should be honest rather than accidental.
+        let ev = review_evidence(&row(9, AttentionKind::Unknown));
+        assert_eq!(ev[3], Evidence::known("read by", "parser"));
+        assert_eq!(ev[0].value, None, "an unreadable screen declared nothing");
+    }
+
+    #[test]
+    fn a_frozen_key_repeated_does_not_duplicate_its_row() {
+        // Pane ids are unique, so a repeat cannot arise from the projection —
+        // it could only arise from a bug in whatever built the frozen list, and
+        // the failure mode then is one pane drawn twice and acted on twice.
+        let frozen = vec![7, 7, 3];
+        let fresh = vec![
+            row(3, AttentionKind::Decision),
+            row(7, AttentionKind::Failure),
+        ];
+        assert_eq!(order_of(&hold_order(&frozen, fresh)), vec![7, 3]);
     }
 
     #[test]

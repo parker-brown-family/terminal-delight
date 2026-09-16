@@ -157,6 +157,17 @@ fn next_split_id() -> u64 {
     SPLIT_IDS.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }
 
+/// One frame's worth of attention projection, kept so the several surfaces that
+/// need it agree and only one of them pays for it.
+///
+/// Holds the pane map beside the rows because they are produced together and a
+/// caller with one and not the other cannot act on a row.
+struct RailMemo {
+    frame: u64,
+    items: Vec<attention::AttentionItem>,
+    panes: std::collections::HashMap<u64, EntityId>,
+}
+
 /// One queue row's flat geometry, recorded during paint so a click can be
 /// resolved after the barrel map is undone.
 #[derive(Clone, Copy, Debug)]
@@ -3377,6 +3388,30 @@ struct Workspace {
     /// actually had in front of them, which is what "seen" is a claim about.
     /// Written each frame by the renderer, read once when the queue closes.
     rail_shown: Arc<Mutex<Vec<(u64, attention::AttentionKind)>>>,
+    /// Which render pass this is. Bumped once at the top of `render`, and used
+    /// for nothing but deciding whether [`Workspace::rail_rows`]'s memo is from
+    /// this frame or the last one.
+    ///
+    /// A counter rather than a clock, deliberately: a time-to-live would be a
+    /// guess about how stale is acceptable, and this needs no guess — the answer
+    /// is "not stale at all within one paint, recomputed for the next".
+    rail_frame: u64,
+    /// The projection, memoised for the frame that built it.
+    ///
+    /// **Why this exists.** `rail_rows` walks every tab and every pane, reads
+    /// each pane entity, resolves the tree twice and allocates several strings,
+    /// and it was being called TWICE per frame with the queue open — once by the
+    /// closed spine and once by the panel — plus twice more on every keystroke.
+    /// On a twenty-eight pane fleet at sixty frames a second that is thousands
+    /// of walks a minute to draw three numbers, which is the unmeasured cost
+    /// filed against the rail drawing by default.
+    ///
+    /// **And it is more correct, not merely cheaper.** A keystroke now acts on
+    /// the projection that was last DRAWN rather than on a fresh one computed
+    /// between the eye and the hand — the same reasoning that makes the
+    /// seen-mark read from what the painter recorded. Pressing enter goes to the
+    /// row you were looking at, even if a bell rang in the microsecond between.
+    rail_memo: std::cell::RefCell<Option<RailMemo>>,
     /// Each deliverable link's own measured band, as `(row, top, bottom)`.
     ///
     /// Written by a canvas inside the link itself and read by the row's canvas
@@ -4532,6 +4567,8 @@ impl Workspace {
             rail_cursor: 0,
             rail_bounds: Arc::new(Mutex::new(None)),
             rail_hits: Arc::new(Mutex::new(Vec::new())),
+            rail_frame: 0,
+            rail_memo: std::cell::RefCell::new(None),
             rail_shown: Arc::new(Mutex::new(Vec::new())),
             rail_band: Arc::new(Mutex::new(Vec::new())),
             focus_body_bounds: Arc::new(Mutex::new(None)),
@@ -15748,6 +15785,33 @@ impl Workspace {
         Vec<attention::AttentionItem>,
         std::collections::HashMap<u64, EntityId>,
     ) {
+        // Once per frame, however many surfaces ask. See [`Workspace::rail_memo`]
+        // for why this is a frame stamp and not a time-to-live, and why acting
+        // on the last-drawn projection is the more correct answer rather than
+        // merely the cheaper one.
+        if let Some(memo) = self.rail_memo.borrow().as_ref() {
+            if memo.frame == self.rail_frame {
+                return (memo.items.clone(), memo.panes.clone());
+            }
+        }
+        let built = self.rail_build(cx);
+        *self.rail_memo.borrow_mut() = Some(RailMemo {
+            frame: self.rail_frame,
+            items: built.0.clone(),
+            panes: built.1.clone(),
+        });
+        built
+    }
+
+    /// The projection itself, walked from live panes. Everything goes through
+    /// [`Workspace::rail_rows`], which memoises this for the frame.
+    fn rail_build(
+        &self,
+        cx: &App,
+    ) -> (
+        Vec<attention::AttentionItem>,
+        std::collections::HashMap<u64, EntityId>,
+    ) {
         if std::env::var("TD_SPINE_DEMO").is_ok_and(|v| v != "0") {
             // Demo rows point at whatever panes this window has, round-robin, so
             // the focus verb still does something real. With one pane, every row
@@ -15770,12 +15834,20 @@ impl Workspace {
             }
             return (items, panes);
         }
-        use attention::{AttentionKind, Observation, PaneKind};
+        use attention::{Observation, PaneKind};
         let mut obs: Vec<Observation> = Vec::new();
         let mut panes: std::collections::HashMap<u64, EntityId> = std::collections::HashMap::new();
         for (ti, tab) in self.tabs.iter().enumerate() {
             let mut leaves = Vec::new();
             tab.root.leaves(&mut leaves);
+            // **Per-TAB work, hoisted out of the per-PANE loop.** Both of these
+            // are functions of the tab and neither varies between its panes, but
+            // they sat inside the inner loop — so a tab holding four terminals
+            // walked the tree four times and built four identical labels, every
+            // frame. `place_of` alone is two linear scans of the project and
+            // group lists, and `level_of` and `rail_origin` each called it.
+            let origin = self.rail_origin(ti);
+            let priority = self.level_of(ti).priority;
             for leaf in leaves {
                 let view = leaf.read(cx);
                 let agent = view.mode.is_agent();
@@ -15792,24 +15864,12 @@ impl Workspace {
                     view.bell_blocked(),
                 );
                 let kind = rail_kind(badge, view.rail_state());
-                // Said in the badge's terms, not the parser's, so the words on
-                // the row match the glyph the tab is wearing.
-                let reason = match kind {
-                    Some(AttentionKind::Decision) => "Stopped at a prompt",
-                    Some(AttentionKind::Failure) => "Finished against a wall",
-                    Some(AttentionKind::ReviewReady) => "Finished, not yet seen",
-                    Some(AttentionKind::Unknown) => "Screen could not be read",
-                    None => "",
-                };
-                // Where the fact came from, shown beside its age. Three
-                // different instruments, and a row that says which one read it
-                // is a row somebody can argue with.
-                let source = match kind {
-                    Some(AttentionKind::Decision) => "prompt",
-                    Some(AttentionKind::Failure) | Some(AttentionKind::ReviewReady) => "bell",
-                    Some(AttentionKind::Unknown) => "parser",
-                    None => "",
-                };
+                // The words and the instrument used to be chosen here, by a
+                // `match` on the very value above, and stored on the row. They
+                // are `AttentionKind::reason()` and `::source()` now — a caption
+                // that is a function of the lane cannot drift from it, and the
+                // per-row `String` is gone with it.
+                //
                 // **The pane's own identity, not its position in a walk.**
                 // This was a counter incremented over tabs and leaves, so every
                 // key shifted the moment a pane anywhere to the left of it
@@ -15824,14 +15884,12 @@ impl Workspace {
                     // so by the time a row is sorted its level is a fact rather
                     // than a search. Slice 1 landed the ordering key with every
                     // row at Neutral; this is the producer it was waiting for.
-                    priority: self.level_of(ti).priority,
+                    priority,
                     kind,
-                    origin: self.rail_origin(ti),
-                    reason: reason.to_string(),
+                    origin: origin.clone(),
                     // None until this pane's lane has been SEEN to change. The
                     // row draws a dash, and never an age it did not measure.
                     observed_at: view.attention_since(),
-                    source,
                     // The line behind the lane, quoted by the pane at the scan
                     // that classified it. Unknown and clean-finish rows have
                     // none, and say so by being absent.
@@ -15891,8 +15949,6 @@ impl Workspace {
                 Priority::Promoted,
                 AttentionKind::Decision,
                 origin("atlas", Some("ingest")),
-                "Stopped at a prompt",
-                "prompt",
                 ago(41 * 60),
                 Some("Do you want to proceed? \u{276f} 1. Rotate now  2. Stage first"),
                 None,
@@ -15902,8 +15958,6 @@ impl Workspace {
                 Priority::Neutral,
                 AttentionKind::Decision,
                 origin("ledger", Some("invoices")),
-                "Stopped at a prompt",
-                "prompt",
                 ago(9 * 60),
                 Some("Overwrite the existing export? (esc to cancel)"),
                 None,
@@ -15913,8 +15967,6 @@ impl Workspace {
                 Priority::Promoted,
                 AttentionKind::Failure,
                 origin("atlas", Some("packaging")),
-                "Finished against a wall",
-                "bell",
                 ago(6 * 60),
                 Some("API Error: 429 rate_limit_error \u{b7} retry after 1m"),
                 None,
@@ -15924,8 +15976,6 @@ impl Workspace {
                 Priority::Neutral,
                 AttentionKind::ReviewReady,
                 origin("atlas", Some("theme-foundry")),
-                "Finished, not yet seen",
-                "bell",
                 ago(12 * 60),
                 // A clean finish matched nothing, so there is nothing to quote
                 // and the row simply omits it.
@@ -15940,8 +15990,6 @@ impl Workspace {
                 Priority::Neutral,
                 AttentionKind::ReviewReady,
                 origin("ledger", None),
-                "Finished, not yet seen",
-                "bell",
                 ago(40 * 60),
                 None,
                 plan.map(|href| Deliverable {
@@ -15954,8 +16002,6 @@ impl Workspace {
                 Priority::Demoted,
                 AttentionKind::Failure,
                 origin("relay", Some("nightly")),
-                "Finished against a wall",
-                "bell",
                 ago(2 * 60),
                 Some("API Error: request timed out after 600s"),
                 None,
@@ -15965,8 +16011,6 @@ impl Workspace {
                 Priority::Neutral,
                 AttentionKind::Unknown,
                 origin("relay", None),
-                "Screen could not be read",
-                "parser",
                 None,
                 // Nothing to quote, by definition: this row exists BECAUSE the
                 // screen could not be read.
@@ -15978,26 +16022,14 @@ impl Workspace {
         let obs: Vec<attention::Observation> = rows
             .into_iter()
             .map(
-                |(
-                    pane,
-                    priority,
-                    kind,
-                    origin,
-                    reason,
-                    source,
-                    observed_at,
-                    evidence,
-                    deliverable,
-                )| {
+                |(pane, priority, kind, origin, observed_at, evidence, deliverable)| {
                     attention::Observation {
                         pane,
                         pane_kind: attention::PaneKind::Agent,
                         priority,
                         kind: Some(kind),
                         origin,
-                        reason: reason.to_string(),
                         observed_at,
-                        source,
                         evidence: evidence.map(str::to_string),
                         deliverable,
                     }
@@ -16716,10 +16748,12 @@ impl Workspace {
         // closes. Recorded from the rows actually drawn, and only the drawn
         // ones: the unknown lane collapses to a count below and was never put
         // in front of anybody as a row.
-        let drawn: Vec<attention::AttentionItem> = waiting.iter().map(|it| (*it).clone()).collect();
+        // Built straight from the rows, not from a clone of them: the previous
+        // version deep-copied every item — origin strings, evidence, deliverable
+        // — purely to read two `Copy` fields back out of the copy.
         self.rail_shown
             .lock()
-            .map(|mut s| *s = attention::shown_keys(&drawn))
+            .map(|mut s| *s = attention::shown_keys(waiting.iter().copied()))
             .ok();
         let cursor = self.rail_cursor.min(waiting.len().saturating_sub(1));
         for (row_index, it) in waiting.iter().enumerate() {
@@ -16794,7 +16828,7 @@ impl Workspace {
                     div()
                         .text_size(px(11. * s))
                         .text_color(sk.ink.ink)
-                        .child(it.reason.clone()),
+                        .child(it.kind.reason()),
                 )
                 // The line the classifier read, quoted. `reason` is our words
                 // for what happened; this is the agent's own, and it is what
@@ -16822,7 +16856,7 @@ impl Workspace {
                         .text_color(sk.ink.ink_dim)
                         .child(format!(
                             "{} \u{b7} {}",
-                            it.source,
+                            it.kind.source(),
                             attention::age_label(it.age(now))
                         )),
                 )
@@ -18622,6 +18656,9 @@ fn td_anchor_top_forced() -> bool {
 
 impl Render for Workspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // A new pass, so the attention projection is recomputed once for it and
+        // then shared by every surface that asks. See [`Workspace::rail_memo`].
+        self.rail_frame = self.rail_frame.wrapping_add(1);
         self.reap(window, cx);
         // Holdings past their window, let go of here because the render pass is
         // the only clock a workspace has — and because the tray that offers them
@@ -27600,7 +27637,7 @@ mod tests {
         ];
         assert!(pane::wants_human(&screen));
         assert_eq!(
-            pane::wants_human_row(&screen).map(pane::clip_evidence),
+            pane::wants_human_row(&screen).and_then(pane::clip_evidence),
             Some("Do you want to proceed?".to_string()),
             "the frame is furniture; the question is the evidence"
         );
@@ -27632,7 +27669,7 @@ mod tests {
         let wall: Vec<String> = vec!["  API Error: 429 rate_limit_error".into()];
         assert!(pane::looks_blocked(&wall));
         assert_eq!(
-            pane::blocked_row(&wall).map(pane::clip_evidence),
+            pane::blocked_row(&wall).and_then(pane::clip_evidence),
             Some("API Error: 429 rate_limit_error".to_string())
         );
         let clean: Vec<String> = vec!["  Done. 3 files changed.".into()];
@@ -27648,11 +27685,172 @@ mod tests {
     #[test]
     fn a_long_quote_is_clipped_and_says_that_it_was() {
         let long = "x".repeat(400);
-        let out = pane::clip_evidence(&long);
+        let out = pane::clip_evidence(&long).expect("a long row is quotable");
         assert!(out.chars().count() <= 96, "clipped to the row's width");
         assert!(out.ends_with('\u{2026}'), "and marked as clipped");
         // A short one is returned whole, with no ellipsis to misread.
-        assert_eq!(pane::clip_evidence("  two   spaces  "), "two spaces");
+        assert_eq!(
+            pane::clip_evidence("  two   spaces  ").as_deref(),
+            Some("two spaces")
+        );
+    }
+
+    /// A row of pure box-drawing tidies down to nothing, and nothing is `None`.
+    ///
+    /// An empty string here renders as an empty grey quote box: a row that
+    /// appears to quote its screen and quotes nothing at all. Today neither
+    /// predicate can hand one in — both demand real text before they match —
+    /// which is precisely why this is worth pinning: the predicates are the only
+    /// thing preventing it, and they are one edit from changing.
+    #[test]
+    fn a_row_of_pure_furniture_is_not_quotable() {
+        for furniture in [
+            "\u{256d}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{256e}",
+            "\u{2570}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{256f}",
+            "\u{2502}          \u{2502}",
+            "    ",
+            "",
+        ] {
+            assert_eq!(
+                pane::clip_evidence(furniture),
+                None,
+                "{furniture:?} has nothing to quote"
+            );
+        }
+    }
+
+    /// The property that keeps the above unreachable: a screen the predicates
+    /// DO match always has something to quote.
+    ///
+    /// This is the pair to the test above — one pins what happens at the
+    /// boundary, this pins that the boundary is not crossed in practice.
+    #[test]
+    fn every_screen_the_predicates_match_yields_a_quote() {
+        let prompts: Vec<Vec<String>> = vec![
+            vec!["\u{2502} Do you want to proceed?   \u{2502}".into()],
+            vec!["  enter to select \u{b7} esc to cancel".into()],
+            vec!["Do you trust the files in this folder?".into()],
+        ];
+        for screen in prompts {
+            assert!(pane::wants_human(&screen), "{screen:?} should match");
+            assert!(
+                pane::wants_human_row(&screen)
+                    .and_then(pane::clip_evidence)
+                    .is_some(),
+                "a matched prompt must leave something quotable: {screen:?}"
+            );
+        }
+        let walls: Vec<Vec<String>> = vec![
+            vec!["API Error: 429 rate_limit_error".into()],
+            vec!["  Your credit balance is too low".into()],
+        ];
+        for screen in walls {
+            assert!(pane::looks_blocked(&screen), "{screen:?} should match");
+            assert!(
+                pane::blocked_row(&screen)
+                    .and_then(pane::clip_evidence)
+                    .is_some(),
+                "a matched wall must leave something quotable: {screen:?}"
+            );
+        }
+    }
+
+    /// Every test and function the architecture guide cites still exists.
+    ///
+    /// `docs/attention-spine.md` lists each invariant beside the test that
+    /// enforces it, which is the half that makes the guide worth opening — a
+    /// rule whose enforcement you cannot find is a rule you will assume is not
+    /// enforced. So the citations have to be real, and a rename that silently
+    /// breaks one turns the map into a liar: the next person looks for the
+    /// landmark, does not find it, and concludes the invariant went away.
+    ///
+    /// Cheap enough to be worth it — the guide names seventeen things, and this
+    /// is the only thing standing between it and quiet rot.
+    #[test]
+    fn the_architecture_guide_cites_nothing_that_has_been_renamed() {
+        let doc = include_str!("../../docs/attention-spine.md");
+        let src = concat!(
+            include_str!("attention.rs"),
+            include_str!("pane.rs"),
+            include_str!("mcp.rs"),
+        );
+        let here = include_str!("main.rs");
+
+        // Backticked snake_case identifiers long enough to be a real name — the
+        // guide's other backticks are types, paths and env vars.
+        let mut cited: Vec<&str> = doc
+            .split('`')
+            .skip(1)
+            .step_by(2)
+            .filter(|s| {
+                s.len() > 12
+                    && s.starts_with(|c: char| c.is_ascii_lowercase())
+                    && s.chars()
+                        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+            })
+            .collect();
+        cited.sort_unstable();
+        cited.dedup();
+        assert!(cited.len() >= 12, "the guide should cite its enforcement");
+
+        let missing: Vec<&str> = cited
+            .into_iter()
+            .filter(|name| {
+                let needle = format!("fn {name}(");
+                !src.contains(&needle) && !here.contains(&needle)
+            })
+            .collect();
+        assert!(
+            missing.is_empty(),
+            "docs/attention-spine.md cites {} name(s) that no longer exist: {:?}\n\
+             Rename them in the guide, or restore them — a map to a landmark \
+             that is gone is worse than no map.",
+            missing.len(),
+            missing
+        );
+    }
+
+    /// The projection is built once per frame, however many surfaces ask.
+    ///
+    /// Read from the source because the property is about call counts across a
+    /// render pass, which no unit test can observe: `rail_rows` must consult the
+    /// memo and `render` must invalidate it, or the rail goes back to walking
+    /// every pane twice a frame plus twice per keystroke.
+    #[test]
+    fn the_projection_is_computed_once_per_frame() {
+        let src = include_str!("main.rs");
+
+        let at = src.find("fn rail_rows(").expect("rail_rows");
+        let body = &src[at..at + src[at..].find("\n    }\n").expect("end")];
+        assert!(
+            body.contains("memo.frame == self.rail_frame"),
+            "rail_rows must return the memo when it is from this frame"
+        );
+        assert!(
+            body.contains("self.rail_build(cx)"),
+            "and fall through to the real walk otherwise"
+        );
+
+        // Exactly one place walks the panes, and it is the memo. Counted over
+        // the PRODUCT half only: this test mentions the string twice itself,
+        // and a check that counts its own text is a check whose number means
+        // nothing — the same trap the queue's lifecycle test documents.
+        let product = &src[..src.find("\nmod tests {").expect("the test module")];
+        let direct = product.matches("self.rail_build(cx)").count();
+        assert_eq!(
+            direct, 1,
+            "rail_build has one caller — the memo. A second would be a surface \
+             paying full price for a projection it could have shared."
+        );
+
+        let r = src
+            .find("fn render(&mut self, window: &mut Window")
+            .expect("Workspace::render");
+        let head = &src[r..r + 400];
+        assert!(
+            head.contains("self.rail_frame = self.rail_frame.wrapping_add(1)"),
+            "render must open a new frame, or the memo never expires"
+        );
     }
 
     /// One list, indexed by the cursor, the number keys and the hit test alike.
