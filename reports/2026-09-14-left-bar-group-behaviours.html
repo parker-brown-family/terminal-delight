@@ -1,0 +1,1348 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Left Bar Manners</title>
+<style>
+/* decision-brief — surfaces, ink, and the three structural components.
+ *
+ * ONE palette. No theme system, no theme toggle. tps-report shipped four themes and
+ * 165 theme-related rules; nobody ever switched. A brief is read once, quickly, to make
+ * a decision — the reader is not shopping for a skin.
+ *
+ * Categorical colours are the validated dataviz default palette (dark steps), which
+ * clears the CVD, chroma, lightness and contrast gates on the adjacent pairlist.
+ * If you change them, re-run the validator; do not eyeball it.
+ *
+ * What is here: tokens, the modal shell, tables, callouts, code. Everything else —
+ * cards, escalation lists, stat tiles, charts — is the brief's own business.
+ * Build what the material needs.
+ */
+:root {
+  color-scheme: dark;
+
+  --surface-0: #111110;   /* page */
+  --surface-1: #1a1a19;   /* panel */
+  --surface-2: #232321;   /* raised */
+  --surface-3: #2e2e2b;   /* control */
+  --line:      #3a3a36;
+
+  --text-primary:   #ffffff;
+  --text-secondary: #c3c2b7;
+  --text-muted:     #8b8a80;
+
+  /* categorical — assign in fixed order, never cycle */
+  --s1: #3987e5;  --s2: #d95926;  --s3: #199e70;  --s4: #c98500;
+  --s5: #d55181;  --s6: #008300;  --s7: #9085e9;  --s8: #e66767;
+
+  /* status — reserved. Never reuse as "series 5". Always ship with a label. */
+  --good:     #0ca30c;
+  --warning:  #fab219;
+  --serious:  #ec835a;
+  --critical: #d03b3b;
+
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, "JetBrains Mono", Menlo, Consolas, monospace;
+  --sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif;
+}
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  margin: 0; background: var(--surface-0); color: var(--text-primary);
+  font-family: var(--sans); font-size: 15px; line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+.wrap { max-width: 1180px; margin: 0 auto; padding: 0 24px 120px; }
+header.top .wrap { padding-bottom: 0; }   /* the wrap's bottom padding is for the page, not the header */
+
+/* ---- headings ----
+   A heading names the thing. It does not explain it — an em-dash gloss after a
+   heading breaks the heading. The body does the explaining. */
+h1 { font-size: 34px; line-height: 1.18; margin: 0 0 16px; letter-spacing: -.02em; font-weight: 650; }
+h2.sec {
+  font-size: 13px; font-family: var(--mono); letter-spacing: .13em; text-transform: uppercase;
+  color: var(--text-muted); margin: 56px 0 18px; padding-bottom: 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+/* ---- modal shell: where depth lives ---- */
+dialog {
+  border: 1px solid var(--line); border-radius: 12px;
+  background: var(--surface-1); color: var(--text-primary);
+  max-width: 880px; width: calc(100vw - 44px); max-height: 86vh; padding: 0; overflow: hidden;
+}
+dialog::backdrop { background: rgba(0,0,0,.76); backdrop-filter: blur(3px); }
+.dlg-head {
+  position: sticky; top: 0; background: var(--surface-2);
+  border-bottom: 1px solid var(--line); padding: 20px 26px;
+  display: flex; justify-content: space-between; align-items: flex-start; gap: 20px; z-index: 2;
+}
+.dlg-head h3 { margin: 0 0 5px; font-size: 20px; letter-spacing: -.015em; }
+.dlg-head .repo { font-family: var(--mono); font-size: 11.5px; color: var(--text-muted); margin: 0; }
+.x {
+  background: var(--surface-3); border: 1px solid var(--line); color: var(--text-secondary);
+  border-radius: 6px; width: 30px; height: 30px; font-size: 17px; line-height: 1;
+  cursor: pointer; flex: none;
+}
+.x:hover { background: var(--critical); color: #fff; border-color: var(--critical); }
+.dlg-body { padding: 24px 26px 34px; overflow-y: auto; max-height: calc(86vh - 78px); }
+.dlg-body h4 {
+  font-family: var(--mono); font-size: 11.5px; letter-spacing: .12em; text-transform: uppercase;
+  color: var(--text-muted); margin: 30px 0 12px; padding-bottom: 8px;
+  border-bottom: 1px solid var(--line);
+}
+.dlg-body h4:first-child { margin-top: 0; }
+.dlg-body p  { margin: 0 0 13px; color: var(--text-secondary); font-size: 14.5px; }
+.dlg-body ul { margin: 0 0 15px; padding-left: 20px; color: var(--text-secondary); font-size: 14.5px; }
+.dlg-body li { margin-bottom: 8px; }
+.dlg-body strong { color: var(--text-primary); font-weight: 600; }
+
+/* ---- prose furniture ---- */
+code {
+  font-family: var(--mono); font-size: 12.5px; background: var(--surface-3);
+  padding: 1.5px 5px; border-radius: 4px; color: #e8d9a8; word-break: break-word;
+}
+pre {
+  background: var(--surface-0); border: 1px solid var(--line); border-radius: 7px;
+  padding: 15px 17px; overflow-x: auto; margin: 0 0 15px;
+}
+pre code { background: none; padding: 0; color: var(--text-secondary); font-size: 12.5px; line-height: 1.65; }
+
+table { width: 100%; border-collapse: collapse; margin: 0 0 17px; font-size: 13.5px; }
+th, td { text-align: left; padding: 9px 11px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th {
+  font-family: var(--mono); font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase;
+  color: var(--text-muted); font-weight: 500; background: var(--surface-2);
+}
+td { color: var(--text-secondary); }
+td b, td strong { color: var(--text-primary); }
+
+blockquote {
+  margin: 0 0 15px; padding: 12px 18px; border-left: 3px solid var(--s1);
+  background: var(--surface-2); border-radius: 0 7px 7px 0;
+  color: var(--text-secondary); font-size: 14px; font-style: italic;
+}
+
+.callout {
+  border-left: 3px solid var(--warning); background: rgba(250,178,25,.07);
+  padding: 14px 18px; border-radius: 0 7px 7px 0; margin: 0 0 17px;
+}
+.callout.crit { border-color: var(--critical); background: rgba(208,59,59,.08); }
+.callout.good { border-color: var(--good);     background: rgba(12,163,12,.08); }
+.callout p:last-child { margin-bottom: 0; }
+.callout .lbl {
+  font-family: var(--mono); font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase;
+  color: var(--text-muted); margin: 0 0 7px; display: block;
+}
+
+/* ---- confidence labels. Never assert without one. ---- */
+.tag {
+  display: inline-block; font-family: var(--mono); font-size: 10px; letter-spacing: .07em;
+  text-transform: uppercase; padding: 2.5px 7px; border-radius: 4px;
+  margin-right: 6px; font-weight: 600;
+}
+.tag.v { background: rgba(12,163,12,.18);  color: #6cd46c; border: 1px solid rgba(12,163,12,.4); }   /* measured */
+.tag.w { background: rgba(250,178,25,.14); color: #f5c95f; border: 1px solid rgba(250,178,25,.38); } /* inferred */
+.tag.c { background: rgba(208,59,59,.16);  color: #f08a8a; border: 1px solid rgba(208,59,59,.4); }   /* contradicted / hunch */
+
+footer {
+  margin-top: 70px; padding-top: 26px; border-top: 1px solid var(--line);
+  font-family: var(--mono); font-size: 11.5px; color: var(--text-muted);
+}
+footer p { margin: 0 0 7px; }
+
+@media (max-width: 640px) {
+  h1 { font-size: 26px; }
+  .wrap { padding: 0 16px 80px; }
+}
+/* decision-brief — reader notes, styling.
+   Depends on the surface/ink/status custom properties in base.css. */
+
+.notable { position: relative; }
+
+.note-btn {
+  position: absolute; top: 8px; right: 8px; z-index: 6;
+  width: 26px; height: 26px; line-height: 1; padding: 0;
+  background: var(--surface-3); border: 1px solid var(--line); border-radius: 6px;
+  color: var(--text-muted); font-size: 13px; cursor: pointer; opacity: 0;
+  transition: opacity .12s, background .12s, color .12s, border-color .12s;
+}
+/* Hidden until hover: a brief with 130 always-visible affordances reads as a form. */
+.notable:hover > .note-btn,
+.note-btn:focus-visible { opacity: 1; }
+.note-btn:hover { background: var(--warning); border-color: var(--warning); color: var(--surface-1); }
+
+.notable.has-note > .note-btn {
+  opacity: 1; background: var(--warning); border-color: var(--warning);
+  color: var(--surface-1); font-weight: 700;
+}
+.notable.has-note { box-shadow: inset 3px 0 0 var(--warning); }
+tr.notable.has-note > td:first-child { box-shadow: inset 3px 0 0 var(--warning); }
+
+/* Table rows can't host an absolutely-positioned child reliably — inline it. */
+tr.notable .note-btn {
+  position: static; opacity: .35; width: 22px; height: 22px; font-size: 11px;
+  margin-left: 6px; vertical-align: middle; display: inline-block;
+}
+tr.notable:hover .note-btn { opacity: 1; }
+
+/* ---- floating bar ---- */
+.notebar {
+  position: fixed; right: 18px; bottom: 18px; z-index: 900;
+  display: flex; gap: 8px; align-items: center;
+  background: var(--surface-2); border: 1px solid var(--line); border-radius: 10px;
+  padding: 9px 11px; box-shadow: 0 10px 32px rgba(0,0,0,.55);
+  font-family: var(--mono); font-size: 11.5px;
+}
+.notebar .cnt { color: var(--text-muted); padding-right: 4px; }
+.notebar .cnt b { color: var(--warning); font-size: 14px; }
+.notebar button {
+  font-family: var(--mono); font-size: 11px; letter-spacing: .03em; cursor: pointer;
+  background: var(--surface-3); border: 1px solid var(--line); color: var(--text-secondary);
+  border-radius: 6px; padding: 6px 10px;
+  transition: background .12s, color .12s, border-color .12s;
+}
+.notebar button:hover { background: var(--warning); color: var(--surface-1); border-color: var(--warning); }
+.notebar button.primary {
+  background: rgba(250,178,25,.14); border-color: rgba(250,178,25,.45); color: #f5c95f;
+}
+.notebar button:disabled {
+  opacity: .4; cursor: default; background: var(--surface-3);
+  color: var(--text-muted); border-color: var(--line);
+}
+@media (max-width: 640px) {
+  .notebar { right: 8px; bottom: 8px; flex-wrap: wrap; max-width: calc(100vw - 16px); }
+}
+
+/* ---- note dialog ---- */
+dialog#d-note { max-width: 620px; }
+#note-list { margin: 0 0 18px; padding: 0; list-style: none; }
+#note-list li {
+  background: var(--surface-2); border: 1px solid var(--line);
+  border-left: 3px solid var(--warning); border-radius: 0 7px 7px 0;
+  padding: 11px 14px; margin-bottom: 9px; font-size: 14px; color: var(--text-secondary);
+}
+#note-list .nts {
+  font-family: var(--mono); font-size: 10px; color: var(--text-muted);
+  display: flex; justify-content: space-between; gap: 10px; margin-bottom: 6px;
+}
+#note-list .ndel {
+  background: none; border: none; color: var(--text-muted);
+  cursor: pointer; font-size: 11px; padding: 0;
+}
+#note-list .ndel:hover { color: var(--critical); }
+#note-none { color: var(--text-muted); font-size: 13.5px; margin: 0 0 16px; }
+
+#note-text {
+  width: 100%; min-height: 104px; background: var(--surface-0);
+  border: 1px solid var(--line); border-radius: 7px; color: var(--text-primary);
+  padding: 11px 13px; font-family: var(--sans); font-size: 14.5px;
+  resize: vertical; line-height: 1.55;
+}
+#note-text:focus { outline: none; border-color: var(--warning); }
+
+.note-actions { display: flex; gap: 9px; align-items: center; margin-top: 11px; }
+.note-actions button {
+  font-family: var(--mono); font-size: 11.5px; cursor: pointer; border-radius: 6px;
+  padding: 8px 14px; border: 1px solid var(--line);
+  background: var(--surface-3); color: var(--text-secondary);
+}
+.note-actions button.save {
+  background: var(--warning); border-color: var(--warning);
+  color: var(--surface-1); font-weight: 600;
+}
+.note-actions .hintk {
+  font-family: var(--mono); font-size: 10.5px; color: var(--text-muted); margin-left: auto;
+}
+
+/* ---- export dialog ---- */
+dialog#d-export { max-width: 780px; }
+#export-out {
+  width: 100%; min-height: 320px; background: var(--surface-0);
+  border: 1px solid var(--line); border-radius: 7px; color: var(--text-secondary);
+  padding: 13px; font-family: var(--mono); font-size: 12px; line-height: 1.55;
+  resize: vertical; white-space: pre;
+}
+.tokest { font-family: var(--mono); font-size: 11px; color: var(--text-muted); margin: 9px 0 0; }
+/* page-specific: components base.css deliberately leaves to the brief */
+
+header.top {
+  border-bottom: 1px solid var(--line);
+  background: linear-gradient(180deg, var(--surface-1), var(--surface-0));
+  padding: 44px 0 34px;
+  margin-bottom: 8px;
+}
+.kicker {
+  font-family: var(--mono); font-size: 11px; letter-spacing: .14em;
+  text-transform: uppercase; color: var(--text-muted); margin: 0 0 14px;
+}
+.lede { font-size: 18px; line-height: 1.55; color: var(--text-secondary); margin: 0 0 18px; max-width: 74ch; }
+.lede b, .score b { color: var(--text-primary); }
+.score {
+  font-size: 14px; color: var(--text-muted); margin: 0; max-width: 74ch;
+  border-left: 3px solid var(--s4); padding: 10px 0 10px 16px; background: rgba(201,133,0,.06);
+  border-radius: 0 6px 6px 0;
+}
+
+/* ---- read-first ---- */
+.esc-list { list-style: none; counter-reset: none; margin: 0; padding: 0; }
+.esc-list li {
+  position: relative; background: var(--surface-1); border: 1px solid var(--line);
+  border-radius: 9px; padding: 16px 20px 14px 58px; margin: 0 0 11px;
+}
+.esc-n {
+  position: absolute; left: 18px; top: 16px;
+  font-family: var(--mono); font-size: 19px; font-weight: 700; color: var(--s1);
+  line-height: 1.1;
+}
+.esc-list h3 { margin: 0 0 8px; font-size: 16.5px; font-weight: 600; letter-spacing: -.01em; }
+.esc-list p { margin: 0 0 7px; font-size: 14px; color: var(--text-secondary); }
+.esc-list p:last-child { margin-bottom: 0; }
+.cost { color: var(--text-muted) !important; font-size: 13.5px !important; }
+
+/* ---- findings ---- */
+.finding {
+  background: var(--surface-1); border: 1px solid var(--line);
+  border-left: 3px solid var(--s3); border-radius: 0 9px 9px 0;
+  padding: 15px 20px; margin: 0 0 11px;
+}
+.finding h3 { margin: 0 0 7px; font-size: 15.5px; font-weight: 600; }
+.finding p { margin: 0; font-size: 14px; color: var(--text-secondary); }
+
+/* ---- option cards ---- */
+.cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px; margin: 0 0 20px; }
+.card {
+  background: var(--surface-1); border: 1px solid var(--line); border-radius: 10px;
+  padding: 18px 20px; display: flex; flex-direction: column;
+}
+.card.rec { border-color: var(--s3); box-shadow: 0 0 0 1px var(--s3) inset; }
+.card .badge {
+  color: var(--s3); font-family: var(--mono); font-size: 10.5px; letter-spacing: .09em;
+  text-transform: uppercase; display: block; margin-bottom: 8px; font-weight: 700;
+}
+.card h3 { margin: 0 0 10px; font-size: 16px; font-weight: 640; letter-spacing: -.01em; }
+.card p { margin: 0 0 11px; font-size: 13.8px; color: var(--text-secondary); line-height: 1.55; }
+.card p:last-child { margin-bottom: 0; }
+.card .why { color: var(--text-secondary); border-top: 1px solid var(--line); padding-top: 11px; }
+.card .cost { color: var(--text-muted) !important; font-size: 13.3px !important; }
+.card .cost b { color: var(--serious); }
+
+/* ---- the four menus ---- */
+.menus { display: grid; grid-template-columns: repeat(4, 1fr); gap: 13px; margin: 0 0 22px; }
+.menu { background: var(--surface-1); border: 1px solid var(--line); border-radius: 10px; padding: 14px 15px 12px; }
+.mtitle {
+  font-family: var(--mono); font-size: 10.5px; letter-spacing: .09em; text-transform: uppercase;
+  color: var(--text-muted); margin-bottom: 11px; padding-bottom: 8px; border-bottom: 1px solid var(--line);
+}
+.menu ul { list-style: none; margin: 0 0 11px; padding: 0; }
+.menu li {
+  font-size: 13px; color: var(--text-secondary); padding: 4px 8px; border-radius: 5px;
+  background: var(--surface-2); margin-bottom: 3px;
+}
+.menu li.rule { background: none; padding: 0; height: 1px; background: var(--line); margin: 6px 2px; }
+.menu li.dim { color: var(--text-muted); font-style: italic; }
+.menu li.danger { color: #f0a0a0; background: rgba(208,59,59,.13); border: 1px solid rgba(208,59,59,.3); }
+.mnote { font-size: 12.5px; color: var(--text-muted); margin: 0; line-height: 1.5; }
+
+/* ---- modal triggers ---- */
+button.more {
+  background: var(--surface-2); border: 1px solid var(--line); color: var(--text-secondary);
+  font-family: var(--sans); font-size: 13.5px; padding: 8px 15px; border-radius: 7px;
+  cursor: pointer; margin: 0 8px 8px 0;
+}
+button.more:hover { background: var(--surface-3); color: var(--text-primary); border-color: var(--s1); }
+
+/* ---- grill ---- */
+.grill { display: flex; flex-direction: column; gap: 12px; }
+.grill .ask {
+  background: var(--surface-1); border: 1px solid var(--line);
+  border-left: 3px solid var(--s7); border-radius: 0 9px 9px 0; padding: 16px 20px;
+}
+.grill .ask h3 { margin: 0 0 8px; font-size: 16px; font-weight: 620; }
+.grill .ask p { margin: 0 0 9px; font-size: 14px; color: var(--text-secondary); }
+.grill .ask p:last-child { margin-bottom: 0; }
+.grill .ask .rec { color: var(--text-primary); background: rgba(144,133,233,.09); padding: 10px 13px; border-radius: 6px; }
+.grill .ask .rec b { color: var(--s7); }
+
+/* ---- footer sketch ---- */
+pre code { white-space: pre; }
+
+/* Three cards never go two-up: the third orphans and the section stops reading as a
+   comparison. Four menus halve cleanly into 2x2. */
+@media (max-width: 1000px) {
+  .cards { grid-template-columns: 1fr; }
+  .menus { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 620px) {
+  .menus { grid-template-columns: 1fr; }
+  .lede { font-size: 16px; }
+}
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="wrap">
+    <p class="kicker">Terminal Delight &middot; left bar &middot; 2026-09-14</p>
+    <h1>Left Bar Manners</h1>
+    <p class="lede">All six things you flagged were in the code, and this page is now the record
+      of what was decided about them rather than a request for a decision. The one that mattered
+      &mdash; deleting a group and getting it back &mdash; leaned on a hold-and-recover store
+      that had been approved on 9 September and parked the next day. It is built.</p>
+    <p class="score"><b>Difficulty 6/10.</b> One destructive path carrying a recovery promise,
+      plus five changes that are a handful of lines each. Six buys one combined plan page and one
+      approval, which is this page. The left bar itself scored six and the score held.</p>
+  </div>
+</header>
+
+<div class="wrap">
+
+<h2 class="sec">Read first</h2>
+<ol class="esc-list">
+  <li>
+    <span class="esc-n">1</span>
+    <h3>The <code>+</code> steals your tab on purpose</h3>
+    <p><span class="tag v">measured</span> <code>main.rs:12826</code> reads
+      <code>let seed = Some(BarDragged::Task(ws.active))</code>, under a comment calling it
+      &ldquo;a project born holding the thing you were looking at&rdquo;. The new project is
+      created, then the tab you are working in is filed into it. The same line is in
+      <code>ffe15b4</code>, which is the commit your installed binary was built from, so this is
+      live for you as you read.</p>
+    <p class="cost">One line to change. It is the one you feel every single time &mdash; and it
+      is the one thing on this page I have already fixed, on
+      <code>bar/new-project-holds-a-fresh-terminal</code>.</p>
+  </li>
+  <li>
+    <span class="esc-n">2</span>
+    <h3>Nothing in the codebase deletes a project</h3>
+    <p><span class="tag v">measured</span> <code>self.projects</code> has zero
+      <code>retain</code> / <code>remove</code> / <code>swap_remove</code> / <code>drain</code> /
+      <code>clear</code> calls across all 24,346 lines of <code>main.rs</code>. Groups vanish on
+      their own when emptied (<code>prune_groups</code>); projects never do.</p>
+    <p class="cost">You are not missing a menu item. The verb was never written.</p>
+  </li>
+  <li>
+    <span class="esc-n">3</span>
+    <h3>The recovery window is a document, not code</h3>
+    <p><span class="tag v">measured</span> One pane held an hour, two or more held four, counted
+      in panes, capped at the ten most recent, reopened with ctrl+shift+z &mdash; approved
+      9 September. On 10 September the status file re-cut it: <i>&ldquo;Close keeps today's
+      immediate meaning until the held state and the reopen key land.&rdquo;</i> There is no
+      ctrl+shift+z binding and no held-tab store in the tree today.</p>
+    <p class="cost">So your time-window answer exists, and nothing honours it yet.</p>
+  </li>
+  <li>
+    <span class="esc-n">4</span>
+    <h3>Right-click is free to become the menu</h3>
+    <p><span class="tag v">measured</span> Double-click already starts a rename on branch rows
+      (<code>main.rs:11907</code>) and task rows (<code>main.rs:12173</code>). Right-click does
+      the same rename and nothing else. Handing right-click to a context menu costs you no
+      gesture you currently have.</p>
+    <p class="cost">And ctrl+click on a task row already opens a tray, so the menu machinery is
+      mostly built.</p>
+  </li>
+  <li>
+    <span class="esc-n">5</span>
+    <h3>The empty space at the foot of your bar is genuinely free</h3>
+    <p><span class="tag v">measured</span> <code>render_bar_slot</code> returns <code>None</code>
+      when there are no allowance rails and no tally &mdash; which is the state in your
+      screenshot. Nothing is competing for that strip.</p>
+    <p class="cost">The trash can has a home and no argument to win.</p>
+  </li>
+</ol>
+
+<h2 class="sec">The six, against the code</h2>
+
+<table class="wide">
+  <thead>
+    <tr><th style="width:30%">What you said</th><th style="width:44%">What is there</th><th style="width:26%">Where</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><b>Group level and tab level should behave differently</b></td>
+      <td>They behave identically. <code>branch_row</code> serves projects and groups from one
+        function, and its own doc comment says the two layers differ &ldquo;in nothing a person
+        does to them&rdquo;. Task rows differ only by also taking ctrl+click.</td>
+      <td><code>main.rs:11725</code></td>
+    </tr>
+    <tr>
+      <td><b>How do I delete a group?</b></td>
+      <td>You empty it. A group with no tabs is pruned automatically. A project cannot be
+        removed at all, by any path, including emptying it.</td>
+      <td><code>main.rs:6462</code></td>
+    </tr>
+    <tr>
+      <td><b>Reserved space at the bottom for a trash can</b></td>
+      <td>The footer already exists as a slot and is drawing nothing for you. The drag system
+        it would hook into is complete: rows register their boxes every frame, and drops
+        resolve through <code>tree::Drop</code>.</td>
+      <td><code>main.rs:12300</code>, <code>tree.rs:372</code></td>
+    </tr>
+    <tr>
+      <td><b>Deleting a group takes its tabs and panes &mdash; YES</b></td>
+      <td>Feasible, and cheaper than it looks. <code>close_tab</code> ends a shell by dropping
+        the last reference to its pane, not by asking &mdash; <code>hangup</code> returns
+        immediately without a host. A delete that parks the <code>Tab</code> instead of dropping
+        it is most of the recovery feature.</td>
+      <td><code>main.rs:9316</code>, <code>main.rs:4319</code></td>
+    </tr>
+    <tr>
+      <td><b>Right-click the header for a contextual tray</b></td>
+      <td>The header has no right-click handler. Its five buttons are all left-click: scope,
+        fold-all, adopt, new project, hide. There is also no way to make a <b>group</b> from the
+        bar at all &mdash; <code>new_group_from</code> only fires from a tab on the mother bar.</td>
+      <td><code>main.rs:12757</code></td>
+    </tr>
+    <tr>
+      <td><b>A new group drags my working tab in</b></td>
+      <td>Confirmed, and deliberate. Fixed on
+        <code>bar/new-project-holds-a-fresh-terminal</code>: the <code>+</code> now makes an
+        empty project and opens a terminal in it, and a source scan fails if the seeding
+        returns.</td>
+      <td><code>main.rs:12826</code></td>
+    </tr>
+  </tbody>
+</table>
+
+<p><button data-dlg="d-sites" class="more">Every code site, with the lines &rarr;</button></p>
+
+<h2 class="sec">Squaring the new-tab circle</h2>
+
+<p>Your two habits are the same verb pointed at different targets, and only the target was ever
+  ambiguous. <code>new_tab</code> already does the structurally right thing &mdash; it reads
+  <code>place_of(self.active)</code> and lands the tab at its branch's end, with a comment
+  explaining that a tab landing loose would open somewhere neither the strip nor the tree is
+  pointing. Nothing about that needs changing. What needs changing is that neither entry point
+  says where it is aiming.</p>
+
+<div class="finding">
+  <h3>The tree row aims at itself</h3>
+  <p>A <code>+</code> fades in on a project or group row under the cursor, and
+    <b>New tab here</b> leads that row's right-click menu. Target is the row you are pointing
+    at, whatever is active, with no selection step and no chord. This is the gesture you said
+    you expected, and it is the discoverable one.</p>
+</div>
+
+<div class="finding">
+  <h3>The header button says its target out loud</h3>
+  <p>Ctrl+shift+T and the strip's <code>+</code> keep meaning &ldquo;a tab in the branch I am
+    working in&rdquo;. The difference is that the button grows a caption &mdash;
+    <code>+ tab in UX</code> &mdash; so the answer is on screen before you press it rather than
+    after.</p>
+</div>
+
+<div class="finding">
+  <h3>Two identical <code>+</code> buttons currently mean two different nouns</h3>
+  <p><span class="tag w">inferred</span> This is probably the root of the confusion rather than
+    a separate complaint. The left bar's <code>+</code> makes a <b>project</b>; the mother bar's
+    <code>+</code> makes a <b>tab</b>. Same glyph, same size, a few hundred pixels apart, and
+    nothing on either says which. Relabelling the bar's to <code>+&#9646;</code> with a tooltip,
+    or folding it into the header tray below, separates them.</p>
+</div>
+
+<p>Both paths call one <code>new_tab</code>, both land at <code>branch_end</code>. The tree row
+  is for pointing; the chord is for muscle memory. Neither is &ldquo;the&rdquo; way.</p>
+
+<h2 class="sec">Three menus, one per level</h2>
+
+<p>Right-click takes over from rename, which survives on double-click. Counts are live, so the
+  destructive line always states what it is about to take.</p>
+
+<div class="menus">
+  <div class="menu">
+    <div class="mtitle">Header strip &mdash; right-click</div>
+    <ul>
+      <li>New project</li>
+      <li>New group</li>
+      <li>Adopt loose tabs into their directories</li>
+      <li class="rule"></li>
+      <li class="dim">Recover &ldquo;MARKETING&rdquo; &mdash; 3h 41m left</li>
+      <li class="dim">Recover &ldquo;11&rdquo; &mdash; 48m left</li>
+      <li class="rule"></li>
+      <li>Empty the trash</li>
+    </ul>
+    <p class="mnote">Only holdings still inside their window appear. Nothing stale, nothing
+      dead.</p>
+  </div>
+
+  <div class="menu">
+    <div class="mtitle">Project row &mdash; right-click</div>
+    <ul>
+      <li>New tab here</li>
+      <li>New group here</li>
+      <li class="rule"></li>
+      <li>Rename</li>
+      <li>Colour&hellip;</li>
+      <li>Fold everything beneath</li>
+      <li class="rule"></li>
+      <li class="danger">Delete &mdash; 3 groups, 11 tabs, 14 panes</li>
+    </ul>
+    <p class="mnote">A project takes tabs directly as well as through groups, the way a directory
+      takes files as well as subdirectories. That already works &mdash; nothing offers it.</p>
+  </div>
+
+  <div class="menu">
+    <div class="mtitle">Group row &mdash; right-click</div>
+    <ul>
+      <li>New tab here</li>
+      <li class="rule"></li>
+      <li>Rename</li>
+      <li>Colour&hellip;</li>
+      <li class="rule"></li>
+      <li class="danger">Delete &mdash; 4 tabs, 6 panes</li>
+    </ul>
+    <p class="mnote">Colour and fold already live on the mother bar's group menu
+      (<code>open_group_menu</code>); this points at the same machinery.</p>
+  </div>
+
+  <div class="menu">
+    <div class="mtitle">Tab row &mdash; right-click</div>
+    <ul>
+      <li>New tab beside this</li>
+      <li>Rename</li>
+      <li>Remove from group</li>
+      <li class="danger">Close &mdash; 2 panes</li>
+    </ul>
+    <p class="mnote">Four lines and no colour. A tab already takes a colour from its group and can
+      be given its own through the ctrl+click tray; a second door to the same wheel on the row
+      people click most is where option proliferation starts.</p>
+  </div>
+</div>
+
+<h2 class="sec">The footer, and what the trash can does</h2>
+
+<pre><code>┌─────────────────────────────┐
+│  ▼ ● JOB                    │
+│    │ APPLY                  │
+│    │ SKYTRAC                │
+│                             │   ← the tree, flex_1, still owns the slack
+├─────────────────────────────┤
+│  🗑  3                      │   ← reserved footer. Click for the tray.
+└─────────────────────────────┘   Drag a row onto it to delete.</code></pre>
+
+<p>The can shows a count of what it is holding and nothing else when empty. It lights as a drop
+  target the way branch rows already do, through the same per-frame bounds registry, so a new
+  <code>RowId::Trash</code> and a <code>Drop::Into</code> arm is the whole hook. Clicking it opens
+  the same recovery tray the header offers, which keeps one list in one place.</p>
+
+<div class="callout">
+  <span class="lbl">The thing that will bite</span>
+  <p>A drop target you can reach by accident, whose payload is running agents, sitting at the
+    bottom of a scrolling list. The mitigation that costs nothing: the can only accepts a drag
+    that has <b>engaged</b> (the bar's drag system already distinguishes armed from engaged), and
+    a delete that took more than one pane shows a four-second undo strip at the foot of the bar
+    before the tray is the only way back.</p>
+</div>
+
+<h2 class="sec">What a deleted group should mean</h2>
+
+<p>You said FULLY recover, which rules out re-creating terminals at the same paths and calling it
+  recovery. An agent mid-turn does not come back that way. These are the three shapes that
+  deliver, or fail to deliver, what you asked for.</p>
+
+<div class="cards">
+  <div class="card rec">
+    <span class="badge">chosen &middot; built</span>
+    <h3>A &middot; Hold in the window</h3>
+    <p>Delete moves the <code>Tab</code> values into a held list with a deadline instead of
+      dropping them. Recover puts the group back with its tabs, their order, their names and
+      their project.</p>
+    <p><span class="tag v">measured</span> <code>hangup</code> returns immediately when
+      <code>self.attach</code> is <code>None</code>, which is the window-owned mode you are
+      running today &mdash; so a close does not kill the shell by asking, it kills it by dropping
+      the last reference to the pane. Keeping the value <i>is</i> the mechanism here, and the
+      same change reads as &ldquo;skip <code>hangup</code>&rdquo; once the host owns the
+      pseudoterminals.</p>
+    <p class="why">The only one that delivers full recovery with the code as it stands, and it
+      reuses the numbers already approved: four hours for a group, one for a lone tab, ten
+      holdings at a cap.</p>
+    <p class="cost"><b>What it costs you:</b> a held group dies when the window does. Quitting
+      Terminal Delight ends every held shell, which is the opposite of what the approved spec
+      promises, so the tray has to say <i>&ldquo;while this window is open&rdquo;</i> and mean
+      it.</p>
+  </div>
+
+  <div class="card">
+    <h3>B &middot; Tombstone the layout</h3>
+    <p>Record the group's shape &mdash; tabs, names, working directories, order, which panes were
+      agents &mdash; kill the shells immediately, and respawn from that record on recover, with
+      <code>claude --resume</code> where it applies.</p>
+    <p class="why">Genuinely better at one thing: it is data in the layout file, so it survives a
+      relaunch and a crash, which A does not.</p>
+    <p class="cost"><b>What it costs you:</b> it re-creates rather than recovers. Scrollback gone,
+      a running turn gone, anything unsaved gone. It answers a smaller question than the one you
+      asked.</p>
+  </div>
+
+  <div class="card">
+    <h3>C &middot; Wait for the flip</h3>
+    <p>Build the menus and the trash now with delete disabled, and turn it on when the host owns
+      the pseudoterminals, at which point a held pane survives the window dying too.</p>
+    <p class="why">One build instead of two, and the promise on the tray is the true one from the
+      first day it appears.</p>
+    <p class="cost"><b>What it costs you:</b> &ldquo;how do I delete a group&rdquo; stays
+      unanswered until the flip lands, and slice 1 of that work is still open. You asked
+      today.</p>
+  </div>
+</div>
+
+<p><span class="tag w">inferred</span> A is not thrown away when the flip lands. The trash, the
+  tray, the menus, the deadline bookkeeping and the recover verb all carry over; what moves is
+  where the held panes live, from a field on the workspace to a question asked of the host. My
+  estimate is that the store is the part that gets rewritten and the surface is not, which puts
+  the duplicated work at roughly a fifth of it.
+  <b>Invalidation:</b> if the host's held-pane table turns out to key on pane ids that the
+  client cannot map back to a tab tree, the recover verb is rewritten too and this estimate is
+  wrong &mdash; that is answerable by reading <code>hostproto.rs</code> before any code moves,
+  and I will read it first.</p>
+
+<p><button data-dlg="d-recovery" class="more">How the window got parked, with dates &rarr;</button>
+   <button data-dlg="d-limits" class="more">What this brief did not check &rarr;</button></p>
+
+<h2 class="sec">Settled, and built</h2>
+
+<p>Answered on 2026-09-15 in twelve annotations on this page. Nothing here is waiting on
+  anybody. What follows is the record.</p>
+
+<table class="wide">
+  <thead><tr><th style="width:38%">Question</th><th>Answer</th></tr></thead>
+  <tbody>
+    <tr><td><b>Hold now, or wait for the host?</b></td>
+      <td><b>Hold now.</b> <i>&ldquo;If we can get A implemented SIMPLY, then let's go with it
+        100%.&rdquo;</i> It is simpler: B has to capture every tab's name, working directory,
+        pane tree and agent resume id, serialise it, and rebuild a split tree on the way back.
+        A is <i>don't drop the value</i>.</td></tr>
+    <tr><td><b>Cascade a project delete two levels?</b></td>
+      <td>Yes, with the full count on the menu line.</td></tr>
+    <tr><td><b>Header <code>+</code>: commit, or tray?</b></td>
+      <td>Both. Left-click commits, right-click opens the tray.</td></tr>
+    <tr><td><b>Ship the small ones first?</b></td>
+      <td>Yes &mdash; and in the event all of it landed together.</td></tr>
+    <tr><td><b>Confirmation?</b></td>
+      <td>On anything not empty, worded like the close-tab dialog. An empty branch goes without
+        a question.</td></tr>
+    <tr><td><b>The release rows, and the tab colour</b></td>
+      <td>Cut. <i>&ldquo;unclear and low utility&rdquo;</i>; <i>&ldquo;too much proliferation of
+        colours and options&rdquo;</i>. A source-scan test fails if any of the three comes
+        back.</td></tr>
+  </tbody>
+</table>
+
+<div class="callout good">
+  <span class="lbl">One thing that turned out already true</span>
+  <p>A project takes tabs directly as well as through groups &mdash; <code>tree::rows</code>
+    lists each project's initiatives <i>and then its loose tasks</i>, and dropping a tab on a
+    project row sets <code>project</code> and clears <code>group</code>. The tree has always
+    been <code>project &rarr; group &rarr; tab &rarr; pane</code> with tabs allowed at either
+    level, the way a directory takes files as well as subdirectories. Nothing offered it, which
+    is why it read as <code>group &rarr; tabs</code>. <b>New tab here</b> on a project row is
+    the offer.</p>
+</div>
+
+<h2 class="sec">What the next decision is, and what triggers it</h2>
+
+<p>A held branch dies when the window does. That is the one part of the approved close-undo
+  promise this cannot keep, and it needs the host to own the pseudoterminals rather than the
+  window. <b>Trigger:</b> the client-server flip landing &mdash; at which point the store moves
+  behind the host and the limit disappears without the surface changing. Until then the
+  confirmation is the first net and the four-hour window the second, which is a different shape
+  from the window being the only one.</p>
+
+<footer>
+  <p>terminal-delight &middot; read against <code>main</code> at <code>88d4029</code> in
+    <code>~/Work/td-cutover</code>, and against the installed
+    <code>td-ffe15b4-skin-tokens</code></p>
+  <p>Ticket: <code>left-bar-group-level-vs-task-level-behaviours&hellip;mu26dghv</code></p>
+  <p>Related and already open: the left bar's genesis issue, which holds the vision and left the
+    project-row question open (#319), and the one asking the close-undo product doc to say which
+    build it describes &mdash; the trap this brief walked into (#354). Nothing open covers
+    deleting a group.</p>
+</footer>
+
+</div>
+
+<dialog id="d-sites">
+  <div class="dlg-head">
+    <div><h3>Code sites</h3><p class="repo">app/src/main.rs &middot; app/src/tree.rs</p></div>
+    <button class="x" data-close>&times;</button>
+  </div>
+  <div class="dlg-body">
+    <h4>The seeding</h4>
+    <pre><code>// main.rs:12820  — the bar header's "+"
+cx.listener(|ws, _: &amp;MouseDownEvent, window, cx| {
+    cx.stop_propagation();
+    // seeded with the task you are in: a project born
+    // holding the thing you were looking at
+    let seed = Some(BarDragged::Task(ws.active));
+    let id = ws.new_project(seed, cx);
+    ws.start_bar_rename(BarBranch::Project(id), window, cx);
+}),</code></pre>
+    <p><code>new_project</code> then calls <code>file_task(i, BarBranch::Project(id))</code>,
+      which clears the tab's group and writes the new project onto it. The tab is moved, not
+      copied.</p>
+    <p>The fix is to pass <code>None</code> and open a fresh terminal into the new project. The
+      cleanest shape reuses <code>new_tab</code>'s own path so the pane is built the same way
+      every other new pane is, then files the resulting tab &mdash; rather than a second
+      pane-construction site that will drift.</p>
+
+    <h4>Where the two layers are the same</h4>
+    <pre><code>/// A PROJECT or INITIATIVE row. One function for both layers: they differ
+/// in their mark and their label's weight, and in nothing a person does to
+/// them.
+fn branch_row(&amp;self, branch: BarBranch, depth: u8, collapsed: bool, ...)</code></pre>
+    <p>That comment is the feature request. Splitting the menus is what makes it stop being
+      true, and <code>BarBranch</code> already discriminates the two everywhere else.</p>
+
+    <h4>Rename, on both buttons, twice</h4>
+    <ul>
+      <li><code>main.rs:11895</code> &mdash; branch row, right mouse down &rarr;
+        <code>start_bar_rename</code></li>
+      <li><code>main.rs:11907</code> &mdash; branch row, left with <code>click_count &gt;= 2</code>
+        &rarr; the same call</li>
+      <li><code>main.rs:12173</code> &mdash; task row, double-click &rarr;
+        <code>start_tab_rename</code></li>
+      <li><code>main.rs:12167</code> &mdash; task row, ctrl+click &rarr;
+        <code>open_tab_menu</code>, the tray that already exists</li>
+    </ul>
+
+    <h4>The drag machinery the trash plugs into</h4>
+    <p><code>bar_bounds</code> is cleared at the top of every <code>render_left_bar</code> and
+      refilled during paint, precisely so a stale box cannot file a task into a branch that has
+      moved. A footer target registers itself the same way. <code>tree::Drop</code> already
+      carries <code>Into</code> / <code>Before</code> / <code>After</code> against a
+      <code>RowId</code>; the can wants <code>Into</code> only.</p>
+
+    <h4>Close, today</h4>
+    <pre><code>// main.rs:9316
+self.hangup(&amp;leaves, cx);   // asks the HOST to close them
+...
+self.tabs.remove(i);         // drops the last reference
+
+// main.rs:4319
+fn hangup(&amp;self, leaves: &amp;[Entity&lt;TerminalView&gt;], cx: &amp;App) {
+    let Some(ctx) = &amp;self.attach else { return };   // ← window-owned: no-op
+    ...
+}</code></pre>
+    <p>Which means the two lines are not two halves of one kill. In hosted mode the first ends
+      the shell and the second tidies up; in window-owned mode the first does nothing and the
+      second is the kill. A held delete keeps the <code>Tab</code> rather than removing it, and
+      skips <code>hangup</code> &mdash; one change that reads correctly in both modes for two
+      different reasons.</p>
+  </div>
+</dialog>
+
+<dialog id="d-recovery">
+  <div class="dlg-head">
+    <div><h3>How the window got parked</h3><p class="repo">docs/plans/client-server/00-status.md</p></div>
+    <button class="x" data-close>&times;</button>
+  </div>
+  <div class="dlg-body">
+    <h4>9 September &mdash; the amendment</h4>
+    <p>A fresh-agent review found that a final close never reaches its save: the process quits
+      while the explicit-shrink flag and the save sit below an early return, so the host keeps
+      the pre-close layout and the next launch replans the closed leaf as a respawn.</p>
+    <p>Your reading of that was not that the save should move up, but that an immediate durable
+      delete was the wrong promise in the first place &mdash; someone who closes the last pane of
+      a tab may simply have missed. The commit that records it is titled
+      <i>&ldquo;Closing a pane now starts a clock instead of ending a process&rdquo;</i> and moves
+      no code.</p>
+    <p>What it pinned down, in its own words:</p>
+    <ul>
+      <li>One pane held for an hour, two or more held for four, <b>counted in panes rather than
+        in the verb that closed them</b> &mdash; which is why a group delete inherits four hours
+        without anyone deciding again.</li>
+      <li>Retention needs a cap as well as a timer, or ordinary churn holds a hundred process
+        groups. Ten most recent.</li>
+      <li>The live process and the layout entry are separate retentions that die at different
+        times, and reopening has to say which one you got.</li>
+      <li>Ctrl+shift+z, not ctrl+shift+t, because that chord is already this terminal's new-tab
+        binding and every other Linux terminal's.</li>
+      <li>Closing the app or the window expires nothing, <b>which was already the point of the
+        feature</b>.</li>
+    </ul>
+
+    <h4>10 September &mdash; the re-cut</h4>
+    <blockquote>That section of 01-product.md describes the iteration <i>after</i> the flip, not
+      the build that flips. Close keeps today's immediate meaning until the held state and the
+      reopen key land, which is how the meaning still ships exactly once &mdash; the reason the
+      amendment was ordered before the flip in the first place.</blockquote>
+    <p>Which is a good decision and the reason the promise is not in the binary. It also means
+      the last bullet above &mdash; surviving a window close &mdash; is the one thing option A
+      cannot buy you, because it needs the host to be the one holding the pseudoterminal.</p>
+
+    <h4>What is true in the binary right now</h4>
+    <ul>
+      <li><span class="tag v">measured</span> No <code>ctrl+shift+z</code> binding.</li>
+      <li><span class="tag v">measured</span> No held-tab or tombstone store. The thirteen
+        matches for &ldquo;held&rdquo; and &ldquo;tombstone&rdquo; in <code>main.rs</code> are
+        prose, a geometry variable, and the graveyard that scans <i>disk</i> for dead agent
+        sessions &mdash; a different feature that recovers a conversation, not a process.</li>
+      <li><span class="tag v">measured</span> The confirm dialog says, in as many words,
+        <i>&ldquo;This can't be undone.&rdquo;</i> It is telling the truth.</li>
+    </ul>
+  </div>
+</dialog>
+
+<dialog id="d-limits">
+  <div class="dlg-head">
+    <div><h3>Limits</h3><p class="repo">what this reading did not establish</p></div>
+    <button class="x" data-close>&times;</button>
+  </div>
+  <div class="dlg-body">
+    <h4>Nobody has pressed the button</h4>
+    <p>The diagnosis is read off the source, and the seeding line is confirmed in
+      <code>ffe15b4</code> itself &mdash; the commit your installed binary was built from &mdash;
+      rather than inferred from a symbol in the binary.</p>
+    <p>The fix on <code>bar/new-project-holds-a-fresh-terminal</code> compiles, and the suite is
+      green: 791 unit tests, 4 dispatch, 8 host-socket, none failing, two ignored as before.
+      <code>cargo fmt --check</code> and <code>cargo clippy -- -D warnings</code> both pass,
+      which is all three CI gates.</p>
+    <p>The two new guards were mutation-tested rather than trusted, since a source scan that
+      matches nothing passes exactly as loudly as one that matches. Putting the seeding back
+      turns the new test red; deleting the <code>new_tab_in</code> call turns it red on a
+      different assertion; stopping <code>new_tab</code> delegating turns the hosted-window scan
+      red. Unmutated, it is green. Four for four.</p>
+    <p>None of that is the same as watching a tab stay put. The listener needs a live gpui
+      window, so no test in this repository can exercise it &mdash; which is exactly why the
+      file already carries source-scan tests for this class of thing, and why I added two rather
+      than one. I have not launched a window, because launching one takes your screen and that is
+      not mine to take. One command, whenever you want it:</p>
+    <pre><code>cd ~/Work/td-bar-manners/app &amp;&amp; cargo run</code></pre>
+    <p>Press the <code>+</code> in the bar header. The tab you were in should still be where you
+      left it, and the new project should hold one fresh terminal with its name box open and
+      taking keystrokes.</p>
+
+    <h4>The tree I read</h4>
+    <p><code>~/Work/td-cutover</code> on <code>main</code> at <code>88d4029</code>, which is
+      where <code>left-bar-hardened</code> and <code>feat/left-bar-usage-slot</code> are merged.
+      Your primary <code>~/Work/terminal-delight</code> checkout is on
+      <code>shorts-pipeline</code>, 153 commits behind <code>main</code> and 3 ahead, with four
+      modified files and an untracked <code>fav.rs</code> &mdash; the left bar does not exist in
+      that tree at all, which is why my first three searches for it found nothing.</p>
+
+    <h4>Not established</h4>
+    <ul>
+      <li><span class="tag w">not established</span> <b>The one to settle before building A.</b>
+        Nothing in Terminal Delight's own code kills a shell on drop &mdash; there is no
+        <code>Drop</code> on the pane, and <code>hangup</code> is a no-op in window-owned mode
+        &mdash; so the shell ends somewhere inside alacritty's teardown when the last reference
+        goes. Holding the value should therefore be sufficient, and &ldquo;should&rdquo; is doing
+        work in that sentence. It is one experiment: hold a tab, note the child's pid, come back
+        in a minute.</li>
+      <li><span class="tag w">not established</span> Whether a held pane keeps reading. It has a
+        reasonable prior &mdash; you run seventeen tabs and every background one keeps its reader
+        alive, so a held group costs what a group you are not looking at already costs &mdash;
+        but ten held groups quietly burning CPU is the failure mode nobody notices, and a prior
+        is not a measurement.</li>
+      <li><span class="tag w">not established</span> Whether the layout save copes with tabs that
+        exist but are not in the tree. <code>save</code> walks <code>self.tabs</code>; a held
+        list beside it is invisible to the file, which is probably correct and is not checked.</li>
+      <li><span class="tag w">not established</span> How the strip's scope behaves while its
+        scoped group is in the trash. Deleting the group you are scoped to should back out to
+        <code>All</code>, and nothing in <code>set_scope</code> handles a branch disappearing
+        under it today because no branch has ever disappeared.</li>
+      <li><span class="tag w">not established</span> What the second window on the same session
+        sees. The tree rides in the layout file the host stores, so a held group in one window is
+        absent from the tree the other draws &mdash; which may read as a tab vanishing from a
+        window that never deleted anything.</li>
+    </ul>
+
+    <h4>One thing I would check before writing a line</h4>
+    <p><code>hostproto.rs</code>, for whether the eventual host-side held-pane table can be keyed
+      back to a tab tree. That answer decides whether option A's recover verb survives the flip
+      or is rewritten, and it is the estimate on this page I trust least.</p>
+  </div>
+</dialog>
+
+<div class="notebar" id="notebar">
+  <span class="cnt"><b id="note-count">0</b> notes</span>
+  <button id="btn-export" class="primary" data-note-action="export"
+          title="Anchored note map for pasting into a prompt">&#x1F4CB; copy map</button>
+  <button id="btn-embed" data-note-action="embed"
+          title="Download this file with your notes baked in">&#x1F4BE; save into file</button>
+  <button id="btn-clear" data-note-action="clear" title="Delete every note">&#x2715;</button>
+</div>
+
+<dialog id="d-note">
+  <div class="dlg-head">
+    <div>
+      <h3 id="note-title">Note</h3>
+      <p class="repo" id="note-anchor">&nbsp;</p>
+    </div>
+    <button class="x" data-close>&times;</button>
+  </div>
+  <div class="dlg-body">
+    <ul id="note-list"></ul>
+    <p id="note-none">No notes on this yet.</p>
+    <textarea id="note-text"
+      placeholder="Your note. Saved against this element and readable by an agent once you save into the file."></textarea>
+    <div class="note-actions">
+      <button class="save" data-note-action="add">Add note</button>
+      <button data-close>Close</button>
+      <span class="hintk">Ctrl+Enter to add</span>
+    </div>
+  </div>
+</dialog>
+
+<dialog id="d-export">
+  <div class="dlg-head">
+    <div>
+      <h3>Note map</h3>
+      <p class="repo">Anchored to element ids in this file &middot; paste straight into a prompt</p>
+    </div>
+    <button class="x" data-close>&times;</button>
+  </div>
+  <div class="dlg-body">
+    <p style="margin-bottom:12px">
+      Each line is anchored to an element id, so an agent can locate the passage without you
+      pasting the file. Prompt shape: <em>"read my notes in <code>2026-09-14-left-bar-group-behaviours.html</code> and act
+      on them."</em>
+    </p>
+    <textarea id="export-out" readonly></textarea>
+    <p class="tokest" id="export-est"></p>
+    <div class="note-actions">
+      <button class="save" data-note-action="copy">Copy to clipboard</button>
+      <button data-close>Close</button>
+    </div>
+  </div>
+</dialog>
+
+<script type="application/json" id="report-notes">{}</script>
+
+<script>
+  window.NOTES_FILE = '2026-09-14-left-bar-group-behaviours.html';
+  /* The skill's default list plus THIS brief's own components. The menu cards
+     were the whole point of the page and shipped uncommentable, because the
+     verification pass enumerated the default selectors instead of what the
+     document actually contained. If you add a component, add it here in the
+     same edit. */
+  window.NOTES_TARGETS = [
+    ['.grill .q, .grill-q, .ask', 'ask'],
+    ['.menu', 'menu'],
+    ['.card', 'verdict'],
+    ['.esc-list li', 'readfirst'],
+    ['.finding', 'finding'],
+    ['.tile', 'stat'],
+    ['table.wide tr', 'row'],
+    ['.bar-row', 'chart'],
+    ['.callout', 'callout'],
+    ['dialog .dlg-body > h4', 'sub']
+  ];
+</script>
+<script>
+/* decision-brief — reader notes.
+ *
+ * Drop-in. No build step, no dependencies. Paste this file's contents inline inside a
+ * script element, after the document body — a decision brief must survive being emailed
+ * as one file, so never load it with a src attribute.
+ *
+ * NOTHING IN THIS FILE MAY CONTAIN THE LITERAL CLOSING SCRIPT TAG, not even inside a
+ * comment or a string: an HTML parser ends the script element at the first one it sees,
+ * and everything after it silently becomes page content. Write it broken up, e.g.
+ * "<\/script>", if you ever need to emit one.
+ *
+ * Three outputs, in the order they matter:
+ *   1. copy map    — anchored note map, ~1% of the tokens of the whole document
+ *   2. save into   — bakes notes into a downloadable copy so an agent can READ them
+ *   3. localStorage — live persistence between reloads
+ *
+ * Why the map exists: pasting a whole annotated report into a prompt costs thousands of
+ * tokens; pasting bare notes loses which passage each one is about. The map is the third
+ * option — [element-id] + note, so the agent greps the id and finds the passage itself.
+ *
+ * Configure before this script runs (all optional):
+ *   window.NOTES_FILE    — filename used for the storage key and the download. Default: location basename.
+ *   window.NOTES_TARGETS — [[selector, prefix], ...] overriding what gets an affordance.
+ */
+(function () {
+  'use strict';
+
+  var FILE = window.NOTES_FILE ||
+    (location.pathname.split('/').pop() || 'decision-brief.html');
+  var KEY = 'notes:' + FILE;
+
+  /* Default targets. A prefix keeps exported anchors readable and grouped.
+     Override wholesale with window.NOTES_TARGETS if a brief's shape differs.
+
+     THE GRILL COMES FIRST, AND IT IS NOT OPTIONAL. Until 2026-09-02 this list
+     covered five of the seven components layout.md tells you to build and
+     omitted the grill — so the one section whose entire purpose is a decision
+     the reader has to make was the one section the reader could not comment on.
+     Two briefs shipped that way, each having invented its own class name
+     (`grill-q`, then `q`) because nothing here named one. Both spellings are
+     matched below; `.ask` is the name to use going forward. If you add a
+     component, add it here in the same commit. */
+  var TARGETS = window.NOTES_TARGETS || [
+    ['.grill .q, .grill-q, .ask', 'ask'],
+    ['.card', 'verdict'],
+    ['.esc-list li', 'readfirst'],
+    ['.finding', 'finding'],
+    ['.tile', 'stat'],
+    ['table.wide tr', 'row'],
+    ['.bar-row', 'chart'],
+    ['.callout', 'callout'],
+    ['dialog .dlg-body > h4', 'sub']
+  ];
+
+  /* Notes baked into the file win on first load — a fresh browser should see what the
+     author saved. After that localStorage is the live copy. */
+  var baked = {};
+  try {
+    var island = document.getElementById('report-notes');
+    if (island) baked = JSON.parse(island.textContent || '{}');
+  } catch (e) { /* a malformed island must not break the page */ }
+
+  var N;
+  try { N = JSON.parse(localStorage.getItem(KEY) || 'null') || baked; }
+  catch (e) { N = baked; }
+
+  var active = null, activeTitle = '';
+
+  function save() {
+    try { localStorage.setItem(KEY, JSON.stringify(N)); } catch (e) {}
+  }
+  function esc(s) {
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+  function slug(s) {
+    return String(s || 'x').toLowerCase().replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-|-$/g, '').slice(0, 44) || 'x';
+  }
+  function titleOf(el) {
+    var h = el.querySelector('h2,h3,h4,.bar-lab,.k,.lbl,td:first-child,th:first-child');
+    var t = ((h ? h.textContent : el.textContent) || 'item').replace(/\s+/g, ' ').trim();
+    return t.length > 72 ? t.slice(0, 69) + '…' : t;
+  }
+
+  /* ---- give every target a stable anchor id and a note affordance ---- */
+  function tag() {
+    var used = {};
+    TARGETS.forEach(function (pair) {
+      var sel = pair[0], pre = pair[1];
+      Array.prototype.forEach.call(document.querySelectorAll(sel), function (el, i) {
+        if (el.classList.contains('notable')) return;
+        if (el.tagName === 'TR' && el.querySelector('th')) return;   // header rows
+        if (el.closest('#d-note, #d-export, .notebar')) return;
+
+        /* Numbered lists anchor by position; everything else by a SHORT title slug.
+           Long slugs make the exported map unreadable, which defeats the map. */
+        var id;
+        var num = el.querySelector('.esc-n');
+        if (num) id = pre + '-' + num.textContent.trim();
+        else id = pre + '-' + slug(titleOf(el)).split('-').slice(0, 4).join('-');
+
+        var base = id, n = 2;
+        while (used[id]) id = base + '-' + (n++);
+        used[id] = 1;
+
+        el.classList.add('notable');
+        el.dataset.nid = id;
+        el.dataset.ntitle = titleOf(el);
+        if (!el.id) el.id = id;                      // a real anchor in the file
+
+        var b = document.createElement('button');
+        b.className = 'note-btn';
+        b.type = 'button';
+        b.title = 'Add a note';
+        b.innerHTML = '&#x1F4AC;';
+        b.addEventListener('click', function (ev) {
+          ev.preventDefault(); ev.stopPropagation(); open(el);
+        });
+        el.appendChild(b);
+      });
+    });
+  }
+
+  function badges() {
+    var total = 0;
+    Array.prototype.forEach.call(document.querySelectorAll('.notable'), function (el) {
+      var n = (N[el.dataset.nid] || []).length;
+      total += n;
+      el.classList.toggle('has-note', n > 0);
+      var b = el.querySelector(':scope > .note-btn');
+      if (b) b.innerHTML = n ? String(n) : '&#x1F4AC;';
+    });
+    var c = document.getElementById('note-count');
+    if (c) c.textContent = total;
+    ['btn-export', 'btn-embed', 'btn-clear'].forEach(function (id) {
+      var b = document.getElementById(id);
+      if (b) b.disabled = total === 0;
+    });
+  }
+
+  function render() {
+    var list = N[active] || [];
+    var ul = document.getElementById('note-list');
+    document.getElementById('note-none').style.display = list.length ? 'none' : 'block';
+    ul.innerHTML = list.map(function (n, i) {
+      return '<li><div class="nts"><span>' + esc(n.ts) + '</span>' +
+        '<button class="ndel" data-i="' + i + '">delete</button></div>' + esc(n.text) + '</li>';
+    }).join('');
+    Array.prototype.forEach.call(ul.querySelectorAll('.ndel'), function (b) {
+      b.addEventListener('click', function () { del(+b.dataset.i); });
+    });
+  }
+
+  function open(el) {
+    active = el.dataset.nid;
+    activeTitle = el.dataset.ntitle;
+    document.getElementById('note-title').textContent = activeTitle;
+    document.getElementById('note-anchor').textContent = '#' + active;
+    render();
+    document.getElementById('d-note').showModal();
+    document.getElementById('note-text').focus();
+  }
+
+  function add() {
+    var ta = document.getElementById('note-text');
+    var t = ta.value.trim();
+    if (!t || !active) return;
+    (N[active] = N[active] || []).push({
+      text: t,
+      title: activeTitle,
+      ts: new Date().toISOString().slice(0, 16).replace('T', ' ')
+    });
+    ta.value = '';
+    save(); render(); badges();
+  }
+
+  function del(i) {
+    N[active].splice(i, 1);
+    if (!N[active].length) delete N[active];
+    save(); render(); badges();
+  }
+
+  /* ---- the map: anchored, compact, prompt-ready ---- */
+  function buildMap() {
+    var count = 0, els = 0;
+    for (var k in N) { if (N.hasOwnProperty(k)) { els++; count += N[k].length; } }
+    var out = [
+      'NOTES — ' + FILE,
+      count + ' notes on ' + els + ' elements.',
+      'Each [anchor] is an element id in that file — search it to find the passage.',
+      ''
+    ];
+    /* Document order, not object order: the map should read the way the brief reads. */
+    Array.prototype.forEach.call(document.querySelectorAll('.notable'), function (el) {
+      var list = N[el.dataset.nid];
+      if (!list || !list.length) return;
+      out.push('[' + el.dataset.nid + '] ' + el.dataset.ntitle);
+      list.forEach(function (n) { out.push('  · ' + n.text.replace(/\n+/g, ' ')); });
+      out.push('');
+    });
+    return out.join('\n');
+  }
+
+  function exportNotes() {
+    var txt = buildMap();
+    document.getElementById('export-out').value = txt;
+    var est = document.getElementById('export-est');
+    if (est) {
+      est.textContent = txt.length + ' characters ≈ ' + Math.ceil(txt.length / 4) +
+        ' tokens — versus ~' + Math.ceil(document.body.innerText.length / 4) +
+        ' for the whole document.';
+    }
+    document.getElementById('d-export').showModal();
+  }
+
+  function copyExport(btn) {
+    var ta = document.getElementById('export-out');
+    ta.select();
+    try { document.execCommand('copy'); } catch (e) {}
+    if (btn) {
+      var o = btn.textContent;
+      btn.textContent = 'Copied';
+      setTimeout(function () { btn.textContent = o; }, 1400);
+    }
+  }
+
+  /* ---- bake notes into a downloadable copy of this file ----
+     localStorage is invisible to an agent. This is what makes
+     "read my notes in <file>" work. */
+  function embedNotes() {
+    var doc = document.documentElement.cloneNode(true);
+    Array.prototype.forEach.call(doc.querySelectorAll('.note-btn'), function (n) { n.remove(); });
+    Array.prototype.forEach.call(doc.querySelectorAll('.notable'), function (n) {
+      n.classList.remove('notable', 'has-note');
+    });
+    var island = doc.querySelector('#report-notes');
+    if (island) island.textContent = JSON.stringify(N, null, 1);
+    /* A plain-text mirror as well, so grep and ctx_read find the notes
+       without anyone having to parse JSON out of a script tag. */
+    var body = doc.querySelector('body');
+    if (body) body.appendChild(document.createComment('\nREADER NOTES —\n' + buildMap() + '\n'));
+
+    var blob = new Blob(['<!DOCTYPE html>\n' + doc.outerHTML], { type: 'text/html' });
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = FILE;
+    a.click();
+    setTimeout(function () { URL.revokeObjectURL(a.href); }, 4000);
+
+    var b = document.getElementById('btn-embed');
+    if (b) { var o = b.innerHTML; b.innerHTML = 'saved &#x2713;'; setTimeout(function () { b.innerHTML = o; }, 2200); }
+  }
+
+  function clearNotes() {
+    if (!confirm('Delete every note in this brief?')) return;
+    N = {}; save(); badges();
+  }
+
+  /* ---- wiring ---- */
+  function init() {
+    var ta = document.getElementById('note-text');
+    if (ta) {
+      ta.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); add(); }
+      });
+    }
+    document.addEventListener('click', function (e) {
+      var t = e.target.closest('[data-note-action]');
+      if (!t) return;
+      var a = t.dataset.noteAction;
+      if (a === 'add') add();
+      else if (a === 'export') exportNotes();
+      else if (a === 'embed') embedNotes();
+      else if (a === 'clear') clearNotes();
+      else if (a === 'copy') copyExport(t);
+    });
+    ['d-note', 'd-export'].forEach(function (id) {
+      var d = document.getElementById(id);
+      if (!d) return;
+      Array.prototype.forEach.call(d.querySelectorAll('[data-close]'), function (x) {
+        x.addEventListener('click', function () { d.close(); });
+      });
+      d.addEventListener('click', function (e) { if (e.target === d) d.close(); });
+    });
+    tag();
+    badges();
+  }
+
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
+  else init();
+})();
+</script>
+
+<script>
+/* modal wiring: [data-dlg] opens, [data-close] closes */
+document.addEventListener('click', function (e) {
+  var open = e.target.closest('[data-dlg]');
+  if (open) {
+    var d = document.getElementById(open.dataset.dlg);
+    if (d) d.showModal();
+    return;
+  }
+  var close = e.target.closest('[data-close]');
+  if (close) {
+    var dlg = close.closest('dialog');
+    if (dlg && dlg.id !== 'd-note' && dlg.id !== 'd-export') dlg.close();
+  }
+});
+/* backdrop click closes the page's own dialogs, as notes.js does for its two */
+Array.prototype.forEach.call(document.querySelectorAll('dialog'), function (d) {
+  if (d.id === 'd-note' || d.id === 'd-export') return;
+  d.addEventListener('click', function (e) { if (e.target === d) d.close(); });
+});
+</script>
+</body>
+</html>
