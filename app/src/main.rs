@@ -190,7 +190,16 @@ enum RailAction {
 /// — but it has to say WHY, in the row, where the next person will read it.
 #[cfg(test)]
 const OVERLAYS_OVER_PANES: [(&str, Warped); 4] = [
-    ("render_rail", Warped::Tube("register_overlay_tube")),
+    (
+        "render_rail",
+        Warped::FlatByDesign(
+            "a menu, not a decal: it floats above the glass like the menu-bar \
+             scale popup, with a border, an opaque fill and a shadow saying so. \
+             Registered as a tube once and the rows sheared into parallelograms \
+             — a tall stack of thin rows shows every bit of a barrel map that a \
+             compact panel hides. Hit-tested flat, to match.",
+        ),
+    ),
     ("mcp_menu panel", Warped::Tube("register_focus_tube")),
     ("pane ghost", Warped::Tube("register_overlay_tube")),
     (
@@ -15269,27 +15278,28 @@ impl Workspace {
     }
 
     /// Which part of the queue a click landed on, once the curve is undone.
-    fn rail_hit_at(&self, pos: Point<Pixels>, cx: &App) -> Option<RailAction> {
+    fn rail_hit_at(&self, pos: Point<Pixels>) -> Option<RailAction> {
         let bounds = (*self.rail_bounds.lock().unwrap())?;
         let hits = self.rail_hits.lock().unwrap();
         if hits.is_empty() {
             return None;
         }
-        let th = theme::theme(cx);
-        let (k1, k2) = theme::warp_coeffs(th.warp);
 
+        // **Flat, and that is not an oversight.** This undid the shader's map
+        // for a while, which was right while the queue registered a warp tube.
+        // It does not any more — it is a menu that floats above the glass — so
+        // the pixels are where they are drawn and un-bending the pointer would
+        // put the click somewhere the row is not. The hit test and the warp
+        // decision have to agree; `every_overlay_over_panes_decides_about_the_warp`
+        // is what keeps them agreeing.
         let (bx, by) = (f32::from(bounds.origin.x), f32::from(bounds.origin.y));
         let bw = f32::from(bounds.size.width).max(1.0);
         let bh = f32::from(bounds.size.height).max(1.0);
         let (u, v) = ((f32::from(pos.x) - bx) / bw, (f32::from(pos.y) - by) / bh);
-        // The pointer sees bent glass; everything below is measured flat, so the
-        // shader's map is undone first. With no curvature this is the identity
-        // and the arithmetic disappears.
-        let (lu, lv) = pane::warp_screen_to_content(u, v, k1, k2);
-        if !(0.0..=1.0).contains(&lu) || !(0.0..=1.0).contains(&lv) {
+        if !(0.0..=1.0).contains(&u) || !(0.0..=1.0).contains(&v) {
             return None;
         }
-        let (x, y) = (bx + lu * bw, by + lv * bh);
+        let (x, y) = (bx + u * bw, by + v * bh);
 
         for hit in hits.iter() {
             if y < hit.top || y > hit.bottom {
@@ -15486,16 +15496,25 @@ impl Workspace {
         let (items, _panes) = self.rail_rows(cx);
         let now = Instant::now();
         let th = theme::theme(cx);
-        let (rail_k1, rail_k2) = theme::warp_coeffs(th.warp);
-        let rail_glare = th.screen_glare;
         let rail_bounds = self.rail_bounds.clone();
 
+        // The menu recipe, copied from the menu-bar scale popup rather than
+        // invented: a real border, an opaque darkened fill, a float shadow and a
+        // radius. This is what earns a flat surface its place above bent glass —
+        // without it the panel reads as a decal, which is the observation that
+        // sent this surface to a warp tube in the first place. The fix was the
+        // chrome, not the curve.
         let mut list = div()
             .flex()
             .flex_col()
             .gap(px(4. * s))
             .p(px(7. * s))
-            .w(px(316. * s));
+            .w(px(316. * s))
+            .rounded(sk.rad_raw(8.))
+            .border_2()
+            .border_color(th.accent.alpha(0.85))
+            .bg(darken(th.surface, 0.45))
+            .shadow(float_shadows(th.accent));
 
         list = list.child(
             div()
@@ -15690,7 +15709,7 @@ impl Workspace {
                             MouseButton::Left,
                             cx.listener(|ws, ev: &MouseDownEvent, _w, cx| {
                                 cx.stop_propagation();
-                                match ws.rail_hit_at(ev.position, cx) {
+                                match ws.rail_hit_at(ev.position) {
                                     Some(RailAction::Open(i)) => {
                                         let (items, _) = ws.rail_rows(cx);
                                         if let Some(d) =
@@ -15713,32 +15732,34 @@ impl Workspace {
                                 cx.notify();
                             }),
                         )
-                        // The queue lies on the same bent glass as the panes it
-                        // covers, so it is registered as a tube and the post-pass
-                        // bends it identically. Drawn flat, it reads as a sticker
-                        // on a curved screen — which is exactly what it looked
-                        // like the first time it was put in front of anyone.
+                        // **The queue is a MENU, and menus float flat above the
+                        // glass.** This registered a warp tube once, on the
+                        // reasoning that a surface lying on bent glass should
+                        // bend with it. Put in front of Parker it was worse, not
+                        // better: the rows sheared into parallelograms and the
+                        // stack fanned out like a venetian blind, because a tall
+                        // list of thin rectangles shows every bit of a barrel map
+                        // that a single compact panel hides.
+                        //
+                        // The precedent is the menu-bar scale popup and every
+                        // other menu in this file — `.absolute()`, a real border,
+                        // an opaque darkened fill, a float shadow, no tube. Flat
+                        // only reads as "a sticker stuck on" when the chrome does
+                        // not say *floating*; give it the border and the shadow
+                        // and the eye reads it as a panel held above the screen,
+                        // which is what it is.
+                        //
+                        // The canvas stays, because the click path still needs the
+                        // painted rect — it just records it now instead of
+                        // registering it.
                         .child(
                             div().absolute().inset_0().child(
                                 gpui::canvas(
-                                    move |bounds, window, _cx| {
-                                        let sf = window.scale_factor();
+                                    move |bounds, _window, _cx| {
                                         // The same rect the click normalises into.
                                         if let Ok(mut b) = rail_bounds.lock() {
                                             *b = Some(bounds);
                                         }
-                                        crate::warp::register_overlay_tube(
-                                            [
-                                                f32::from(bounds.origin.x) * sf,
-                                                f32::from(bounds.origin.y) * sf,
-                                                f32::from(bounds.size.width) * sf,
-                                                f32::from(bounds.size.height) * sf,
-                                            ],
-                                            rail_glare,
-                                            rail_k1,
-                                            rail_k2,
-                                            [0.0, 1.0, 1.0],
-                                        );
                                     },
                                     |_, _, _, _| {},
                                 )
@@ -25483,25 +25504,45 @@ mod tests {
         );
     }
 
-    /// The other half of the same bug, stated as a test so it cannot be forgotten
-    /// when somebody adds the next overlay: a bent surface whose clicks are not
-    /// un-bent sends the pointer to the wrong row, and the wrongness grows
-    /// towards the screen edge — which is exactly where the queue lives.
+    /// The other half of the same bug: **the hit test has to agree with the warp
+    /// decision**, and it is wrong in BOTH directions.
+    ///
+    /// A bent surface whose clicks are not un-bent sends the pointer to the
+    /// wrong row, and the error grows towards the screen edge — which is exactly
+    /// where the queue lives. A flat surface whose clicks ARE un-bent is the
+    /// same bug mirrored: the pixels never moved, so undoing a map nothing
+    /// applied walks the pointer off the row it is sitting on.
+    ///
+    /// So this asserts the pairing rather than either half. The queue has now
+    /// been each of those things — it registered a tube and un-bent its clicks,
+    /// then became a flat menu and stopped — and the pair moved together both
+    /// times because this test made them.
     #[test]
-    fn a_bent_surface_undoes_the_curve_before_it_hit_tests() {
+    fn the_hit_test_agrees_with_the_queues_warp_decision() {
         let src = include_str!("main.rs");
-        let at = src
-            .find("fn rail_hit_at(")
-            .expect("the queue's curve-aware hit test");
+        let at = src.find("fn rail_hit_at(").expect("the queue's hit test");
         let body = &src[at..at + 1600];
-        assert!(
-            body.contains("warp_screen_to_content"),
-            "rail_hit_at must undo the same map the shader applies"
-        );
-        assert!(
-            body.contains("warp_coeffs"),
-            "and it must use the live curvature, not a constant"
-        );
+        let unbends = body.contains("warp_screen_to_content");
+
+        let (_, how) = OVERLAYS_OVER_PANES
+            .iter()
+            .find(|(name, _)| *name == "render_rail")
+            .expect("the queue has a row in the overlay list");
+
+        match how {
+            Warped::Tube(_) | Warped::Predistorted(_) => assert!(
+                unbends,
+                "the queue bends with the glass, so rail_hit_at must undo the \
+                 same map the shader applies — otherwise clicks land where the \
+                 row is drawn flat, and the error grows towards the edge"
+            ),
+            Warped::FlatByDesign(_) => assert!(
+                !unbends,
+                "the queue is flat, so rail_hit_at must NOT un-bend the pointer \
+                 — the pixels never moved, and undoing a map nothing applied \
+                 walks the click off the row it is on"
+            ),
+        }
     }
 
     /// The tree is somebody's organisation of their own work. It has to come
