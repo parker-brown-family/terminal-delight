@@ -57,15 +57,6 @@ Plus: **[ENV-FLAGS.md](ENV-FLAGS.md)** — every `TD_*` environment flag in one 
 - **Partial** — works, with a documented gap or demo-gated.
 - **Roadmap** — designed, not yet built (tracked in the GitHub `1.0` milestone).
 
-## Does it film?
-
-A feature earns public attention two different ways, and the catalog now tracks
-which: some are a **gesture** — four seconds of screen where a viewer who has never
-heard of TD understands the whole idea without narration — and the rest **explain**,
-needing a sentence before they land. Marketing clips come only from the first kind;
-the shot list, with a ready-to-run prompt per clip, lives in
-[`docs/media/DEMO-PIPELINE-CHECKLIST.md`](../media/DEMO-PIPELINE-CHECKLIST.md).
-
 ## Freshness
 
 Panels 01–09 were written in the first catalog pass (June 2026). Everything landed

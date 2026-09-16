@@ -13,14 +13,6 @@ app/.cargo/config.toml
 # Local-only demo logo/art assets (never committed — populate the demo wall)
 demo-assets/
 
-# Marketing clips from scripts/td-clip.sh — build artifacts of a moment, not source
-docs/media/clips/
-
 # Python bytecode from plugin test runs (plugins/*/ are scripts, never compiled artifacts)
 __pycache__/
 *.pyc
-
-# Shorts pipeline working files (takes, mixes, what has gone out)
-docs/media/voice/
-docs/media/to-upload/
-docs/media/posted/
