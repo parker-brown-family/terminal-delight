@@ -178,11 +178,22 @@ enum RailAction {
 /// Every surface that can be drawn OVER the terminal area, and what it does
 /// about the barrel warp.
 ///
-/// **Why this list exists.** The warp is a pixel post-pass over the panes, so
-/// anything laid on top of them is drawn FLAT unless it says otherwise — and it
-/// then reads as a sticker stuck on curved glass, with its click boxes sitting
-/// where the pixels are not. That is two bugs from one omission, and it has been
-/// the same two bugs on element after element here.
+/// **Why this list exists.** The warp is a pixel post-pass over the panes, and
+/// it is SCREEN-SPACE: `fs_crt` asks only whether a pixel falls inside a
+/// registered rect, never which element painted it. So a surface laid over a
+/// pane does not get to be flat by keeping quiet — it is composited into the
+/// frame the pass then resamples, and it bends with the pane underneath it.
+///
+/// Every row here therefore names a MECHANISM, not a preference. There are only
+/// three, and [`Warped::FlatByDesign`] is the one that is easiest to believe you
+/// have without having it: flat is bought by `warp::set_suppressed`, which
+/// empties the tube set for the frame, or by sitting outside every tube (the
+/// closed spine is a flex sibling of the screen and is never over one). Declaring
+/// it here buys nothing on its own.
+///
+/// Get it wrong and it is two bugs from one omission — a surface that reads as a
+/// sticker stuck on curved glass, with its click boxes sitting where the pixels
+/// are not — and it has been the same two bugs on element after element here.
 ///
 /// So it is a list, and [`every_overlay_over_panes_decides_about_the_warp`] is
 /// the gate: add a surface that covers the pane area, add a row, or the suite
@@ -193,11 +204,13 @@ const OVERLAYS_OVER_PANES: [(&str, Warped); 4] = [
     (
         "render_rail",
         Warped::FlatByDesign(
-            "a menu, not a decal: it floats above the glass like the menu-bar \
-             scale popup, with a border, an opaque fill and a shadow saying so. \
-             Registered as a tube once and the rows sheared into parallelograms \
-             — a tall stack of thin rows shows every bit of a barrel map that a \
-             compact panel hides. Hit-tested flat, to match.",
+            "a menu, not a decal. Flat is BOUGHT by `rail_open` in the \
+             `warp::set_suppressed` list, exactly as the menu-bar scale popup \
+             buys it — the border, opaque fill and shadow only make a flat \
+             surface read as floating rather than stuck on, and on their own \
+             they left it bending. Registered as a tube once and the rows \
+             sheared into parallelograms: a tall stack of thin rows shows every \
+             bit of a barrel map a compact panel hides. Hit-tested flat, to match.",
         ),
     ),
     ("mcp_menu panel", Warped::Tube("register_focus_tube")),
@@ -17419,6 +17432,14 @@ impl Render for Workspace {
                              // of reach of its own flat hit box. Suppress so the menu reads true.
         warp::set_suppressed(
             pane_popup_open
+                // The attention queue is a menu and floats FLAT above the glass —
+                // and this line is the whole of what makes that true. Giving it a
+                // border and a shadow and taking its warp tube away does not: the
+                // pass is screen-space, so `fs_crt` bends every pixel that lands
+                // inside a registered rect no matter which element drew it, and the
+                // queue is drawn over panes that are registered. Chrome without
+                // this line is a flat-looking panel that still bows.
+                || self.rail_open
                 || self.theme_menu.is_some()
                 || self.osd_menu.is_some()
                 || self.mcp_menu
@@ -25502,6 +25523,79 @@ mod tests {
             sticky.contains("pub fn pre_warp("),
             "the note claims a pre-warp that no longer exists"
         );
+    }
+
+    /// Everything esc can close is a panel over the panes, so every one of them
+    /// has to be in the list that flattens the glass.
+    ///
+    /// `close_popups` and the `warp::set_suppressed` call in `render` are the
+    /// same set written out twice, by hand, two thousand lines apart, with
+    /// nothing tying them together. They agreed for eighteen overlays and then
+    /// did not. The attention queue was given a `rail_open` flag, wired into
+    /// `close_popups` as the FIRST thing esc peels, and never added to the
+    /// suppression list — and it shipped bowing across the glass while the
+    /// scale popup two thousand lines away read perfectly flat.
+    ///
+    /// What made that omission so easy to hold is that the queue looked
+    /// handled. It had a row in [`OVERLAYS_OVER_PANES`] saying it was flat by
+    /// design, a paragraph of chrome giving it a border and a float shadow, and
+    /// a hit test deliberately not un-bending its clicks — three deliberate
+    /// acts, none of which touches the shader. `fs_crt` tests a pixel against
+    /// the registered rects and nothing else; a panel over a tube is bent by
+    /// that tube whatever it declares about itself. Suppression is the whole
+    /// mechanism, so membership of the list is the whole test.
+    ///
+    /// Derived from the source rather than from a list of names, because a gate
+    /// that enumerates the overlays somebody thought of only guards those.
+    #[test]
+    fn every_overlay_esc_can_close_also_flattens_the_glass() {
+        let src = shipped_src();
+
+        /// The `self.<field>` names in one slice, ignoring method calls.
+        fn fields(body: &str) -> Vec<String> {
+            let mut out = vec![];
+            for (i, _) in body.match_indices("self.") {
+                let rest = &body[i + "self.".len()..];
+                let name: String = rest
+                    .chars()
+                    .take_while(|c| c.is_alphanumeric() || *c == '_')
+                    .collect();
+                if name.is_empty() || rest[name.len()..].starts_with('(') {
+                    continue; // a method call is not an overlay flag
+                }
+                if !out.contains(&name) {
+                    out.push(name);
+                }
+            }
+            out
+        }
+
+        let at = src
+            .find("fn close_popups(&mut self) -> bool {")
+            .expect("close_popups");
+        let peels = &src[at..at + src[at..].find("\n    }\n").expect("end of close_popups")];
+
+        let at = src
+            .find("warp::set_suppressed(")
+            .expect("the suppression list in render");
+        let flattens = &src[at..at
+            + src[at..]
+                .find("\n        );")
+                .expect("end of the suppression list")];
+        let flattens = fields(flattens);
+
+        for field in fields(peels) {
+            assert!(
+                flattens.contains(&field),
+                "`{field}` is an overlay esc can close, which makes it a panel \
+                 drawn OVER the panes — but it is missing from the \
+                 `warp::set_suppressed` list in `render`. The warp pass is \
+                 screen-space: with no entry there the panel is composited into \
+                 the frame and then bent by whatever pane tube it happens to \
+                 cover, however flat its own border and shadow make it look. \
+                 Add `|| self.{field}` beside the others."
+            );
+        }
     }
 
     /// The other half of the same bug: **the hit test has to agree with the warp
