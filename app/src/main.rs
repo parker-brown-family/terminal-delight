@@ -13806,6 +13806,42 @@ impl Workspace {
         }
     }
 
+    /// Every live leaf in the window, in tab order.
+    fn all_leaves(&self) -> Vec<Entity<TerminalView>> {
+        let mut leaves = vec![];
+        for tab in &self.tabs {
+            tab.root.leaves(&mut leaves);
+        }
+        leaves.into_iter().cloned().collect()
+    }
+
+    /// How many live panes have broken their theme group away from outer — the
+    /// number "pass down" would actually change. Zero means the window already
+    /// wears one theme, and the button says so rather than pretending to act.
+    fn panes_off_outer_theme(&self, cx: &App) -> usize {
+        self.all_leaves()
+            .iter()
+            .filter(|p| !p.read(cx).appearance.follows_outer_theme())
+            .count()
+    }
+
+    /// Pass the OUTER theme down: re-attach every live pane's theme group to
+    /// outer, so the whole window wears what the outer tray is showing. The
+    /// counterpart of a pane's "follow outer" toggle, driven from the other end
+    /// — and non-destructive in the same way, because each pane keeps its
+    /// retained override and gets it back the moment it detaches again. Grades
+    /// are a separate group and are untouched.
+    fn pass_theme_down(&mut self, cx: &mut Context<Self>) {
+        for pane in self.all_leaves() {
+            pane.update(cx, |view, cx| {
+                view.appearance.follow_theme();
+                cx.notify();
+            });
+        }
+        self.save(cx);
+        cx.notify();
+    }
+
     /// Flip a pane's grade-group "follow outer" switch (see
     /// [`Self::toggle_theme_inherit`]).
     fn toggle_grade_inherit(&mut self, scope: &MenuScope, cx: &mut Context<Self>) {
@@ -20821,9 +20857,26 @@ impl Render for Workspace {
             // The anchor toggle is GLOBAL (not per-pane), so it shows only in the
             // OUTER design panel. A short ANCHOR label + the ⚓ TOP/BOTTOM ▲▼ pill.
             if !is_pane {
+                // The outer end of the pane's "follow outer" toggle: one press
+                // puts every pane back on the window's theme. The count is what
+                // would change, so a window already in one theme reads 0 and the
+                // button sits inactive instead of claiming to have done work.
+                let stray = self.panes_off_outer_theme(cx);
+                let lbl = if stray == 0 {
+                    format!("⤓ {}", t.pass_down)
+                } else {
+                    format!("⤓ {} ({})", t.pass_down, stray)
+                };
                 controls = controls
                     .child(label("ANCHOR"))
-                    .child(div().flex().child(self.anchor_top_toggle(&sk, cx)));
+                    .child(div().flex().child(self.anchor_top_toggle(&sk, cx)))
+                    .child(Self::bezel_btn(&sk, &lbl, stray > 0).on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                            cx.stop_propagation();
+                            ws.pass_theme_down(cx);
+                        }),
+                    ));
             }
             if is_pane {
                 // Per-group toggle: on = this pane's theme follows the outer scope

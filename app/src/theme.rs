@@ -1128,6 +1128,20 @@ impl PaneTheme {
         self.pins.is_empty()
     }
 
+    /// True when the theme group tracks outer — the pane wears whatever the
+    /// window wears. Drives the OUTER tray's "pass down" count.
+    pub fn follows_outer_theme(&self) -> bool {
+        self.inherit_theme
+    }
+
+    /// Re-attach the theme group to outer, KEEPING the retained override so a
+    /// later detach hands the pane its own look back rather than freezing
+    /// whatever outer says then. Idempotent, so the "pass the outer theme down"
+    /// gesture can call it on every pane, including ones already following.
+    pub fn follow_theme(&mut self) {
+        self.inherit_theme = true;
+    }
+
     /// The choice this pane actually renders with. The theme group resolves as a
     /// group (pinned or inherited); the grade resolves PER CHANNEL — outer is
     /// the base and the pane overlays only what it owns.
@@ -2863,6 +2877,37 @@ mod tests {
         assert!(
             (p.effective(&outer).grade.brightness - 0.7).abs() < 1e-6,
             "brightness was never set here, so it still follows"
+        );
+    }
+
+    /// Passing the outer theme down re-attaches a detached pane WITHOUT eating
+    /// its retained override: the pane wears outer immediately, and detaching
+    /// again hands its own look back rather than freezing outer.
+    #[test]
+    fn pass_down_re_attaches_and_keeps_the_retained_override() {
+        let mut outer = house_outer();
+        outer.id = "quiet".into();
+
+        let mut p = PaneTheme::default();
+        let mut mine = ThemeGroup::of(&outer);
+        mine.id = "hacker".into();
+        p.set_theme(mine);
+        assert!(!p.follows_outer_theme());
+        assert_eq!(p.effective(&outer).id, "hacker");
+
+        p.follow_theme();
+        assert!(p.follows_outer_theme());
+        assert_eq!(p.effective(&outer).id, "quiet", "it wears outer now");
+
+        // and it is idempotent — the gesture hits every pane, following or not
+        p.follow_theme();
+        assert_eq!(p.effective(&outer).id, "quiet");
+
+        p.toggle_theme(&outer);
+        assert_eq!(
+            p.effective(&outer).id,
+            "hacker",
+            "the pane's own theme survived the pass-down"
         );
     }
 
