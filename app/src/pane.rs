@@ -209,13 +209,21 @@ pub fn blocked_row(recent_rows: &[String]) -> Option<&str> {
 /// per pane to draw sixty characters of it is a cost paid every scan.
 const EVIDENCE_CHARS: usize = 96;
 
-/// Tidy one screen row into something quotable on a 300-pixel row.
+/// Tidy one screen row into something quotable on a 300-pixel row, or `None`
+/// when nothing quotable is left.
 ///
 /// Box-drawing furniture goes (the CLI draws its prompts inside a frame, and
 /// `│ Do you want to proceed? │` quotes the frame as much as the question), runs
 /// of spaces collapse, and the result is clipped with an ellipsis so a clipped
 /// quote can never be mistaken for a short one.
-pub fn clip_evidence(row: &str) -> String {
+///
+/// **`None` rather than an empty string**, because a row of pure furniture —
+/// `╭──────────╮`, or a framed blank line — tidies down to nothing at all, and
+/// the renderer would draw that as an empty grey quote box: a row appearing to
+/// quote its screen and quoting nothing. Today's predicates cannot hand one in
+/// (both demand real text before they match), so this is the boundary being
+/// closed one predicate change ahead of needing it, not a bug being fixed.
+pub fn clip_evidence(row: &str) -> Option<String> {
     let cleaned: String = row
         .chars()
         .map(|c| {
@@ -242,7 +250,7 @@ pub fn clip_evidence(row: &str) -> String {
     if out.chars().count() > EVIDENCE_CHARS {
         out = out.chars().take(EVIDENCE_CHARS - 1).collect::<String>() + "\u{2026}";
     }
-    out
+    (!out.is_empty()).then_some(out)
 }
 
 /// How many rows of the visible tail the prompt predicates read.
@@ -2982,7 +2990,7 @@ impl TerminalView {
                             // then the pane may have scrolled it away while the
                             // latch quite correctly still holds.
                             view.needs_input_line = needs
-                                .then(|| wants_human_row(&recent).map(clip_evidence))
+                                .then(|| wants_human_row(&recent).and_then(clip_evidence))
                                 .flatten();
                             // One grid walk per pane per tick, not per frame.
                             // Inside the scroll gate with the rest of the
@@ -3017,7 +3025,7 @@ impl TerminalView {
                                             // and inventing one would be the
                                             // placeholder this surface refuses.
                                             view.bell_line =
-                                                blocked_row(&recent).map(clip_evidence);
+                                                blocked_row(&recent).and_then(clip_evidence);
                                             view.bell_player.play();
                                             view.think_since = None;
                                             view.not_thinking_since = None;
