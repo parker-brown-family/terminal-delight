@@ -23,9 +23,14 @@ pub enum AgentState {
     Finished,
     /// Agent at rest with nothing pending (or a plain shell).
     ///
-    /// Reachable only when a caller that KNOWS the pane is not an agent says so.
-    /// The parser cannot claim it: from rows alone, a resting agent and a screen
-    /// this code cannot read are the same picture.
+    /// **The parser can now claim this, and the reason it once could not is
+    /// worth keeping.** From rows alone a resting agent and a screen this code
+    /// cannot read were the same picture — there were positive tests for
+    /// working, errored and blocked and none at all for at-rest, so rest was
+    /// only ever the absence of evidence. [`is_at_rest`] gives it evidence of
+    /// its own: the idle furniture an agent CLI prints at its prompt. Recognised
+    /// rest is a finding; unrecognised anything is still [`AgentState::Unknown`],
+    /// and the two must never merge again.
     #[default]
     Idle,
     /// The pane is an agent and its screen matched no rule here.
@@ -198,6 +203,11 @@ pub fn parse_status_line(rows: &[String]) -> AgentStatus {
         AgentState::Error
     } else if lower.iter().any(|l| is_blocked_prompt(l)) {
         AgentState::Blocked
+    } else if lower.iter().any(|l| is_at_rest(l)) {
+        // The agent's own idle furniture is on screen. It is not working, it has
+        // not errored and it is not asking — it is sitting at its prompt, which
+        // is a thing we can recognise rather than a thing we failed to.
+        AgentState::Idle
     } else {
         // Nothing matched. That is not the same as an agent at rest, and saying
         // so was the bug: a queue built on this reported "nothing needs you" for
@@ -210,6 +220,38 @@ pub fn parse_status_line(rows: &[String]) -> AgentStatus {
 }
 
 /// Does a (lowercased) row look like the agent is waiting on a human decision?
+/// Is this the furniture an agent CLI shows while it sits at its prompt doing
+/// nothing?
+///
+/// **The missing positive test.** The parser had one for working, one for
+/// errored and one for blocked, and nothing for at-rest — so a resting agent
+/// matched none of them and fell to [`AgentState::Unknown`]. That was correct in
+/// the narrow sense (nothing was recognised) and useless in practice: on a fleet
+/// of two dozen mostly-idle panes the rail's unreadable lane held almost all of
+/// them, which is not a report about anything.
+///
+/// **Safe by ordering, which is why it can be a heuristic at all.** This is
+/// consulted LAST, after working, error and blocked have each had their say. A
+/// marker that fires wrongly can therefore only turn an Unknown into a rest — it
+/// can never hide a prompt, a wall or a live turn, because those are decided
+/// before control reaches here. The failure mode of a bad needle is a pane that
+/// stops being listed as unreadable, not a pane that stops asking for you.
+///
+/// Anything unrecognised still falls through to Unknown. Adding a needle can
+/// only shrink that set, and the collapsed "N panes could not be read" line is
+/// what keeps the remainder visible instead of silently absorbed.
+fn is_at_rest(l: &str) -> bool {
+    const NEEDLES: [&str; 6] = [
+        "? for shortcuts",
+        "shift+tab to cycle",
+        "auto-accept edits on",
+        "plan mode on",
+        "bypassing permissions",
+        "send with enter",
+    ];
+    NEEDLES.iter().any(|n| l.contains(n))
+}
+
 fn is_blocked_prompt(l: &str) -> bool {
     const NEEDLES: [&str; 8] = [
         "do you want to proceed",
@@ -376,6 +418,55 @@ mod tests {
         let st = parse_status_line(&rows(&["pbrown@host:~/proj$ "]));
         assert_eq!(st.state, AgentState::Unknown);
         assert_eq!(st.turn_tokens, None);
+    }
+
+    /// An agent sitting at its own prompt is recognised as resting rather than
+    /// falling through to unreadable. Without this the rail's unknown lane held
+    /// almost every pane on a mostly-idle fleet, which is not a report.
+    #[test]
+    fn an_agent_at_its_own_prompt_is_resting_not_unreadable() {
+        for footer in [
+            "? for shortcuts",
+            "\u{23f5}\u{23f5} auto-accept edits on (shift+tab to cycle)",
+            "\u{23f8} plan mode on",
+            "send with enter",
+        ] {
+            let st = parse_status_line(&rows(&["> ", footer]));
+            assert_eq!(
+                st.state,
+                AgentState::Idle,
+                "{footer:?} is an agent at rest, not a screen we failed to read"
+            );
+        }
+    }
+
+    /// **The ordering is what makes the rest test safe**, so it is asserted
+    /// rather than left to the reader of the `if` chain. Every louder state is
+    /// decided first, so a rest marker that fires wrongly can only turn an
+    /// Unknown into a rest — it can never hide a live turn, a wall, or a
+    /// question. Each case below carries the idle footer AND something louder,
+    /// and the louder thing must win.
+    #[test]
+    fn a_rest_marker_never_outranks_a_turn_a_wall_or_a_question() {
+        let idle = "? for shortcuts";
+        let cases = [
+            (
+                vec![
+                    "\u{2733} Refactoring\u{2026} (2m \u{b7} esc to interrupt)",
+                    idle,
+                ],
+                AgentState::Working,
+            ),
+            (vec!["API Error: overloaded_error", idle], AgentState::Error),
+            (vec!["Do you want to proceed?", idle], AgentState::Blocked),
+        ];
+        for (screen, want) in cases {
+            assert_eq!(
+                parse_status_line(&rows(&screen)).state,
+                want,
+                "the idle footer must not outrank {want:?}"
+            );
+        }
     }
 
     #[test]

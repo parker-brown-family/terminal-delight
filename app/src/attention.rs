@@ -324,6 +324,33 @@ pub fn counts(items: &[AttentionItem]) -> Counts {
     c
 }
 
+/// The counted lanes that are actually present, with how many rows each holds,
+/// in lane order.
+///
+/// What the closed spine draws: one number per lane rather than a single total,
+/// because a total plus a set of colours still cannot tell two-blocked-and-
+/// two-review from one-blocked-and-three-review, and that is exactly the
+/// question the spine exists to answer at a glance.
+///
+/// [`AttentionKind::Unknown`] is excluded — it is shown by its own marker and
+/// never as a numeral. A count of things nobody could read, sitting in a row of
+/// counts of things that want you, reads as a fourth kind of wanting.
+///
+/// An absent lane produces no entry rather than a zero: it has no rows in the
+/// queue either, and a column of noughts is noise on a surface twenty pixels
+/// wide.
+pub fn lane_counts(items: &[AttentionItem]) -> Vec<(AttentionKind, usize)> {
+    let mut lanes: Vec<(AttentionKind, usize)> = Vec::new();
+    for it in items.iter().filter(|it| it.kind.counted()) {
+        match lanes.iter_mut().find(|(k, _)| *k == it.kind) {
+            Some((_, n)) => *n += 1,
+            None => lanes.push((it.kind, 1)),
+        }
+    }
+    lanes.sort_by_key(|(k, _)| *k);
+    lanes
+}
+
 /// How long a row says it has waited, or a dash.
 ///
 /// The dash is the point: a row whose transition was never observed renders an
@@ -443,6 +470,61 @@ mod tests {
         let c = counts(&items);
         assert_eq!(c.wanting, 1);
         assert_eq!(c.unknown, 2, "and it is counted where it cannot inflate");
+    }
+
+    /// The spine's numbers: one per lane present, in lane order, and the
+    /// distinction the old single total could not make. Two blocked and two
+    /// review must not look like one blocked and three review, which is what a
+    /// count of four plus a pair of colours amounts to.
+    #[test]
+    fn the_spine_counts_each_lane_separately_and_in_lane_order() {
+        let items = project(&[
+            obs(1, Some(AttentionKind::ReviewReady), Some(5)),
+            obs(2, Some(AttentionKind::Decision), Some(5)),
+            obs(3, Some(AttentionKind::ReviewReady), Some(5)),
+            obs(4, Some(AttentionKind::Decision), Some(5)),
+        ]);
+        assert_eq!(
+            lane_counts(&items),
+            vec![
+                (AttentionKind::Decision, 2),
+                (AttentionKind::ReviewReady, 2)
+            ],
+            "two of each, loudest lane first, and failure absent rather than zero"
+        );
+    }
+
+    /// The unreadable lane never appears as a numeral beside the counted ones.
+    /// It has its own marker, because a number saying eighteen next to a number
+    /// saying two invites reading both as things that want you — and the whole
+    /// point of the split is that one of them does not.
+    #[test]
+    fn the_spine_never_gives_the_unknown_lane_a_number() {
+        let items = project(&[
+            obs(1, Some(AttentionKind::Unknown), None),
+            obs(2, Some(AttentionKind::Unknown), None),
+            obs(3, Some(AttentionKind::ReviewReady), Some(5)),
+        ]);
+        assert_eq!(
+            lane_counts(&items),
+            vec![(AttentionKind::ReviewReady, 1)],
+            "eighteen unreadable panes must not become an eighteen in the pill"
+        );
+        assert_eq!(
+            counts(&items).unknown,
+            2,
+            "it is still known, just not there"
+        );
+    }
+
+    /// Nothing waiting produces no lanes at all rather than three zeroes — the
+    /// caller draws a single dim nought, because an empty pill and a pill that
+    /// was never computed look the same and only one of them is true.
+    #[test]
+    fn a_quiet_fleet_produces_no_lanes_rather_than_zeroes() {
+        let items = project(&[obs(1, None, None), obs(2, None, None)]);
+        assert!(items.is_empty());
+        assert!(lane_counts(&items).is_empty());
     }
 
     #[test]
