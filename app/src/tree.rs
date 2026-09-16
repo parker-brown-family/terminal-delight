@@ -43,9 +43,35 @@ pub struct Place {
     pub initiative: Option<u32>,
 }
 
+/// Which branch a task hangs from most immediately.
+///
+/// Two levels can be a task's parent and only one of them ever is, so this is an
+/// either rather than a pair — a caller that has to ask "initiative, or project
+/// if that is None" at each site is a caller that will eventually forget at one
+/// of them.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Nearest {
+    Initiative(u32),
+    Project(u32),
+}
+
 impl Place {
     pub fn unfiled(&self) -> bool {
         self.project.is_none() && self.initiative.is_none()
+    }
+
+    /// The NEAREST branch above this task: its initiative, or its project when
+    /// it belongs to no initiative, or nothing when it is unfiled.
+    ///
+    /// Nearest rather than a fixed rung, because a task may hang from either
+    /// level and asking for a specific one prints a dash whenever the task does
+    /// not use it. That is what the attention rail did — it read the project
+    /// slot, which a GROUPED task always leaves empty, and so labelled every
+    /// grouped task with a dash for a project it really was in.
+    pub fn nearest(&self) -> Option<Nearest> {
+        self.initiative
+            .map(Nearest::Initiative)
+            .or(self.project.map(Nearest::Project))
     }
 }
 
@@ -751,6 +777,48 @@ pub fn first_child(rows: &[Row], of: RowId) -> Option<RowId> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The nearest parent, in all four shapes a task can be filed in.
+    ///
+    /// The grouped case is the one that was wrong on screen: a task under the
+    /// JOB initiative read as `—:JOB`, a dash standing in for a project the task
+    /// really is in, because the label was taken from the project slot that a
+    /// grouped task always leaves empty. Its nearest parent is the initiative,
+    /// and the project is a rung further up.
+    #[test]
+    fn the_nearest_parent_is_the_initiative_when_there_is_one() {
+        let grouped = Place {
+            project: Some(7),
+            initiative: Some(3),
+        };
+        let loose_in_project = Place {
+            project: Some(7),
+            initiative: None,
+        };
+        let unfiled = Place::default();
+
+        assert_eq!(grouped.nearest(), Some(Nearest::Initiative(3)));
+        assert_eq!(
+            loose_in_project.nearest(),
+            Some(Nearest::Project(7)),
+            "a task with no initiative hangs from its project directly"
+        );
+        assert_eq!(unfiled.nearest(), None, "unfiled hangs from nothing");
+        assert!(unfiled.unfiled());
+    }
+
+    /// An initiative with no project still answers. The rung above a parent has
+    /// nothing to do with whether the parent exists, and a task filed under a
+    /// group that nobody has put in a project yet must still say which group.
+    #[test]
+    fn an_initiative_without_a_project_is_still_the_nearest_parent() {
+        let p = Place {
+            project: None,
+            initiative: Some(3),
+        };
+        assert_eq!(p.nearest(), Some(Nearest::Initiative(3)));
+        assert!(!p.unfiled());
+    }
 
     fn task(project: Option<u32>, initiative: Option<u32>) -> TaskRef {
         TaskRef {
