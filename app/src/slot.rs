@@ -435,12 +435,16 @@ pub struct Tally {
     pub errored: u32,
     pub finished: u32,
     pub idle: u32,
+    /// Agent panes whose screen matched no rule. Counted apart from `idle`
+    /// because the difference is the whole point: one is a measurement, the
+    /// other is the absence of one.
+    pub unknown: u32,
 }
 
 impl Tally {
     /// Every agent pane counted.
     pub fn total(&self) -> u32 {
-        self.working + self.blocked + self.errored + self.finished + self.idle
+        self.working + self.blocked + self.errored + self.finished + self.idle + self.unknown
     }
 
     /// True when something in the tally wants a human — the whole point of the

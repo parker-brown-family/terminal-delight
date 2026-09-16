@@ -32,7 +32,7 @@ under `~/Work/reports`) and came back annotated. Four decisions, in Parker's wor
 
 ### Product contract
 
-1. **Closed:** a narrow right-edge spine shows a known handoff count plus an unclassified marker when present.
+1. **Closed:** a narrow right-edge spine shows a known handoff count plus an unknown marker when present.
 2. **Open:** an overlay lists decision, failure, finished-unseen, then known-agent/unknown-state items. Opening it does not change pane bounds.
 3. **Selected:** a row exposes reason, source, observation time, and `project:group`. Finished work may expose the review tray.
 4. **Pinned:** an opt-in wide-screen mode reserves width. It is never the default.
@@ -69,7 +69,7 @@ enum AttentionKind {
     Decision,
     Failure,
     ReviewReady,
-    Unclassified,
+    Unknown,
 }
 
 struct AttentionItem {
@@ -102,7 +102,7 @@ pane screen + bell + existing labels
     -> focus the existing pane or open sourced review evidence
 ```
 
-The current parser ends every unmatched screen at `Idle`. That state must become explicit before the spine can claim an accurate count. A plain shell, an agent at rest, and an unclassified agent are separate facts.
+The current parser ends every unmatched screen at `Idle`. That state must become explicit before the spine can claim an accurate count. A plain shell, an agent at rest, and an unknown agent are separate facts.
 
 ## Amendments from the code
 
@@ -167,6 +167,92 @@ Four consequences, all of which belong to the review tray in Slice 4:
   anything renders it. It is the cheapest piece of this plan to prove and the only one whose value
   does not depend on the surface shipping.
 
+### Opening one
+
+A deliverable opens on a **plain click**, with no modifier. A terminal pane needs one because a
+click there belongs to the program underneath; the rail is a UI surface and owes the click to
+nobody.
+
+**The desktop opens it, not the terminal.** The row hands the target to the system handler — the
+same `open_with_system` path a clicked link in a pane already uses, which routes through
+`uwsm-app` on a uwsm session so what opens is scoped to the desktop and outlives the pane that
+produced it. A rail that hard-wired its own viewer would override a choice the person has already
+made in their MIME database, and on this machine that database is set deliberately: `.md` resolves
+to `text/markdown` and opens in `markdown-delight`, `.html` opens in the browser.
+
+**The two shapes that matter are HTML and Markdown**, so the row names which it is before you
+click — a rendered report and a plan document behave differently and a row that mislabels one is a
+row lying about what the click will do. Anything else says `open` and nothing more. The
+classification is by extension, query and fragment stripped, and it is a pure function with tests
+rather than a guess at paint time.
+
+**Nothing is inferred.** A turn that declared no deliverable gets a row with no link, not a link to
+the newest file near it. The tracer in Slice 1 proves the path early, with two real documents from
+this repository — the plan below and one of the HTML design notes — so that the click, the handler
+and the two viewers are exercised before any of the declaring machinery exists.
+
+## Attention levels: promoted, neutral, demoted
+
+Right-click any row in the left bar — a project, an initiative or a task — and set what it is
+worth today. Three values and no more: **promoted**, **neutral**, **demoted**. Neutral is the
+default and draws nothing, because a tree where every row carries a glyph is a tree where none of
+them mean anything.
+
+The three are not severities, they are where the work sits in your day — **main focus, side task,
+background** — and that is why they outrank everything the agents are doing. Parker, settling it:
+*"human provenance: 'THIS IS IMPORTANTER' is central."* No parser can observe that, and no
+heuristic should be allowed to overrule it.
+
+The context menu already exists on all three rows (`BarMenu::{Project, Initiative, Task}`), so
+this is two rows added to a menu rather than a new gesture to learn.
+
+### It inherits downward, and nothing travels up
+
+Setting a project promotes everything under it. Setting an initiative promotes its tasks. A row's
+**effective level is the nearest explicit setting at or above it**, which is what lets one noisy
+task sit demoted inside a promoted project — the case that makes the whole feature usable rather
+than a blunt instrument.
+
+This is deliberately the opposite direction from everything else in the bar. `tree::Roll` gathers
+agent state from panes into tabs into projects, so a branch row can say what is happening beneath
+it; a level goes the other way and **does not roll at all**. A branch's arrow says what that branch
+is set to. It never means "something inside here is promoted", and a collapsed branch summarises
+nothing — the marks appear on the children when you open it.
+
+### The mark
+
+A green up arrow, a blue down arrow, or nothing, in the row's badge line beside the pins and the
+state badges. **An inherited mark draws dimmer than one set on that row**, because otherwise there
+is no way to see which row to right-click to clear it — and a setting you cannot find is a setting
+you cannot undo.
+
+**No numbers in that space, ever.** Parker, on the mark: *"we do not include NUMBERS in the right
+glyph space — that is noisy."* The badge line is glyphs; a quantity belongs on the spine's count or
+the strip's `⋯n` chip, where it is read deliberately rather than scanned past twenty times a
+minute. This is the grain the bar already has — `roll_glyphs` renders a branch's roll-up as a line
+of glyphs rather than a tally — and the level must not be the thing that breaks it.
+
+### What it does to the queue
+
+Level is the **outermost sort key**, above the lane:
+
+```text
+priority  →  lane  →  age  →  pane
+```
+
+The consequence, stated plainly because it is the part to argue with: **a promoted review sits
+above a neutral decision.** Promoting a project is a person saying "this is what I am doing today",
+and a surface that then buries it under someone else's rate limit has overruled him with a
+heuristic. Inside one level the lane order is unchanged, so the rest of the plan stands.
+
+### What it is not
+
+- It never hides. A demoted row still appears, last.
+- It never mutes. The bell, the desktop notification and the tab badge are untouched; this is an
+  ordering, not a filter.
+- It never changes the count. A demoted agent blocked on a prompt still wants you, and the number
+  says so.
+
 ## Evaluation contract
 
 The baseline is currently unknown and remains unknown until recorded. Before implementation is called successful, replay the same two-pane and eight-or-more-pane event sequences with the current manual sweep and with the spine.
@@ -179,9 +265,10 @@ The spine passes when:
 - selecting a row focuses the correct existing pane in one action;
 - reading a row or a review moves focus nowhere on its own;
 - every visible fact names its source and observation time, or explicitly says they are unavailable;
-- the spine requires fewer unrelated pane openings than the manual sweep for the same event sequence.
+- the spine requires fewer unrelated pane openings than the manual sweep for the same event sequence;
+- a promoted branch's work appears above every neutral row, and a demoted row still appears.
 
-Record time-to-correct-pane, unrelated panes opened, missed known events, false positives, and unclassified observations as separate measurements. Missing measurements stay blank or unknown. If unrelated pane openings do not fall, the attention-surface hypothesis fails even if the UI works.
+Record time-to-correct-pane, unrelated panes opened, missed known events, false positives, and unknown observations as separate measurements. Missing measurements stay blank or unknown. If unrelated pane openings do not fall, the attention-surface hypothesis fails even if the UI works.
 
 ## Least confident decisions
 
@@ -190,19 +277,34 @@ Record time-to-correct-pane, unrelated panes opened, missed known events, false 
    inferred. Rule: resolve `Origin` the way the tree resolves it — the group's project when a tab is
    grouped, the tab's own field when it is not — and keep named, unnamed and absent distinct. The
    earlier worry was right in spirit: no path is ever consulted at render time.
-2. **How unknown enters the count.** Preferred rule: known-agent/unknown-state gets a neutral unclassified row after handoff work; unknown pane kind gets a separate marker and does not inflate the red attention count.
+2. **How unknown enters the count.** Preferred rule: known-agent/unknown-state gets a neutral unknown row after handoff work; unknown pane kind gets a separate marker and does not inflate the red attention count.
 3. **Finished versus review-ready.** The bell can establish finished-unseen today. Changed files, checks, and artifacts require an authoritative source. The review tray must show unavailable fields until that contract exists. A declared deliverable is the one piece of review evidence that needs no new contract, because the agent supplies it.
 4. **Seen lifetime.** *Narrowed, 15 September.* Reuse the existing bell acknowledgement for the
    tracer bullet — it is a real function with a focus-in edge, not a convention to invent.
    Persistence across restarts stays deferred until observation shows it matters.
+5. **Whether level outranks lane.** *Settled 15 September: yes.* Both orderings were drawn side by
+   side and the answer was the human-provenance one — main focus beats side work beats background,
+   whatever the agents are doing. A promoted review therefore sits above a neutral decision, and
+   that is intended rather than tolerated.
+6. **Whether a demoted row still counts.** *Settled 15 September: yes.* Demoting says "not first";
+   a count that quietly drops work is the idle fallback wearing different clothes.
+7. **Nearest explicit setting wins.** *Settled 15 September: yes*, so one noisy task can sit
+   demoted inside a promoted project.
+8. **The mark.** *Settled 15 September:* green up, blue down, nothing for neutral, dimmer when
+   inherited — and no numbers in that space.
 
 ## Slices
 
-1. **Tracer bullet:** feed synthetic decision, failure, finished, and unknown observations through the projector into a collapsed spine and overlay; activate a row through TD's existing pane-focus path.
+1. **Tracer bullet:** feed synthetic decision, failure, finished, and unknown observations through the projector into a collapsed spine and overlay; activate a row through TD's existing pane-focus path; and carry a declared deliverable on the rows that would have one, opened by a plain click through the desktop's own handler.
 2. **Explicit live state:** add pane-kind and unknown-state distinctions, then connect the existing HUD parser and bell without changing queue behaviour. Carries amendments 2, 3 and 5: stamp the transition instant, derive the kind from the badge predicate, and give blocked a clearing edge.
 3. **Queue lifecycle:** add fixed ordering, visible reason/source/time, `project:group` resolved per amendment 1, seen/unseen completion on the existing bell latch, and keyboard movement.
 4. **Review tray:** attach sourced change/check/artifact evidence to finished items; unavailable evidence remains visibly unavailable. Carries the declared deliverable, its plain-click open, and the separate focus action.
-5. **Responsive behaviour and evaluation:** add opt-in pinning, verify overlay geometry and focus handling, then run the recorded comparison against manual pane sweeping.
+5. **Attention levels in the tree:** the two context-menu rows on project, initiative and task;
+   the level persisted in the layout beside the project record; downward resolution with the
+   nearest explicit setting winning; the badge-line mark, with an inherited mark drawn dimmer. The
+   projector's ordering key landed early, alongside Slice 1's core, because it is one comparison
+   and deferring it would have meant rewriting the sort and its tests twice.
+6. **Responsive behaviour and evaluation:** add opt-in pinning, verify overlay geometry and focus handling, then run the recorded comparison against manual pane sweeping.
 
 ## Deliberately outside this plan
 
@@ -215,7 +317,7 @@ Record time-to-correct-pane, unrelated panes opened, missed known events, false 
   when two or more went at once, reopenable with `ctrl+shift+z`. Such an agent has no screen to read
   and no pane to focus, so it reaches none of this plan's observation sources. Version one therefore
   scopes its count to visible panes **and says so on the surface**; a count that is quietly short is
-  the same defect as an unclassified pane reported as idle. Revisit in the slice that builds the
+  the same defect as an unknown pane reported as idle. Revisit in the slice that builds the
   held set, where the data will exist.
 
 Approval of this page permits Slice 1. Until then, the work remains planning only.

@@ -45,6 +45,26 @@ pub enum Kind {
     Project,
     Initiative,
     Task,
+    /// One pane out of a split — the only kind that can come back somewhere
+    /// other than where it left, because a split reshapes the moment it leaves.
+    Pane,
+}
+
+impl Kind {
+    /// What a tray row calls this, in the words the left bar already uses.
+    ///
+    /// The tray offers projects, groups, tabs and panes in one list, and
+    /// `Recover "UX"` means four different things across them — so each row says
+    /// which it is rather than leaving it to be inferred from a name that may
+    /// be shared.
+    pub fn noun(self) -> &'static str {
+        match self {
+            Kind::Project => "project",
+            Kind::Initiative => "group",
+            Kind::Task => "tab",
+            Kind::Pane => "pane",
+        }
+    }
 }
 
 /// What went into the trash, and what it is still worth.

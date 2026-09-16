@@ -27,6 +27,7 @@
 //! TODO(os-chrome): client-side window decorations (WindowDecorations::Client).
 
 mod art;
+mod attention;
 mod bell;
 mod crt;
 mod csd;
@@ -83,8 +84,8 @@ use gpui_platform::application;
 use pane::{
     AgentDone, AgentWorkingChanged, CloseFocusRead, ClosePane, DragPaneStart, FocusReadNav,
     OpenAgentPanel, OpenDisplayMenu, OpenFind, OpenFocusRead, OpenHelp, OpenLogoPicker,
-    OpenThemeMenu, OpenUsagePanel, PaintApplied, PaneRenamed, ReadNav, RequestCloseTab,
-    TerminalView, ToggleLeftBar,
+    OpenThemeMenu, OpenUsagePanel, PaintApplied, PaneRenamed, ReadNav, ReopenClosed,
+    RequestCloseTab, TerminalView, ToggleLeftBar, ToggleRail,
 };
 use serde::{Deserialize, Serialize};
 use theme::{PaneTheme, ThemeChoice};
@@ -140,9 +141,100 @@ enum SplitDir {
     Col,
 }
 
+/// Which half of a split something sits in.
+///
+/// A split's two children are not interchangeable — `a` is left or top — so a
+/// pane that comes back on the wrong side has moved across the screen without
+/// anybody asking it to.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Side {
+    A,
+    B,
+}
+
 static SPLIT_IDS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 fn next_split_id() -> u64 {
     SPLIT_IDS.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+}
+
+/// One queue row's flat geometry, recorded during paint so a click can be
+/// resolved after the barrel map is undone.
+#[derive(Clone, Copy, Debug)]
+struct RailHit {
+    index: usize,
+    top: f32,
+    bottom: f32,
+    left: f32,
+    /// The deliverable line inside the row, when the row has one.
+    deliverable: Option<(f32, f32)>,
+}
+
+/// What a click on the queue meant, once the curve was undone.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RailAction {
+    /// Go to the pane this row is about.
+    Focus(usize),
+    /// Open what the turn produced. Never also focuses: two acts, two clicks.
+    Open(usize),
+}
+
+/// Every surface that can be drawn OVER the terminal area, and what it does
+/// about the barrel warp.
+///
+/// **Why this list exists.** The warp is a pixel post-pass over the panes, and
+/// it is SCREEN-SPACE: `fs_crt` asks only whether a pixel falls inside a
+/// registered rect, never which element painted it. So a surface laid over a
+/// pane does not get to be flat by keeping quiet — it is composited into the
+/// frame the pass then resamples, and it bends with the pane underneath it.
+///
+/// Every row here therefore names a MECHANISM, not a preference. There are only
+/// three, and [`Warped::FlatByDesign`] is the one that is easiest to believe you
+/// have without having it: flat is bought by `warp::set_suppressed`, which
+/// empties the tube set for the frame, or by sitting outside every tube (the
+/// closed spine is a flex sibling of the screen and is never over one). Declaring
+/// it here buys nothing on its own.
+///
+/// Get it wrong and it is two bugs from one omission — a surface that reads as a
+/// sticker stuck on curved glass, with its click boxes sitting where the pixels
+/// are not — and it has been the same two bugs on element after element here.
+///
+/// So it is a list, and [`every_overlay_over_panes_decides_about_the_warp`] is
+/// the gate: add a surface that covers the pane area, add a row, or the suite
+/// fails. A row may say the surface is deliberately flat — some things should be
+/// — but it has to say WHY, in the row, where the next person will read it.
+#[cfg(test)]
+const OVERLAYS_OVER_PANES: [(&str, Warped); 4] = [
+    (
+        "render_rail",
+        Warped::FlatByDesign(
+            "a menu, not a decal. Flat is BOUGHT by `rail_open` in the \
+             `warp::set_suppressed` list, exactly as the menu-bar scale popup \
+             buys it — the border, opaque fill and shadow only make a flat \
+             surface read as floating rather than stuck on, and on their own \
+             they left it bending. Registered as a tube once and the rows \
+             sheared into parallelograms: a tall stack of thin rows shows every \
+             bit of a barrel map a compact panel hides. Hit-tested flat, to match.",
+        ),
+    ),
+    ("mcp_menu panel", Warped::Tube("register_focus_tube")),
+    ("pane ghost", Warped::Tube("register_overlay_tube")),
+    (
+        "sticky note",
+        Warped::Predistorted("drawn through the pane's own map; hit-tested flat"),
+    ),
+];
+
+/// How a surface over the panes handles the curve.
+#[cfg(test)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Warped {
+    /// Registers its painted rect so the post-pass bends it with the glass.
+    Tube(&'static str),
+    /// Draws itself through the map so the pass undoes it — the note's way.
+    Predistorted(&'static str),
+    /// Deliberately flat, with the reason. Allowed, never silent.
+    #[allow(dead_code)]
+    FlatByDesign(&'static str),
 }
 
 /// The tiling tree: splits divide only the targeted leaf. Generic over the
@@ -343,6 +435,79 @@ impl<L: Clone> Tree<L> {
                         b,
                     }),
                 )
+            }
+        }
+    }
+
+    /// Where a leaf sits, described so it can be put back after it has left.
+    ///
+    /// Returns its parent split's direction and ratio, which side of that split
+    /// the leaf is on, and — the load-bearing part — the SIBLING subtree rather
+    /// than the parent. The parent does not survive the removal: `remove_leaf`
+    /// collapses it onto the sibling, so a seat recorded as "inside split 41"
+    /// aims at something that no longer exists by the time anybody asks for it
+    /// back. The sibling is what is still standing there.
+    ///
+    /// `None` when the leaf is the whole tree. That is not a seat, and the
+    /// caller wants the tab-shaped answer instead.
+    fn seat_of<'a>(
+        &'a self,
+        target: &impl Fn(&L) -> bool,
+    ) -> Option<(SplitDir, f32, Side, &'a Tree<L>)> {
+        match self {
+            Tree::Leaf(_) => None,
+            Tree::Split {
+                dir, ratio, a, b, ..
+            } => {
+                if matches!(a.as_ref(), Tree::Leaf(e) if target(e)) {
+                    return Some((*dir, *ratio, Side::A, b));
+                }
+                if matches!(b.as_ref(), Tree::Leaf(e) if target(e)) {
+                    return Some((*dir, *ratio, Side::B, a));
+                }
+                a.seat_of(target).or_else(|| b.seat_of(target))
+            }
+        }
+    }
+
+    /// Put a leaf back beside the subtree it used to share a split with.
+    ///
+    /// The anchor is matched as a whole SUBTREE, not as a leaf, because the
+    /// sibling may itself have been a split — closing one pane of a four-pane
+    /// tab leaves a split holding the other three, and that is the thing the
+    /// returning pane has to sit beside.
+    ///
+    /// Hands the leaf back when the anchor is gone, so the caller can try the
+    /// next-best home rather than having to guess in advance whether this
+    /// would work.
+    fn reseat(
+        &mut self,
+        is_anchor: &impl Fn(&Tree<L>) -> bool,
+        side: Side,
+        dir: SplitDir,
+        ratio: f32,
+        leaf: L,
+    ) -> Option<L> {
+        if is_anchor(self) {
+            let sibling = std::mem::replace(self, Tree::Leaf(leaf.clone()));
+            let (a, b) = match side {
+                Side::A => (Tree::Leaf(leaf), sibling),
+                Side::B => (sibling, Tree::Leaf(leaf)),
+            };
+            *self = Tree::Split {
+                id: next_split_id(),
+                dir,
+                ratio,
+                a: Box::new(a),
+                b: Box::new(b),
+            };
+            return None;
+        }
+        match self {
+            Tree::Leaf(_) => Some(leaf),
+            Tree::Split { a, b, .. } => {
+                let leaf = a.reseat(is_anchor, side, dir, ratio, leaf)?;
+                b.reseat(is_anchor, side, dir, ratio, leaf)
             }
         }
     }
@@ -625,13 +790,21 @@ impl<'de> Deserialize<'de> for SavedNode {
 }
 
 impl SavedNode {
-    /// Visit every leaf's captured resume command, in layout order.
-    fn for_each_resume(&mut self, f: &mut impl FnMut(&mut Option<String>)) {
+    /// Visit every leaf's claim on a terminal, in layout order.
+    ///
+    /// A claim is both halves at once — the pane a leaf says it was showing and
+    /// the conversation it says was running there — because they are one
+    /// assertion about one terminal and a repair has to be able to drop either
+    /// half. Visiting them separately is how a file ends up with a leaf whose
+    /// recipe has been taken away and whose pane id has not.
+    fn for_each_claim(&mut self, f: &mut impl FnMut(&mut Option<u64>, &mut Option<String>)) {
         match self {
-            SavedNode::Leaf { resume, .. } => f(resume),
+            SavedNode::Leaf {
+                pane_id, resume, ..
+            } => f(pane_id, resume),
             SavedNode::Split { a, b, .. } => {
-                a.for_each_resume(f);
-                b.for_each_resume(f);
+                a.for_each_claim(f);
+                b.for_each_claim(f);
             }
         }
     }
@@ -652,16 +825,45 @@ impl SavedNode {
     }
 }
 
-/// Two panes sharing a working directory can capture the *same* resume command:
-/// `claude --continue` is cwd-scoped by definition, and an id recovered from
-/// disk is only ever the newest session in that directory. Restoring both would
-/// drop two agents into one conversation, each overwriting the other's turns —
-/// so the first pane keeps the resume and the rest come back as a fresh agent in
-/// the same place, which is what a second pane there was always going to be.
+/// One terminal answers to one leaf, enforced on the way out to disk.
+///
+/// Two claims can collide, and they collide for different reasons:
+///
+/// **The same resume command.** Two panes sharing a working directory can
+/// capture it: `claude --continue` is cwd-scoped by definition, and an id
+/// recovered from disk is only ever the newest session in that directory.
+/// Restoring both would drop two agents into one conversation, each overwriting
+/// the other's turns — so the first pane keeps the resume and the rest come back
+/// as a fresh agent in the same place, which is what a second pane there was
+/// always going to be.
+///
+/// **The same pane id.** A pane id names ONE running terminal, so a second leaf
+/// carrying it is not describing a terminal that exists; it is a copy of a leaf
+/// that does. Left in the file it hands the next restore a tie it can only break
+/// by layout order, and layout order is not evidence: on 2026-09-15 three tabs
+/// carried `pane_id = 4` and the terminal went to the earliest of them, which
+/// was not the tab whose work it was. The other two got shells with an
+/// explanatory note, and the person found out by reading the screen.
+///
+/// Dropping the id rather than the whole leaf is deliberate: a copied leaf still
+/// has a name, colours, a sticky note and a place in the tree, all of which
+/// somebody chose. It comes back as itself, holding a terminal of its own.
+///
+/// This is the write-side half of a loop. The read side repairs the same
+/// collision on restore (see `LeafPlan::Duplicate`), and the host refuses to
+/// widen it on checkpoint (`fill_leaves`). Three independent breaks, because a
+/// layout that has fallen behind its panes can be produced by any of the three
+/// and repaired by whichever one sees it first.
 fn dedupe_resumes(tabs: &mut [SavedTab]) {
     let mut claimed = std::collections::HashSet::new();
+    let mut panes = std::collections::HashSet::new();
     for tab in tabs.iter_mut() {
-        tab.node.for_each_resume(&mut |resume| {
+        tab.node.for_each_claim(&mut |pane_id, resume| {
+            if let Some(id) = *pane_id {
+                if !panes.insert(id) {
+                    *pane_id = None;
+                }
+            }
             if let Some(cmd) = resume.clone() {
                 if !claimed.insert(cmd.clone()) {
                     *resume = bare_agent(&cmd);
@@ -743,6 +945,28 @@ const SLOT_RAIL_GROWTH: f32 = 1.5;
 /// bar's vertical space.
 const BAY_H: f32 = 56.0;
 
+/// Seconds since the process started, for animations that want a phase rather
+/// than a duration.
+///
+/// A free function over a `OnceLock` rather than a field on the workspace: a
+/// flicker wants to know what time it is, not when this particular window was
+/// built, and threading an `Instant` through the constructor to answer that
+/// would put a clock in the state file's neighbourhood for no reason.
+fn anim_clock() -> f32 {
+    static T0: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+    T0.get_or_init(Instant::now).elapsed().as_secs_f32()
+}
+
+/// The left bar's fold triangle: its hit target, and therefore the width a
+/// child row has to clear before it reads as a child.
+///
+/// A branch wears a disclosure triangle and a task does not, so indenting a task
+/// by one step alone puts its label four pixels LEFT of the branch it hangs
+/// from — the indent is spent getting back to where the parent's label already
+/// started. Tasks add this on top, which makes all three layers step by the
+/// same amount from the layer above.
+const FOLD_W: f32 = 15.0;
+
 /// The bin glyph's point size at scale 1.0 — two thirds of the 19pt it shipped
 /// at on the first pass, which read as the subject of the panel rather than as
 /// something the panel holds.
@@ -790,6 +1014,31 @@ fn left_bar_visible(saved: Option<bool>, scratch: bool, demo: bool) -> bool {
         return false;
     }
     saved.unwrap_or(LEFT_BAR_DEFAULT_ON)
+}
+
+/// Whether the attention rail is drawn, given `TD_SPINE`.
+///
+/// **On by default.** The rail shipped behind `TD_SPINE=1` for exactly as long
+/// as that was honest — until a person had looked at it and said it was worth
+/// the right edge. Parker has, so the flag inverts: the surface is the steady
+/// state and the variable only takes it away.
+///
+/// An off switch still exists because a switch that cannot be thrown is a claim
+/// nobody can test — a demo that wants a clean right edge, a screenshot, someone
+/// who simply disagrees. `TD_SPINE=0`, `false` or `off` all do it, because a
+/// person reaching for an off switch should not have to guess which spelling
+/// this particular program chose.
+///
+/// Anything else, including an unset variable, an empty one, or a value nobody
+/// anticipated, leaves the rail on. That asymmetry is deliberate: switching a
+/// surface OFF is the destructive direction, so it requires somebody to have
+/// said so plainly, while a typo fails towards the visible thing a person can
+/// see and turn off themselves.
+fn rail_on(flag: Option<&str>) -> bool {
+    !matches!(
+        flag.map(str::trim).map(str::to_ascii_lowercase).as_deref(),
+        Some("0") | Some("false") | Some("off")
+    )
 }
 
 /// The colour a project takes when nobody has picked one.
@@ -1165,10 +1414,22 @@ impl TabGroup {
     /// needs this: without it the strip's heading renders as nothing at all,
     /// which is an invisible control rather than an unnamed one.
     fn label(&self) -> String {
-        self.name
-            .clone()
-            .unwrap_or_else(|| format!("initiative {}", self.id))
+        self.name.clone().unwrap_or_else(|| unnamed_group(self.id))
     }
+}
+
+/// What an unnamed group is called, in the one place that decides it.
+///
+/// "initiative" is the TREE's word for the middle layer and it never reached a
+/// person before: a new group opened straight into its rename box, so the
+/// default was overwritten before it could be read. Now that making a group
+/// leaves it named, the label a person sees has to be the word the menu that
+/// made it used — and every menu says "group".
+///
+/// Four sites spelled this string out separately. A default that four places
+/// decide is a default that eventually disagrees with itself.
+fn unnamed_group(id: u32) -> String {
+    format!("group {id}")
 }
 
 /// A branch that was deleted, holding everything needed to put it back.
@@ -1192,6 +1453,124 @@ struct Deleted {
     /// you were working in should land you back in it.
     held_active: Option<usize>,
 }
+
+/// What one retirement is holding.
+///
+/// Every way of ending something in this application puts one of these in the
+/// trash instead of hanging up: the bay, the ✕, ctrl+w, alt+w, and the two menu
+/// rows. They differ only in how they come back — a branch by its tab indices,
+/// a pane by the split it sat in — which is why this is an enum and not two
+/// trashes.
+///
+/// Dropping this value is what ends the shells it holds. Nothing else does.
+enum Retired {
+    /// A project, a group, or a whole tab: [`Deleted`] already carries all three.
+    Branch(Deleted),
+    /// One pane out of a split.
+    Pane(HeldPane),
+}
+
+/// What a returning pane aims at: the subtree it used to share a split with.
+///
+/// A leaf is named by the terminal inside it and a split by its own id, both of
+/// which outlive the reshaping that happens while the pane is away.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Anchor {
+    Leaf(EntityId),
+    Split(u64),
+}
+
+impl Anchor {
+    fn of(node: &Node) -> Anchor {
+        match node {
+            Tree::Leaf(e) => Anchor::Leaf(e.entity_id()),
+            Tree::Split { id, .. } => Anchor::Split(*id),
+        }
+    }
+
+    fn matches(&self, node: &Node) -> bool {
+        match (self, node) {
+            (Anchor::Leaf(want), Tree::Leaf(e)) => e.entity_id() == *want,
+            (Anchor::Split(want), Tree::Split { id, .. }) => id == want,
+            _ => false,
+        }
+    }
+}
+
+/// One pane, closed and still running, with everywhere it might go back to.
+///
+/// Three homes in descending order of honesty, because a pane is away for up to
+/// an hour and the layout does not hold still: the seat it left, the tab it left,
+/// and a tab of its own. Which one it got is told rather than glossed — "back
+/// where it was" and "back as its own tab" are different facts about a screen
+/// somebody is about to look at.
+struct HeldPane {
+    /// The live terminal. Held here is the whole mechanism keeping it running.
+    leaf: Entity<TerminalView>,
+    /// The subtree it shared a split with, and how they shared it.
+    anchor: Anchor,
+    side: Side,
+    dir: SplitDir,
+    ratio: f32,
+    /// Where its tab sat, and what that tab was — the second and third homes.
+    tab_at: usize,
+    ident: TabIdentity,
+}
+
+/// Which home a returning pane actually got.
+///
+/// Three states rather than a boolean, because "recovered" covering all three
+/// is the sentence that makes a person think their layout is intact when it is
+/// not.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Landed {
+    /// Back in the split it left, same side, same ratio.
+    Seat,
+    /// Its tab is still there, but the seat is gone — split in beside it.
+    Tab,
+    /// The tab is gone too. A new one, wearing the old tab's name and colours.
+    NewTab,
+}
+
+impl Landed {
+    fn says(self) -> &'static str {
+        match self {
+            Landed::Seat => "back where it was",
+            Landed::Tab => "back in its tab, in a new seat",
+            Landed::NewTab => "back as its own tab",
+        }
+    }
+}
+
+/// The one line the bay says out loud, for a few seconds, over its own doors.
+///
+/// Two different messages and not one string, because they are answers to
+/// different questions: what just happened to a thing you closed, and what just
+/// happened to a thing you asked back.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum BaySays {
+    /// Something was held. Said once ever, the first time.
+    Held,
+    /// A pane came back, and which of its three homes it got.
+    Reopened(Landed),
+    /// ctrl+shift+z with nothing to give back. Said out loud rather than
+    /// swallowed: a chord that silently does nothing reads as a chord that is
+    /// broken, and this one is often pressed one time too many.
+    Empty,
+}
+
+impl BaySays {
+    fn line(self) -> String {
+        match self {
+            BaySays::Held => "held \u{2014} ctrl+shift+z brings it back".to_string(),
+            BaySays::Reopened(l) => l.says().to_string(),
+            BaySays::Empty => "nothing left to bring back".to_string(),
+        }
+    }
+}
+
+/// How long the bay keeps saying it.
+const BAY_SAYS_FOR: Duration = Duration::from_secs(6);
 
 /// The outer layer of the left bar's tree: a PROJECT, holding initiatives (tab
 /// groups) and any tasks filed straight under it.
@@ -1448,6 +1827,11 @@ struct StateFile {
     /// absent on pre-feature files, and on every non-Hyprland desktop.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     last_workspace: Option<String>,
+    /// Whether this person has been told, once, that a close can be undone.
+    /// Absent on pre-feature files → not yet told, which is the truth about
+    /// everybody who has never seen the hint.
+    #[serde(default)]
+    undo_hinted: bool,
 }
 
 fn default_warp() -> f32 {
@@ -1495,6 +1879,7 @@ impl Default for StateFile {
             anchor_top: false,
             lang: lang::Lang::default(),
             last_workspace: None,
+            undo_hinted: false,
         }
     }
 }
@@ -1821,6 +2206,10 @@ struct PaneDrag {
     /// True while the cursor is currently outside the window — a release there
     /// tears the pane off into a brand-new window of its own.
     left_window: bool,
+    /// True while the cursor is over the bay at the foot of the left bar. A
+    /// release there retires the pane — the same gesture a branch and a tab
+    /// already have, landing in the same holding.
+    over_bay: bool,
 }
 
 /// An OUTER tab being dragged along the mother bar to reorder it. Distinct from
@@ -2667,12 +3056,20 @@ struct Workspace {
     /// never reused, so a stale reference resolves to nothing instead of to
     /// somebody else's project.
     next_project_id: u32,
-    /// Branches that have been deleted and are still coming back.
+    /// Everything that has been ended and is still coming back — a deleted
+    /// branch, a closed tab, a closed pane. One trash, because they are one
+    /// promise.
     ///
-    /// Holding a [`Deleted`] here is the entire mechanism that keeps its shells
+    /// Holding a [`Retired`] here is the entire mechanism that keeps its shells
     /// running: in window-owned mode a terminal ends when the last reference to
     /// its pane is dropped, and this is that reference. See [`crate::hold`].
-    trash: hold::Trash<Deleted>,
+    trash: hold::Trash<Retired>,
+    /// The one line the bay says out loud, and when it started saying it.
+    bay_says: Option<(BaySays, Instant)>,
+    /// Whether a person has been told once that a close is recoverable.
+    /// Persisted: an undo nobody knows about is an undo nobody uses, and a hint
+    /// that returns every session is furniture.
+    undo_hinted: bool,
     /// The trash can's hangar doors, 0.0 shut to 1.0 open. Driven by whether a
     /// drag is over the footer, and eased per frame rather than stored as a
     /// target, so a drag that leaves mid-open closes from where it got to.
@@ -2803,6 +3200,22 @@ struct Workspace {
     /// the owning tab and focuses the pane. The async notification task can't
     /// touch the Window itself.
     pending_jump: Option<EntityId>,
+    /// The attention rail exists at all. On by default since it was looked at
+    /// and kept; `TD_SPINE=0` takes it away. See [`rail_on`].
+    rail_on: bool,
+    /// The queue is open over the panes. The closed spine is the steady state
+    /// and this never opens itself.
+    rail_open: bool,
+    /// The queue's painted rect, captured each frame. This is the SAME rect
+    /// registered as its warp tube, so a click normalises into it and applies
+    /// the identical barrel map the shader gathers with — the curve-aware
+    /// hit-test the live pane and the FOCUS reader already use.
+    rail_bounds: Arc<Mutex<Option<Bounds<Pixels>>>>,
+    /// Each row's box in FLAT window space, plus the deliverable's box inside it
+    /// when it has one. Flat, because the warp is undone before anything is
+    /// compared: what the pointer is asked about is the plain box, exactly as
+    /// the sticky note does it.
+    rail_hits: Arc<Mutex<Vec<RailHit>>>,
     /// On-screen box of the FOCUS reading area (the clip box below the header),
     /// captured each frame. This is the SAME rect registered as the warp tube, so a
     /// click normalises into it and applies the identical barrel map the shader
@@ -2965,9 +3378,22 @@ fn wire_pane(pane: &Entity<TerminalView>, window: &mut Window, cx: &mut Context<
         cx.notify();
     })
     .detach();
+    // ctrl+shift+N in any pane → open or close the attention queue.
+    cx.subscribe(pane, |ws, _pane, _ev: &ToggleRail, cx| {
+        if ws.rail_on {
+            ws.rail_open = !ws.rail_open;
+            cx.notify();
+        }
+    })
+    .detach();
     cx.subscribe(pane, |ws, _pane, _ev: &OpenAgentPanel, cx| {
         ws.mcp_menu = true;
         cx.notify();
+    })
+    .detach();
+    // ctrl+shift+z in any pane → the most recently closed thing comes back.
+    cx.subscribe_in(pane, window, |ws, _pane, _ev: &ReopenClosed, window, cx| {
+        ws.reopen_newest(window, cx);
     })
     .detach();
     // Ctrl+F / Ctrl+Shift+F in a pane → open the find panel (this pane, or global)
@@ -2984,6 +3410,7 @@ fn wire_pane(pane: &Entity<TerminalView>, window: &mut Window, cx: &mut Context<
             at: start,
             engaged: false,
             left_window: false,
+            over_bay: false,
         });
         ws.drop_target = None;
         cx.notify();
@@ -3035,6 +3462,39 @@ enum LeafPlan {
     /// Nothing of it is left. Start one the way a restore always has: the
     /// recipe on disk, cwd and resume command included.
     Respawn { restore: session::PaneRestore },
+    /// An earlier leaf of this same layout already claimed this leaf's
+    /// terminal — by pane id, or by naming the identical resume recipe.
+    ///
+    /// **One terminal cannot be two panes.** It has one pseudoterminal with one
+    /// winsize, and one sink: two panes of different widths take turns
+    /// SIGWINCHing it to their own size, and the second to attach supersedes
+    /// the first's byte stream. The loser is then frozen on the snapshot it
+    /// took at attach, and the winner holds a replica of a shape the host's
+    /// grid never had, which `gridwire::grid_hash` can never agree with. Both
+    /// paint whatever was on the glass before the disagreement — on a restored
+    /// agent pane, the echoed `claude --resume <id>` and nothing after it.
+    /// Which reads exactly like a session that failed to start, and is not one:
+    /// the agent is running, in a pane nothing on screen is showing correctly.
+    ///
+    /// So the duplicate is repaired here rather than honoured. The leaf keeps
+    /// its place in the tree, its cwd, its logo and its note, and gets a plain
+    /// shell. Resuming the id a second time is the two-agents-on-one-transcript
+    /// failure #339 closed, arriving through the layout file instead of through
+    /// a race.
+    ///
+    /// **It carries no recipe at all, and that is what makes the repair work on
+    /// a host this window did not bring with it.** `dedupe_resumes` answers the
+    /// same collision on the way OUT to disk by demoting the line to bare
+    /// `claude`, and demoting to match it here looks like the tidier answer
+    /// until you count: a layout holding four duplicates asks the host for four
+    /// `claude`s in the same breath, and a host whose `HostPane::runs` still
+    /// compares recipe TEXT answers the second, third and fourth with the pane
+    /// it made for the first. Four leaves, one terminal — this bug again, in
+    /// new tabs, produced by its own repair. The `runs` fix is in this branch
+    /// and cannot help: the host only picks it up when a host restarts, while
+    /// the window picks this up on a bounce. A pane asked for with no recipe
+    /// never reaches that check, on any host, of any age.
+    Duplicate { restore: session::PaneRestore },
 }
 
 /// The whole of a hosted restore, decided before a single pane is built.
@@ -3054,6 +3514,62 @@ struct AttachPlan {
     orphans: Vec<hostproto::PaneInfo>,
 }
 
+/// The conversation a recipe names, if it names one.
+///
+/// `claude --resume <id>` and `codex resume <id>` are identities: two panes on
+/// one of those are two agents writing one transcript. `claude`, `claude
+/// --continue` and `codex resume --last` name nothing — they are a request for
+/// an agent, and two leaves carrying one are two agents that were always going
+/// to be two.
+fn named_session(recipe: Option<&str>) -> Option<String> {
+    recipe.and_then(session::resume_session_id)
+}
+
+/// Which of the terminals behind `closing` are losing their last pane, given
+/// every pane id `shown` still names somewhere in the window.
+///
+/// Pure, because this is the decision that kills a shell and it must be
+/// answerable without a window. A terminal some remaining leaf is still showing
+/// survives being closed *here*; it dies when the leaf still showing it goes.
+///
+/// **`shown` is the window WITHOUT what is closing.** Both callers arrange
+/// that: `end_held` asks about leaves already moved into the trash, and
+/// `close_tab`'s last-tab exception reads its leaves before removing the tab
+/// and asks afterwards. A caller that asked while its leaves were still in the
+/// tree would be told every one of them is still shown, and would hang up
+/// nothing at all.
+fn hangups_of(shown: &[u64], closing: &[u64]) -> Vec<u64> {
+    let mut dying: Vec<u64> = vec![];
+    for pane in closing {
+        if !shown.contains(pane) && !dying.contains(pane) {
+            dying.push(*pane);
+        }
+    }
+    dying
+}
+
+/// What a repaired duplicate leaf says on its glass when it has nothing else
+/// to say.
+///
+/// A pane that quietly became an empty shell is a pane whose owner concludes
+/// the restore lost his conversation. It did not — the conversation is one tab
+/// over — and this note is the only thing in the path that can tell him so. A
+/// leaf that already carries a note keeps it: somebody's own words are not
+/// ours to overwrite to make room for ours.
+///
+/// One fixed seed, where a hand-written note draws its own. The wobble exists
+/// so two notes on ONE screen are not the same quadrilateral, and two of these
+/// are never on one screen — they are the leaves of a duplicate, which is a
+/// tab apart by definition.
+fn duplicate_leaf_note() -> sticky::Saved {
+    sticky::Saved {
+        title: Some("DUPLICATE TAB".into()),
+        text: "Two tabs named one conversation. The first kept it; this is a fresh shell.".into(),
+        seed: 0,
+        pinned: false,
+    }
+}
+
 /// Match a saved layout against what is actually running.
 ///
 /// Pure, and deliberately so: this is the decision that a restore either gets
@@ -3064,6 +3580,23 @@ fn plan_attach(saved: &[SavedTab], live: &[hostproto::PaneInfo]) -> AttachPlan {
     // still be sitting in the saved layout; binding to it would show a window
     // full of nothing where a shell used to be.
     let mut unclaimed: Vec<&hostproto::PaneInfo> = live.iter().filter(|p| !p.ended).collect();
+    // Every CONVERSATION this plan has already spoken for, whether by binding
+    // the terminal running it or by scheduling a respawn of it.
+    //
+    // Taking a pane out of `unclaimed` is not enough on its own, and that gap
+    // is what put two tabs on one terminal on 2026-09-15. A second leaf naming
+    // the same recipe finds nothing unclaimed, falls through to `Respawn`, and
+    // the host answers a recipe it is already running with the pane that is
+    // running it — `Started::Already`, which exists to stop a second agent and
+    // here hands back a terminal that already has a pane. The refusal has to
+    // happen in the plan, which is the only place that knows what it promised.
+    //
+    // Keyed on the session id inside the recipe, never on the recipe text: a
+    // line that names no conversation — `claude`, `claude --continue`, `codex
+    // resume --last` — is not an identity, and two leaves carrying one are two
+    // agents that were always going to be two. Deduping those would quietly
+    // turn the repair `dedupe_resumes` writes into a pane that starts nothing.
+    let mut spoken_for: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut tabs = Vec::with_capacity(saved.len());
     for tab in saved {
         let mut leaves = vec![];
@@ -3109,22 +3642,54 @@ fn plan_attach(saved: &[SavedTab], live: &[hostproto::PaneInfo]) -> AttachPlan {
                     .position(|p| p.resume.as_deref() == Some(want)),
                 _ => None,
             };
-            let bound = by_id.or(by_work).map(|at| unclaimed.remove(at).pane);
+            let bound = by_id.or(by_work).map(|at| {
+                let taken = unclaimed.remove(at);
+                // Both recipes, because the two can differ: the file's line is
+                // what this leaf asked for, the host's is what the terminal is
+                // actually running, and a later leaf naming either conversation
+                // is asking for this same terminal.
+                spoken_for.extend(named_session(taken.resume.as_deref()));
+                spoken_for.extend(named_session(resume.as_deref()));
+                taken.pane
+            });
+            let saved_note = || {
+                note.as_ref().map(|n| sticky::Saved {
+                    title: n.title.clone(),
+                    text: n.text.clone(),
+                    seed: n.seed,
+                    pinned: n.pinned,
+                })
+            };
             plans.push(match bound {
                 Some(pane) => LeafPlan::Bind { pane },
-                None => LeafPlan::Respawn {
-                    restore: session::PaneRestore {
-                        cwd: cwd.clone(),
-                        resume: resume.clone(),
-                        logo: logo.clone(),
-                        note: note.as_ref().map(|n| sticky::Saved {
-                            title: n.title.clone(),
-                            text: n.text.clone(),
-                            seed: n.seed,
-                            pinned: n.pinned,
-                        }),
-                    },
-                },
+                // Nothing left to bind, and the conversation is one this plan
+                // has already promised to an earlier leaf. See
+                // `LeafPlan::Duplicate`.
+                None if named_session(resume.as_deref())
+                    .is_some_and(|id| spoken_for.contains(&id)) =>
+                {
+                    LeafPlan::Duplicate {
+                        restore: session::PaneRestore {
+                            cwd: cwd.clone(),
+                            // No recipe at all, and that is the load-bearing
+                            // part rather than a preference. See below.
+                            resume: None,
+                            logo: logo.clone(),
+                            note: saved_note().or_else(|| Some(duplicate_leaf_note())),
+                        },
+                    }
+                }
+                None => {
+                    spoken_for.extend(named_session(resume.as_deref()));
+                    LeafPlan::Respawn {
+                        restore: session::PaneRestore {
+                            cwd: cwd.clone(),
+                            resume: resume.clone(),
+                            logo: logo.clone(),
+                            note: saved_note(),
+                        },
+                    }
+                }
             });
         }
         tabs.push(plans);
@@ -3482,6 +4047,16 @@ fn build_node_attached(
                 Some(LeafPlan::Respawn { restore }) => {
                     make_pane_host_spawned(restore, ctx, window, cx)
                 }
+                // A plain shell, and the recipe deliberately absent: the
+                // terminal this leaf named belongs to a leaf built before it.
+                Some(LeafPlan::Duplicate { restore }) => {
+                    eprintln!(
+                        "terminal-delight: two saved leaves named one terminal; the second \
+                         gets a fresh shell rather than a second view of a pane that can \
+                         only have one size"
+                    );
+                    make_pane_host_spawned(restore, ctx, window, cx)
+                }
                 None => make_pane_host_spawned(restore.clone(), ctx, window, cx),
             };
             let pane = make_pane_hosted_or_local(built, restore, window, cx);
@@ -3719,6 +4294,8 @@ impl Workspace {
             projects: Vec::new(),
             next_project_id: 1,
             trash: hold::Trash::new(),
+            bay_says: None,
+            undo_hinted: false,
             bay: 0.,
             confirm_delete: None,
             bar_menu: None,
@@ -3763,6 +4340,10 @@ impl Workspace {
             focus_line_h: 0.0,
             focus_page_h: 0.0,
             pending_jump: None,
+            rail_on: rail_on(std::env::var("TD_SPINE").ok().as_deref()),
+            rail_open: false,
+            rail_bounds: Arc::new(Mutex::new(None)),
+            rail_hits: Arc::new(Mutex::new(Vec::new())),
             focus_body_bounds: Arc::new(Mutex::new(None)),
             focus_map: Arc::new(Mutex::new(None)),
             focus_sel: None,
@@ -4504,12 +5085,34 @@ impl Workspace {
     /// merely stops watching a pane leaves it running on purpose. So this is
     /// called from the two places a person means it — closing a pane, closing a
     /// tab — and from nowhere that is merely tidying up.
+    ///
+    /// A terminal another leaf is still showing is not hung up, however plainly
+    /// the person meant to close *this* one. Where a layout has put two leaves
+    /// on one pane, closing either of them used to kill the terminal both were
+    /// showing — a running agent, closed by tidying away the blank decoy of
+    /// itself. See [`hangups_of`] for the arithmetic and what it cannot see.
     fn hangup(&self, leaves: &[Entity<TerminalView>], cx: &App) {
         let Some(ctx) = &self.attach else { return };
-        for leaf in leaves {
-            let Some(pane) = leaf.read(cx).pane_id() else {
-                continue;
-            };
+        let mut shown = vec![];
+        for tab in &self.tabs {
+            let mut held = vec![];
+            tab.root.leaves(&mut held);
+            shown.extend(held.iter().filter_map(|leaf| leaf.read(cx).pane_id()));
+        }
+        let closing: Vec<u64> = leaves
+            .iter()
+            .filter_map(|leaf| leaf.read(cx).pane_id())
+            .collect();
+        let dying = hangups_of(&shown, &closing);
+        for pane in &closing {
+            if !dying.contains(pane) {
+                eprintln!(
+                    "terminal-delight: pane {pane} is still shown by another leaf of this \
+                     window; closing this one leaves the terminal running"
+                );
+            }
+        }
+        for pane in dying {
             if let Err(err) = ctx.link.close_pane(hostproto::PaneId(pane)) {
                 eprintln!("terminal-delight: the session host would not close pane {pane}: {err}");
             }
@@ -4592,6 +5195,7 @@ impl Workspace {
             // for ranking only — never an identity, so a dragged or renamed
             // workspace costs nothing.
             last_workspace: instance::current_workspace(),
+            undo_hinted: self.undo_hinted,
         }
     }
 
@@ -6828,12 +7432,12 @@ impl Workspace {
             label,
             taken.len(),
             panes,
-            Deleted {
+            Retired::Branch(Deleted {
                 tabs: taken,
                 groups,
                 project,
                 held_active,
-            },
+            }),
             Instant::now(),
         );
         // Here, deliberately: this is where shells end.
@@ -6884,6 +7488,21 @@ impl Workspace {
             .and_then(|t| t.name.clone())
             .unwrap_or_else(|| format!("tab {}", i + 1));
         let was_active = self.active == i;
+
+        // Every tube in the tab goes dark at once, if this is the tab on screen.
+        // The terminals are NOT dying — they go on running in the trash — but
+        // the screen they were on is leaving, and that is what the ghost draws.
+        // A background tab's panes hold stale bounds (see `ghost_of`), so there
+        // is nothing worth animating there.
+        if i == self.active {
+            let mut leaves = vec![];
+            self.tabs[i].root.leaves(&mut leaves);
+            let leaves: Vec<_> = leaves.into_iter().cloned().collect();
+            for e in &leaves {
+                let g = self.ghost_of(e, cx);
+                self.ghosts.extend(g);
+            }
+        }
         let tab = self.tabs.remove(i);
 
         let (_, evicted) = self.trash.take(
@@ -6891,12 +7510,12 @@ impl Workspace {
             label,
             1,
             panes,
-            Deleted {
+            Retired::Branch(Deleted {
                 tabs: vec![(i, tab)],
                 groups: vec![],
                 project: None,
                 held_active: was_active.then_some(0),
-            },
+            }),
             Instant::now(),
         );
         self.end_held(evicted, cx);
@@ -6906,9 +7525,38 @@ impl Workspace {
         self.active = tree::active_after_removal(self.active, &[i], self.tabs.len());
         self.permit_shrink.set(true);
         self.focus_active(window, cx);
+        self.hint_undo_once();
         self.save(cx);
         cx.notify();
         true
+    }
+
+    /// Bring back the most recently closed thing, whatever kind it was.
+    ///
+    /// Newest first, and repeating the chord walks back through the trash — the
+    /// order a person remembers their own closes in. Expired holdings are not
+    /// in `live_items`, so a press after everything has run out says so rather
+    /// than resurrecting the oldest thing still technically on the list.
+    fn reopen_newest(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        let Some(id) = self.trash.live_items(Instant::now()).next().map(|h| h.id) else {
+            self.bay_says = Some((BaySays::Empty, Instant::now()));
+            cx.notify();
+            return false;
+        };
+        self.recover_holding(id, window, cx)
+    }
+
+    /// Say once, the first time anything is held, that it can be had back.
+    ///
+    /// The whole feature is invisible otherwise: a close looks exactly like the
+    /// close that used to end things, and ctrl+shift+z is not a chord anybody
+    /// guesses. Once per person rather than once per session — a hint that
+    /// returns every morning is furniture people learn to look past.
+    fn hint_undo_once(&mut self) {
+        if !self.undo_hinted {
+            self.undo_hinted = true;
+            self.bay_says = Some((BaySays::Held, Instant::now()));
+        }
     }
 
     /// Put a holding back where it came from.
@@ -6929,7 +7577,11 @@ impl Workspace {
             groups,
             project,
             held_active,
-        } = h.payload;
+        } = match h.payload {
+            Retired::Branch(d) => d,
+            // A pane knows where it goes and nothing above it does.
+            Retired::Pane(p) => return self.reopen_pane(p, window, cx),
+        };
 
         if let Some(p) = project {
             if !self.projects.iter().any(|q| q.id == p.id) {
@@ -6976,16 +7628,93 @@ impl Workspace {
     /// [`Self::hangup`] returns immediately when there is no host, so calling
     /// it here is correct in both modes and does nothing in the one you are
     /// probably running.
-    fn end_held(&self, held: Vec<Deleted>, cx: &mut Context<Self>) {
-        for d in &held {
-            let mut leaves = vec![];
-            for (_, tab) in &d.tabs {
-                tab.root.leaves(&mut leaves);
-            }
-            let leaves: Vec<_> = leaves.into_iter().cloned().collect();
+    fn end_held(&self, held: Vec<Retired>, cx: &mut Context<Self>) {
+        for r in &held {
+            let leaves: Vec<Entity<TerminalView>> = match r {
+                Retired::Branch(d) => {
+                    let mut refs = vec![];
+                    for (_, tab) in &d.tabs {
+                        tab.root.leaves(&mut refs);
+                    }
+                    refs.into_iter().cloned().collect()
+                }
+                Retired::Pane(p) => vec![p.leaf.clone()],
+            };
             self.hangup(&leaves, cx);
         }
         drop(held);
+    }
+
+    /// Put one held pane back, and say which of its three homes it got.
+    ///
+    /// The order is the honest one: the seat it left, then its tab, then a tab
+    /// of its own. Each step is tried against the tree as it is NOW — an hour is
+    /// long enough for the layout to have moved, and a seat that has gone is an
+    /// ordinary outcome rather than an error.
+    fn reopen_pane(&mut self, p: HeldPane, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        let HeldPane {
+            leaf,
+            anchor,
+            side,
+            dir,
+            ratio,
+            tab_at,
+            ident,
+        } = p;
+
+        // 1 — the seat. The anchor is the sibling it shared a split with, so
+        // finding it means the split can be rebuilt exactly as it was.
+        let is_anchor = |n: &Node| anchor.matches(n);
+        let mut leaf = Some(leaf);
+        let mut at = None;
+        for (i, tab) in self.tabs.iter_mut().enumerate() {
+            let Some(l) = leaf.take() else { break };
+            match tab.root.reseat(&is_anchor, side, dir, ratio, l) {
+                None => {
+                    at = Some((i, Landed::Seat));
+                    break;
+                }
+                Some(back) => leaf = Some(back),
+            }
+        }
+
+        // 2 — the tab, by identity. Its shape has changed underneath the pane,
+        // so it goes in as a fresh split against whatever is there now.
+        if let Some(l) = leaf.take() {
+            let home = self
+                .tabs
+                .iter()
+                .position(|t| t.name == ident.name && t.group == ident.group)
+                .or_else(|| (tab_at < self.tabs.len()).then_some(tab_at));
+            match home {
+                Some(i) => {
+                    let tab = &mut self.tabs[i];
+                    let old = std::mem::replace(&mut tab.root, Tree::Leaf(l.clone()));
+                    tab.root = Tree::Split {
+                        id: next_split_id(),
+                        dir,
+                        ratio: 0.5,
+                        a: Box::new(old),
+                        b: Box::new(Tree::Leaf(l)),
+                    };
+                    at = Some((i, Landed::Tab));
+                }
+                // 3 — a tab of its own, wearing what the old tab was called.
+                None => {
+                    let i = tab_at.min(self.tabs.len());
+                    self.tabs.insert(i, ident.onto(Tree::Leaf(l)));
+                    at = Some((i, Landed::NewTab));
+                }
+            }
+        }
+
+        if let Some((i, landed)) = at {
+            self.bay_says = Some((BaySays::Reopened(landed), Instant::now()));
+            self.activate_tab(i, window, cx);
+        }
+        self.save(cx);
+        cx.notify();
+        true
     }
 
     /// The chrome every "this ends something" modal wears.
@@ -7205,7 +7934,7 @@ impl Workspace {
                     .map(|h| {
                         (
                             h.id,
-                            format!("Recover \u{201c}{}\u{201d}", h.label),
+                            format!("Recover {} \u{201c}{}\u{201d}", h.kind.noun(), h.label),
                             h.left(now).map(hold::remaining_label).unwrap_or_default(),
                         )
                     })
@@ -7579,9 +8308,12 @@ impl Workspace {
 
     /// A project born holding a terminal of its own, and landed in.
     ///
-    /// The whole gesture, in the order Parker described it: generate, go there,
-    /// then the housekeeping. The rename box opens last so the keyboard is
-    /// already where the naming happens.
+    /// Generate, then go there. It does NOT open the rename box: a gesture that
+    /// grabs the keyboard decides for you that naming the thing is the next
+    /// move, when most of the time the next move is using the terminal it just
+    /// gave you. It opens as `project N` and stays that way until somebody
+    /// double-clicks or right-clicks the row, which is where renaming already
+    /// lives and costs nothing to reach.
     fn new_project_with_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) -> u32 {
         let id = self.new_project(None, cx);
         self.new_tab_in(
@@ -7592,7 +8324,6 @@ impl Workspace {
             window,
             cx,
         );
-        self.start_bar_rename(BarBranch::Project(id), window, cx);
         id
     }
 
@@ -7625,7 +8356,6 @@ impl Workspace {
             window,
             cx,
         );
-        self.start_bar_rename(BarBranch::Initiative(id), window, cx);
         id
     }
 
@@ -7647,10 +8377,17 @@ impl Workspace {
     /// things to tell somebody, and a door that only opens on hover is a door
     /// nobody discovers.
     fn bay_target(&self) -> f32 {
-        match self.bar_drag.as_ref().filter(|d| d.engaged) {
-            Some(d) if d.over_bay => 1.0,
-            Some(_) => 0.34,
-            None => 0.0,
+        // Two kinds of drag can end in the bay — a branch off the left bar and a
+        // pane off its own header — and the doors answer to both. A door that
+        // opens for one of the two gestures teaches that the other one cannot be
+        // dropped there, which is the opposite of what is true.
+        let bar = self.bar_drag.as_ref().filter(|d| d.engaged);
+        let pane = self.drag_pane.as_ref().filter(|d| d.engaged);
+        let over = bar.is_some_and(|d| d.over_bay) || pane.is_some_and(|d| d.over_bay);
+        match (over, bar.is_some() || pane.is_some()) {
+            (true, _) => 1.0,
+            (false, true) => 0.34,
+            (false, false) => 0.0,
         }
     }
 
@@ -7870,7 +8607,7 @@ impl Workspace {
                 .iter()
                 .find(|g| g.id == gid)
                 .map(|g| g.label())
-                .unwrap_or_else(|| format!("initiative {gid}")),
+                .unwrap_or_else(|| unnamed_group(gid)),
             BarBranch::Unfiled => "unfiled".into(),
         }
     }
@@ -10778,12 +11515,29 @@ impl Workspace {
         }
         self.confirm_close = None;
         self.tab_menu = None;
-        {
+
+        // A close is a retirement, not an ending. The shells keep running in the
+        // trash until somebody asks for them back or the holding runs out, which
+        // is the same promise the bay makes — one protocol, whichever gesture
+        // got here. `trash_tab` owns the ghosts, the focus and the save.
+        //
+        // Except for the last tab: closing it quits the application, and a
+        // holding lives in this window's memory, so it would be dropped in the
+        // same breath it was made. That case keeps today's explicit hangup,
+        // which at least ends the shells deliberately rather than by accident.
+        // It stops being the exception when a holding outlives its window.
+        if self.tabs.len() > 1 {
+            self.trash_tab(i, window, cx);
+            return;
+        }
+        // Read before the tab goes, hung up after it. `hangup` answers with
+        // what the window is still showing, and the answer has to be the window
+        // without this tab in it — see [`hangups_of`].
+        let dying: Vec<_> = {
             let mut leaves = vec![];
             self.tabs[i].root.leaves(&mut leaves);
-            let leaves: Vec<_> = leaves.into_iter().cloned().collect();
-            self.hangup(&leaves, cx);
-        }
+            leaves.into_iter().cloned().collect()
+        };
         // Every tube in the tab goes dark at once — but only if this tab is the
         // one on screen; a background tab's panes hold stale bounds (see
         // `ghost_of`), and there is no point animating a screen nobody saw.
@@ -10797,6 +11551,7 @@ impl Workspace {
             }
         }
         self.tabs.remove(i);
+        self.hangup(&dying, cx);
         if self.tabs.is_empty() {
             cx.quit();
             return;
@@ -10975,6 +11730,13 @@ impl Workspace {
     /// graveyard, plugins) closes first — a second esc then closes the wall.
     /// Returns whether anything was closed. NEVER touches a terminal pane.
     fn close_popups(&mut self) -> bool {
+        // The attention queue draws over everything and is the cheapest thing to
+        // dismiss, so it goes first: Esc with the queue open should fold the
+        // queue, never the wall underneath it.
+        if self.rail_open {
+            self.rail_open = false;
+            return true;
+        }
         // Overlays that stack ON TOP of the agent wall — peel these first.
         if self.savings_menu {
             self.savings_menu = false;
@@ -11660,10 +12422,15 @@ impl Workspace {
                 .map(|(_, _, w, h)| (w, h))
                 .unwrap_or((0.0, 0.0));
             let outside = engaged && outside_bounds(f32::from(pos.x), f32::from(pos.y), ow, oh);
+            let in_bay = engaged && !outside && self.point_in_bay(pos);
             if let Some(d) = self.drag_pane.as_mut() {
                 d.left_window = outside;
+                d.over_bay = in_bay;
             }
-            self.drop_target = if engaged && !outside {
+            // Over the bay, the pane is being retired rather than moved, so the
+            // in-window landing zones stop being offered: two affordances lit at
+            // once is a release whose outcome nobody can predict.
+            self.drop_target = if engaged && !outside && !in_bay {
                 let id = self.drag_pane.as_ref().unwrap().id;
                 self.resolve_drop(pos, id)
             } else {
@@ -11920,7 +12687,13 @@ impl Workspace {
                     .unwrap_or((0.0, 0.0));
                 let outside = drag.left_window
                     || outside_bounds(f32::from(ev.position.x), f32::from(ev.position.y), ow, oh);
-                if let Some(target) = target {
+                if drag.over_bay {
+                    // Into the incinerator, by the same door everything else
+                    // uses. `close_pane` is the retirement, so a pane dropped
+                    // here and a pane closed with alt+w land in one holding and
+                    // come back the same way.
+                    self.close_pane(drag.id, window, cx);
+                } else if let Some(target) = target {
                     self.perform_drop(drag.id, target, window, cx);
                 } else if outside && self.pane_count() > 1 {
                     // released past the window edge → tear this pane off into a
@@ -11977,23 +12750,31 @@ impl Workspace {
         }) else {
             return;
         };
-        // Take the dying tube's stage before it goes. `remove_leaf` below drops
-        // the Entity, which SIGHUPs the shell — after that there is no pane left
-        // to ask where it was or how bent it was.
-        // A pane the host owns does not die when this window stops watching it,
-        // so closing one has to be said out loud. Said here, before the entity
-        // is dropped: after that there is no pane left to ask which terminal it
-        // was showing.
-        {
-            let mut leaves = vec![];
-            self.tabs[from].root.leaves(&mut leaves);
-            let dying: Vec<_> = leaves
-                .into_iter()
-                .filter(|e| e.entity_id() == id)
-                .cloned()
-                .collect();
-            self.hangup(&dying, cx);
+        // A pane alone in its tab is a tab. Closing it there is the tab-shaped
+        // gesture wearing a different chord, and routing it to one place keeps
+        // the two from drifting into two answers for one act.
+        if self.tab_pane_count(from) <= 1 {
+            self.close_tab(from, window, cx);
+            return;
         }
+
+        // The seat, read BEFORE the pane leaves. `remove_leaf` collapses the
+        // parent split onto the sibling, so a moment from now there is nothing
+        // left in the tree that describes where this pane was — and a pane that
+        // cannot say where it sat comes back somewhere arbitrary, which is worse
+        // than not coming back at all.
+        let seat = {
+            let pred = |e: &Entity<TerminalView>| e.entity_id() == id;
+            self.tabs[from]
+                .root
+                .seat_of(&pred)
+                .map(|(dir, ratio, side, sibling)| (dir, ratio, side, Anchor::of(sibling)))
+        };
+        let label = self
+            .tabs
+            .get(from)
+            .and_then(|t| t.name.clone())
+            .unwrap_or_else(|| format!("pane in tab {}", from + 1));
         if from == self.active {
             let mut leaves = vec![];
             self.tabs[from].root.leaves(&mut leaves);
@@ -12011,15 +12792,40 @@ impl Workspace {
         // The tab survives this; only one of its panes is leaving. It goes back
         // as the same task — same name, same colours, same branch.
         let was = tab.identity();
-        // dropping the taken Entity releases its PTY (SIGHUP) — that's the close
-        let (_taken, remaining) = tab.root.remove_leaf(&pred);
+        let (taken, remaining) = tab.root.remove_leaf(&pred);
         if let Some(root) = remaining {
-            self.tabs.insert(from, was.onto(root));
+            self.tabs.insert(from, was.clone().onto(root));
         }
         if self.tabs.is_empty() {
             cx.quit();
             return;
         }
+
+        // Retired, not hung up. The Entity that came out of the tree is the
+        // terminal's last reference, so the trash holding it is what keeps the
+        // shell running — and letting go of it, on eviction or expiry, is what
+        // finally ends it. There is deliberately no `hangup` on this path.
+        if let (Some(leaf), Some((dir, ratio, side, anchor))) = (taken, seat) {
+            let (_, evicted) = self.trash.take(
+                hold::Kind::Pane,
+                label,
+                0,
+                1,
+                Retired::Pane(HeldPane {
+                    leaf,
+                    anchor,
+                    side,
+                    dir,
+                    ratio,
+                    tab_at: from,
+                    ident: was,
+                }),
+                Instant::now(),
+            );
+            self.end_held(evicted, cx);
+            self.hint_undo_once();
+        }
+
         self.active = self.active.min(self.tabs.len() - 1);
         self.focus_active(window, cx);
         // Closing a pane is an EXPLICIT shrink — allow it past the guard.
@@ -13189,9 +13995,7 @@ impl Workspace {
             } => {
                 let g = self.groups.iter().find(|g| g.id == id);
                 let color = g.map(|g| g.color).unwrap_or(th.faint);
-                let label = g
-                    .map(|g| g.label())
-                    .unwrap_or_else(|| format!("initiative {id}"));
+                let label = g.map(|g| g.label()).unwrap_or_else(|| unnamed_group(id));
                 self.branch_row(
                     BarBranch::Initiative(id),
                     depth,
@@ -13389,8 +14193,8 @@ impl Workspace {
             .child(
                 div()
                     .id(SharedString::from(format!("bar-fold-{key}")))
-                    .w(px(15. * s))
-                    .h(px(15. * s))
+                    .w(px(FOLD_W * s))
+                    .h(px(FOLD_W * s))
                     .flex()
                     .flex_row()
                     .items_center()
@@ -13592,7 +14396,7 @@ impl Workspace {
         // one gesture renames a task wherever it is grabbed from
         if let Some((_, eb)) = self.renaming.as_ref().filter(|(ri, _)| *ri == i) {
             return div()
-                .pl(step * (depth as f32) + px(4. * s))
+                .pl(step * (depth as f32) + px(4. * s) + px(FOLD_W * s))
                 .pr(px(4. * s))
                 .py(px(1. * s))
                 .child(
@@ -13627,7 +14431,11 @@ impl Workspace {
                     .id(SharedString::from(format!("bar-task-{i}")))
                     .group(grp.clone())
                     .relative()
-                    .pl(step * (depth as f32) + px(4. * s))
+                    // Plus the fold's width: a task has no disclosure triangle, and
+                    // without clearing the one its PARENT wears it starts four
+                    // pixels LEFT of the branch label it hangs from. Two levels of
+                    // tree that do not read as two levels — see `FOLD_W`.
+                    .pl(step * (depth as f32) + px(4. * s) + px(FOLD_W * s))
                     .pr(px(5. * s))
                     .py(px(2. * s))
                     .flex()
@@ -13842,6 +14650,7 @@ impl Workspace {
                     hud::AgentState::Error => t.errored += 1,
                     hud::AgentState::Finished => t.finished += 1,
                     hud::AgentState::Idle => t.idle += 1,
+                    hud::AgentState::Unknown => t.unknown += 1,
                 }
             }
         }
@@ -13906,10 +14715,23 @@ impl Workspace {
         let store = self.bay_bounds.clone();
         let open = self.bay.clamp(0., 1.);
         let held = self.trash.live_len(Instant::now());
+        // What the bay is saying out loud right now, if anything. Read rather
+        // than cleared here: `render_bay` takes `&self`, and a message that
+        // expires on a clock nobody is watching would sit there until the next
+        // frame happened to be drawn for some other reason.
+        let says = self
+            .bay_says
+            .filter(|(_, at)| at.elapsed() < BAY_SAYS_FOR)
+            .map(|(what, _)| what.line());
+        // Aimed at the bin, by either gesture that can be.
         let hot = self
             .bar_drag
             .as_ref()
-            .is_some_and(|d| d.engaged && d.over_bay);
+            .is_some_and(|d| d.engaged && d.over_bay)
+            || self
+                .drag_pane
+                .as_ref()
+                .is_some_and(|d| d.engaged && d.over_bay);
 
         // Half the bay's inner width, which is how far each door travels to be
         // fully open. Derived from the bar rather than measured, because a door
@@ -13917,25 +14739,50 @@ impl Workspace {
         let half = (self.left_bar_w * s - 12. * s).max(20.) / 2.;
         let travel = px(open * half);
 
-        let door = |right: bool| {
+        let ember = hsla(0.06, 0.95, 0.55, 1.);
+        let door = move |right: bool| {
             div()
                 .absolute()
                 .top_0()
                 .bottom_0()
-                .w(px(half))
+                // A hair over half, so rounding can never leave a lit seam
+                // between two shut doors. They are opaque; overlapping costs
+                // nothing.
+                .w(px(half + 1.))
                 .when(!right, |d| d.left(-travel))
                 .when(right, |d| d.right(-travel))
-                .bg(th.faint.alpha(0.13))
-                .border_color(th.faint.alpha(0.30))
-                // Only the inner edge is lit: it is the edge that moves, and
-                // the one that makes two panels read as a parting seam rather
-                // than as two unrelated rectangles.
+                // OPAQUE, and the whole point of them. These were painted at
+                // 13% alpha, which is a tint rather than a material: the fire
+                // showed straight through both doors, so the bay read as a lit
+                // panel that never opened and the sliding was invisible. A door
+                // that does not occlude is not a door.
+                .bg(sk.ink.panel)
+                // The inner edge is the one that moves and the one the fire
+                // falls on, so it takes the ember as the gap widens — the doors
+                // are lit BY what is behind them.
+                .border_color(ember.alpha(0.20 + 0.60 * open))
                 .when(!right, |d| d.border_r_1())
                 .when(right, |d| d.border_l_1())
         };
 
         let danger = hsla(0., 0.72, 0.60, 1.);
-        let bin_ink = if hot { danger } else { th.text.alpha(0.55) };
+        // The bin is red because of what it does, not because it is hovered —
+        // it brightens toward danger when you are actually aimed at it.
+        let bin_ink = if hot {
+            danger
+        } else {
+            hsla(0.02, 0.70, 0.52, 0.92)
+        };
+
+        // The fire's breath. Two sine waves whose periods do not divide into one
+        // another, so the flicker never settles into a visible loop the way a
+        // single wave does. Cheap: one `sin` a frame, no state, no timer — the
+        // bay is already repainting while it is open.
+        let flicker = {
+            let t = anim_clock();
+            let wobble = (t * 7.3).sin() * 0.11 + (t * 2.9).sin() * 0.06;
+            (0.86 + wobble).clamp(0., 1.)
+        };
 
         div()
             .id("bar-bay")
@@ -13945,6 +14792,51 @@ impl Workspace {
             .flex_none()
             .overflow_hidden()
             .rounded(sk.radius())
+            // The fire throws light on the bar around it. Same phosphor shape
+            // the delete dialog wears — a crisp rim plus a soft bloom — in ember
+            // rather than danger red, and scaled by how far open the doors are,
+            // so the glow arrives WITH the fire instead of announcing it.
+            // Firelight thrown onto the bar around the bay. Three box shadows:
+            // GPU-rasterised with the element, no per-frame CPU, no extra draw
+            // pass — which is why the answer to "can we glow the surrounding
+            // surface cheaply" is yes, and why it scales with `open` for free.
+            .when(open > 0.02, |d| {
+                d.shadow(vec![
+                    // the rim itself, catching light
+                    BoxShadow {
+                        color: ember.alpha(0.55 * open),
+                        offset: point(px(0.), px(0.)),
+                        blur_radius: px(0.),
+                        spread_radius: px(1.),
+                        inset: false,
+                    },
+                    // the near bloom on the bar's ground
+                    BoxShadow {
+                        color: ember.alpha(0.45 * open),
+                        offset: point(px(0.), px(0.)),
+                        blur_radius: px(26. * open),
+                        spread_radius: px(3.),
+                        inset: false,
+                    },
+                    // and a wider, fainter wash, so the light falls off rather
+                    // than stopping at a hard edge
+                    BoxShadow {
+                        color: ember.alpha(0.22 * open),
+                        offset: point(px(0.), px(-2.)),
+                        blur_radius: px(52. * open),
+                        spread_radius: px(6.),
+                        inset: false,
+                    },
+                    // the light on the inside of the bay's own walls
+                    BoxShadow {
+                        color: ember.alpha(0.30 * open),
+                        offset: point(px(0.), px(0.)),
+                        blur_radius: px(14. * open),
+                        spread_radius: px(0.),
+                        inset: true,
+                    },
+                ])
+            })
             // What is behind the doors. Faded in with the opening rather than
             // switched on, so the reveal is the doors' doing.
             //
@@ -13958,30 +14850,63 @@ impl Workspace {
                 div()
                     .absolute()
                     .inset_0()
-                    .when(hot, |d| d.bg(danger.alpha(0.10)))
+                    // What is behind the doors: an incinerator, not a bonfire.
+                    //
+                    // A full-bleed fire filled the bay and left nothing for the
+                    // doors to reveal that was not already the whole panel. The
+                    // bin IS the thing behind the doors; the fire belongs inside
+                    // the bin, which is also the only place it means anything —
+                    // this is where the thing you drop goes.
+                    // Everything the doors reveal is CENTRED, because the centre
+                    // is the only part they reveal until they are wide open.
+                    // The bin sat in the bottom-right corner — which was right
+                    // when the doors were a 13% tint and the whole panel showed
+                    // at once, and became invisible the moment they started
+                    // occluding: at a third open you saw a lit gap with nothing
+                    // in it. What the doors part to show has to be behind the
+                    // gap, not beside it.
                     .child(
                         div()
                             .absolute()
                             .inset_0()
                             .flex()
+                            .flex_col()
                             .items_center()
                             .justify_center()
-                            .text_size(px(8.5 * s))
-                            .text_color(bin_ink.alpha(bin_ink.a * open * 0.9))
-                            .child(SharedString::from(if hot {
-                                "release to delete".to_string()
-                            } else {
-                                "drop here to delete".to_string()
-                            })),
-                    )
-                    .child(
-                        div()
-                            .absolute()
-                            .right(px(5. * s))
-                            .bottom(px(3. * s))
-                            .text_size(px(BIN_PT * s))
-                            .text_color(bin_ink.alpha(bin_ink.a * open))
-                            .child("\u{1F5D1}"),
+                            .gap(px(1. * s))
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .items_center()
+                                    // The flame sits ON the bin's mouth rather
+                                    // than above it: a negative gap laps it over
+                                    // the rim, so it reads as burning IN there
+                                    // rather than as two glyphs stacked.
+                                    .gap(px(-6. * s))
+                                    .child(
+                                        div()
+                                            .text_size(px(BIN_PT * 0.78 * s))
+                                            .text_color(ember.alpha(flicker * open))
+                                            .child("\u{1F525}"),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_size(px(BIN_PT * s))
+                                            .text_color(bin_ink.alpha(bin_ink.a * open))
+                                            .child("\u{1F5D1}"),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(8. * s))
+                                    .text_color(ember.alpha(0.85 * open))
+                                    .child(SharedString::from(if hot {
+                                        "release to delete".to_string()
+                                    } else {
+                                        "drop here to delete".to_string()
+                                    })),
+                            ),
                     ),
             )
             .child(door(false))
@@ -13999,7 +14924,7 @@ impl Workspace {
                     .w(px(1.))
                     .bg(th.faint.alpha(0.42 * (1. - open))),
             )
-            .when(held > 0 && open < 0.5, |d| {
+            .when(held > 0 && open < 0.5 && says.is_none(), |d| {
                 d.child(
                     div()
                         .absolute()
@@ -14010,6 +14935,24 @@ impl Workspace {
                         .text_size(px(9. * s))
                         .text_color(th.text.alpha(0.42 * (1. - open)))
                         .child(SharedString::from(format!("{held} recoverable"))),
+                )
+            })
+            // What just happened, for a few seconds, in the same place the count
+            // sits — the count is what the bay says at rest, and this is what it
+            // says when something has just moved. Two lines at once in a 56-pixel
+            // box would be neither.
+            .when_some(says, |d, line| {
+                d.child(
+                    div()
+                        .absolute()
+                        .inset_0()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .px(px(4. * s))
+                        .text_size(px(9. * s))
+                        .text_color(ember.alpha(0.92 * (1. - open)))
+                        .child(SharedString::from(line)),
                 )
             })
             .child(
@@ -14338,12 +15281,15 @@ impl Workspace {
         // as blank space, which reads as a broken feature rather than as a
         // missing character. The pause is `U+2016` for the same reason —
         // `U+23F8`, which `hud::AgentState::badge` returns, is absent too.
-        let cells: [(hud::AgentState, u32, &str); 5] = [
+        let cells: [(hud::AgentState, u32, &str); 6] = [
             (hud::AgentState::Working, tally.working, "\u{25b6}"),
             (hud::AgentState::Blocked, tally.blocked, "\u{2016}"),
             (hud::AgentState::Error, tally.errored, "\u{2715}"),
             (hud::AgentState::Finished, tally.finished, "\u{2713}"),
             (hud::AgentState::Idle, tally.idle, "\u{25cb}"),
+            // The bar is on screen constantly, which makes it the one place a
+            // parser gap must not be invisible.
+            (hud::AgentState::Unknown, tally.unknown, "?"),
         ];
         // This line is also the door to the agent wall, which is the surface it
         // is a summary OF. It used to be opened by a robot glyph in the top
@@ -14423,6 +15369,786 @@ impl Workspace {
                 .h(px(rows.len() as f32 * (row_h + 6.0 * s)
                     + counter_h
                     + 11.0 * s)),
+        )
+    }
+
+    /// Slice 2: real panes, observed states.
+    ///
+    /// The rotation is gone. Every lane on every row now comes from the badge
+    /// that pane's own tab is showing — see [`rail_kind`], which is the single
+    /// precedence both surfaces read — and every age comes from an instant the
+    /// 120ms scan stamped when the lane actually changed.
+    ///
+    /// **Three fields are deliberately absent rather than invented**, because a
+    /// slice whose whole claim is "explicit live state" cannot carry the
+    /// tracer's props:
+    ///
+    /// - **Deliverable is `None`.** Slice 1 pointed every review row at a
+    ///   document this file picked out. That was honest as a tracer and is a lie
+    ///   here: a deliverable is something the AGENT declared, and there is no
+    ///   source for one until Slice 4. A row with nothing to open now offers
+    ///   nothing, which is the shape the plan asks for.
+    /// - **Priority is Neutral for every row.** Levels live on the tree and
+    ///   land in Slice 5. `Priority` already sorts above the lane, so the key is
+    ///   in place and simply has one value until somebody can set it.
+    /// - **`PaneKind::Unknown` is never produced.** This process launched the
+    ///   pane and knows what is in it. The variant exists for a pane whose kind
+    ///   genuinely cannot be established — one a client is only being told about
+    ///   — and synthesising it here would be the rotation again under a new name.
+    ///
+    /// Origin is still the tab's own project and group. The full resolution —
+    /// nearest explicit setting, the group's project when a tab is grouped — is
+    /// Slice 3's.
+    fn rail_rows(
+        &self,
+        cx: &App,
+    ) -> (
+        Vec<attention::AttentionItem>,
+        std::collections::HashMap<u64, EntityId>,
+    ) {
+        if std::env::var("TD_SPINE_DEMO").is_ok_and(|v| v != "0") {
+            // Demo rows point at whatever panes this window has, round-robin, so
+            // the focus verb still does something real. With one pane, every row
+            // goes to it — which is honest about a demo rather than faking a
+            // fleet that is not there.
+            let mut panes = std::collections::HashMap::new();
+            let mut live: Vec<EntityId> = Vec::new();
+            for tab in self.tabs.iter() {
+                let mut leaves = Vec::new();
+                tab.root.leaves(&mut leaves);
+                for leaf in leaves {
+                    live.push(leaf.entity_id());
+                }
+            }
+            let items = self.rail_demo_rows();
+            for (i, it) in items.iter().enumerate() {
+                if !live.is_empty() {
+                    panes.insert(it.pane, live[i % live.len()]);
+                }
+            }
+            return (items, panes);
+        }
+        use attention::{AttentionKind, Observation, PaneKind, Priority};
+        let mut obs: Vec<Observation> = Vec::new();
+        let mut panes: std::collections::HashMap<u64, EntityId> = std::collections::HashMap::new();
+        let mut n: u64 = 0;
+        for (ti, tab) in self.tabs.iter().enumerate() {
+            let mut leaves = Vec::new();
+            tab.root.leaves(&mut leaves);
+            for leaf in leaves {
+                let view = leaf.read(cx);
+                let agent = view.mode.is_agent();
+                let pane_kind = if agent {
+                    PaneKind::Agent
+                } else {
+                    PaneKind::Shell
+                };
+                // The same four signals the tab strip ranks, ranked once.
+                let badge = agent_badge(
+                    view.needs_input(),
+                    view.agent_working(),
+                    view.has_bell(),
+                    view.bell_blocked(),
+                );
+                let kind = rail_kind(badge, view.rail_state());
+                // Said in the badge's terms, not the parser's, so the words on
+                // the row match the glyph the tab is wearing.
+                let reason = match kind {
+                    Some(AttentionKind::Decision) => "Stopped at a prompt",
+                    Some(AttentionKind::Failure) => "Finished against a wall",
+                    Some(AttentionKind::ReviewReady) => "Finished, not yet seen",
+                    Some(AttentionKind::Unknown) => "Screen could not be read",
+                    None => "",
+                };
+                // Where the fact came from, shown beside its age. Three
+                // different instruments, and a row that says which one read it
+                // is a row somebody can argue with.
+                let source = match kind {
+                    Some(AttentionKind::Decision) => "prompt",
+                    Some(AttentionKind::Failure) | Some(AttentionKind::ReviewReady) => "bell",
+                    Some(AttentionKind::Unknown) => "parser",
+                    None => "",
+                };
+                obs.push(Observation {
+                    pane: n,
+                    pane_kind,
+                    priority: Priority::Neutral,
+                    kind,
+                    origin: self.rail_origin(ti),
+                    reason: reason.to_string(),
+                    // None until this pane's lane has been SEEN to change. The
+                    // row draws a dash, and never an age it did not measure.
+                    observed_at: view.attention_since(),
+                    source,
+                    deliverable: None,
+                });
+                panes.insert(n, leaf.entity_id());
+                n += 1;
+            }
+        }
+        (attention::project(&obs), panes)
+    }
+
+    /// A fixed, fictional queue for looking at the surface.
+    ///
+    /// `TD_SPINE_DEMO=1`. The tracer above needs live agent panes to have
+    /// anything to say, and a freshly opened window has one shell — so without
+    /// this, the demo of an attention surface is an empty list, which shows
+    /// nothing about how it reads.
+    ///
+    /// The origins and reasons are invented, in the house rule for demo data:
+    /// no real prompt, path or business ever ships in capture media. The two
+    /// deliverables are the exception and are deliberate — they point at real
+    /// documents in this checkout so the click can be seen to work, and both are
+    /// public repository files.
+    ///
+    /// Every case is here on purpose: all four lanes, a promoted row and a
+    /// demoted one, a row with no observed time, and both document kinds.
+    fn rail_demo_rows(&self) -> Vec<attention::AttentionItem> {
+        use attention::{AttentionKind, Deliverable, Origin, Priority};
+
+        fn origin(project: &str, initiative: Option<&str>) -> Origin {
+            Origin {
+                project: Some(project.to_string()),
+                initiative: initiative.map(|s| s.to_string()),
+            }
+        }
+        let ago = |secs: u64| Instant::now().checked_sub(Duration::from_secs(secs));
+
+        let plan = Self::tracer_doc("docs/plans/attention-spine/plan.md");
+        let page = Self::tracer_doc("docs/2026-08-31-one-click-copy-affordance.html");
+
+        let rows = vec![
+            (
+                1u64,
+                Priority::Promoted,
+                AttentionKind::Decision,
+                origin("atlas", Some("ingest")),
+                "Choose the token migration path",
+                "pane screen",
+                ago(41 * 60),
+                None,
+            ),
+            (
+                2,
+                Priority::Neutral,
+                AttentionKind::Decision,
+                origin("ledger", Some("invoices")),
+                "Overwrite the July export?",
+                "pane screen",
+                ago(9 * 60),
+                None,
+            ),
+            (
+                3,
+                Priority::Promoted,
+                AttentionKind::Failure,
+                origin("atlas", Some("packaging")),
+                "AppImage smoke, exit 1",
+                "check",
+                ago(6 * 60),
+                None,
+            ),
+            (
+                4,
+                Priority::Neutral,
+                AttentionKind::ReviewReady,
+                origin("atlas", Some("theme-foundry")),
+                "Finished, not yet seen",
+                "bell",
+                ago(12 * 60),
+                page.map(|href| Deliverable {
+                    label: "One-click copy affordance".into(),
+                    href: href.to_string(),
+                }),
+            ),
+            (
+                5,
+                Priority::Neutral,
+                AttentionKind::ReviewReady,
+                origin("ledger", None),
+                "Finished, not yet seen",
+                "bell",
+                ago(40 * 60),
+                plan.map(|href| Deliverable {
+                    label: "Attention spine plan".into(),
+                    href: href.to_string(),
+                }),
+            ),
+            (
+                6,
+                Priority::Demoted,
+                AttentionKind::Failure,
+                origin("relay", Some("nightly")),
+                "Connection lost, retrying",
+                "check",
+                ago(2 * 60),
+                None,
+            ),
+            (
+                7,
+                Priority::Neutral,
+                AttentionKind::Unknown,
+                origin("relay", None),
+                "Known agent, state unreadable",
+                "pane screen",
+                None,
+                None,
+            ),
+        ];
+
+        let obs: Vec<attention::Observation> = rows
+            .into_iter()
+            .map(
+                |(pane, priority, kind, origin, reason, source, observed_at, deliverable)| {
+                    attention::Observation {
+                        pane,
+                        pane_kind: attention::PaneKind::Agent,
+                        priority,
+                        kind: Some(kind),
+                        origin,
+                        reason: reason.to_string(),
+                        observed_at,
+                        source,
+                        deliverable,
+                    }
+                },
+            )
+            .collect();
+        attention::project(&obs)
+    }
+
+    /// Which part of the queue a click landed on, once the curve is undone.
+    fn rail_hit_at(&self, pos: Point<Pixels>) -> Option<RailAction> {
+        let bounds = (*self.rail_bounds.lock().unwrap())?;
+        let hits = self.rail_hits.lock().unwrap();
+        if hits.is_empty() {
+            return None;
+        }
+
+        // **Flat, and that is not an oversight.** This undid the shader's map
+        // for a while, which was right while the queue registered a warp tube.
+        // It does not any more — it is a menu that floats above the glass — so
+        // the pixels are where they are drawn and un-bending the pointer would
+        // put the click somewhere the row is not. The hit test and the warp
+        // decision have to agree; `every_overlay_over_panes_decides_about_the_warp`
+        // is what keeps them agreeing.
+        let (bx, by) = (f32::from(bounds.origin.x), f32::from(bounds.origin.y));
+        let bw = f32::from(bounds.size.width).max(1.0);
+        let bh = f32::from(bounds.size.height).max(1.0);
+        let (u, v) = ((f32::from(pos.x) - bx) / bw, (f32::from(pos.y) - by) / bh);
+        if !(0.0..=1.0).contains(&u) || !(0.0..=1.0).contains(&v) {
+            return None;
+        }
+        let (x, y) = (bx + u * bw, by + v * bh);
+
+        for hit in hits.iter() {
+            if y < hit.top || y > hit.bottom {
+                continue;
+            }
+            if let Some((dt, db)) = hit.deliverable {
+                if y >= dt && y <= db && x >= hit.left {
+                    return Some(RailAction::Open(hit.index));
+                }
+            }
+            return Some(RailAction::Focus(hit.index));
+        }
+        None
+    }
+
+    /// A document that certainly exists, for a tracer to point a deliverable at.
+    ///
+    /// **Kept, unused, on purpose** — Slice 4 needs the resolution rule this
+    /// encodes (resolve from the running binary, offer nothing when the file is
+    /// absent) the moment a declared deliverable arrives from an agent, and the
+    /// paragraph below about not touching the disk while painting is the
+    /// expensive half of what was learned building it.
+    ///
+    /// Resolved from the running binary rather than written down, so this works
+    /// in anyone's checkout and points at nothing on a machine where the file is
+    /// missing. A tracer whose link 404s teaches the wrong lesson about the
+    /// click.
+    ///
+    /// **Resolved once per process, and that is not a detail.** The queue is
+    /// built inside the render pass, so the first version of this ran a
+    /// filesystem stat per review row per frame — the exact thing the slot bar's
+    /// own doc forbids two hundred lines up, for the reason it gives: a surface
+    /// that is never not on screen cannot afford to touch the disk while
+    /// painting. Both answers are fixed for the life of the process, so they are
+    /// looked up on first use and kept.
+    #[allow(dead_code)]
+    fn tracer_doc(rel: &'static str) -> Option<&'static str> {
+        use std::sync::OnceLock;
+        static PLAN: OnceLock<Option<String>> = OnceLock::new();
+        static PAGE: OnceLock<Option<String>> = OnceLock::new();
+
+        fn resolve(rel: &str) -> Option<String> {
+            let exe = std::env::current_exe().ok()?;
+            // <repo>/app/target/<profile>/terminal-delight
+            let root = exe.parent()?.parent()?.parent()?.parent()?;
+            let path = root.join(rel);
+            path.exists().then(|| path.to_string_lossy().into_owned())
+        }
+
+        let cell = if rel.ends_with(".md") { &PLAN } else { &PAGE };
+        cell.get_or_init(|| resolve(rel)).as_deref()
+    }
+
+    /// A tab's `project:initiative`, as far as Slice 1 resolves it.
+    fn rail_origin(&self, i: usize) -> attention::Origin {
+        let Some(tab) = self.tabs.get(i) else {
+            return attention::Origin::default();
+        };
+        attention::Origin {
+            project: tab
+                .project
+                .and_then(|id| self.project_at(id))
+                .and_then(|p| p.name.clone()),
+            initiative: tab
+                .group
+                .map(|g| self.branch_label(BarBranch::Initiative(g))),
+        }
+    }
+
+    fn rail_ink(kind: attention::AttentionKind, sk: &skin::Skin) -> Hsla {
+        match kind {
+            attention::AttentionKind::Decision => hsla(0., 0.72, 0.60, 1.),
+            attention::AttentionKind::Failure => hsla(0.06, 0.74, 0.62, 1.),
+            attention::AttentionKind::ReviewReady => hsla(0.40, 0.60, 0.50, 1.),
+            attention::AttentionKind::Unknown => sk.ink.ink_dim,
+        }
+    }
+
+    /// The closed spine: a narrow strip at the right edge carrying the count and
+    /// one pip per kind present.
+    ///
+    /// It is a flex sibling of the screen, so it costs the terminals its own
+    /// width and nothing more. The queue it opens draws *over* the panes instead
+    /// of pushing them, which is the property the plan's geometry test checks.
+    fn render_spine(&self, cx: &mut Context<Self>) -> Option<gpui::Div> {
+        if !self.rail_on {
+            return None;
+        }
+        let s = theme::outer_choice(cx).grade.scale;
+        let sk = skin::skin(cx, s);
+        let (items, _) = self.rail_rows(cx);
+        let counts = attention::counts(&items);
+
+        // One pip per kind that is actually present, in lane order — not one per
+        // row, which would turn a twenty-five pane fleet into a barcode.
+        let mut kinds: Vec<attention::AttentionKind> = Vec::new();
+        for it in &items {
+            if !kinds.contains(&it.kind) {
+                kinds.push(it.kind);
+            }
+        }
+        let wanting = counts.wanting;
+        let unknown = counts.unknown;
+
+        // Two divs, not one, and the split is what stops the spine being a
+        // full-height stripe.
+        //
+        // The OUTER div is the flex sibling — it owns the column beside the
+        // screen and is stretched to its full height by the row, which is the
+        // layout contract this surface signed: it costs the terminals its width
+        // and nothing else. The INNER pill is a child of a flex COLUMN, so the
+        // vertical axis is the main axis and it sizes to its own content. One
+        // badge as tall as the things in it, parked at the top, instead of a
+        // rule running the height of the window with three marks near the top of
+        // it.
+        Some(
+            div()
+                .flex_none()
+                .w(px(26. * s))
+                .ml(px(4. * s))
+                .flex()
+                .flex_col()
+                .items_center()
+                .pt(px(8. * s))
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .items_center()
+                        .gap(px(5. * s))
+                        // Asymmetric on purpose: the count and the pips are
+                        // narrow, so equal padding all round reads as too wide.
+                        // The vertical is what gives the badge its shape.
+                        .px(px(5. * s))
+                        .py(px(7. * s))
+                        .rounded(sk.radius())
+                        .border_1()
+                        // Carried at a lower alpha than the fill it sits on, so
+                        // the edge reads as an edge rather than as a second
+                        // element. Same pair the tab chips use.
+                        .border_color(sk.ink.ink.alpha(0.22))
+                        .bg(sk.ink.ink.alpha(0.06))
+                        .cursor_pointer()
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                                cx.stop_propagation();
+                                ws.rail_open = !ws.rail_open;
+                                cx.notify();
+                            }),
+                        )
+                        .child(
+                            div()
+                                .text_size(px(11. * s))
+                                .text_color(if wanting > 0 {
+                                    hsla(0., 0.72, 0.60, 1.)
+                                } else {
+                                    sk.ink.ink_dim
+                                })
+                                .child(format!("{wanting}")),
+                        )
+                        .children(kinds.into_iter().map(|k| {
+                            div()
+                                .w(px(4. * s))
+                                .h(px(10. * s))
+                                .rounded(px(2. * s))
+                                .bg(Self::rail_ink(k, &sk))
+                        }))
+                        .when(unknown > 0, |d| {
+                            d.child(
+                                div()
+                                    .text_size(px(9. * s))
+                                    .text_color(sk.ink.ink_dim)
+                                    .child("?"),
+                            )
+                        }),
+                ),
+        )
+    }
+
+    /// The queue, drawn over the right-hand panes.
+    ///
+    /// Overlay rather than reflow: the scrim is `inset_0` and the panel is
+    /// pushed to the right edge by the flex row, so no pane's bounds change when
+    /// this opens. One verb per row, and it is focus — the pane's own focus-in
+    /// edge then acknowledges its bell, which is the seen-state the plan reuses
+    /// rather than inventing.
+    fn render_rail(&self, cx: &mut Context<Self>) -> Option<gpui::Div> {
+        if !self.rail_on || !self.rail_open {
+            return None;
+        }
+        let s = theme::outer_choice(cx).grade.scale;
+        let sk = skin::skin(cx, s);
+        let (items, _panes) = self.rail_rows(cx);
+        let now = Instant::now();
+        let th = theme::theme(cx);
+        let rail_bounds = self.rail_bounds.clone();
+
+        // The menu recipe, copied from the menu-bar scale popup rather than
+        // invented: a real border, an opaque darkened fill, a float shadow and a
+        // radius. This is what earns a flat surface its place above bent glass —
+        // without it the panel reads as a decal, which is the observation that
+        // sent this surface to a warp tube in the first place. The fix was the
+        // chrome, not the curve.
+        let mut list = div()
+            .flex()
+            .flex_col()
+            .gap(px(4. * s))
+            .p(px(7. * s))
+            .w(px(316. * s))
+            .rounded(sk.rad_raw(8.))
+            .border_2()
+            .border_color(th.accent.alpha(0.85))
+            .bg(darken(th.surface, 0.45))
+            .shadow(float_shadows(th.accent));
+
+        list = list.child(
+            div()
+                .flex()
+                .flex_row()
+                .justify_between()
+                .px(px(3. * s))
+                .pb(px(5. * s))
+                .text_size(px(9.5 * s))
+                .text_color(sk.ink.ink_dim)
+                .child(format!(
+                    "NEEDS ME \u{b7} {}",
+                    attention::counts(&items).wanting
+                ))
+                .child("esc"),
+        );
+
+        // **The unknown lane collapses to one line, and this is the only place
+        // it may.**
+        //
+        // `parse_status_line` answers Unknown for any screen it cannot match,
+        // and a resting agent at its prompt is such a screen — #425 made that
+        // deliberate, because a screen nobody could read must never assert rest.
+        // The consequence only appears on a real fleet: twenty-three panes,
+        // most of them idle, and the queue was twenty identical rows saying
+        // nothing with one review row buried in them. The surface exists to
+        // answer "who needs me", and it was answering "here is every pane".
+        //
+        // The projection still carries them one by one, because a count is not a
+        // fact you can get back once it is collapsed. The collapse happens HERE,
+        // at the front, where a person can see it and argue with it — a store
+        // that had already thrown the rows away could never be asked which panes
+        // they were.
+        let (waiting, unknown_rows): (Vec<_>, Vec<_>) = items
+            .iter()
+            .partition(|it| it.kind != attention::AttentionKind::Unknown);
+
+        if waiting.is_empty() {
+            list = list.child(
+                div()
+                    .px(px(4. * s))
+                    .py(px(8. * s))
+                    .text_size(px(11. * s))
+                    .text_color(sk.ink.ink_dim)
+                    .child("Nothing is waiting on you."),
+            );
+        }
+
+        self.rail_hits.lock().map(|mut h| h.clear()).ok();
+        for (row_index, it) in waiting.iter().enumerate() {
+            let ink = Self::rail_ink(it.kind, &sk);
+            let head = div()
+                .flex()
+                .flex_row()
+                .gap(px(6. * s))
+                .items_center()
+                .child(
+                    div()
+                        .text_size(px(8.5 * s))
+                        .text_color(ink)
+                        .child(it.kind.label().to_uppercase()),
+                )
+                .child(
+                    div()
+                        .text_size(px(9.5 * s))
+                        .text_color(sk.ink.ink_dim)
+                        .child(it.origin.label()),
+                )
+                .children(it.priority.glyph().map(|g| {
+                    div()
+                        .text_size(px(9.5 * s))
+                        .text_color(match it.priority {
+                            attention::Priority::Promoted => hsla(0.33, 0.70, 0.42, 1.),
+                            _ => hsla(0.58, 0.72, 0.56, 1.),
+                        })
+                        .child(g)
+                }))
+                .child(div().flex_1())
+                .child(
+                    div()
+                        .text_size(px(9.5 * s))
+                        .text_color(sk.ink.ink_dim)
+                        .child(attention::age_label(it.age(now))),
+                );
+            let row = div()
+                .pl(px(7. * s))
+                .pr(px(6. * s))
+                .py(px(5. * s))
+                .border_l(px(2. * s))
+                .border_color(ink)
+                .rounded(sk.radius())
+                .bg(sk.ink.ink.alpha(0.05))
+                .cursor_pointer()
+                .hover(move |st| st.bg(sk.ink.ink.alpha(0.12)))
+                .child(head)
+                .child(
+                    div()
+                        .text_size(px(11. * s))
+                        .text_color(sk.ink.ink)
+                        .child(it.reason.clone()),
+                )
+                // Every fact on the row says where it came from and when it was
+                // seen. A surface that shows a state without its provenance is
+                // asking to be trusted on nothing.
+                .child(
+                    div()
+                        .text_size(px(8.5 * s))
+                        .text_color(sk.ink.ink_dim)
+                        .child(format!(
+                            "{} \u{b7} {}",
+                            it.source,
+                            attention::age_label(it.age(now))
+                        )),
+                )
+                .children(it.deliverable.as_ref().map(|d| {
+                    let href = d.href.clone();
+                    let kind = attention::doc_kind(&href);
+                    div()
+                        .mt(px(4. * s))
+                        .flex()
+                        .flex_row()
+                        .gap(px(6. * s))
+                        .items_center()
+                        .text_size(px(10. * s))
+                        .text_color(hsla(0.58, 0.72, 0.62, 1.))
+                        .cursor_pointer()
+                        .child(
+                            div()
+                                .px(px(4. * s))
+                                .rounded(px(2. * s))
+                                .text_size(px(8. * s))
+                                .text_color(sk.ink.ink_dim)
+                                .bg(sk.ink.ink.alpha(0.10))
+                                .child(kind.label()),
+                        )
+                        .child(d.label.clone())
+                        // Its own click, and it stops there. Opening what a turn
+                        // produced and visiting the terminal that produced it are
+                        // two different acts, and reading never does the second.
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |_ws, _: &MouseDownEvent, _w, cx| {
+                                cx.stop_propagation();
+                                pane::open_with_system(&href);
+                                cx.notify();
+                            }),
+                        )
+                }));
+            // No per-row click handler. The panel takes one click and resolves it
+            // through the inverse barrel map, because these boxes are where the
+            // rows ARE and the curve is where the rows LOOK.
+            let hits = self.rail_hits.clone();
+            let idx = row_index;
+            let has_deliverable = it.deliverable.is_some();
+            let row = row.child(
+                div().absolute().inset_0().child(
+                    gpui::canvas(
+                        move |bounds, _window, _cx| {
+                            let top = f32::from(bounds.origin.y);
+                            let bottom = top + f32::from(bounds.size.height);
+                            let left = f32::from(bounds.origin.x);
+                            // The deliverable sits on the row's last line; its
+                            // band is the bottom third, which is enough to tell
+                            // "open this" from "go there" and needs no second
+                            // canvas inside the row.
+                            let deliverable =
+                                has_deliverable.then_some((top + (bottom - top) * 0.62, bottom));
+                            if let Ok(mut h) = hits.lock() {
+                                h.push(RailHit {
+                                    index: idx,
+                                    top,
+                                    bottom,
+                                    left,
+                                    deliverable,
+                                });
+                            }
+                        },
+                        |_, _, _, _| {},
+                    )
+                    .size_full(),
+                ),
+            );
+            list = list.child(row);
+        }
+
+        // One line for everything that could not be read, under the rows that
+        // could. Dim, unclickable, and phrased as the absence it is: the parser
+        // cannot tell a resting agent from a screen it failed on, so this must
+        // not say either "running" or "idle" about any of them. It says how many
+        // and stops, which is the whole of what is known.
+        if !unknown_rows.is_empty() {
+            let n = unknown_rows.len();
+            list = list.child(
+                div()
+                    .px(px(4. * s))
+                    .pt(px(7. * s))
+                    .text_size(px(9.5 * s))
+                    .text_color(sk.ink.ink_dim)
+                    .child(if n == 1 {
+                        "1 more pane could not be read".to_string()
+                    } else {
+                        format!("{n} more panes could not be read")
+                    }),
+            );
+        }
+
+        Some(
+            div()
+                .absolute()
+                .inset_0()
+                .occlude()
+                .flex()
+                .flex_row()
+                .justify_end()
+                .items_start()
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                        cx.stop_propagation();
+                        ws.rail_open = false;
+                        cx.notify();
+                    }),
+                )
+                .child(
+                    sk.panel()
+                        .mt(px(58. * s))
+                        .mr(px(30. * s))
+                        .shadow_lg()
+                        .child(list)
+                        // One click for the whole queue, resolved against the
+                        // flat boxes after the curve is undone.
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|ws, ev: &MouseDownEvent, _w, cx| {
+                                cx.stop_propagation();
+                                match ws.rail_hit_at(ev.position) {
+                                    Some(RailAction::Open(i)) => {
+                                        let (items, _) = ws.rail_rows(cx);
+                                        if let Some(d) =
+                                            items.get(i).and_then(|it| it.deliverable.as_ref())
+                                        {
+                                            pane::open_with_system(&d.href);
+                                        }
+                                    }
+                                    Some(RailAction::Focus(i)) => {
+                                        let (items, panes) = ws.rail_rows(cx);
+                                        if let Some(id) =
+                                            items.get(i).and_then(|it| panes.get(&it.pane)).copied()
+                                        {
+                                            ws.pending_jump = Some(id);
+                                            ws.rail_open = false;
+                                        }
+                                    }
+                                    None => {}
+                                }
+                                cx.notify();
+                            }),
+                        )
+                        // **The queue is a MENU, and menus float flat above the
+                        // glass.** This registered a warp tube once, on the
+                        // reasoning that a surface lying on bent glass should
+                        // bend with it. Put in front of Parker it was worse, not
+                        // better: the rows sheared into parallelograms and the
+                        // stack fanned out like a venetian blind, because a tall
+                        // list of thin rectangles shows every bit of a barrel map
+                        // that a single compact panel hides.
+                        //
+                        // The precedent is the menu-bar scale popup and every
+                        // other menu in this file — `.absolute()`, a real border,
+                        // an opaque darkened fill, a float shadow, no tube. Flat
+                        // only reads as "a sticker stuck on" when the chrome does
+                        // not say *floating*; give it the border and the shadow
+                        // and the eye reads it as a panel held above the screen,
+                        // which is what it is.
+                        //
+                        // The canvas stays, because the click path still needs the
+                        // painted rect — it just records it now instead of
+                        // registering it.
+                        .child(
+                            div().absolute().inset_0().child(
+                                gpui::canvas(
+                                    move |bounds, _window, _cx| {
+                                        // The same rect the click normalises into.
+                                        if let Ok(mut b) = rail_bounds.lock() {
+                                            *b = Some(bounds);
+                                        }
+                                    },
+                                    |_, _, _, _| {},
+                                )
+                                .size_full(),
+                            ),
+                        ),
+                ),
         )
     }
 
@@ -14965,7 +16691,7 @@ impl Workspace {
             .iter()
             .find(|g| g.id == gid)
             .map(|g| g.label())
-            .unwrap_or_else(|| format!("initiative {gid}"));
+            .unwrap_or_else(|| unnamed_group(gid));
         let mut chip = div()
             .id(SharedString::from(format!("grp-title-{gid}")))
             .flex()
@@ -15427,6 +17153,8 @@ fn agent_state_glow(th: &theme::Theme, idle: Hsla, state: hud::AgentState) -> Hs
         hud::AgentState::Error => hsla(0., 0.75, 0.60, 1.),
         hud::AgentState::Finished => hsla(0.34, 0.85, 0.58, 1.),
         hud::AgentState::Idle => idle,
+        // An unreadable screen is drawn as quiet, never as activity.
+        hud::AgentState::Unknown => idle,
     }
 }
 
@@ -15928,12 +17656,31 @@ impl Render for Workspace {
         // is built further down this same pass, so it can never draw an offer
         // this sweep would have taken.
         self.sweep_trash(cx);
-        // The bay doors, eased toward wherever the drag says they should be.
-        // Asking for another frame while they are still travelling is what makes
-        // this an animation rather than a jump; once they arrive, nothing here
-        // asks for anything and the window goes quiet again.
-        if self.ease_bay() {
+        // The bay doors, eased toward wherever the drag says they should be —
+        // and the fire behind them.
+        //
+        // The `|| self.bay > 0.0` half is what makes the bonfire burn. gpui
+        // advances a GIF's frame during PAINT and never schedules the next one,
+        // so an animated image in a surface nobody is repainting draws once and
+        // freezes. Easing alone asks for frames only while the doors travel, so
+        // the fire ran for a third of a second and then stood still — a
+        // photograph of a fire, which is the failure that looks most like
+        // success. The bay is only ever open while a drag is in flight, so this
+        // is a bounded burst rather than a window that never sleeps.
+        let travelling = self.ease_bay();
+        if travelling || self.bay > 0.0 {
             cx.notify();
+        }
+        // A line the bay is saying needs frames for the same reason: it expires
+        // on a clock, and a clock nobody repaints for is a message that stays up
+        // until something else happens to redraw. Dropped here, at its deadline,
+        // so the count underneath comes back on its own.
+        if let Some((_, at)) = self.bay_says {
+            if at.elapsed() < BAY_SAYS_FOR {
+                cx.notify();
+            } else {
+                self.bay_says = None;
+            }
         }
         // Tubes still going dark. Aged out here rather than on a timer: a ghost
         // that outlives its animation would keep an overlay tube registered.
@@ -16028,6 +17775,14 @@ impl Render for Workspace {
                              // of reach of its own flat hit box. Suppress so the menu reads true.
         warp::set_suppressed(
             pane_popup_open
+                // The attention queue is a menu and floats FLAT above the glass —
+                // and this line is the whole of what makes that true. Giving it a
+                // border and a shadow and taking its warp tube away does not: the
+                // pass is screen-space, so `fs_crt` bends every pixel that lands
+                // inside a registered rect no matter which element drew it, and the
+                // queue is drawn over panes that are registered. Chrome without
+                // this line is a flat-looking panel that still bows.
+                || self.rail_open
                 || self.theme_menu.is_some()
                 || self.osd_menu.is_some()
                 || self.mcp_menu
@@ -17890,14 +19645,14 @@ impl Render for Workspace {
             // filter domains. Group chips come from tab groups; program chips
             // come from live pane modes; state chips only come from matching
             // agents. ----
-            let (mut n_work, mut n_block, mut n_err, mut n_done, mut n_idle) =
-                (0u32, 0u32, 0u32, 0u32, 0u32);
+            let (mut n_work, mut n_block, mut n_err, mut n_done, mut n_idle, mut n_unknown) =
+                (0u32, 0u32, 0u32, 0u32, 0u32, 0u32);
             let mut turn_tok_total = 0u64;
             let mut sess_tok_total = 0u64;
             let mut total_panes = 0u32;
             let mut visible_agent_total = 0u32;
-            let (mut v_work, mut v_block, mut v_err, mut v_done, mut v_idle) =
-                (0u32, 0u32, 0u32, 0u32, 0u32);
+            let (mut v_work, mut v_block, mut v_err, mut v_done, mut v_idle, mut v_unknown) =
+                (0u32, 0u32, 0u32, 0u32, 0u32, 0u32);
             let mut visible_program_total = 0u32;
             let mut programs_present: Vec<(String, Hsla, u32)> = Vec::new();
             // (group key, display name, band colour, pane count) in first-seen order.
@@ -17938,6 +19693,7 @@ impl Render for Workspace {
                             hud::AgentState::Error => n_err += 1,
                             hud::AgentState::Finished => n_done += 1,
                             hud::AgentState::Idle => n_idle += 1,
+                            hud::AgentState::Unknown => n_unknown += 1,
                         }
                         turn_tok_total += st.turn_tokens.unwrap_or(0);
                         sess_tok_total += p.session_tokens();
@@ -17949,6 +19705,7 @@ impl Render for Workspace {
                                 hud::AgentState::Error => v_err += 1,
                                 hud::AgentState::Finished => v_done += 1,
                                 hud::AgentState::Idle => v_idle += 1,
+                                hud::AgentState::Unknown => v_unknown += 1,
                             }
                         }
                         let state_matches = state_filt.is_none_or(|s| st.state == s);
@@ -18223,6 +19980,10 @@ impl Render for Workspace {
                 (hud::AgentState::Error, v_err),
                 (hud::AgentState::Finished, v_done),
                 (hud::AgentState::Idle, v_idle),
+                // Unknown gets its own chip rather than being folded into idle:
+                // a filter you cannot select is a state you cannot inspect, and
+                // this is the one people will want to inspect first.
+                (hud::AgentState::Unknown, v_unknown),
             ] {
                 if count == 0 {
                     continue;
@@ -18367,7 +20128,7 @@ impl Render for Workspace {
                     // instead, marked with a ❯. Working agents show live output;
                     // fall back to recent output if there's no visible prompt.
                     let feed: Vec<String> = if is_agent {
-                        if status.state == hud::AgentState::Idle {
+                        if status.state.is_quiet() {
                             let mut v = p.last_human_message(3);
                             if v.is_empty() {
                                 p.recent_lines(4)
@@ -18489,7 +20250,7 @@ impl Render for Workspace {
                     } else {
                         theme_col.alpha(0.75)
                     };
-                    let live_glow = is_agent && !matches!(status.state, hud::AgentState::Idle);
+                    let live_glow = is_agent && !status.state.is_quiet();
                     // Parker's "FRAME" = the card's INTERIOR negative space (NOT the
                     // rim): a dark wash of THIS terminal's THEME seed, so every card
                     // body wears its own theme colour. Only when the wall theme is on;
@@ -19376,6 +21137,31 @@ impl Render for Workspace {
                                     }),
                                 ),
                         )
+                        // Panes whose screen matched no rule. Its own chip, so
+                        // the set can be filtered to and looked at — the first
+                        // thing anyone will want when this number is not zero.
+                        .child(
+                            div()
+                                .text_color(th.text.alpha(0.45))
+                                .cursor_pointer()
+                                .px_1()
+                                .rounded(sk.radius())
+                                .when(state_filt == Some(hud::AgentState::Unknown), |d| {
+                                    d.bg(th.text.alpha(0.45).alpha(0.22))
+                                })
+                                .hover(|s| s.bg(th.text.alpha(0.45).alpha(0.12)))
+                                .child(format!("? {n_unknown}"))
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                                        cx.stop_propagation();
+                                        ws.mcp_state_filter = (ws.mcp_state_filter
+                                            != Some(hud::AgentState::Unknown))
+                                        .then_some(hud::AgentState::Unknown);
+                                        cx.notify();
+                                    }),
+                                ),
+                        )
                         .child(div().flex_1().min_w(px(0.)))
                         .child(div().text_color(th.text.alpha(0.7)).child(format!(
                             "\u{0394} {} \u{00b7} \u{03a3} {}",
@@ -20109,19 +21895,43 @@ impl Render for Workspace {
                 .unwrap_or_else(|| format!("tab {}", i + 1));
             let n = self.tab_pane_count(i);
             let danger = hsla(0., 0.72, 0.60, 1.);
-            // Grammar adapts to a single shell vs a multi-pane tab.
-            let (btn_label, body) = if n <= 1 {
-                (
+            // The question this dialog asks changed when the close became a
+            // retirement: it is no longer "are you sure you want to end these
+            // shells" but "are you sure you want this off your screen". Saying
+            // the old sentence over the new behaviour would be the worse of the
+            // two errors — a person declines a close they could have taken back.
+            //
+            // The last tab is still the old sentence, and it is still true: a
+            // holding lives in this window, and closing the last tab closes the
+            // window. Whichever branch is drawn, it matches what `close_tab`
+            // will actually do.
+            let hours = hold::window_for(n).as_secs() / 3600;
+            let last = self.tabs.len() <= 1;
+            let (btn_label, body) = match (last, n) {
+                (true, 1) => (
                     "CLOSE TAB".to_string(),
-                    format!("Closing \u{201c}{name}\u{201d} ends its shell. This can\u{2019}t be undone."),
-                )
-            } else {
-                (
+                    format!(
+                        "\u{201c}{name}\u{201d} is the last tab \u{2014} closing it ends its shell and quits. This can\u{2019}t be undone."
+                    ),
+                ),
+                (true, n) => (
                     format!("CLOSE {n} PANES"),
                     format!(
-                        "\u{201c}{name}\u{201d} holds {n} panes \u{2014} closing it ends all {n} shells. This can\u{2019}t be undone."
+                        "\u{201c}{name}\u{201d} is the last tab \u{2014} closing it ends all {n} shells and quits. This can\u{2019}t be undone."
                     ),
-                )
+                ),
+                (false, 1) => (
+                    "CLOSE TAB".to_string(),
+                    format!(
+                        "\u{201c}{name}\u{201d} goes to the bay. Its shell keeps running, and ctrl+shift+z brings it back for the next {hours}h."
+                    ),
+                ),
+                (false, n) => (
+                    format!("CLOSE {n} PANES"),
+                    format!(
+                        "\u{201c}{name}\u{201d} holds {n} panes. They go to the bay still running, and come back with ctrl+shift+z for the next {hours}h."
+                    ),
+                ),
             };
             let confirm_btn = div()
                 .px_3()
@@ -20548,6 +22358,7 @@ impl Render for Workspace {
                         row(s.k_alt_arrows, s.move_focus_dir),
                         row(s.k_drag_subtab, s.drag_subtab),
                         row(s.k_rclick_tab, s.rclick_tab),
+                        row("Ctrl+Shift+Z", s.reopen_closed),
                     ],
                 ))
                 .child(section(
@@ -20605,6 +22416,7 @@ impl Render for Workspace {
                         row(s.k_rclick_note, s.sticky_pin),
                         row(s.k_wheel_key, s.pan_focus),
                         row(s.k_input_colour, s.input_colour),
+                        row("Ctrl+Shift+N", s.rail),
                         row(&format!("🤖 {}", s.k_mother_bar), s.mcp),
                         row("Ctrl+Shift+A", s.mcp),
                         row("Ctrl+Shift+U / Y", s.usage),
@@ -21906,7 +23718,8 @@ impl Render for Workspace {
             .flex_1()
             .min_h_0()
             .children(self.render_left_bar(cx))
-            .child(screen);
+            .child(screen)
+            .children(self.render_spine(cx));
 
         let root = div()
             .size_full()
@@ -21997,6 +23810,7 @@ impl Render for Workspace {
                     .children(confirm_overlay)
                     .children(delete_overlay)
                     .children(self.render_bar_menu(&th, scale, cx))
+                    .children(self.render_rail(cx))
                     .children(scale_overlay)
                     .children(more_overlay)
                     .children(help_overlay)
@@ -22107,6 +23921,167 @@ mod tests {
             Workspace::delete_label(None, 0, 0),
             "Delete",
             "an empty branch names no weight, because it has none"
+        );
+    }
+
+    /// An unnamed group is called the same thing everywhere.
+    ///
+    /// Before the rename box stopped opening on creation, nobody ever saw this
+    /// string — the default was overwritten the instant it existed. Now it is
+    /// what a new group is called until somebody renames it, so it has to match
+    /// the word the menus use, and it has to be decided in one place: four
+    /// sites spelled it out separately, which is how a default comes to
+    /// disagree with itself.
+    #[test]
+    fn an_unnamed_group_is_named_the_same_way_everywhere() {
+        assert_eq!(unnamed_group(3), "group 3");
+
+        let src = shipped_src();
+        assert!(
+            !src.contains("format!(\"initiative "),
+            "a hand-spelled `initiative N` label is back — the tree's internal word for the \
+             middle layer, shown to a person by a menu that calls it a group"
+        );
+        let sites = src.matches("unnamed_group(").count();
+        assert!(
+            sites >= 4,
+            "only {sites} site(s) reach the shared label; the others have gone their own way"
+        );
+    }
+
+    /// What the doors reveal is behind the GAP, not beside it.
+    ///
+    /// The doors part from a centre seam, so at anything short of fully open the
+    /// only thing on show is the middle. A bin pinned to the bottom-right corner
+    /// is therefore behind the right-hand door for the entire opening — you get
+    /// a lit, glowing, empty slot, which is exactly what it looked like.
+    ///
+    /// The corner placement was correct *before* the doors occluded, when the
+    /// whole panel showed at once. One change made the other wrong, and nothing
+    /// connected them: two separate right answers that stopped composing.
+    #[test]
+    fn the_bay_puts_what_it_reveals_where_the_doors_part() {
+        let src = shipped_src();
+        let at = src.find("fn render_bay(").expect("render_bay");
+        let end = src[at..]
+            .find("\n    fn ")
+            .map(|e| e + at)
+            .unwrap_or(src.len());
+        // only the layer behind the doors; the seam and the count sit outside it
+        let behind_start = src[at..end]
+            .find("// Everything the doors reveal is CENTRED")
+            .map(|p| p + at)
+            .expect("the revealed layer");
+        let behind_end = src[behind_start..end]
+            .find("            .child(door(false))")
+            .map(|p| p + behind_start)
+            .expect("the doors are drawn after what they hide");
+        let behind = &src[behind_start..behind_end];
+
+        assert!(
+            behind.contains(".justify_center()") && behind.contains(".items_center()"),
+            "the layer behind the doors is not centred, so the doors open on nothing"
+        );
+        for edge in [".right(px(", ".left(px(", ".bottom(px(", ".top(px("] {
+            assert!(
+                !behind.contains(edge),
+                "something behind the bay doors is pinned to an edge ({edge}) — the doors \
+                 part at the CENTRE, so an edge-pinned element stays hidden for the whole \
+                 opening and the bay reveals an empty slot"
+            );
+        }
+    }
+
+    /// The doors are opaque, or they are not doors.
+    ///
+    /// They shipped at `alpha(0.13)` — a tint, not a material. The fire showed
+    /// straight through both of them, so the bay read as a permanently lit panel
+    /// and the sliding was invisible: nothing was ever occluded, and the whole
+    /// reveal was doing no work. Caught by eye on a real tree, which is the only
+    /// way it could have been: every test passed, the asset loaded, the doors
+    /// moved, and the pixels were wrong.
+    #[test]
+    fn the_bay_doors_occlude_what_is_behind_them() {
+        let src = shipped_src();
+        let at = src
+            .find("let door = move |right: bool|")
+            .expect("the bay doors");
+        let end = src[at..]
+            .find("\n        };")
+            .expect("end of the door closure")
+            + at;
+        let body = &src[at..end];
+
+        let bg = body
+            .lines()
+            .find(|l| l.contains(".bg("))
+            .expect("a door with no background paints nothing at all");
+        assert!(
+            !bg.contains("alpha("),
+            "a bay door is painted with an alpha ({}) — it tints the fire instead of hiding \
+             it, and a door that does not occlude is not a door",
+            bg.trim()
+        );
+    }
+
+    /// The bay keeps asking for frames the whole time it is open, or the flame
+    /// stops moving.
+    ///
+    /// The flicker is a function of the clock, so it only advances on a repaint.
+    /// The doors' own easing stops notifying the moment they arrive, which left
+    /// the flame frozen on whatever phase it happened to reach — lit, plausible,
+    /// and still. Nothing else catches that: the glyph is drawn, the colour is
+    /// right, and every test passes. Presence is not motion.
+    ///
+    /// This guard survived the fire being scrapped, because the thing it
+    /// protects was never really the GIF — it is that an animation in a surface
+    /// nobody repaints is a picture.
+    #[test]
+    fn the_bay_asks_for_frames_the_whole_time_it_is_open() {
+        let src = shipped_src();
+        let at = src.find("let travelling = self.ease_bay();").expect(
+            "the bay's frame pump — if this moved, the flame may have stopped moving with it",
+        );
+        let after = &src[at..at + 200];
+        assert!(
+            after.contains("self.bay > 0.0"),
+            "the render pass asks for another frame only while the doors are TRAVELLING. \
+             The flame then freezes at whichever phase the doors finished on, and every \
+             other check still passes"
+        );
+    }
+
+    /// A task row clears the disclosure triangle its parent wears.
+    ///
+    /// Indenting a task by one step alone is not enough: a branch spends
+    /// `FOLD_W` on its fold target before its label starts, so a child indented
+    /// only by `step` lands to the LEFT of the parent it hangs from. Two levels
+    /// of tree that do not read as two levels — which is exactly how it looked
+    /// on a real tree.
+    #[test]
+    fn a_task_is_indented_past_its_parents_fold_triangle() {
+        let src = shipped_src();
+        let at = src.find("fn task_row(").expect("task_row");
+        let end = src[at..]
+            .find("\n    fn ")
+            .map(|e| e + at)
+            .unwrap_or(src.len());
+        let body = &src[at..end];
+
+        let indents = body.matches("step * (depth as f32)").count();
+        assert!(
+            indents >= 2,
+            "expected both task-row indents; found {indents}"
+        );
+        // `px(FOLD_W`, not the bare word: the doc comment beside these lines
+        // names the constant too, so counting the word read 3 against 2 real
+        // uses and failed on correct code. The same trap `shipped_src` exists
+        // for, one level in — a guard matching prose rather than the call.
+        assert_eq!(
+            body.matches("px(FOLD_W").count(),
+            indents,
+            "a task-row indent is missing its FOLD_W: the rename box and the row itself must \
+             line up with each other, and both must clear the parent's triangle"
         );
     }
 
@@ -22284,9 +24259,11 @@ mod tests {
             "a new project must open a terminal of its own"
         );
         assert!(
-            body.find("new_tab_in(") < body.find("start_bar_rename("),
-            "the terminal has to exist before the rename box opens: generate, zip there, \
-             then the housekeeping"
+            !body.contains("start_bar_rename("),
+            "making a project opens its rename box again — the gesture grabs the keyboard \
+             and decides for you that naming it is the next move, when the next move is \
+             usually using the terminal it just gave you. It opens as `project N`; renaming \
+             is double-click or the row's own menu"
         );
 
         // And the tab it builds goes through the identity carrier. `Tab::new`
@@ -23392,6 +25369,11 @@ mod tests {
         // A layout edited by hand, or written wrong. The first leaf gets the
         // terminal; the second gets its own rather than a second view of the
         // same one, which is the only reading that loses nothing.
+        //
+        // Neither leaf carries a recipe, which is the half of the case that was
+        // always safe: a shell is started, a new pane comes back, and the two
+        // leaves end up on two terminals. The half that was not safe is the one
+        // a real saved layout has, and it is the test below this one.
         let saved = vec![tab_of(SavedNode::Split {
             dir: SplitDir::Row,
             ratio: 0.5,
@@ -23407,6 +25389,201 @@ mod tests {
         );
         assert!(matches!(plan.tabs[0][1], LeafPlan::Respawn { .. }));
         assert!(plan.orphans.is_empty(), "5 was claimed, once");
+    }
+
+    #[test]
+    fn a_second_leaf_naming_the_same_agent_does_not_get_a_second_view_of_it() {
+        // The shape a real duplicate has, and the one that reached a screen on
+        // 2026-09-15: two leaves, one pane id, and the SAME resume line under
+        // both of them. Dropping the second through to `Respawn` is not a
+        // repair here — the host refuses to start a recipe it is already
+        // running and answers with the pane that is running it, so the window
+        // builds a second pane onto the first one's terminal. One winsize and
+        // one sink between them, and both paint nothing but the echoed
+        // launch command.
+        let recipe = "claude --resume b040fc0f-e7ab-4a78-a77c-fa191152536c";
+        let saved = vec![
+            tab_of(leaf_with(Some(3), "/work", Some(recipe))),
+            tab_of(SavedNode::Split {
+                dir: SplitDir::Row,
+                ratio: 0.5,
+                a: Box::new(leaf_with(Some(3), "/work", Some(recipe))),
+                b: Box::new(leaf_with(Some(12), "/work", Some("claude --resume other"))),
+            }),
+        ];
+        let plan = plan_attach(
+            &saved,
+            &[
+                running_agent(3, recipe),
+                running_agent(12, "claude --resume other"),
+            ],
+        );
+        assert_eq!(
+            plan.tabs[0][0],
+            LeafPlan::Bind {
+                pane: hostproto::PaneId(3)
+            },
+            "the first leaf to name it keeps the terminal"
+        );
+        let LeafPlan::Duplicate { restore } = &plan.tabs[1][0] else {
+            panic!(
+                "the second leaf must be repaired, got {:?}",
+                plan.tabs[1][0]
+            );
+        };
+        assert_eq!(
+            restore.resume, None,
+            "no recipe at all: resuming the id twice is two agents on one transcript, and \
+             asking a host for bare `claude` is how four repaired leaves collapse back onto \
+             one terminal"
+        );
+        assert_eq!(restore.cwd.as_deref(), Some("/work"), "its place is kept");
+        assert!(
+            restore.note.is_some(),
+            "and it says why it is a shell, or its owner reads the restore as a loss"
+        );
+        assert_eq!(
+            plan.tabs[1][1],
+            LeafPlan::Bind {
+                pane: hostproto::PaneId(12)
+            },
+            "the leaf beside it is unaffected"
+        );
+    }
+
+    #[test]
+    fn a_duplicate_leaf_keeps_the_note_its_owner_wrote() {
+        // The explanation is for a leaf with nothing on its glass. A leaf that
+        // already carries a note keeps it: overwriting somebody's own words to
+        // make room for ours costs more than the explanation is worth.
+        let recipe = "claude --resume x";
+        let mut theirs = leaf_with(Some(3), "/work", Some(recipe));
+        if let SavedNode::Leaf { note, .. } = &mut theirs {
+            *note = Some(SavedNote {
+                title: Some("NEEDS YOU".into()),
+                text: "sign in before this can continue".into(),
+                seed: 99,
+                pinned: true,
+            });
+        }
+        let saved = vec![
+            tab_of(leaf_with(Some(3), "/work", Some(recipe))),
+            tab_of(theirs),
+        ];
+        let plan = plan_attach(&saved, &[running_agent(3, recipe)]);
+        let LeafPlan::Duplicate { restore } = &plan.tabs[1][0] else {
+            panic!("expected a repaired duplicate, got {:?}", plan.tabs[1][0]);
+        };
+        let note = restore.note.as_ref().expect("the note survives");
+        assert_eq!(note.title.as_deref(), Some("NEEDS YOU"));
+        assert!(note.pinned, "including its pin");
+    }
+
+    #[test]
+    fn two_leaves_asking_for_an_agent_rather_than_a_conversation_both_get_one() {
+        // The repair `dedupe_resumes` writes on the way out to disk, read back
+        // in. A recipe with no session id in it is not an identity — it is a
+        // request for an agent — and two leaves carrying one were always going
+        // to be two agents. Deduping those would turn the repair into a pane
+        // that starts nothing, which is the same blank tab by another road.
+        let saved = vec![
+            tab_of(leaf_with(Some(3), "/a", Some("claude"))),
+            tab_of(leaf_with(Some(4), "/b", Some("claude"))),
+        ];
+        let plan = plan_attach(&saved, &[]);
+        for (tab, plan) in plan.tabs.iter().enumerate() {
+            let LeafPlan::Respawn { restore } = &plan[0] else {
+                panic!("tab {tab} should start its own agent, got {:?}", plan[0]);
+            };
+            assert_eq!(restore.resume.as_deref(), Some("claude"));
+        }
+    }
+
+    #[test]
+    fn two_leaves_naming_one_recipe_with_no_pane_ids_still_start_it_once() {
+        // The same collision reached by the other door: a layout written before
+        // pane ids existed, or one whose ids have gone stale, where both leaves
+        // fall through to the recipe. The host would answer the second spawn
+        // with the pane it made for the first, which is the duplicate again.
+        let recipe = "codex resume 01a086f7";
+        let saved = vec![
+            tab_of(leaf_with(None, "/a", Some(recipe))),
+            tab_of(leaf_with(None, "/b", Some(recipe))),
+        ];
+        let plan = plan_attach(&saved, &[]);
+        assert!(
+            matches!(plan.tabs[0][0], LeafPlan::Respawn { .. }),
+            "the first starts it"
+        );
+        assert!(
+            matches!(plan.tabs[1][0], LeafPlan::Duplicate { .. }),
+            "the second must not ask for it again, got {:?}",
+            plan.tabs[1][0]
+        );
+    }
+
+    #[test]
+    fn a_recipe_running_in_two_real_terminals_is_bound_twice() {
+        // The check is on what this plan has promised, never on the recipe
+        // being unusual. If the session really is holding two terminals on one
+        // recipe — which #339 exists to prevent and a restored backup can still
+        // produce — then there are two terminals, and showing both of them is
+        // the only answer that loses nothing.
+        let recipe = "claude --resume x";
+        let saved = vec![
+            tab_of(leaf_with(Some(3), "/a", Some(recipe))),
+            tab_of(leaf_with(Some(9), "/b", Some(recipe))),
+        ];
+        let plan = plan_attach(
+            &saved,
+            &[running_agent(3, recipe), running_agent(9, recipe)],
+        );
+        assert_eq!(
+            plan.tabs[0][0],
+            LeafPlan::Bind {
+                pane: hostproto::PaneId(3)
+            }
+        );
+        assert_eq!(
+            plan.tabs[1][0],
+            LeafPlan::Bind {
+                pane: hostproto::PaneId(9)
+            }
+        );
+    }
+
+    // ---- which closes actually hang a terminal up ---------------------------
+
+    #[test]
+    fn closing_the_only_leaf_showing_a_terminal_hangs_it_up() {
+        // The leaf is already out of the window by the time this is asked, so
+        // `shown` is what is left. Nothing left names 7.
+        assert_eq!(hangups_of(&[8], &[7]), vec![7]);
+    }
+
+    #[test]
+    fn closing_one_of_two_leaves_on_one_terminal_leaves_it_running() {
+        // The damage half of the duplicate. Three tabs held pane 16 on
+        // 2026-09-11; closing the blank decoys hung up the terminal the working
+        // tab was legitimately showing, and three shells doing real work died
+        // inside four minutes.
+        assert_eq!(hangups_of(&[16, 4], &[16]), Vec::<u64>::new());
+    }
+
+    #[test]
+    fn closing_both_leaves_on_one_terminal_does_hang_it_up() {
+        // Not a rule against closing it — a rule against closing it early. A
+        // tab holding both views of one terminal takes the terminal with it,
+        // and says so once rather than twice.
+        assert_eq!(hangups_of(&[4], &[16, 16]), vec![16]);
+    }
+
+    #[test]
+    fn letting_go_of_a_held_tab_hangs_up_what_nothing_else_shows() {
+        // `end_held` asks about leaves that are already out of the tree, so the
+        // window's count never held them. A pane nothing on screen names is a
+        // pane whose last leaf has gone.
+        assert_eq!(hangups_of(&[1, 2], &[5]), vec![5]);
     }
 
     #[test]
@@ -23586,7 +25763,7 @@ mod tests {
             .iter()
             .map(|p| match p {
                 LeafPlan::Bind { pane } => pane.0,
-                LeafPlan::Respawn { .. } => 0,
+                LeafPlan::Respawn { .. } | LeafPlan::Duplicate { .. } => 0,
             })
             .collect();
         assert_eq!(bound, vec![1, 2, 3]);
@@ -23648,6 +25825,165 @@ mod tests {
             panic!("not a leaf");
         };
         assert_eq!(*pane_id, None);
+    }
+
+    /// The gate on the thing that has gone wrong the most times here.
+    ///
+    /// A surface laid over the panes is drawn flat unless it registers a tube or
+    /// pre-warps itself, and a flat surface on bent glass is wrong twice: it
+    /// looks stuck on, and its click boxes are not where its pixels are. The
+    /// list is the decision record; the counting below is what stops the list
+    /// from drifting away from the code, because a list nobody has to keep true
+    /// is a comment.
+    #[test]
+    fn every_overlay_over_panes_decides_about_the_warp() {
+        for (name, how) in OVERLAYS_OVER_PANES {
+            match how {
+                Warped::Tube(sym) => assert!(
+                    !sym.is_empty(),
+                    "{name} claims a tube and does not name the call"
+                ),
+                Warped::Predistorted(why) | Warped::FlatByDesign(why) => {
+                    assert!(why.len() > 12, "{name} has to say why in more than a word")
+                }
+            }
+        }
+
+        // The teeth: delete a registration and this fails. Both this file's
+        // tubes and the note's pre-warp are counted, so the list cannot quietly
+        // stop describing the code.
+        let src = include_str!("main.rs");
+        let registrations = src.matches("register_overlay_tube(").count()
+            + src.matches("register_focus_tube(").count();
+        let claimed = OVERLAYS_OVER_PANES
+            .iter()
+            .filter(|(_, how)| matches!(how, Warped::Tube(_)))
+            .count();
+        assert!(
+            registrations >= claimed,
+            "{claimed} surfaces claim a warp tube and only {registrations} registrations \
+             exist in main.rs — a surface stopped bending with the glass"
+        );
+
+        let sticky = include_str!("sticky.rs");
+        assert!(
+            sticky.contains("pub fn pre_warp("),
+            "the note claims a pre-warp that no longer exists"
+        );
+    }
+
+    /// Everything esc can close is a panel over the panes, so every one of them
+    /// has to be in the list that flattens the glass.
+    ///
+    /// `close_popups` and the `warp::set_suppressed` call in `render` are the
+    /// same set written out twice, by hand, two thousand lines apart, with
+    /// nothing tying them together. They agreed for eighteen overlays and then
+    /// did not. The attention queue was given a `rail_open` flag, wired into
+    /// `close_popups` as the FIRST thing esc peels, and never added to the
+    /// suppression list — and it shipped bowing across the glass while the
+    /// scale popup two thousand lines away read perfectly flat.
+    ///
+    /// What made that omission so easy to hold is that the queue looked
+    /// handled. It had a row in [`OVERLAYS_OVER_PANES`] saying it was flat by
+    /// design, a paragraph of chrome giving it a border and a float shadow, and
+    /// a hit test deliberately not un-bending its clicks — three deliberate
+    /// acts, none of which touches the shader. `fs_crt` tests a pixel against
+    /// the registered rects and nothing else; a panel over a tube is bent by
+    /// that tube whatever it declares about itself. Suppression is the whole
+    /// mechanism, so membership of the list is the whole test.
+    ///
+    /// Derived from the source rather than from a list of names, because a gate
+    /// that enumerates the overlays somebody thought of only guards those.
+    #[test]
+    fn every_overlay_esc_can_close_also_flattens_the_glass() {
+        let src = shipped_src();
+
+        /// The `self.<field>` names in one slice, ignoring method calls.
+        fn fields(body: &str) -> Vec<String> {
+            let mut out = vec![];
+            for (i, _) in body.match_indices("self.") {
+                let rest = &body[i + "self.".len()..];
+                let name: String = rest
+                    .chars()
+                    .take_while(|c| c.is_alphanumeric() || *c == '_')
+                    .collect();
+                if name.is_empty() || rest[name.len()..].starts_with('(') {
+                    continue; // a method call is not an overlay flag
+                }
+                if !out.contains(&name) {
+                    out.push(name);
+                }
+            }
+            out
+        }
+
+        let at = src
+            .find("fn close_popups(&mut self) -> bool {")
+            .expect("close_popups");
+        let peels = &src[at..at + src[at..].find("\n    }\n").expect("end of close_popups")];
+
+        let at = src
+            .find("warp::set_suppressed(")
+            .expect("the suppression list in render");
+        let flattens = &src[at..at
+            + src[at..]
+                .find("\n        );")
+                .expect("end of the suppression list")];
+        let flattens = fields(flattens);
+
+        for field in fields(peels) {
+            assert!(
+                flattens.contains(&field),
+                "`{field}` is an overlay esc can close, which makes it a panel \
+                 drawn OVER the panes — but it is missing from the \
+                 `warp::set_suppressed` list in `render`. The warp pass is \
+                 screen-space: with no entry there the panel is composited into \
+                 the frame and then bent by whatever pane tube it happens to \
+                 cover, however flat its own border and shadow make it look. \
+                 Add `|| self.{field}` beside the others."
+            );
+        }
+    }
+
+    /// The other half of the same bug: **the hit test has to agree with the warp
+    /// decision**, and it is wrong in BOTH directions.
+    ///
+    /// A bent surface whose clicks are not un-bent sends the pointer to the
+    /// wrong row, and the error grows towards the screen edge — which is exactly
+    /// where the queue lives. A flat surface whose clicks ARE un-bent is the
+    /// same bug mirrored: the pixels never moved, so undoing a map nothing
+    /// applied walks the pointer off the row it is sitting on.
+    ///
+    /// So this asserts the pairing rather than either half. The queue has now
+    /// been each of those things — it registered a tube and un-bent its clicks,
+    /// then became a flat menu and stopped — and the pair moved together both
+    /// times because this test made them.
+    #[test]
+    fn the_hit_test_agrees_with_the_queues_warp_decision() {
+        let src = include_str!("main.rs");
+        let at = src.find("fn rail_hit_at(").expect("the queue's hit test");
+        let body = &src[at..at + 1600];
+        let unbends = body.contains("warp_screen_to_content");
+
+        let (_, how) = OVERLAYS_OVER_PANES
+            .iter()
+            .find(|(name, _)| *name == "render_rail")
+            .expect("the queue has a row in the overlay list");
+
+        match how {
+            Warped::Tube(_) | Warped::Predistorted(_) => assert!(
+                unbends,
+                "the queue bends with the glass, so rail_hit_at must undo the \
+                 same map the shader applies — otherwise clicks land where the \
+                 row is drawn flat, and the error grows towards the edge"
+            ),
+            Warped::FlatByDesign(_) => assert!(
+                !unbends,
+                "the queue is flat, so rail_hit_at must NOT un-bend the pointer \
+                 — the pixels never moved, and undoing a map nothing applied \
+                 walks the click off the row it is on"
+            ),
+        }
     }
 
     /// The tree is somebody's organisation of their own work. It has to come
@@ -23875,6 +26211,129 @@ mod tests {
                 want,
                 "needs={needs} working={working} bell={bell} blocked={blocked}"
             );
+        }
+    }
+
+    /// The rail reads the SAME table the tab strip does, so the two cannot
+    /// drift. Every row of the badge precedence is driven through the lane
+    /// mapping here, which is what makes "one precedence function, not two"
+    /// an enforced property rather than a comment. It also pins the two false
+    /// friends: a finish that rang against a wall is a FAILURE, and only the
+    /// live prompt is a DECISION.
+    #[test]
+    fn the_rail_lane_follows_the_badge_and_never_ranks_a_second_time() {
+        use attention::AttentionKind;
+        use hud::AgentState;
+        // (needs_input, working, bell, blocked) → the lane the rail draws
+        let cases = [
+            ((false, false, false, false), None),
+            // mid-turn wants nothing from anybody
+            ((false, true, false, false), None),
+            ((true, false, false, false), Some(AttentionKind::Decision)),
+            (
+                (false, false, true, false),
+                Some(AttentionKind::ReviewReady),
+            ),
+            // rang with the wall still on screen — the badge calls this
+            // Blocked and it is a failure, not a question
+            ((false, false, true, true), Some(AttentionKind::Failure)),
+            // asking AND holding an unread finish is asking
+            ((true, false, true, true), Some(AttentionKind::Decision)),
+            // back at work with last turn's bell still latched: working
+            ((false, true, true, false), None),
+            ((true, true, false, false), Some(AttentionKind::Decision)),
+            // `blocked` without a bell is stale classification — say nothing
+            ((false, false, false, true), None),
+        ];
+        for ((needs, working, bell, blocked), want) in cases {
+            let badge = agent_badge(needs, working, bell, blocked);
+            assert_eq!(
+                rail_kind(badge, AgentState::Idle),
+                want,
+                "needs={needs} working={working} bell={bell} blocked={blocked}"
+            );
+        }
+    }
+
+    /// An agent whose screen could not be read earns no badge, and that is a
+    /// different answer from an agent with nothing to say. It takes the Unknown
+    /// lane, which `counted()` keeps out of the red number — the distinction
+    /// #425 put in the parser and #426 stopped the bell erasing.
+    #[test]
+    fn an_unreadable_agent_takes_the_unknown_lane_and_a_resting_one_takes_none() {
+        use attention::AttentionKind;
+        use hud::AgentState;
+        assert_eq!(
+            rail_kind(None, AgentState::Unknown),
+            Some(AttentionKind::Unknown)
+        );
+        assert_eq!(rail_kind(None, AgentState::Idle), None);
+        assert!(!AttentionKind::Unknown.counted());
+    }
+
+    /// The badge decides the lane even when the parser disagrees about the same
+    /// pane, because the alternative is two rankings again. Pinned in both
+    /// directions so a later "improvement" that consults the state first turns
+    /// this red instead of quietly forking the two surfaces.
+    #[test]
+    fn the_badge_decides_the_lane_even_when_the_parser_disagrees() {
+        use attention::AttentionKind;
+        use hud::AgentState;
+        assert_eq!(
+            rail_kind(Some(AgentBadge::Done), AgentState::Unknown),
+            Some(AttentionKind::ReviewReady)
+        );
+        assert_eq!(
+            rail_kind(Some(AgentBadge::Working), AgentState::Unknown),
+            None
+        );
+    }
+
+    /// The rail is on unless somebody plainly said otherwise, and "plainly"
+    /// covers the three spellings a person actually reaches for.
+    ///
+    /// The asymmetry is the point: turning a surface off is the destructive
+    /// direction, so it takes a clear instruction, while `TD_SPINE=maybe` — or
+    /// an empty value, which is what a shell gives you for `TD_SPINE=` — fails
+    /// towards the visible thing somebody can see and switch off themselves.
+    #[test]
+    fn only_a_plain_no_takes_the_rail_away() {
+        // off, in the spellings a person reaches for
+        for off in ["0", "false", "off", "OFF", "False", "  off  "] {
+            assert!(!rail_on(Some(off)), "{off:?} should turn the rail off");
+        }
+        // on: unset, empty, and anything unanticipated
+        for on in [
+            None,
+            Some(""),
+            Some("1"),
+            Some("yes"),
+            Some("maybe"),
+            Some("no"),
+        ] {
+            assert!(rail_on(on), "{on:?} should leave the rail on");
+        }
+    }
+
+    /// Every locale answers for the rail's help row. A sheet that silently drops
+    /// to English for one language is worse than one that never had the row:
+    /// the gap is invisible to whoever added the string.
+    #[test]
+    fn every_locale_has_the_rail_row() {
+        assert!(!lang::EN.rail.is_empty(), "English has no rail string");
+        let translated = [
+            ("es", lang::ES.rail),
+            ("de", lang::DE.rail),
+            ("fr", lang::FR.rail),
+            ("ru", lang::RU.rail),
+            ("zh", lang::ZH.rail),
+            ("ja", lang::JA.rail),
+            ("ko", lang::KO.rail),
+            ("hi", lang::HI.rail),
+        ];
+        for (code, s) in translated {
+            assert!(!s.is_empty(), "{code} has no rail string");
+            assert_ne!(s, lang::EN.rail, "{code} still carries the English string");
         }
     }
 
@@ -24663,7 +27122,7 @@ mod tests {
         let resumes = |tabs: &mut [SavedTab]| {
             let mut out = vec![];
             for tab in tabs.iter_mut() {
-                tab.node.for_each_resume(&mut |r| out.push(r.clone()));
+                tab.node.for_each_claim(&mut |_, r| out.push(r.clone()));
             }
             out
         };
@@ -24706,6 +27165,130 @@ mod tests {
         );
         assert_eq!(bare_agent("codex resume --last").as_deref(), Some("codex"));
         assert_eq!(bare_agent("").as_deref(), None);
+    }
+
+    /// Only one leaf may say it is a given terminal, and the other claimants
+    /// keep everything that is theirs.
+    ///
+    /// Modelled on the layout this was found in: three tabs — HACKATHON WINNER,
+    /// APPLY and RIGHT MENU — each carried `pane_id = 4` and a sticky note of its
+    /// own, so the restore had one terminal and three claimants and broke the tie
+    /// by layout order. The note is the part that proves the loser is a real tab
+    /// somebody was using rather than a stray: it is what its own agent wrote.
+    #[test]
+    fn only_one_leaf_may_claim_a_terminal() {
+        let note = |text: &str| SavedNote {
+            title: None,
+            text: text.to_string(),
+            seed: 0,
+            pinned: false,
+        };
+        let claim = |pane: Option<u64>, resume: Option<&str>, text: &str| SavedNode::Leaf {
+            appearance: PaneTheme::default(),
+            cwd: Some("/home/me".into()),
+            resume: resume.map(str::to_string),
+            name: None,
+            logo: None,
+            note: Some(note(text)),
+            pane_id: pane,
+        };
+        let tab = |node: SavedNode| SavedTab {
+            name: None,
+            color: None,
+            text_color: None,
+            group: None,
+            node,
+            project: None,
+        };
+        let mut tabs = vec![
+            tab(claim(Some(4), Some("claude --resume 4df48691"), "workflow")),
+            tab(claim(Some(4), None, "NEEDS YOU: INDEED LOGIN")),
+            tab(claim(Some(4), None, "NO COLLISION: slice 1 merges clean")),
+            // a different terminal is nobody's duplicate
+            tab(claim(Some(9), Some("claude --resume 505975dc"), "themes")),
+        ];
+        dedupe_resumes(&mut tabs);
+
+        let mut ids = vec![];
+        let mut notes = vec![];
+        for t in tabs.iter_mut() {
+            t.node.for_each_claim(&mut |pane, _| ids.push(*pane));
+            if let SavedNode::Leaf { note, .. } = &t.node {
+                notes.push(note.as_ref().map(|n| n.text.clone()));
+            }
+        }
+        assert_eq!(
+            ids,
+            vec![Some(4), None, None, Some(9)],
+            "the first claimant keeps the terminal and the copies keep none"
+        );
+        assert_eq!(
+            notes,
+            vec![
+                Some("workflow".to_string()),
+                Some("NEEDS YOU: INDEED LOGIN".to_string()),
+                Some("NO COLLISION: slice 1 merges clean".to_string()),
+                Some("themes".to_string()),
+            ],
+            "a leaf that loses a terminal is still the tab somebody was using"
+        );
+    }
+
+    /// The invariant, stated as itself: whatever goes in, no terminal is claimed
+    /// twice on the way out.
+    ///
+    /// Written as a property rather than a case because the collision arrives
+    /// from three directions — a restore that bound two leaves to one pane, a
+    /// checkpoint that widened a recipe, and a file edited or restored from a
+    /// backup — and a test per direction would miss the fourth.
+    #[test]
+    fn no_terminal_is_claimed_twice_on_the_way_out() {
+        let leaf = |pane: Option<u64>, resume: Option<&str>| SavedNode::Leaf {
+            appearance: PaneTheme::default(),
+            cwd: None,
+            resume: resume.map(str::to_string),
+            name: None,
+            logo: None,
+            note: None,
+            pane_id: pane,
+        };
+        let tab = |node: SavedNode| SavedTab {
+            name: None,
+            color: None,
+            text_color: None,
+            group: None,
+            node,
+            project: None,
+        };
+        let mut tabs = vec![
+            tab(SavedNode::Split {
+                dir: SplitDir::Col,
+                ratio: 0.5,
+                a: Box::new(leaf(Some(7), Some("claude --resume aaa"))),
+                b: Box::new(leaf(Some(7), Some("claude --resume aaa"))),
+            }),
+            tab(leaf(Some(7), Some("claude --resume aaa"))),
+            tab(leaf(None, None)),
+            tab(leaf(Some(8), None)),
+            tab(leaf(Some(8), Some("codex resume 01a0"))),
+        ];
+        dedupe_resumes(&mut tabs);
+
+        let mut seen_panes = std::collections::HashSet::new();
+        let mut seen_work = std::collections::HashSet::new();
+        for t in tabs.iter_mut() {
+            t.node.for_each_claim(&mut |pane, resume| {
+                if let Some(id) = *pane {
+                    assert!(seen_panes.insert(id), "pane {id} is claimed twice");
+                }
+                if let Some(cmd) = resume.clone() {
+                    if named_session(Some(&cmd)).is_some() {
+                        assert!(seen_work.insert(cmd.clone()), "{cmd} is claimed twice");
+                    }
+                }
+            });
+        }
+        assert_eq!(seen_panes.len(), 2, "two real terminals survive");
     }
 
     #[test]
@@ -25020,6 +27603,7 @@ id = "hacker"
         let state = StateFile {
             panes: 0,
             last_workspace: None,
+            undo_hinted: false,
             active: 0,
             win: Some((12.0, 34.0, 1280.0, 720.0)),
             scale: Some(1.0),
@@ -25073,6 +27657,7 @@ id = "hacker"
         let state = StateFile {
             panes: 0,
             last_workspace: None,
+            undo_hinted: false,
             active: 0,
             win: None,
             scale: None,
@@ -25130,6 +27715,7 @@ id = "hacker"
         let state = StateFile {
             panes: 0,
             last_workspace: None,
+            undo_hinted: false,
             active: 0,
             win: None,
             scale: None,
@@ -25419,6 +28005,146 @@ node = "Leaf"
         assert_eq!(leaf_ids(&rest.unwrap()), vec![9]);
     }
 
+    /// A pane must come back where it left, which means the seat has to be read
+    /// before the removal reshapes the tree around it.
+    #[test]
+    fn a_seat_survives_the_removal_that_erases_it() {
+        // 1 | (2 / 3)
+        let mut t: Tree<u32> = Tree::Leaf(1);
+        t.split_leaf(&|l| *l == 1, SplitDir::Row, 2);
+        t.split_leaf(&|l| *l == 2, SplitDir::Col, 3);
+
+        let (dir, ratio, side, sibling) = t.seat_of(&|l| *l == 2).expect("2 sits in a split");
+        assert!(matches!(dir, SplitDir::Col));
+        assert_eq!(side, Side::A, "2 is the first half of the col split");
+        assert_eq!(leaf_ids(sibling), vec![3], "its sibling is the leaf 3");
+        let anchor = leaf_ids(sibling);
+
+        let (taken, rest) = t.remove_leaf(&|l| *l == 2);
+        let mut rest = rest.expect("1 and 3 remain");
+        assert_eq!(taken, Some(2));
+        assert_eq!(leaf_ids(&rest), vec![1, 3]);
+
+        // Back into the seat: the anchor is the SIBLING, which is what the
+        // collapse left standing where the parent split used to be.
+        let left = rest.reseat(&|n: &Tree<u32>| leaf_ids(n) == anchor, side, dir, ratio, 2);
+        assert!(left.is_none(), "the leaf was placed");
+        assert_eq!(
+            leaf_ids(&rest),
+            vec![1, 2, 3],
+            "same order it had before it left"
+        );
+    }
+
+    /// The anchor is a whole subtree, not a leaf: close one pane of three and
+    /// what is left standing beside it can be a split.
+    #[test]
+    fn a_pane_can_sit_back_down_beside_a_split() {
+        let mut t: Tree<u32> = Tree::Leaf(1);
+        t.split_leaf(&|l| *l == 1, SplitDir::Row, 2);
+        t.split_leaf(&|l| *l == 2, SplitDir::Col, 3);
+        let (dir, ratio, side, sibling) = t.seat_of(&|l| *l == 1).expect("1 sits in a split");
+        assert_eq!(side, Side::A);
+        assert_eq!(
+            leaf_ids(sibling),
+            vec![2, 3],
+            "its sibling is a whole split"
+        );
+        let anchor = leaf_ids(sibling);
+
+        let (_, rest) = t.remove_leaf(&|l| *l == 1);
+        let mut rest = rest.expect("the split survives");
+        let left = rest.reseat(&|n: &Tree<u32>| leaf_ids(n) == anchor, side, dir, ratio, 1);
+        assert!(left.is_none());
+        assert_eq!(leaf_ids(&rest), vec![1, 2, 3]);
+    }
+
+    /// An hour is long enough for the seat to be gone, and a pane that cannot
+    /// find it must be handed back rather than dropped somewhere arbitrary.
+    #[test]
+    fn a_seat_that_is_gone_hands_the_pane_back() {
+        let mut t: Tree<u32> = Tree::Leaf(1);
+        t.split_leaf(&|l| *l == 1, SplitDir::Row, 2);
+        let left = t.reseat(
+            &|n: &Tree<u32>| leaf_ids(n) == vec![99],
+            Side::A,
+            SplitDir::Row,
+            0.5,
+            7,
+        );
+        assert_eq!(left, Some(7), "no anchor, so the caller still has its pane");
+        assert_eq!(leaf_ids(&t), vec![1, 2], "and the tree was not touched");
+    }
+
+    /// The whole tree is not a seat. A lone pane in a tab is a tab, and the
+    /// caller wants the tab-shaped answer rather than a split that never was.
+    #[test]
+    fn a_lone_leaf_has_no_seat() {
+        let t: Tree<u32> = Tree::Leaf(1);
+        assert!(t.seat_of(&|l| *l == 1).is_none());
+    }
+
+    /// Three homes, three sentences. Two of them reading the same loses the
+    /// distinction the type exists for, at the last step before a person reads it.
+    #[test]
+    fn every_landing_says_something_different() {
+        let all = [Landed::Seat, Landed::Tab, Landed::NewTab];
+        for (i, a) in all.iter().enumerate() {
+            for b in &all[i + 1..] {
+                assert_ne!(a.says(), b.says(), "{a:?} and {b:?} read the same");
+            }
+        }
+    }
+
+    /// Every kind names itself in the tray, and no two share a noun — the row
+    /// `Recover "UX"` is four different offers otherwise.
+    #[test]
+    fn every_retirable_kind_has_its_own_noun() {
+        let all = [
+            hold::Kind::Project,
+            hold::Kind::Initiative,
+            hold::Kind::Task,
+            hold::Kind::Pane,
+        ];
+        for (i, a) in all.iter().enumerate() {
+            assert!(!a.noun().is_empty());
+            for b in &all[i + 1..] {
+                assert_ne!(a.noun(), b.noun(), "{a:?} and {b:?} read the same");
+            }
+        }
+    }
+
+    /// The point of the whole change: no close path may end a shell itself.
+    ///
+    /// `hangup` is the one place a terminal dies, and it belongs to `end_held`,
+    /// which runs when a holding is evicted or swept. A close that calls it
+    /// directly has skipped the trash, and that failure is invisible — the app
+    /// looks identical and the pane is simply gone when somebody asks for it.
+    ///
+    /// The last tab is the written exception: closing it quits the application,
+    /// and a holding made in a dying window is dropped in the same breath.
+    #[test]
+    fn a_close_does_not_end_a_shell_itself() {
+        let src = include_str!("main.rs");
+        for f in ["fn close_pane(", "fn trash_tab(", "fn delete_branch("] {
+            let at = src.find(f).unwrap_or_else(|| panic!("{f} must exist"));
+            let body = &src[at..];
+            let end = body.find("\n    fn ").unwrap_or(body.len());
+            assert!(
+                !body[..end].contains("self.hangup("),
+                "{f} hangs up its own panes — the trash is what holds them"
+            );
+        }
+        let at = src.find("fn close_tab(").expect("close_tab must exist");
+        let body = &src[at..];
+        let end = body.find("\n    fn ").unwrap_or(body.len());
+        assert_eq!(
+            body[..end].matches("self.hangup(").count(),
+            1,
+            "close_tab may hang up only the last tab, which quits with it"
+        );
+    }
+
     // load_state() reads $HOME so isn't callable in tests, but its body is
     // `read.ok().and_then(parse.ok()).unwrap_or_default()` — pin that parse
     // contract so a corrupt or old state.toml degrades to a clean boot instead
@@ -25471,6 +28197,7 @@ node = "Leaf"
         let state = StateFile {
             panes: 0,
             last_workspace: None,
+            undo_hinted: false,
             active: 0,
             win: None,
             scale: None,
@@ -25579,6 +28306,54 @@ pub fn agent_badge(
         })
     } else {
         None
+    }
+}
+
+/// The lane a pane belongs in, read off the badge its tab already shows.
+///
+/// [`agent_badge`] is the precedence, and this reads its answer instead of
+/// ranking the same four signals a second time. Two rankings of one pane is a
+/// defect: the tab strip is what a person's eye checks first, and a rail that
+/// disagreed with it would be arguing with the thing it is supposed to save you
+/// from sweeping.
+///
+/// **Two of the badge's names point the wrong way, so the mapping is written
+/// down once here rather than inline.** [`AgentBadge::Blocked`] is not a
+/// question — it is a finish that rang with an error banner still on screen, so
+/// it takes the FAILURE lane. The question is [`AgentBadge::NeedsInput`], the
+/// live prompt, and that is the DECISION lane. Spelling those two out is the
+/// whole reason this function exists as a function.
+///
+/// `state` is consulted for exactly one thing the badge cannot carry: an agent
+/// whose screen could not be read earns no badge, and that is not the same as an
+/// agent with nothing to say. It takes the Unknown lane — shown, never counted —
+/// which is the distinction #425 put into the parser and #426 stopped the bell
+/// from erasing.
+///
+/// **Known consequence, deliberately not worked around.** A live error that has
+/// not yet rung produces no row: `looks_blocked` is only consulted at bell time,
+/// so the wall becomes visible when the turn ends. `AgentState::Error` is live
+/// and `hud::needs_you` already counts it, so the parser and the badge disagree
+/// about that pane today. Widening the mapping here would hide that divergence
+/// behind a second ranking — the exact defect the amendment forbids — so it is
+/// filed against the badge instead.
+pub fn rail_kind(
+    badge: Option<AgentBadge>,
+    state: hud::AgentState,
+) -> Option<attention::AttentionKind> {
+    use attention::AttentionKind;
+    match badge {
+        Some(AgentBadge::NeedsInput) => Some(AttentionKind::Decision),
+        Some(AgentBadge::Blocked) => Some(AttentionKind::Failure),
+        Some(AgentBadge::Done) => Some(AttentionKind::ReviewReady),
+        // Mid-turn wants nothing. The person is not the bottleneck yet, and a
+        // queue that lists every working agent is the pane sweep with extra
+        // steps.
+        Some(AgentBadge::Working) => None,
+        None => match state {
+            hud::AgentState::Unknown => Some(AttentionKind::Unknown),
+            _ => None,
+        },
     }
 }
 

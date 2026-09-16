@@ -171,6 +171,46 @@ pub fn wants_human(recent_rows: &[String]) -> bool {
     recent_rows.iter().any(|r| row_wants_human(r))
 }
 
+/// How many rows of the visible tail the prompt predicates read.
+///
+/// One constant because the scan and the clearing edge must agree: a
+/// fingerprint taken over a different window than the predicate ran on would
+/// suppress the wrong screen, and the bug would only show on a pane whose
+/// fifteenth-from-last row happened to change.
+pub const PROMPT_TAIL_ROWS: usize = 14;
+
+/// A cheap identity for the rows a predicate was just evaluated over.
+///
+/// Not a checksum and not a diff — only enough to answer "is this the same
+/// screen I was already told about". Fourteen trimmed rows, so it costs nothing
+/// on the 120ms scan that already has them in hand.
+pub fn rows_fingerprint(recent_rows: &[String]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    for r in recent_rows {
+        r.trim_end().hash(&mut h);
+    }
+    h.finish()
+}
+
+/// [`wants_human`], minus a screen the person has already answered to.
+///
+/// The predicate reads the visible tail, and on a quiet pane an answered prompt
+/// does not scroll away — which is how the needs-you blinker once pinned on
+/// permanently. Narrowing [`row_wants_human`] fixed the loud half of that;
+/// this is the clearing edge for the rest. A keystroke in the pane records the
+/// screen it was typed at, and the flag cannot re-arm while that is still what
+/// is showing.
+///
+/// **Keyed on the SCREEN, deliberately, and not on a clock.** A stale prompt and
+/// a fresh one are indistinguishable to a timer, so a timeout would either keep
+/// hiding a real question or start showing an answered one again. Somebody who
+/// types and is then genuinely asked something new has a different screen, and
+/// gets told.
+pub fn wants_human_unless_answered(recent_rows: &[String], answered_on: Option<u64>) -> bool {
+    wants_human(recent_rows) && answered_on != Some(rows_fingerprint(recent_rows))
+}
+
 /// Did the agent stop because it hit a WALL rather than the end of its turn?
 /// Matches the error banners the agent CLI itself prints — API failures,
 /// exhausted limits, expired auth — NOT the word "error", which appears
@@ -747,7 +787,7 @@ fn session_uses_uwsm() -> bool {
 /// goes through `uwsm-app` so the opened app is scoped to the desktop rather
 /// than to this terminal — closing the pane that printed a link should not be
 /// able to take the PDF it opened with it.
-fn open_with_system(target: &str) {
+pub(crate) fn open_with_system(target: &str) {
     if session_uses_uwsm() {
         spawn_detached("uwsm-app", &["--", "xdg-open", target]);
     } else {
@@ -1896,6 +1936,31 @@ pub struct TerminalView {
     /// scan, never latched: true exactly while the prompt is up. Drives the
     /// tab ❓ pulse and the "needs you" notification flavour.
     needs_input: bool,
+    /// The screen the person last answered to, as a [`rows_fingerprint`].
+    ///
+    /// `None` means they have not engaged with a prompt on this pane, which is
+    /// not the same as having engaged with a blank one — so the suppression is
+    /// keyed on `Some(fingerprint)` and a fresh pane suppresses nothing. See
+    /// [`wants_human_unless_answered`] for why this is a screen and not a clock.
+    answered_on: Option<u64>,
+    /// When this pane's rail lane was last seen to CHANGE, and what it was.
+    ///
+    /// The outer `None` on `last_rail_badge` means no observation has been taken
+    /// yet; `attention_since` stays `None` until a lane is seen to *change*,
+    /// because "we have not watched it change" is a different claim from "it
+    /// changed just now" and the rail draws the first as a dash. Maintained by
+    /// the same 120ms scan that already edge-detects every input the badge
+    /// reads, so nothing new is polled to keep it.
+    attention_since: Option<Instant>,
+    last_rail_badge: Option<Option<crate::AgentBadge>>,
+    /// The parsed agent state, refreshed on the 120ms scan.
+    ///
+    /// Cached for the same reason [`Self::agent_working`] is: the rail asks
+    /// every pane for its lane on every frame, and [`Self::agent_status`] locks
+    /// the grid and rebuilds every visible row as a `String`. Twenty panes
+    /// paying that at frame rate is a cost nobody asked for, on a machine where
+    /// TD's processor load is already a live question.
+    rail_state: crate::hud::AgentState,
     /// How the latched finish classified at ring time: `true` = the agent hit
     /// a wall (an error banner was on screen — see [`looks_blocked`]) → the ❌
     /// badge; `false` = a clean finish → ✅. Meaningless while `bell` is off;
@@ -2024,6 +2089,20 @@ impl gpui::EventEmitter<OpenUsagePanel> for TerminalView {}
 /// Ctrl+Shift+B — show or hide the left bar (the session's project tree).
 pub struct ToggleLeftBar;
 impl gpui::EventEmitter<ToggleLeftBar> for TerminalView {}
+
+/// Ctrl+Shift+N — open or close the attention rail's queue.
+pub struct ToggleRail;
+impl gpui::EventEmitter<ToggleRail> for TerminalView {}
+
+/// Ctrl+Shift+Z — bring back the most recently closed thing.
+///
+/// Z because the feature is an undo on a close. Not ctrl+shift+T, which this
+/// terminal already spends on a new tab and so does every other one; not plain
+/// ctrl+Z, which belongs to whatever is running in the pane — a terminal that
+/// claims an unshifted control chord takes it away from every program in every
+/// pane, with no way for them to ask for it back.
+pub struct ReopenClosed;
+impl gpui::EventEmitter<ReopenClosed> for TerminalView {}
 
 /// Ctrl+F (`global = false`) / Ctrl+Shift+F (`global = true`) was pressed in this
 /// pane — ask the workspace to open the find panel. In-pane find searches just
@@ -2777,13 +2856,26 @@ impl TerminalView {
                             // upgrades the finish notification to "needs you".
                             // ONE bottom-rows scan feeds this and the ✅/❌
                             // classification when the bell latches below.
-                            let recent = view.recent_lines(14);
-                            let needs = view.mode.is_agent() && !thinking && wants_human(&recent);
+                            let recent = view.recent_lines(PROMPT_TAIL_ROWS);
+                            // `answered_on` is the clearing edge: a keystroke in
+                            // this pane records the screen it was typed at, and
+                            // an unchanged screen cannot re-arm the flag. Without
+                            // it the scan re-asserts the prompt 120ms after the
+                            // person answers, because an answered prompt is still
+                            // the visible tail on a quiet pane.
+                            let needs = view.mode.is_agent()
+                                && !thinking
+                                && wants_human_unless_answered(&recent, view.answered_on);
                             if needs != view.needs_input {
                                 view.needs_input = needs;
                                 cx.emit(AgentWorkingChanged);
                                 cx.notify();
                             }
+                            // One grid walk per pane per tick, not per frame.
+                            // Inside the scroll gate with the rest of the
+                            // screen-reading: a parse taken mid-scroll reads a
+                            // status line that has slid out of place.
+                            view.rail_state = view.agent_status().state;
                             // Only ring the bell if we've been not-thinking for 300ms+ AND
                             // the original thinking period was real (> 1200ms).
                             if !thinking && view.mode.is_agent() {
@@ -2817,6 +2909,36 @@ impl TerminalView {
                                 }
                             }
                         }
+                    }
+                    // The rail's clock. Every signal the badge reads was just
+                    // edge-detected above, so the lane is recomputed once here
+                    // and an instant is written only when it CHANGES. This is
+                    // the producer the plan said was missing: before it, age was
+                    // not merely unexposed, it was unrecorded.
+                    //
+                    // **The first sighting of a pane stamps nothing.** We know
+                    // what its lane IS, not when it became that, and writing a
+                    // timestamp here would make every pane claim it changed the
+                    // moment TD started — a number that reads as a measurement
+                    // and is not one. `attention_since` stays None and the row
+                    // draws a dash.
+                    //
+                    // Sits outside the scroll-settle gate on purpose: a bell
+                    // acknowledged by focusing the pane changes the lane without
+                    // anything on screen moving.
+                    let badge_now = crate::agent_badge(
+                        view.needs_input,
+                        view.gamba.is_thinking(),
+                        view.bell,
+                        view.bell && view.bell_blocked,
+                    );
+                    match view.last_rail_badge {
+                        Some(prev) if prev != badge_now => {
+                            view.attention_since = Some(Instant::now());
+                            view.last_rail_badge = Some(badge_now);
+                        }
+                        None => view.last_rail_badge = Some(badge_now),
+                        Some(_) => {}
                     }
                     if view.gamba.tick() {
                         cx.notify();
@@ -2894,6 +3016,10 @@ impl TerminalView {
             ctx_menu: None,
             bell: false,
             needs_input: false,
+            answered_on: None,
+            attention_since: None,
+            last_rail_badge: None,
+            rail_state: crate::hud::AgentState::default(),
             bell_blocked: false,
             bell_player: crate::bell::BellPlayer::default(),
             hdr_overflow: None,
@@ -3067,9 +3193,7 @@ impl TerminalView {
             return crate::hud::AgentStatus::default();
         }
         let mut st = crate::hud::parse_status_line(&self.live_rows());
-        if st.state == crate::hud::AgentState::Idle && self.bell {
-            st.state = crate::hud::AgentState::Finished;
-        }
+        st.state = crate::hud::with_bell(st.state, self.bell);
         st
     }
 
@@ -4130,6 +4254,12 @@ impl TerminalView {
         // where the pane kept idle keyboard focus across the whole latch, so
         // no focus-in edge ever fired. No-op when nothing is latched.
         self.ack_bell(cx);
+        // ...and the same edge answers a live prompt. Self-healing rather than
+        // latched: the suppression holds only while the screen is byte-identical
+        // to the one typed at, so an arrow key that moves a picker's selection
+        // re-arms the flag on the very next scan. What it cannot do is keep
+        // asserting a question the person has already dealt with.
+        self.ack_needs_input(cx);
         // F1 opens the help modal (handled by the workspace), never the PTY.
         // STOP the event here: the workspace root also binds F1 (its no-pane-
         // focused fallback), and a bubbled F1 toggled `help_open` a SECOND time
@@ -4321,6 +4451,21 @@ impl TerminalView {
                 // first, so a chord added there would never fire.
                 "b" => {
                     cx.emit(ToggleLeftBar);
+                    return;
+                }
+                // Ctrl+Shift+N → the attention rail's queue. N for "needs me".
+                // Here for the same reason as the arms above: a focused terminal
+                // takes the chord first, so a workspace-level binding would
+                // compile, test green, and do nothing when pressed.
+                "n" => {
+                    cx.emit(ToggleRail);
+                    return;
+                }
+                // Ctrl+Shift+Z → the most recently closed thing comes back.
+                // Same reason as the arms above for living here: the pane has
+                // the keyboard, so this is the only place the chord is seen.
+                "z" => {
+                    cx.emit(ReopenClosed);
                     return;
                 }
                 // Two keys for one panel, and the second is not redundant.
@@ -5094,6 +5239,39 @@ impl TerminalView {
         self.bell_blocked = false;
         self.bell_player.stop();
         self.not_thinking_since = None;
+        cx.notify();
+    }
+
+    /// When this pane's rail lane was last seen to change, or `None` when it has
+    /// not been seen to change yet. The rail draws `None` as a dash; rendering
+    /// it as a zero age would be the same defect as the idle fallback.
+    pub fn attention_since(&self) -> Option<Instant> {
+        self.attention_since
+    }
+
+    /// This pane's agent state as of the last 120ms scan. Free to ask every
+    /// frame — see the field for why it is cached rather than parsed on demand.
+    pub fn rail_state(&self) -> crate::hud::AgentState {
+        self.rail_state
+    }
+
+    /// Answer the prompt that is on screen: the person has engaged, so the
+    /// needs-you flag drops and cannot re-arm while that screen is still showing.
+    ///
+    /// The bell has had a clearing edge since [`Self::ack_bell`]. The live prompt
+    /// had none, which is how a stopped agent could hold the ❓ pulse for as long
+    /// as its question stayed the visible tail — the scan re-asserts it 120ms
+    /// later from the very rows the person just dealt with. Fired from the key
+    /// handler beside the bell acknowledgement, because typing at a prompt IS
+    /// the answer to it.
+    pub fn ack_needs_input(&mut self, cx: &mut Context<Self>) {
+        if !self.needs_input {
+            return;
+        }
+        let answered = rows_fingerprint(&self.recent_lines(PROMPT_TAIL_ROWS));
+        self.answered_on = Some(answered);
+        self.needs_input = false;
+        cx.emit(AgentWorkingChanged);
         cx.notify();
     }
 
@@ -7650,6 +7828,72 @@ impl Render for TerminalView {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn rows(lines: &[&str]) -> Vec<String> {
+        lines.iter().map(|s| s.to_string()).collect()
+    }
+
+    /// The pin, and the edge that clears it.
+    ///
+    /// A permission prompt is the visible tail of a stopped pane and does not
+    /// scroll away, so the 120ms scan re-asserts it forever — that is the
+    /// blinker that once stayed on permanently. Answering suppresses exactly
+    /// that screen, and nothing else.
+    #[test]
+    fn an_answered_prompt_stops_re_arming_until_the_screen_changes() {
+        let asking = rows(&["Do you want to proceed?", "  1. Yes", "  esc to cancel"]);
+
+        // Positive control: without the edge this is a live question, and it
+        // stays one however many times the scan looks at it.
+        assert!(wants_human(&asking));
+        assert!(wants_human_unless_answered(&asking, None));
+
+        // The person types at it. That screen is now answered.
+        let answered = rows_fingerprint(&asking);
+        assert!(!wants_human_unless_answered(&asking, Some(answered)));
+
+        // The agent asks something NEW. A different screen is a different
+        // question, and suppressing it would be the failure this whole rail
+        // exists to prevent.
+        let asking_again = rows(&["Do you trust the files in this folder?", "  esc to cancel"]);
+        assert!(wants_human_unless_answered(&asking_again, Some(answered)));
+    }
+
+    /// The suppression is keyed on the screen, so a picker the person is
+    /// steering re-arms the moment the selection moves — one row differing is
+    /// enough. Without this the down-arrow through a permission picker would
+    /// silence a prompt that is still waiting.
+    #[test]
+    fn moving_a_pickers_selection_re_arms_the_prompt() {
+        let before = rows(&[
+            "Do you want to proceed?",
+            "> 1. Yes",
+            "  2. No",
+            "  esc to cancel",
+        ]);
+        let after = rows(&[
+            "Do you want to proceed?",
+            "  1. Yes",
+            "> 2. No",
+            "  esc to cancel",
+        ]);
+        let answered = rows_fingerprint(&before);
+        assert_ne!(rows_fingerprint(&before), rows_fingerprint(&after));
+        assert!(!wants_human_unless_answered(&before, Some(answered)));
+        assert!(wants_human_unless_answered(&after, Some(answered)));
+    }
+
+    /// A screen nobody has answered to suppresses nothing, and a fingerprint is
+    /// stable across the trailing whitespace a terminal pads rows with — the
+    /// cells to the right of the text change as the grid resizes, and a prompt
+    /// that "changed" because the pane got wider is not a new question.
+    #[test]
+    fn no_answer_suppresses_nothing_and_padding_is_not_a_change() {
+        let asking = rows(&["Do you want to proceed?", "  esc to cancel"]);
+        let padded = rows(&["Do you want to proceed?   ", "  esc to cancel      "]);
+        assert!(wants_human_unless_answered(&asking, None));
+        assert_eq!(rows_fingerprint(&asking), rows_fingerprint(&padded));
+    }
 
     /// A single styled run of `len` bytes (style irrelevant to wrap geometry).
     fn run(len: usize) -> TextRun {
