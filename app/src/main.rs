@@ -49,6 +49,7 @@ mod mcp;
 mod mcp_tail;
 mod mcp_transport;
 mod notify;
+mod notifpref;
 mod palette;
 mod pane;
 mod plugins;
@@ -990,6 +991,122 @@ const SLOT_RAIL_GROWTH: f32 = 1.5;
 /// as reserved, small enough that it never competes with the tree for the
 /// bar's vertical space.
 const BAY_H: f32 = 56.0;
+
+/// A slider switch: a track with a knob at one end. The house control for a
+/// boolean that takes effect immediately.
+///
+/// Not a checkbox. A checkbox is a field in a form you submit, and nothing in
+/// this window is submitted — the switch IS the write. The knob's position
+/// carries the state on its own, so the control still reads at a glance with
+/// the label covered, which a tick in a box does not.
+fn slider_switch(on: bool, th: &theme::Theme) -> gpui::Div {
+    const TRACK_W: f32 = 36.;
+    const TRACK_H: f32 = 18.;
+    const KNOB: f32 = 13.;
+    let pad = (TRACK_H - KNOB) / 2.;
+    div()
+        .w(px(TRACK_W))
+        .h(px(TRACK_H))
+        .flex_none()
+        .rounded_full()
+        .border_1()
+        .border_color(if on {
+            th.accent
+        } else {
+            th.text.alpha(0.25)
+        })
+        .bg(if on {
+            th.accent.alpha(0.35)
+        } else {
+            th.text.alpha(0.08)
+        })
+        .flex()
+        .flex_row()
+        .items_center()
+        .when(on, |d| d.justify_end())
+        .when(!on, |d| d.justify_start())
+        .px(px(pad))
+        .child(
+            div()
+                .w(px(KNOB))
+                .h(px(KNOB))
+                .rounded_full()
+                .bg(if on { th.accent } else { th.text.alpha(0.45) })
+                .when(on, |d| {
+                    d.shadow(vec![BoxShadow {
+                        color: th.accent.alpha(0.8),
+                        offset: point(px(0.), px(0.)),
+                        blur_radius: px(6.),
+                        spread_radius: px(0.),
+                        inset: false,
+                    }])
+                }),
+        )
+}
+
+/// How long a marquee banner stays up before it fades itself out.
+const MARQUEE_SECS: f32 = 6.0;
+
+/// The in-window marquee: a strip of chasing bulbs around a line of text,
+/// across the top of the window.
+///
+/// The bulbs are the casino cabinet's ([`gamba`]), which is deliberate — this
+/// is the loud channel, opted into by a switch that says so, and a quiet
+/// version of it would just be the toast we already had.
+fn marquee_banner(text: &str, age: f32, th: &theme::Theme) -> gpui::Div {
+    // Fade the last second rather than vanishing on a frame boundary.
+    let fade = ((MARQUEE_SECS - age) / 1.0).clamp(0.0, 1.0);
+    let t = anim_clock();
+    let bulbs = |phase: i64| {
+        let mut m = div().flex().flex_row().items_center().gap_1();
+        for k in 0..6 {
+            let lit = (((t * 6.0) as i64 + k + phase) % 3) == 0;
+            m = m.child(
+                div()
+                    .w(px(6.))
+                    .h(px(6.))
+                    .rounded_full()
+                    .bg(if lit {
+                        th.accent.alpha(fade)
+                    } else {
+                        th.text.alpha(0.25 * fade)
+                    }),
+            );
+        }
+        m
+    };
+    div()
+        .absolute()
+        .top(px(8.))
+        .left_0()
+        .right_0()
+        .flex()
+        .flex_row()
+        .justify_center()
+        .child(
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap_3()
+                .px_3()
+                .py_1()
+                .rounded_md()
+                .border_1()
+                .border_color(th.accent.alpha(0.8 * fade))
+                .bg(th.bg.alpha(0.88 * fade))
+                .shadow(float_shadows(th.accent))
+                .child(bulbs(0))
+                .child(
+                    div()
+                        .text_size(px(11.))
+                        .font_weight(gpui::FontWeight::EXTRA_BOLD)
+                        .text_color(th.text.alpha(fade))
+                        .child(SharedString::from(text.to_string())),
+                )
+                .child(bulbs(1)),
+        )
+}
 
 /// Seconds since the process started, for animations that want a phase rather
 /// than a duration.
@@ -3090,6 +3207,17 @@ struct Workspace {
     pending_adopts: Vec<ctl::AdoptReq>,
     /// The 🧩 plugins panel overlay is open (MCP plugin host — see [`plugins`]).
     plugins_menu: bool,
+    /// The 🔔 notifications panel overlay is open — what a finished agent is
+    /// allowed to do to the rest of the desktop (see [`notifpref`]).
+    notif_menu: bool,
+    /// The live notification switches, read once at startup and re-read on the
+    /// 2s sweep so an edit to `notifications.toml` (or a second window's
+    /// toggle) lands without a restart — the same hot-file contract as
+    /// `theme.toml` and `dir-logos.toml`.
+    notif: notifpref::Prefs,
+    /// The in-window marquee banner: what it says, and when it was raised. It
+    /// fades itself out; nothing needs to clear it.
+    marquee_says: Option<(String, Instant)>,
     /// Last plugin action result line (e.g. "wrote …/<id>.cdx"), shown as a
     /// transient toast in the graveyard / plugins panel.
     harvest_status: Option<String>,
@@ -4442,6 +4570,9 @@ impl Workspace {
             dead_filter: None,
             pending_adopts: Vec::new(),
             plugins_menu: false,
+            notif_menu: false,
+            notif: notifpref::load(),
+            marquee_says: None,
             harvest_status: None,
             savings_menu: false,
             savings_view: None,
@@ -4680,7 +4811,13 @@ impl Workspace {
         cx.spawn(async move |this, cx| loop {
             cx.background_executor().timer(Duration::from_secs(2)).await;
             if this
-                .update(cx, |ws: &mut Workspace, cx| ws.refresh_dir_logos(cx))
+                .update(cx, |ws: &mut Workspace, cx| {
+                    // The notification switches ride this tick too: one tiny
+                    // file read, so an edit from $EDITOR or a second window
+                    // lands without a restart.
+                    ws.notif = notifpref::load();
+                    ws.refresh_dir_logos(cx)
+                })
                 .is_err()
             {
                 break;
@@ -9774,6 +9911,21 @@ impl Workspace {
             needs,
             blocked,
         );
+        // The marquee is the in-window channel, so it does not care whether
+        // the desktop daemon is wanted — it is its own switch (see
+        // `notifpref`), and it fires here whether or not a toast follows.
+        if self.notif.marquee {
+            self.marquee_says = Some((title.clone(), Instant::now()));
+            cx.notify();
+        }
+        // With the system switch off the news stays inside terminal delight:
+        // the tab keeps the 🔔 badge `ack_bell` would have cleared, the pane
+        // still pings, and nothing reaches the desktop daemon. Returning here
+        // also skips the transcript read the body needed — the recap only
+        // ever existed to fill a toast.
+        if !self.notif.system {
+            return;
+        }
         let pane_id = pane.entity_id();
         cx.spawn(async move |this, cx| {
             // One background task end-to-end: resolve the transcript, build the
@@ -10694,6 +10846,179 @@ impl Workspace {
                     MouseButton::Left,
                     cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
                         ws.plugins_menu = false;
+                        cx.notify();
+                    }),
+                )
+                .child(panel),
+        )
+    }
+
+    /// 🔔 the notifications panel: the two switches deciding what a finished
+    /// agent is allowed to do to the rest of the desktop.
+    ///
+    /// Switches, not checkboxes. A checkbox is a form field you fill in and
+    /// submit; these take effect the instant they are thrown and write
+    /// themselves to disk, and the slider is the control that says so — the
+    /// knob is already where the setting is.
+    fn render_notif_overlay(
+        &self,
+        th: &theme::Theme,
+        cx: &mut Context<Self>,
+    ) -> Option<gpui::Div> {
+        if !self.notif_menu {
+            return None;
+        }
+        let p = self.notif;
+
+        // One row shape for both switches: glyph, name, the sentence saying
+        // what it does, and the slider — which is the whole row's hit target,
+        // because a 34px track is a small thing to ask a mouse to find.
+        let row = |glyph: &str, name: &str, blurb: &str, on: bool, id: &'static str| {
+            div()
+                .id(SharedString::from(id))
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap_3()
+                .px_2()
+                .py_2()
+                .rounded_sm()
+                .border_1()
+                .border_color(if on {
+                    th.accent.alpha(0.55)
+                } else {
+                    th.text.alpha(0.12)
+                })
+                .child(div().text_size(px(15.)).child(SharedString::from(glyph.to_string())))
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_0p5()
+                        .flex_1()
+                        .min_w(px(0.))
+                        .child(
+                            div()
+                                .font_weight(gpui::FontWeight::EXTRA_BOLD)
+                                .text_color(if on { th.text } else { th.text.alpha(0.75) })
+                                .child(SharedString::from(name.to_string())),
+                        )
+                        .child(
+                            div()
+                                .text_size(px(8.5))
+                                .text_color(th.text.alpha(0.6))
+                                .child(SharedString::from(blurb.to_string())),
+                        ),
+                )
+                .child(slider_switch(on, th))
+        };
+
+        let panel = div()
+            .w(px(460.))
+            .p_3()
+            .rounded_md()
+            .border_2()
+            .border_color(th.accent.alpha(0.85))
+            .bg(darken(th.surface, 0.6))
+            .shadow(float_shadows(th.accent))
+            .flex()
+            .flex_col()
+            .gap_2()
+            .text_size(px(10.))
+            .text_color(th.text)
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|_, _: &MouseDownEvent, _w, cx| cx.stop_propagation()),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_2()
+                    .text_size(px(13.))
+                    // The mochi. It is the panel's mark, not decoration: the
+                    // 🔔 glyph in the footer says WHERE you are, and a bell
+                    // repeated inside the panel it opened says nothing twice.
+                    .child(div().text_size(px(18.)).child("\u{1f361}"))
+                    .child(
+                        div()
+                            .font_weight(gpui::FontWeight::EXTRA_BOLD)
+                            .text_color(th.complement)
+                            .child("NOTIFICATIONS"),
+                    ),
+            )
+            .child(
+                div()
+                    .text_size(px(8.5))
+                    .text_color(th.accent.alpha(0.85))
+                    .child(
+                        "what a finished agent may do to the rest of the desktop \u{2014} saved to notifications.toml the moment you throw a switch",
+                    ),
+            )
+            .child(
+                row(
+                    "\u{1f5a5}",
+                    "System notifications",
+                    "an agent finishing in a pane you are not watching raises an omarchy toast; clicking it jumps to that pane",
+                    p.system,
+                    "notif-system",
+                )
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                        cx.stop_propagation();
+                        ws.notif.system = !ws.notif.system;
+                        notifpref::save(ws.notif);
+                        cx.notify();
+                    }),
+                ),
+            )
+            .child(
+                row(
+                    "\u{2728}",
+                    "Marquee",
+                    "the same news as a chasing-bulb banner across the top of this window \u{2014} loud, and off until you ask",
+                    p.marquee,
+                    "notif-marquee",
+                )
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                        cx.stop_propagation();
+                        ws.notif.marquee = !ws.notif.marquee;
+                        notifpref::save(ws.notif);
+                        // Throwing the switch shows you what you just bought,
+                        // so the setting is not a promise about a future agent.
+                        ws.marquee_says = ws
+                            .notif
+                            .marquee
+                            .then(|| ("MARQUEE ON \u{00b7} TD \u{2192} AGENT FINISHED".to_string(), Instant::now()));
+                        cx.notify();
+                    }),
+                ),
+            )
+            .child(
+                div()
+                    .text_size(px(8.))
+                    .text_color(th.text.alpha(0.45))
+                    .child(
+                        "with both off the news stays inside terminal delight: the tab keeps its \u{1f514} badge and the pane still pings",
+                    ),
+            );
+
+        Some(
+            div()
+                .absolute()
+                .inset_0()
+                .bg(th.bg.alpha(0.70))
+                .flex()
+                .items_center()
+                .justify_center()
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                        ws.notif_menu = false;
                         cx.notify();
                     }),
                 )
@@ -11912,6 +12237,7 @@ impl Workspace {
             || self.mcp_menu
             || self.dead_menu
             || self.plugins_menu
+            || self.notif_menu
             || self.savings_menu
     }
 
@@ -12056,6 +12382,10 @@ impl Workspace {
         }
         if self.plugins_menu {
             self.plugins_menu = false;
+            return true;
+        }
+        if self.notif_menu {
+            self.notif_menu = false;
             return true;
         }
         // Standalone modals (only one is ever open at a time; order is moot).
@@ -18798,6 +19128,7 @@ impl Render for Workspace {
                 || self.scale_menu
                 || self.more_menu
                 || self.plugins_menu
+                || self.notif_menu
                 || self.savings_menu
                 || self.dead_menu
                 || self.group_menu.is_some()
@@ -19530,6 +19861,27 @@ impl Render for Workspace {
                     cx.notify();
                 }),
             );
+        // 🔔 the notifications panel. It sits beside the graveyard rather than
+        // inside the theme or display menus because what it decides is not how
+        // the window LOOKS — it is what a finished agent is allowed to do to
+        // the rest of the desktop, which is a different kind of question and
+        // was previously not a question at all (see `notifpref`).
+        let ic_notif = Self::hicon_s(&sk, self.notif_menu, scale)
+            .text_size(px(CHROME_GLYPH * scale))
+            .line_height(px(CHROME_GLYPH * scale))
+            .child("\u{1f514}")
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                    cx.stop_propagation();
+                    // Re-read from disk on open: another window (or $EDITOR)
+                    // may have moved a switch since this one last looked, and
+                    // a panel showing a stale position would write it back.
+                    ws.notif = notifpref::load();
+                    ws.notif_menu = true;
+                    cx.notify();
+                }),
+            );
         let ic_plugins = Self::hicon_s(&sk, self.plugins_menu, scale)
             .text_size(px(CHROME_GLYPH * scale))
             .line_height(px(CHROME_GLYPH * scale))
@@ -19581,6 +19933,7 @@ impl Render for Workspace {
                     d.child(ic_theme)
                         .child(ic_osd)
                         .child(ic_dead)
+                        .child(ic_notif)
                         .child(ic_plugins)
                 }
             });
@@ -20515,6 +20868,17 @@ impl Render for Workspace {
         let lang_picker_overlay = self.render_lang_picker(&th, cx);
         let logo_picker_overlay = self.render_logo_picker(&th, cx);
         let plugins_overlay = self.render_plugins_overlay(&th, cx);
+        let notif_overlay = self.render_notif_overlay(&th, cx);
+        // The marquee, while it lives. It ages out on its own — nothing
+        // clears it — and it keeps asking for frames so the bulbs chase and
+        // the fade actually runs.
+        let marquee = self.marquee_says.as_ref().and_then(|(text, at)| {
+            let age = at.elapsed().as_secs_f32();
+            (age < MARQUEE_SECS).then(|| marquee_banner(text, age, &th))
+        });
+        if marquee.is_some() {
+            window.request_animation_frame();
+        }
         let savings_overlay = self.render_savings_overlay(&th, chrome_vw, cx);
 
         // ---- MCP control: the read-only agent-watch surface (the 🤖 button) ----
@@ -23254,6 +23618,16 @@ impl Render for Workspace {
                         cx.notify();
                     }),
                 ))
+                .child(entry("\u{1f514}", s.notifications, "more-notif").on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                        cx.stop_propagation();
+                        ws.more_menu = false;
+                        ws.notif = notifpref::load();
+                        ws.notif_menu = true;
+                        cx.notify();
+                    }),
+                ))
                 .child(entry("\u{1f9e9}", s.plugins, "more-plugins").on_mouse_down(
                     MouseButton::Left,
                     cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
@@ -24838,6 +25212,8 @@ impl Render for Workspace {
                     .children(mcp_overlay)
                     .children(dead_overlay)
                     .children(plugins_overlay)
+                    .children(notif_overlay)
+                    .children(marquee)
                     .children(savings_overlay)
                     .children(confirm_overlay)
                     .children(delete_overlay)
