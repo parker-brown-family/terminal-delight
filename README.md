@@ -69,7 +69,7 @@ does the VT emulation; your real shell runs on a real PTY.
 | 4 built-in themes + live-editable `custom`; picker with hover captions/tooltips | ✅ |
 | Per-pane appearance: theme & monitor-OSD **grade** groups inherit the workspace independently, each with a live "follow outer" toggle | ✅ |
 | Monitor-OSD tray: brightness/contrast/colour/text/background/gamma **+ text size**, global or per-pane | ✅ |
-| **Agent panes** (claude/codex): your own messages get their own colour (👤 wheel pip) + `Alt+↑/↓` / ▲▼ to jump between them | ✅ |
+| **Agent panes** (claude/codex): your own messages get their own colour (👤 wheel pip) + ▲▼ to jump between them | ✅ |
 | **Sticky notes** — a written note pinned to a pane, warped with it, restored on launch | ✅ |
 | **Per-agent tab badges** — working / needs-you / done / blocked, without opening the tab | ✅ |
 | **Desktop notifications** (`notify-send`) on finish or question, with a transcript recap; click to jump to the pane | ✅ |

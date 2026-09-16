@@ -689,6 +689,22 @@ pub fn stops(rows: &[Row]) -> Vec<RowId> {
     rows.iter().filter_map(row_id).collect()
 }
 
+/// Where a walk with no live cursor BEGINS: the row of the active task.
+///
+/// The bar is a map of the session, and the one place a person is certain to
+/// already be is the tab they are working in — so a fresh Ctrl+Alt+↑/↓ lands
+/// the highlight there rather than at whichever end of the list the press came
+/// from. Starting at the top meant every walk began by travelling back to where
+/// you already were, past rows you had no business highlighting.
+///
+/// `None` when that task is not DRAWN — its branch is folded over it — and the
+/// caller falls back to entering at the near end. The cursor never lands on a
+/// row nobody can see; that is the same rule [`step`] holds.
+pub fn seed(rows: &[Row], active: usize) -> Option<RowId> {
+    let at = RowId::Task(active);
+    stops(rows).contains(&at).then_some(at)
+}
+
 /// One step of the cursor. The list is a RING: ↓ from the last row lands on the
 /// first, ↑ from the first lands on the last, and `None` now means only that
 /// there was nothing to land on at all.
@@ -1872,6 +1888,29 @@ mod tests {
             step(&rows, Some(RowId::Task(0)), false),
             Some(RowId::Task(2))
         );
+    }
+
+    /// A walk that starts from nothing starts where the person already is.
+    /// Landing at the top of the list instead made every fresh Ctrl+Alt+↑/↓
+    /// begin with a journey back to the active task.
+    #[test]
+    fn a_fresh_walk_enters_the_tree_on_the_active_task() {
+        let (p, i, t) = bar();
+        let rows = rows(&p, &i, &t);
+        assert!(stops(&rows).contains(&RowId::Task(1)));
+        assert_eq!(seed(&rows, 1), Some(RowId::Task(1)));
+    }
+
+    /// ...unless that task is folded away under its own branch, where landing
+    /// on it would put the highlight on a row nobody can see. The caller falls
+    /// back to the end of the list, which is the old behaviour.
+    #[test]
+    fn a_fresh_walk_declines_to_start_on_a_task_that_is_not_drawn() {
+        let (mut p, i, t) = bar();
+        p[0] = project(1, true);
+        let rows = rows(&p, &i, &t);
+        assert!(!stops(&rows).contains(&RowId::Task(0)));
+        assert_eq!(seed(&rows, 0), None);
     }
 
     #[test]
