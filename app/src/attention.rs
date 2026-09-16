@@ -128,6 +128,73 @@ impl Priority {
     }
 }
 
+/// An effective level, and whether the row was told it or set it.
+///
+/// The two travel together because the mark is drawn differently for each —
+/// dimmer when inherited — and a caller holding only the level would have to
+/// re-derive the second half from the same three inputs, which is where the two
+/// would eventually disagree.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Level {
+    pub priority: Priority,
+    /// True when this row carries a level set on a branch ABOVE it.
+    pub inherited: bool,
+}
+
+impl Level {
+    /// The mark to draw, or nothing. Neutral draws nothing however it was
+    /// arrived at: "explicitly neutral" and "nobody said" look identical on a
+    /// row, and they should — the row is not promoted either way.
+    pub fn glyph(self) -> Option<&'static str> {
+        self.priority.glyph()
+    }
+}
+
+impl Default for Level {
+    fn default() -> Self {
+        Level {
+            priority: Priority::Neutral,
+            inherited: false,
+        }
+    }
+}
+
+/// Resolve a row's level from the explicit settings above it: **nearest wins**.
+///
+/// Settled with the plan's fourth question: one noisy task can sit demoted
+/// inside a promoted project, so a nearer setting overrules a further one rather
+/// than combining with it. There is no arithmetic here on purpose — promoted
+/// inside promoted is not doubly promoted, and a scheme where it were would
+/// make a person's two deliberate statements produce a third they never made.
+///
+/// **Downward only.** A project that is promoted promotes what is under it; a
+/// promoted task says nothing about its project. `tree::Roll` carries agent
+/// state the other way, and mixing the two directions in one tree is how a
+/// branch ends up claiming something nobody set on it.
+///
+/// Each argument is `Option<Priority>` and `None` means *unset*, which is a
+/// different thing from `Some(Neutral)`: a person who explicitly neutralises a
+/// task inside a promoted project is asking for that task to sit at neutral, and
+/// an unset task is asking for nothing at all. Collapsing the two would make
+/// "clear this" impossible to express.
+pub fn resolve_level(
+    task: Option<Priority>,
+    initiative: Option<Priority>,
+    project: Option<Priority>,
+) -> Level {
+    match (task, initiative, project) {
+        (Some(p), _, _) => Level {
+            priority: p,
+            inherited: false,
+        },
+        (None, Some(p), _) | (None, None, Some(p)) => Level {
+            priority: p,
+            inherited: true,
+        },
+        (None, None, None) => Level::default(),
+    }
+}
+
 /// Which task this row is about, and what it hangs from — read from the tree
 /// rather than guessed from a path.
 ///
@@ -728,6 +795,69 @@ mod tests {
         for key in ["down", "up", "home", "end", "1"] {
             assert_eq!(move_cursor(0, 0, key), None, "{key} on an empty queue");
         }
+    }
+
+    #[test]
+    fn the_nearest_explicit_level_wins_over_every_further_one() {
+        use Priority::*;
+        // A noisy task, demoted, inside a project the person promoted.
+        let lvl = resolve_level(Some(Demoted), None, Some(Promoted));
+        assert_eq!(lvl.priority, Demoted);
+        assert!(!lvl.inherited, "the task was told to be this, by name");
+        // And an initiative beats the project above it.
+        assert_eq!(
+            resolve_level(None, Some(Demoted), Some(Promoted)).priority,
+            Demoted
+        );
+    }
+
+    #[test]
+    fn a_level_travels_down_and_is_marked_as_inherited() {
+        use Priority::*;
+        let lvl = resolve_level(None, None, Some(Promoted));
+        assert_eq!(lvl.priority, Promoted);
+        assert!(lvl.inherited, "nobody set this on the task itself");
+        let from_group = resolve_level(None, Some(Promoted), None);
+        assert!(from_group.inherited);
+    }
+
+    #[test]
+    fn nothing_set_anywhere_is_neutral_and_not_inherited() {
+        let lvl = resolve_level(None, None, None);
+        assert_eq!(lvl.priority, Priority::Neutral);
+        assert!(!lvl.inherited);
+        assert_eq!(lvl.glyph(), None, "a neutral row carries no mark");
+    }
+
+    #[test]
+    fn an_explicit_neutral_is_not_the_same_as_unset() {
+        use Priority::*;
+        // The person cleared this one task inside a promoted project. That is an
+        // instruction, and it must not fall through to the project's level.
+        let cleared = resolve_level(Some(Neutral), None, Some(Promoted));
+        assert_eq!(cleared.priority, Neutral);
+        assert!(!cleared.inherited);
+        // Where nobody said anything, the project's level does travel.
+        let unset = resolve_level(None, None, Some(Promoted));
+        assert_eq!(unset.priority, Promoted);
+    }
+
+    #[test]
+    fn levels_do_not_compound_when_two_rungs_agree() {
+        use Priority::*;
+        // Promoted inside promoted is promoted. There is no louder state, and
+        // inventing one would make two deliberate statements produce a third.
+        assert_eq!(
+            resolve_level(Some(Promoted), Some(Promoted), Some(Promoted)).priority,
+            Promoted
+        );
+    }
+
+    #[test]
+    fn the_two_marks_are_the_two_levels_and_neutral_draws_nothing() {
+        assert_eq!(Priority::Promoted.glyph(), Some("\u{25b2}"));
+        assert_eq!(Priority::Demoted.glyph(), Some("\u{25bc}"));
+        assert_eq!(Priority::Neutral.glyph(), None);
     }
 
     #[test]

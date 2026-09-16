@@ -1128,11 +1128,19 @@ struct Tab {
     /// leaves this `None`, so the two can never disagree about which project a
     /// task is in — see [`Workspace::place_of`]. Persisted.
     project: Option<u32>,
+    /// What the person has said this task is worth today, if anything.
+    ///
+    /// `None` is unset and inherits from the branch above; `Some(Neutral)` is a
+    /// person clearing this one task inside a promoted project, which is a
+    /// different instruction and must not fall back through. See
+    /// [`attention::resolve_level`]. Persisted.
+    level: Option<attention::Priority>,
 }
 
 impl Tab {
     fn new(root: Node, name: Option<String>) -> Self {
         Self {
+            level: None,
             root,
             name,
             focused: None,
@@ -1160,6 +1168,7 @@ impl Tab {
             text_color: self.text_color,
             group: self.group,
             project: self.project,
+            level: self.level,
         }
     }
 }
@@ -1176,6 +1185,9 @@ struct TabIdentity {
     text_color: Option<Hsla>,
     group: Option<u32>,
     project: Option<u32>,
+    /// A task closing its last pane has not stopped being the thing somebody
+    /// promoted this morning.
+    level: Option<attention::Priority>,
 }
 
 impl TabIdentity {
@@ -1183,6 +1195,7 @@ impl TabIdentity {
     /// whatever is left of its panes.
     fn onto(self, root: Node) -> Tab {
         Tab {
+            level: self.level,
             root,
             name: self.name,
             // re-read from the live focus each render; the pane this pointed at
@@ -1433,6 +1446,9 @@ struct TabGroup {
     /// belongs to no project sits at the top level of the tree — which is every
     /// group in a session written before the tree existed. Persisted.
     project: Option<u32>,
+    /// This initiative's attention level, inherited downward by its tasks unless
+    /// one of them says otherwise. See [`Tab::level`]. Persisted.
+    level: Option<attention::Priority>,
 }
 
 impl TabGroup {
@@ -1616,6 +1632,9 @@ struct Project {
     color: Hsla,
     /// Folded away. Never honoured for the project holding the active task.
     collapsed: bool,
+    /// This project's attention level, inherited by everything under it unless a
+    /// nearer row says otherwise. See [`Tab::level`]. Persisted.
+    level: Option<attention::Priority>,
 }
 
 impl Project {
@@ -1930,6 +1949,9 @@ struct SavedTab {
     /// which is how an old session opens as one unfiled list.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     project: Option<u32>,
+    /// Absent = nobody set a level on this task, so it inherits.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    level: Option<SavedLevel>,
     node: SavedNode,
 }
 
@@ -1947,6 +1969,47 @@ struct SavedGroup {
     /// The project this group hangs from in the left bar. Absent = top level.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     project: Option<u32>,
+    /// Absent = nobody set a level on this initiative, so it inherits.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    level: Option<SavedLevel>,
+}
+
+/// The persisted form of [`attention::Priority`] — a person's thumb on the
+/// scale, written down so it survives a restart.
+///
+/// Its own type for the same reason [`SavedScope`] is: a state file that
+/// serialised the projection's enum would break the moment a lane was renamed
+/// for a reason that has nothing to do with disk.
+///
+/// Absent means UNSET and inherits; present means a person said this, including
+/// when what they said was neutral. `Option<SavedLevel>` therefore carries three
+/// states and is written with `skip_serializing_if`, so a file from before this
+/// feature says nothing rather than saying neutral about everything.
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
+enum SavedLevel {
+    Promoted,
+    Neutral,
+    Demoted,
+}
+
+impl From<attention::Priority> for SavedLevel {
+    fn from(p: attention::Priority) -> Self {
+        match p {
+            attention::Priority::Promoted => SavedLevel::Promoted,
+            attention::Priority::Neutral => SavedLevel::Neutral,
+            attention::Priority::Demoted => SavedLevel::Demoted,
+        }
+    }
+}
+
+impl From<SavedLevel> for attention::Priority {
+    fn from(l: SavedLevel) -> Self {
+        match l {
+            SavedLevel::Promoted => attention::Priority::Promoted,
+            SavedLevel::Neutral => attention::Priority::Neutral,
+            SavedLevel::Demoted => attention::Priority::Demoted,
+        }
+    }
 }
 
 /// The persisted form of [`tree::Scope`]. Its own type so the state file is
@@ -1989,6 +2052,10 @@ struct SavedProject {
     color: String,
     #[serde(default)]
     collapsed: bool,
+    /// Absent = nobody set a level on this project, so everything under it is
+    /// neutral unless told otherwise nearer down.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    level: Option<SavedLevel>,
 }
 
 fn load_state() -> StateFile {
@@ -4467,6 +4534,7 @@ impl Workspace {
                 // drop a dangling group ref (a group that failed to parse / vanished)
                 tab.group = t.group.filter(|g| live.contains(g));
                 tab.project = t.project.filter(|p| live_projects.contains(p));
+                tab.level = t.level.map(attention::Priority::from);
                 ws.tabs.push(tab);
             }
             ws.prune_groups();
@@ -4701,6 +4769,7 @@ impl Workspace {
             built.text_color = tab.text_color.as_deref().and_then(theme::parse_hex);
             built.group = tab.group.filter(|g| live_groups.contains(g));
             built.project = tab.project.filter(|p| live_projects.contains(p));
+            built.level = tab.level.map(attention::Priority::from);
             self.tabs.push(built);
         }
 
@@ -5050,6 +5119,7 @@ impl Workspace {
             .projects
             .iter()
             .map(|p| Project {
+                level: p.level.map(attention::Priority::from),
                 id: p.id,
                 name: p.name.clone(),
                 // Same reasoning as a group's colour: never drop a project
@@ -5067,6 +5137,7 @@ impl Workspace {
             .groups
             .iter()
             .map(|g| TabGroup {
+                level: g.level.map(attention::Priority::from),
                 id: g.id,
                 name: g.name.clone(),
                 // A group pointing at a project that is no longer in the file
@@ -5205,6 +5276,7 @@ impl Workspace {
                     // A grouped task's project is its group's; writing it here
                     // too would be a second copy of one fact, free to rot.
                     project: t.project.filter(|_| t.group.is_none()),
+                    level: t.level.map(SavedLevel::from),
                     node: t.root.to_saved(cx),
                 })
                 .collect(),
@@ -5218,6 +5290,7 @@ impl Workspace {
                     text_color: g.text_color.map(hsla_to_hex),
                     collapsed: g.collapsed,
                     project: g.project,
+                    level: g.level.map(SavedLevel::from),
                 })
                 .collect(),
             projects: self
@@ -5228,6 +5301,7 @@ impl Workspace {
                     name: p.name.clone(),
                     color: hsla_to_hex(p.color),
                     collapsed: p.collapsed,
+                    level: p.level.map(SavedLevel::from),
                 })
                 .collect(),
             left_bar: Some(self.left_bar),
@@ -8038,6 +8112,14 @@ impl Workspace {
                 let (tabs, panes) = self.branch_weight(branch);
                 let groups = self.groups.iter().filter(|g| g.project == Some(id)).count();
                 items = items
+                    // The level goes FIRST on every branch menu, and in the same
+                    // slot on all three. It is the row a person reaches for
+                    // daily — this is what I am on today, this is not — while
+                    // the rest of the menu is for things that happen once to a
+                    // branch. A row in the same place on every rung is a row
+                    // somebody reaches for without reading the menu.
+                    .children(self.level_rows(which, &sk, s, cx))
+                    .child(Self::bar_menu_rule(th, s))
                     .child(
                         Self::bar_menu_row(&sk, s, "New tab here", MenuTone::Plain).on_mouse_down(
                             MouseButton::Left,
@@ -8118,6 +8200,8 @@ impl Workspace {
             BarMenu::Initiative(id) => {
                 let (tabs, panes) = self.branch_weight(BarBranch::Initiative(id));
                 items = items
+                    .children(self.level_rows(which, &sk, s, cx))
+                    .child(Self::bar_menu_rule(th, s))
                     .child(
                         Self::bar_menu_row(&sk, s, "New tab here", MenuTone::Plain).on_mouse_down(
                             MouseButton::Left,
@@ -8184,6 +8268,8 @@ impl Workspace {
                 let panes = self.tab_pane_count(i);
                 let grouped = self.tabs.get(i).is_some_and(|t| t.group.is_some());
                 items = items
+                    .children(self.level_rows(which, &sk, s, cx))
+                    .child(Self::bar_menu_rule(th, s))
                     .child(
                         Self::bar_menu_row(&sk, s, "New tab beside this", MenuTone::Plain)
                             .on_mouse_down(
@@ -8386,6 +8472,7 @@ impl Workspace {
         let id = self.next_group_id;
         self.next_group_id += 1;
         self.groups.push(TabGroup {
+            level: None,
             id,
             name: None,
             color: hsla(0.47, 0.5, 0.5, 1.0),
@@ -8516,6 +8603,7 @@ impl Workspace {
         // two tasks inside a project does not quietly lift them out of it.
         let project = self.place_of(i).project;
         self.groups.push(TabGroup {
+            level: None,
             id,
             name: None,
             color,
@@ -8687,6 +8775,7 @@ impl Workspace {
         let id = self.next_project_id;
         self.next_project_id += 1;
         self.projects.push(Project {
+            level: None,
             id,
             name: None,
             color: project_hue(id),
@@ -9083,6 +9172,7 @@ impl Workspace {
                     let id = self.next_project_id;
                     self.next_project_id += 1;
                     self.projects.push(Project {
+                        level: None,
                         id,
                         name: Some(name.clone()),
                         color: project_hue(id),
@@ -9275,6 +9365,7 @@ impl Workspace {
         let id = self.next_group_id;
         self.next_group_id += 1;
         self.groups.push(TabGroup {
+            level: None,
             id,
             name: (!want.is_empty()).then(|| want.to_string()),
             color: color.unwrap_or_else(|| hsla(0.47, 0.5, 0.5, 1.0)),
@@ -13080,6 +13171,11 @@ impl Workspace {
                 // name, colour overrides, and where it sits in the tree all
                 // survive a reap
                 t.root.reap(cx).map(|root| Tab {
+                    // A reap rebuilds the tab around its surviving panes and
+                    // must carry every part of its identity across, this
+                    // included: a task that loses a pane has not stopped being
+                    // the thing the person promoted this morning.
+                    level: t.level,
                     root,
                     name: t.name,
                     focused: t.focused,
@@ -13994,6 +14090,68 @@ impl Workspace {
         out
     }
 
+    /// The attention mark for a row's badge line: a green up or a blue down,
+    /// drawn dimmer when the row was told rather than set.
+    ///
+    /// **It never rolls up.** Every other mark on these rows travels upward —
+    /// `tree::Roll` gathers what is happening in a branch onto the branch — and
+    /// this one deliberately goes the other way. A project showing an arrow
+    /// because something inside it was promoted would be the branch claiming a
+    /// setting nobody made on it, and the person who set that one task would
+    /// have no way to see, from the tree, which row actually carries the
+    /// instruction.
+    ///
+    /// Neutral draws nothing at all, explicit or inherited. A tree where every
+    /// row carries a glyph is a tree where none of them mean anything, and the
+    /// question these answer is "which of these did I single out".
+    fn level_mark(level: attention::Level, s: f32) -> Option<AnyElement> {
+        let glyph = level.glyph()?;
+        // Green up, blue down — settled with the plan's eighth question, and the
+        // two hues are deliberately NOT the lane colours: a lane says what an
+        // agent is doing and a level says what a person decided, so borrowing
+        // red here would make somebody's priority read as a failure.
+        let ink = match level.priority {
+            attention::Priority::Promoted => hsla(0.33, 0.70, 0.42, 1.),
+            _ => hsla(0.58, 0.72, 0.56, 1.),
+        };
+        Some(
+            div()
+                .text_size(px(8.5 * s))
+                // Inherited is the same mark at half strength rather than a
+                // different mark: it says the same thing, one rung further
+                // away, and a second glyph would be a second thing to learn for
+                // a distinction that only matters when you are about to change
+                // it.
+                .text_color(if level.inherited {
+                    ink.alpha(0.45)
+                } else {
+                    ink
+                })
+                .child(SharedString::from(glyph))
+                .into_any_element(),
+        )
+    }
+
+    /// A branch's own level — explicit only, never resolved downward from above.
+    ///
+    /// A branch shows what IT is set to. Inheritance is a fact about the rows
+    /// below, and drawing an inherited arrow on the initiative that received it
+    /// would put two rows in the tree claiming one instruction.
+    fn branch_level_mark(&self, branch: BarBranch, s: f32) -> Option<AnyElement> {
+        let which = match branch {
+            BarBranch::Project(id) => BarMenu::Project(id),
+            BarBranch::Initiative(id) => BarMenu::Initiative(id),
+            BarBranch::Unfiled => return None,
+        };
+        Self::level_mark(
+            attention::Level {
+                priority: self.branch_level(which)?,
+                inherited: false,
+            },
+            s,
+        )
+    }
+
     /// One row of the left bar, whatever layer it is on.
     ///
     /// Every row is the same shape — indent, disclosure, colour mark, label,
@@ -14296,6 +14454,7 @@ impl Workspace {
                     })
                     .child(label.clone()),
             )
+            .children(self.branch_level_mark(branch, s))
             .children(self.roll_badges(&roll, collapsed, key, s, th))
             // The task count used to sit here, so a folded branch still said how
             // much was in it. Removed 2026-09-12: on a real tree it is a column
@@ -14522,6 +14681,11 @@ impl Workspace {
                 }))
                 .child(label),
         )
+        // What the person said this task is worth — its own setting at full
+        // strength, or its branch's at half. Ahead of the agent badges because
+        // it is a fact about the task rather than about what is happening in
+        // it, and the two must not read as one cluster.
+        .children(Self::level_mark(self.level_of(i), s))
         // this task's own agent roster, animating exactly as it does on the
         // strip. The badge key is offset off the strip's range so a tab
         // showing in both places gets two animations rather than one shared
@@ -15476,7 +15640,7 @@ impl Workspace {
             }
             return (items, panes);
         }
-        use attention::{AttentionKind, Observation, PaneKind, Priority};
+        use attention::{AttentionKind, Observation, PaneKind};
         let mut obs: Vec<Observation> = Vec::new();
         let mut panes: std::collections::HashMap<u64, EntityId> = std::collections::HashMap::new();
         for (ti, tab) in self.tabs.iter().enumerate() {
@@ -15526,7 +15690,11 @@ impl Workspace {
                 obs.push(Observation {
                     pane: key,
                     pane_kind,
-                    priority: Priority::Neutral,
+                    // Resolved through the tree before the projection sees it,
+                    // so by the time a row is sorted its level is a fact rather
+                    // than a search. Slice 1 landed the ordering key with every
+                    // row at Neutral; this is the producer it was waiting for.
+                    priority: self.level_of(ti).priority,
                     kind,
                     origin: self.rail_origin(ti),
                     reason: reason.to_string(),
@@ -15912,6 +16080,133 @@ impl Workspace {
     /// ids are already filtered against what exists by `place_of`, so a dangling
     /// reference resolves to no parent rather than to a branch that is not
     /// there.
+    /// A task's effective attention level, and whether it was inherited.
+    ///
+    /// Resolved through [`Workspace::place_of`] for exactly the reason
+    /// `rail_origin` is: a grouped task carries no project of its own, so
+    /// reading `tab.project` would skip the project rung entirely for the tasks
+    /// most likely to be filed under one.
+    ///
+    /// A task set on a branch that has since been deleted resolves to whatever
+    /// its surviving branches say, because `place_of` filters dangling ids
+    /// first. Nothing here has to know about deletion.
+    fn level_of(&self, i: usize) -> attention::Level {
+        let place = self.place_of(i);
+        attention::resolve_level(
+            self.tabs.get(i).and_then(|t| t.level),
+            place
+                .initiative
+                .and_then(|g| self.groups.iter().find(|x| x.id == g))
+                .and_then(|g| g.level),
+            place
+                .project
+                .and_then(|p| self.projects.iter().find(|x| x.id == p))
+                .and_then(|p| p.level),
+        )
+    }
+
+    /// Read or write the explicit level of any branch of the tree.
+    ///
+    /// One function for all three rungs, because the menu row that sets a level
+    /// is the same row on a project, an initiative and a task, and three copies
+    /// of "toggle it off if it is already that" is three chances for one of them
+    /// to behave differently from the others.
+    fn branch_level(&self, which: BarMenu) -> Option<attention::Priority> {
+        match which {
+            BarMenu::Project(id) => self
+                .projects
+                .iter()
+                .find(|p| p.id == id)
+                .and_then(|p| p.level),
+            BarMenu::Initiative(id) => self
+                .groups
+                .iter()
+                .find(|g| g.id == id)
+                .and_then(|g| g.level),
+            BarMenu::Task(i) => self.tabs.get(i).and_then(|t| t.level),
+            BarMenu::Header => None,
+        }
+    }
+
+    /// Set a branch's level, or clear it when it already holds that level.
+    ///
+    /// **Pressing promote on an already-promoted row clears it**, which is the
+    /// gesture every toggle in this bar already has and the only way to get back
+    /// to *unset* — as distinct from neutral — without a third menu row that
+    /// says "inherit". The distinction is real: unset follows the project, and
+    /// neutral deliberately does not.
+    fn set_branch_level(
+        &mut self,
+        which: BarMenu,
+        level: attention::Priority,
+        cx: &mut Context<Self>,
+    ) {
+        let next = (self.branch_level(which) != Some(level)).then_some(level);
+        match which {
+            BarMenu::Project(id) => {
+                if let Some(p) = self.projects.iter_mut().find(|p| p.id == id) {
+                    p.level = next;
+                }
+            }
+            BarMenu::Initiative(id) => {
+                if let Some(g) = self.groups.iter_mut().find(|g| g.id == id) {
+                    g.level = next;
+                }
+            }
+            BarMenu::Task(i) => {
+                if let Some(t) = self.tabs.get_mut(i) {
+                    t.level = next;
+                }
+            }
+            BarMenu::Header => {}
+        }
+        self.save(cx);
+        cx.notify();
+    }
+
+    /// The two level rows every branch menu carries, in one place.
+    ///
+    /// Drawn on all three rungs because the level means the same thing on each,
+    /// and a menu whose rows move between levels is a menu somebody has to read
+    /// rather than reach for. The row that is already in force is marked, so the
+    /// menu says what the branch currently is as well as what it can be.
+    fn level_rows(
+        &self,
+        which: BarMenu,
+        sk: &skin::Skin,
+        s: f32,
+        cx: &mut Context<Self>,
+    ) -> [gpui::Div; 2] {
+        let now = self.branch_level(which);
+        [attention::Priority::Promoted, attention::Priority::Demoted].map(|level| {
+            let on = now == Some(level);
+            let word = if matches!(level, attention::Priority::Promoted) {
+                "Promote"
+            } else {
+                "Demote"
+            };
+            let glyph = level.glyph().unwrap_or("");
+            Self::bar_menu_row(
+                sk,
+                s,
+                // The mark on the left is the same glyph the badge line draws,
+                // so the menu teaches the tree's vocabulary rather than adding
+                // a second one. A tick would have been a third symbol meaning
+                // "this one", for a row that already has a symbol of its own.
+                format!("{glyph} {word}{}", if on { "  \u{2713}" } else { "" }),
+                MenuTone::Plain,
+            )
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                    cx.stop_propagation();
+                    ws.bar_menu = None;
+                    ws.set_branch_level(which, level, cx);
+                }),
+            )
+        })
+    }
+
     fn rail_origin(&self, i: usize) -> attention::Origin {
         let Some(tab) = self.tabs.get(i) else {
             return attention::Origin::default();
@@ -24936,6 +25231,7 @@ mod tests {
 
         // and the fallback has to actually say something
         let nameless = TabGroup {
+            level: None,
             id: 7,
             name: None,
             color: white(),
@@ -25599,6 +25895,7 @@ mod tests {
 
     fn tab_of(node: SavedNode) -> SavedTab {
         SavedTab {
+            level: None,
             name: None,
             color: None,
             text_color: None,
@@ -26428,6 +26725,7 @@ mod tests {
     #[test]
     fn a_leafs_pane_id_survives_a_round_trip_and_an_old_file_reads_absent() {
         let with_id = SavedTab {
+            level: None,
             name: None,
             color: None,
             text_color: None,
@@ -26624,12 +26922,14 @@ mod tests {
     fn the_left_bar_tree_survives_a_round_trip_through_the_state_file() {
         let state = StateFile {
             projects: vec![SavedProject {
+                level: None,
                 id: 3,
                 name: Some("terminal-delight".into()),
                 color: "#4d8fa8".into(),
                 collapsed: true,
             }],
             groups: vec![SavedGroup {
+                level: None,
                 id: 7,
                 name: Some("left bar".into()),
                 color: "#3a8f4d".into(),
@@ -26639,6 +26939,7 @@ mod tests {
             }],
             tabs: vec![
                 SavedTab {
+                    level: None,
                     name: Some("build".into()),
                     color: None,
                     text_color: None,
@@ -26647,6 +26948,7 @@ mod tests {
                     node: leaf_with(None, "/work", None),
                 },
                 SavedTab {
+                    level: None,
                     name: Some("loose".into()),
                     color: None,
                     text_color: None,
@@ -27053,6 +27355,99 @@ mod tests {
                 .filter(|l| l.contains("rail_open = "))
                 .collect::<Vec<_>>()
                 .join("\n")
+        );
+    }
+
+    /// A level written to the state file comes back as the same level, and a
+    /// file that never had one comes back as UNSET rather than as neutral.
+    ///
+    /// The three-state field is the whole feature: unset inherits, neutral
+    /// deliberately does not, and a `#[serde(default)]` that produced neutral
+    /// for an old file would silently pin every task in every existing session
+    /// against its project.
+    #[test]
+    fn an_absent_level_is_unset_and_not_a_neutral_one() {
+        let old: StateFile = toml::from_str(
+            "active = 0\npanes = 1\n\
+             [[tabs]]\n[tabs.node.Leaf]\ncwd = \"/work\"\n",
+        )
+        .expect("a file written before levels existed");
+        assert_eq!(old.tabs[0].level, None, "nobody said anything about this");
+
+        let set: StateFile = toml::from_str(
+            "active = 0\npanes = 1\n\
+             [[tabs]]\nlevel = \"Demoted\"\n[tabs.node.Leaf]\ncwd = \"/work\"\n",
+        )
+        .expect("a file that carries a level");
+        assert_eq!(set.tabs[0].level, Some(SavedLevel::Demoted));
+        assert_eq!(
+            attention::Priority::from(set.tabs[0].level.unwrap()),
+            attention::Priority::Demoted
+        );
+    }
+
+    /// Both directions of the conversion, so a level cannot come back as a
+    /// different one after a restart.
+    #[test]
+    fn every_level_survives_the_round_trip_to_disk() {
+        for p in [
+            attention::Priority::Promoted,
+            attention::Priority::Neutral,
+            attention::Priority::Demoted,
+        ] {
+            assert_eq!(attention::Priority::from(SavedLevel::from(p)), p);
+        }
+    }
+
+    /// A tab's identity carries its level, so closing the last pane in a task
+    /// does not quietly clear what somebody set on it this morning.
+    ///
+    /// `TabIdentity`'s own doc promises that a new `Tab` field "fails to compile
+    /// here rather than going quietly missing from the next close" — and it
+    /// nearly did not, because the carrier derives `Default` and a mechanical
+    /// `level: None` in `onto` would have satisfied the compiler while breaking
+    /// exactly what the doc promises. The comment needed a test under it.
+    #[test]
+    fn a_reshaped_tab_keeps_the_level_it_was_given() {
+        let id = TabIdentity {
+            name: Some("skytrac".into()),
+            level: Some(attention::Priority::Promoted),
+            ..Default::default()
+        };
+        let src = include_str!("main.rs");
+        let at = src
+            .find("fn onto(self, root: Node) -> Tab {")
+            .expect("onto");
+        let body = &src[at..at + src[at..].find("\n    }\n").expect("end of onto")];
+        assert!(
+            body.contains("level: self.level,"),
+            "onto must carry the level across, not default it"
+        );
+        assert_eq!(id.level, Some(attention::Priority::Promoted));
+    }
+
+    /// The mark goes DOWN the tree and never up.
+    ///
+    /// Every other mark on a bar row rolls upward — `roll_badges` gathers what
+    /// is happening under a branch onto the branch — so this is the one that has
+    /// to be checked by reading the code: a branch resolves only its OWN
+    /// explicit level, and a task resolves through `level_of`, which walks
+    /// upward for INHERITANCE and never reports a child's setting on a parent.
+    #[test]
+    fn a_branchs_mark_is_its_own_setting_and_never_a_childs() {
+        let src = include_str!("main.rs");
+        let at = src
+            .find("fn branch_level_mark(")
+            .expect("the branch's own mark");
+        let body = &src[at..at + src[at..].find("\n    }\n").expect("end of it")];
+        assert!(
+            body.contains("self.branch_level(which)"),
+            "a branch draws the level set ON it"
+        );
+        assert!(
+            !body.contains("level_of") && !body.contains("resolve_level"),
+            "resolution is for rows BELOW a setting; a branch that resolved \
+             would draw an arrow for a setting made somewhere else"
         );
     }
 
@@ -27894,6 +28289,7 @@ mod tests {
             out
         };
         let tab = |node: SavedNode| SavedTab {
+            level: None,
             name: None,
             color: None,
             text_color: None,
@@ -27960,6 +28356,7 @@ mod tests {
             pane_id: pane,
         };
         let tab = |node: SavedNode| SavedTab {
+            level: None,
             name: None,
             color: None,
             text_color: None,
@@ -28036,6 +28433,7 @@ mod tests {
             pane_id: pane,
         };
         let tab = |node: SavedNode| SavedTab {
+            level: None,
             name: None,
             color: None,
             text_color: None,
@@ -28094,6 +28492,7 @@ mod tests {
             pane_id: pane,
         };
         let tab = |node: SavedNode| SavedTab {
+            level: None,
             name: None,
             color: None,
             text_color: None,
@@ -28292,6 +28691,7 @@ mod tests {
             "custom name lost on save"
         );
         let toml = toml::to_string(&SavedTab {
+            level: None,
             name: None,
             color: None,
             text_color: None,
@@ -28456,6 +28856,7 @@ id = "hacker"
             warp: theme::WARP_DEFAULT,
             track: None,
             tabs: vec![SavedTab {
+                level: None,
                 name: None,
                 color: None,
                 text_color: None,
@@ -28506,6 +28907,7 @@ id = "hacker"
             warp: theme::WARP_DEFAULT,
             track: None,
             tabs: vec![SavedTab {
+                level: None,
                 name: Some("agents".into()),
                 color: None,
                 text_color: None,
@@ -28565,6 +28967,7 @@ id = "hacker"
             track: None,
             tabs: vec![
                 SavedTab {
+                    level: None,
                     name: Some("HOME".into()),
                     color: Some("#aa3344".into()),
                     text_color: Some("#ffffff".into()),
@@ -28573,6 +28976,7 @@ id = "hacker"
                     project: None,
                 },
                 SavedTab {
+                    level: None,
                     name: Some("loose".into()),
                     color: None,
                     text_color: None,
@@ -28582,6 +28986,7 @@ id = "hacker"
                 },
             ],
             groups: vec![SavedGroup {
+                level: None,
                 id: 7,
                 name: Some("WORK".into()),
                 color: "#2d8f4d".into(),
@@ -29046,6 +29451,7 @@ node = "Leaf"
             warp: theme::WARP_DEFAULT,
             track: None,
             tabs: vec![SavedTab {
+                level: None,
                 name: None,
                 color: None,
                 text_color: None,
