@@ -4514,7 +4514,19 @@ impl Workspace {
             focus_page_h: 0.0,
             pending_jump: None,
             rail_on: rail_on(std::env::var("TD_SPINE").ok().as_deref()),
-            rail_open: false,
+            // **The demo opens the queue itself, and only the demo does.**
+            //
+            // The queue never opens on its own in a real window — that is a
+            // standing rule of this surface — but a demo of a queue that is not
+            // showing demonstrates a twenty-pixel badge. It also makes the
+            // surface capturable without synthetic input, which matters more
+            // than it sounds: `ctrl+shift+N` is read by the focused PANE, and a
+            // `wtype`-sent chord arrives with a shifted keysym that the match on
+            // `"n"` does not accept. So the one gesture that opens this thing is
+            // the one gesture a screenshot script cannot perform, and without
+            // this flag the only way to photograph the queue is to ask a person
+            // to press a key.
+            rail_open: std::env::var("TD_SPINE_DEMO").is_ok_and(|v| v != "0"),
             rail_order: Vec::new(),
             rail_seen: attention::Seen::default(),
             rail_cursor: 0,
@@ -15830,15 +15842,24 @@ impl Workspace {
         let plan = Self::tracer_doc("docs/plans/attention-spine/plan.md");
         let page = Self::tracer_doc("docs/2026-08-31-one-click-copy-affordance.html");
 
+        // The seventh field is the QUOTED LINE — invented like everything else
+        // here and in the same house style: no real prompt, path or business.
+        //
+        // Two rows carry none, and those are as deliberate as the five that do.
+        // A clean finish matches no line, so a review-ready row has nothing to
+        // quote; an unreadable screen is precisely what could not be read. A
+        // demo that quoted something on every row would teach the opposite of
+        // what the field means.
         let rows = vec![
             (
                 1u64,
                 Priority::Promoted,
                 AttentionKind::Decision,
                 origin("atlas", Some("ingest")),
-                "Choose the token migration path",
-                "pane screen",
+                "Stopped at a prompt",
+                "prompt",
                 ago(41 * 60),
+                Some("Do you want to proceed? \u{276f} 1. Rotate now  2. Stage first"),
                 None,
             ),
             (
@@ -15846,9 +15867,10 @@ impl Workspace {
                 Priority::Neutral,
                 AttentionKind::Decision,
                 origin("ledger", Some("invoices")),
-                "Overwrite the July export?",
-                "pane screen",
+                "Stopped at a prompt",
+                "prompt",
                 ago(9 * 60),
+                Some("Overwrite the existing export? (esc to cancel)"),
                 None,
             ),
             (
@@ -15856,9 +15878,10 @@ impl Workspace {
                 Priority::Promoted,
                 AttentionKind::Failure,
                 origin("atlas", Some("packaging")),
-                "AppImage smoke, exit 1",
-                "check",
+                "Finished against a wall",
+                "bell",
                 ago(6 * 60),
+                Some("API Error: 429 rate_limit_error \u{b7} retry after 1m"),
                 None,
             ),
             (
@@ -15869,6 +15892,9 @@ impl Workspace {
                 "Finished, not yet seen",
                 "bell",
                 ago(12 * 60),
+                // A clean finish matched nothing, so there is nothing to quote
+                // and the row simply omits it.
+                None,
                 page.map(|href| Deliverable {
                     label: "One-click copy affordance".into(),
                     href: href.to_string(),
@@ -15882,6 +15908,7 @@ impl Workspace {
                 "Finished, not yet seen",
                 "bell",
                 ago(40 * 60),
+                None,
                 plan.map(|href| Deliverable {
                     label: "Attention spine plan".into(),
                     href: href.to_string(),
@@ -15892,9 +15919,10 @@ impl Workspace {
                 Priority::Demoted,
                 AttentionKind::Failure,
                 origin("relay", Some("nightly")),
-                "Connection lost, retrying",
-                "check",
+                "Finished against a wall",
+                "bell",
                 ago(2 * 60),
+                Some("API Error: request timed out after 600s"),
                 None,
             ),
             (
@@ -15902,8 +15930,11 @@ impl Workspace {
                 Priority::Neutral,
                 AttentionKind::Unknown,
                 origin("relay", None),
-                "Known agent, state unreadable",
-                "pane screen",
+                "Screen could not be read",
+                "parser",
+                None,
+                // Nothing to quote, by definition: this row exists BECAUSE the
+                // screen could not be read.
                 None,
                 None,
             ),
@@ -15912,7 +15943,17 @@ impl Workspace {
         let obs: Vec<attention::Observation> = rows
             .into_iter()
             .map(
-                |(pane, priority, kind, origin, reason, source, observed_at, deliverable)| {
+                |(
+                    pane,
+                    priority,
+                    kind,
+                    origin,
+                    reason,
+                    source,
+                    observed_at,
+                    evidence,
+                    deliverable,
+                )| {
                     attention::Observation {
                         pane,
                         pane_kind: attention::PaneKind::Agent,
@@ -15922,12 +15963,7 @@ impl Workspace {
                         reason: reason.to_string(),
                         observed_at,
                         source,
-                        // The demo quotes nothing. Its rows are invented, and
-                        // an invented screen line presented as a quotation is
-                        // exactly the fabrication the quote exists to prevent —
-                        // so the demo shows what a row with no evidence looks
-                        // like, which is a case worth seeing anyway.
-                        evidence: None,
+                        evidence: evidence.map(str::to_string),
                         deliverable,
                     }
                 },
