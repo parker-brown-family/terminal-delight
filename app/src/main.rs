@@ -15406,14 +15406,27 @@ impl Workspace {
         let (items, _) = self.rail_rows(cx);
         let counts = attention::counts(&items);
 
-        // One pip per kind that is actually present, in lane order — not one per
-        // row, which would turn a twenty-five pane fleet into a barcode.
-        let mut kinds: Vec<attention::AttentionKind> = Vec::new();
-        for it in &items {
-            if !kinds.contains(&it.kind) {
-                kinds.push(it.kind);
-            }
-        }
+        // **One number per lane, in that lane's own colour.**
+        //
+        // This was a single total plus a pip per lane, and the total was painted
+        // `hsla(0., 0.72, 0.60, 1.)` unconditionally — which is not "the count
+        // colour", it is `rail_ink(Decision)` written out by hand. So two green
+        // review rows produced a red 2, and the pill said *something is on fire*
+        // about a queue whose every row was calm.
+        //
+        // A count and a separate colour is one fact too few anyway: the total
+        // answers "how many" and the pips answer "which kinds", and a person
+        // still cannot tell two-blocked-and-two-review from one-blocked-and-
+        // three-review. Per-lane numbers answer both at once and the colour
+        // stops being a claim of its own — each number is simply its own row
+        // colour, which is the one the queue already uses.
+        //
+        // Lane order, so the loudest thing is highest: decision, failure,
+        // review. Absent lanes draw nothing rather than a zero — an empty lane
+        // has no row in the queue either, and a column of noughts would be the
+        // barcode the pips were avoiding.
+        let per_lane = attention::lane_counts(&items);
+
         let wanting = counts.wanting;
         let unknown = counts.unknown;
 
@@ -15464,22 +15477,22 @@ impl Workspace {
                                 cx.notify();
                             }),
                         )
-                        .child(
+                        // Nothing waiting draws a single dim nought, because an
+                        // empty pill and a pill that has not been computed look
+                        // the same, and only one of them is true.
+                        .when(wanting == 0, |d| {
+                            d.child(
+                                div()
+                                    .text_size(px(11. * s))
+                                    .text_color(sk.ink.ink_dim)
+                                    .child("0"),
+                            )
+                        })
+                        .children(per_lane.into_iter().map(|(k, n)| {
                             div()
                                 .text_size(px(11. * s))
-                                .text_color(if wanting > 0 {
-                                    hsla(0., 0.72, 0.60, 1.)
-                                } else {
-                                    sk.ink.ink_dim
-                                })
-                                .child(format!("{wanting}")),
-                        )
-                        .children(kinds.into_iter().map(|k| {
-                            div()
-                                .w(px(4. * s))
-                                .h(px(10. * s))
-                                .rounded(px(2. * s))
-                                .bg(Self::rail_ink(k, &sk))
+                                .text_color(Self::rail_ink(k, &sk))
+                                .child(format!("{n}"))
                         }))
                         .when(unknown > 0, |d| {
                             d.child(
