@@ -168,7 +168,77 @@ pub fn row_wants_human(text: &str) -> bool {
 /// Is an interaction prompt on screen RIGHT NOW? Scans the last few live rows
 /// (prompts sit at the bottom of an agent TUI). Pure over the rows for tests.
 pub fn wants_human(recent_rows: &[String]) -> bool {
-    recent_rows.iter().any(|r| row_wants_human(r))
+    wants_human_row(recent_rows).is_some()
+}
+
+/// The row that made [`wants_human`] say yes — the evidence behind a decision
+/// row in the rail.
+///
+/// **The predicate is defined in terms of this, and not the other way round.**
+/// A second scan that re-derived "which line was it" would be free to disagree
+/// with the one that set the flag, and the disagreement would appear only on the
+/// screens where two rows both match — precisely the ambiguous screens where a
+/// person most needs the quote to be the real one. One walk, one answer, and
+/// `wants_human` is now a question about whether that answer exists.
+///
+/// The LAST match wins, because an agent TUI prints downward: with a stale
+/// question still on screen above a live picker, the live one is lower.
+pub fn wants_human_row(recent_rows: &[String]) -> Option<&str> {
+    recent_rows
+        .iter()
+        .rev()
+        .find(|r| row_wants_human(r))
+        .map(|r| r.trim())
+}
+
+/// The row that made [`looks_blocked`] say yes — the evidence behind a failure
+/// row. Same one-walk contract as [`wants_human_row`].
+pub fn blocked_row(recent_rows: &[String]) -> Option<&str> {
+    recent_rows.iter().rev().find(|r| row_blocked(r)).map(|r| r.trim())
+}
+
+/// The longest quote a rail row will carry.
+///
+/// A queue row is 300 pixels wide and the line it quotes is a terminal row that
+/// may be two hundred columns of box-drawing. Clipped at capture rather than at
+/// paint: the stored string is what a later reader gets, and storing a kilobyte
+/// per pane to draw sixty characters of it is a cost paid every scan.
+const EVIDENCE_CHARS: usize = 96;
+
+/// Tidy one screen row into something quotable on a 300-pixel row.
+///
+/// Box-drawing furniture goes (the CLI draws its prompts inside a frame, and
+/// `│ Do you want to proceed? │` quotes the frame as much as the question), runs
+/// of spaces collapse, and the result is clipped with an ellipsis so a clipped
+/// quote can never be mistaken for a short one.
+pub fn clip_evidence(row: &str) -> String {
+    let cleaned: String = row
+        .chars()
+        .map(|c| {
+            if ('\u{2500}'..='\u{257f}').contains(&c) {
+                ' '
+            } else {
+                c
+            }
+        })
+        .collect();
+    let mut out = String::with_capacity(cleaned.len());
+    let mut space = false;
+    for c in cleaned.trim().chars() {
+        if c.is_whitespace() {
+            space = true;
+            continue;
+        }
+        if space && !out.is_empty() {
+            out.push(' ');
+        }
+        space = false;
+        out.push(c);
+    }
+    if out.chars().count() > EVIDENCE_CHARS {
+        out = out.chars().take(EVIDENCE_CHARS - 1).collect::<String>() + "\u{2026}";
+    }
+    out
 }
 
 /// How many rows of the visible tail the prompt predicates read.
@@ -218,17 +288,22 @@ pub fn wants_human_unless_answered(recent_rows: &[String], answered_on: Option<u
 /// WORKING, not the agent blocked). Classifies the finish badge: ✅ clean, ❌
 /// blocked. Strict for the same reason as [`row_wants_human`].
 pub fn looks_blocked(recent_rows: &[String]) -> bool {
-    recent_rows.iter().any(|r| {
-        let t = r.trim().to_ascii_lowercase();
-        !t.is_empty()
-            && (t.contains("api error")
-                || t.contains("usage limit")
-                || t.contains("credit balance")
-                || t.contains("oauth token")
-                || t.contains("rate_limit_error")
-                || t.contains("overloaded_error")
-                || t.contains("request timed out"))
-    })
+    blocked_row(recent_rows).is_some()
+}
+
+/// Does this one row read as a wall? The row-level half of [`looks_blocked`],
+/// split out so the predicate and the evidence come from one walk — see
+/// [`wants_human_row`] for why that matters.
+pub fn row_blocked(text: &str) -> bool {
+    let t = text.trim().to_ascii_lowercase();
+    !t.is_empty()
+        && (t.contains("api error")
+            || t.contains("usage limit")
+            || t.contains("credit balance")
+            || t.contains("oauth token")
+            || t.contains("rate_limit_error")
+            || t.contains("overloaded_error")
+            || t.contains("request timed out"))
 }
 
 /// Mark which rows belong to *the user's own turn*, spanning a wrapped multi-line
@@ -1966,6 +2041,16 @@ pub struct TerminalView {
     /// badge; `false` = a clean finish → ✅. Meaningless while `bell` is off;
     /// cleared with it.
     bell_blocked: bool,
+    /// The wall the latched finish hit, quoted from the screen at ring time.
+    ///
+    /// `None` on a clean finish, and that absence is the honest one: nothing
+    /// matched, so there is nothing to quote. Captured at the ring rather than
+    /// read back when the rail paints, because by then the error may have
+    /// scrolled away while the latch — quite correctly — still holds.
+    bell_line: Option<String>,
+    /// The prompt line behind [`Self::needs_input`], quoted from the same rows
+    /// and the same scan that set the flag. `None` whenever the flag is down.
+    needs_input_line: Option<String>,
     /// The live player child for this pane's ping (hard-killed on stop/drop).
     bell_player: crate::bell::BellPlayer,
     /// Responsive header: when the pane narrows, controls tuck into a ⋯ overflow
@@ -2871,6 +2956,15 @@ impl TerminalView {
                                 cx.emit(AgentWorkingChanged);
                                 cx.notify();
                             }
+                            // The line behind the flag, quoted at the moment the
+                            // flag was set and from the same rows it was set
+                            // from. Recorded here rather than read back later
+                            // because "later" is a different screen: the rail
+                            // paints minutes after the prompt appeared, and by
+                            // then the pane may have scrolled it away while the
+                            // latch quite correctly still holds.
+                            view.needs_input_line =
+                                needs.then(|| wants_human_row(&recent).map(clip_evidence)).flatten();
                             // One grid walk per pane per tick, not per frame.
                             // Inside the scroll gate with the rest of the
                             // screen-reading: a parse taken mid-scroll reads a
@@ -2897,6 +2991,14 @@ impl TerminalView {
                                             // classify the finish while the
                                             // stop-state is still on screen
                                             view.bell_blocked = looks_blocked(&recent);
+                                            // …and quote the wall while it is
+                                            // still on screen too. A clean
+                                            // finish matched nothing and stores
+                                            // nothing: there is no line to show
+                                            // and inventing one would be the
+                                            // placeholder this surface refuses.
+                                            view.bell_line =
+                                                blocked_row(&recent).map(clip_evidence);
                                             view.bell_player.play();
                                             view.think_since = None;
                                             view.not_thinking_since = None;
@@ -3021,6 +3123,8 @@ impl TerminalView {
             last_rail_badge: None,
             rail_state: crate::hud::AgentState::default(),
             bell_blocked: false,
+            bell_line: None,
+            needs_input_line: None,
             bell_player: crate::bell::BellPlayer::default(),
             hdr_overflow: None,
             copy_hint: None,
@@ -5237,6 +5341,7 @@ impl TerminalView {
         }
         self.bell = false;
         self.bell_blocked = false;
+        self.bell_line = None;
         self.bell_player.stop();
         self.not_thinking_since = None;
         cx.notify();
@@ -5253,6 +5358,23 @@ impl TerminalView {
     /// frame — see the field for why it is cached rather than parsed on demand.
     pub fn rail_state(&self) -> crate::hud::AgentState {
         self.rail_state
+    }
+
+    /// The screen line behind whatever this pane is asking for, or `None`.
+    ///
+    /// The prompt wins over the wall when a pane somehow has both, matching the
+    /// badge precedence exactly: a live question outranks a rung bell, so the
+    /// quote must be of the thing the row is about. Two quotes on one row would
+    /// be a second ranking, which is the thing the rail spent Slice 2 removing.
+    ///
+    /// A clean finish returns `None` and the row draws no quote. That is not a
+    /// gap to fill later: a review-ready row exists *because a turn ended*, and
+    /// no single line on the screen is the reason.
+    pub fn attention_evidence(&self) -> Option<String> {
+        if self.needs_input {
+            return self.needs_input_line.clone();
+        }
+        self.bell.then(|| self.bell_line.clone()).flatten()
     }
 
     /// Answer the prompt that is on screen: the person has engaged, so the

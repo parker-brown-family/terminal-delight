@@ -245,6 +245,8 @@ pub struct Observation {
     pub observed_at: Option<Instant>,
     /// Where the fact came from, shown on the row beside its time.
     pub source: &'static str,
+    /// The line the classifier actually read. See [`AttentionItem::evidence`].
+    pub evidence: Option<String>,
     /// What this turn produced, if the agent declared anything.
     pub deliverable: Option<Deliverable>,
 }
@@ -259,6 +261,20 @@ pub struct AttentionItem {
     pub reason: String,
     pub observed_at: Option<Instant>,
     pub source: &'static str,
+    /// The line on the pane's screen that the classifier matched, captured at
+    /// the moment it matched.
+    ///
+    /// `source` names the instrument; this is what the instrument read. A row
+    /// saying "prompt · 4m" asks to be believed; a row that also shows
+    /// `Do you want to proceed?` can be checked, and checked against the wrong
+    /// pane is how a person catches a misfire in a second rather than by opening
+    /// the terminal.
+    ///
+    /// `None` is a real answer and stays one. The unknown lane has no matched
+    /// line by definition — the screen is precisely what could not be read — and
+    /// a bell that rang on a clean finish matched no failure phrase either. The
+    /// renderer draws the absence and never a placeholder sentence.
+    pub evidence: Option<String>,
     /// Opened by a plain click, and never by focusing the pane. Reading a row
     /// and visiting its terminal are two different acts.
     pub deliverable: Option<Deliverable>,
@@ -302,6 +318,7 @@ pub fn project(observations: &[Observation]) -> Vec<AttentionItem> {
                 reason: o.reason.clone(),
                 observed_at: o.observed_at,
                 source: o.source,
+                evidence: o.evidence.clone(),
                 deliverable: o.deliverable.clone(),
             })
         })
@@ -369,6 +386,146 @@ pub fn lane_counts(items: &[AttentionItem]) -> Vec<(AttentionKind, usize)> {
     lanes
 }
 
+/// The order a person is currently looking at, held still while they look.
+///
+/// **The projection re-sorts every frame, and that is right until somebody is
+/// reading it.** A queue ordered by urgency and age is a queue whose rows move:
+/// a bell three panes away re-sorts the list under a cursor, and the row that
+/// was second when the hand started moving is fourth when the key lands. The
+/// ordering is not wrong — the moment to apply it is.
+///
+/// So the order is frozen when the queue opens and released when it closes.
+/// While held, rows keep their positions, rows that leave simply vanish from
+/// their slot, and **arrivals are appended at the bottom** rather than inserted
+/// where their urgency says they belong. A row that jumped in above the cursor
+/// would be exactly the defect this exists to prevent, and appending is visible:
+/// a new decision at the bottom of a held list is one keystroke away and
+/// obviously new, where a silently reordered list is neither.
+///
+/// `frozen` is a list of pane keys, not of rows: the queue re-projects from live
+/// panes every frame and the held thing is the *sequence*, never a stale copy of
+/// what the rows said. A held row therefore still ticks its age, still changes
+/// lane, and still disappears the instant it stops wanting anything.
+pub fn hold_order(frozen: &[u64], items: Vec<AttentionItem>) -> Vec<AttentionItem> {
+    if frozen.is_empty() {
+        return items;
+    }
+    let mut held: Vec<AttentionItem> = Vec::with_capacity(items.len());
+    let mut rest: Vec<AttentionItem> = Vec::new();
+    let mut pool: Vec<Option<AttentionItem>> = items.into_iter().map(Some).collect();
+    for key in frozen {
+        if let Some(slot) = pool
+            .iter_mut()
+            .find(|s| s.as_ref().is_some_and(|it| it.pane == *key))
+        {
+            held.push(slot.take().expect("just matched a present slot"));
+        }
+    }
+    rest.extend(pool.into_iter().flatten());
+    held.extend(rest);
+    held
+}
+
+/// The keys of a queue, in the order it is currently drawn.
+pub fn order_of(items: &[AttentionItem]) -> Vec<u64> {
+    items.iter().map(|it| it.pane).collect()
+}
+
+/// What the painter records about the rows it drew: which pane, in which lane.
+pub fn shown_keys(items: &[AttentionItem]) -> Vec<(u64, AttentionKind)> {
+    items.iter().map(|it| (it.pane, it.kind)).collect()
+}
+
+/// Which rows the person has already looked at, and which arrived since.
+///
+/// **The bell's own contract, extended to the queue rather than duplicated.** A
+/// finish bell is acknowledged by looking at the pane, because looking IS the
+/// acknowledgement; a queue row is acknowledged by the queue having been open
+/// while the row was in it, for the same reason and with the same failure mode
+/// if we chose otherwise. A second, cleverer notion of seen — dwell time, a
+/// hover, a scroll position — would be a claim about attention that a terminal
+/// has no instrument to make.
+///
+/// Seen is keyed by **pane and lane together**, so a pane that was reviewed and
+/// then blocks is unseen again. The pane has not changed; what it wants has, and
+/// the row is about what it wants.
+#[derive(Debug, Clone, Default)]
+pub struct Seen {
+    marks: std::collections::HashMap<u64, AttentionKind>,
+}
+
+impl Seen {
+    /// Has this row arrived, or changed what it wants, since the last look?
+    pub fn is_unseen(&self, it: &AttentionItem) -> bool {
+        self.marks.get(&it.pane) != Some(&it.kind)
+    }
+
+    /// How many of these rows the person has not looked at yet.
+    pub fn unseen_count(&self, items: &[AttentionItem]) -> usize {
+        items.iter().filter(|it| self.is_unseen(it)).count()
+    }
+
+    /// Record every row here as looked at. Called when the queue closes, not
+    /// when it opens: the rows that were on screen for the duration are the ones
+    /// that were seen, and a row that arrived while the panel was open is one of
+    /// them.
+    ///
+    /// Takes the pairs the painter recorded rather than projected rows, because
+    /// what was on screen is the claim being made. See `Workspace::rail_close`.
+    pub fn mark(&mut self, shown: &[(u64, AttentionKind)]) {
+        for (pane, kind) in shown {
+            self.marks.insert(*pane, *kind);
+        }
+    }
+
+    /// Forget panes that are no longer anywhere in the queue.
+    ///
+    /// Without this the map grows for the life of the window, and — worse than
+    /// the memory — a pane that leaves the queue and comes back hours later
+    /// returns already marked seen, so a genuinely new finish arrives wearing
+    /// yesterday's acknowledgement. Called on the same edge as [`Self::mark`].
+    pub fn retain_live(&mut self, shown: &[(u64, AttentionKind)]) {
+        let live: std::collections::HashSet<u64> = shown.iter().map(|(p, _)| *p).collect();
+        self.marks.retain(|k, _| live.contains(k));
+    }
+}
+
+/// Where a key press moves the cursor, or `None` when the key is not ours.
+///
+/// **No wrapping, deliberately.** The list is ordered by what it costs to leave
+/// a thing alone, so down from the last row landing on the first is the surface
+/// quietly telling a person they have reached the end when they have reached the
+/// beginning. A cursor that stops is a cursor you can hold a key against.
+///
+/// `end` on an empty queue is 0 rather than an underflow, and every caller
+/// clamps against the live length anyway: the queue re-projects between
+/// keystrokes and a row can leave it between one press and the next.
+pub fn move_cursor(cursor: usize, len: usize, key: &str) -> Option<usize> {
+    if len == 0 {
+        return None;
+    }
+    let last = len - 1;
+    let next = match key {
+        "down" | "j" | "tab" => cursor.saturating_add(1).min(last),
+        "up" | "k" => cursor.saturating_sub(1),
+        "home" => 0,
+        "end" => last,
+        // 1..9 jump straight to a row, the way the left bar's number keys do.
+        // Out of range is ignored rather than clamped: pressing 7 on a queue of
+        // three meant a row that is not there, and moving to the last one is a
+        // different instruction than the one given.
+        d if d.len() == 1 && d.chars().next().is_some_and(|c| ('1'..='9').contains(&c)) => {
+            let i = d.chars().next().unwrap() as usize - '1' as usize;
+            if i > last {
+                return None;
+            }
+            i
+        }
+        _ => return None,
+    };
+    Some(next)
+}
+
 /// How long a row says it has waited, or a dash.
 ///
 /// The dash is the point: a row whose transition was never observed renders an
@@ -407,8 +564,157 @@ mod tests {
             reason: "because".into(),
             observed_at: secs_ago.map(|s| Instant::now() - Duration::from_secs(s)),
             source: "pane screen",
+            evidence: None,
             deliverable: None,
         }
+    }
+
+    /// A projected row, built straight rather than through an observation —
+    /// the lifecycle functions take items and care about two fields.
+    fn row(pane: u64, kind: AttentionKind) -> AttentionItem {
+        AttentionItem {
+            pane,
+            priority: Priority::Neutral,
+            kind,
+            origin: Origin::default(),
+            reason: String::new(),
+            observed_at: None,
+            source: "",
+            evidence: None,
+            deliverable: None,
+        }
+    }
+
+    #[test]
+    fn a_held_order_survives_a_reprojection_that_would_resort_it() {
+        let frozen = vec![7, 3, 9];
+        // The projection hands them back in its own order; the hold wins.
+        let fresh = vec![
+            row(9, AttentionKind::Decision),
+            row(3, AttentionKind::Failure),
+            row(7, AttentionKind::ReviewReady),
+        ];
+        assert_eq!(order_of(&hold_order(&frozen, fresh)), vec![7, 3, 9]);
+    }
+
+    #[test]
+    fn a_row_that_arrives_while_the_queue_is_open_lands_at_the_bottom() {
+        let frozen = vec![7, 3];
+        let fresh = vec![
+            // A decision outranks everything and would sort first.
+            row(1, AttentionKind::Decision),
+            row(3, AttentionKind::ReviewReady),
+            row(7, AttentionKind::ReviewReady),
+        ];
+        assert_eq!(
+            order_of(&hold_order(&frozen, fresh)),
+            vec![7, 3, 1],
+            "an arrival must never insert itself above the cursor"
+        );
+    }
+
+    #[test]
+    fn a_row_that_leaves_vacates_its_slot_and_moves_nobody_above_it() {
+        let frozen = vec![7, 3, 9];
+        let fresh = vec![row(7, AttentionKind::Decision), row(9, AttentionKind::Decision)];
+        assert_eq!(order_of(&hold_order(&frozen, fresh)), vec![7, 9]);
+    }
+
+    #[test]
+    fn nothing_frozen_leaves_the_projection_exactly_as_it_came() {
+        let fresh = vec![row(4, AttentionKind::Decision), row(2, AttentionKind::Failure)];
+        assert_eq!(order_of(&hold_order(&[], fresh)), vec![4, 2]);
+    }
+
+    #[test]
+    fn a_frozen_key_for_a_pane_that_is_gone_is_simply_skipped() {
+        // The pane closed while the queue was open. It must not leave a hole,
+        // and it must not resurrect as an empty row.
+        let frozen = vec![7, 42, 3];
+        let fresh = vec![row(3, AttentionKind::Decision), row(7, AttentionKind::Decision)];
+        assert_eq!(order_of(&hold_order(&frozen, fresh)), vec![7, 3]);
+    }
+
+    #[test]
+    fn everything_is_unseen_before_the_first_look() {
+        let seen = Seen::default();
+        let items = vec![row(1, AttentionKind::Decision), row(2, AttentionKind::Failure)];
+        assert_eq!(seen.unseen_count(&items), 2);
+    }
+
+    #[test]
+    fn marking_a_queue_makes_its_rows_seen_and_nothing_else() {
+        let mut seen = Seen::default();
+        let items = vec![row(1, AttentionKind::Decision)];
+        seen.mark(&shown_keys(&items));
+        assert!(!seen.is_unseen(&items[0]));
+        assert!(
+            seen.is_unseen(&row(2, AttentionKind::Decision)),
+            "a pane nobody has looked at is not seen because a neighbour was"
+        );
+    }
+
+    #[test]
+    fn a_seen_pane_that_changes_lane_is_unseen_again() {
+        let mut seen = Seen::default();
+        seen.mark(&shown_keys(&[row(1, AttentionKind::ReviewReady)]));
+        assert!(
+            seen.is_unseen(&row(1, AttentionKind::Failure)),
+            "the pane is the same; what it wants is not, and the row is about what it wants"
+        );
+    }
+
+    #[test]
+    fn a_pane_that_leaves_the_queue_entirely_comes_back_unseen() {
+        let mut seen = Seen::default();
+        let looked_at = vec![row(1, AttentionKind::ReviewReady), row(2, AttentionKind::Decision)];
+        seen.mark(&shown_keys(&looked_at));
+        // Pane 1 was dealt with and dropped out; only pane 2 is still queued.
+        seen.retain_live(&shown_keys(&looked_at[1..]));
+        assert!(
+            seen.is_unseen(&row(1, AttentionKind::ReviewReady)),
+            "an hour later this is a new finish, not the one already acknowledged"
+        );
+        assert!(!seen.is_unseen(&looked_at[1]));
+    }
+
+    #[test]
+    fn the_cursor_stops_at_both_ends_rather_than_wrapping() {
+        assert_eq!(move_cursor(0, 3, "up"), Some(0));
+        assert_eq!(move_cursor(2, 3, "down"), Some(2));
+        assert_eq!(move_cursor(0, 3, "down"), Some(1));
+        assert_eq!(move_cursor(2, 3, "up"), Some(1));
+    }
+
+    #[test]
+    fn the_cursor_declines_every_key_that_is_not_its_own() {
+        for key in ["a", "left", "right", "f1", "enter", "escape", "0"] {
+            assert_eq!(move_cursor(1, 5, key), None, "{key} is not a navigation key");
+        }
+    }
+
+    #[test]
+    fn a_number_key_jumps_to_that_row_and_is_ignored_past_the_end() {
+        assert_eq!(move_cursor(0, 5, "3"), Some(2));
+        assert_eq!(move_cursor(0, 5, "1"), Some(0));
+        assert_eq!(
+            move_cursor(0, 3, "7"),
+            None,
+            "7 on a queue of three named a row that is not there — do not clamp it to the last"
+        );
+    }
+
+    #[test]
+    fn an_empty_queue_takes_no_cursor_at_all() {
+        for key in ["down", "up", "home", "end", "1"] {
+            assert_eq!(move_cursor(0, 0, key), None, "{key} on an empty queue");
+        }
+    }
+
+    #[test]
+    fn home_and_end_reach_the_ends_of_a_long_queue() {
+        assert_eq!(move_cursor(9, 40, "home"), Some(0));
+        assert_eq!(move_cursor(9, 40, "end"), Some(39));
     }
 
     #[test]

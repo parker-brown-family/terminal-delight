@@ -3233,6 +3233,19 @@ struct Workspace {
     /// The queue is open over the panes. The closed spine is the steady state
     /// and this never opens itself.
     rail_open: bool,
+    /// The row order the person is currently looking at, held while they look.
+    ///
+    /// Empty whenever the queue is shut, which is what "released" means — the
+    /// live projection is the truth again the moment nobody is reading a
+    /// snapshot of it. See [`attention::hold_order`] for why a list of keys and
+    /// not a list of rows.
+    rail_order: Vec<u64>,
+    /// Which rows have already been looked at. Survives the queue closing, and
+    /// is the queue's half of the bell's own acknowledgement contract.
+    rail_seen: attention::Seen,
+    /// The keyboard cursor over the waiting rows, clamped against the live
+    /// length every frame because a row can leave between two keystrokes.
+    rail_cursor: usize,
     /// The queue's painted rect, captured each frame. This is the SAME rect
     /// registered as its warp tube, so a click normalises into it and applies
     /// the identical barrel map the shader gathers with — the curve-aware
@@ -3243,6 +3256,10 @@ struct Workspace {
     /// compared: what the pointer is asked about is the plain box, exactly as
     /// the sticky note does it.
     rail_hits: Arc<Mutex<Vec<RailHit>>>,
+    /// The rows the painter last drew, as (pane, lane) pairs — what the person
+    /// actually had in front of them, which is what "seen" is a claim about.
+    /// Written each frame by the renderer, read once when the queue closes.
+    rail_shown: Arc<Mutex<Vec<(u64, attention::AttentionKind)>>>,
     /// On-screen box of the FOCUS reading area (the clip box below the header),
     /// captured each frame. This is the SAME rect registered as the warp tube, so a
     /// click normalises into it and applies the identical barrel map the shader
@@ -3408,7 +3425,7 @@ fn wire_pane(pane: &Entity<TerminalView>, window: &mut Window, cx: &mut Context<
     // ctrl+shift+N in any pane → open or close the attention queue.
     cx.subscribe(pane, |ws, _pane, _ev: &ToggleRail, cx| {
         if ws.rail_on {
-            ws.rail_open = !ws.rail_open;
+            ws.rail_toggle(cx);
             cx.notify();
         }
     })
@@ -4369,8 +4386,12 @@ impl Workspace {
             pending_jump: None,
             rail_on: rail_on(std::env::var("TD_SPINE").ok().as_deref()),
             rail_open: false,
+            rail_order: Vec::new(),
+            rail_seen: attention::Seen::default(),
+            rail_cursor: 0,
             rail_bounds: Arc::new(Mutex::new(None)),
             rail_hits: Arc::new(Mutex::new(Vec::new())),
+            rail_shown: Arc::new(Mutex::new(Vec::new())),
             focus_body_bounds: Arc::new(Mutex::new(None)),
             focus_map: Arc::new(Mutex::new(None)),
             focus_sel: None,
@@ -11761,7 +11782,7 @@ impl Workspace {
         // dismiss, so it goes first: Esc with the queue open should fold the
         // queue, never the wall underneath it.
         if self.rail_open {
-            self.rail_open = false;
+            self.rail_close();
             return true;
         }
         // Overlays that stack ON TOP of the agent wall — peel these first.
@@ -15458,7 +15479,6 @@ impl Workspace {
         use attention::{AttentionKind, Observation, PaneKind, Priority};
         let mut obs: Vec<Observation> = Vec::new();
         let mut panes: std::collections::HashMap<u64, EntityId> = std::collections::HashMap::new();
-        let mut n: u64 = 0;
         for (ti, tab) in self.tabs.iter().enumerate() {
             let mut leaves = Vec::new();
             tab.root.leaves(&mut leaves);
@@ -15496,8 +15516,15 @@ impl Workspace {
                     Some(AttentionKind::Unknown) => "parser",
                     None => "",
                 };
+                // **The pane's own identity, not its position in a walk.**
+                // This was a counter incremented over tabs and leaves, so every
+                // key shifted the moment a pane anywhere to the left of it
+                // opened or closed — and Slice 3 keys a held order and a seen
+                // mark off it. A row's identity moving when an unrelated pane
+                // closes would silently transfer both to its neighbour.
+                let key = leaf.entity_id().as_u64();
                 obs.push(Observation {
-                    pane: n,
+                    pane: key,
                     pane_kind,
                     priority: Priority::Neutral,
                     kind,
@@ -15507,10 +15534,13 @@ impl Workspace {
                     // row draws a dash, and never an age it did not measure.
                     observed_at: view.attention_since(),
                     source,
+                    // The line behind the lane, quoted by the pane at the scan
+                    // that classified it. Unknown and clean-finish rows have
+                    // none, and say so by being absent.
+                    evidence: view.attention_evidence(),
                     deliverable: None,
                 });
-                panes.insert(n, leaf.entity_id());
-                n += 1;
+                panes.insert(key, leaf.entity_id());
             }
         }
         (attention::project(&obs), panes)
@@ -15637,12 +15667,159 @@ impl Workspace {
                         reason: reason.to_string(),
                         observed_at,
                         source,
+                        // The demo quotes nothing. Its rows are invented, and
+                        // an invented screen line presented as a quotation is
+                        // exactly the fabrication the quote exists to prevent —
+                        // so the demo shows what a row with no evidence looks
+                        // like, which is a case worth seeing anyway.
+                        evidence: None,
                         deliverable,
                     }
                 },
             )
             .collect();
         attention::project(&obs)
+    }
+
+    /// Open or shut the queue, and run the lifecycle either way.
+    ///
+    /// **One door, because the lifecycle is three things and a call site that
+    /// remembers two is a bug that looks like a working feature.** Opening
+    /// freezes the order and parks the cursor at the top; closing marks what was
+    /// on screen as seen, forgets panes that have left the queue entirely, and
+    /// releases the order back to the live projection. There were four places
+    /// that flipped the flag before this existed, and the hit test is about to
+    /// add a fifth.
+    fn rail_toggle(&mut self, cx: &mut Context<Self>) {
+        if self.rail_open {
+            self.rail_close();
+        } else {
+            let (items, _) = self.rail_rows(cx);
+            self.rail_order = attention::order_of(&items);
+            self.rail_cursor = 0;
+            self.rail_open = true;
+        }
+    }
+
+    /// Shut the queue, marking everything that was ON SCREEN as looked at.
+    ///
+    /// Marking on the way OUT rather than on the way in is deliberate: the rows
+    /// that were on screen for the duration are the ones that were seen, and a
+    /// row that arrived while the panel was open is one of them. Marking on open
+    /// would mean a row that appeared a frame later stayed "new" forever after
+    /// sitting in front of somebody for a minute.
+    ///
+    /// **From what the painter drew, not from a fresh projection.** The two
+    /// differ by a frame, and the difference is entirely rows that appeared in
+    /// the instant between the last paint and the Esc — which nobody saw. This
+    /// also keeps the whole lifecycle free of `cx`, so `close_popups` can run it
+    /// on the same terms as every other overlay's dismissal.
+    fn rail_close(&mut self) {
+        if !self.rail_open {
+            return;
+        }
+        let shown = self
+            .rail_shown
+            .lock()
+            .map(|s| s.clone())
+            .unwrap_or_default();
+        self.rail_seen.mark(&shown);
+        self.rail_seen.retain_live(&shown);
+        self.rail_order.clear();
+        self.rail_open = false;
+    }
+
+    /// The queue as it is currently drawn: projected live, then reordered onto
+    /// whatever order the reader is looking at.
+    ///
+    /// Everything that needs to agree about "row 3" goes through here — the
+    /// painter, the cursor, the hit test and the key handler — so a click and a
+    /// keystroke on the same row cannot reach two different panes.
+    fn rail_queue(
+        &self,
+        cx: &App,
+    ) -> (
+        Vec<attention::AttentionItem>,
+        std::collections::HashMap<u64, EntityId>,
+    ) {
+        let (items, panes) = self.rail_rows(cx);
+        (attention::hold_order(&self.rail_order, items), panes)
+    }
+
+    /// The rows the queue actually lists, which is everything except the
+    /// unknown lane — that collapses to one unclickable line at the bottom.
+    ///
+    /// The cursor, the number keys and the hit test all index THIS list, so the
+    /// collapse cannot make row 4 on screen mean row 9 in the projection.
+    fn rail_waiting(
+        &self,
+        cx: &App,
+    ) -> (
+        Vec<attention::AttentionItem>,
+        std::collections::HashMap<u64, EntityId>,
+    ) {
+        let (items, panes) = self.rail_queue(cx);
+        (
+            items
+                .into_iter()
+                .filter(|it| it.kind != attention::AttentionKind::Unknown)
+                .collect(),
+            panes,
+        )
+    }
+
+    /// Act on the cursor's row: go to its pane, or open what it produced.
+    ///
+    /// Returns false when there is nothing under the cursor, so the key handler
+    /// can decline the keystroke rather than swallow it.
+    fn rail_activate(&mut self, open_deliverable: bool, cx: &mut Context<Self>) -> bool {
+        let (items, panes) = self.rail_waiting(cx);
+        let Some(it) = items.get(self.rail_cursor) else {
+            return false;
+        };
+        if open_deliverable {
+            let Some(d) = it.deliverable.as_ref() else {
+                return false;
+            };
+            pane::open_with_system(&d.href);
+            return true;
+        }
+        let Some(id) = panes.get(&it.pane).copied() else {
+            return false;
+        };
+        self.pending_jump = Some(id);
+        self.rail_close();
+        true
+    }
+
+    /// The queue owns the keyboard while it is open. Returns whether the press
+    /// was ours — the caller stops propagation on a yes, so no navigation key
+    /// ever reaches the terminal underneath.
+    ///
+    /// Esc is NOT handled here: it goes through `close_popups` with every other
+    /// overlay in the window, so the one dismissal path stays one path.
+    fn rail_key(&mut self, key: &str, cx: &mut Context<Self>) -> bool {
+        if !self.rail_on || !self.rail_open {
+            return false;
+        }
+        let len = self.rail_waiting(cx).0.len();
+        // Clamp first: rows leave the queue between keystrokes, and a cursor
+        // parked past the end would make `end` a no-op and `up` jump two.
+        self.rail_cursor = self.rail_cursor.min(len.saturating_sub(1));
+        match key {
+            "enter" => self.rail_activate(false, cx),
+            // A second verb for the second act. The plan is explicit that
+            // reading what a turn produced and visiting the terminal that
+            // produced it are different, so they do not share a key.
+            "o" => self.rail_activate(true, cx),
+            _ => match attention::move_cursor(self.rail_cursor, len, key) {
+                Some(next) => {
+                    self.rail_cursor = next;
+                    true
+                }
+                None => false,
+            },
+        }
     }
 
     /// Which part of the queue a click landed on, once the curve is undone.
@@ -15795,6 +15972,17 @@ impl Workspace {
 
         let wanting = counts.wanting;
         let unknown = counts.unknown;
+        // How many of those numbers are things that have arrived since the last
+        // look. Counted over the COUNTED lanes only, matching the numbers it
+        // sits under: the unknown lane has its own mark and is never a claim
+        // that something wants you.
+        let unseen = self.rail_seen.unseen_count(
+            &items
+                .iter()
+                .filter(|it| it.kind.counted())
+                .cloned()
+                .collect::<Vec<_>>(),
+        );
 
         // Two divs, not one, and the split is what stops the spine being a
         // full-height stripe.
@@ -15839,7 +16027,7 @@ impl Workspace {
                             MouseButton::Left,
                             cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
                                 cx.stop_propagation();
-                                ws.rail_open = !ws.rail_open;
+                                ws.rail_toggle(cx);
                                 cx.notify();
                             }),
                         )
@@ -15867,6 +16055,25 @@ impl Workspace {
                                     .text_color(sk.ink.ink_dim)
                                     .child("?"),
                             )
+                        })
+                        // A dot under the numbers whenever something in them has
+                        // not been looked at yet. Not a second number: the
+                        // question the closed spine answers is "is there
+                        // anything NEW", and a person who wants the breakdown is
+                        // one click from the rows themselves, each of which
+                        // carries its own dot.
+                        //
+                        // It disappears the moment the queue is closed again,
+                        // because closing it IS the look — the same contract the
+                        // finish bell has always had.
+                        .when(unseen > 0, |d| {
+                            d.child(
+                                div()
+                                    .mt(px(1. * s))
+                                    .text_size(px(8. * s))
+                                    .text_color(sk.ink.ink)
+                                    .child("\u{25cf}"),
+                            )
                         }),
                 ),
         )
@@ -15885,7 +16092,7 @@ impl Workspace {
         }
         let s = theme::outer_choice(cx).grade.scale;
         let sk = skin::skin(cx, s);
-        let (items, _panes) = self.rail_rows(cx);
+        let (items, _panes) = self.rail_queue(cx);
         let now = Instant::now();
         let th = theme::theme(cx);
         let rail_bounds = self.rail_bounds.clone();
@@ -15921,7 +16128,19 @@ impl Workspace {
                     "NEEDS ME \u{b7} {}",
                     attention::counts(&items).wanting
                 ))
-                .child("esc"),
+                // The keys, on the surface that has them. A chord nobody can
+                // discover is a chord nobody uses, and there is room for six
+                // characters beside the word esc.
+                .child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .gap(px(6. * s))
+                        .child("\u{2191}\u{2193} go")
+                        .child("\u{21b5} pane")
+                        .child("o open")
+                        .child("esc"),
+                ),
         );
 
         // **The unknown lane collapses to one line, and this is the only place
@@ -15956,13 +16175,36 @@ impl Workspace {
         }
 
         self.rail_hits.lock().map(|mut h| h.clear()).ok();
+        // What the person is looking at, for the seen-mark taken when this
+        // closes. Recorded from the rows actually drawn, and only the drawn
+        // ones: the unknown lane collapses to a count below and was never put
+        // in front of anybody as a row.
+        let drawn: Vec<attention::AttentionItem> = waiting.iter().map(|it| (*it).clone()).collect();
+        self.rail_shown
+            .lock()
+            .map(|mut s| *s = attention::shown_keys(&drawn))
+            .ok();
+        let cursor = self.rail_cursor.min(waiting.len().saturating_sub(1));
         for (row_index, it) in waiting.iter().enumerate() {
             let ink = Self::rail_ink(it.kind, &sk);
+            let on_cursor = row_index == cursor;
+            let unseen = self.rail_seen.is_unseen(it);
             let head = div()
                 .flex()
                 .flex_row()
                 .gap(px(6. * s))
                 .items_center()
+                // A row nobody has looked at yet wears a filled dot in its own
+                // lane colour; one already looked at leaves the space empty
+                // rather than drawing a hollow one. Two glyphs would make the
+                // reader learn a vocabulary to read a list of four things.
+                .child(
+                    div()
+                        .w(px(7. * s))
+                        .text_size(px(9. * s))
+                        .text_color(ink)
+                        .child(if unseen { "\u{25cf}" } else { "" }),
+                )
                 .child(
                     div()
                         .text_size(px(8.5 * s))
@@ -15995,10 +16237,19 @@ impl Workspace {
                 .pl(px(7. * s))
                 .pr(px(6. * s))
                 .py(px(5. * s))
-                .border_l(px(2. * s))
+                // The cursor is a thicker edge in the lane's own colour plus a
+                // lifted fill — never a second accent hue, which on a surface
+                // whose colours already MEAN something would read as a fifth
+                // lane. A person can point at the selected row from across the
+                // desk, which is the whole requirement.
+                .border_l(px(if on_cursor { 4. * s } else { 2. * s }))
                 .border_color(ink)
                 .rounded(sk.radius())
-                .bg(sk.ink.ink.alpha(0.05))
+                .bg(if on_cursor {
+                    sk.ink.ink.alpha(0.16)
+                } else {
+                    sk.ink.ink.alpha(0.05)
+                })
                 .cursor_pointer()
                 .hover(move |st| st.bg(sk.ink.ink.alpha(0.12)))
                 .child(head)
@@ -16008,6 +16259,23 @@ impl Workspace {
                         .text_color(sk.ink.ink)
                         .child(it.reason.clone()),
                 )
+                // The line the classifier read, quoted. `reason` is our words
+                // for what happened; this is the agent's own, and it is what
+                // turns a row somebody has to trust into a row somebody can
+                // check. Absent where nothing matched — a clean finish has no
+                // single line that is the reason — and the row simply omits it
+                // rather than printing a placeholder sentence.
+                .children(it.evidence.as_ref().map(|q| {
+                    div()
+                        .mt(px(2. * s))
+                        .px(px(4. * s))
+                        .py(px(2. * s))
+                        .rounded(px(2. * s))
+                        .bg(sk.ink.ink.alpha(0.06))
+                        .text_size(px(9.5 * s))
+                        .text_color(sk.ink.ink_dim)
+                        .child(format!("\u{201c}{q}\u{201d}"))
+                }))
                 // Every fact on the row says where it came from and when it was
                 // seen. A surface that shows a state without its provenance is
                 // asking to be trusted on nothing.
@@ -16124,9 +16392,14 @@ impl Workspace {
                 .items_start()
                 .on_mouse_down(
                     MouseButton::Left,
+                    // Clicking off the panel dismisses it, and dismissing is the
+                    // same act however it is spelt: this skipped the seen-mark
+                    // and the order release when it set the flag itself, so a
+                    // queue closed by clicking the scrim left every row still
+                    // wearing its unseen dot.
                     cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
                         cx.stop_propagation();
-                        ws.rail_open = false;
+                        ws.rail_close();
                         cx.notify();
                     }),
                 )
@@ -16142,23 +16415,24 @@ impl Workspace {
                             MouseButton::Left,
                             cx.listener(|ws, ev: &MouseDownEvent, _w, cx| {
                                 cx.stop_propagation();
+                                // A click moves the cursor to the row it landed
+                                // on before acting, so the keyboard carries on
+                                // from where the hand left off rather than from
+                                // wherever it was three rows ago. The two
+                                // gestures drive one selection.
+                                //
+                                // Both go through `rail_activate`, which reads
+                                // the same held, unknown-filtered list the hit
+                                // boxes were built from — the click's index and
+                                // the cursor's index are the same index.
                                 match ws.rail_hit_at(ev.position) {
                                     Some(RailAction::Open(i)) => {
-                                        let (items, _) = ws.rail_rows(cx);
-                                        if let Some(d) =
-                                            items.get(i).and_then(|it| it.deliverable.as_ref())
-                                        {
-                                            pane::open_with_system(&d.href);
-                                        }
+                                        ws.rail_cursor = i;
+                                        ws.rail_activate(true, cx);
                                     }
                                     Some(RailAction::Focus(i)) => {
-                                        let (items, panes) = ws.rail_rows(cx);
-                                        if let Some(id) =
-                                            items.get(i).and_then(|it| panes.get(&it.pane)).copied()
-                                        {
-                                            ws.pending_jump = Some(id);
-                                            ws.rail_open = false;
-                                        }
+                                        ws.rail_cursor = i;
+                                        ws.rail_activate(false, cx);
                                     }
                                     None => {}
                                 }
@@ -23788,6 +24062,22 @@ impl Render for Workspace {
                 if ev.keystroke.key.as_str() == "escape" && ws.close_popups() {
                     cx.stop_propagation();
                     cx.notify();
+                    return;
+                }
+                // The attention queue owns the keyboard while it is open, and it
+                // has to own it in the CAPTURE phase for the same reason Esc
+                // does: a terminal pane holds the focus, and an arrow key that
+                // reaches it is an arrow key sent to somebody's shell. The
+                // handler answers false for anything that is not its own, so
+                // ordinary typing still falls through to the pane — which is
+                // what makes this safe to leave armed over a live terminal.
+                let m = &ev.keystroke.modifiers;
+                if !m.control && !m.alt && !m.platform {
+                    let key = ev.keystroke.key.as_str();
+                    if ws.rail_key(key, cx) {
+                        cx.stop_propagation();
+                        cx.notify();
+                    }
                 }
             }))
             .on_key_down(cx.listener(Self::on_key))
@@ -26627,6 +26917,142 @@ mod tests {
         assert_eq!(
             rail_kind(Some(AgentBadge::Working), AgentState::Unknown),
             None
+        );
+    }
+
+    /// A pane's evidence is the line its own predicate matched, and the two
+    /// cannot disagree because there is only one walk.
+    ///
+    /// The pair matters more than either half: a surface that shows a quote
+    /// chosen by a second scan is a surface that will eventually quote one line
+    /// while the flag was set by another, and it would show up only on the
+    /// screens carrying two candidates — the ambiguous ones, where being right
+    /// matters most.
+    #[test]
+    fn the_quote_on_a_row_is_the_line_that_set_the_flag() {
+        let screen: Vec<String> = vec![
+            "  I'll refactor the parser now.".into(),
+            "╭──────────────────────────────╮".into(),
+            "│ Do you want to proceed?      │".into(),
+            "│ ❯ 1. Yes                     │".into(),
+            "╰──────────────────────────────╯".into(),
+        ];
+        assert!(pane::wants_human(&screen));
+        assert_eq!(
+            pane::wants_human_row(&screen).map(pane::clip_evidence),
+            Some("Do you want to proceed?".to_string()),
+            "the frame is furniture; the question is the evidence"
+        );
+        // And the absence is real: a screen with no prompt quotes nothing.
+        let quiet: Vec<String> = vec!["all done".into()];
+        assert!(!pane::wants_human(&quiet));
+        assert_eq!(pane::wants_human_row(&quiet), None);
+    }
+
+    /// The LAST match wins, because an agent TUI prints downward and a stale
+    /// question above a live picker is not the thing being asked.
+    #[test]
+    fn the_lower_of_two_prompts_is_the_live_one() {
+        let screen: Vec<String> = vec![
+            "Do you trust the files in this folder?".into(),
+            "  yes".into(),
+            "Do you want to proceed?".into(),
+        ];
+        assert_eq!(
+            pane::wants_human_row(&screen),
+            Some("Do you want to proceed?")
+        );
+    }
+
+    /// A wall quotes itself; a clean finish quotes nothing and says so by
+    /// being absent rather than by printing a sentence nobody wrote.
+    #[test]
+    fn a_clean_finish_has_no_quote_and_that_is_the_honest_answer() {
+        let wall: Vec<String> = vec!["  API Error: 429 rate_limit_error".into()];
+        assert!(pane::looks_blocked(&wall));
+        assert_eq!(
+            pane::blocked_row(&wall).map(pane::clip_evidence),
+            Some("API Error: 429 rate_limit_error".to_string())
+        );
+        let clean: Vec<String> = vec!["  Done. 3 files changed.".into()];
+        assert!(!pane::looks_blocked(&clean));
+        assert_eq!(pane::blocked_row(&clean), None);
+    }
+
+    /// A quote is clipped at capture, and a clipped quote is visibly clipped.
+    ///
+    /// Silent truncation is the failure that matters here: a row showing the
+    /// first ninety characters of an error, with no mark, reads as the whole
+    /// error — and somebody will act on the half they were shown.
+    #[test]
+    fn a_long_quote_is_clipped_and_says_that_it_was() {
+        let long = "x".repeat(400);
+        let out = pane::clip_evidence(&long);
+        assert!(out.chars().count() <= 96, "clipped to the row's width");
+        assert!(out.ends_with('\u{2026}'), "and marked as clipped");
+        // A short one is returned whole, with no ellipsis to misread.
+        assert_eq!(pane::clip_evidence("  two   spaces  "), "two spaces");
+    }
+
+    /// One list, indexed by the cursor, the number keys and the hit test alike.
+    ///
+    /// The queue collapses the unknown lane into a single line at the bottom, so
+    /// "row 4 on screen" and "row 4 in the projection" are different rows the
+    /// moment anything is unreadable — which on Parker's fleet is most panes.
+    /// Both the click path and the key path therefore go through
+    /// `rail_waiting`, and this is the check that keeps them there: a future
+    /// edit that reaches for `rail_rows` or `rail_queue` in either place turns
+    /// this red rather than silently focusing a neighbour's terminal.
+    #[test]
+    fn the_cursor_and_the_click_resolve_a_row_through_the_same_list() {
+        let src = include_str!("main.rs");
+        let at = src
+            .find("fn rail_activate(")
+            .expect("the one place a row is acted on");
+        let body = &src[at..at + src[at..].find("\n    }\n").expect("end of rail_activate")];
+        assert!(
+            body.contains("self.rail_waiting(cx)"),
+            "rail_activate must resolve rows through the drawn, unknown-filtered list"
+        );
+        assert!(
+            !body.contains("self.rail_rows(cx)"),
+            "the raw projection includes unknown rows the queue never draws"
+        );
+        // And the click handler must not re-resolve its own list either.
+        let click = src
+            .find("Some(RailAction::Focus(i)) => {")
+            .expect("the queue's click handler");
+        let arm = &src[click..click + 400];
+        assert!(
+            arm.contains("rail_activate"),
+            "a click goes through the same verb the keyboard does"
+        );
+    }
+
+    /// Opening and closing the queue is one function, because the lifecycle is
+    /// three things and a call site that remembers two is a bug that looks like
+    /// a working feature.
+    #[test]
+    fn nothing_flips_the_queue_open_without_running_its_lifecycle() {
+        // Counted over the PRODUCT half of the file only. A scan of the whole
+        // source counts this test's own two mentions of the string it is
+        // looking for, and a check that matches itself is a check whose number
+        // means nothing — it passes at four whether the fourth is a real call
+        // site or a comment somebody wrote about it.
+        let src = include_str!("main.rs");
+        let product = &src[..src.find("\nmod tests {").expect("the test module")];
+        let assignments = product.matches("rail_open = ").count();
+        assert_eq!(
+            assignments,
+            2,
+            "expected only the two inside rail_toggle/rail_close; a third \
+             `rail_open = …` is a call site that skips the order freeze, the \
+             seen-mark or the cursor reset. Found:\n{}",
+            product
+                .lines()
+                .filter(|l| l.contains("rail_open = "))
+                .collect::<Vec<_>>()
+                .join("\n")
         );
     }
 
