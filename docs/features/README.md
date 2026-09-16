@@ -7,7 +7,7 @@
 This catalog is the canonical, evidence-backed inventory of what Terminal Delight
 does, organised so we can draw from it for the site, the README, release notes,
 and GTM. Every entry cites the source (`file:line`), any `TD_*` flag or keybinding,
-and ship status. **85+ features across 9 capability areas.**
+and ship status. **110+ features across 12 capability areas.**
 
 ## The one-line pitch
 
@@ -39,6 +39,16 @@ in a genuinely beautiful CRT aesthetic with per-pane themes and barrel-warp glas
 9. **[Packaging / platform](09-packaging.md)** — MIT AppImage, GPL severed, the
    gpui fork, portability hardening.
 
+10. **[Sticky notes](10-sticky-notes.md)** — the fridge door on a pane's glass;
+    `alt+s`, the pin that surfaces on the tab, and the MCP `leave_note` an agent
+    writes to you in ten words.
+11. **[Usage & vitals](11-usage-vitals-keepalive.md)** — what the fleet costs and
+    whether a session is dying: Σ per-subscription spend and three bars per card
+    resolving to RUN/WATCH/COMPACT/HAND OFF. The prompt-cache keepalive that once
+    sat here was withdrawn in #317; the panel records why.
+12. **[ctl / scripting](12-ctl-scripting.md)** — the control socket: PAINT mode, a
+    scriptable tab strip, MCP policy toggles, all against a *running* window.
+
 Plus: **[ENV-FLAGS.md](ENV-FLAGS.md)** — every `TD_*` environment flag in one table.
 
 ## Status legend
@@ -46,6 +56,23 @@ Plus: **[ENV-FLAGS.md](ENV-FLAGS.md)** — every `TD_*` environment flag in one 
 - **Shipped** — in `main`, tested, in the released binary.
 - **Partial** — works, with a documented gap or demo-gated.
 - **Roadmap** — designed, not yet built (tracked in the GitHub `1.0` milestone).
+
+## Does it film?
+
+A feature earns public attention two different ways, and the catalog now tracks
+which: some are a **gesture** — four seconds of screen where a viewer who has never
+heard of TD understands the whole idea without narration — and the rest **explain**,
+needing a sentence before they land. Marketing clips come only from the first kind;
+the shot list, with a ready-to-run prompt per clip, lives in
+[`docs/media/DEMO-PIPELINE-CHECKLIST.md`](../media/DEMO-PIPELINE-CHECKLIST.md).
+
+## Freshness
+
+Panels 01–09 were written in the first catalog pass (June 2026). Everything landed
+since carries an **"Added since the first catalog pass"** table at the foot of its
+panel, or its own panel at 10–12. When adding a feature, add its row in the same
+turn — a catalog that lags the binary is how a launch ends up demoing last quarter's
+product.
 
 ## The positioning line (keep it honest)
 
