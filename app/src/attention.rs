@@ -453,6 +453,78 @@ pub fn lane_counts(items: &[AttentionItem]) -> Vec<(AttentionKind, usize)> {
     lanes
 }
 
+/// One line of review evidence: what it is called, and what it says.
+///
+/// **A field with no source says `unavailable` on its face.** That is the whole
+/// design of this struct: the plan's third open question is that changed files,
+/// checks and artifacts need an authoritative source and do not have one yet, so
+/// the tray must show them missing rather than show nothing, and must never show
+/// a zero. "0 files changed" and "nobody has told us how many files changed" are
+/// different claims, and only one of them is true today.
+///
+/// So the value is an `Option` and stays one to the edge. The renderer decides
+/// how absence is drawn — dimmed, in italics, as the word itself — because that
+/// is a presentation choice a person can see and argue with; collapsing it here
+/// would hand every later reader a confident number nobody measured.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Evidence {
+    pub label: &'static str,
+    /// `None` means no source has told us. Never a zero standing in for it.
+    pub value: Option<String>,
+}
+
+impl Evidence {
+    pub fn known(label: &'static str, value: impl Into<String>) -> Self {
+        Evidence {
+            label,
+            value: Some(value.into()),
+        }
+    }
+
+    pub fn unavailable(label: &'static str) -> Self {
+        Evidence { label, value: None }
+    }
+
+    /// What the tray prints in the value slot.
+    ///
+    /// One word, and it is about the INSTRUMENT rather than the subject: not
+    /// "no changes" (a measurement) but "unavailable" (an admission). A reader
+    /// who sees it knows to go and look, which is the correct next move and the
+    /// opposite of what a zero would suggest.
+    pub fn text(&self) -> &str {
+        self.value.as_deref().unwrap_or("unavailable")
+    }
+}
+
+/// What the review tray can say about a finished row, today.
+///
+/// Three of the four fields have no authoritative source in this build and are
+/// therefore `unavailable` on every row — which is the point of shipping the
+/// tray now rather than waiting: the shape is visible, the gap is visible, and
+/// nobody can mistake an empty tray for a clean one.
+pub fn review_evidence(it: &AttentionItem) -> Vec<Evidence> {
+    vec![
+        // The one field that HAS a source: the agent declared it. Everything
+        // else here is waiting on a contract that does not exist yet.
+        match it.deliverable.as_ref() {
+            Some(d) => Evidence::known("deliverable", d.label.clone()),
+            None => Evidence::unavailable("deliverable"),
+        },
+        // No source. A terminal can see a screen; it cannot see a working tree,
+        // and asking git from a render pass would be both wrong and slow.
+        Evidence::unavailable("changes"),
+        // No source. A check result belongs to whatever ran it, and nothing
+        // reports one to this window.
+        Evidence::unavailable("checks"),
+        // The lane's own instrument, which we do have — so the tray says where
+        // its one certain fact came from rather than leaving the row sourceless.
+        match it.source {
+            "" => Evidence::unavailable("read by"),
+            s => Evidence::known("read by", s),
+        },
+    ]
+}
+
 /// The order a person is currently looking at, held still while they look.
 ///
 /// **The projection re-sorts every frame, and that is right until somebody is
@@ -795,6 +867,45 @@ mod tests {
         for key in ["down", "up", "home", "end", "1"] {
             assert_eq!(move_cursor(0, 0, key), None, "{key} on an empty queue");
         }
+    }
+
+    #[test]
+    fn an_unsourced_review_field_says_unavailable_and_never_zero() {
+        let ev = review_evidence(&row(1, AttentionKind::ReviewReady));
+        let changes = ev.iter().find(|e| e.label == "changes").expect("changes");
+        assert_eq!(changes.value, None, "nothing reports this to the window");
+        assert_eq!(
+            changes.text(),
+            "unavailable",
+            "an admission about the instrument, not a measurement of the subject — \
+             '0 files changed' would be a number nobody took"
+        );
+        // Every field is present in the tray whether or not it has a source: an
+        // omitted row leaves no hole, and a hole is what a reader fills in.
+        for want in ["deliverable", "changes", "checks", "read by"] {
+            assert!(
+                ev.iter().any(|e| e.label == want),
+                "{want} must be shown, even unavailable"
+            );
+        }
+    }
+
+    #[test]
+    fn a_declared_deliverable_is_the_one_field_the_tray_can_answer() {
+        let mut it = row(1, AttentionKind::ReviewReady);
+        it.deliverable = Some(Deliverable {
+            label: "Slice ledger".into(),
+            href: "/home/parker/Work/reports/ledger.html".into(),
+        });
+        it.source = "bell";
+        let ev = review_evidence(&it);
+        assert_eq!(
+            ev[0],
+            Evidence::known("deliverable", "Slice ledger"),
+            "declared by the agent — the one piece of review evidence that \
+             needs no new contract"
+        );
+        assert_eq!(ev[3], Evidence::known("read by", "bell"));
     }
 
     #[test]

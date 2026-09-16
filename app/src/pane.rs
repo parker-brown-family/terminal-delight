@@ -2055,6 +2055,20 @@ pub struct TerminalView {
     /// The prompt line behind [`Self::needs_input`], quoted from the same rows
     /// and the same scan that set the flag. `None` whenever the flag is down.
     needs_input_line: Option<String>,
+    /// What the agent in this pane says its last turn produced.
+    ///
+    /// **Declared through the `declare_deliverable` MCP verb and nowhere else.**
+    /// Never parsed out of the screen: the links an agent prints mix what it
+    /// just made with everything it happened to reference, and a rail that
+    /// guessed between them would offer a confident click on the wrong file.
+    /// An agent that declares nothing has a row with no deliverable, which is a
+    /// fact rather than a blank.
+    ///
+    /// Not persisted. It belongs to a turn, and a turn does not survive the
+    /// process that ran it — a restored pane offering yesterday's report as
+    /// what it just produced is precisely the stale claim this surface exists
+    /// to avoid.
+    deliverable: Option<crate::attention::Deliverable>,
     /// The live player child for this pane's ping (hard-killed on stop/drop).
     bell_player: crate::bell::BellPlayer,
     /// Responsive header: when the pane narrows, controls tuck into a ⋯ overflow
@@ -3130,6 +3144,7 @@ impl TerminalView {
             bell_blocked: false,
             bell_line: None,
             needs_input_line: None,
+            deliverable: None,
             bell_player: crate::bell::BellPlayer::default(),
             hdr_overflow: None,
             copy_hint: None,
@@ -5375,6 +5390,20 @@ impl TerminalView {
     /// A clean finish returns `None` and the row draws no quote. That is not a
     /// gap to fill later: a review-ready row exists *because a turn ended*, and
     /// no single line on the screen is the reason.
+    /// Record what this pane's agent says it produced, or withdraw it.
+    ///
+    /// Takes no `cx` and notifies nothing: the rail reads this while painting,
+    /// and the MCP apply path that calls it already notifies. A second notify
+    /// here would repaint the window twice for one write.
+    pub fn declare_deliverable(&mut self, d: Option<crate::attention::Deliverable>) {
+        self.deliverable = d;
+    }
+
+    /// What this pane's last turn produced, if its agent declared anything.
+    pub fn deliverable(&self) -> Option<crate::attention::Deliverable> {
+        self.deliverable.clone()
+    }
+
     pub fn attention_evidence(&self) -> Option<String> {
         if self.needs_input {
             return self.needs_input_line.clone();

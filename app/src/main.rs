@@ -165,7 +165,15 @@ struct RailHit {
     top: f32,
     bottom: f32,
     left: f32,
-    /// The deliverable line inside the row, when the row has one.
+    /// The deliverable line's own band inside the row, when the row has one.
+    ///
+    /// **Measured, not a fraction of the row.** It was the bottom 38% — which
+    /// held only while every row was the same fixed shape, and stopped holding
+    /// the moment the review tray opened on the cursor's row and pushed the
+    /// link four lines further down. A click aimed at the link would then have
+    /// landed on the tray above it and focused the pane instead of opening the
+    /// document: the wrong verb, from a hit box that was still confidently
+    /// returning an answer.
     deliverable: Option<(f32, f32)>,
 }
 
@@ -3327,6 +3335,15 @@ struct Workspace {
     /// actually had in front of them, which is what "seen" is a claim about.
     /// Written each frame by the renderer, read once when the queue closes.
     rail_shown: Arc<Mutex<Vec<(u64, attention::AttentionKind)>>>,
+    /// Each deliverable link's own measured band, as `(row, top, bottom)`.
+    ///
+    /// Written by a canvas inside the link itself and read by the row's canvas
+    /// one frame later, which is why it survives between frames rather than
+    /// being cleared with the hits: gpui paints children before the parent's
+    /// overlay in some orders and after in others, and a band read one frame
+    /// stale is a link whose hit box lags a single repaint. A band computed
+    /// from a guess is a link whose hit box is wrong forever.
+    rail_band: Arc<Mutex<Vec<(usize, f32, f32)>>>,
     /// On-screen box of the FOCUS reading area (the clip box below the header),
     /// captured each frame. This is the SAME rect registered as the warp tube, so a
     /// click normalises into it and applies the identical barrel map the shader
@@ -4459,6 +4476,7 @@ impl Workspace {
             rail_bounds: Arc::new(Mutex::new(None)),
             rail_hits: Arc::new(Mutex::new(Vec::new())),
             rail_shown: Arc::new(Mutex::new(Vec::new())),
+            rail_band: Arc::new(Mutex::new(Vec::new())),
             focus_body_bounds: Arc::new(Mutex::new(None)),
             focus_map: Arc::new(Mutex::new(None)),
             focus_sel: None,
@@ -5704,6 +5722,25 @@ impl Workspace {
                                                     *pin,
                                                     cx,
                                                 );
+                                            }
+                                        }
+                                        // And the declared deliverable, on the
+                                        // same pipeline for the same reasons.
+                                        match &patch.deliverable {
+                                            None => {}
+                                            Some(mcp::DeliverableChange::Clear) => {
+                                                view.declare_deliverable(None);
+                                            }
+                                            Some(mcp::DeliverableChange::Declare {
+                                                label,
+                                                href,
+                                            }) => {
+                                                view.declare_deliverable(Some(
+                                                    attention::Deliverable {
+                                                        label: label.clone(),
+                                                        href: href.clone(),
+                                                    },
+                                                ));
                                             }
                                         }
                                         cx.notify();
@@ -15706,7 +15743,11 @@ impl Workspace {
                     // that classified it. Unknown and clean-finish rows have
                     // none, and say so by being absent.
                     evidence: view.attention_evidence(),
-                    deliverable: None,
+                    // Declared through the MCP verb by the agent in this pane,
+                    // or absent. Slice 4's channel: the tracer pointed at a
+                    // file this code picked out, which is a document we chose
+                    // rather than one a turn produced.
+                    deliverable: view.deliverable(),
                 });
                 panes.insert(key, leaf.entity_id());
             }
@@ -16470,6 +16511,12 @@ impl Workspace {
         }
 
         self.rail_hits.lock().map(|mut h| h.clear()).ok();
+        // `rail_band` is deliberately NOT cleared here. It is written by a
+        // canvas inside each link and read by the row's own canvas, and gpui
+        // gives no ordering guarantee between the two within one paint — so
+        // clearing it every frame would leave the reader looking at an empty list
+        // every time the child happened to paint second. Entries are replaced
+        // in place instead, and a row with no link ignores whatever is there.
         // What the person is looking at, for the seen-mark taken when this
         // closes. Recorded from the rows actually drawn, and only the drawn
         // ones: the unknown lane collapses to a count below and was never put
@@ -16584,10 +16631,88 @@ impl Workspace {
                             attention::age_label(it.age(now))
                         )),
                 )
+                // **The review tray, open on the cursor's row and shut on the
+                // rest.** A queue where every row carries four lines of
+                // evidence is a queue you scroll instead of glance at, and the
+                // rail's whole claim is the glance. Following the cursor rather
+                // than a per-row disclosure means the detail is where the
+                // attention already is, and arrives with no extra gesture — the
+                // keyboard opens it by moving.
+                //
+                // Three of its four fields read `unavailable` on every row in
+                // this build, and that is the honest state rather than a stub:
+                // changed files and checks need an authoritative source that
+                // does not exist yet. Shown missing, so nobody mistakes an empty
+                // tray for a clean one.
+                .when(on_cursor, |row| {
+                    row.child(
+                        div()
+                            .mt(px(4. * s))
+                            .pt(px(4. * s))
+                            .border_t(px(1.))
+                            .border_color(sk.ink.ink.alpha(0.12))
+                            .flex()
+                            .flex_col()
+                            .gap(px(1. * s))
+                            .children(attention::review_evidence(it).into_iter().map(|e| {
+                                let missing = e.value.is_none();
+                                div()
+                                    .flex()
+                                    .flex_row()
+                                    .gap(px(6. * s))
+                                    .text_size(px(9. * s))
+                                    .child(
+                                        div()
+                                            .w(px(64. * s))
+                                            .text_color(sk.ink.ink_dim)
+                                            .child(e.label),
+                                    )
+                                    .child(
+                                        div()
+                                            // An unavailable field is drawn
+                                            // dimmer than a known one and says
+                                            // the word. Two signals for one
+                                            // fact, because this is the fact
+                                            // the tray most needs not to be
+                                            // misread.
+                                            .text_color(if missing {
+                                                sk.ink.ink_dim.alpha(0.55)
+                                            } else {
+                                                sk.ink.ink
+                                            })
+                                            .child(e.text().to_string()),
+                                    )
+                            })),
+                    )
+                })
                 .children(it.deliverable.as_ref().map(|d| {
                     let href = d.href.clone();
                     let kind = attention::doc_kind(&href);
+                    let band = self.rail_band.clone();
                     div()
+                        .relative()
+                        // Its own band, written down where it is actually drawn.
+                        // The row's canvas cannot know this: the tray above the
+                        // link opens and shuts under the cursor, so the link's
+                        // offset inside the row is not a constant.
+                        .child(
+                            div().absolute().inset_0().child(
+                                gpui::canvas(
+                                    move |bounds, _window, _cx| {
+                                        let top = f32::from(bounds.origin.y);
+                                        let h = f32::from(bounds.size.height);
+                                        if let Ok(mut b) = band.lock() {
+                                            match b.iter_mut().find(|(i, _, _)| *i == row_index) {
+                                                Some(slot) => *slot = (row_index, top, top + h),
+                                                None => b.push((row_index, top, top + h)),
+                                            }
+                                        }
+                                    },
+                                    |_, _, _, _| {},
+                                )
+                                .size_full(),
+                            ),
+                        )
                         .mt(px(4. * s))
                         .flex()
                         .flex_row()
@@ -16623,6 +16748,9 @@ impl Workspace {
             // rows ARE and the curve is where the rows LOOK.
             let hits = self.rail_hits.clone();
             let idx = row_index;
+            let band = self.rail_band.clone();
+            // A row with nothing to open never consults the band, so a stale
+            // entry left by a row that used to have a link cannot resurrect it.
             let has_deliverable = it.deliverable.is_some();
             let row = row.child(
                 div().absolute().inset_0().child(
@@ -16631,12 +16759,19 @@ impl Workspace {
                             let top = f32::from(bounds.origin.y);
                             let bottom = top + f32::from(bounds.size.height);
                             let left = f32::from(bounds.origin.x);
-                            // The deliverable sits on the row's last line; its
-                            // band is the bottom third, which is enough to tell
-                            // "open this" from "go there" and needs no second
-                            // canvas inside the row.
-                            let deliverable =
-                                has_deliverable.then_some((top + (bottom - top) * 0.62, bottom));
+                            // The deliverable's band was measured by its own
+                            // canvas inside this row — see `RailHit`. Read here
+                            // rather than computed, so a row whose shape changes
+                            // (the review tray opening under the cursor) cannot
+                            // put the link's hit box where the link is not.
+                            let deliverable = has_deliverable
+                                .then(|| {
+                                    band.lock()
+                                        .ok()
+                                        .and_then(|b| b.iter().find(|(i, _, _)| *i == idx).copied())
+                                        .map(|(_, t, bt)| (t, bt))
+                                })
+                                .flatten();
                             if let Ok(mut h) = hits.lock() {
                                 h.push(RailHit {
                                     index: idx,
