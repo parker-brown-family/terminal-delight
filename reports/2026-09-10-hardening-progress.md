@@ -44,3 +44,10 @@ Rollback if wrong: ln -sfn ~/.local/lib/terminal-delight/td-3ead832-cs-split ~/.
 
 ### Still open (narrower)
 - The encoder round-trip gap under #356 (why a fresh snapshot doesn't reproduce some grid state) — needs the offset/grid data the guard logs from a real divergence. #356's mitigation stops the flicker; this would remove the divergence itself.
+
+### Landed on main (2026-09-11 00:15 UTC)
+- #355 + #356-mitigation carried on `left-bar-hardened` (combined with the left bar #319/#359) and MERGED to main via PR #366 (merge commit 95d9717).
+- CI was red first: my #356 loop-restructure and #355 pid-write were committed after a local build+test pass but WITHOUT the two extra gates CI runs — `cargo fmt -- --check` (wanted the re-indented guard closure reflowed) and `clippy --locked -D warnings` (rejected `let _ = write_window_pid(..)` as a unit-value binding). Fixed in 8ca3f3f: ran fmt, dropped the `let _ =`. Whitespace-ignored diff confirms zero logic change. All 4 checks green (Rust 4m49s, browser, supply-chain, cla).
+- VERIFIED on origin/main (by content, not report): window_pid_path in hostproto.rs (2) + ctl.rs relay (1); repaired_at cooldown in main.rs (3); tree.rs present + render_left_bar (2). main tip 95d9717.
+- main is now the correct base for the front-end-redesign agent: split + left bar + spy fix + guard mitigation. Merged branch auto-deleted.
+- STILL OPEN: #356 root cause (encoder round-trip gap — re-snapshot can't heal, needs live offset data); the 45s cooldown only caps the storm. Install is a SEPARATE step (versioned-binary + symlink swap, Parker's call) — NOTHING is installed from this branch.
