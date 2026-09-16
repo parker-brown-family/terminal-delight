@@ -15129,7 +15129,7 @@ impl Workspace {
                     Some(AttentionKind::Decision) => "Stopped at a prompt",
                     Some(AttentionKind::Failure) => "Finished against a wall",
                     Some(AttentionKind::ReviewReady) => "Finished, not yet seen",
-                    Some(AttentionKind::Unknown) => "Agent running, screen unreadable",
+                    Some(AttentionKind::Unknown) => "Screen could not be read",
                     None => "",
                 };
                 // Where the fact came from, shown beside its age. Three
@@ -15545,7 +15545,27 @@ impl Workspace {
                 .child("esc"),
         );
 
-        if items.is_empty() {
+        // **The unknown lane collapses to one line, and this is the only place
+        // it may.**
+        //
+        // `parse_status_line` answers Unknown for any screen it cannot match,
+        // and a resting agent at its prompt is such a screen — #425 made that
+        // deliberate, because a screen nobody could read must never assert rest.
+        // The consequence only appears on a real fleet: twenty-three panes,
+        // most of them idle, and the queue was twenty identical rows saying
+        // nothing with one review row buried in them. The surface exists to
+        // answer "who needs me", and it was answering "here is every pane".
+        //
+        // The projection still carries them one by one, because a count is not a
+        // fact you can get back once it is collapsed. The collapse happens HERE,
+        // at the front, where a person can see it and argue with it — a store
+        // that had already thrown the rows away could never be asked which panes
+        // they were.
+        let (waiting, unknown_rows): (Vec<_>, Vec<_>) = items
+            .iter()
+            .partition(|it| it.kind != attention::AttentionKind::Unknown);
+
+        if waiting.is_empty() {
             list = list.child(
                 div()
                     .px(px(4. * s))
@@ -15557,7 +15577,7 @@ impl Workspace {
         }
 
         self.rail_hits.lock().map(|mut h| h.clear()).ok();
-        for (row_index, it) in items.iter().enumerate() {
+        for (row_index, it) in waiting.iter().enumerate() {
             let ink = Self::rail_ink(it.kind, &sk);
             let head = div()
                 .flex()
@@ -15691,6 +15711,27 @@ impl Workspace {
                 ),
             );
             list = list.child(row);
+        }
+
+        // One line for everything that could not be read, under the rows that
+        // could. Dim, unclickable, and phrased as the absence it is: the parser
+        // cannot tell a resting agent from a screen it failed on, so this must
+        // not say either "running" or "idle" about any of them. It says how many
+        // and stops, which is the whole of what is known.
+        if !unknown_rows.is_empty() {
+            let n = unknown_rows.len();
+            list = list.child(
+                div()
+                    .px(px(4. * s))
+                    .pt(px(7. * s))
+                    .text_size(px(9.5 * s))
+                    .text_color(sk.ink.ink_dim)
+                    .child(if n == 1 {
+                        "1 more pane could not be read".to_string()
+                    } else {
+                        format!("{n} more panes could not be read")
+                    }),
+            );
         }
 
         Some(
