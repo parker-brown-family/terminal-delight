@@ -2131,6 +2131,49 @@ mod owning {
         (host, info.pane)
     }
 
+    /// The two halves of #462, joined: what this host puts in its census is
+    /// what a window reading that census corrects itself with.
+    ///
+    /// The window's own rule is unit-tested beside it in `main.rs`, and the
+    /// host's classification is tested above — and both of those were already
+    /// right while eleven running agents sat in a window that called them
+    /// shells for five hours. What nothing tested is the sentence that joins
+    /// them, because nothing in the window ever said it: the census was read
+    /// once, at attach, and after that the only path was an event that (
+    /// measured against a live host, forty seconds, 24 panes) never fires.
+    ///
+    /// So this is deliberately end to end over the protocol half: a real host,
+    /// a real `list-panes` reply, and the real decision a sweep makes from it.
+    #[test]
+    fn a_window_reading_this_hosts_census_corrects_a_pane_it_has_wrong() {
+        let (host, pane) = host_with_cat_pane();
+        *host.panes.lock().expect("panes")[&pane]
+            .mode
+            .lock()
+            .expect("mode") = Some(WireMode::Claude);
+
+        let census = host.list_panes();
+        // Exactly the live shape: the window believes it is looking at a shell
+        // and the host has known better the whole time.
+        let believed = vec![(pane.0, crate::pane::PaneMode::Shell)];
+        assert_eq!(
+            crate::modes_to_apply(&census, &believed),
+            vec![(pane.0, crate::pane::PaneMode::Claude)],
+            "a window reading this census must come away with the host's answer"
+        );
+
+        // And a host that has not classified a pane hands over nothing to
+        // convert — the census says `None`, which is not `Shell`.
+        *host.panes.lock().expect("panes")[&pane]
+            .mode
+            .lock()
+            .expect("mode") = None;
+        assert!(
+            crate::modes_to_apply(&host.list_panes(), &believed).is_empty(),
+            "an unclassified pane must travel as an absence and stay one"
+        );
+    }
+
     /// Say one verb over a connection of this test's own and take the answer.
     ///
     /// Over a real socket pair rather than with no connection at all, because
