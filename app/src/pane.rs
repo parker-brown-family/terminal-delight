@@ -194,7 +194,11 @@ pub fn wants_human_row(recent_rows: &[String]) -> Option<&str> {
 /// The row that made [`looks_blocked`] say yes — the evidence behind a failure
 /// row. Same one-walk contract as [`wants_human_row`].
 pub fn blocked_row(recent_rows: &[String]) -> Option<&str> {
-    recent_rows.iter().rev().find(|r| row_blocked(r)).map(|r| r.trim())
+    recent_rows
+        .iter()
+        .rev()
+        .find(|r| row_blocked(r))
+        .map(|r| r.trim())
 }
 
 /// The longest quote a rail row will carry.
@@ -2963,8 +2967,9 @@ impl TerminalView {
                             // paints minutes after the prompt appeared, and by
                             // then the pane may have scrolled it away while the
                             // latch quite correctly still holds.
-                            view.needs_input_line =
-                                needs.then(|| wants_human_row(&recent).map(clip_evidence)).flatten();
+                            view.needs_input_line = needs
+                                .then(|| wants_human_row(&recent).map(clip_evidence))
+                                .flatten();
                             // One grid walk per pane per tick, not per frame.
                             // Inside the scroll gate with the rest of the
                             // screen-reading: a parse taken mid-scroll reads a

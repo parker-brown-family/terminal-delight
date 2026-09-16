@@ -616,13 +616,19 @@ mod tests {
     #[test]
     fn a_row_that_leaves_vacates_its_slot_and_moves_nobody_above_it() {
         let frozen = vec![7, 3, 9];
-        let fresh = vec![row(7, AttentionKind::Decision), row(9, AttentionKind::Decision)];
+        let fresh = vec![
+            row(7, AttentionKind::Decision),
+            row(9, AttentionKind::Decision),
+        ];
         assert_eq!(order_of(&hold_order(&frozen, fresh)), vec![7, 9]);
     }
 
     #[test]
     fn nothing_frozen_leaves_the_projection_exactly_as_it_came() {
-        let fresh = vec![row(4, AttentionKind::Decision), row(2, AttentionKind::Failure)];
+        let fresh = vec![
+            row(4, AttentionKind::Decision),
+            row(2, AttentionKind::Failure),
+        ];
         assert_eq!(order_of(&hold_order(&[], fresh)), vec![4, 2]);
     }
 
@@ -631,14 +637,20 @@ mod tests {
         // The pane closed while the queue was open. It must not leave a hole,
         // and it must not resurrect as an empty row.
         let frozen = vec![7, 42, 3];
-        let fresh = vec![row(3, AttentionKind::Decision), row(7, AttentionKind::Decision)];
+        let fresh = vec![
+            row(3, AttentionKind::Decision),
+            row(7, AttentionKind::Decision),
+        ];
         assert_eq!(order_of(&hold_order(&frozen, fresh)), vec![7, 3]);
     }
 
     #[test]
     fn everything_is_unseen_before_the_first_look() {
         let seen = Seen::default();
-        let items = vec![row(1, AttentionKind::Decision), row(2, AttentionKind::Failure)];
+        let items = vec![
+            row(1, AttentionKind::Decision),
+            row(2, AttentionKind::Failure),
+        ];
         assert_eq!(seen.unseen_count(&items), 2);
     }
 
@@ -667,7 +679,10 @@ mod tests {
     #[test]
     fn a_pane_that_leaves_the_queue_entirely_comes_back_unseen() {
         let mut seen = Seen::default();
-        let looked_at = vec![row(1, AttentionKind::ReviewReady), row(2, AttentionKind::Decision)];
+        let looked_at = vec![
+            row(1, AttentionKind::ReviewReady),
+            row(2, AttentionKind::Decision),
+        ];
         seen.mark(&shown_keys(&looked_at));
         // Pane 1 was dealt with and dropped out; only pane 2 is still queued.
         seen.retain_live(&shown_keys(&looked_at[1..]));
@@ -689,7 +704,11 @@ mod tests {
     #[test]
     fn the_cursor_declines_every_key_that_is_not_its_own() {
         for key in ["a", "left", "right", "f1", "enter", "escape", "0"] {
-            assert_eq!(move_cursor(1, 5, key), None, "{key} is not a navigation key");
+            assert_eq!(
+                move_cursor(1, 5, key),
+                None,
+                "{key} is not a navigation key"
+            );
         }
     }
 
