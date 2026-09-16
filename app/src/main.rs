@@ -1069,6 +1069,28 @@ fn left_bar_visible(saved: Option<bool>, scratch: bool, demo: bool) -> bool {
 /// surface OFF is the destructive direction, so it requires somebody to have
 /// said so plainly, while a typo fails towards the visible thing a person can
 /// see and turn off themselves.
+/// The narrowest window that may dock the queue beside the panes.
+///
+/// The panel is 316 logical pixels plus its margins, and docking spends every
+/// one of them out of the terminal grid. Below this the trade stops being worth
+/// making: Parker's tiled panes are 968 wide, and a docked queue there would
+/// take a third of a terminal he is actually working in — so that width
+/// deliberately falls on the overlay side of this line rather than just inside
+/// it.
+const RAIL_PIN_MIN_W: f32 = 1280.0;
+
+/// Is this window wide enough to dock the queue?
+///
+/// Pure, and tested at the two widths that matter: a tiled pane, and a full
+/// screen. The preference is separate from the fit — see [`Workspace::rail_pinned`]
+/// — so this answers only "would it fit", never "does he want it".
+fn rail_pin_fits(window_w: Option<f32>) -> bool {
+    // A window that has not reported its size yet is NOT wide enough. Unknown
+    // is not a yes: guessing wide would dock the queue for one frame on every
+    // cold start and take the width out of the panes before anyone asked.
+    window_w.is_some_and(|w| w >= RAIL_PIN_MIN_W)
+}
+
 fn rail_on(flag: Option<&str>) -> bool {
     !matches!(
         flag.map(str::trim).map(str::to_ascii_lowercase).as_deref(),
@@ -1846,6 +1868,11 @@ struct StateFile {
     /// dragged. `None` = the default width.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     left_bar_w: Option<f32>,
+    /// Whether the attention queue docks beside the panes instead of floating
+    /// over them. Absent = nobody has chosen, which resolves to the overlay —
+    /// the presentation that costs the terminals nothing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    rail_pinned: Option<bool>,
     /// Whether the bottom slot's allowance rows read as what is left rather
     /// than what is spent. A display flip computed at paint — the record's own
     /// `percent` is always the fraction *spent*, so no config change can ever
@@ -1913,6 +1940,9 @@ impl Default for StateFile {
         Self {
             active: 0,
             panes: 0,
+            // Nobody has chosen, which is not the same as choosing the overlay
+            // — it simply resolves to it at load. See the field.
+            rail_pinned: None,
             win: None,
             scale: None,
             theme: None,
@@ -3308,6 +3338,18 @@ struct Workspace {
     /// The queue is open over the panes. The closed spine is the steady state
     /// and this never opens itself.
     rail_open: bool,
+    /// The queue is docked beside the panes rather than floating over them.
+    ///
+    /// **Opt-in, and a wide-screen choice.** The terminal grid keeps priority —
+    /// that is the plan's own line — so the steady state is an overlay that
+    /// costs the panes nothing and goes away. A person with the width to spare
+    /// can spend it, and only they can say whether they have it.
+    ///
+    /// A preference, not a state: a window narrowed below [`RAIL_PIN_MIN_W`]
+    /// draws the queue as an overlay while this stays true, and gets the dock
+    /// back when it is widened. Clearing it on a resize would silently discard
+    /// somebody's setting because they dragged a window.
+    rail_pinned: bool,
     /// The row order the person is currently looking at, held while they look.
     ///
     /// Empty whenever the queue is shut, which is what "released" means — the
@@ -4428,6 +4470,9 @@ impl Workspace {
             confirm_delete: None,
             bar_menu: None,
             left_bar: left_bar_visible(saved.left_bar, scratch, demo),
+            // Absent means nobody has chosen, and the choice that costs the
+            // terminals nothing is the one an unasked question gets.
+            rail_pinned: saved.rail_pinned.unwrap_or(false),
             left_bar_w: saved
                 .left_bar_w
                 .unwrap_or(LEFT_BAR_W)
@@ -5323,6 +5368,7 @@ impl Workspace {
                 })
                 .collect(),
             left_bar: Some(self.left_bar),
+            rail_pinned: Some(self.rail_pinned),
             left_bar_w: Some(self.left_bar_w),
             slot_remaining: Some(self.slot_remaining),
             scope: Some(self.scope.into()),
@@ -16021,6 +16067,17 @@ impl Workspace {
             // reading what a turn produced and visiting the terminal that
             // produced it are different, so they do not share a key.
             "o" => self.rail_activate(true, cx),
+            // Dock or undock. Refused rather than silently ignored on a window
+            // with no room: the press answers false, so it falls through to the
+            // pane instead of being eaten by a control that is not on offer.
+            "p" => {
+                if !rail_pin_fits(self.last_win.map(|(_, _, w, _)| w)) {
+                    return false;
+                }
+                self.rail_pinned = !self.rail_pinned;
+                self.save(cx);
+                true
+            }
             _ => match attention::move_cursor(self.rail_cursor, len, key) {
                 Some(next) => {
                     self.rail_cursor = next;
@@ -16422,10 +16479,50 @@ impl Workspace {
     /// this opens. One verb per row, and it is focus — the pane's own focus-in
     /// edge then acknowledges its bell, which is the seen-state the plan reuses
     /// rather than inventing.
-    fn render_rail(&self, cx: &mut Context<Self>) -> Option<gpui::Div> {
-        if !self.rail_on || !self.rail_open {
+    /// Is the queue docked right now — the preference AND the room for it?
+    ///
+    /// Two conditions, never collapsed into one flag. The preference is a
+    /// person's decision and survives a narrow window; the fit is a fact about
+    /// this frame. Storing the conjunction would mean a resize silently erasing
+    /// the decision.
+    fn rail_docked(&self) -> bool {
+        self.rail_pinned && rail_pin_fits(self.last_win.map(|(_, _, w, _)| w))
+    }
+
+    /// The queue, docked beside the panes: a flex sibling that costs the
+    /// terminals its width, the way the spine already does.
+    ///
+    /// No scrim, no `absolute`, no occlude — a docked panel is part of the
+    /// layout rather than over it, so clicking a terminal beside it does not
+    /// dismiss it. That is the whole difference between the two presentations
+    /// and the reason this is a separate function rather than a flag inside the
+    /// overlay: an overlay that "just" stopped being absolute would keep the
+    /// scrim's dismissal behaviour, and a docked panel that vanishes when you
+    /// click a pane is a docked panel nobody can use.
+    fn render_rail_docked(&self, cx: &mut Context<Self>) -> Option<gpui::Div> {
+        if !self.rail_on || !self.rail_open || !self.rail_docked() {
             return None;
         }
+        let s = theme::outer_choice(cx).grade.scale;
+        Some(
+            div()
+                .flex_none()
+                .pt(px(8. * s))
+                .pl(px(4. * s))
+                .child(self.rail_panel(cx)),
+        )
+    }
+
+    /// The queue panel itself — chrome, rows, hit recording, one click handler
+    /// and the bounds canvas the hit test resolves against.
+    ///
+    /// Identical whether it floats or docks, which is the point of it being one
+    /// function: the two presentations differ only in what WRAPS it, and a
+    /// second copy of four hundred lines of rows would drift the moment either
+    /// was touched.
+    fn rail_panel(&self, cx: &mut Context<Self>) -> gpui::Div {
+        let fits = rail_pin_fits(self.last_win.map(|(_, _, w, _)| w));
+        let pinned = self.rail_docked();
         let s = theme::outer_choice(cx).grade.scale;
         let sk = skin::skin(cx, s);
         let (items, _panes) = self.rail_queue(cx);
@@ -16475,6 +16572,33 @@ impl Workspace {
                         .child("\u{2191}\u{2193} go")
                         .child("\u{21b5} pane")
                         .child("o open")
+                        // The pin, drawn inert on a window too narrow to dock
+                        // in rather than hidden. A control that disappears at
+                        // some width is a control nobody knows exists; one that
+                        // is visibly unavailable says both that it is there and
+                        // why it is not on offer.
+                        .child(
+                            div()
+                                .when(fits, |d| {
+                                    d.cursor_pointer().on_mouse_down(
+                                        MouseButton::Left,
+                                        cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                                            cx.stop_propagation();
+                                            ws.rail_pinned = !ws.rail_pinned;
+                                            ws.save(cx);
+                                            cx.notify();
+                                        }),
+                                    )
+                                })
+                                .text_color(if !fits {
+                                    sk.ink.ink_dim.alpha(0.4)
+                                } else if pinned {
+                                    th.accent
+                                } else {
+                                    sk.ink.ink_dim
+                                })
+                                .child(if pinned { "p unpin" } else { "p pin" }),
+                        )
                         .child("esc"),
                 ),
         );
@@ -16811,6 +16935,88 @@ impl Workspace {
             );
         }
 
+        sk.panel()
+            .child(list)
+            // One click for the whole queue, resolved against the
+            // flat boxes after the curve is undone.
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|ws, ev: &MouseDownEvent, _w, cx| {
+                    cx.stop_propagation();
+                    // A click moves the cursor to the row it landed
+                    // on before acting, so the keyboard carries on
+                    // from where the hand left off rather than from
+                    // wherever it was three rows ago. The two
+                    // gestures drive one selection.
+                    //
+                    // Both go through `rail_activate`, which reads
+                    // the same held, unknown-filtered list the hit
+                    // boxes were built from — the click's index and
+                    // the cursor's index are the same index.
+                    match ws.rail_hit_at(ev.position) {
+                        Some(RailAction::Open(i)) => {
+                            ws.rail_cursor = i;
+                            ws.rail_activate(true, cx);
+                        }
+                        Some(RailAction::Focus(i)) => {
+                            ws.rail_cursor = i;
+                            ws.rail_activate(false, cx);
+                        }
+                        None => {}
+                    }
+                    cx.notify();
+                }),
+            )
+            // **The queue is a MENU, and menus float flat above the
+            // glass.** This registered a warp tube once, on the
+            // reasoning that a surface lying on bent glass should
+            // bend with it. Put in front of Parker it was worse, not
+            // better: the rows sheared into parallelograms and the
+            // stack fanned out like a venetian blind, because a tall
+            // list of thin rectangles shows every bit of a barrel map
+            // that a single compact panel hides.
+            //
+            // The precedent is the menu-bar scale popup and every
+            // other menu in this file — `.absolute()`, a real border,
+            // an opaque darkened fill, a float shadow, no tube. Flat
+            // only reads as "a sticker stuck on" when the chrome does
+            // not say *floating*; give it the border and the shadow
+            // and the eye reads it as a panel held above the screen,
+            // which is what it is.
+            //
+            // The canvas stays, because the click path still needs the
+            // painted rect — it just records it now instead of
+            // registering it.
+            .child(
+                div().absolute().inset_0().child(
+                    gpui::canvas(
+                        move |bounds, _window, _cx| {
+                            // The same rect the click normalises into.
+                            if let Ok(mut b) = rail_bounds.lock() {
+                                *b = Some(bounds);
+                            }
+                        },
+                        |_, _, _, _| {},
+                    )
+                    .size_full(),
+                ),
+            )
+    }
+
+    /// The queue as an OVERLAY: drawn over the right-hand panes, dismissed by
+    /// clicking beside it.
+    ///
+    /// Overlay rather than reflow is the steady state, and the geometry test
+    /// that matters is that no pane's bounds change when this opens — the scrim
+    /// is `inset_0` and the panel is pushed to the right edge by the flex row,
+    /// so the terminals underneath are not resized, only covered.
+    fn render_rail(&self, cx: &mut Context<Self>) -> Option<gpui::Div> {
+        // Docked draws in the stage row instead; two presentations, one panel,
+        // and never both at once.
+        if !self.rail_on || !self.rail_open || self.rail_docked() {
+            return None;
+        }
+        let s = theme::outer_choice(cx).grade.scale;
         Some(
             div()
                 .absolute()
@@ -16827,6 +17033,10 @@ impl Workspace {
                     // and the order release when it set the flag itself, so a
                     // queue closed by clicking the scrim left every row still
                     // wearing its unseen dot.
+                    //
+                    // A DOCKED queue has no scrim at all, deliberately: it is
+                    // part of the layout, so clicking a terminal beside it must
+                    // not fold it away.
                     cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
                         cx.stop_propagation();
                         ws.rail_close();
@@ -16834,75 +17044,11 @@ impl Workspace {
                     }),
                 )
                 .child(
-                    sk.panel()
+                    div()
                         .mt(px(58. * s))
                         .mr(px(30. * s))
                         .shadow_lg()
-                        .child(list)
-                        // One click for the whole queue, resolved against the
-                        // flat boxes after the curve is undone.
-                        .on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(|ws, ev: &MouseDownEvent, _w, cx| {
-                                cx.stop_propagation();
-                                // A click moves the cursor to the row it landed
-                                // on before acting, so the keyboard carries on
-                                // from where the hand left off rather than from
-                                // wherever it was three rows ago. The two
-                                // gestures drive one selection.
-                                //
-                                // Both go through `rail_activate`, which reads
-                                // the same held, unknown-filtered list the hit
-                                // boxes were built from — the click's index and
-                                // the cursor's index are the same index.
-                                match ws.rail_hit_at(ev.position) {
-                                    Some(RailAction::Open(i)) => {
-                                        ws.rail_cursor = i;
-                                        ws.rail_activate(true, cx);
-                                    }
-                                    Some(RailAction::Focus(i)) => {
-                                        ws.rail_cursor = i;
-                                        ws.rail_activate(false, cx);
-                                    }
-                                    None => {}
-                                }
-                                cx.notify();
-                            }),
-                        )
-                        // **The queue is a MENU, and menus float flat above the
-                        // glass.** This registered a warp tube once, on the
-                        // reasoning that a surface lying on bent glass should
-                        // bend with it. Put in front of Parker it was worse, not
-                        // better: the rows sheared into parallelograms and the
-                        // stack fanned out like a venetian blind, because a tall
-                        // list of thin rectangles shows every bit of a barrel map
-                        // that a single compact panel hides.
-                        //
-                        // The precedent is the menu-bar scale popup and every
-                        // other menu in this file — `.absolute()`, a real border,
-                        // an opaque darkened fill, a float shadow, no tube. Flat
-                        // only reads as "a sticker stuck on" when the chrome does
-                        // not say *floating*; give it the border and the shadow
-                        // and the eye reads it as a panel held above the screen,
-                        // which is what it is.
-                        //
-                        // The canvas stays, because the click path still needs the
-                        // painted rect — it just records it now instead of
-                        // registering it.
-                        .child(
-                            div().absolute().inset_0().child(
-                                gpui::canvas(
-                                    move |bounds, _window, _cx| {
-                                        // The same rect the click normalises into.
-                                        if let Ok(mut b) = rail_bounds.lock() {
-                                            *b = Some(bounds);
-                                        }
-                                    },
-                                    |_, _, _, _| {},
-                                )
-                                .size_full(),
-                            ),
-                        ),
+                        .child(self.rail_panel(cx)),
                 ),
         )
     }
@@ -24474,6 +24620,13 @@ impl Render for Workspace {
             .min_h_0()
             .children(self.render_left_bar(cx))
             .child(screen)
+            // A DOCKED queue sits here, between the panes and the spine, and is
+            // a flex sibling like the left bar — so it costs the terminals its
+            // width and nothing more. The overlay presentation is not in this
+            // row at all; it is laid over the whole root below, which is what
+            // makes "opening the queue does not resize a pane" true by
+            // construction rather than by measurement.
+            .children(self.render_rail_docked(cx))
             .children(self.render_spine(cx));
 
         let root = div()
@@ -27583,6 +27736,163 @@ mod tests {
             !body.contains("level_of") && !body.contains("resolve_level"),
             "resolution is for rows BELOW a setting; a branch that resolved \
              would draw an arrow for a setting made somewhere else"
+        );
+    }
+
+    /// A tiled pane is not wide enough to dock the queue in, and a full screen
+    /// is.
+    ///
+    /// The two widths are the real ones, not round numbers: Parker works in
+    /// 968-wide tiled panes, and a docked 316-pixel queue there would take a
+    /// third of a terminal he is using. That width has to fall on the OVERLAY
+    /// side of the line, and a threshold picked without checking it is a
+    /// threshold that quietly does the wrong thing on the machine it was
+    /// written for.
+    #[test]
+    fn a_tiled_pane_is_too_narrow_to_dock_the_queue_in() {
+        assert!(!rail_pin_fits(Some(968.0)), "Parker's tiled pane width");
+        assert!(!rail_pin_fits(Some(390.0)), "a phone-width window");
+        assert!(rail_pin_fits(Some(1920.0)), "a full screen");
+        assert!(rail_pin_fits(Some(RAIL_PIN_MIN_W)), "exactly at the line");
+        assert!(!rail_pin_fits(Some(RAIL_PIN_MIN_W - 1.0)));
+    }
+
+    /// A window that has not reported a size yet is not wide enough.
+    ///
+    /// Unknown is not a yes. Guessing wide would dock the queue for one frame
+    /// on every cold start and take that width out of the panes before anybody
+    /// asked for it.
+    #[test]
+    fn an_unmeasured_window_is_not_treated_as_a_wide_one() {
+        assert!(!rail_pin_fits(None));
+    }
+
+    /// The preference survives a narrow window; only the behaviour changes.
+    ///
+    /// Read from the code because the conjunction is the whole point: a person
+    /// who docks the queue and then tiles their window must get the dock back
+    /// when they widen it, and a `rail_pinned` that had been cleared on resize
+    /// is a setting deleted by a window drag.
+    #[test]
+    fn narrowing_a_window_never_clears_the_pin_preference() {
+        let src = include_str!("main.rs");
+        let at = src.find("fn rail_docked(").expect("rail_docked");
+        let body = &src[at..at + src[at..].find("\n    }\n").expect("end")];
+        assert!(
+            body.contains("self.rail_pinned && rail_pin_fits"),
+            "docked must be preference AND fit, computed per frame"
+        );
+        let product = &src[..src.find("\nmod tests {").expect("the test module")];
+        // The only writes to the preference are the two toggles — the pin
+        // control and its key — plus the load. Nothing may clear it on a
+        // resize.
+        let writes = product.matches("rail_pinned = ").count();
+        assert_eq!(
+            writes,
+            2,
+            "expected only the pin control and the `p` key to write it; found:\n{}",
+            product
+                .lines()
+                .filter(|l| l.contains("rail_pinned = "))
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
+    }
+
+    /// Opening the queue does not resize a pane, and docking it does.
+    ///
+    /// That is the plan's geometry contract and it holds by CONSTRUCTION here,
+    /// which is what this checks: the overlay is laid over the root and is not
+    /// in the stage row at all, while the docked panel is a flex sibling in the
+    /// row beside the screen — so an overlay cannot take width from a terminal
+    /// even if somebody later changes its size.
+    #[test]
+    fn the_overlay_is_not_in_the_row_that_sizes_the_panes() {
+        let src = include_str!("main.rs");
+        let at = src.find("let stage = div()").expect("the stage row");
+        let stage = &src[at..at + src[at..].find(";\n").expect("end of stage")];
+        assert!(
+            stage.contains("self.render_rail_docked(cx)"),
+            "the docked queue is a flex sibling and costs the panes its width"
+        );
+        assert!(
+            !stage.contains("self.render_rail(cx)"),
+            "the overlay must NOT be in the row that lays out the terminals"
+        );
+        // And the overlay is absolute over the whole root.
+        let ov = src.find("fn render_rail(&self").expect("render_rail");
+        let body = &src[ov..ov + src[ov..].find("\n    }\n").expect("end")];
+        assert!(
+            body.contains(".absolute()") && body.contains(".inset_0()"),
+            "an overlay covers, it does not reflow"
+        );
+    }
+
+    /// A docked queue has no dismissing scrim.
+    ///
+    /// The scrim is what makes an overlay go away when you click a terminal
+    /// beside it, and that behaviour on a docked panel would make the dock
+    /// unusable: every click in the pane you were sent to would fold the queue
+    /// you were working through.
+    #[test]
+    fn a_docked_queue_does_not_vanish_when_you_click_a_pane() {
+        let src = include_str!("main.rs");
+        let at = src
+            .find("fn render_rail_docked(")
+            .expect("render_rail_docked");
+        let body = &src[at..at + src[at..].find("\n    }\n").expect("end")];
+        assert!(
+            !body.contains("occlude") && !body.contains("rail_close"),
+            "a docked panel is part of the layout, not over it"
+        );
+    }
+
+    /// Both presentations draw the same panel, and never both at once.
+    #[test]
+    fn the_two_presentations_share_one_panel_and_exclude_each_other() {
+        let src = include_str!("main.rs");
+        for f in ["fn render_rail(&self", "fn render_rail_docked("] {
+            let at = src.find(f).expect(f);
+            let body = &src[at..at + src[at..].find("\n    }\n").expect("end")];
+            assert!(
+                body.contains("self.rail_panel(cx)"),
+                "{f} must draw the shared panel rather than its own copy"
+            );
+            assert!(
+                body.contains("self.rail_docked()"),
+                "{f} must check which presentation is in force"
+            );
+        }
+    }
+
+    /// The queue's keys do not eat anything that is not its own.
+    ///
+    /// This is the focus half of Slice 6: the handler is armed in the CAPTURE
+    /// phase over a live terminal, so every key it claims is a key that never
+    /// reaches somebody's shell. It claims navigation and two verbs; a letter
+    /// that is not one of them must fall through, or the queue being open would
+    /// silently swallow typing.
+    #[test]
+    fn an_open_queue_only_claims_the_keys_it_uses() {
+        // The movement half is pure and already tested in `attention`; this
+        // pins the two verbs and the refusals at the workspace's own boundary.
+        for key in ["a", "z", "left", "right", "f1", "0", "space"] {
+            assert_eq!(
+                attention::move_cursor(0, 5, key),
+                None,
+                "{key} must not move the cursor"
+            );
+        }
+        // And the keys it does claim are exactly these.
+        let src = include_str!("main.rs");
+        let at = src.find("fn rail_key(").expect("rail_key");
+        let body = &src[at..at + src[at..].find("\n    }\n").expect("end")];
+        for claimed in ["\"enter\"", "\"o\"", "\"p\""] {
+            assert!(body.contains(claimed), "{claimed} should be handled");
+        }
+        assert!(
+            body.contains("return false") || body.contains("=> false"),
+            "an unclaimed key must answer false so it falls through to the pane"
         );
     }
 
