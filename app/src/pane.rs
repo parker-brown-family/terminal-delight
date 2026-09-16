@@ -6580,6 +6580,17 @@ impl Render for TerminalView {
             let worn = self.worn(cx);
             let txt = th.text;
             let ff = th.font_family.clone();
+            // This pane's own skin: the tiles and pills are chrome, so their
+            // corners follow the skin, and a pane wearing its own palette gets
+            // a card baked against THAT rather than against the window's.
+            let card_sk = crate::skin::for_theme(
+                cx,
+                &th,
+                self.appearance
+                    .effective(&theme::outer_choice(cx))
+                    .grade
+                    .scale,
+            );
             let mut grid = div()
                 .flex()
                 .flex_row()
@@ -6594,7 +6605,7 @@ impl Render for TerminalView {
             // shelf order, two surfaces that cannot disagree about either.
             for e in crate::paint::entries(cx, shelf, &worn, "ESKTOP") {
                 let pick = e.pick.clone();
-                grid = grid.child(crate::paint::tile(&e, &th).on_mouse_down(
+                grid = grid.child(crate::paint::tile(&e, &th, &card_sk).on_mouse_down(
                     MouseButton::Left,
                     cx.listener(move |v, _, _, cx| {
                         // A click is unambiguous about which scope it means, so
@@ -6611,7 +6622,7 @@ impl Render for TerminalView {
             let pills = (shelves.len() > 1).then(|| {
                 let mut row = div().flex().flex_row().gap(px(4.));
                 for s in shelves.iter().copied() {
-                    row = row.child(crate::paint::pill(s, s == shelf, &th).on_mouse_down(
+                    row = row.child(crate::paint::pill(s, s == shelf, &card_sk).on_mouse_down(
                         MouseButton::Left,
                         cx.listener(move |_v, _, _, cx| {
                             theme::set_paint_shelf(cx, s);

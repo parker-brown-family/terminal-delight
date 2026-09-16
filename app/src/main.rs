@@ -17113,19 +17113,29 @@ impl Workspace {
             )
     }
 
-    /// The OUTER's paint card — the cabinet's own tiles, hanging from the top
-    /// edge of the window whenever the paint overlay is up.
+    /// The OUTER's paint card — the cabinet's own tiles, floating just under the
+    /// mother bar while the paint overlay is up.
     ///
-    /// It HANGS, and that is the whole geometry. The cabinet IS the window, so a
-    /// card centred over the wall would be sitting on the very thing it paints,
-    /// in the one place every pane has already put a card of its own. Hung from
-    /// the top edge it lands on the mother bar — chrome, over chrome, painting
-    /// chrome — and leaves the left bar, the status bar and the bezel in plain
-    /// sight to recolour under it as the letters land.
+    /// **It is built from the menu recipe, and that is the whole of its chrome:**
+    /// a real border, an opaque darkened fill, a float shadow and a radius —
+    /// copied from the menu-bar scale popup and the queue panel rather than
+    /// invented. That recipe is what earns a FLAT surface its place above BENT
+    /// glass. The first build of this card was translucent and hugged the top
+    /// edge, and it read as a decal smeared across the tube: the panes behind it
+    /// curve with the CRT warp, the card did not, and nothing about it said it
+    /// was a separate object floating in front. The queue panel learned the same
+    /// lesson the hard way and the fix, recorded there, was the chrome and not
+    /// the curve — this surface does not register a warp tube either.
     ///
-    /// Dimmed until it is aimed, exactly as an unselected pane's card is: the
-    /// wall and the cabinet are one overlay with one spotlight, and two lit
-    /// targets would be a lie about where the next letter goes.
+    /// It sits below the bar rather than flush to the window's edge for the same
+    /// reason: the popups it is a sibling of hang there, and a gap is what makes
+    /// a panel read as in front of something. It also leaves the mother bar, the
+    /// left bar, the status bar and the bezel in plain sight to recolour under it
+    /// as the letters land.
+    ///
+    /// Dimmed until it is aimed — but dimmed in its BORDER and its ink, never by
+    /// going transparent. The wall and the cabinet are one overlay with one
+    /// spotlight, and a card you can see the chrome through is the decal again.
     fn render_paint_outer(&self, cx: &mut Context<Self>) -> Option<gpui::Div> {
         if !theme::paint_mode(cx) {
             return None;
@@ -17149,7 +17159,7 @@ impl Workspace {
             .max_w(px(paint::grid_w(self.last_win.map(|(_, _, w, _)| w))));
         for e in paint::entries(cx, shelf, &worn, "EFAULT") {
             let pick = e.pick.clone();
-            grid = grid.child(paint::tile(&e, &th).on_mouse_down(
+            grid = grid.child(paint::tile(&e, &th, &sk).on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
                     // A click is unambiguous about which surface it means, so it
@@ -17162,33 +17172,40 @@ impl Workspace {
                 }),
             ));
         }
-        let mut head = div()
+        // Label on the left, live value on the right — the scale popup's header,
+        // where "menu bar" sits opposite "85%". Here the value is what the
+        // cabinet has on, which is the one thing a person cannot read off the
+        // tiles when the worn look is scrolled onto a shelf they are not looking
+        // at.
+        let head = div()
             .flex()
             .flex_row()
-            .flex_wrap()
             .items_center()
-            .justify_center()
-            .gap(px(6.))
+            .justify_between()
+            .gap(px(10. * scale))
+            .w_full()
             .child(
                 div()
-                    .text_size(px(11.))
-                    .font_weight(if aimed {
-                        gpui::FontWeight::EXTRA_BOLD
-                    } else {
-                        gpui::FontWeight::NORMAL
-                    })
-                    .text_color(th.text)
+                    .text_size(px(10.5 * scale))
+                    .font_weight(gpui::FontWeight::BOLD)
+                    .text_color(if aimed { th.complement } else { th.faint })
                     // "OUTER" is the theme tray's own word for this scope
                     // (`lang::Strings::scope_outer`); the overlay says it in the
                     // same English the wall's card does.
                     .child("PAINT THE OUTER"),
+            )
+            .child(
+                div()
+                    .text_size(px(10. * scale))
+                    .text_color(th.accent)
+                    .child(paint::worn_label(&worn)),
             );
-        // The shelf pills ride in the header rather than on their own row: this
-        // card is a shade pulled over the chrome, and every row it costs is a
-        // row of the window it covers.
-        if shelves.len() > 1 {
+        // The shelf pills — the visible half of `z`, on their own row so the
+        // header keeps the label/value shape it borrowed.
+        let pills = (shelves.len() > 1).then(|| {
+            let mut row = div().flex().flex_row().gap(px(4. * scale));
             for s in shelves.iter().copied() {
-                head = head.child(paint::pill(s, s == shelf, &th).on_mouse_down(
+                row = row.child(paint::pill(s, s == shelf, &sk).on_mouse_down(
                     MouseButton::Left,
                     cx.listener(move |_ws, _: &MouseDownEvent, _w, cx| {
                         theme::set_paint_shelf(cx, s);
@@ -17196,7 +17213,8 @@ impl Workspace {
                     }),
                 ));
             }
-        }
+            row
+        });
         let legend = if aimed {
             paint::legend(cx, &["↓ panes"], "d default", &worn)
         } else {
@@ -17210,30 +17228,32 @@ impl Workspace {
             .flex()
             .flex_col()
             .items_center()
-            .gap(px(6.))
-            .px(px(12.))
-            .pt(px(7.))
-            .pb(px(9.))
-            .rounded_bl(sk.rad_raw(12.))
-            .rounded_br(sk.rad_raw(12.))
+            .gap(px(8. * scale))
+            .p(px(12. * scale))
+            .rounded(sk.rad_raw(8.))
             .border_2()
-            .border_t_0()
             .border_color(if aimed {
-                th.accent.alpha(0.9)
+                th.accent.alpha(0.85)
             } else {
-                th.accent.alpha(0.35)
+                th.accent.alpha(0.3)
             })
             .bg(darken(th.surface, 0.45))
+            .text_color(th.text)
+            .font_family(th.font_family.clone())
             .shadow(float_shadows(if aimed {
                 th.accent
             } else {
-                th.accent.alpha(0.3)
+                th.accent.alpha(0.35)
             }))
-            .opacity(if aimed { 1.0 } else { 0.45 })
-            .font_family(th.font_family.clone())
             .child(head)
+            .children(pills)
             .child(grid)
-            .child(div().text_size(px(9.)).text_color(th.faint).child(legend))
+            .child(
+                div()
+                    .text_size(px(9. * scale))
+                    .text_color(th.faint)
+                    .child(legend),
+            )
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|_ws, _: &MouseDownEvent, _w, cx| {
@@ -17248,7 +17268,9 @@ impl Workspace {
         Some(
             div()
                 .absolute()
-                .top_0()
+                // The same drop the scale popup uses to clear the mother bar, so
+                // the two land on the same line when they are up together.
+                .top(px(74. * scale))
                 .left_0()
                 .w_full()
                 .flex()

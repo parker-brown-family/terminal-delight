@@ -26,6 +26,7 @@ use gpui::{
 };
 
 use crate::fav::{self, Face, Fav};
+use crate::skin::Skin;
 use crate::theme::{self, Dynamic, Shelf, Theme, ThemeChoice, ThemeGroup};
 
 /// What one tile paints.
@@ -394,11 +395,30 @@ pub fn legend(cx: &App, walk: &[&str], lead_verb: &str, worn: &Wearing) -> Strin
     parts.join(" · ")
 }
 
+/// What a scope has ON, as one word — for a header that reads label on the left,
+/// live value on the right, the way the menu-bar popup says "menu bar … 85%".
+///
+/// THREE answers, and they are genuinely different. The name of the look; the
+/// house default, when nothing has been painted; and CUSTOM, for a look with no
+/// name to say — a hand-seeded tint, or a palette this desktop no longer has
+/// installed. Folding that third case into "default" would report a cabinet
+/// somebody hand-tuned in the theme tray as the one we shipped.
+pub fn worn_label(w: &Wearing) -> String {
+    if w.unpainted {
+        return "DEFAULT".into();
+    }
+    match w.fav() {
+        Some(Fav::Palette(id)) => id.to_uppercase(),
+        Some(Fav::Set(d)) => d.label().to_uppercase(),
+        None => "CUSTOM".into(),
+    }
+}
+
 /// A tile's face: a colour set's glyph, or a palette's own screen in miniature.
 ///
 /// Omarchy themes ship no emoji, and a name alone cannot tell gruvbox from
 /// everforest — the miniature can.
-pub fn face_el(face: &Face, th: &Theme) -> AnyElement {
+pub fn face_el(face: &Face, th: &Theme, sk: &Skin) -> AnyElement {
     match face {
         Face::Glyph(g) => div()
             .text_size(px(17.))
@@ -408,7 +428,7 @@ pub fn face_el(face: &Face, th: &Theme) -> AnyElement {
             .relative()
             .w(px(30.))
             .h(px(18.))
-            .rounded(px(3.))
+            .rounded(sk.rad_raw(3.))
             .border_1()
             .border_color(th.text.alpha(0.25))
             .bg(*bg)
@@ -416,7 +436,7 @@ pub fn face_el(face: &Face, th: &Theme) -> AnyElement {
             .items_center()
             .justify_center()
             .gap(px(3.))
-            .children((*chips).map(|c| div().w(px(4.)).h(px(4.)).rounded_full().bg(c)))
+            .children((*chips).map(|c| div().w(px(4.)).h(px(4.)).rounded(sk.radius_pill()).bg(c)))
             // A LIGHT scheme turns the whole surface into a bright screen —
             // worth knowing BEFORE the key is pressed, not after.
             .when(*light, |d| {
@@ -442,12 +462,18 @@ pub const TILE_GAP: f32 = 6.;
 /// The tile grid's width on a card CENTRED over a pane: seven tiles, the width
 /// the wall's card has always used.
 const NARROW_W: f32 = 430.;
-/// The widest the hanging card's grid goes — sixteen tiles, measured against the
-/// shelves this machine actually has: a fifteen-entry shortlist lands on ONE row,
-/// and the full desktop shelf (twenty-three themes) on two. Capped rather than
-/// let run to the window edge, because a shade drawn corner to corner on a wide
-/// monitor stops reading as a card hung on the chrome.
-const WIDE_W: f32 = 1120.;
+/// The widest the card's grid goes — EIGHT tiles.
+///
+/// It was sixteen for one build, and on a wide monitor that drew a banner across
+/// the whole window: at that width the card stops being a panel floating over the
+/// glass and becomes a stripe painted on it. Eight keeps the footprint in the same
+/// family as the queue panel and the menu-bar popup, which are the two surfaces
+/// this one is meant to read as a sibling of — a fifteen-entry shortlist is two
+/// rows, the full desktop shelf three.
+///
+/// Unscaled, like the tiles it caps. Scaling the cap while the tiles it holds stay
+/// fixed is how a row silently loses a tile at 85%.
+const WIDE_W: f32 = 560.;
 /// Window edge to card edge, so the shade never runs corner to corner.
 const CARD_MARGIN: f32 = 48.;
 
@@ -470,7 +496,7 @@ pub fn grid_w(win_w: Option<f32>) -> f32 {
 ///
 /// The caller attaches the click — a pane paints itself, the outer card paints
 /// the cabinet — which is the only thing the two surfaces do differently.
-pub fn tile(e: &Entry, th: &Theme) -> Div {
+pub fn tile(e: &Entry, th: &Theme, sk: &Skin) -> Div {
     let (acc, surf, txt, faint) = (th.accent, th.surface, th.text, th.faint);
     let swatch = e.swatch;
     let lit = e.lit;
@@ -482,7 +508,7 @@ pub fn tile(e: &Entry, th: &Theme) -> Div {
         .items_center()
         .gap(px(3.))
         .py(px(6.))
-        .rounded(px(8.))
+        .rounded(sk.rad_raw(8.))
         .border_1()
         .border_color(if lit { acc } else { acc.alpha(0.28) })
         .bg(if lit {
@@ -511,7 +537,7 @@ pub fn tile(e: &Entry, th: &Theme) -> Div {
                 .h(px(21.))
                 .flex()
                 .items_center()
-                .child(face_el(&e.face, th)),
+                .child(face_el(&e.face, th, sk)),
         )
         .child(
             div()
@@ -564,26 +590,21 @@ pub fn tile(e: &Entry, th: &Theme) -> Div {
             div()
                 .h(px(3.))
                 .w(px(36.))
-                .rounded(px(2.))
+                .rounded(sk.rad_raw(2.))
                 .bg(swatch.unwrap_or(acc.alpha(0.0))),
         )
 }
 
 /// One shelf pill — the visible half of `z`. The caller attaches the click.
-pub fn pill(s: Shelf, on: bool, th: &Theme) -> Div {
-    let (acc, surf, txt, faint) = (th.accent, th.surface, th.text, th.faint);
-    div()
-        .px(px(9.))
-        .py(px(2.))
-        .rounded(px(9.))
-        .border_1()
-        .border_color(if on { acc } else { acc.alpha(0.25) })
-        .bg(if on { acc.alpha(0.18) } else { surf.alpha(0.5) })
-        .text_size(px(8.))
-        .text_color(if on { txt } else { faint })
-        .cursor_pointer()
-        .hover(move |s| s.bg(acc.alpha(0.28)))
-        .child(s.label())
+///
+/// [`Skin::chip`] rather than a hand-rolled pill: this is a small tag saying
+/// which shelf is showing, which is the chrome's chip in every other surface,
+/// and going through the verb is what makes a square skin square THESE corners
+/// too. It also means the overlay's selected-thing follows the same emphasis
+/// strategy as the rest of the app instead of being the one filled pill left
+/// behind when that strategy changes.
+pub fn pill(shelf: Shelf, on: bool, sk: &Skin) -> Div {
+    sk.chip(on).cursor_pointer().child(shelf.label())
 }
 
 #[cfg(test)]
@@ -706,16 +727,45 @@ mod tests {
         );
     }
 
+    /// The header's live value tells a named look, the shipped default and a
+    /// look with no name apart — three states, because the third one is exactly
+    /// the hand-tuned cabinet that must not be reported as the shipped one.
+    #[test]
+    fn the_header_value_keeps_custom_apart_from_default() {
+        let d = Dynamic::NAMED[0].clone();
+        assert_eq!(
+            worn_label(&Wearing {
+                unpainted: true,
+                ..Default::default()
+            }),
+            "DEFAULT"
+        );
+        assert_eq!(worn_label(&set(d.clone())), d.label().to_uppercase());
+        assert_eq!(
+            worn_label(&Wearing {
+                unpainted: false,
+                set: Some(Dynamic::Plain),
+                palette: None,
+            }),
+            "CUSTOM",
+            "a seeded tint with no set name is not the house default"
+        );
+    }
+
     /// A window that has not said how big it is gets the narrow card, never a
     /// wide one — the difference between "not measured" and "measured wide" is
     /// a row of tiles hanging off the edge of the screen.
     #[test]
     fn an_unmeasured_window_is_not_a_wide_one() {
         assert_eq!(grid_w(None), NARROW_W);
-        assert_eq!(grid_w(Some(4000.)), WIDE_W, "capped, not edge to edge");
         assert_eq!(
-            grid_w(Some(800.)),
-            800. - 2. * CARD_MARGIN,
+            grid_w(Some(4000.)),
+            WIDE_W,
+            "a panel on a wide screen, not a banner"
+        );
+        assert_eq!(
+            grid_w(Some(600.)),
+            600. - 2. * CARD_MARGIN,
             "between the floor and the cap it is simply the window, less its margins"
         );
         assert!(
