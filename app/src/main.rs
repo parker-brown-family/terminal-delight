@@ -9,7 +9,7 @@
 //! ← closes it, then climbs out) ·
 //! drag a tab to reorder · ctrl+click a tab: set its binder-divider colour
 //! 👓 on a sub-tab header: FOCUS — mirror that pane big, rest dimmed, esc closes
-//! (alt+↑/↓ jumps between your messages in a claude/codex pane) ·
+//! (the ▲/▼ header buttons jump between your messages in a claude/codex pane) ·
 //! alt+s: stick a note to this pane's glass (alt+backspace peels it off; it
 //! survives a restart — see [`sticky`]) ·
 //! ctrl+scroll or the bezel scrubber: menu-bar size · F1 opens help.
@@ -8777,13 +8777,38 @@ impl Workspace {
     /// active task's branches never fold, so arrowing through a folded project
     /// would have unfolded it on the way past: the opposite of maintaining
     /// visual state.
+    ///
+    /// A walk with no live cursor STARTS on the active task — the press lands
+    /// the highlight there and moves nothing else. `activate_tab` drops the
+    /// cursor for exactly this reason, so the first press after switching tabs
+    /// always re-enters the tree where the person actually is instead of at the
+    /// top of a list they would then have to walk back down.
     fn bar_walk(&mut self, down: bool, cx: &mut Context<Self>) {
         let rows = self.bar_rows(cx);
-        if let Some(to) = tree::step(&rows, self.bar_cursor, down) {
+        let to = match self.bar_live_cursor(&rows) {
+            Some(at) => tree::step(&rows, Some(at), down),
+            None => self
+                .bar_seed(&rows)
+                .or_else(|| tree::step(&rows, None, down)),
+        };
+        if let Some(to) = to {
             self.bar_cursor = Some(to);
             self.bar_reveal(&rows);
             cx.notify();
         }
+    }
+
+    /// The cursor, but only while it is on a row that is still drawn. A folded
+    /// branch or a closed tab leaves a stale `bar_cursor` behind, and a stale
+    /// one must not out-rank the active task when a walk re-enters the tree.
+    fn bar_live_cursor(&self, rows: &[tree::Row]) -> Option<tree::RowId> {
+        self.bar_cursor.filter(|at| tree::stops(rows).contains(at))
+    }
+
+    /// Where a fresh walk enters the tree: the active task's row (see
+    /// [`tree::seed`]).
+    fn bar_seed(&self, rows: &[tree::Row]) -> Option<tree::RowId> {
+        tree::seed(rows, self.active)
     }
 
     /// Open whatever the active task is hanging under, so activating a task
@@ -8868,7 +8893,11 @@ impl Workspace {
     /// meaning left and a cursor with no way to commit is a tour with no door.
     fn bar_enter(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let rows = self.bar_rows(cx);
-        let Some(at) = self.bar_cursor.or_else(|| tree::step(&rows, None, true)) else {
+        let Some(at) = self
+            .bar_live_cursor(&rows)
+            .or_else(|| self.bar_seed(&rows))
+            .or_else(|| tree::step(&rows, None, true))
+        else {
             return;
         };
         self.bar_cursor = Some(at);
@@ -8909,8 +8938,11 @@ impl Workspace {
         // of it in a window did nothing at all and read as a dead binding. It
         // seeds the same way, and stops: a first press that folded whatever
         // happened to be at the top would be a gesture nobody aimed.
-        let Some(at) = self.bar_cursor else {
-            if let Some(first) = tree::step(&rows, None, true) {
+        let Some(at) = self.bar_live_cursor(&rows) else {
+            if let Some(first) = self
+                .bar_seed(&rows)
+                .or_else(|| tree::step(&rows, None, true))
+            {
                 self.bar_cursor = Some(first);
                 self.bar_reveal(&rows);
                 cx.notify();
@@ -11428,6 +11460,11 @@ impl Workspace {
             self.ensure_scope_shows(i);
             // ...and the tree must be open down to it, for the same reason.
             self.reveal_active_branch();
+            // The keyboard cursor goes back to meaning "wherever you are": the
+            // next Ctrl+Alt+↑/↓ re-enters the tree on THIS task (`bar_seed`)
+            // rather than resuming from a highlight left behind somewhere else
+            // in the session, which is where a walk kept starting from.
+            self.bar_cursor = None;
             // Visiting the tab IS reading its finish badges: clear every
             // latched ✅/❌ in it. The focus-in edge alone can miss — a bell
             // that latched while this pane already held (idle) keyboard focus
@@ -12265,16 +12302,14 @@ impl Workspace {
                 }
                 return;
             }
-            // In an agent (claude/codex) pane, Alt+↑/↓ navigate between YOUR
-            // messages in the chat instead of moving pane focus — same as the
-            // ▲/▼ header buttons. Alt+←/→ still move focus everywhere.
-            if matches!(ks.key.as_str(), "up" | "down") {
-                if let Some(p) = leaves.get(cur).filter(|p| p.read(cx).mode.is_agent()) {
-                    let next = ks.key.as_str() == "down";
-                    p.update(cx, |view, cx| view.scroll_to_human(next, cx));
-                    return;
-                }
-            }
+            // Alt+↑/↓ used to walk YOUR messages inside an agent pane, which
+            // made the vertical half of the pane chord mean something different
+            // depending on what happened to be running in the pane you were
+            // standing in — the one place a navigation key must not be
+            // conditional. All four arrows now move pane focus everywhere; the
+            // ▲/▼ header buttons still jump between messages, and that is the
+            // gesture that gets to be agent-specific because it is drawn ON the
+            // agent pane.
             // Alt+arrows move focus BY DIRECTION: the highlight goes the way you
             // pressed, resolved against the live pane rects (`focus_dir`) rather
             // than the order the leaves happen to be walked in. This used to be a
@@ -22459,7 +22494,7 @@ impl Render for Workspace {
                 .child(section(
                     s.s_agents,
                     vec![
-                        row("Alt + ↑ / ↓", s.jump_msg),
+                        row("▲ / ▼", s.jump_msg),
                         row("Alt+R", s.focus),
                         row(s.k_focus_inherit_key, s.focus_inherit),
                         row("Alt+S", s.sticky),

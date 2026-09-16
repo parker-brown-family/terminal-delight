@@ -1908,9 +1908,9 @@ pub struct TerminalView {
     /// Debounced PTY resize: (target grid, when it stabilized).
     pending_grid: Option<(term::GridSize, Instant)>,
     /// Scroll-settle debounce: (display_offset, when last seen). Prevents spurious
-    /// agent-done notifications when Alt+up/down navigation scrolls away from the prompt.
+    /// agent-done notifications when ▲/▼ message navigation scrolls away from the prompt.
     last_scroll_offset: Option<(i32, Instant)>,
-    /// A prompt seek (Alt+↑/↓ in an alt-screen agent pane) is walking the AGENT's
+    /// A prompt seek (▲/▼ in an alt-screen agent pane) is walking the AGENT's
     /// own scrollback right now. Guards against a second press stacking another
     /// walk on top of the first and doubling every synthetic wheel step.
     seeking: bool,
@@ -2251,8 +2251,9 @@ pub(crate) fn fuzzy_match(hay: &str, needle: &str) -> Option<(i64, Vec<usize>)> 
 /// width on the terminal instead of on controls. The pane header now keeps only
 /// 🎨 (theme) and 📊 (display).
 ///
-/// The BEHAVIOUR is untouched in both cases — only the glyph goes. Alt+↑/↓ still
-/// walks your own messages in an agent pane, and Alt+R still opens the FOCUS
+/// The BEHAVIOUR is untouched in both cases — only the glyph goes. The ▲/▼
+/// header buttons still walk your own messages in an agent pane (Alt+↑/↓ is
+/// pane focus everywhere now), and Alt+R still opens the FOCUS
 /// reader. Flip either back to `true` to restore its glyph and its ⋯ entry.
 const SHOW_HUMAN_NAV_GLYPH: bool = false;
 const SHOW_FOCUS_GLYPH: bool = false;
@@ -3061,7 +3062,7 @@ impl TerminalView {
         let term = self.session.term.lock();
         // Scan the LIVE bottom screen directly (Line(0)..screen_lines), NOT
         // `renderable_content().display_iter` — that honours the display offset, so
-        // when Alt+↑ scrolls back to a human message the running agent's "esc to
+        // when ▲ scrolls back to a human message the running agent's "esc to
         // interrupt" spinner leaves the *viewport* and the scan falsely reads
         // "done". The agent is still working at the buffer bottom, so detection
         // must read the live screen regardless of how far the user has scrolled up.
@@ -4853,10 +4854,11 @@ impl TerminalView {
     /// (`next = true`) of *your own* messages. The viewport top is grid line
     /// `-display_offset`; we step to the nearest human line above/below it and
     /// scroll so it lands at the top. Stepping past the newest snaps to live.
-    /// Driven by the ▲/▼ header buttons and the `Alt+↑/↓` hotkeys (Workspace).
+    /// Driven by the ▲/▼ header buttons. NOT by Alt+↑/↓: all four Alt+arrows move
+    /// pane focus, so the only gesture for this is the one drawn on the pane.
     pub fn scroll_to_human(&mut self, next: bool, cx: &mut Context<Self>) {
         // In the anchor-top INVERTED read the newest message sits at the TOP, so
-        // the ▲/▼ (and Alt+↑/↓) directions flip: "up" steps toward NEWER, "down"
+        // the ▲/▼ directions flip: "up" steps toward NEWER, "down"
         // toward OLDER — the opposite of the default bottom-anchored read. The
         // overshoot snap-to-live still lands on the newest (rendered at top).
         let next = next ^ self.paint_inverted;
@@ -4900,7 +4902,7 @@ impl TerminalView {
         cx.notify();
     }
 
-    /// `Alt+↑/↓` (and the ▲/▼ header buttons) in an agent pane whose TUI owns the
+    /// The ▲/▼ header buttons in an agent pane whose TUI owns the
     /// whole screen. On the alternate screen there is no terminal-side history to
     /// move a viewport through, so we ask the AGENT to scroll and watch what it
     /// repaints, stepping until one of the human's own prompt lines (`❯`/`>`)
