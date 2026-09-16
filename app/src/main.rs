@@ -797,11 +797,17 @@ impl SavedNode {
     /// assertion about one terminal and a repair has to be able to drop either
     /// half. Visiting them separately is how a file ends up with a leaf whose
     /// recipe has been taken away and whose pane id has not.
-    fn for_each_claim(&mut self, f: &mut impl FnMut(&mut Option<u64>, &mut Option<String>)) {
+    fn for_each_claim(
+        &mut self,
+        f: &mut impl FnMut(&mut Option<u64>, &mut Option<String>, &mut Option<SavedNote>),
+    ) {
         match self {
             SavedNode::Leaf {
-                pane_id, resume, ..
-            } => f(pane_id, resume),
+                pane_id,
+                resume,
+                note,
+                ..
+            } => f(pane_id, resume, note),
             SavedNode::Split { a, b, .. } => {
                 a.for_each_claim(f);
                 b.for_each_claim(f);
@@ -858,16 +864,37 @@ fn dedupe_resumes(tabs: &mut [SavedTab]) {
     let mut claimed = std::collections::HashSet::new();
     let mut panes = std::collections::HashSet::new();
     for tab in tabs.iter_mut() {
-        tab.node.for_each_claim(&mut |pane_id, resume| {
+        tab.node.for_each_claim(&mut |pane_id, resume, note| {
+            let mut copied = false;
             if let Some(id) = *pane_id {
                 if !panes.insert(id) {
                     *pane_id = None;
+                    copied = true;
                 }
             }
             if let Some(cmd) = resume.clone() {
                 if !claimed.insert(cmd.clone()) {
                     *resume = bare_agent(&cmd);
+                    copied = true;
                 }
+            }
+            // Say so on the glass. The restore explains this when IT finds the
+            // collision (`LeafPlan::Duplicate`), and dropping the claim here
+            // means the restore no longer can — the leaf reaches it looking like
+            // an ordinary fresh shell. Repairing something silently and leaving
+            // a person to notice that a tab is empty is the failure this whole
+            // thread is about, so the explanation moves with the repair.
+            //
+            // Only onto blank glass: somebody's own words outrank ours, and the
+            // note they wrote is usually what identifies the tab.
+            if copied && note.is_none() {
+                let said = duplicate_leaf_note();
+                *note = Some(SavedNote {
+                    title: said.title,
+                    text: said.text,
+                    seed: said.seed,
+                    pinned: said.pinned,
+                });
             }
         });
     }
@@ -25311,6 +25338,296 @@ mod tests {
         }
     }
 
+    /// One restart, modelled: the save-side dedupe, then the plan against what
+    /// the host is actually running, then the layout that comes back out.
+    ///
+    /// Returns the new layout and the new live set, so a caller can run it
+    /// again — which is the only way to catch a restore that is individually
+    /// sane and drifts when repeated.
+    ///
+    /// A respawned leaf gets a NEW pane id here, because that is what happens:
+    /// the host starts a terminal and hands back its id. Modelling it as "no
+    /// pane" instead would make the second restart look stable when the real
+    /// one would respawn all over again.
+    fn restart(
+        mut saved: Vec<SavedTab>,
+        live: &[hostproto::PaneInfo],
+        next_id: &mut u64,
+    ) -> (
+        Vec<SavedTab>,
+        Vec<hostproto::PaneInfo>,
+        Vec<Vec<&'static str>>,
+    ) {
+        dedupe_resumes(&mut saved);
+        let plan = plan_attach(&saved, live);
+        // What the plan DID, not only what came out of it. A restart that
+        // respawned every pane from its recipe produces the same tab-to-
+        // conversation map as one that bound the terminals that were already
+        // running — and those are not the same event. One is the agent still
+        // working; the other is the agent started again, its transcript reread,
+        // its scrollback gone. A test blind to the difference passes while the
+        // whole feature is missing.
+        let shape: Vec<Vec<&'static str>> = plan
+            .tabs
+            .iter()
+            .map(|leaves| {
+                leaves
+                    .iter()
+                    .map(|l| match l {
+                        LeafPlan::Bind { .. } => "bind",
+                        LeafPlan::Respawn { .. } => "respawn",
+                        LeafPlan::Duplicate { .. } => "duplicate",
+                    })
+                    .collect()
+            })
+            .collect();
+
+        let mut now: Vec<hostproto::PaneInfo> = live.iter().filter(|p| !p.ended).cloned().collect();
+        let mut out = Vec::new();
+        for (tab, leaves) in saved.iter().zip(plan.tabs.iter()) {
+            let mut built: Vec<SavedNode> = Vec::new();
+            for leaf in leaves {
+                built.push(match leaf {
+                    LeafPlan::Bind { pane } => {
+                        let running = now
+                            .iter()
+                            .find(|p| p.pane == *pane)
+                            .expect("a bind names a live pane");
+                        leaf_with(
+                            Some(pane.0),
+                            running.cwd.as_deref().unwrap_or("/work"),
+                            running.resume.as_deref(),
+                        )
+                    }
+                    LeafPlan::Respawn { restore } | LeafPlan::Duplicate { restore } => {
+                        *next_id += 1;
+                        let mut fresh =
+                            running_agent(*next_id, restore.resume.as_deref().unwrap_or(""));
+                        if restore.resume.is_none() {
+                            fresh.resume = None;
+                        }
+                        now.push(fresh);
+                        leaf_with(
+                            Some(*next_id),
+                            restore.cwd.as_deref().unwrap_or("/work"),
+                            restore.resume.as_deref(),
+                        )
+                    }
+                });
+            }
+            // One leaf per tab in these fixtures; a split would fold the same way.
+            let node = built
+                .into_iter()
+                .reduce(|a, b| SavedNode::Split {
+                    dir: SplitDir::Row,
+                    ratio: 0.5,
+                    a: Box::new(a),
+                    b: Box::new(b),
+                })
+                .expect("every tab keeps at least one leaf");
+            out.push(SavedTab {
+                name: tab.name.clone(),
+                ..tab_of(node)
+            });
+        }
+        (out, now, shape)
+    }
+
+    /// What each tab is holding, named by conversation rather than by pane —
+    /// the thing a person recognises, and the thing that moved.
+    ///
+    /// Takes `&mut` rather than cloning the tree: `SavedNode` is not `Clone`,
+    /// and deriving it on a serialised type so a test can read it would be the
+    /// test changing the thing it is measuring.
+    fn by_tab(saved: &mut [SavedTab]) -> Vec<(Option<String>, Vec<Option<String>>)> {
+        saved
+            .iter_mut()
+            .map(|t| {
+                let mut work = vec![];
+                t.node
+                    .for_each_claim(&mut |_, resume, _| work.push(resume.clone()));
+                (t.name.clone(), work)
+            })
+            .collect()
+    }
+
+    fn named_tab(name: &str, node: SavedNode) -> SavedTab {
+        SavedTab {
+            name: Some(name.to_string()),
+            ..tab_of(node)
+        }
+    }
+
+    /// A restart does not move a conversation from one tab to another.
+    ///
+    /// The composition, which is where this broke in the wild: the dedupe had
+    /// tests, `plan_attach` had tests, and the two of them run back to back had
+    /// none — so a layout could come back with every pane alive, the right
+    /// number of tabs, and the wrong work inside them. That is precisely what
+    /// was reported, from a screen rather than from a failure.
+    #[test]
+    fn a_restart_leaves_every_conversation_in_its_own_tab() {
+        let saved = vec![
+            named_tab(
+                "RIGHT MENU",
+                leaf_with(Some(4), "/work", Some("claude --resume rm")),
+            ),
+            named_tab(
+                "APPLY",
+                leaf_with(Some(5), "/apply", Some("claude --resume ap")),
+            ),
+            named_tab(
+                "HACKATHON",
+                leaf_with(Some(6), "/hack", Some("claude --resume hk")),
+            ),
+            named_tab("DEV", leaf_with(Some(7), "/dev", None)),
+        ];
+        let live = vec![
+            running_agent(4, "claude --resume rm"),
+            running_agent(5, "claude --resume ap"),
+            running_agent(6, "claude --resume hk"),
+            running(7, false),
+        ];
+        let mut saved = saved;
+        let before = by_tab(&mut saved);
+        let mut next = 100;
+        let (mut after, _, shape) = restart(saved, &live, &mut next);
+        assert_eq!(
+            before,
+            by_tab(&mut after),
+            "a restart moved somebody's work"
+        );
+        // Every terminal in this fixture is still running, so every leaf must
+        // BIND one. Without this the test passes just as happily on a restore
+        // that ended them all and started them again from their recipes — same
+        // tabs, same conversations named, and every agent back at the beginning.
+        assert_eq!(
+            shape,
+            vec![vec!["bind"], vec!["bind"], vec!["bind"], vec!["bind"]],
+            "a terminal that was still running got respawned instead of taken back"
+        );
+    }
+
+    /// Restarting twice changes nothing the first restart did not.
+    ///
+    /// Drift is the shape of this bug class: each restore looks reasonable and
+    /// the layout walks. Asserting the second pass is a no-op catches a repair
+    /// that keeps repairing, which a single-restart test cannot see.
+    #[test]
+    fn a_second_restart_changes_nothing() {
+        let saved = vec![
+            named_tab(
+                "RIGHT MENU",
+                leaf_with(Some(4), "/work", Some("claude --resume rm")),
+            ),
+            named_tab(
+                "THEMES",
+                leaf_with(Some(5), "/themes", Some("claude --resume th")),
+            ),
+            // a tab whose terminal died while the window was away
+            named_tab(
+                "GONE",
+                leaf_with(Some(6), "/gone", Some("claude --resume go")),
+            ),
+        ];
+        let live = vec![
+            running_agent(4, "claude --resume rm"),
+            running_agent(5, "claude --resume th"),
+        ];
+        let mut next = 100;
+        let (mut once, live_once, first) = restart(saved, &live, &mut next);
+        let settled = by_tab(&mut once);
+        let (mut twice, _, second) = restart(once, &live_once, &mut next);
+        assert_eq!(
+            settled,
+            by_tab(&mut twice),
+            "the second restart moved something the first had settled"
+        );
+        // The dead one is respawned exactly once, and is a live terminal to bind
+        // by the next pass. A restore that respawns it every time is the shape
+        // that makes a session drift, and it looks identical by tab and by
+        // conversation — only the verb differs.
+        assert_eq!(
+            first,
+            vec![vec!["bind"], vec!["bind"], vec!["respawn"]],
+            "the first restart did not respawn exactly the terminal that had died"
+        );
+        assert_eq!(
+            second,
+            vec![vec!["bind"], vec!["bind"], vec!["bind"]],
+            "the second restart respawned something it should have bound"
+        );
+    }
+
+    /// Three tabs claiming one terminal settle in one restart, and stay settled.
+    ///
+    /// The layout that was actually on disk on 2026-09-15: HACKATHON WINNER,
+    /// APPLY and RIGHT MENU all carrying `pane_id = 4`. One of them keeps the
+    /// conversation — which one is decided by layout order and is not the
+    /// interesting part — and the other two must come back as themselves with
+    /// terminals of their own, and must NOT go on being repaired every restart.
+    #[test]
+    fn three_tabs_claiming_one_terminal_settle_and_stay_settled() {
+        let saved = vec![
+            named_tab(
+                "HACKATHON WINNER",
+                leaf_with(Some(4), "/work", Some("claude --resume rm")),
+            ),
+            named_tab(
+                "APPLY",
+                leaf_with(Some(4), "/work", Some("claude --resume rm")),
+            ),
+            named_tab(
+                "RIGHT MENU",
+                leaf_with(Some(4), "/work", Some("claude --resume rm")),
+            ),
+        ];
+        let live = vec![running_agent(4, "claude --resume rm")];
+        let mut next = 100;
+
+        let (mut once, live_once, first) = restart(saved, &live, &mut next);
+        let settled = by_tab(&mut once);
+        let holders: Vec<_> = settled
+            .iter()
+            .filter(|(_, work)| {
+                work.iter()
+                    .any(|w| w.as_deref() == Some("claude --resume rm"))
+            })
+            .map(|(name, _)| name.clone())
+            .collect();
+        assert_eq!(holders.len(), 1, "one terminal, one holder: {holders:?}");
+        assert_eq!(once.len(), 3, "the tabs that lost the claim are still tabs");
+        // One tab takes the terminal; the copies come back as shells of their own.
+        //
+        // Not `duplicate`, and the reason is the ORDER of two repairs. The
+        // save-side dedupe runs first and has already taken the copies' claims
+        // away, so by the time `plan_attach` sees them they name nothing and are
+        // ordinary respawns. `LeafPlan::Duplicate` is now the second line — it
+        // fires on a layout written before the dedupe existed, or restored from
+        // a backup.
+        //
+        // What must NOT differ between the two paths is what the person is told,
+        // which is why the save side writes the same note the restore would
+        // have. A repair nobody can see is the failure this whole thread is about.
+        assert_eq!(
+            first,
+            vec![vec!["bind"], vec!["respawn"], vec!["respawn"]],
+            "a copied claim was not reduced to a shell of its own"
+        );
+
+        let (mut twice, live_twice, _) = restart(once, &live_once, &mut next);
+        assert_eq!(
+            settled,
+            by_tab(&mut twice),
+            "the repair is still repairing on the second restart"
+        );
+        assert_eq!(
+            live_once.len(),
+            live_twice.len(),
+            "the second restart spawned more terminals for a layout already settled"
+        );
+    }
+
     #[test]
     fn a_leaf_whose_terminal_is_still_running_is_bound_to_it() {
         let saved = vec![tab_of(leaf_with(
@@ -27146,7 +27463,7 @@ mod tests {
         let resumes = |tabs: &mut [SavedTab]| {
             let mut out = vec![];
             for tab in tabs.iter_mut() {
-                tab.node.for_each_claim(&mut |_, r| out.push(r.clone()));
+                tab.node.for_each_claim(&mut |_, r, _| out.push(r.clone()));
             }
             out
         };
@@ -27236,7 +27553,7 @@ mod tests {
         let mut ids = vec![];
         let mut notes = vec![];
         for t in tabs.iter_mut() {
-            t.node.for_each_claim(&mut |pane, _| ids.push(*pane));
+            t.node.for_each_claim(&mut |pane, _, _| ids.push(*pane));
             if let SavedNode::Leaf { note, .. } = &t.node {
                 notes.push(note.as_ref().map(|n| n.text.clone()));
             }
@@ -27256,6 +27573,80 @@ mod tests {
             ],
             "a leaf that loses a terminal is still the tab somebody was using"
         );
+    }
+
+    /// A claim taken away is explained on the glass, and never over somebody's
+    /// own words.
+    ///
+    /// The restore says this when IT finds the collision. Dropping the claim on
+    /// the way out to disk means the restore never sees one — the leaf arrives
+    /// looking like an ordinary shell — so the explanation has to travel with
+    /// whichever repair actually happened. Otherwise a tab quietly empties and
+    /// the person finds out by looking, which is how this was found in the first
+    /// place.
+    #[test]
+    fn a_claim_taken_away_says_so_on_the_glass() {
+        let blank = |pane: Option<u64>| SavedNode::Leaf {
+            appearance: PaneTheme::default(),
+            cwd: None,
+            resume: Some("claude --resume rm".into()),
+            name: None,
+            logo: None,
+            note: None,
+            pane_id: pane,
+        };
+        let spoken = |pane: Option<u64>| SavedNode::Leaf {
+            appearance: PaneTheme::default(),
+            cwd: None,
+            resume: Some("claude --resume rm".into()),
+            name: None,
+            logo: None,
+            note: Some(SavedNote {
+                title: Some("MINE".into()),
+                text: "what I was doing".into(),
+                seed: 3,
+                pinned: true,
+            }),
+            pane_id: pane,
+        };
+        let tab = |node: SavedNode| SavedTab {
+            name: None,
+            color: None,
+            text_color: None,
+            group: None,
+            node,
+            project: None,
+        };
+        let mut tabs = vec![
+            tab(blank(Some(4))),
+            tab(blank(Some(4))),
+            tab(spoken(Some(4))),
+        ];
+        dedupe_resumes(&mut tabs);
+
+        let notes: Vec<Option<SavedNote>> = tabs
+            .iter()
+            .map(|t| match &t.node {
+                SavedNode::Leaf { note, .. } => note.clone(),
+                SavedNode::Split { .. } => None,
+            })
+            .collect();
+
+        assert!(
+            notes[0].is_none(),
+            "the leaf that KEPT its claim gains nothing"
+        );
+        let said = notes[1]
+            .as_ref()
+            .expect("the copy is told why it is a shell");
+        assert_eq!(said.title.as_deref(), Some("DUPLICATE TAB"));
+        assert_eq!(said.text, duplicate_leaf_note().text);
+        let theirs = notes[2].as_ref().expect("their own note is still there");
+        assert_eq!(
+            theirs.text, "what I was doing",
+            "we wrote over somebody's words"
+        );
+        assert!(theirs.pinned, "and took their pin out while we were at it");
     }
 
     /// The invariant, stated as itself: whatever goes in, no terminal is claimed
@@ -27301,7 +27692,7 @@ mod tests {
         let mut seen_panes = std::collections::HashSet::new();
         let mut seen_work = std::collections::HashSet::new();
         for t in tabs.iter_mut() {
-            t.node.for_each_claim(&mut |pane, resume| {
+            t.node.for_each_claim(&mut |pane, resume, _| {
                 if let Some(id) = *pane {
                     assert!(seen_panes.insert(id), "pane {id} is claimed twice");
                 }
