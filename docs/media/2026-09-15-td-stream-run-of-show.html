@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Terminal Delight — live demo run-of-show</title>
+<style>
+  :root {
+    --bg: #0d1210;
+    --panel: #141b18;
+    --line: #223029;
+    --ink: #d8e6dd;
+    --dim: #7e9488;
+    --green: #5ad17f;
+    --amber: #e8b04b;
+    --red: #e1614f;
+    --blue: #6fa8dc;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding-block: 32px;
+    padding-left: 20px;
+    padding-right: 20px;
+    background: var(--bg);
+    color: var(--ink);
+    font: 17px/1.55 ui-sans-serif, system-ui, "Inter", sans-serif;
+  }
+  main { max-width: 860px; margin: 0 auto; }
+  h1 { font-size: 30px; margin: 0 0 4px; letter-spacing: -0.01em; }
+  .sub { color: var(--dim); margin: 0 0 28px; }
+  h2 {
+    font-size: 13px; text-transform: uppercase; letter-spacing: 0.1em;
+    color: var(--dim); margin: 36px 0 12px; font-weight: 600;
+  }
+  .card {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 10px; padding: 16px 18px; margin-bottom: 12px;
+  }
+  .beat { display: flex; gap: 14px; align-items: flex-start; }
+  .num {
+    flex: 0 0 34px; height: 34px; border-radius: 8px;
+    background: #1d2a23; color: var(--green);
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 700; font-size: 15px;
+  }
+  .beat h3 { margin: 4px 0 6px; font-size: 19px; }
+  .say { color: var(--ink); margin: 8px 0; }
+  .say::before { content: "SAY "; color: var(--green); font-size: 12px; letter-spacing: .08em; }
+  .do { color: var(--dim); margin: 6px 0; }
+  .do::before { content: "DO  "; color: var(--blue); font-size: 12px; letter-spacing: .08em; }
+  code, pre {
+    font-family: ui-monospace, "JetBrains Mono", "Fira Code", monospace;
+    font-size: 15px;
+  }
+  code { background: #0a0f0d; border: 1px solid var(--line); border-radius: 5px; padding: 1px 6px; color: var(--green); }
+  pre {
+    background: #0a0f0d; border: 1px solid var(--line); border-radius: 8px;
+    padding: 12px 14px; overflow-x: auto; color: var(--green); margin: 10px 0 0;
+  }
+  pre code { background: none; border: none; padding: 0; }
+  .tag {
+    display: inline-block; font-size: 11px; letter-spacing: .08em; text-transform: uppercase;
+    border-radius: 999px; padding: 2px 9px; margin-left: 8px; vertical-align: 3px;
+  }
+  .core { background: #14301f; color: var(--green); border: 1px solid #235437; }
+  .cut  { background: #302614; color: var(--amber); border: 1px solid #55411f; }
+  .flag { border-left: 3px solid var(--red); }
+  .flag strong { color: var(--red); }
+  ul { margin: 8px 0 0; padding-left: 20px; }
+  li { margin: 5px 0; }
+  .checks li { color: var(--dim); }
+  .checks b { color: var(--ink); font-weight: 600; }
+  footer { color: var(--dim); font-size: 14px; margin-top: 40px; border-top: 1px solid var(--line); padding-top: 14px; }
+</style>
+</head>
+<body>
+<main>
+
+<h1>Terminal Delight — live demo run-of-show</h1>
+<p class="sub">15 September 2026 · YouTube live · OBS profile <em>Terminal Delight</em> · capture eDP-1 2560×1600 @ 60</p>
+
+<h2>Before you hit Start Streaming</h2>
+
+<div class="card flag">
+  <strong>The stream key is the only thing missing.</strong>
+  YouTube Studio → your live event → Stream key (copy). In OBS:
+  Settings → Stream → Service <em>Custom</em>, Server is already
+  <code>rtmp://a.rtmp.youtube.com/live2</code> — paste the key, OK.
+</div>
+
+<div class="card checks">
+  <ul>
+    <li><b>OBS lives on DP-2</b> (the external). The capture is eDP-1, so OBS itself never appears in shot. Keep it that way.</li>
+    <li><b>Mic</b> is the Shure MV7 (mono). Talk and watch the meter move before you go live.</li>
+    <li><b>Desktop audio</b> is the MV7's own output monitor — the agent-finished bell will be audible to viewers. That's usually what you want.</li>
+    <li><b>Webcam</b> C920 on <code>/dev/video2</code>, 1920×1080 MJPG 30 fps.</li>
+    <li><b>Encoder</b> NVENC H.264, CBR 12 000 kbps, 2 s keyframes, preset p5. If the OBS status bar starts counting dropped frames, drop to 8 000 and carry on — don't stop the stream.</li>
+    <li><b>16:10 canvas.</b> YouTube's player is 16:9, so viewers get thin bars top and bottom. Expected, not a fault.</li>
+    <li><b>Legibility.</b> A 2560-wide capture gets scaled down in most viewers' players. Bump TD's text size in the monitor-OSD tray before the cold open — one notch bigger than feels right to you.</li>
+    <li><b>Staged content only.</b> Throwaway home, fake prompt, no real shell — same rule the screenshots follow.</li>
+  </ul>
+</div>
+
+<h2>The demo — eleven beats</h2>
+<p class="sub" style="margin-top:-6px">Green beats are the spine; amber ones are the first to cut if you're running long.</p>
+
+<div class="card beat">
+  <div class="num">1</div>
+  <div>
+    <h3>Cold open — the wall<span class="tag core">core</span></h3>
+    <p class="do">Open on the twenty-pane window. Don't type anything for ten seconds. Let them look.</p>
+    <p class="say">"This is one window. Twenty real shells, every one on its own PTY, every one with its own tube, theme and curvature. Nothing here is a screenshot and nothing here is a mock."</p>
+  </div>
+</div>
+
+<div class="card beat">
+  <div class="num">2</div>
+  <div>
+    <h3>It's a real terminal first<span class="tag core">core</span></h3>
+    <p class="do">Split, run something heavy, resize the pane while it's running.</p>
+    <pre><code>alt+v          split vertical
+alt+h          split horizontal
+alt+←  alt+→   move between panes</code></pre>
+    <p class="do">Then in a fresh pane:</p>
+    <pre><code>vim</code></pre>
+    <pre><code>seq 1 100000</code></pre>
+    <p class="say">"Full VT emulation — vim, top, tmux all behave. That <code>seq</code> takes 0.089 seconds, and key-to-pixel is 121 microseconds at the median. The pretty part is not costing you the terminal."</p>
+  </div>
+</div>
+
+<div class="card beat">
+  <div class="num">3</div>
+  <div>
+    <h3>Themes hot-reload — edit it while it runs<span class="tag core">core</span></h3>
+    <p class="do">Open the theme file in a pane, change a colour, save. The window repaints in about 300 ms, on camera, with no restart.</p>
+    <pre><code>vim ~/.config/terminal-delight/theme.toml</code></pre>
+    <p class="say">"Four themes ship — hacker, tactical-overdrive, field-command, quiet-command. They're TOML data files, which means the contribution path into this project doesn't require writing a line of Rust."</p>
+  </div>
+</div>
+
+<div class="card beat">
+  <div class="num">4</div>
+  <div>
+    <h3>Per-pane grading<span class="tag cut">cuttable</span></h3>
+    <p class="do">Open the monitor-OSD tray. Change brightness, contrast, colour, warp on <em>one</em> pane. Show the "follow outer" toggle breaking the inheritance.</p>
+    <p class="say">"Each pane is graded independently, like a monitor rather than a text box. The dials are plain percents, and they're the same dials the MCP server exposes to an agent."</p>
+  </div>
+</div>
+
+<div class="card beat">
+  <div class="num">5</div>
+  <div>
+    <h3>Sticky notes<span class="tag core">core</span></h3>
+    <p class="do">Press a note onto a pane, write on it, then drag the pane so the note warps with it.</p>
+    <p class="say">"What this shell is for. What you were half-way through. What to check when you get back. It rides the barrel warp with the pane and it survives a restart — this is the thing I actually use most, and it's the least technically impressive thing in the app."</p>
+  </div>
+</div>
+
+<div class="card beat">
+  <div class="num">6</div>
+  <div>
+    <h3>Copy chips — the one-click affordance<span class="tag core">core</span></h3>
+    <p class="do">Hold Alt over a line that starts with a command. Chip appears. Alt+click copies the whole rejoined line even though the terminal wrapped it.</p>
+    <p class="say">"The terminal wrapped that command across three rows. Copying it out of any other terminal gives you three broken pieces. The chip only appears on a line that actually starts with a command, and never on an elided one — a truncated command that looks copyable is a trap."</p>
+  </div>
+</div>
+
+<div class="card beat">
+  <div class="num">7</div>
+  <div>
+    <h3>Agent panes and the tab strip<span class="tag core">core</span></h3>
+    <p class="do">Start an agent in a pane. Collapse to a different tab. Point at the badge under the tab as it breathes, then goes yellow HEY, then ✅.</p>
+    <pre><code>claude</code></pre>
+    <p class="say">"You never open a tab to find out whether anything is happening in it. Breathing means working. Yellow HEY outranks everything else on the strip — that one means the turn is yours."</p>
+    <p class="do">Let a toast fire and click it to zip to the pane.</p>
+  </div>
+</div>
+
+<div class="card beat">
+  <div class="num">8</div>
+  <div>
+    <h3>The MCP server — the agent can see the window<span class="tag core">core</span></h3>
+    <p class="do">In an agent pane, ask it out loud to survey the window. Let the audience watch the answer arrive.</p>
+    <p class="say">"Every agent in here can list every pane — who's running where, in what directory, and which tool they're calling this second. It can grep the scrollback of all twenty panes at once and tell me which pane the error is in. And it can stick a note on another agent's glass."</p>
+    <p class="say">"What it cannot do is write a byte to anyone's PTY. That's appearance-only, deliberately."</p>
+    <p class="do">The grep is the money shot — find one string across twenty panes and land on the pane that has it.</p>
+  </div>
+</div>
+
+<div class="card beat">
+  <div class="num">9</div>
+  <div>
+    <h3>FOCUS reader<span class="tag cut">cuttable</span></h3>
+    <p class="do"><code>Alt+R</code> to open the reader over the whole conversation; Esc closes. Type while it's open — input still reaches the agent.</p>
+  </div>
+</div>
+
+<div class="card beat">
+  <div class="num">10</div>
+  <div>
+    <h3>td-send — adopt a tile off the desktop<span class="tag cut">cuttable</span></h3>
+    <p class="do">Focus a foot or Alacritty tile with an agent in it, press SUPER+ALT+T, watch the session migrate into a TD pane and resume by session id.</p>
+    <p class="say">"Idle shells reopen at their directory, agents resume by session id, tmux re-attaches. Anything it can't safely adopt — vim, htop — it refuses, and nothing gets closed."</p>
+    <p class="do">If it misbehaves on camera, <code>td-send --dry-run</code> prints the plan and touches nothing.</p>
+  </div>
+</div>
+
+<div class="card beat">
+  <div class="num">11</div>
+  <div>
+    <h3>Land it<span class="tag core">core</span></h3>
+    <p class="say">"Linux only, X11 and Wayland. MIT, single AppImage, no install ceremony."</p>
+    <pre><code>chmod +x terminal-delight-x86_64.AppImage</code></pre>
+    <pre><code>./terminal-delight-x86_64.AppImage</code></pre>
+    <p class="do">Put the repo URL on screen and leave it there while you take questions.</p>
+    <pre><code>https://github.com/parker-brown-family/terminal-delight</code></pre>
+  </div>
+</div>
+
+<h2>If something goes wrong live</h2>
+<div class="card checks">
+  <ul>
+    <li><b>Dropped frames climbing</b> — Settings → Output → Streaming → bitrate 8000. Don't stop the stream to do it.</li>
+    <li><b>Screen capture goes black</b> — the pipewire portal session died. Right-click the source → Properties → re-select eDP-1. Talk over it.</li>
+    <li><b>Mic dead</b> — the MV7 is <code>alsa_input.usb-Shure_Inc_Shure_MV7-00.mono-fallback</code>. Reselect it in the source properties.</li>
+    <li><b>TD crashes</b> — say so and relaunch it. Layout and per-pane appearance restore on launch, which is itself a feature worth showing.</li>
+  </ul>
+</div>
+
+<footer>
+  Drawn from the repository's own README and docs — feature claims, keybindings and the
+  latency numbers are quoted from there, not measured for this stream. Beats are a
+  suggestion; cut freely.
+</footer>
+
+</main>
+</body>
+</html>
