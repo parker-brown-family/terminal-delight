@@ -1378,6 +1378,40 @@ pub fn typed_line(text: &str) -> Vec<u8> {
     bytes
 }
 
+/// What pressing a verb will do, in the bytes it will do it with.
+///
+/// The same [`crate::surface::ActionReport::to_prompt`] that types the line
+/// produces the preview, so a chip cannot promise one thing and type another —
+/// the label came from the agent, and the whole point of the click is to be a
+/// check on the agent. Local verbs, the ones the window performs itself, say
+/// what they open instead, and say plainly when they would open nothing.
+pub fn verb_preview(
+    surface: &Surface,
+    action: &crate::surface::Action,
+    target: Option<&str>,
+    comment: Option<&str>,
+    tag: Option<&str>,
+) -> String {
+    use crate::surface::{Action, ActionReport, Kind};
+    match action {
+        Action::Open => match &surface.kind {
+            Kind::Artifact(a) => format!("opens {}", a.href),
+            _ => "opens nothing \u{2014} this surface is not a document".to_string(),
+        },
+        Action::OpenSource => match surface.source.as_ref().and_then(|s| s.files.first()) {
+            Some(f) => format!("opens {f}"),
+            None => "opens nothing \u{2014} this surface names no source".to_string(),
+        },
+        _ => ActionReport {
+            surface: surface.id.clone(),
+            action: action.clone(),
+            target: target.map(str::to_string),
+            comment: comment.map(str::to_string),
+        }
+        .to_prompt(tag),
+    }
+}
+
 impl Default for Bench {
     /// The rail is OPEN by default, and that is the one field here whose
     /// default is a design decision rather than a zero value.
@@ -1908,6 +1942,54 @@ mod tests {
         changed.surface.as_mut().unwrap().arrived_ms = 62_000;
         assert!(b.apply(changed).is_some(), "a different title is a change");
         assert_eq!(b.get(&SurfaceId("same".into())).unwrap().arrived_ms, 62_000);
+    }
+
+    #[test]
+    fn a_verb_preview_is_the_typed_line_and_a_local_verb_says_what_it_opens() {
+        use crate::surface::{Action, ActionReport};
+        // The hunk id is the agent's own text, newline included. The preview
+        // must be exactly what pressing would type — one flattened, tagged
+        // line — because the label alone came from the party being checked.
+        let mut b = Bench::new();
+        b.apply(post(json!({
+            "td":"0.2","kind":"changeset","id":"change-847","title":"x",
+            "model":{"repository":"r","hunks":[{"id":"a\nwhoami","file":"a.rs","patch":"+1"}]}
+        })));
+        let s = b
+            .get(&SurfaceId("change-847".into()))
+            .expect("the changeset");
+        let shown = verb_preview(
+            s,
+            &Action::RejectPart,
+            Some("a\nwhoami"),
+            Some("first\r\nsecond"),
+            Some("k7f2q9ax"),
+        );
+        let typed = ActionReport {
+            surface: s.id.clone(),
+            action: Action::RejectPart,
+            target: Some("a\nwhoami".into()),
+            comment: Some("first\r\nsecond".into()),
+        }
+        .to_prompt(Some("k7f2q9ax"));
+        assert_eq!(shown, typed, "one function produces both");
+        assert!(shown.starts_with("[workbench:k7f2q9ax]"), "{shown}");
+        assert!(!shown.contains('\n') && !shown.contains('\r'), "{shown}");
+
+        let mut b = Bench::new();
+        b.apply(post(json!({
+            "td":"0.2","kind":"artifact","id":"doc","title":"d",
+            "model":{"href":"/tmp/a.pdf"}
+        })));
+        let s = b.get(&SurfaceId("doc".into())).expect("the artifact");
+        assert_eq!(
+            verb_preview(s, &Action::Open, None, None, None),
+            "opens /tmp/a.pdf"
+        );
+        assert!(
+            verb_preview(s, &Action::OpenSource, None, None, None).contains("nothing"),
+            "a verb that would do nothing says so"
+        );
     }
 
     #[test]

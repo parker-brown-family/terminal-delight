@@ -613,67 +613,139 @@ impl TerminalView {
         if actions.is_empty() {
             return None;
         }
-        Some(
-            div()
-                .flex()
-                .flex_row()
-                .flex_wrap()
-                .gap(px(6.))
-                .items_center()
-                .children(actions.into_iter().flat_map(|action| {
-                    let needs_part = matches!(
-                        action,
-                        crate::surface::Action::AcceptPart | crate::surface::Action::RejectPart
-                    );
-                    let targets: Vec<Option<String>> = if needs_part {
-                        hunks.iter().map(|id| Some(id.clone())).collect()
-                    } else {
-                        vec![None]
-                    };
-                    let label = action.label();
-                    targets
-                        .into_iter()
-                        .map(|target| {
-                            let text = match &target {
-                                Some(t) => {
-                                    format!("{label} {}", t.rsplit('/').next().unwrap_or(t))
-                                }
-                                None => label.clone(),
-                            };
-                            // The PRIMARY verb is a button you can hit without
-                            // aiming. `open` on an artifact is the whole point
-                            // of the card — the reason a person opened it was
-                            // to get to the thing — and it was drawn as a
-                            // ten-point word in a row of ten-point words, all
-                            // the same weight, none of them looking pressable.
-                            // Parker: *"click to open the artifact needs to be
-                            // a chunky button!"*. The rest stay chips: a card
-                            // with five buttons has no primary verb either.
-                            let primary = matches!(
-                                action,
-                                crate::surface::Action::Open | crate::surface::Action::Approve
-                            );
-                            let action = action.clone();
-                            crate::benchdraw::verb_button(
-                                sk.chip(primary)
-                                    .cursor_pointer()
-                                    .font_family(th.font_family.clone())
-                                    .child(text),
-                                primary,
-                                th,
-                            )
-                            .relative()
-                            .child(crate::benchdraw::zone(
-                                self.wb_zones.clone(),
-                                crate::workbench::Hit::Verb {
-                                    action: action.clone(),
-                                    target: target.clone(),
-                                },
-                            ))
-                        })
-                        .collect::<Vec<_>>()
-                })),
-        )
+        // WHAT EACH BUTTON WILL DO, in the bytes it will do it with. A chip
+        // said `reject x`, and `x` was whatever the agent had put in its own
+        // hunk id — so the label came from the one party the click is meant
+        // to be a check on. The lines under the row are produced by the same
+        // function that produces the typed line, so the two cannot disagree,
+        // and they are printed whole: an elided command that looks copyable
+        // is a trap, and an elided instruction that looks readable is the
+        // same trap.
+        let tag = crate::surfacefeed::tag();
+        let comment = self
+            .wb_compose
+            .as_ref()
+            .map(|l| l.text().to_string())
+            .filter(|c| !c.trim().is_empty());
+        let where_to = format!(
+            "\u{2192} pane {} \u{b7} {}{}",
+            self.pane_id
+                .map_or_else(|| "?".to_string(), |p| p.to_string()),
+            self.mode.label(),
+            self.staged
+                .cwd
+                .as_deref()
+                .map_or(String::new(), |c| format!(" \u{b7} {c}")),
+        );
+        let previews: Vec<(String, String)> = actions
+            .iter()
+            .flat_map(|action| {
+                let needs_part = matches!(
+                    action,
+                    crate::surface::Action::AcceptPart | crate::surface::Action::RejectPart
+                );
+                let targets: Vec<Option<String>> = if needs_part {
+                    hunks.iter().map(|id| Some(id.clone())).collect()
+                } else {
+                    vec![None]
+                };
+                targets
+                    .into_iter()
+                    .map(|target| {
+                        let chip = match &target {
+                            Some(t) => {
+                                format!("{} {}", action.label(), t.rsplit('/').next().unwrap_or(t))
+                            }
+                            None => action.label(),
+                        };
+                        let what = crate::workbench::verb_preview(
+                            surface,
+                            action,
+                            target.as_deref(),
+                            comment.as_deref(),
+                            tag,
+                        );
+                        (chip, what)
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        let shown = div()
+            .flex()
+            .flex_col()
+            .gap(px(2.))
+            .pt(px(2.))
+            .font_family(th.font_family.clone())
+            .text_size(px(9.5))
+            .child(div().text_color(th.faint).child(where_to))
+            .children(previews.into_iter().map(|(chip, what)| {
+                div()
+                    .flex()
+                    .flex_row()
+                    .gap(px(8.))
+                    .child(div().flex_none().text_color(th.faint).child(chip))
+                    .child(div().text_color(th.text.alpha(0.72)).child(what))
+            }));
+        let row = div()
+            .flex()
+            .flex_row()
+            .flex_wrap()
+            .gap(px(6.))
+            .items_center()
+            .children(actions.into_iter().flat_map(|action| {
+                let needs_part = matches!(
+                    action,
+                    crate::surface::Action::AcceptPart | crate::surface::Action::RejectPart
+                );
+                let targets: Vec<Option<String>> = if needs_part {
+                    hunks.iter().map(|id| Some(id.clone())).collect()
+                } else {
+                    vec![None]
+                };
+                let label = action.label();
+                targets
+                    .into_iter()
+                    .map(|target| {
+                        let text = match &target {
+                            Some(t) => {
+                                format!("{label} {}", t.rsplit('/').next().unwrap_or(t))
+                            }
+                            None => label.clone(),
+                        };
+                        // The PRIMARY verb is a button you can hit without
+                        // aiming. `open` on an artifact is the whole point
+                        // of the card — the reason a person opened it was
+                        // to get to the thing — and it was drawn as a
+                        // ten-point word in a row of ten-point words, all
+                        // the same weight, none of them looking pressable.
+                        // Parker: *"click to open the artifact needs to be
+                        // a chunky button!"*. The rest stay chips: a card
+                        // with five buttons has no primary verb either.
+                        let primary = matches!(
+                            action,
+                            crate::surface::Action::Open | crate::surface::Action::Approve
+                        );
+                        let action = action.clone();
+                        crate::benchdraw::verb_button(
+                            sk.chip(primary)
+                                .cursor_pointer()
+                                .font_family(th.font_family.clone())
+                                .child(text),
+                            primary,
+                            th,
+                        )
+                        .relative()
+                        .child(crate::benchdraw::zone(
+                            self.wb_zones.clone(),
+                            crate::workbench::Hit::Verb {
+                                action: action.clone(),
+                                target: target.clone(),
+                            },
+                        ))
+                    })
+                    .collect::<Vec<_>>()
+            }));
+        Some(div().flex().flex_col().gap(px(6.)).child(row).child(shown))
     }
 
     /// Press one of the selected question's answers, by zero-based index.
