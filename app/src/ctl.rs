@@ -52,6 +52,23 @@ pub(crate) struct AdoptReq {
     pub run: Option<String>,
 }
 
+/// Who is asking, as they worked it out from their own process tree.
+///
+/// Carried on the wire so the window can do two things it previously could not:
+/// refuse a call meant for a different Terminal Delight, and let a pane-scoped
+/// verb default to the pane the caller is actually sitting in. Both were
+/// guesses before — the first was not made at all, and the second was made by
+/// the agent, out of titles and directories that two panes routinely share.
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub(crate) struct Caller {
+    /// The session the caller believes it is in.
+    pub session: String,
+    /// The pane, when the host could name one. `None` is a real answer — a
+    /// process whose chain the host does not recognise is in no pane of ours —
+    /// and it stays distinct from "pane zero".
+    pub pane: Option<u64>,
+}
+
 /// A queued control request, applied on the UI thread by the ticker.
 #[derive(Debug)]
 pub(crate) enum Req {
@@ -263,8 +280,13 @@ enum Cmd {
     PaintStatus,
     Paint(Req),
     Adopt(AdoptReq),
-    /// A whole JSON-RPC line for the MCP handler, verbatim.
-    McpRpc(String),
+    /// A whole JSON-RPC line for the MCP handler, verbatim, plus who is asking
+    /// when they were able to work it out.
+    McpRpc(Option<Caller>, String),
+    /// Which session this window holds, and its own pid. The verb that lets a
+    /// caller find the right window by asking every live one, rather than by
+    /// trusting a file or an environment variable to still be true.
+    WhoAmI,
     McpStatus,
     McpPolicy(McpPolicy),
     /// A batch of tab-strip edits, verbatim JSON.
@@ -329,10 +351,11 @@ pub fn socket_path(pid: u32) -> PathBuf {
 
 /// Everything the grammar accepts, in one place — the usage string and the
 /// unknown-command error both quote it, so they can't drift from the match.
-const USAGE: &str = "ping | paint on|off|toggle|status | \
+const USAGE: &str = "ping | whoami | paint on|off|toggle|status | \
      skin <name>|theme|status | \
      mcp status|on|off | mcp writes on|off | mcp expose agents|all | \
-     mcp rpc <json> | adopt {\"cwd\":\"/…\",\"run\":\"…\"} | \
+     mcp rpc <json> | mcp from <session> <pane|-> rpc <json> | \
+     adopt {\"cwd\":\"/…\",\"run\":\"…\"} | \
      tabs [{\"op\":\"name\",\"pane\":1234,\"name\":\"DEV\"}, …] | \
      tab name <text> | tab group <name> | tab ungroup";
 
@@ -347,6 +370,12 @@ fn parse_line(s: &str) -> Result<Cmd, String> {
     if let Some(rest) = s.strip_prefix("tabs ") {
         return parse_tabs(rest.trim()).map(Cmd::Tabs);
     }
+    // `mcp from <session> <pane|-> rpc <json>` — the same payload with the
+    // caller named. Parsed before the bare form so the longer prefix wins, and
+    // the JSON is still taken verbatim from after the third word.
+    if let Some(rest) = s.strip_prefix("mcp from ") {
+        return parse_from(rest);
+    }
     // `mcp rpc` carries a whole JSON-RPC line: take the remainder VERBATIM.
     // Splitting it on whitespace would corrupt every string literal in it.
     if let Some(rest) = s.strip_prefix("mcp rpc ") {
@@ -354,11 +383,12 @@ fn parse_line(s: &str) -> Result<Cmd, String> {
         if line.is_empty() {
             return Err("mcp rpc: empty payload".into());
         }
-        return Ok(Cmd::McpRpc(line.to_string()));
+        return Ok(Cmd::McpRpc(None, line.to_string()));
     }
     let w: Vec<&str> = s.split_whitespace().collect();
     match w.as_slice() {
         ["ping"] => Ok(Cmd::Ping),
+        ["whoami"] => Ok(Cmd::WhoAmI),
         ["paint", "on"] => Ok(Cmd::Paint(Req::Set(true))),
         ["paint", "off"] => Ok(Cmd::Paint(Req::Set(false))),
         ["paint", "toggle"] => Ok(Cmd::Paint(Req::Toggle)),
@@ -377,6 +407,44 @@ fn parse_line(s: &str) -> Result<Cmd, String> {
         ["mcp", "expose", "agents"] => Ok(Cmd::McpPolicy(McpPolicy::ExposeAll(false))),
         _ => Err(format!("unknown command {s:?} — try: {USAGE}")),
     }
+}
+
+/// `mcp from <session> <pane|-> rpc <json>`.
+///
+/// Three fixed words then a verbatim tail, for the same reason the bare form
+/// takes its tail verbatim: splitting the payload on whitespace would corrupt
+/// every string literal in it. `-` in the pane slot says the caller could not
+/// find out which pane it is in, which is different from a pane called nothing
+/// and is the honest answer from a process whose chain the host did not know.
+fn parse_from(rest: &str) -> Result<Cmd, String> {
+    let mut words = rest.splitn(3, ' ');
+    let (Some(session), Some(pane), Some(tail)) = (words.next(), words.next(), words.next()) else {
+        return Err("mcp from: expected <session> <pane|-> rpc <json>".into());
+    };
+    if session.is_empty() {
+        return Err("mcp from: empty session".into());
+    }
+    let pane = match pane {
+        "-" => None,
+        n => Some(
+            n.parse::<u64>()
+                .map_err(|_| format!("mcp from: {n:?} is not a pane id (or `-`)"))?,
+        ),
+    };
+    let Some(payload) = tail.strip_prefix("rpc ") else {
+        return Err("mcp from: expected `rpc <json>` after the pane".into());
+    };
+    let payload = payload.trim();
+    if payload.is_empty() {
+        return Err("mcp from: empty payload".into());
+    }
+    Ok(Cmd::McpRpc(
+        Some(Caller {
+            session: session.to_string(),
+            pane,
+        }),
+        payload.to_string(),
+    ))
 }
 
 /// The `adopt` payload: one JSON object, `cwd` and/or `run`, cwd absolute when
@@ -458,12 +526,35 @@ fn handle_conn(
         // thread and get straight back to accepting. That thread re-arms the
         // write timeout: 400 ms is sized for a mirror read, not a `tools/list`
         // payload after a five-second wait.
-        Ok(Cmd::McpRpc(payload)) => {
+        Ok(Cmd::McpRpc(caller, payload)) => {
+            // A caller that named a DIFFERENT session is answered here and goes
+            // no further. Several Terminal Delights run on one box and a relay
+            // that resolved the wrong window used to be served in full — an
+            // answer about somebody else's terminals, correct in shape and
+            // impossible to spot. Refusing costs one comparison and turns that
+            // into a sentence naming both sessions.
+            if let Some(c) = &caller {
+                let mine = crate::instance::key();
+                if c.session != mine {
+                    let msg = format!(
+                        "wrong window: this is terminal-delight session {mine:?} \
+                         (window {}), and you asked for session {:?}. Nothing was \
+                         read or written. Your relay resolved the wrong instance.",
+                        std::process::id(),
+                        c.session
+                    );
+                    let reply = mcp::error_response(&payload, -32001, &msg)
+                        .unwrap_or_else(|| MCP_NONE.to_string());
+                    let mut stream = stream;
+                    let _ = writeln!(stream, "{reply}");
+                    return;
+                }
+            }
             let spawned = thread::Builder::new()
                 .name("td-ctl-mcp".into())
                 .spawn(move || {
-                    let reply =
-                        mcp_transport::respond(&payload).unwrap_or_else(|| MCP_NONE.to_string());
+                    let reply = mcp_transport::respond_as(&payload, caller)
+                        .unwrap_or_else(|| MCP_NONE.to_string());
                     let mut stream = stream;
                     let _ = stream.set_write_timeout(Some(Duration::from_secs(8)));
                     let _ = writeln!(stream, "{reply}");
@@ -477,6 +568,11 @@ fn handle_conn(
             return; // the worker owns the connection from here
         }
         Ok(Cmd::Ping) => "pong".to_string(),
+        // Answered from the socket thread with no main-thread hop: it reads the
+        // process-wide session binding and a pid, neither of which the UI owns.
+        // It has to stay cheap, because finding the right window means asking
+        // every live one.
+        Ok(Cmd::WhoAmI) => format!("ok {} {}", crate::instance::key(), std::process::id()),
         Ok(Cmd::PaintStatus) => if mirror.load(Ordering::Relaxed) {
             "on"
         } else {
@@ -1129,6 +1225,111 @@ fn owning_td() -> Option<(u32, Option<u32>)> {
     None
 }
 
+/// This process's own parent chain, innermost first, ending where `/proc` does.
+///
+/// The raw material for every structural answer below: a process inside a pane
+/// is a descendant of the host that forked that pane's shell, so the chain
+/// contains both the shell and the host, and neither can be faked by an
+/// environment somebody else set.
+fn ancestry() -> Vec<u32> {
+    let mut chain = vec![];
+    let mut pid = std::process::id();
+    // Deep enough for host → shell → agent → wrapper → server with room to
+    // spare; bounded so a malformed /proc chain can never spin.
+    for _ in 0..64 {
+        if pid <= 1 {
+            break;
+        }
+        chain.push(pid);
+        match ppid_of(pid) {
+            Some(p) => pid = p,
+            None => break,
+        }
+    }
+    chain
+}
+
+/// Which window a live control socket belongs to: `(session, window pid)`.
+///
+/// Asked of the socket rather than read from a file, so the answer is a running
+/// process's own account of itself. A socket file whose process is gone simply
+/// fails to answer, which is how [`live_windows`] filters the dead ones without
+/// a separate liveness test — the runtime directory keeps every socket a window
+/// ever made, and 26 of 28 pointing at nothing was the state that made an
+/// unresolved relay report twenty-eight running windows.
+fn window_identity(path: &Path) -> Option<(String, u32)> {
+    let reply = send_within(path, "whoami", Duration::from_millis(300)).ok()?;
+    let mut w = reply.trim().split_whitespace();
+    (w.next()? == "ok").then_some(())?;
+    let session = w.next()?.to_string();
+    let pid = w.next()?.parse().ok()?;
+    Some((session, pid))
+}
+
+/// Every window that is actually running, with the session each one holds.
+fn live_windows() -> Vec<(String, u32)> {
+    discover()
+        .into_iter()
+        .filter_map(|(_, path)| window_identity(&path))
+        .collect()
+}
+
+/// What a process inside a pane can find out about itself without being told.
+pub(crate) struct Located {
+    pub session: String,
+    pub pane: Option<u64>,
+    /// The window drawing this session, when one is running.
+    pub window: Option<u32>,
+}
+
+/// Work out which Terminal Delight this process is inside, from the process
+/// tree rather than from the environment.
+///
+/// The walk this replaces looked for an ancestor that owned a WINDOW's control
+/// socket, and it worked until the host took the pseudoterminals: a hosted
+/// pane's parent is the host, and the window is a sibling that never appears on
+/// the chain at all. Every hosted pane therefore fell through to
+/// `$TD_SESSION` — which an agent that scrubs its children's environment (Codex
+/// does) does not pass on, and which anything can set to the wrong value.
+///
+/// The host is still an ancestor. So: walk up, ask every live session host for
+/// its own pid, and the one that appears on the chain is ours. That host also
+/// holds the pane table, so the shell on the chain names the pane. Then ask
+/// every live window which session it holds, and take the one that matches.
+///
+/// Nothing here reads an environment variable, and every answer comes from a
+/// process that cannot be wrong about itself.
+pub(crate) fn locate() -> Option<Located> {
+    let chain = ancestry();
+    let (session, host) = crate::hostctl::sockets_present().into_iter().find_map(|s| {
+        match crate::hostctl::probe_host(&s) {
+            crate::hostctl::HostProbe::Live { host, session, .. }
+                if host != 0 && chain.contains(&host) =>
+            {
+                Some((session, host))
+            }
+            _ => None,
+        }
+    })?;
+    // The pane is a second question, and a failure to answer it is not a
+    // failure to locate: knowing the session is already enough to reach the
+    // right window and to be refused by the wrong one.
+    let pane = crate::hostctl::panes_of(&session)
+        .into_iter()
+        .find(|p| chain.contains(&p.shell_pid))
+        .map(|p| p.pane.0);
+    let _ = host;
+    let window = live_windows()
+        .into_iter()
+        .find(|(s, _)| *s == session)
+        .map(|(_, pid)| pid);
+    Some(Located {
+        session,
+        pane,
+        window,
+    })
+}
+
 /// Resolve which terminal the relay talks to: an explicit `--pid`, else the
 /// window hosting us, else — only if it is unambiguous — the single running
 /// terminal. Refusing to guess between several is deliberate: silently driving
@@ -1190,12 +1391,33 @@ fn relay_target(args: &[String]) -> Result<u32, String> {
 /// a GUI terminal launched from the desktop never is. The relay inverts that: it
 /// is spawned BY the agent, and reaches back to the window already on screen.
 pub fn run_mcp_cli(args: &[String]) -> i32 {
-    let pid = match relay_target(args) {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("terminal-delight mcp: {e}");
-            return 1;
-        }
+    // Derived first, from the process tree, because that is the only account
+    // nobody else can have got wrong. An explicit `--pid` still overrides it —
+    // naming a window on purpose is a different act from being unable to find
+    // one — and the environment remains the last resort, for a caller whose
+    // chain was broken by a reparenting wrapper (tmux, issue 215).
+    let located = args.is_empty().then(locate).flatten();
+    let pid = match located.as_ref().and_then(|l| l.window) {
+        Some(p) => p,
+        None => match relay_target(args) {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("terminal-delight mcp: {e}");
+                return 1;
+            }
+        },
+    };
+    // The prefix every line is sent under. Naming ourselves lets the window
+    // refuse a call meant for a different instance, and lets a pane-scoped verb
+    // act on the pane we are actually in. A caller that could locate nothing
+    // sends the bare form and is served as before — degraded, never blocked.
+    let prefix = match &located {
+        Some(l) => format!(
+            "mcp from {} {} rpc ",
+            l.session,
+            l.pane.map(|p| p.to_string()).unwrap_or_else(|| "-".into())
+        ),
+        None => "mcp rpc ".to_string(),
     };
     let path = socket_path(pid);
 
@@ -1215,7 +1437,7 @@ pub fn run_mcp_cli(args: &[String]) -> i32 {
         if req.is_empty() {
             continue;
         }
-        match send_within(&path, &format!("mcp rpc {req}"), budget) {
+        match send_within(&path, &format!("{prefix}{req}"), budget) {
             // A notification: JSON-RPC says answer nothing, so write nothing.
             Ok(r) if r == MCP_NONE => {}
             // A protocol-level refusal from ctl (never from the MCP handler,
@@ -1589,6 +1811,58 @@ mod tests {
         server.join().unwrap();
     }
 
+    /// A call addressed to another session is refused, over the real socket,
+    /// before anything is read or written — and the refusal NAMES both sessions
+    /// so the caller can tell a resolution bug from a policy one.
+    ///
+    /// This is the guarantee the whole caller-identity path exists to make:
+    /// several Terminal Delights run on one box, and a relay that resolved the
+    /// wrong window used to be served in full. `whoami` is exercised here too,
+    /// because it is how a caller finds the right window in the first place and
+    /// the two answers have to agree about which session this is.
+    #[test]
+    fn a_call_meant_for_another_session_is_refused_by_name() {
+        let dir = tmp("wrong-window");
+        let sock = dir.join("ctl-1.sock");
+        let listener = UnixListener::bind(&sock).unwrap();
+        let (tx, _rx) = mpsc::channel::<Req>();
+        let mirror = Arc::new(AtomicBool::new(false));
+        let m2 = Arc::clone(&mirror);
+        let mcp_mirror = Arc::new(AtomicU8::new(0));
+        let mm2 = Arc::clone(&mcp_mirror);
+        let server = thread::spawn(move || {
+            for _ in 0..2 {
+                let (stream, _) = listener.accept().unwrap();
+                handle_conn(stream, &m2, &mm2, &Mutex::new(SkinMirror::default()), &tx);
+            }
+        });
+
+        let mine = crate::instance::key();
+        let who = send(&sock, "whoami").unwrap();
+        assert_eq!(
+            who.trim(),
+            format!("ok {mine} {}", std::process::id()),
+            "whoami must name this window's session and pid"
+        );
+
+        // A session this window certainly does not hold.
+        let req = r#"{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"list_panes","arguments":{}}}"#;
+        let reply = send(&sock, &format!("mcp from not-{mine} - rpc {req}")).unwrap();
+        assert!(
+            reply.contains("wrong window") && reply.contains(&format!("not-{mine}")),
+            "the refusal did not name the session that was asked for: {reply}"
+        );
+        assert!(
+            reply.contains("\"id\":7"),
+            "a refusal must answer the request it refused: {reply}"
+        );
+        assert!(
+            !reply.contains("\"result\""),
+            "a refused call must not carry a result: {reply}"
+        );
+        server.join().unwrap();
+    }
+
     #[test]
     fn junk_gets_an_error_line_not_a_hang() {
         let dir = tmp("junk");
@@ -1656,11 +1930,58 @@ mod tests {
         // would corrupt it, so the parser must take the remainder untouched.
         let json = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"x y"}}"#;
         match parse_line(&format!("mcp rpc {json}")) {
-            Ok(Cmd::McpRpc(p)) => assert_eq!(p, json),
+            Ok(Cmd::McpRpc(None, p)) => assert_eq!(p, json),
             _ => panic!("mcp rpc did not parse as a verbatim payload"),
         }
         assert!(parse_line("mcp rpc ").is_err());
         assert!(parse_line("mcp rpc").is_err());
+    }
+
+    /// The caller-naming form takes its payload just as verbatim, after three
+    /// fixed words — the whole point being that the JSON is untouched while the
+    /// identity in front of it is structured.
+    #[test]
+    fn the_caller_naming_form_keeps_the_payload_verbatim() {
+        let json = r#"{"jsonrpc":"2.0","id":1,"params":{"name":"x y","p":{"q":"r s"}}}"#;
+        match parse_line(&format!("mcp from tdclip 9 rpc {json}")) {
+            Ok(Cmd::McpRpc(Some(c), p)) => {
+                assert_eq!(c.session, "tdclip");
+                assert_eq!(c.pane, Some(9));
+                assert_eq!(p, json);
+            }
+            other => panic!("did not parse as a named caller: {other:?}"),
+        }
+    }
+
+    /// A caller that could not find out which pane it is in says so with `-`,
+    /// and that is NOT pane zero. The distinction is the whole reason the field
+    /// is optional rather than defaulted.
+    #[test]
+    fn a_caller_with_no_pane_says_so_and_is_not_pane_zero() {
+        match parse_line(r#"mcp from 1 - rpc {"id":1}"#) {
+            Ok(Cmd::McpRpc(Some(c), _)) => assert_eq!(c.pane, None),
+            other => panic!("`-` did not parse as an unknown pane: {other:?}"),
+        }
+        match parse_line(r#"mcp from 1 0 rpc {"id":1}"#) {
+            Ok(Cmd::McpRpc(Some(c), _)) => assert_eq!(c.pane, Some(0)),
+            other => panic!("pane 0 is a pane: {other:?}"),
+        }
+    }
+
+    /// A malformed caller is refused rather than silently dropped down to the
+    /// anonymous form — being unable to read who is asking is not the same as
+    /// nobody asking, and serving it as anonymous would skip the wrong-window
+    /// guard exactly when something is already wrong.
+    #[test]
+    fn a_malformed_caller_is_refused_rather_than_treated_as_anonymous() {
+        for line in [
+            r#"mcp from tdclip rpc {"id":1}"#,
+            r#"mcp from tdclip nine rpc {"id":1}"#,
+            r#"mcp from tdclip 9 {"id":1}"#,
+            "mcp from tdclip 9 rpc ",
+        ] {
+            assert!(parse_line(line).is_err(), "accepted a broken caller: {line}");
+        }
     }
 
     #[test]

@@ -245,6 +245,9 @@ fn snapshot_of(ws: &mut Workspace, cx: &mut Context<Workspace>) -> mcp::Snapshot
         panes: ws.mcp_snapshot(cx),
         outer_grade: ws.mcp_outer_grade(cx),
         instance: Some(here()),
+        // Filled in by the transport that has a caller to name; the ticker
+        // serves every transport and knows nothing about who asked.
+        caller: None,
     }
 }
 
@@ -278,6 +281,17 @@ fn here() -> mcp::Instance {
 /// Blocks up to [`SNAPSHOT_BUDGET`], so callers must not run it on a thread that
 /// owns an accept loop.
 pub(crate) fn respond(line: &str) -> Option<String> {
+    respond_as(line, None)
+}
+
+/// [`respond`], with the caller named.
+///
+/// `caller` is what a relay worked out about ITSELF from its own process tree —
+/// which session it is in and which pane. It reaches the snapshot rather than
+/// the transport because it is per-request data the protocol layer needs: a
+/// pane-scoped verb can then default to the pane that called it instead of
+/// making the agent guess its own pid out of a listing.
+pub(crate) fn respond_as(line: &str, caller: Option<crate::ctl::Caller>) -> Option<String> {
     if !mcp::requires_snapshot(line) {
         return mcp::handle_line(line, &mcp::Snapshot::empty(), |_, _| vec![]);
     }
@@ -286,7 +300,11 @@ pub(crate) fn respond(line: &str) -> Option<String> {
         return mcp::error_response(line, -32000, "terminal-delight UI not ready");
     }
     match reply_rx.recv_timeout(SNAPSHOT_BUDGET) {
-        Ok(snap) => {
+        Ok(mut snap) => {
+            snap.caller = caller.map(|c| mcp::Caller {
+                session: c.session,
+                pane: c.pane,
+            });
             let home = session::home_dir();
             // The write capability: a set_pane_config batch is applied on the
             // gpui main thread via the same ticker, bounded by the same budget.
@@ -431,6 +449,7 @@ mod tests {
                 window: 99,
                 build: Some("td-test".into()),
             }),
+            caller: None,
         }
     }
 

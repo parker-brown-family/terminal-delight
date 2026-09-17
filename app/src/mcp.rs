@@ -547,12 +547,73 @@ pub struct Snapshot {
     /// stays `Option` to the wire, because a window that cannot name itself is a
     /// fact a caller needs and silence would read as agreement.
     pub instance: Option<Instance>,
+    /// Who asked, when they were able to say. Per-request rather than per-window,
+    /// which is why it lives on the snapshot: the snapshot is the live data ONE
+    /// request is answered from.
+    pub caller: Option<Caller>,
+}
+
+/// Who is asking, as derived from their own process tree by the relay.
+///
+/// The host that forked a pane's shell is an ancestor of everything running in
+/// it, so a process inside a pane can find out which session and which pane it
+/// is in by walking its own parents and asking the authority — no environment
+/// variable, and nothing a wrapper could strip. See `ctl::locate`.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub struct Caller {
+    /// The session the caller believes it is in. The window compares this
+    /// against its own before answering anything.
+    pub session: String,
+    /// The pane the caller is in, when the host could name one. `None` is a
+    /// real answer and never means pane zero.
+    pub pane: Option<u64>,
 }
 
 impl Snapshot {
     /// Panes the policy currently permits a connected agent to see.
     fn exposed(&self) -> Vec<&PaneInfo> {
         self.panes.iter().filter(|p| p.exposed).collect()
+    }
+
+    /// Which pane a pane-scoped verb should act on: the one the caller named,
+    /// else the one the caller is sitting in.
+    ///
+    /// The default is the whole point. `declare_deliverable` asked for a `pid`
+    /// "from list_panes" and the caller's only way to find itself in that
+    /// listing was its title and working directory — which two agents on one
+    /// project share, so the rule was "guess, and if you guess wrong your turn's
+    /// deliverable appears on somebody else's row". The pane id the host put in
+    /// the caller's environment settles it without asking anyone to match
+    /// strings.
+    ///
+    /// The error says which of the two ways to name a pane were available, so a
+    /// caller whose chain the host could not read is told that rather than
+    /// being told to try harder.
+    fn target_pane(&self, named: Option<u32>) -> Result<u32, String> {
+        if let Some(pid) = named {
+            return Ok(pid);
+        }
+        let Some(caller) = &self.caller else {
+            return Err("no `pid`, and this connection did not say who is calling \
+                        — pass a pid from list_panes"
+                .to_string());
+        };
+        let Some(pane) = caller.pane else {
+            return Err("no `pid`, and the host could not say which pane you are \
+                        in (a pane it did not start, or a process detached from \
+                        its own parents) — pass a pid from list_panes"
+                .to_string());
+        };
+        self.panes
+            .iter()
+            .find(|p| p.pane_id == Some(pane))
+            .map(|p| p.pid)
+            .ok_or_else(|| {
+                format!(
+                    "no `pid`, and pane {pane} — the pane you are calling from — \
+                     is not in this window's listing"
+                )
+            })
     }
 
     /// A snapshot that exposes nothing — used to answer snapshot-independent
@@ -564,6 +625,7 @@ impl Snapshot {
             panes: vec![],
             outer_grade: GradeReport::default(),
             instance: None,
+            caller: None,
         }
     }
 }
@@ -810,13 +872,13 @@ fn tool_defs() -> Value {
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "pid": { "type": "integer", "description": "pid of the pane to note, from list_panes — usually your own" },
+                    "pid": { "type": "integer", "description": "pid of the pane to note, from list_panes. OMIT IT to note your own pane — the window works out which one you are calling from, which is more reliable than matching yourself in a listing." },
                     "title": { "type": "string", "description": "optional headline, up to 40 characters, drawn bigger and bolder (\"GET MILK!\")" },
                     "text": { "type": "string", "description": "the note itself — TEN words or fewer; what happened, or why this pane needs attention" },
                     "pin": { "type": "boolean", "description": "stick a pushpin through it (surfaces on the pane's tab); default false" },
                     "clear": { "type": "boolean", "description": "peel the note off instead of posting one" }
                 },
-                "required": ["pid"],
+                "required": [],
                 "additionalProperties": false
             }
         },
@@ -839,12 +901,12 @@ fn tool_defs() -> Value {
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "pid": { "type": "integer", "description": "pid of the pane that produced it, from list_panes — usually your own" },
+                    "pid": { "type": "integer", "description": "pid of the pane that produced it, from list_panes. OMIT IT for your own pane — the usual case, and the window resolves it from who is calling rather than leaving you to match a title." },
                     "label": { "type": "string", "description": "what to call it, up to 48 characters (\"Slice ledger\", \"PR 460\"); defaults to the target's filename" },
                     "href": { "type": "string", "description": "absolute path (/home/you/report.html) or full URL (https://…). Relative paths are refused: they would resolve against the terminal's directory, not yours." },
                     "clear": { "type": "boolean", "description": "withdraw the current declaration instead of making one" }
                 },
-                "required": ["pid"],
+                "required": [],
                 "additionalProperties": false
             }
         },
@@ -1263,8 +1325,9 @@ where
              TD_MCP_WRITE=1) to let an agent leave a note.",
         );
     }
-    let Some(pid) = args.get("pid").and_then(Value::as_u64) else {
-        return tool_err("leave_note requires a `pid` (an integer, from list_panes).");
+    let pid = match snap.target_pane(args.get("pid").and_then(Value::as_u64).map(|p| p as u32)) {
+        Ok(pid) => u64::from(pid),
+        Err(why) => return tool_err(&why),
     };
     let title = args.get("title").and_then(Value::as_str);
     let text = args.get("text").and_then(Value::as_str);
@@ -1315,8 +1378,9 @@ where
              TD_MCP_WRITE=1) to let an agent declare a deliverable.",
         );
     }
-    let Some(pid) = args.get("pid").and_then(Value::as_u64) else {
-        return tool_err("declare_deliverable requires a `pid` (an integer, from list_panes).");
+    let pid = match snap.target_pane(args.get("pid").and_then(Value::as_u64).map(|p| p as u32)) {
+        Ok(pid) => u64::from(pid),
+        Err(why) => return tool_err(&why),
     };
     let change = match validate_deliverable(
         args.get("label").and_then(Value::as_str),
@@ -1655,6 +1719,7 @@ mod tests {
                 window: 4242,
                 build: Some("td-abc1234-under-test".into()),
             }),
+            caller: None,
         }
     }
 
@@ -1903,6 +1968,20 @@ mod tests {
         resp(&handle_line(&line, snap, no_tail).unwrap())["result"].clone()
     }
 
+    /// A tool call with a write capability that succeeds on any pane, so a test
+    /// about WHICH pane was chosen is not also a test of the apply pipeline.
+    fn call_writing(snap: &Snapshot, name: &str, args: Value) -> Value {
+        let apply = |ups: &[ConfigUpdate]| -> Vec<ApplyOutcome> {
+            ups.iter()
+                .map(|(t, _)| (t.clone(), Ok(GradeReport::default())))
+                .collect()
+        };
+        let line = json!({ "id": 9, "method": "tools/call",
+            "params": { "name": name, "arguments": args } })
+        .to_string();
+        resp(&handle_line_with(&line, snap, no_tail, apply, no_search).unwrap())["result"].clone()
+    }
+
     /// Every block of text in a result, joined — the stamp is its own block, so
     /// an assertion that only read `content[0]` would pass whatever we did.
     fn text_of(result: &Value) -> String {
@@ -2002,6 +2081,102 @@ mod tests {
             text_of(&out)
         );
         assert_eq!(out["structuredContent"]["panes"][0]["pane_id"], 9);
+    }
+
+    /// A caller that names itself does not have to name its own pane: the
+    /// declaration lands on the pane it called from.
+    ///
+    /// This is the defect the whole caller-identity path exists for. The old
+    /// rule sent the agent to `list_panes` to find its own pid, and the only
+    /// keys it could match on were the title and the directory — which two
+    /// agents working on one project share, so the deliverable went to
+    /// whichever of them the agent picked.
+    #[test]
+    fn a_deliverable_with_no_pid_lands_on_the_pane_that_declared_it() {
+        let mut mine = agent_pane(100, true);
+        mine.pane_id = Some(9);
+        let mut sibling = agent_pane(200, true);
+        sibling.pane_id = Some(4);
+        // Indistinguishable by every key the agent could have matched on.
+        assert_eq!(mine.title, sibling.title);
+        assert_eq!(mine.cwd, sibling.cwd);
+
+        let mut s = snap_writable(vec![sibling, mine]);
+        s.caller = Some(Caller {
+            session: "tdclip".into(),
+            pane: Some(9),
+        });
+        let out = call_writing(&s, "declare_deliverable", json!({ "href": "/tmp/r.html" }));
+        assert_ne!(out["isError"], true, "{}", text_of(&out));
+        assert_eq!(
+            out["structuredContent"]["pid"], 100,
+            "the deliverable landed on the wrong pane: {}",
+            text_of(&out)
+        );
+    }
+
+    /// The same default for a note, and it reaches the pane through the one
+    /// pipeline every pane mutation uses.
+    #[test]
+    fn a_note_with_no_pid_lands_on_the_pane_that_left_it() {
+        let mut mine = agent_pane(100, true);
+        mine.pane_id = Some(9);
+        let mut s = snap_writable(vec![mine]);
+        s.caller = Some(Caller {
+            session: "tdclip".into(),
+            pane: Some(9),
+        });
+        let out = call_writing(&s, "leave_note", json!({ "text": "back in ten" }));
+        assert_ne!(out["isError"], true, "{}", text_of(&out));
+        assert_eq!(out["structuredContent"]["pid"], 100);
+    }
+
+    /// An explicit pid still wins. Supervising another pane is a real use, and
+    /// the default is a convenience for the common case, not a confinement.
+    #[test]
+    fn an_explicit_pid_still_beats_the_caller_default() {
+        let mut mine = agent_pane(100, true);
+        mine.pane_id = Some(9);
+        let mut other = agent_pane(200, true);
+        other.pane_id = Some(4);
+        let mut s = snap_writable(vec![mine, other]);
+        s.caller = Some(Caller {
+            session: "tdclip".into(),
+            pane: Some(9),
+        });
+        let out = call_writing(&s, "leave_note", json!({ "pid": 200, "text": "look here" }));
+        assert_eq!(out["structuredContent"]["pid"], 200);
+    }
+
+    /// A caller the host could not place is told THAT, rather than being told
+    /// to pass a pid with no hint of why the default did not work. The three
+    /// ways this fails are three different sentences on purpose: an anonymous
+    /// connection, a located caller in no known pane, and a pane this window is
+    /// not showing.
+    #[test]
+    fn each_way_of_not_knowing_the_caller_says_which_one_it_was() {
+        let mut p = agent_pane(100, true);
+        p.pane_id = Some(9);
+
+        let anon = snap_writable(vec![p.clone()]);
+        let e = text_of(&call(&anon, "leave_note", json!({ "text": "x" })));
+        assert!(e.contains("did not say who is calling"), "{e}");
+
+        let mut no_pane = snap_writable(vec![p.clone()]);
+        no_pane.caller = Some(Caller {
+            session: "tdclip".into(),
+            pane: None,
+        });
+        let e = text_of(&call(&no_pane, "leave_note", json!({ "text": "x" })));
+        assert!(e.contains("could not say which pane"), "{e}");
+
+        let mut stranger = snap_writable(vec![p]);
+        stranger.caller = Some(Caller {
+            session: "tdclip".into(),
+            pane: Some(77),
+        });
+        let e = text_of(&call(&stranger, "leave_note", json!({ "text": "x" })));
+        assert!(e.contains("pane 77"), "{e}");
     }
 
     /// A pane with no host id reports `null` rather than dropping the key.

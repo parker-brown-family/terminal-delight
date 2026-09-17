@@ -851,6 +851,7 @@ mod tests {
             session: session.to_string(),
             panes: 2,
             attended,
+            host: 1234,
         }
     }
 
