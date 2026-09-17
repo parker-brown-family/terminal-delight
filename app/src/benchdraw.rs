@@ -81,7 +81,7 @@ pub fn ink(tint: Tint, th: &Theme) -> Hsla {
     role_of(tint).of(th)
 }
 
-/// Lift an element off the pane, and let the tube's phosphor bleed around it.
+/// (see the two functions below)
 ///
 /// One function, used by every layered thing on the bench — the waiting
 /// block, the card, the composer, the rail — so depth is a property of the
@@ -94,9 +94,23 @@ pub fn ink(tint: Tint, th: &Theme) -> Hsla {
 /// having an opinion of its own. `tint` is the element's meaning-colour,
 /// which is what makes a question bloom in the complement and a document in
 /// the accent: the depth carries the same information the border does.
-pub fn raised<E: Styled>(el: E, tint: Hsla, th: &Theme) -> E {
-    let mut shadows = vec![
-        // The drop: the layer casting onto what it covers.
+/// Depth, and deliberately no phosphor.
+///
+/// It takes a tint and a theme it does not read, so that it and [`aglow`] are
+/// interchangeable — a renderer that glows only while a thing is waiting picks
+/// one of the two by name and calls it, rather than branching around two
+/// different shapes of call. The unused arguments are the price of that, and
+/// they are cheaper than the branch.
+pub fn raised<E: Styled>(el: E, _tint: Hsla, _th: &Theme) -> E {
+    el.shadow(depth())
+}
+
+/// The drop and the inner edge — what makes a surface read as a solid face
+/// rather than as a rectangle of a different colour. Every layered thing on
+/// the bench gets this; it is depth, and depth is free.
+fn depth() -> Vec<BoxShadow> {
+    vec![
+        // The layer casting onto what it covers.
         BoxShadow {
             color: gpui::black().alpha(0.42),
             offset: point(px(0.), px(2.)),
@@ -104,9 +118,7 @@ pub fn raised<E: Styled>(el: E, tint: Hsla, th: &Theme) -> E {
             spread_radius: px(0.),
             inset: false,
         },
-        // A bright inner top edge — the same reflection the pane header
-        // draws, which is what makes a surface read as a solid face rather
-        // than as a rectangle of a different colour.
+        // A bright inner top edge — the same reflection the pane header draws.
         BoxShadow {
             color: gpui::white().alpha(0.06),
             offset: point(px(0.), px(1.)),
@@ -114,7 +126,23 @@ pub fn raised<E: Styled>(el: E, tint: Hsla, th: &Theme) -> E {
             spread_radius: px(0.),
             inset: true,
         },
-    ];
+    ]
+}
+
+/// Depth AND the tube's phosphor — for the one thing on a surface that is
+/// asking to be looked at.
+///
+/// Split from [`raised`] because it was being spent on everything: the title
+/// card, the waiting block, the opened card, the composer, the rail's head row
+/// and every option chip could bloom at once, and a screen where six things
+/// glow has told the reader nothing. Parker: *"the amount of glow is just way
+/// too much ... glow should MEAN something, this is noise"*.
+///
+/// The budget is one per REGION — the head of the rail, the thing waiting on
+/// you in the body, the primary action on a card — and everything else takes
+/// depth, which separates surfaces without making a claim about attention.
+pub fn aglow<E: Styled>(el: E, tint: Hsla, th: &Theme) -> E {
+    let mut shadows = depth();
     if th.glow > 0.001 {
         shadows.push(BoxShadow {
             color: tint.alpha((th.glow * 0.45).min(0.5)),
@@ -231,7 +259,9 @@ pub fn rail_row(row: &Row, sk: &Skin, th: &Theme) -> Div {
             th,
         ));
     if raise {
-        raised(body, tint, th)
+        // The head of the rail: one row in a shelf, guaranteed by
+        // `Standing::lit`.
+        aglow(body, tint, th)
     } else {
         body
     }
@@ -563,7 +593,10 @@ fn question(q: &crate::surface::Question, sk: &Skin, th: &Theme) -> Div {
     } else {
         ink(crate::workbench::Tint::Settled, th)
     };
-    raised(
+    // Waiting earns the phosphor; answered is a record and records do not
+    // ask for attention.
+    let dress = if waiting { aglow } else { raised };
+    dress(
         sk.panel()
             .flex()
             .flex_col()
@@ -1065,11 +1098,11 @@ pub fn title_card(
         .when_some(tool.map(str::to_string), |d, t| {
             d.child(micro(t, 10., th.faint, th))
         });
-    if state.urgent() {
-        raised(card, tint, th)
-    } else {
-        card
-    }
+    // Depth, never phosphor. The title card says "Waiting on you" directly
+    // above a waiting block that says the same thing and carries the actual
+    // question — two blooms for one fact, and the one holding the buttons is
+    // the one worth looking at.
+    raised(card, tint, th)
 }
 
 /// Dress a verb as a button: big enough to hit, lit if it is the main one.
@@ -1086,7 +1119,8 @@ pub fn verb_button<E: Styled>(el: E, primary: bool, th: &Theme) -> E {
         .py(px(if primary { 10. } else { 6. }))
         .text_size(px(if primary { 13.5 } else { 11. }));
     if primary {
-        raised(el.border_color(th.accent.alpha(0.75)), th.accent, th)
+        // The primary action on a card — one per card.
+        aglow(el.border_color(th.accent.alpha(0.75)), th.accent, th)
     } else {
         el
     }
@@ -1368,7 +1402,7 @@ pub fn conversation(tail: &[String], th: &Theme) -> Div {
 /// have to go looking for. The chips are attached by the pane, because
 /// pressing one reaches a pseudoterminal.
 pub fn waiting_block(q: &crate::surface::Question, sk: &Skin, th: &Theme) -> Div {
-    raised(
+    aglow(
         sk.panel()
             .flex()
             .flex_col()

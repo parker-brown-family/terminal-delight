@@ -6864,7 +6864,16 @@ impl TerminalView {
                     Some(false) => format!("\u{2022} {} \u{b7} {}", i + 1, o.label),
                     None => format!("{} \u{b7} {}", i + 1, o.label),
                 };
-                let chip = sk.chip(lit || !answered).text_size(px(11.5)).child(label);
+                // LIT MEANS CHOSEN, and nothing else.
+                //
+                // Every chip was lit while the question was open, on the
+                // reasoning that every chip was pressable — so six options
+                // came up glowing at once and the glow stopped saying
+                // anything. Parker: *"the amount of glow is just way too much
+                // ... glow should MEAN something, this is noise"*. Pressable
+                // is what the cursor and the border are for; the bloom is
+                // reserved for state a person put there.
+                let chip = sk.chip(lit).text_size(px(11.5)).child(label);
                 if answered {
                     // A question already answered keeps its chips so the
                     // record reads the same as the decision did, but they do
@@ -6883,28 +6892,43 @@ impl TerminalView {
             .collect();
         div()
             .flex()
-            .flex_row()
-            .flex_wrap()
-            .gap(px(6.))
-            .children(chips)
-            // The picker's own Submit, where it has one. Ticking boxes
-            // commits nothing without it, so a multi-select without this chip
-            // is a question the bench can ask and cannot answer.
+            .flex_col()
+            .gap(px(10.))
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .flex_wrap()
+                    .gap(px(6.))
+                    .children(chips),
+            )
+            // The picker's own Submit, where it has one — on a row of its
+            // own, behind a rule.
+            //
+            // Ticking boxes commits nothing without it, so a multi-select
+            // without this chip is a question the bench can ask and cannot
+            // answer. And it is not one of the options: wrapped in beside
+            // `6 · Chat about this` it read as a seventh thing to pick.
+            // Parker: *"SUBMIT lives in its own space"*. It is also the only
+            // element in this card that glows, which is what makes the glow
+            // legible again — one primary action, one bloom.
             .when_some(q.submit.filter(|_| !answered), |d, at| {
-                d.child(
-                    crate::benchdraw::verb_button(
-                        sk.chip(true)
-                            .cursor_pointer()
-                            .child(format!("\u{2714} {}", submit_word)),
-                        true,
-                        th,
-                    )
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(move |view, _ev: &MouseDownEvent, _w, cx| {
-                            cx.stop_propagation();
-                            view.bench_press_nav(at, cx);
-                        }),
+                d.child(sk.rule_h()).child(
+                    div().flex().flex_row().justify_end().child(
+                        crate::benchdraw::verb_button(
+                            sk.chip(true)
+                                .cursor_pointer()
+                                .child(format!("\u{2714} {submit_word}")),
+                            true,
+                            th,
+                        )
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |view, _ev: &MouseDownEvent, _w, cx| {
+                                cx.stop_propagation();
+                                view.bench_press_nav(at, cx);
+                            }),
+                        ),
                     ),
                 )
             })
