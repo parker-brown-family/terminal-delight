@@ -3284,8 +3284,10 @@ impl TerminalView {
                 }
                 s.push(if cell.c == '\0' { ' ' } else { cell.c });
             }
-            let low = s.to_ascii_lowercase();
-            if low.contains("esc to interrupt") || low.contains("interrupt)") {
+            // The SAME rule the status line uses. These were two copies of
+            // one heuristic, and when the CLI stopped printing `esc to
+            // interrupt` only one of them would have been noticed.
+            if crate::hud::row_is_working(&s) {
                 return true;
             }
         }

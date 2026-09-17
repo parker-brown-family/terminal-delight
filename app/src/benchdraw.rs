@@ -1165,39 +1165,62 @@ pub fn title_card(
     th: &Theme,
 ) -> Div {
     let tint = ink(state.tint(), th);
+    let urgent = state.urgent();
     let card = sk
         .panel()
         .flex()
         .flex_row()
         .items_center()
-        .gap(px(10.))
-        .px(px(12.))
-        .py(px(9.))
-        .bg(th.surface.alpha(if state.urgent() { 0.6 } else { 0.35 }))
-        .border_l(px(if state.urgent() { 4. } else { 2. }))
-        .border_color(tint.alpha(if state.urgent() { 1.0 } else { 0.6 }))
+        .gap(px(14.))
+        .px(px(18.))
+        .py(px(16.))
+        .bg(th.surface.alpha(if urgent { 0.7 } else { 0.45 }))
+        .border_l(px(if urgent { 6. } else { 4. }))
+        .border_color(tint.alpha(if urgent { 1.0 } else { 0.75 }))
         .child(
+            // A LAMP, not a bullet. Ringed rather than merely bigger: a filled
+            // circle reads as punctuation at any size, and a ring around it
+            // reads as an indicator — the difference between a full stop and
+            // something that is on.
             div()
-                .w(px(8.))
-                .h(px(8.))
+                .w(px(18.))
+                .h(px(18.))
                 .flex_none()
-                .rounded(sk.rad_raw(4.))
-                .bg(tint),
+                .rounded(sk.rad_raw(9.))
+                .border_2()
+                .border_color(tint.alpha(0.55))
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(div().w(px(8.)).h(px(8.)).rounded(sk.rad_raw(4.)).bg(tint)),
         )
         .child(
+            // THE STATE, at the size of the thing it is reporting on.
+            //
+            // It was thirteen points beside an eight-pixel dot on a surface
+            // whose headings run to eighteen, so the one line answering *what
+            // is this agent doing* was the quietest thing on the bench.
+            // Parker: *"I want about 5x more emphasis on the Agent state"*.
+            //
+            // The SIZE is constant and the COLOUR does the work of saying
+            // which state it is — a calm state that shrinks is a calm state
+            // nobody can find, and finding it is the whole job. Waiting takes
+            // the tint outright; everything else is ordinary text beside a
+            // tinted lamp.
             div()
-                .text_size(px(13.))
-                .text_color(th.text.alpha(if state.urgent() { 1.0 } else { 0.8 }))
+                .text_size(px(26.))
+                .text_color(if urgent { tint } else { th.text.alpha(0.9) })
                 .child(state.word()),
         )
         .child(div().flex_1())
         .when_some(tool.map(str::to_string), |d, t| {
-            d.child(micro(t, 10., th.faint, th))
+            d.child(micro(t, 11., th.faint, th))
         });
     // Depth, never phosphor. The title card says "Waiting on you" directly
     // above a waiting block that says the same thing and carries the actual
     // question — two blooms for one fact, and the one holding the buttons is
-    // the one worth looking at.
+    // the one worth looking at. Emphasis is not the same dial as attention:
+    // this got bigger without getting a bloom.
     raised(card, tint, th)
 }
 

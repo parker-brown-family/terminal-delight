@@ -139,18 +139,95 @@ impl AgentStatus {
 /// gracefully (a bare "esc to interrupt" still reads as Working, just without
 /// metrics). `Finished` is *not* decided here — the caller layers it on from
 /// the pane's unacknowledged bell.
+/// Does this row read as the agent's own working spinner?
+///
+/// **The shape, not the words.** The detector this replaces looked for `esc to
+/// interrupt`, and that string has almost left the CLI: in 2.1.270 it survives
+/// only in the low-priority retry path, so an agent that had been composing for
+/// forty-nine seconds was reported as Idle. Parker, with the spinner on screen
+/// beside a bench reading Idle: *"the agent state is also not accurate"*.
+///
+/// The gerund is hopeless to match — Composing, Churned, Cooked, Cerebrating,
+/// Sautéed — and that is the point: the CLI varies the word on purpose and
+/// keeps the STRUCTURE. A working line is a parenthesised group carrying both
+/// an elapsed time and a token count:
+///
+/// ```text
+/// \u{2733} Composing\u{2026} (49s \u{b7} \u{2193} 7.5k tokens)
+/// ```
+///
+/// A finished line has neither the parentheses nor the tokens — `\u{2733}
+/// Churned for 13s \u{b7} done 11:22 AM` — so the two do not collide, and prose
+/// that merely mentions tokens has no seconds inside a bracket.
+///
+/// The old strings are kept rather than replaced. They still appear on older
+/// builds and on the retry path, and a detector that stops recognising the
+/// previous format is how this broke in the first place.
+pub fn row_is_working(text: &str) -> bool {
+    let low = text.to_ascii_lowercase();
+    if low.contains("esc to interrupt")
+        || low.contains("interrupt)")
+        || low.contains("still thinking")
+    {
+        return true;
+    }
+    // A bracketed group holding both an elapsed time and a token count.
+    let mut rest = low.as_str();
+    while let Some(open) = rest.find('(') {
+        let after = &rest[open + 1..];
+        let close = after.find(')').unwrap_or(after.len());
+        let group = &after[..close];
+        if group.contains("tokens") && has_elapsed(group) {
+            return true;
+        }
+        rest = &after[close.min(after.len())..];
+        if rest.is_empty() {
+            break;
+        }
+        rest = &rest[1.min(rest.len())..];
+    }
+    false
+}
+
+/// A run of digits followed by a time unit — `49s`, `2m`, `1h`.
+///
+/// Deliberately not a regex and deliberately strict about what follows the
+/// unit: `7.5k tokens` must not read as an elapsed time just because it has a
+/// digit and a letter in it.
+fn has_elapsed(group: &str) -> bool {
+    let b = group.as_bytes();
+    let mut i = 0;
+    while i < b.len() {
+        if !b[i].is_ascii_digit() {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        while i < b.len() && b[i].is_ascii_digit() {
+            i += 1;
+        }
+        if i == start {
+            continue;
+        }
+        let unit = b.get(i).copied();
+        let after = b.get(i + 1).copied();
+        let ends = after.is_none_or(|c| !c.is_ascii_alphanumeric() && c != b'.');
+        if matches!(unit, Some(b's') | Some(b'm') | Some(b'h')) && ends {
+            return true;
+        }
+    }
+    false
+}
+
 pub fn parse_status_line(rows: &[String]) -> AgentStatus {
     let lower: Vec<String> = rows.iter().map(|r| r.to_ascii_lowercase()).collect();
 
     // Working: stock Claude/Codex print "esc to interrupt"; Parker's custom
     // status line says "still thinking …". Accept both (broader than the bell's
     // detector on purpose — this never feeds the bell).
-    let working = lower.iter().any(|l| {
-        l.contains("esc to interrupt")
-            || l.contains("interrupt)")
-            || l.contains("still thinking")
-            || (l.contains("tokens") && l.contains("thinking"))
-    });
+    // One rule, shared with `TerminalView::agent_is_thinking` — they were two
+    // copies of the same heuristic and only one of them would have been fixed.
+    let working = lower.iter().any(|l| row_is_working(l));
 
     // The richest status row: prefer one carrying a "(… tokens …)" group.
     let status_row = rows
@@ -351,6 +428,46 @@ pub fn fmt_tokens(n: u64) -> String {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_working_spinner_is_recognised_by_its_shape_not_its_verb() {
+        // Transcribed from a photograph of the running agent. It had been
+        // composing for forty-nine seconds while the bench read Idle, because
+        // the old detector wanted `esc to interrupt` and this build prints it
+        // almost nowhere.
+        assert!(row_is_working("✳ Composing… (49s · ↓ 7.5k tokens)"));
+        // The CLI varies the gerund on purpose and keeps the structure, so
+        // the structure is what this matches.
+        for gerund in ["Churning", "Cerebrating", "Sautéing", "Baking", "Noodling"] {
+            let row = format!("✳ {gerund}… (3s · ↓ 120 tokens)");
+            assert!(row_is_working(&row), "{row}");
+        }
+        // Older builds and the retry path still say it, and dropping support
+        // for the previous format is how this broke the first time.
+        assert!(row_is_working("✳ Thinking… (12s · esc to interrupt)"));
+        assert!(row_is_working(
+            "  · next try in 4s · attempt 2 · esc to interrupt"
+        ));
+    }
+
+    #[test]
+    fn a_finished_line_and_ordinary_prose_are_not_working() {
+        // The done line from the same screen. It has an elapsed time and no
+        // tokens and no bracket, and confusing the two would make every
+        // finished agent look busy forever.
+        assert!(!row_is_working("✳ Churned for 13s · done 11:22 AM"));
+        // Prose that mentions tokens. No bracket, no elapsed time, not a
+        // spinner — and the agent talks about tokens constantly.
+        assert!(!row_is_working("we spent 7.5k tokens on that turn"));
+        assert!(!row_is_working(
+            "the context window is 200k tokens and we used half"
+        ));
+        // A bracket with tokens but no duration: a caption, not a spinner.
+        assert!(!row_is_working("Prompt cache (main): 12k tokens"));
+        // And a bracket with a duration but no tokens.
+        assert!(!row_is_working("finished (49s)"));
+        assert!(!row_is_working(""));
+    }
     use super::*;
 
     fn rows(s: &[&str]) -> Vec<String> {
