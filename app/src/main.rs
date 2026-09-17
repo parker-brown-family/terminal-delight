@@ -1135,6 +1135,37 @@ fn marquee_banner(text: &str, age: f32, th: &theme::Theme) -> gpui::Div {
         )
 }
 
+/// How far past the terminal render a tray may stand: a hairline, not a hand.
+///
+/// Trays are drawn over the panes, and a tray taller than what it covers
+/// stops reading as a layer over the terminal and starts reading as a second
+/// window that happens to overlap ours — the palette tray was doing exactly
+/// that, running down over the bottom bezel and its split buttons. One percent
+/// is deliberately not zero: a tray that ends flush with the render's edge
+/// looks clipped by accident, and the sliver of overhang says the edge is
+/// where it is on purpose. Everything past the cap scrolls inside the tray.
+const TRAY_OVERHANG: f32 = 0.01;
+
+/// The shortest a tray is ever squeezed to. Below this a scrolling panel is
+/// a peephole, and the honest answer on a window that small is to overhang a
+/// little more rather than to show three pixels of content.
+const TRAY_MIN_H: f32 = 160.;
+
+/// The tallest a tray whose top edge sits at `top` may be, given the render
+/// band `(band_top, band_h)` it hangs over.
+///
+/// Pure arithmetic, so the rule is testable without a window: the tray's
+/// bottom may reach one [`TRAY_OVERHANG`] past the render's bottom, and the
+/// tray itself is never taller than the render plus that same sliver — which
+/// is what stops a tray anchored ABOVE the render (in the top bezel) from
+/// buying extra height with the distance.
+fn tray_cap(band: (f32, f32), top: f32) -> f32 {
+    let (band_top, band_h) = band;
+    let overhang = band_h * TRAY_OVERHANG;
+    let limit = band_top + band_h + overhang;
+    (limit - top).min(band_h + overhang).max(TRAY_MIN_H)
+}
+
 /// Seconds since the process started, for animations that want a phase rather
 /// than a duration.
 ///
@@ -3330,6 +3361,15 @@ struct Workspace {
     drop_target: Option<DropTarget>,
     /// Live per-pane content rects (entity → box) for drop hit-testing.
     pane_bounds: Arc<Mutex<std::collections::HashMap<EntityId, Bounds<Pixels>>>>,
+    /// The vertical band the terminal grid occupied last frame — `(top,
+    /// height)` in window coordinates, measured from the pane rects the paint
+    /// registered rather than guessed from the bezels.
+    ///
+    /// Trays hang OVER the render and are clamped to it (see [`TRAY_OVERHANG`]
+    /// and [`Workspace::tray_max_h`]), so this is the number every popup's
+    /// height is answerable to. `None` before the first paint, and on that one
+    /// frame the viewport stands in.
+    render_band: Option<(f32, f32)>,
     /// Live per-tab button rects (index → box) for "drop onto a main tab".
     tab_bounds: Arc<Mutex<std::collections::HashMap<usize, Bounds<Pixels>>>>,
     /// An outer tab being dragged along the strip to reorder it, if any.
@@ -4647,6 +4687,7 @@ impl Workspace {
             drag_pane: None,
             drop_target: None,
             pane_bounds: Arc::new(Mutex::new(std::collections::HashMap::new())),
+            render_band: None,
             tab_bounds: Arc::new(Mutex::new(std::collections::HashMap::new())),
             tab_drag: None,
             group_drag: None,
@@ -8655,9 +8696,16 @@ impl Workspace {
                 )
                 .child(
                     sk.panel()
+                        .id("bar-menu-panel")
                         .absolute()
                         .left(at.x)
                         .top(at.y)
+                        // A branch with forty tabs makes this list longer than
+                        // the window; it is a tray like any other and stops at
+                        // the render's edge.
+                        .max_h(px(self.tray_max_h(f32::from(at.y))))
+                        .overflow_x_hidden()
+                        .overflow_y_scroll()
                         .shadow_lg()
                         .child(items),
                 ),
@@ -10044,6 +10092,50 @@ impl Workspace {
         cx.notify();
     }
 
+    /// The band a set of pane rects covers: `(top, height)` in window
+    /// coordinates. `None` for an empty map — no panes were painted, which is
+    /// not the same as panes of zero height.
+    fn band_of(rects: &std::collections::HashMap<EntityId, Bounds<Pixels>>) -> Option<(f32, f32)> {
+        let mut top = f32::INFINITY;
+        let mut bottom = f32::NEG_INFINITY;
+        for b in rects.values() {
+            top = top.min(f32::from(b.origin.y));
+            bottom = bottom.max(f32::from(b.origin.y) + f32::from(b.size.height));
+        }
+        (bottom > top).then_some((top, bottom - top))
+    }
+
+    /// The render band trays are answerable to. Before the first paint there
+    /// are no pane rects to measure, and the window stands in for one frame —
+    /// the honest fallback, since an unmeasured render is not a render of
+    /// height zero.
+    ///
+    /// Deliberately takes no `Window`: half the trays are built in helpers
+    /// that never had one, and a rule only half the trays can ask about is
+    /// how the palette tray ended up being the only one with a cap.
+    fn tray_band(&self) -> (f32, f32) {
+        self.render_band.unwrap_or_else(|| {
+            (
+                0.,
+                self.last_win
+                    .map(|(_, _, _, h)| h)
+                    .unwrap_or(TRAY_MIN_H * 4.),
+            )
+        })
+    }
+
+    /// The tallest a CENTRED tray (one the layout places rather than one
+    /// anchored to a click) may be: the render's own height plus the hairline.
+    fn tray_card_h(&self) -> f32 {
+        let (top, _) = self.tray_band();
+        tray_cap(self.tray_band(), top)
+    }
+
+    /// The tallest a tray anchored at `top` may be. See [`tray_cap`].
+    fn tray_max_h(&self, top: f32) -> f32 {
+        tray_cap(self.tray_band(), top)
+    }
+
     /// The pane entity with this id, if it's still in any tab's tree.
     fn pane_by_id(&self, id: gpui::EntityId) -> Option<Entity<TerminalView>> {
         for tab in &self.tabs {
@@ -10812,9 +10904,11 @@ impl Workspace {
         }
 
         let panel = div()
+            .id("plugins-panel")
             .w(gpui::relative(0.6))
-            .max_h(gpui::relative(0.8))
-            .overflow_hidden()
+            .max_h(px(self.tray_card_h()))
+            .overflow_x_hidden()
+            .overflow_y_scroll()
             .p_3()
             .rounded_md()
             .border_2()
@@ -10941,7 +11035,11 @@ impl Workspace {
         };
 
         let panel = div()
+            .id("notif-panel")
             .w(px(460.))
+            .max_h(px(self.tray_card_h()))
+            .overflow_x_hidden()
+            .overflow_y_scroll()
             .p_3()
             .rounded_md()
             .border_2()
@@ -19421,6 +19519,9 @@ impl Render for Workspace {
         );
         // drop-hit-test rects are rebuilt every frame by the canvases below, so
         // a closed pane / removed tab never leaves a stale target behind.
+        // The band those rects covered IS the terminal render, so take it
+        // before the clear: it is what every tray's height is clamped to.
+        self.render_band = Self::band_of(&self.pane_bounds.lock().unwrap());
         self.pane_bounds.lock().unwrap().clear();
         self.tab_bounds.lock().unwrap().clear();
         let wb = window.bounds();
@@ -20908,17 +21009,23 @@ impl Render for Workspace {
             // top-right anchor under the titlebar control.
             const PANEL_W: f32 = 300.; // match the DISPLAY (⛭) tray width
             const PANEL_H_EST: f32 = 458.; // generous, incl. colour wheel + pick row + follow-outer
-            let vp_h = f32::from(window.viewport_size().height);
             let mut panel = div().id("theme-panel").absolute().w(px(PANEL_W));
+            // Where the tray's top edge lands decides how tall it may be, so
+            // the anchor is computed first and kept.
+            let tray_top = match self.menu_at {
+                Some(at) => {
+                    let vh = f32::from(window.viewport_size().height);
+                    (f32::from(at.y) + 6.).clamp(8., (vh - PANEL_H_EST - 8.).max(8.))
+                }
+                None => 36.,
+            };
             panel = match self.menu_at {
                 Some(at) => {
-                    let vp = window.viewport_size();
-                    let (vw, vh) = (f32::from(vp.width), f32::from(vp.height));
+                    let vw = f32::from(window.viewport_size().width);
                     let right = (vw - f32::from(at.x)).clamp(8., (vw - PANEL_W - 8.).max(8.));
-                    let top = (f32::from(at.y) + 6.).clamp(8., (vh - PANEL_H_EST - 8.).max(8.));
-                    panel.right(px(right)).top(px(top))
+                    panel.right(px(right)).top(px(tray_top))
                 }
-                None => panel.top(px(36.)).right(px(150.)),
+                None => panel.top(px(tray_top)).right(px(150.)),
             };
             panel = panel
                 .p_3()
@@ -20926,9 +21033,12 @@ impl Render for Workspace {
                 .border_2()
                 .border_color(th.accent.alpha(0.85))
                 .bg(darken(th.surface, 0.6))
-                // never spill past the screen: clip horizontally, scroll a tall
-                // panel vertically rather than overflowing the bottom edge.
-                .max_h(px((vp_h - 16.).max(160.)))
+                // never spill past the RENDER: clip horizontally, scroll a
+                // tall tray vertically rather than running down over the
+                // bottom bezel. The cap is the terminal band this tray hangs
+                // over plus one hairline — not the window, which is how the
+                // densest tray in the app came to cover the split buttons.
+                .max_h(px(self.tray_max_h(tray_top)))
                 .overflow_x_hidden()
                 .overflow_y_scroll()
                 .shadow(float_shadows(th.accent))
@@ -21003,18 +21113,29 @@ impl Render for Workspace {
             }
             const PANEL_W: f32 = 300.;
             const PANEL_H_EST: f32 = 328.; // 8 slider rows + reset + follow-outer
-            let mut panel = div().absolute().w(px(PANEL_W));
+            let mut panel = div().id("osd-panel").absolute().w(px(PANEL_W));
+            let tray_top = match self.osd_at {
+                Some(at) => {
+                    let vh = f32::from(window.viewport_size().height);
+                    (f32::from(at.y) + 6.).clamp(8., (vh - PANEL_H_EST - 8.).max(8.))
+                }
+                None => 36.,
+            };
             panel = match self.osd_at {
                 Some(at) => {
-                    let vp = window.viewport_size();
-                    let (vw, vh) = (f32::from(vp.width), f32::from(vp.height));
+                    let vw = f32::from(window.viewport_size().width);
                     let right = (vw - f32::from(at.x)).clamp(8., (vw - PANEL_W - 8.).max(8.));
-                    let top = (f32::from(at.y) + 6.).clamp(8., (vh - PANEL_H_EST - 8.).max(8.));
-                    panel.right(px(right)).top(px(top))
+                    panel.right(px(right)).top(px(tray_top))
                 }
-                None => panel.top(px(36.)).right(px(110.)),
+                None => panel.top(px(tray_top)).right(px(110.)),
             };
             panel = panel
+                // Nine slider rows on a short window is taller than the render
+                // it covers, and this tray had no cap at all — it simply drew
+                // past the bottom.
+                .max_h(px(self.tray_max_h(tray_top)))
+                .overflow_x_hidden()
+                .overflow_y_scroll()
                 .p_3()
                 .rounded(sk.rad_raw(6.))
                 .border_2()
@@ -23750,11 +23871,16 @@ impl Render for Workspace {
                         }),
                     )
             };
+            let scale_top = 74. * scale;
             let panel = div()
+                .id("scale-panel")
                 .absolute()
-                .top(px(74. * scale))
+                .top(px(scale_top))
                 .right(px(12. * scale))
                 .w(px(240.))
+                .max_h(px(self.tray_max_h(scale_top)))
+                .overflow_x_hidden()
+                .overflow_y_scroll()
                 .p_4()
                 .rounded(sk.rad_raw(8.))
                 .border_2()
@@ -23846,6 +23972,7 @@ impl Render for Workspace {
                     .child(div().flex_1().min_w(px(0.)).child(label.to_string()))
             };
             let panel = div()
+                .id("more-panel")
                 .absolute()
                 // Under its own button, which is at the bottom left now. A menu
                 // that opens at the opposite corner from the thing that raised
@@ -23853,6 +23980,13 @@ impl Render for Workspace {
                 .bottom(px((pane::HICON + 10.) * scale))
                 .left(px(12. * scale))
                 .w(px(230.))
+                // It grows UPWARD from the footer, so its own top edge is what
+                // the cap has to be measured from: the band's top, since a menu
+                // rising past the render is the same fault as one falling past
+                // it. Entries beyond that scroll.
+                .max_h(px(self.tray_max_h(self.tray_band().0)))
+                .overflow_x_hidden()
+                .overflow_y_scroll()
                 .p_2()
                 .rounded(sk.rad_raw(8.))
                 .border_2()
@@ -24736,10 +24870,15 @@ impl Render for Workspace {
                 }),
             );
 
+            let group_top = f32::from(at.y) + 8.;
             let panel = div()
+                .id("group-menu-panel")
                 .absolute()
                 .left(px(f32::from(at.x)))
-                .top(px(f32::from(at.y) + 8.))
+                .top(px(group_top))
+                .max_h(px(self.tray_max_h(group_top)))
+                .overflow_x_hidden()
+                .overflow_y_scroll()
                 .p_2()
                 .rounded(sk.rad_raw(6.))
                 .border_2()
@@ -25549,6 +25688,108 @@ impl Render for Workspace {
 #[allow(clippy::items_after_test_module)]
 mod tests {
     use super::*;
+
+    // ---- trays stay inside the render ----------------------------------
+    //
+    // The rule Parker set: a tray may stand 1% of the render's height past the
+    // render and not a pixel further. These pin the arithmetic; the wiring is
+    // pinned by the source assertions below, which fail if a tray loses its
+    // cap.
+
+    /// A render 1000 tall starting at y=100: a tray anchored at its top edge
+    /// may be 1010 tall, so its bottom lands at 1110 — ten past the render's
+    /// 1100, which is the hairline and nothing more.
+    #[test]
+    fn a_tray_may_stand_one_percent_past_the_render_and_no_further() {
+        let band = (100., 1000.);
+        let cap = tray_cap(band, 100.);
+        assert_eq!(cap, 1010.);
+        assert_eq!(100. + cap, 1110., "bottom edge = render bottom + 1%");
+    }
+
+    /// The number that broke: the palette tray was capped to the WINDOW, so it
+    /// ran down over the bottom bezel and its split buttons. Anchored 36px
+    /// below the window's top, over a render that starts at 90 and ends at
+    /// 1450, it must now stop at 1463.6 — not at the window's 1520.
+    #[test]
+    fn the_palette_tray_stops_at_the_render_not_at_the_window() {
+        let band = (90., 1360.); // render: y 90 → 1450
+        let window_h = 1520.;
+        let cap = tray_cap(band, 36.);
+        let bottom = 36. + cap;
+        assert!(
+            bottom < window_h,
+            "a tray capped to the window reaches {window_h}; this one stops at {bottom}"
+        );
+        // Anchored 54px above the render's own top, the height cap (render +
+        // hairline) binds before the bottom limit does, so it stops 40px SHORT
+        // of the render's bottom rather than 70px past the window's.
+        assert!((bottom - 1409.6).abs() < 0.1, "bottom was {bottom}");
+        assert!(bottom <= 90. + 1360. + 13.6);
+    }
+
+    /// Anchoring a tray in the top bezel must not buy it extra height: the cap
+    /// is the render plus the hairline, however far above the render it starts.
+    #[test]
+    fn a_tray_anchored_above_the_render_buys_no_extra_height() {
+        let band = (400., 600.);
+        assert_eq!(
+            tray_cap(band, 0.),
+            606.,
+            "capped by the render's own height"
+        );
+        assert!(tray_cap(band, 0.) <= 600. * 1.01);
+    }
+
+    /// A tray anchored low is squeezed, not extended — until the squeeze would
+    /// leave a peephole, where the floor takes over.
+    #[test]
+    fn a_low_anchor_squeezes_the_tray_down_to_the_floor_and_stops() {
+        let band = (0., 1000.);
+        assert_eq!(tray_cap(band, 500.), 510.);
+        assert_eq!(
+            tray_cap(band, 995.),
+            TRAY_MIN_H,
+            "a three-pixel tray is not an answer"
+        );
+    }
+
+    /// Unknown is not zero: with no panes painted yet there is no band, and
+    /// the fallback is the window — never a render of height 0, which would
+    /// collapse every tray to the floor on the first frame.
+    #[test]
+    fn an_unmeasured_render_is_not_a_render_of_height_zero() {
+        let empty = std::collections::HashMap::new();
+        assert_eq!(Workspace::band_of(&empty), None);
+    }
+
+    /// Every tray's cap is wired, not merely available. Each of these is a
+    /// live call site; deleting one is what this test exists to catch.
+    #[test]
+    fn every_tray_asks_for_its_cap() {
+        let src = shipped_src();
+        let calls =
+            src.matches("self.tray_max_h(").count() + src.matches("self.tray_card_h()").count();
+        assert!(
+            calls >= 8,
+            "only {calls} trays ask for a cap — a tray without one spills over the bezel"
+        );
+        for panel in [
+            "\"theme-panel\"",
+            "\"osd-panel\"",
+            "\"scale-panel\"",
+            "\"more-panel\"",
+            "\"bar-menu-panel\"",
+            "\"group-menu-panel\"",
+            "\"plugins-panel\"",
+            "\"notif-panel\"",
+        ] {
+            assert!(
+                src.contains(panel),
+                "{panel} lost its id, and a scrollable tray needs one"
+            );
+        }
+    }
 
     /// This file's source with the test module cut off.
     ///
