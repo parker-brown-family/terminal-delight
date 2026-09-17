@@ -1200,10 +1200,21 @@ pub fn title_card(
 ) -> Div {
     let tint = ink(state.tint(), th);
     let urgent = state.urgent();
-    // The spine's frame, at the strength the state deserves. A frame that
-    // shouts at Idle is a frame nobody reads at Waiting, so the border, the
-    // ring and the bloom all ride one number.
-    let strength = if urgent { 1.0 } else { 0.4 };
+    // FULL strength, whatever the state.
+    //
+    // This rode a dial — 0.4 when calm, 1.0 when waiting — on the reasoning
+    // that a frame which shouts at Idle is a frame nobody reads at Waiting.
+    // That reasoning holds for a queue of rows competing with each other and
+    // not for this, which is one card answering one question and has nothing
+    // to compete with. Parker, looking at the calm state: *"the agent state
+    // though --- like MORE phosphor... by 2.5x"* — and 0.4 × 2.5 is 1.0, so
+    // the dial simply goes away.
+    //
+    // A calm state stays calm because its TINT is grey: `Tint::Unknown`
+    // resolves to `Faint`, and grey does not bloom however much of it there
+    // is. The restraint lives in the colour table where it belongs, rather
+    // than in a second number turning the same table back down.
+    let strength = 1.0;
     spine_frame(
         div().flex().flex_col().gap(px(8.)).px(px(14.)).py(px(12.)),
         tint,
