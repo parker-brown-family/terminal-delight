@@ -519,15 +519,31 @@ impl ActionReport {
             self.action.id(),
             self.surface.as_str()
         );
+        // Both free-text halves are typed into a pseudoterminal as ONE line.
+        // The target is not ours: for `reject_part` it is `hunks[].id`
+        // verbatim out of the agent's payload, and a payload that put a
+        // newline or an escape sequence in a hunk id would have had it typed
+        // into the terminal as a second command. Every control character in
+        // either half becomes a space — the same flattening the composer
+        // applies to what a person pastes.
         if let Some(t) = &self.target {
-            line.push_str(&format!(" · {t}"));
+            line.push_str(&format!(" · {}", plain(t)));
         }
         if let Some(c) = &self.comment {
-            let trimmed = c.replace('\n', " ");
-            line.push_str(&format!(" — {trimmed}"));
+            line.push_str(&format!(" — {}", plain(c)));
         }
         line
     }
+}
+
+/// Free text that is about to be typed into a terminal, flattened to one line:
+/// every control character (newline, carriage return, tab, ESC and the rest of
+/// C0/C1) becomes a space. Nothing else changes — the text is somebody's
+/// comment or somebody's hunk id, and it should still read as what they wrote.
+fn plain(s: &str) -> String {
+    s.chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -2049,6 +2065,30 @@ mod tests {
             comment: Some("first\nsecond".into()),
         };
         assert!(!report.to_prompt().contains('\n'));
+    }
+
+    /// The target is the agent's own bytes — for `reject_part` it is a hunk id
+    /// straight out of the payload — and the line is typed into a real
+    /// pseudoterminal. A newline in it was a second command; an escape
+    /// sequence was whatever the terminal made of it. Neither survives.
+    #[test]
+    fn a_hostile_hunk_id_cannot_type_a_second_line_or_an_escape() {
+        let report = ActionReport {
+            surface: SurfaceId("change-1".into()),
+            action: Action::RejectPart,
+            target: Some("evil.rs#one\necho INJECTED\r\u{1b}[2J\t#two".into()),
+            comment: Some("looks\u{85}wrong\u{7f}".into()),
+        };
+        let line = report.to_prompt();
+        assert!(
+            !line.chars().any(char::is_control),
+            "a control character reached the prompt: {line:?}"
+        );
+        // Flattened, not dropped: the person can still read what was there.
+        assert!(line.contains("evil.rs#one echo INJECTED"), "{line}");
+        assert!(line.contains("#two"), "{line}");
+        assert!(line.contains("looks wrong"), "{line}");
+        assert_eq!(line.lines().count(), 1);
     }
 
     #[test]
