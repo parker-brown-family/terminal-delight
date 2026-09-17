@@ -132,15 +132,103 @@ impl AgentStatus {
     }
 }
 
+/// The spinner frames an agent CLI cycles through at the head of its status
+/// line. Claude's set, observed live: `·` `✢` `✳` `✶` `✷` `✻` `✽`.
+const SPINNER_FRAMES: [char; 7] = ['\u{b7}', '✢', '✳', '✶', '✷', '✻', '✽'];
+
+/// Is this row an agent's LIVE SPINNER — the `✻ Forming… (6m 34s · ↓ 50.0k
+/// tokens)` line a CLI repaints for as long as a turn is running?
+///
+/// **This is the needle that survives a narrow pane, and that is why it exists.**
+/// Every other working marker we had lived on the footer Claude Code prints
+/// last, and that footer is RESPONSIVE: at a tiled width it truncates to
+/// `⏵⏵ auto mode on (shift+tab to  ·` — before the `· esc to interrupt ·` that
+/// the whole detector rested on. Measured across one window on 2026-09-17: the
+/// wide panes carried the phrase, the narrow ones carried nothing, and a pane
+/// visibly mid-turn read as idle in every surface downstream (no robot on its
+/// tab or its tree row, no tool face, no finish bell, and `needs_input` free to
+/// fire while the agent was still talking). The spinner line is the same fact
+/// printed at the top of the same block, it is short, and it is never elided.
+///
+/// The shape is deliberately tight, because a loose needle matched against
+/// PAYLOAD is how this file earned three false-positive bugs in one day (#238,
+/// #239, #240). All of these must hold:
+///
+/// * the first non-blank character is a spinner frame — anchored, not `contains`;
+/// * one word follows it, letters only;
+/// * that word is a gerund (`…ing`) **or** it is trailed by `…`, which is what
+///   separates `· Puzzling… (5m 58s)` from a prose bullet `· Update (2m ago)`;
+/// * the first field inside the parentheses is an ELAPSED TIME.
+///
+/// Codex is untouched here: it does not print this line, and its panes keep the
+/// `esc to interrupt` needle they already matched.
+pub fn is_live_spinner(row: &str) -> bool {
+    let t = row.trim_start();
+    let mut chars = t.chars();
+    if !chars.next().is_some_and(|c| SPINNER_FRAMES.contains(&c)) {
+        return false;
+    }
+    let rest = chars.as_str().trim_start();
+    let word: String = rest
+        .chars()
+        .take_while(|c| c.is_ascii_alphabetic())
+        .collect();
+    if !(3..=24).contains(&word.len()) {
+        return false;
+    }
+    let after = &rest[word.len()..];
+    let ellipsis = after.starts_with('\u{2026}');
+    if !ellipsis && !word.ends_with("ing") {
+        return false;
+    }
+    let after = if ellipsis {
+        &after['\u{2026}'.len_utf8()..]
+    } else {
+        after
+    };
+    let Some(inner) = after.trim_start().strip_prefix('(') else {
+        return false;
+    };
+    // The first `·`-separated field of the group. Claude puts the clock first
+    // and everything else (tokens, "thinking", effort) after it, so this is the
+    // one field whose meaning is fixed.
+    let first = inner
+        .split(')')
+        .next()
+        .unwrap_or("")
+        .split('\u{b7}')
+        .next()
+        .unwrap_or("");
+    is_time(&first.to_ascii_lowercase())
+}
+
+/// Does this screen say a turn is RUNNING?
+///
+/// One ranking, consulted by both readers of it — [`parse_status_line`] for the
+/// rail and `TerminalView::agent_is_thinking` for the badge, the reels and the
+/// finish bell. They used to hold separate copies of the needle list, which is
+/// the defect this file already names elsewhere: two rankings of one pane, free
+/// to disagree about whether the person is the bottleneck.
+pub fn rows_say_working(rows: &[String]) -> bool {
+    // ONE rule, shared with `TerminalView::agent_is_thinking`: the needles live
+    // in `screenread::row_is_working`, and the spinner line joined them there.
+    // These were two copies of one heuristic, and when the CLI stopped printing
+    // `esc to interrupt` on a narrow pane only one of them would have been
+    // noticed.
+    rows.iter().any(|r| crate::screenread::row_is_working(r))
+}
+
+/// Parse the visible bottom rows of an agent pane into an [`AgentStatus`].
+///
+/// `rows` is the live screen, top-to-bottom. We do not assume a fixed format:
+/// we look for the richest status row and pull whatever is present, degrading
+/// gracefully (a bare "esc to interrupt" still reads as Working, just without
+/// metrics). `Finished` is *not* decided here — the caller layers it on from
+/// the pane's unacknowledged bell.
 pub fn parse_status_line(rows: &[String]) -> AgentStatus {
     let lower: Vec<String> = rows.iter().map(|r| r.to_ascii_lowercase()).collect();
 
-    // Working: stock Claude/Codex print "esc to interrupt"; Parker's custom
-    // status line says "still thinking …". Accept both (broader than the bell's
-    // detector on purpose — this never feeds the bell).
-    // One rule, shared with `TerminalView::agent_is_thinking` — they were two
-    // copies of the same heuristic and only one of them would have been fixed.
-    let working = lower.iter().any(|l| crate::screenread::row_is_working(l));
+    let working = rows_say_working(rows);
 
     // The richest status row: prefer one carrying a "(… tokens …)" group.
     let status_row = rows
@@ -231,8 +319,13 @@ pub fn parse_status_line(rows: &[String]) -> AgentStatus {
 /// only shrink that set, and the collapsed "N panes could not be read" line is
 /// what keeps the remainder visible instead of silently absorbed.
 fn is_at_rest(l: &str) -> bool {
-    const NEEDLES: [&str; 6] = [
+    const NEEDLES: [&str; 7] = [
         "? for shortcuts",
+        // The truncated form first, because it is the one a tiled pane leaves.
+        // `shift+tab to cycle` is the same footer at a width that fits, and a
+        // narrow column cuts it to `auto mode on (shift+tab to` — which is how
+        // eight resting panes came to sit in the rail's unreadable lane.
+        "auto mode on",
         "shift+tab to cycle",
         "auto-accept edits on",
         "plan mode on",
@@ -379,6 +472,100 @@ mod tests {
         let st = parse_status_line(&rows(&["(esc to interrupt)"]));
         assert_eq!(st.state, AgentState::Working);
         assert_eq!(st.turn_tokens, None);
+    }
+
+    /// **The regression, taken off the live wall rather than imagined.**
+    ///
+    /// Captured 2026-09-17 from pid 877618, a pane visibly mid-turn in a tiled
+    /// column about 25 columns wide. Claude Code's footer is responsive: at this
+    /// width it stops at `(shift+tab to` and the `· esc to interrupt ·` the whole
+    /// detector rested on is simply not on screen. Every working needle we had
+    /// missed, so a working agent reported idle — no robot on its tab or its
+    /// tree row, no tool face, and no bell when it finished.
+    ///
+    /// The spinner line two rows up is what carries the fact at any width.
+    #[test]
+    fn a_narrow_pane_whose_footer_truncated_away_esc_to_interrupt_is_still_working() {
+        let r = rows(&[
+            "\u{25cf} Calling lean-ctx 2 times\u{2026}",
+            "\u{273d} Bootstrapping\u{2026} (30s \u{00b7} thinking)",
+            "  Update available! Run: mise upgr\u{2026}",
+            "  \u{23f5}\u{23f5} auto mode on (shift+tab to  \u{00b7}",
+        ]);
+        assert_eq!(parse_status_line(&r).state, AgentState::Working);
+        assert!(rows_say_working(&r));
+    }
+
+    /// The same screen at a width that keeps the footer whole. Both halves of
+    /// the fleet must answer the same thing — that they did not is the bug.
+    #[test]
+    fn a_wide_pane_carrying_both_the_spinner_and_the_footer_is_working() {
+        let r = rows(&[
+            "\u{00b7} Puzzling\u{2026} (5m 58s \u{00b7} \u{2193} 29.5k tokens)",
+            "  \u{23f5}\u{23f5} auto mode on (shift+tab to cycle) \u{00b7} esc to interrupt \u{00b7} \u{2190} 2 agents",
+        ]);
+        assert_eq!(parse_status_line(&r).state, AgentState::Working);
+    }
+
+    /// A NARROW pane that is genuinely at rest must not be dragged into Working
+    /// by the new needle. Trading a false negative for a false positive here is
+    /// not a fix: it is a bell that never rings, because the spell never ends.
+    #[test]
+    fn a_narrow_pane_at_rest_is_still_at_rest() {
+        let r = rows(&[
+            "\u{23bf}  \"done\"",
+            "  Update available! Run: mise u\u{2026}",
+            // The footer as a ~25-column column leaves it: `cycle)` is gone too.
+            "  \u{23f5}\u{23f5} auto mode on (shift+tab to",
+        ]);
+        assert!(!rows_say_working(&r));
+        // Idle, not Unknown. The at-rest needle used to read `shift+tab to
+        // cycle`, which the same truncation removes, so a resting narrow pane
+        // was filed as a screen we could not read.
+        assert_eq!(parse_status_line(&r).state, AgentState::Idle);
+    }
+
+    /// The needle is anchored and shaped, so ordinary payload does not trip it.
+    ///
+    /// Every row here is real text off the same wall on the same afternoon,
+    /// except the last two, which are the shapes a loose version of this check
+    /// would have swallowed: a prose bullet with a relative time in it, and a
+    /// demo line that opens with a spinner frame and means nothing.
+    #[test]
+    fn ordinary_rows_are_not_a_live_spinner() {
+        for row in [
+            "  \u{23f5}\u{23f5} auto mode on (shift+tab to cycle) \u{00b7} \u{2190} 2 agents",
+            "\u{25cf} Calling terminal-delight\u{2026}",
+            "  Update available! Run: mise upgr\u{2026}",
+            "  new task? /clear to save 336.\u{2026}",
+            "  \u{23bf}  \"esc to interrupt\" was the old needle",
+            "\u{00b7} Update (2m ago)",
+            "\u{2733} Cooked for 5m 3s",
+            "",
+        ] {
+            assert!(!is_live_spinner(row), "matched payload: {row:?}");
+        }
+    }
+
+    /// Every spinner frame observed in the wild, with the two gerund spellings
+    /// Claude actually prints (trailing `…`, and the bare word the older build
+    /// used). One frame dropped from the set is one pane that stops reporting.
+    #[test]
+    fn every_spinner_frame_reads_as_working() {
+        for frame in [
+            '\u{b7}', '\u{2722}', '\u{2733}', '\u{2736}', '\u{2737}', '\u{273b}', '\u{273d}',
+        ] {
+            assert!(
+                is_live_spinner(&format!(
+                    "{frame} Forming\u{2026} (6m 34s \u{00b7} thinking)"
+                )),
+                "frame {frame:?} with an ellipsis"
+            );
+            assert!(
+                is_live_spinner(&format!("{frame} Cogitating (45s \u{00b7} 1,234 tokens)")),
+                "frame {frame:?} bare"
+            );
+        }
     }
 
     #[test]

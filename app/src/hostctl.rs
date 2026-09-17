@@ -76,6 +76,10 @@ pub enum HostProbe {
         /// with panes and nobody watching them is exactly what a relaunch
         /// should adopt.
         attended: bool,
+        /// The host process's own pid, so a caller can tell whether this is the
+        /// host that forked the terminal it is sitting in. `0` from a host
+        /// built before the field existed — not a pid, so it matches nothing.
+        host: u32,
     },
     NoSocket,
     Unresponsive,
@@ -156,11 +160,13 @@ pub fn probe_at(path: &Path, budget: Duration) -> HostProbe {
             session,
             panes,
             attended,
+            host,
         }) => HostProbe::Live {
             proto,
             session,
             panes,
             attended,
+            host,
         },
         // It answered, and what it said was that it cannot speak to us. That
         // is a healthy host on the wrong side of a protocol change, which is a
@@ -208,6 +214,37 @@ pub fn sockets_present_in(dir: &Path) -> Vec<String> {
 /// The alternative to waiting is starting a second host over a socket the
 /// first still holds, which is the failure this whole path exists to avoid.
 pub const STAND_DOWN_BUDGET: Duration = Duration::from_secs(5);
+
+/// A session's pane table, asked as a tool rather than as its window.
+///
+/// Announces `ClientKind::Tool`, opens no pane stream, and so takes nothing
+/// from whoever is drawing them — the same harmlessness [`probe_host`] relies
+/// on. It exists for the one question a process inside a pane needs answered
+/// about itself: which of these panes am I in? The shell pid it matches on is
+/// on its own parent chain, so the answer is derived rather than declared.
+///
+/// An empty vector for a host that is absent, unreachable, or speaking a
+/// protocol this build cannot: none of those is "you are in no pane", and the
+/// caller keeps the two apart by having already located the host.
+pub fn panes_of(key: &str) -> Vec<PaneInfo> {
+    let Ok(stream) = UnixStream::connect(host_socket_path(key)) else {
+        return vec![];
+    };
+    let Ok(mut conn) = Conn::over(stream, PROBE_BUDGET) else {
+        return vec![];
+    };
+    if conn.hello(ClientKind::Tool).is_err() {
+        return vec![];
+    }
+    if conn.send(&Request::ListPanes).is_err() {
+        return vec![];
+    }
+    conn.expect(|reply| match reply {
+        Reply::Panes { panes } => Ok(panes),
+        other => Err(other),
+    })
+    .unwrap_or_default()
+}
 
 /// Ask a host this build cannot speak to to checkpoint and stand down, and
 /// wait until it has gone.
@@ -942,6 +979,7 @@ mod talking {
                 session: "kind".into(),
                 panes: 2,
                 attended: false,
+                host: 0,
             }
         );
         assert!(verdict.is_free(), "a host nobody is watching is adoptable");

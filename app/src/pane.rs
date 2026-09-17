@@ -43,6 +43,22 @@ pub enum PaneMode {
     Codex,
     Remote,
     Other(String),
+    /// Nobody has said what is in this pane yet.
+    ///
+    /// **Not a shell, and the difference is the whole point.** A pane this
+    /// window forked is born `Shell` because that is a reading — the window
+    /// started the shell and watched it start. A pane a host owns is born this,
+    /// because the window has read nothing at all, and storing that as `Shell`
+    /// makes "I have not been told" indistinguishable from "I was told, and it
+    /// is a shell". Everything downstream then inherits a confident answer
+    /// nobody gave: a shell is filtered out of the attention queue before a row
+    /// exists, so eleven running agents went five hours without the ability to
+    /// ask for help (#462).
+    ///
+    /// [`PaneMode::is_agent`] is false here, exactly as it is for a shell —
+    /// "we do not know" is not a yes. What changes is that the rail can see the
+    /// difference and draw the pane in its unknown lane rather than dropping it.
+    Unknown,
 }
 
 impl PaneMode {
@@ -85,6 +101,10 @@ impl PaneMode {
             PaneMode::Codex => "CODEX",
             PaneMode::Remote => "REMOTE",
             PaneMode::Other(name) => name,
+            // What `list_panes` hands an agent asking about its own fleet. A
+            // reader that sees this knows the census could not describe the
+            // pane, which is a different thing to act on than `SHELL`.
+            PaneMode::Unknown => "UNKNOWN",
         }
     }
 
@@ -100,6 +120,11 @@ impl PaneMode {
             PaneMode::Claude => Cow::Borrowed("CLAUDE"),
             PaneMode::Codex => Cow::Borrowed("CODEX"),
             PaneMode::Other(name) => Cow::Owned(name.clone()),
+            // Untranslated for the same reason CLAUDE and CODEX are: it is a
+            // placeholder rather than a word about the pane's contents, and a
+            // header reading UNKNOWN in every language is a header nobody
+            // mistakes for a program name.
+            PaneMode::Unknown => Cow::Borrowed("UNKNOWN"),
         }
     }
 
@@ -773,7 +798,9 @@ pub(crate) fn warp_screen_to_content(sx: f32, sy: f32, k1: f32, k2: f32) -> (f32
 fn mode_theme(base: &Theme, mode: &PaneMode) -> Theme {
     let mut th = base.clone();
     let (accent, text, faint, cursor) = match mode {
-        PaneMode::Shell | PaneMode::Other(_) => return th,
+        // A tube nobody has classified keeps the base palette rather than
+        // wearing a phosphor that would claim something about its contents.
+        PaneMode::Shell | PaneMode::Other(_) | PaneMode::Unknown => return th,
         // amber phosphor — Claude (P3 tube, Anthropic-warm)
         PaneMode::Claude => (0xf59e0bu32, 0xfbe3b0u32, 0x4a3410u32, 0xfbbf24u32),
         // ice cyan — Codex
@@ -2966,7 +2993,16 @@ impl TerminalView {
             paint_offset: 0,
             paint_inverted: false,
             paint_to_grid: None,
-            mode: PaneMode::Shell,
+            // A terminal of our own is a shell because we just forked one and
+            // watched it start — that is a reading. A terminal a host owns has
+            // not been read by anything in this process, and saying `Shell`
+            // there is inventing an answer that the attention queue then
+            // silently acts on. The host's word arrives a line later at attach,
+            // or at the next sweep; until one of those, this is the truth.
+            mode: match pane_id {
+                Some(_) => PaneMode::Unknown,
+                None => PaneMode::Shell,
+            },
             appearance: PaneTheme::default(),
             ctx_menu: None,
             bell: false,
@@ -3015,8 +3051,22 @@ impl TerminalView {
     }
 
     /// Is the agent in this pane "thinking" right now? We scan the visible grid
-    /// for the spinner hint Claude/Codex print while a turn runs ("esc to
-    /// interrupt"). `TD_GAMBA_DEMO=1` forces it on for demos/screenshots.
+    /// for the furniture Claude/Codex print while a turn runs — the footer's
+    /// "esc to interrupt", or the spinner line above it.
+    /// `TD_GAMBA_DEMO=1` forces it on for demos/screenshots.
+    ///
+    /// The needles themselves live in [`crate::hud::rows_say_working`], which is
+    /// also what the rail's parser asks. They were two lists until 2026-09-17,
+    /// and they disagreed: the rail knew about "still thinking" and this did
+    /// not. One ranking, or the tab badge and the rail argue about whether you
+    /// are the bottleneck.
+    ///
+    /// Reads [`Self::live_rows`] — the LIVE bottom screen (Line(0)..screen_lines),
+    /// NOT `renderable_content().display_iter`, which honours the display offset:
+    /// when ▲ scrolls back to a human message the running agent's status block
+    /// leaves the *viewport* and the scan falsely reads "done". The agent is
+    /// still working at the buffer bottom, so detection must read the live screen
+    /// regardless of how far the user has scrolled up.
     fn agent_is_thinking(&self) -> bool {
         if std::env::var("TD_GAMBA_DEMO").is_ok() {
             return true;
@@ -3024,34 +3074,11 @@ impl TerminalView {
         if !self.mode.is_agent() {
             return false;
         }
-        let term = self.session.term.lock();
-        // Scan the LIVE bottom screen directly (Line(0)..screen_lines), NOT
-        // `renderable_content().display_iter` — that honours the display offset, so
-        // when ▲ scrolls back to a human message the running agent's "esc to
-        // interrupt" spinner leaves the *viewport* and the scan falsely reads
-        // "done". The agent is still working at the buffer bottom, so detection
-        // must read the live screen regardless of how far the user has scrolled up.
-        let grid = term.grid();
-        let rows = grid.screen_lines();
-        let cols = grid.columns();
-        for line in 0..rows as i32 {
-            let row = &grid[Line(line)];
-            let mut s = String::with_capacity(cols);
-            for col in 0..cols {
-                let cell = &row[Column(col)];
-                if cell.flags.contains(Flags::WIDE_CHAR_SPACER) {
-                    continue;
-                }
-                s.push(if cell.c == '\0' { ' ' } else { cell.c });
-            }
-            // The SAME rule the status line uses. These were two copies of
-            // one heuristic, and when the CLI stopped printing `esc to
-            // interrupt` only one of them would have been noticed.
-            if crate::screenread::row_is_working(&s) {
-                return true;
-            }
-        }
-        false
+        // The SAME rule the status line uses, over the LIVE screen rows
+        // (`live_rows` reads the buffer bottom regardless of how far the
+        // person has scrolled up — a running agent's spinner leaving the
+        // viewport must not read as "done").
+        crate::hud::rows_say_working(&self.live_rows())
     }
 
     /// Snapshot the live bottom screen as plain-text rows (top→bottom) — the same

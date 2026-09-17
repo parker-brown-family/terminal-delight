@@ -341,7 +341,11 @@ pub fn row_is_working(text: &str) -> bool {
         }
         rest = &rest[1.min(rest.len())..];
     }
-    false
+    // The spinner line — `✻ Forming… (6m 34s · ↓ 50.0k tokens)` — is the needle
+    // that survives a NARROW pane, where the footer carrying every string above
+    // has been truncated away (#477). Case does not matter to it, so the row
+    // this function was handed is the row it gets.
+    crate::hud::is_live_spinner(text)
 }
 
 /// A run of digits followed by a time unit — `49s`, `2m`, `1h`.

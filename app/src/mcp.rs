@@ -76,6 +76,47 @@ impl Expose {
     }
 }
 
+/// Which Terminal Delight answered.
+///
+/// Several instances run on one box — one window per workspace, each with its
+/// own session host — and until this existed nothing on the wire said which of
+/// them a reply came from. An agent's relay resolves a window from its own
+/// environment, so pointing it at the wrong instance produced an answer that
+/// was correct in shape, plausible in content, and about somebody else's
+/// terminals. There was no field to check, so there was no way to notice.
+///
+/// Stamped onto every tool result by [`tools_call`] — the one place every verb
+/// passes through — so a tool added later cannot ship without saying where its
+/// answer came from.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub struct Instance {
+    /// The session id this window holds (`1`, `tdclip`, …) — the same name the
+    /// host socket and `$TD_SESSION` carry.
+    pub session: String,
+    /// This window's own pid, which is also the `ctl-<pid>.sock` the caller
+    /// reached it through.
+    pub window: u32,
+    /// The build this window is running, taken from its executable's own file
+    /// name (`td-<sha>-<label>` for an installed one). Two windows on one box
+    /// are routinely different builds, and the version string cannot tell them
+    /// apart because it is the same in both. `None` only when the executable
+    /// path could not be read at all.
+    pub build: Option<String>,
+}
+
+impl Instance {
+    /// One line naming this instance, for the text half of a tool result — what
+    /// a model actually reads.
+    fn line(&self) -> String {
+        format!(
+            "— terminal-delight · session {} · window {} · {}",
+            self.session,
+            self.window,
+            self.build.as_deref().unwrap_or("build unreadable")
+        )
+    }
+}
+
 /// One pane as the read-only server would report it — the *identity* an
 /// orchestrator binds a watch rule to.
 ///
@@ -95,6 +136,15 @@ pub struct PaneInfo {
     pub is_agent: bool,
     /// The pane's shell pid (ephemeral — see the struct note).
     pub pid: u32,
+    /// The host's id for this pane — the same number the host stamps into the
+    /// pane's environment as `$TD_PANE_ID`, which is how a process running
+    /// inside a terminal can say which pane it is in without walking `/proc`
+    /// and guessing.
+    ///
+    /// Deliberately serialised even when absent. `None` means this window owns
+    /// the pane directly (no host), which is a different fact from "the id was
+    /// not reported", and an omitted key leaves a hole a reader fills in.
+    pub pane_id: Option<u64>,
     /// Foreground process cwd (falls back to the shell's), if readable.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cwd: Option<String>,
@@ -503,12 +553,78 @@ pub struct Snapshot {
     /// The window-level outer grade (the scope panes inherit from), reported in
     /// the same `0..100` percents — the `outer` target of `get_pane_config`.
     pub outer_grade: GradeReport,
+    /// Which window built this snapshot. `None` only where there is no window to
+    /// ask — a snapshot-independent method, or a UI that has gone away — and it
+    /// stays `Option` to the wire, because a window that cannot name itself is a
+    /// fact a caller needs and silence would read as agreement.
+    pub instance: Option<Instance>,
+    /// Who asked, when they were able to say. Per-request rather than per-window,
+    /// which is why it lives on the snapshot: the snapshot is the live data ONE
+    /// request is answered from.
+    pub caller: Option<Caller>,
+}
+
+/// Who is asking, as derived from their own process tree by the relay.
+///
+/// The host that forked a pane's shell is an ancestor of everything running in
+/// it, so a process inside a pane can find out which session and which pane it
+/// is in by walking its own parents and asking the authority — no environment
+/// variable, and nothing a wrapper could strip. See `ctl::locate`.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub struct Caller {
+    /// The session the caller believes it is in. The window compares this
+    /// against its own before answering anything.
+    pub session: String,
+    /// The pane the caller is in, when the host could name one. `None` is a
+    /// real answer and never means pane zero.
+    pub pane: Option<u64>,
 }
 
 impl Snapshot {
     /// Panes the policy currently permits a connected agent to see.
     fn exposed(&self) -> Vec<&PaneInfo> {
         self.panes.iter().filter(|p| p.exposed).collect()
+    }
+
+    /// Which pane a pane-scoped verb should act on: the one the caller named,
+    /// else the one the caller is sitting in.
+    ///
+    /// The default is the whole point. `declare_deliverable` asked for a `pid`
+    /// "from list_panes" and the caller's only way to find itself in that
+    /// listing was its title and working directory — which two agents on one
+    /// project share, so the rule was "guess, and if you guess wrong your turn's
+    /// deliverable appears on somebody else's row". The pane id the host put in
+    /// the caller's environment settles it without asking anyone to match
+    /// strings.
+    ///
+    /// The error says which of the two ways to name a pane were available, so a
+    /// caller whose chain the host could not read is told that rather than
+    /// being told to try harder.
+    fn target_pane(&self, named: Option<u32>) -> Result<u32, String> {
+        if let Some(pid) = named {
+            return Ok(pid);
+        }
+        let Some(caller) = &self.caller else {
+            return Err("no `pid`, and this connection did not say who is calling \
+                        — pass a pid from list_panes"
+                .to_string());
+        };
+        let Some(pane) = caller.pane else {
+            return Err("no `pid`, and the host could not say which pane you are \
+                        in (a pane it did not start, or a process detached from \
+                        its own parents) — pass a pid from list_panes"
+                .to_string());
+        };
+        self.panes
+            .iter()
+            .find(|p| p.pane_id == Some(pane))
+            .map(|p| p.pid)
+            .ok_or_else(|| {
+                format!(
+                    "no `pid`, and pane {pane} — the pane you are calling from — \
+                     is not in this window's listing"
+                )
+            })
     }
 
     /// A snapshot that exposes nothing — used to answer snapshot-independent
@@ -519,6 +635,8 @@ impl Snapshot {
             config: McpConfig::default(),
             panes: vec![],
             outer_grade: GradeReport::default(),
+            instance: None,
+            caller: None,
         }
     }
 }
@@ -631,7 +749,14 @@ fn initialize_result(params: &Value) -> Value {
         "capabilities": { "tools": {}, "logging": {} },
         "serverInfo": { "name": SERVER_NAME, "version": env!("CARGO_PKG_VERSION") },
         "instructions":
-            "Watch and configure terminal-delight's panes. `list_panes` reports \
+            "Watch and configure terminal-delight's panes. SEVERAL TERMINAL \
+             DELIGHTS RUN ON ONE MACHINE — one window per workspace, each with \
+             its own panes — so every tool result ends with the instance that \
+             answered it (session, window pid, build) and carries the same under \
+             `structuredContent.instance`. Check it before believing a listing \
+             is yours. To find your OWN pane in a listing, match the `pane <n>` \
+             field against your `$TD_PANE_ID`; titles and directories are not \
+             unique. `list_panes` reports \
              who is running where (mode, cwd, agent session); `pane_events` tails \
              an agent pane's own transcript for recent tool calls. With logging \
              enabled the server also pushes `notifications/message` as agents \
@@ -758,13 +883,13 @@ fn tool_defs() -> Value {
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "pid": { "type": "integer", "description": "pid of the pane to note, from list_panes — usually your own" },
+                    "pid": { "type": "integer", "description": "pid of the pane to note, from list_panes. OMIT IT to note your own pane — the window works out which one you are calling from, which is more reliable than matching yourself in a listing." },
                     "title": { "type": "string", "description": "optional headline, up to 40 characters, drawn bigger and bolder (\"GET MILK!\")" },
                     "text": { "type": "string", "description": "the note itself — TEN words or fewer; what happened, or why this pane needs attention" },
                     "pin": { "type": "boolean", "description": "stick a pushpin through it (surfaces on the pane's tab); default false" },
                     "clear": { "type": "boolean", "description": "peel the note off instead of posting one" }
                 },
-                "required": ["pid"],
+                "required": [],
                 "additionalProperties": false
             }
         },
@@ -787,12 +912,12 @@ fn tool_defs() -> Value {
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "pid": { "type": "integer", "description": "pid of the pane that produced it, from list_panes — usually your own" },
+                    "pid": { "type": "integer", "description": "pid of the pane that produced it, from list_panes. OMIT IT for your own pane — the usual case, and the window resolves it from who is calling rather than leaving you to match a title." },
                     "label": { "type": "string", "description": "what to call it, up to 48 characters (\"Slice ledger\", \"PR 460\"); defaults to the target's filename" },
                     "href": { "type": "string", "description": "absolute path (/home/you/report.html) or full URL (https://…). Relative paths are refused: they would resolve against the terminal's directory, not yours." },
                     "clear": { "type": "boolean", "description": "withdraw the current declaration instead of making one" }
                 },
-                "required": ["pid"],
+                "required": [],
                 "additionalProperties": false
             }
         },
@@ -868,18 +993,59 @@ where
         .and_then(Value::as_str)
         .ok_or((-32602, "tools/call requires a `name`".to_string()))?;
     let args = params.get("arguments").cloned().unwrap_or(Value::Null);
-    match name {
-        "list_panes" => Ok(list_panes(snap)),
-        "pane_events" => Ok(pane_events(&args, snap, tail)),
-        "get_pane_config" => Ok(get_pane_config(&args, snap)),
-        "set_pane_config" => Ok(set_pane_config(&args, snap, apply)),
-        "leave_note" => Ok(leave_note(&args, snap, apply)),
-        "declare_deliverable" => Ok(declare_deliverable(&args, snap, apply)),
-        "present_surface" => Ok(present_surface(&args, snap, apply)),
-        "surface_catalogue" => Ok(surface_catalogue()),
-        "grep" => Ok(grep(&args, snap, search)),
-        other => Err((-32602, format!("unknown tool: {other}"))),
+    let out = match name {
+        "list_panes" => list_panes(snap),
+        "pane_events" => pane_events(&args, snap, tail),
+        "get_pane_config" => get_pane_config(&args, snap),
+        "set_pane_config" => set_pane_config(&args, snap, apply),
+        "leave_note" => leave_note(&args, snap, apply),
+        "declare_deliverable" => declare_deliverable(&args, snap, apply),
+        "present_surface" => present_surface(&args, snap, apply),
+        "surface_catalogue" => surface_catalogue(),
+        "grep" => grep(&args, snap, search),
+        other => return Err((-32602, format!("unknown tool: {other}"))),
+    };
+    Ok(stamp(out, snap))
+}
+
+/// Stamp the answering instance onto a tool result.
+///
+/// Both halves, because they are read by different things: the text is what a
+/// model sees, the structured half is what a program joins on. Errors are
+/// stamped too — a refusal from the wrong window ("MCP exposure is disabled")
+/// is exactly the answer somebody would act on without ever asking which
+/// terminal refused.
+///
+/// Done here rather than inside each verb on purpose. Nine tools would be
+/// nine chances to forget, and the tenth would ship without it.
+fn stamp(mut v: Value, snap: &Snapshot) -> Value {
+    let line = match &snap.instance {
+        Some(i) => i.line(),
+        // Not silence. A window that cannot name itself is a finding, and an
+        // unstamped answer beside stamped ones would read as "same as before".
+        None => "— terminal-delight · instance unknown: this answer names no window".to_string(),
+    };
+    if let Some(content) = v.get_mut("content").and_then(Value::as_array_mut) {
+        content.push(json!({ "type": "text", "text": line }));
     }
+    let who = serde_json::to_value(&snap.instance).unwrap_or(Value::Null);
+    match v
+        .get_mut("structuredContent")
+        .and_then(Value::as_object_mut)
+    {
+        Some(obj) => {
+            obj.insert("instance".into(), who);
+        }
+        // A refusal carries no structured half of its own. It gets one here
+        // anyway, because a caller that reads `structuredContent.instance` to
+        // decide whether an answer is its own needs that to work on the answers
+        // it is most likely to act on blind — "exposure is disabled", "unknown
+        // pid" — and those are exactly the errors a wrong window produces.
+        None => {
+            v["structuredContent"] = json!({ "instance": who });
+        }
+    }
+    v
 }
 
 /// `grep` — search every exposed pane's scrollback for an exact, case-insensitive
@@ -970,9 +1136,18 @@ fn list_panes(snap: &Snapshot) -> Value {
                         None => format!(" · \u{1f4dd} {}", n.text),
                     })
                     .unwrap_or_default();
+                // The pane id rides the line beside the tab, because it is how
+                // a caller finds ITSELF in this listing: the host stamps the
+                // same number into the pane as `$TD_PANE_ID`. Matching on title
+                // and cwd was the only way before, and in a window holding two
+                // agents in one directory it picks the wrong one.
+                let pane = p
+                    .pane_id
+                    .map(|id| format!("pane {id}"))
+                    .unwrap_or_else(|| "pane —".to_string());
                 format!(
-                    "tab {} · {} · {} · {} · {}{}{}",
-                    p.tab, p.title, p.mode, cwd, sess, tool, note
+                    "tab {} · {} · {} · {} · {} · {}{}{}",
+                    p.tab, pane, p.title, p.mode, cwd, sess, tool, note
                 )
             })
             .collect::<Vec<_>>()
@@ -1199,8 +1374,9 @@ where
              TD_MCP_WRITE=1) to let an agent leave a note.",
         );
     }
-    let Some(pid) = args.get("pid").and_then(Value::as_u64) else {
-        return tool_err("leave_note requires a `pid` (an integer, from list_panes).");
+    let pid = match snap.target_pane(args.get("pid").and_then(Value::as_u64).map(|p| p as u32)) {
+        Ok(pid) => u64::from(pid),
+        Err(why) => return tool_err(&why),
     };
     let title = args.get("title").and_then(Value::as_str);
     let text = args.get("text").and_then(Value::as_str);
@@ -1251,8 +1427,9 @@ where
              TD_MCP_WRITE=1) to let an agent declare a deliverable.",
         );
     }
-    let Some(pid) = args.get("pid").and_then(Value::as_u64) else {
-        return tool_err("declare_deliverable requires a `pid` (an integer, from list_panes).");
+    let pid = match snap.target_pane(args.get("pid").and_then(Value::as_u64).map(|p| p as u32)) {
+        Ok(pid) => u64::from(pid),
+        Err(why) => return tool_err(&why),
     };
     let change = match validate_deliverable(
         args.get("label").and_then(Value::as_str),
@@ -1671,6 +1848,7 @@ mod tests {
             mode: "CLAUDE".into(),
             is_agent: true,
             pid,
+            pane_id: Some(u64::from(pid % 97)),
             cwd: Some("/work/x".into()),
             session: Some("claude --resume abc".into()),
             tool: None,
@@ -1690,6 +1868,12 @@ mod tests {
             },
             panes,
             outer_grade: GradeReport::default(),
+            instance: Some(Instance {
+                session: "tdclip".into(),
+                window: 4242,
+                build: Some("td-abc1234-under-test".into()),
+            }),
+            caller: None,
         }
     }
 
@@ -1936,6 +2120,243 @@ mod tests {
             "params": { "name": name, "arguments": args } })
         .to_string();
         resp(&handle_line(&line, snap, no_tail).unwrap())["result"].clone()
+    }
+
+    /// A tool call with a write capability that succeeds on any pane, so a test
+    /// about WHICH pane was chosen is not also a test of the apply pipeline.
+    fn call_writing(snap: &Snapshot, name: &str, args: Value) -> Value {
+        let apply = |ups: &[ConfigUpdate]| -> Vec<ApplyOutcome> {
+            ups.iter()
+                .map(|(t, _)| (t.clone(), Ok(GradeReport::default())))
+                .collect()
+        };
+        let line = json!({ "id": 9, "method": "tools/call",
+            "params": { "name": name, "arguments": args } })
+        .to_string();
+        resp(&handle_line_with(&line, snap, no_tail, apply, no_search).unwrap())["result"].clone()
+    }
+
+    /// Every block of text in a result, joined — the stamp is its own block, so
+    /// an assertion that only read `content[0]` would pass whatever we did.
+    fn text_of(result: &Value) -> String {
+        result["content"]
+            .as_array()
+            .expect("a result always carries content")
+            .iter()
+            .filter_map(|b| b.get("text").and_then(Value::as_str))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    // ---- which instance answered ----
+
+    /// EVERY tool names the window that answered it, reads and writes alike.
+    ///
+    /// The whole defect this exists for is that a reply from the wrong instance
+    /// was byte-identical in shape to a reply from the right one. The list is
+    /// spelled out rather than derived from `tool_defs`, so adding a tool
+    /// without a stamp fails here instead of quietly inheriting a pass.
+    #[test]
+    fn every_tool_result_names_the_instance_that_answered() {
+        let snap = snap_writable(vec![agent_pane(100, true)]);
+        for (name, args) in [
+            ("list_panes", json!({})),
+            ("pane_events", json!({ "pid": 100 })),
+            ("get_pane_config", json!({})),
+            ("set_pane_config", json!({ "pid": 100, "brightness": 40 })),
+            ("leave_note", json!({ "pid": 100, "text": "hi" })),
+            (
+                "declare_deliverable",
+                json!({ "pid": 100, "href": "/tmp/x.html" }),
+            ),
+            ("grep", json!({ "query": "x" })),
+        ] {
+            let out = call(&snap, name, args);
+            let text = text_of(&out);
+            assert!(
+                text.contains("session tdclip") && text.contains("window 4242"),
+                "{name} answered without naming its instance: {text}"
+            );
+            assert_eq!(
+                out["structuredContent"]["instance"]["session"], "tdclip",
+                "{name} left the structured half unstamped"
+            );
+            assert_eq!(
+                out["structuredContent"]["instance"]["build"], "td-abc1234-under-test",
+                "{name} named no build, and two windows on one box are routinely different ones"
+            );
+        }
+    }
+
+    /// A refusal is stamped too. "MCP exposure is disabled" from the window you
+    /// did not mean to reach is the answer most likely to be acted on blind.
+    #[test]
+    fn a_refusal_names_the_window_that_refused() {
+        let out = call(
+            &snap(false, true, vec![agent_pane(100, true)]),
+            "list_panes",
+            json!({}),
+        );
+        assert_eq!(out["isError"], true, "a disabled server must refuse");
+        assert!(
+            text_of(&out).contains("window 4242"),
+            "the refusal did not say which window refused: {}",
+            text_of(&out)
+        );
+    }
+
+    /// A window that cannot name itself says so, out loud, in the same slot.
+    /// Silence there would be read as agreement with whatever the caller assumed.
+    #[test]
+    fn a_window_that_cannot_name_itself_says_so_rather_than_going_quiet() {
+        let mut s = snap(true, true, vec![agent_pane(100, true)]);
+        s.instance = None;
+        let out = call(&s, "list_panes", json!({}));
+        let text = text_of(&out);
+        assert!(
+            text.contains("instance unknown"),
+            "an unnamed instance went quiet instead of saying so: {text}"
+        );
+        assert!(
+            out["structuredContent"]["instance"].is_null(),
+            "unknown must reach the wire as null, never as a blank name"
+        );
+    }
+
+    // ---- which pane is the caller ----
+
+    /// The listing carries the host's pane id, which is the number the caller
+    /// already holds in `$TD_PANE_ID` — the join that lets an agent find itself
+    /// without matching on a title two panes share.
+    #[test]
+    fn list_panes_carries_the_pane_id_an_agent_can_match_on() {
+        let mut p = agent_pane(100, true);
+        p.pane_id = Some(9);
+        let out = call(&snap(true, true, vec![p]), "list_panes", json!({}));
+        assert!(
+            text_of(&out).contains("pane 9"),
+            "the pane id is missing from the line a model reads: {}",
+            text_of(&out)
+        );
+        assert_eq!(out["structuredContent"]["panes"][0]["pane_id"], 9);
+    }
+
+    /// A caller that names itself does not have to name its own pane: the
+    /// declaration lands on the pane it called from.
+    ///
+    /// This is the defect the whole caller-identity path exists for. The old
+    /// rule sent the agent to `list_panes` to find its own pid, and the only
+    /// keys it could match on were the title and the directory — which two
+    /// agents working on one project share, so the deliverable went to
+    /// whichever of them the agent picked.
+    #[test]
+    fn a_deliverable_with_no_pid_lands_on_the_pane_that_declared_it() {
+        let mut mine = agent_pane(100, true);
+        mine.pane_id = Some(9);
+        let mut sibling = agent_pane(200, true);
+        sibling.pane_id = Some(4);
+        // Indistinguishable by every key the agent could have matched on.
+        assert_eq!(mine.title, sibling.title);
+        assert_eq!(mine.cwd, sibling.cwd);
+
+        let mut s = snap_writable(vec![sibling, mine]);
+        s.caller = Some(Caller {
+            session: "tdclip".into(),
+            pane: Some(9),
+        });
+        let out = call_writing(&s, "declare_deliverable", json!({ "href": "/tmp/r.html" }));
+        assert_ne!(out["isError"], true, "{}", text_of(&out));
+        assert_eq!(
+            out["structuredContent"]["pid"],
+            100,
+            "the deliverable landed on the wrong pane: {}",
+            text_of(&out)
+        );
+    }
+
+    /// The same default for a note, and it reaches the pane through the one
+    /// pipeline every pane mutation uses.
+    #[test]
+    fn a_note_with_no_pid_lands_on_the_pane_that_left_it() {
+        let mut mine = agent_pane(100, true);
+        mine.pane_id = Some(9);
+        let mut s = snap_writable(vec![mine]);
+        s.caller = Some(Caller {
+            session: "tdclip".into(),
+            pane: Some(9),
+        });
+        let out = call_writing(&s, "leave_note", json!({ "text": "back in ten" }));
+        assert_ne!(out["isError"], true, "{}", text_of(&out));
+        assert_eq!(out["structuredContent"]["pid"], 100);
+    }
+
+    /// An explicit pid still wins. Supervising another pane is a real use, and
+    /// the default is a convenience for the common case, not a confinement.
+    #[test]
+    fn an_explicit_pid_still_beats_the_caller_default() {
+        let mut mine = agent_pane(100, true);
+        mine.pane_id = Some(9);
+        let mut other = agent_pane(200, true);
+        other.pane_id = Some(4);
+        let mut s = snap_writable(vec![mine, other]);
+        s.caller = Some(Caller {
+            session: "tdclip".into(),
+            pane: Some(9),
+        });
+        let out = call_writing(&s, "leave_note", json!({ "pid": 200, "text": "look here" }));
+        assert_eq!(out["structuredContent"]["pid"], 200);
+    }
+
+    /// A caller the host could not place is told THAT, rather than being told
+    /// to pass a pid with no hint of why the default did not work. The three
+    /// ways this fails are three different sentences on purpose: an anonymous
+    /// connection, a located caller in no known pane, and a pane this window is
+    /// not showing.
+    #[test]
+    fn each_way_of_not_knowing_the_caller_says_which_one_it_was() {
+        let mut p = agent_pane(100, true);
+        p.pane_id = Some(9);
+
+        let anon = snap_writable(vec![p.clone()]);
+        let e = text_of(&call(&anon, "leave_note", json!({ "text": "x" })));
+        assert!(e.contains("did not say who is calling"), "{e}");
+
+        let mut no_pane = snap_writable(vec![p.clone()]);
+        no_pane.caller = Some(Caller {
+            session: "tdclip".into(),
+            pane: None,
+        });
+        let e = text_of(&call(&no_pane, "leave_note", json!({ "text": "x" })));
+        assert!(e.contains("could not say which pane"), "{e}");
+
+        let mut stranger = snap_writable(vec![p]);
+        stranger.caller = Some(Caller {
+            session: "tdclip".into(),
+            pane: Some(77),
+        });
+        let e = text_of(&call(&stranger, "leave_note", json!({ "text": "x" })));
+        assert!(e.contains("pane 77"), "{e}");
+    }
+
+    /// A pane with no host id reports `null` rather than dropping the key.
+    /// A window-owned pane genuinely has no id; an omitted field would leave a
+    /// hole the reader fills in with a guess.
+    #[test]
+    fn a_pane_with_no_host_id_reports_null_rather_than_omitting_it() {
+        let mut p = agent_pane(100, true);
+        p.pane_id = None;
+        let out = call(&snap(true, true, vec![p]), "list_panes", json!({}));
+        let pane = &out["structuredContent"]["panes"][0];
+        assert!(
+            pane.get("pane_id").is_some(),
+            "pane_id was omitted; absence must be visible: {pane}"
+        );
+        assert!(pane["pane_id"].is_null());
+        assert!(
+            text_of(&out).contains("pane —"),
+            "the line hid the missing id instead of drawing it: {}",
+            text_of(&out)
+        );
     }
 
     /// Call set_pane_config with a fake gpui-thread `apply`: pid 100 succeeds
@@ -2524,6 +2945,7 @@ mod tests {
             mode: "SHELL".into(),
             is_agent: false,
             pid: 7,
+            pane_id: Some(7),
             cwd: None,
             session: None,
             tool: None,

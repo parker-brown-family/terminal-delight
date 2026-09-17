@@ -55,12 +55,16 @@ pub enum PaneKind {
     Shell,
     /// The pane exists and nothing could be established about what runs in it.
     ///
-    /// Not constructed today, and that is the honest state rather than an
-    /// oversight: this process launches its own panes and knows what is in each
-    /// one. It becomes reachable when a client is shown a pane the host owns and
-    /// has not described. Slice 1's rotation synthesised it, which is why the
-    /// dead-code warning only appears now that the rotation is gone.
-    #[allow(dead_code)]
+    /// Reachable since #462, exactly where this comment said it would become
+    /// reachable: a client is shown a pane the host owns and has not described.
+    /// Until then the window stored that state as [`PaneKind::Shell`], which is
+    /// filtered out below — so eleven running agents produced no row, no count
+    /// and no lane, and the queue drew "Nothing is waiting on you" over the top
+    /// of them.
+    ///
+    /// It is shown and never counted, for the same reason
+    /// [`AttentionKind::Unknown`] is: a pane we cannot describe is not a pane
+    /// asking for something.
     Unknown,
 }
 
@@ -378,6 +382,17 @@ pub struct AttentionItem {
     pub pane: u64,
     pub priority: Priority,
     pub kind: AttentionKind,
+    /// What the pane is, carried through so a row can say WHY it is in the
+    /// unknown lane.
+    ///
+    /// Not a field standing in for a function of `kind` — the file's rule
+    /// above — but the second, independent fact the row was built from. A row
+    /// in the unknown lane means one of two different things, and the
+    /// difference is the difference between "this agent's screen is
+    /// unreadable" and "nothing has told us there is an agent here". Saying
+    /// the first about the second is the exact lie
+    /// [`AttentionKind::reason`] warns against one sentence further down.
+    pub pane_kind: PaneKind,
     pub origin: Origin,
     pub observed_at: Option<Instant>,
     /// The line on the pane's screen that the classifier matched, captured at
@@ -401,6 +416,33 @@ pub struct AttentionItem {
 }
 
 impl AttentionItem {
+    /// Why this row exists, said truthfully for both kinds of unknown.
+    ///
+    /// Still a function and still not a field — of two values the row already
+    /// holds rather than one. [`AttentionKind::reason`] answers for every row
+    /// whose pane we can describe; the one case it cannot answer is a pane
+    /// nobody has described, where "screen could not be read" would assert
+    /// that a screen was read and failed. Nothing read anything: the census
+    /// has no entry.
+    pub fn reason(&self) -> &'static str {
+        match (self.kind, self.pane_kind) {
+            (AttentionKind::Unknown, PaneKind::Unknown) => "Not described by the host",
+            (kind, _) => kind.reason(),
+        }
+    }
+
+    /// Which instrument put this row here — the same split, one layer down.
+    ///
+    /// A pane the host never described was not read by the screen parser. It
+    /// was missed by the pane census, and naming that is what lets somebody
+    /// tell a parser that is failing from a census that is incomplete.
+    pub fn source(&self) -> &'static str {
+        match (self.kind, self.pane_kind) {
+            (AttentionKind::Unknown, PaneKind::Unknown) => "census",
+            (kind, _) => kind.source(),
+        }
+    }
+
     /// How long this has been waiting, or `None` when nothing was observed.
     ///
     /// The caller renders `None` as an absence. Returning `Duration::ZERO` here
@@ -434,6 +476,7 @@ pub fn project(observations: &[Observation]) -> Vec<AttentionItem> {
                 pane: o.pane,
                 priority: o.priority,
                 kind,
+                pane_kind: o.pane_kind,
                 origin: o.origin.clone(),
                 observed_at: o.observed_at,
                 evidence: o.evidence.clone(),
@@ -571,7 +614,7 @@ pub fn review_evidence(it: &AttentionItem) -> Vec<Evidence> {
         // its one certain fact came from rather than leaving the row sourceless.
         // Never unavailable: a row exists BECAUSE some instrument read
         // something, so there is always an honest answer here.
-        Evidence::known("read by", it.kind.source()),
+        Evidence::known("read by", it.source()),
     ]
 }
 
@@ -770,10 +813,87 @@ mod tests {
             pane,
             priority: Priority::Neutral,
             kind,
+            pane_kind: PaneKind::Agent,
             origin: Origin::default(),
             observed_at: None,
             evidence: None,
             deliverable: None,
+        }
+    }
+
+    /// The #462 shape, at the projection: a pane nobody could describe must
+    /// reach the queue.
+    ///
+    /// It used to be stored as [`PaneKind::Shell`] and dropped by the filter
+    /// below, which is how eleven agents produced no row, no lane and no count
+    /// while the queue drew "Nothing is waiting on you" over the top of them.
+    /// A shell is still dropped — a shell genuinely wants nothing — and the
+    /// difference between the two is the whole fix.
+    #[test]
+    fn a_pane_nobody_has_described_gets_a_row_and_a_shell_still_does_not() {
+        let mut unknown = obs(1, Some(AttentionKind::Unknown), None);
+        unknown.pane_kind = PaneKind::Unknown;
+        let mut shell = obs(2, Some(AttentionKind::Unknown), None);
+        shell.pane_kind = PaneKind::Shell;
+
+        let items = project(&[unknown, shell]);
+        assert_eq!(
+            order_of(&items),
+            vec![1],
+            "the undescribed pane must survive the projection and the shell must not"
+        );
+
+        // Shown, never counted: "we could not tell" is not a thing asking for
+        // you, and folding it into the red number would make the repair for an
+        // invisible pane into an inflated alarm.
+        let c = counts(&items);
+        assert_eq!(c.wanting, 0, "an undescribed pane is not a request");
+        assert_eq!(c.unknown, 1, "and it is not nothing either");
+    }
+
+    /// The two unknowns are different sentences, and the row says which.
+    ///
+    /// `AttentionKind::Unknown` alone means "we know it is an agent and could
+    /// not read its screen". Saying that about a pane the host never described
+    /// asserts both that there is an agent and that a screen was read — two
+    /// claims nothing supports. The row is a function of both facts, so it
+    /// cannot drift from either.
+    #[test]
+    fn an_undescribed_pane_says_so_instead_of_blaming_the_screen() {
+        let mut described = row(1, AttentionKind::Unknown);
+        described.pane_kind = PaneKind::Agent;
+        let mut undescribed = row(2, AttentionKind::Unknown);
+        undescribed.pane_kind = PaneKind::Unknown;
+
+        assert_eq!(described.reason(), AttentionKind::Unknown.reason());
+        assert_ne!(
+            undescribed.reason(),
+            described.reason(),
+            "a pane nobody described must not be reported as a screen that could not be read"
+        );
+        let words = undescribed.reason().to_ascii_lowercase();
+        assert!(
+            !words.contains("screen") && !words.contains("agent"),
+            "the words must assert neither a screen nor an agent, and say: {words:?}"
+        );
+
+        assert_ne!(
+            undescribed.source(),
+            described.source(),
+            "the instrument differs too — a census that has no entry is not a parser that failed"
+        );
+        assert!(!undescribed.source().is_empty(), "and it is still named");
+
+        // Every other lane keeps answering exactly as it did.
+        for kind in [
+            AttentionKind::Decision,
+            AttentionKind::Failure,
+            AttentionKind::ReviewReady,
+        ] {
+            let mut it = row(3, kind);
+            it.pane_kind = PaneKind::Unknown;
+            assert_eq!(it.reason(), kind.reason());
+            assert_eq!(it.source(), kind.source());
         }
     }
 

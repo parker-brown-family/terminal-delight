@@ -880,7 +880,13 @@ impl SavedNode {
     /// is built.
     fn migrate_grades(&mut self, outer: &ThemeChoice) {
         match self {
-            SavedNode::Leaf { appearance, .. } => appearance.migrate_legacy_grade(outer),
+            SavedNode::Leaf { appearance, .. } => {
+                appearance.migrate_legacy_grade(outer);
+                // …and the theme half of the same argument: a pane still
+                // wearing exactly what birth stamped on it never chose that,
+                // so it goes back to following outer.
+                appearance.release_birth_theme();
+            }
             SavedNode::Split { a, b, .. } => {
                 a.migrate_grades(outer);
                 b.migrate_grades(outer);
@@ -1134,6 +1140,37 @@ fn marquee_banner(text: &str, age: f32, th: &theme::Theme) -> gpui::Div {
                 )
                 .child(bulbs(1)),
         )
+}
+
+/// How far past the terminal render a tray may stand: a hairline, not a hand.
+///
+/// Trays are drawn over the panes, and a tray taller than what it covers
+/// stops reading as a layer over the terminal and starts reading as a second
+/// window that happens to overlap ours — the palette tray was doing exactly
+/// that, running down over the bottom bezel and its split buttons. One percent
+/// is deliberately not zero: a tray that ends flush with the render's edge
+/// looks clipped by accident, and the sliver of overhang says the edge is
+/// where it is on purpose. Everything past the cap scrolls inside the tray.
+const TRAY_OVERHANG: f32 = 0.01;
+
+/// The shortest a tray is ever squeezed to. Below this a scrolling panel is
+/// a peephole, and the honest answer on a window that small is to overhang a
+/// little more rather than to show three pixels of content.
+const TRAY_MIN_H: f32 = 160.;
+
+/// The tallest a tray whose top edge sits at `top` may be, given the render
+/// band `(band_top, band_h)` it hangs over.
+///
+/// Pure arithmetic, so the rule is testable without a window: the tray's
+/// bottom may reach one [`TRAY_OVERHANG`] past the render's bottom, and the
+/// tray itself is never taller than the render plus that same sliver — which
+/// is what stops a tray anchored ABOVE the render (in the top bezel) from
+/// buying extra height with the distance.
+fn tray_cap(band: (f32, f32), top: f32) -> f32 {
+    let (band_top, band_h) = band;
+    let overhang = band_h * TRAY_OVERHANG;
+    let limit = band_top + band_h + overhang;
+    (limit - top).min(band_h + overhang).max(TRAY_MIN_H)
 }
 
 /// Seconds since the process started, for animations that want a phase rather
@@ -1980,6 +2017,45 @@ impl SavingsView {
     }
 }
 
+/// One pane the session is holding after a close, and when the hold ends.
+///
+/// The deadline is wall-clock seconds since the epoch rather than the `Instant`
+/// the trash keeps, because it has to mean something to a DIFFERENT process
+/// than the one that wrote it: an `Instant` is only comparable inside the
+/// program that took it, and the reader here is the next window, which is
+/// exactly the one the old window's monotonic clock means nothing to.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
+struct ClosedPane {
+    pane: u64,
+    /// Unix seconds. Past = the hold has run out and the pane is ordinary
+    /// again; a clock that has gone backwards therefore reads as expired, which
+    /// is the safe direction — it adopts rather than kills.
+    until: u64,
+}
+
+/// Which held panes are still inside their hold at `now` (unix seconds).
+///
+/// Pure and separate from the attach so it can be tested without a host, a
+/// window or a terminal — the same reason `plan_attach` is pure. It is also the
+/// whole of the decision: an unclaimed terminal is either one this session
+/// closed and is still holding, or one it has never heard of, and those two get
+/// opposite treatment.
+fn still_closed(closed: &[ClosedPane], now: u64) -> Vec<u64> {
+    closed
+        .iter()
+        .filter(|c| c.until > now)
+        .map(|c| c.pane)
+        .collect()
+}
+
+/// Wall-clock seconds since the epoch, or 0 if the clock is before it.
+fn unix_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
 #[derive(Serialize, Deserialize)]
 struct StateFile {
     active: usize,
@@ -2007,6 +2083,22 @@ struct StateFile {
     #[serde(default)]
     panes: usize,
     tabs: Vec<SavedTab>,
+    /// The panes this session has CLOSED but is still holding, with the instant
+    /// each one's hold runs out.
+    ///
+    /// Written because the trash is in the window's memory and the terminal it
+    /// is holding is in the host's. Close a tab and the two disagree: the saved
+    /// layout no longer claims that pane, and the pane is still running. The
+    /// next attach reads that disagreement as "a terminal nobody has a tab for"
+    /// and adopts it — see `plan_attach`'s orphans and `still_closed`. So a
+    /// close survived exactly as long as the window did, and a bounce inside
+    /// the hold hour turned it into a nameless tab at the end of the list.
+    ///
+    /// Absent on files written before this existed, which reads as "this
+    /// session was holding nothing" — the same answer those files would have
+    /// given, rather than a claim that every orphan was once closed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    closed: Vec<ClosedPane>,
     /// Tab groups (browser-style colour bands). Absent on pre-feature files.
     #[serde(default)]
     groups: Vec<SavedGroup>,
@@ -2105,6 +2197,7 @@ impl Default for StateFile {
             warp: theme::WARP_DEFAULT, // fresh install: the classic dial
             track: None,
             tabs: Vec::new(),
+            closed: Vec::new(),
             groups: Vec::new(),
             projects: Vec::new(),
             left_bar: None,
@@ -3379,6 +3472,15 @@ struct Workspace {
     drop_target: Option<DropTarget>,
     /// Live per-pane content rects (entity → box) for drop hit-testing.
     pane_bounds: Arc<Mutex<std::collections::HashMap<EntityId, Bounds<Pixels>>>>,
+    /// The vertical band the terminal grid occupied last frame — `(top,
+    /// height)` in window coordinates, measured from the pane rects the paint
+    /// registered rather than guessed from the bezels.
+    ///
+    /// Trays hang OVER the render and are clamped to it (see [`TRAY_OVERHANG`]
+    /// and [`Workspace::tray_max_h`]), so this is the number every popup's
+    /// height is answerable to. `None` before the first paint, and on that one
+    /// frame the viewport stands in.
+    render_band: Option<(f32, f32)>,
     /// Live per-tab button rects (index → box) for "drop onto a main tab".
     tab_bounds: Arc<Mutex<std::collections::HashMap<usize, Bounds<Pixels>>>>,
     /// An outer tab being dragged along the strip to reorder it, if any.
@@ -4164,6 +4266,60 @@ fn collect_saved_leaves<'a>(node: &'a SavedNode, out: &mut Vec<&'a SavedNode>) {
 /// against its own correctness.
 const GUARD_PERIOD_SECS: u64 = 30;
 
+/// How often an attached window re-reads the host's census to check what its
+/// panes are running.
+///
+/// Six times as often as the guard above, and far cheaper: one NDJSON request
+/// and one reply for the whole session, against the guard's hash of every row of
+/// scrollback per quiet pane. Frequent because what it repairs is visible —
+/// a pane's phosphor, its header, and whether the attention queue can see it at
+/// all — and a colour that is wrong for half a minute is a colour somebody
+/// reads and believes.
+const MODE_SWEEP_SECS: u64 = 5;
+
+/// A pane's mode decides its phosphor, its header, and whether the attention
+/// queue is allowed to see it at all. It must never be repaired more slowly
+/// than a scrollback hash is checked — held at compile time rather than in a
+/// test, because it is a relationship between two constants and a test of one
+/// of those is a test of nothing.
+const _: () = assert!(MODE_SWEEP_SECS <= GUARD_PERIOD_SECS);
+
+/// Which panes the host's census disagrees with this window about, and what the
+/// host says they are.
+///
+/// Pulled out of the sweep so the rule can be asserted without a host, a window
+/// or a clock — the same reason [`repair_step`] is a function. Three decisions
+/// live here and each one is a thing that was got wrong before:
+///
+/// - **A pane the host has no mode for is left alone.** `None` in a census row
+///   means the host's watcher has not classified that pane yet, and
+///   [`hostproto::PaneInfo`] says so in as many words: *a pane nobody has
+///   classified yet is not a pane running a shell*. Converting it would be the
+///   original defect with a new author.
+/// - **A pane this window does not hold is not this window's business.** The
+///   host owns panes for every client; the census lists them all.
+/// - **Agreement produces nothing**, so the common case — every pane already
+///   right, twelve times a minute — costs no `set_host_mode`, no `notify` and
+///   no repaint.
+fn modes_to_apply(
+    live: &[hostproto::PaneInfo],
+    mine: &[(u64, pane::PaneMode)],
+) -> Vec<(u64, pane::PaneMode)> {
+    let mut out = Vec::new();
+    for info in live {
+        let Some(wire) = info.mode.as_ref() else {
+            continue;
+        };
+        let said = pane::PaneMode::from_wire(wire);
+        for (id, believed) in mine {
+            if *id == info.pane.0 && *believed != said {
+                out.push((*id, said.clone()));
+            }
+        }
+    }
+    out
+}
+
 /// What a guard pass does about a pane it has just found at odds with the host.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Repair {
@@ -4709,6 +4865,7 @@ impl Workspace {
             drag_pane: None,
             drop_target: None,
             pane_bounds: Arc::new(Mutex::new(std::collections::HashMap::new())),
+            render_band: None,
             tab_bounds: Arc::new(Mutex::new(std::collections::HashMap::new())),
             tab_drag: None,
             group_drag: None,
@@ -5271,7 +5428,31 @@ impl Workspace {
         // Adoption. A terminal running with nothing showing it is the failure
         // this whole feature exists to end, and a stale layout is just another
         // way of arriving at it.
+        //
+        // With one exception, and it is the whole of `closed`: a terminal this
+        // session CLOSED and is still holding for undo is also running with
+        // nothing showing it, and looks from here exactly like a stale layout.
+        // Adopting it undoes the close — and worse than undoing it, since the
+        // adopted tab arrives with no name, no group and no note (the
+        // `..Default::default()` below is why), so a tab somebody deliberately
+        // threw away comes back as a bare number at the end of the list. That
+        // is the shape of #479.
+        let interred = still_closed(&saved.closed, unix_now());
         for orphan in &plan.orphans {
+            if interred.contains(&orphan.pane.0) {
+                // Hang it up rather than leaving it running and unshown. The
+                // window that could have offered the undo is gone — its trash
+                // never reached the disk — so the hold has no UI left to be
+                // recovered through, and a held pane nobody can reach is a
+                // process that outlives every window forever.
+                if let Err(err) = ctx.link.close_pane(orphan.pane) {
+                    eprintln!(
+                        "terminal-delight: the session host would not close held pane {}: {err}",
+                        orphan.pane.0
+                    );
+                }
+                continue;
+            }
             let restore = session::PaneRestore {
                 cwd: orphan.cwd.clone(),
                 ..Default::default()
@@ -5307,18 +5488,112 @@ impl Workspace {
         self.save(cx);
         Self::watch_for_divergence(ctx.clone(), window, cx);
         self.listen_to_the_host(ctx.clone(), cx);
+        Self::reconcile_modes(ctx.clone(), cx);
+    }
+
+    /// Ask the host what its panes are running, and keep asking.
+    ///
+    /// **The repair for #462, and the reason it is a sweep rather than a
+    /// better event.** The window had exactly one way to learn a hosted pane's
+    /// mode after the pane was built — a [`hostproto::Push::Mode`] event — and
+    /// four independent things could lose it: the subscription is opt-in and is
+    /// taken out at the END of a restore, after every pane exists; the reader
+    /// thread breaks on any read error and is never restarted; a push is sent
+    /// on the change and nothing re-asks; and the change itself is rare. That
+    /// last one is what made the other three fatal rather than transient. A
+    /// watcher held open against a live host for forty seconds, over 24 panes
+    /// and some twenty working agents, received **no** mode pushes at all:
+    /// `next_mode`'s sticky rule is doing its job and an agent's
+    /// classification simply does not move. So a window that was wrong once
+    /// stayed wrong for five hours, and the panes it was wrong about were
+    /// filtered out of the attention queue before they could say so.
+    ///
+    /// The protocol already said where the answer lives — `list-panes` is
+    /// documented as what a client asks "for the current mode of every pane"
+    /// ([`hostproto::Push`]) — and nothing was asking it twice.
+    ///
+    /// One NDJSON round trip every [`MODE_SWEEP_SECS`] seconds, taken on the
+    /// background executor so the shared control connection is never waited on
+    /// from the render thread. Cheaper than the divergence guard beside it,
+    /// which spends one round trip per quiet pane every thirty seconds.
+    ///
+    /// Immediately, then on the clock: the first sweep is what closes the
+    /// startup race, where the host classifies a pane while the window is still
+    /// building the rest of the layout.
+    fn reconcile_modes(ctx: AttachCtx, cx: &mut Context<Self>) {
+        cx.spawn(async move |this, cx| {
+            loop {
+                let link = ctx.link.clone();
+                let census = cx
+                    .background_executor()
+                    .spawn(async move { link.list_panes() })
+                    .await;
+                // A host that will not answer is the divergence guard's problem
+                // and the link's `lost` flag's problem, not this sweep's. It
+                // keeps asking on the next turn of the loop: a host that
+                // answers again is exactly the case this exists for.
+                if let Ok(live) = census {
+                    let applied = this.update(cx, |ws: &mut Workspace, cx| {
+                        ws.apply_census_modes(&live, cx)
+                    });
+                    // The window has gone. Nothing left to reconcile.
+                    if applied.is_err() {
+                        break;
+                    }
+                }
+                cx.background_executor()
+                    .timer(Duration::from_secs(MODE_SWEEP_SECS))
+                    .await;
+            }
+        })
+        .detach();
+    }
+
+    /// Apply a host census to the panes this window holds.
+    ///
+    /// Split from the sweep so the rule can be tested without a window: see
+    /// [`modes_to_apply`], which decides, while this one only carries out.
+    fn apply_census_modes(&mut self, live: &[hostproto::PaneInfo], cx: &mut Context<Self>) {
+        let mut mine: Vec<(u64, pane::PaneMode)> = Vec::new();
+        for tab in &self.tabs {
+            let mut leaves = vec![];
+            tab.root.leaves(&mut leaves);
+            for leaf in leaves {
+                let view = leaf.read(cx);
+                if let Some(id) = view.pane_id() {
+                    mine.push((id, view.mode.clone()));
+                }
+            }
+        }
+        let changes = modes_to_apply(live, &mine);
+        if changes.is_empty() {
+            return;
+        }
+        for (id, mode) in changes {
+            for tab in &self.tabs {
+                let mut leaves = vec![];
+                tab.root.leaves(&mut leaves);
+                for leaf in leaves {
+                    if leaf.read(cx).pane_id() == Some(id) {
+                        leaf.update(cx, |view, cx| view.set_host_mode(mode.clone(), cx));
+                    }
+                }
+            }
+        }
+        cx.notify();
     }
 
     /// Take the host's word for what its panes are running.
     ///
     /// The host watches the pseudoterminals it owns, so it knows what is in the
     /// foreground of each one before this window could work it out from
-    /// outside. It says so when it changes rather than on a clock, which is
-    /// also the only time the answer is new — so a window that has heard
-    /// nothing has not fallen behind, it has nothing to hear.
+    /// outside. It says so when it changes rather than on a clock.
     ///
-    /// The current mode of every pane arrives with the pane itself, from
-    /// `list-panes` at attach. This is only the changes after that.
+    /// **A shortcut, and no longer the only path.** Until #462 this was the
+    /// whole of how a mode reached a built pane, which made every way of losing
+    /// one message a permanent wrong answer. [`Workspace::reconcile_modes`]
+    /// now re-reads the census on a clock, so this feed is what makes a change
+    /// arrive in milliseconds rather than what makes it arrive at all.
     fn listen_to_the_host(&mut self, ctx: AttachCtx, cx: &mut Context<Self>) {
         let news = match hostctl::watch(ctx.link.socket()) {
             Ok(news) => news,
@@ -5747,6 +6022,45 @@ impl Workspace {
     /// split tree, per-pane appearance, groups, theme, and MCP policy. Shared by
     /// [`Self::save`] (writes the real state) and [`Self::share_demo`] (clones the
     /// layout into a throwaway demo state), so the two can never drift.
+    /// Every pane the trash is holding, with its hold's deadline in wall-clock
+    /// seconds.
+    ///
+    /// Walks the holdings the same way [`Self::end_held`] does, because these
+    /// are the same panes: the ones a close left running so it could be taken
+    /// back. `end_held` reaches them to hang them up; this reaches them to write
+    /// down that they are not orphans, which is the fact the NEXT window needs
+    /// and the only one it cannot work out for itself.
+    ///
+    /// Expired holdings are skipped rather than recorded as already-past
+    /// deadlines. A holding that has run out is one the sweep is about to drop,
+    /// and writing it would put a row in the file whose only effect is to be
+    /// ignored.
+    fn held_panes(&self, cx: &App) -> Vec<ClosedPane> {
+        let now = Instant::now();
+        let deadline_base = unix_now();
+        let mut out = vec![];
+        for h in self.trash.live_items(now) {
+            let Some(left) = h.left(now) else { continue };
+            let until = deadline_base.saturating_add(left.as_secs());
+            let mut leaves: Vec<&Entity<TerminalView>> = vec![];
+            match &h.payload {
+                Retired::Branch(d) => {
+                    for (_, tab) in &d.tabs {
+                        tab.root.leaves(&mut leaves);
+                    }
+                }
+                Retired::Pane(p) => leaves.push(&p.leaf),
+            }
+            out.extend(
+                leaves
+                    .into_iter()
+                    .filter_map(|leaf| leaf.read(cx).pane_id())
+                    .map(|pane| ClosedPane { pane, until }),
+            );
+        }
+        out
+    }
+
     fn build_state(&self, cx: &App) -> StateFile {
         StateFile {
             active: self.active,
@@ -5760,6 +6074,7 @@ impl Workspace {
             // writing the legacy top-level fields so older readers still work.
             warp: theme::outer_choice(cx).grade.warp,
             track: theme::outer_choice(cx).grade.tracking,
+            closed: self.held_panes(cx),
             tabs: self
                 .tabs
                 .iter()
@@ -5952,6 +6267,10 @@ impl Workspace {
                     mode: p.mode.label().to_string(),
                     is_agent,
                     pid,
+                    // `None` for a pane this window owns outright (no host).
+                    // That is a real state, not a missing reading, and the wire
+                    // keeps the two apart.
+                    pane_id: p.pane_id(),
                     cwd: rt.cwd,
                     session: rt.resume,
                     tool: p.tool_face.as_ref().map(|f| f.tool.clone()),
@@ -9114,9 +9433,16 @@ impl Workspace {
                 )
                 .child(
                     sk.panel()
+                        .id("bar-menu-panel")
                         .absolute()
                         .left(at.x)
                         .top(at.y)
+                        // A branch with forty tabs makes this list longer than
+                        // the window; it is a tray like any other and stops at
+                        // the render's edge.
+                        .max_h(px(self.tray_max_h(f32::from(at.y))))
+                        .overflow_x_hidden()
+                        .overflow_y_scroll()
                         .shadow_lg()
                         .child(items),
                 ),
@@ -10503,6 +10829,50 @@ impl Workspace {
         cx.notify();
     }
 
+    /// The band a set of pane rects covers: `(top, height)` in window
+    /// coordinates. `None` for an empty map — no panes were painted, which is
+    /// not the same as panes of zero height.
+    fn band_of(rects: &std::collections::HashMap<EntityId, Bounds<Pixels>>) -> Option<(f32, f32)> {
+        let mut top = f32::INFINITY;
+        let mut bottom = f32::NEG_INFINITY;
+        for b in rects.values() {
+            top = top.min(f32::from(b.origin.y));
+            bottom = bottom.max(f32::from(b.origin.y) + f32::from(b.size.height));
+        }
+        (bottom > top).then_some((top, bottom - top))
+    }
+
+    /// The render band trays are answerable to. Before the first paint there
+    /// are no pane rects to measure, and the window stands in for one frame —
+    /// the honest fallback, since an unmeasured render is not a render of
+    /// height zero.
+    ///
+    /// Deliberately takes no `Window`: half the trays are built in helpers
+    /// that never had one, and a rule only half the trays can ask about is
+    /// how the palette tray ended up being the only one with a cap.
+    fn tray_band(&self) -> (f32, f32) {
+        self.render_band.unwrap_or_else(|| {
+            (
+                0.,
+                self.last_win
+                    .map(|(_, _, _, h)| h)
+                    .unwrap_or(TRAY_MIN_H * 4.),
+            )
+        })
+    }
+
+    /// The tallest a CENTRED tray (one the layout places rather than one
+    /// anchored to a click) may be: the render's own height plus the hairline.
+    fn tray_card_h(&self) -> f32 {
+        let (top, _) = self.tray_band();
+        tray_cap(self.tray_band(), top)
+    }
+
+    /// The tallest a tray anchored at `top` may be. See [`tray_cap`].
+    fn tray_max_h(&self, top: f32) -> f32 {
+        tray_cap(self.tray_band(), top)
+    }
+
     /// The pane entity with this id, if it's still in any tab's tree.
     fn pane_by_id(&self, id: gpui::EntityId) -> Option<Entity<TerminalView>> {
         for tab in &self.tabs {
@@ -11366,9 +11736,11 @@ impl Workspace {
         }
 
         let panel = div()
+            .id("plugins-panel")
             .w(gpui::relative(0.6))
-            .max_h(gpui::relative(0.8))
-            .overflow_hidden()
+            .max_h(px(self.tray_card_h()))
+            .overflow_x_hidden()
+            .overflow_y_scroll()
             .p_3()
             .rounded_md()
             .border_2()
@@ -11495,7 +11867,11 @@ impl Workspace {
         };
 
         let panel = div()
+            .id("notif-panel")
             .w(px(460.))
+            .max_h(px(self.tray_card_h()))
+            .overflow_x_hidden()
+            .overflow_y_scroll()
             .p_3()
             .rounded_md()
             .border_2()
@@ -14733,6 +15109,42 @@ impl Workspace {
         }
     }
 
+    /// Every live leaf in the window, in tab order.
+    fn all_leaves(&self) -> Vec<Entity<TerminalView>> {
+        let mut leaves = vec![];
+        for tab in &self.tabs {
+            tab.root.leaves(&mut leaves);
+        }
+        leaves.into_iter().cloned().collect()
+    }
+
+    /// How many live panes have broken their theme group away from outer — the
+    /// number "pass down" would actually change. Zero means the window already
+    /// wears one theme, and the button says so rather than pretending to act.
+    fn panes_off_outer_theme(&self, cx: &App) -> usize {
+        self.all_leaves()
+            .iter()
+            .filter(|p| !p.read(cx).appearance.follows_outer_theme())
+            .count()
+    }
+
+    /// Pass the OUTER theme down: re-attach every live pane's theme group to
+    /// outer, so the whole window wears what the outer tray is showing. The
+    /// counterpart of a pane's "follow outer" toggle, driven from the other end
+    /// — and non-destructive in the same way, because each pane keeps its
+    /// retained override and gets it back the moment it detaches again. Grades
+    /// are a separate group and are untouched.
+    fn pass_theme_down(&mut self, cx: &mut Context<Self>) {
+        for pane in self.all_leaves() {
+            pane.update(cx, |view, cx| {
+                view.appearance.follow_theme();
+                cx.notify();
+            });
+        }
+        self.save(cx);
+        cx.notify();
+    }
+
     /// Flip a pane's grade-group "follow outer" switch (see
     /// [`Self::toggle_theme_inherit`]).
     fn toggle_grade_inherit(&mut self, scope: &MenuScope, cx: &mut Context<Self>) {
@@ -15710,9 +16122,25 @@ impl Workspace {
             }
             tree::Row::Task { index, depth } => self.task_row(index, depth, step, &th, s, cx),
             tree::Row::Unfiled { depth } => {
-                // A hairline and nothing else. It is also a drop target — "file
-                // this under nothing" is an answer — so it registers its box and
-                // lights up like a branch when a drag is over it.
+                // A word, then a hairline. It used to be the hairline alone,
+                // which made this the one boundary in the tree that divided
+                // without naming what came after it: the loose tasks below took
+                // their caption from whichever branch heading happened to sit
+                // above them, so a run of eight ordinary panes read as junk
+                // filed under JOB. Every other row in this bar says what it is,
+                // and the one row whose whole job is to say "these belong to
+                // nobody" was the one saying nothing.
+                //
+                // Not in tension with the strip heading, which deliberately
+                // stays a bare mark for a loose tab (see `place_name`):
+                // there "unfiled" would be the only heading in an unorganised
+                // session, shouting a state. Here it is a divider, and a
+                // divider with filed rows above it and loose rows below has to
+                // name which side is which.
+                //
+                // It is also a drop target — "file this under nothing" is an
+                // answer — so it registers its box and lights up like a branch
+                // when a drag is over it.
                 let store = self.bar_bounds.clone();
                 let hot = self
                     .bar_drag
@@ -15735,6 +16163,18 @@ impl Workspace {
                     .flex()
                     .flex_row()
                     .items_center()
+                    // Margin on the label rather than a row `gap`: the third
+                    // child here is an absolutely-positioned hit canvas, and a
+                    // gap is a rule about EVERY pair in the row rather than
+                    // about the pair you were looking at.
+                    .child(
+                        div()
+                            .flex_none()
+                            .mr(px(5. * s))
+                            .text_size(px(CHROME_NAME_PT * s))
+                            .text_color(if hot { th.accent } else { th.faint })
+                            .child(self.branch_label(BarBranch::Unfiled).to_uppercase()),
+                    )
                     .child(div().h(px(if hot { 2. } else { 1. })).flex_1().bg(if hot {
                         th.accent
                     } else {
@@ -17166,11 +17606,15 @@ impl Workspace {
             let priority = self.level_of(ti).priority;
             for leaf in leaves {
                 let view = leaf.read(cx);
-                let agent = view.mode.is_agent();
-                let pane_kind = if agent {
-                    PaneKind::Agent
-                } else {
-                    PaneKind::Shell
+                // Three answers, because there are three things to say. A pane
+                // nobody has classified is not a shell, and storing it as one
+                // is what deleted eleven running agents from this queue for an
+                // afternoon (#462): shells are filtered out before a row
+                // exists, so the absence had nowhere to show up.
+                let pane_kind = match view.mode {
+                    pane::PaneMode::Unknown => PaneKind::Unknown,
+                    ref mode if mode.is_agent() => PaneKind::Agent,
+                    _ => PaneKind::Shell,
                 };
                 // The same four signals the tab strip ranks, ranked once.
                 let badge = agent_badge(
@@ -17179,7 +17623,15 @@ impl Workspace {
                     view.has_bell(),
                     view.bell_blocked(),
                 );
-                let kind = rail_kind(badge, view.rail_state());
+                // A pane we cannot describe goes in the unknown lane on that
+                // ground alone. Its four signals are all gated on `is_agent`
+                // and therefore all false, so the badge would say "wants
+                // nothing" about a pane we know nothing about — which is the
+                // same silent zero one layer up.
+                let kind = match pane_kind {
+                    PaneKind::Unknown => Some(attention::AttentionKind::Unknown),
+                    _ => rail_kind(badge, view.rail_state()),
+                };
                 // The words and the instrument used to be chosen here, by a
                 // `match` on the very value above, and stored on the row. They
                 // are `AttentionKind::reason()` and `::source()` now — a caption
@@ -18144,7 +18596,7 @@ impl Workspace {
                     div()
                         .text_size(px(11. * s))
                         .text_color(sk.ink.ink)
-                        .child(it.kind.reason()),
+                        .child(it.reason()),
                 )
                 // The line the classifier read, quoted. `reason` is our words
                 // for what happened; this is the agent's own, and it is what
@@ -18172,7 +18624,7 @@ impl Workspace {
                         .text_color(sk.ink.ink_dim)
                         .child(format!(
                             "{} \u{b7} {}",
-                            it.kind.source(),
+                            it.source(),
                             attention::age_label(it.age(now))
                         )),
                 )
@@ -20307,6 +20759,9 @@ impl Render for Workspace {
         );
         // drop-hit-test rects are rebuilt every frame by the canvases below, so
         // a closed pane / removed tab never leaves a stale target behind.
+        // The band those rects covered IS the terminal render, so take it
+        // before the clear: it is what every tray's height is clamped to.
+        self.render_band = Self::band_of(&self.pane_bounds.lock().unwrap());
         self.pane_bounds.lock().unwrap().clear();
         self.tab_bounds.lock().unwrap().clear();
         let wb = window.bounds();
@@ -21749,9 +22204,26 @@ impl Render for Workspace {
             // The anchor toggle is GLOBAL (not per-pane), so it shows only in the
             // OUTER design panel. A short ANCHOR label + the ⚓ TOP/BOTTOM ▲▼ pill.
             if !is_pane {
+                // The outer end of the pane's "follow outer" toggle: one press
+                // puts every pane back on the window's theme. The count is what
+                // would change, so a window already in one theme reads 0 and the
+                // button sits inactive instead of claiming to have done work.
+                let stray = self.panes_off_outer_theme(cx);
+                let lbl = if stray == 0 {
+                    format!("⤓ {}", t.pass_down)
+                } else {
+                    format!("⤓ {} ({})", t.pass_down, stray)
+                };
                 controls = controls
                     .child(label("ANCHOR"))
-                    .child(div().flex().child(self.anchor_top_toggle(&sk, cx)));
+                    .child(div().flex().child(self.anchor_top_toggle(&sk, cx)))
+                    .child(Self::bezel_btn(&sk, &lbl, stray > 0).on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                            cx.stop_propagation();
+                            ws.pass_theme_down(cx);
+                        }),
+                    ));
             }
             if is_pane {
                 // Per-group toggle: on = this pane's theme follows the outer scope
@@ -21777,17 +22249,23 @@ impl Render for Workspace {
             // top-right anchor under the titlebar control.
             const PANEL_W: f32 = 300.; // match the DISPLAY (⛭) tray width
             const PANEL_H_EST: f32 = 458.; // generous, incl. colour wheel + pick row + follow-outer
-            let vp_h = f32::from(window.viewport_size().height);
             let mut panel = div().id("theme-panel").absolute().w(px(PANEL_W));
+            // Where the tray's top edge lands decides how tall it may be, so
+            // the anchor is computed first and kept.
+            let tray_top = match self.menu_at {
+                Some(at) => {
+                    let vh = f32::from(window.viewport_size().height);
+                    (f32::from(at.y) + 6.).clamp(8., (vh - PANEL_H_EST - 8.).max(8.))
+                }
+                None => 36.,
+            };
             panel = match self.menu_at {
                 Some(at) => {
-                    let vp = window.viewport_size();
-                    let (vw, vh) = (f32::from(vp.width), f32::from(vp.height));
+                    let vw = f32::from(window.viewport_size().width);
                     let right = (vw - f32::from(at.x)).clamp(8., (vw - PANEL_W - 8.).max(8.));
-                    let top = (f32::from(at.y) + 6.).clamp(8., (vh - PANEL_H_EST - 8.).max(8.));
-                    panel.right(px(right)).top(px(top))
+                    panel.right(px(right)).top(px(tray_top))
                 }
-                None => panel.top(px(36.)).right(px(150.)),
+                None => panel.top(px(tray_top)).right(px(150.)),
             };
             panel = panel
                 .p_3()
@@ -21795,9 +22273,12 @@ impl Render for Workspace {
                 .border_2()
                 .border_color(th.accent.alpha(0.85))
                 .bg(darken(th.surface, 0.6))
-                // never spill past the screen: clip horizontally, scroll a tall
-                // panel vertically rather than overflowing the bottom edge.
-                .max_h(px((vp_h - 16.).max(160.)))
+                // never spill past the RENDER: clip horizontally, scroll a
+                // tall tray vertically rather than running down over the
+                // bottom bezel. The cap is the terminal band this tray hangs
+                // over plus one hairline — not the window, which is how the
+                // densest tray in the app came to cover the split buttons.
+                .max_h(px(self.tray_max_h(tray_top)))
                 .overflow_x_hidden()
                 .overflow_y_scroll()
                 .shadow(float_shadows(th.accent))
@@ -21872,18 +22353,29 @@ impl Render for Workspace {
             }
             const PANEL_W: f32 = 300.;
             const PANEL_H_EST: f32 = 328.; // 8 slider rows + reset + follow-outer
-            let mut panel = div().absolute().w(px(PANEL_W));
+            let mut panel = div().id("osd-panel").absolute().w(px(PANEL_W));
+            let tray_top = match self.osd_at {
+                Some(at) => {
+                    let vh = f32::from(window.viewport_size().height);
+                    (f32::from(at.y) + 6.).clamp(8., (vh - PANEL_H_EST - 8.).max(8.))
+                }
+                None => 36.,
+            };
             panel = match self.osd_at {
                 Some(at) => {
-                    let vp = window.viewport_size();
-                    let (vw, vh) = (f32::from(vp.width), f32::from(vp.height));
+                    let vw = f32::from(window.viewport_size().width);
                     let right = (vw - f32::from(at.x)).clamp(8., (vw - PANEL_W - 8.).max(8.));
-                    let top = (f32::from(at.y) + 6.).clamp(8., (vh - PANEL_H_EST - 8.).max(8.));
-                    panel.right(px(right)).top(px(top))
+                    panel.right(px(right)).top(px(tray_top))
                 }
-                None => panel.top(px(36.)).right(px(110.)),
+                None => panel.top(px(tray_top)).right(px(110.)),
             };
             panel = panel
+                // Nine slider rows on a short window is taller than the render
+                // it covers, and this tray had no cap at all — it simply drew
+                // past the bottom.
+                .max_h(px(self.tray_max_h(tray_top)))
+                .overflow_x_hidden()
+                .overflow_y_scroll()
                 .p_3()
                 .rounded(sk.rad_raw(6.))
                 .border_2()
@@ -24620,11 +25112,16 @@ impl Render for Workspace {
                         }),
                     )
             };
+            let scale_top = 74. * scale;
             let panel = div()
+                .id("scale-panel")
                 .absolute()
-                .top(px(74. * scale))
+                .top(px(scale_top))
                 .right(px(12. * scale))
                 .w(px(240.))
+                .max_h(px(self.tray_max_h(scale_top)))
+                .overflow_x_hidden()
+                .overflow_y_scroll()
                 .p_4()
                 .rounded(sk.rad_raw(8.))
                 .border_2()
@@ -24716,6 +25213,7 @@ impl Render for Workspace {
                     .child(div().flex_1().min_w(px(0.)).child(label.to_string()))
             };
             let panel = div()
+                .id("more-panel")
                 .absolute()
                 // Under its own button, which is at the bottom left now. A menu
                 // that opens at the opposite corner from the thing that raised
@@ -24723,6 +25221,13 @@ impl Render for Workspace {
                 .bottom(px((pane::HICON + 10.) * scale))
                 .left(px(12. * scale))
                 .w(px(230.))
+                // It grows UPWARD from the footer, so its own top edge is what
+                // the cap has to be measured from: the band's top, since a menu
+                // rising past the render is the same fault as one falling past
+                // it. Entries beyond that scroll.
+                .max_h(px(self.tray_max_h(self.tray_band().0)))
+                .overflow_x_hidden()
+                .overflow_y_scroll()
                 .p_2()
                 .rounded(sk.rad_raw(8.))
                 .border_2()
@@ -25606,10 +26111,15 @@ impl Render for Workspace {
                 }),
             );
 
+            let group_top = f32::from(at.y) + 8.;
             let panel = div()
+                .id("group-menu-panel")
                 .absolute()
                 .left(px(f32::from(at.x)))
-                .top(px(f32::from(at.y) + 8.))
+                .top(px(group_top))
+                .max_h(px(self.tray_max_h(group_top)))
+                .overflow_x_hidden()
+                .overflow_y_scroll()
                 .p_2()
                 .rounded(sk.rad_raw(6.))
                 .border_2()
@@ -26421,6 +26931,108 @@ impl Render for Workspace {
 mod tests {
     use super::*;
 
+    // ---- trays stay inside the render ----------------------------------
+    //
+    // The rule Parker set: a tray may stand 1% of the render's height past the
+    // render and not a pixel further. These pin the arithmetic; the wiring is
+    // pinned by the source assertions below, which fail if a tray loses its
+    // cap.
+
+    /// A render 1000 tall starting at y=100: a tray anchored at its top edge
+    /// may be 1010 tall, so its bottom lands at 1110 — ten past the render's
+    /// 1100, which is the hairline and nothing more.
+    #[test]
+    fn a_tray_may_stand_one_percent_past_the_render_and_no_further() {
+        let band = (100., 1000.);
+        let cap = tray_cap(band, 100.);
+        assert_eq!(cap, 1010.);
+        assert_eq!(100. + cap, 1110., "bottom edge = render bottom + 1%");
+    }
+
+    /// The number that broke: the palette tray was capped to the WINDOW, so it
+    /// ran down over the bottom bezel and its split buttons. Anchored 36px
+    /// below the window's top, over a render that starts at 90 and ends at
+    /// 1450, it must now stop at 1463.6 — not at the window's 1520.
+    #[test]
+    fn the_palette_tray_stops_at_the_render_not_at_the_window() {
+        let band = (90., 1360.); // render: y 90 → 1450
+        let window_h = 1520.;
+        let cap = tray_cap(band, 36.);
+        let bottom = 36. + cap;
+        assert!(
+            bottom < window_h,
+            "a tray capped to the window reaches {window_h}; this one stops at {bottom}"
+        );
+        // Anchored 54px above the render's own top, the height cap (render +
+        // hairline) binds before the bottom limit does, so it stops 40px SHORT
+        // of the render's bottom rather than 70px past the window's.
+        assert!((bottom - 1409.6).abs() < 0.1, "bottom was {bottom}");
+        assert!(bottom <= 90. + 1360. + 13.6);
+    }
+
+    /// Anchoring a tray in the top bezel must not buy it extra height: the cap
+    /// is the render plus the hairline, however far above the render it starts.
+    #[test]
+    fn a_tray_anchored_above_the_render_buys_no_extra_height() {
+        let band = (400., 600.);
+        assert_eq!(
+            tray_cap(band, 0.),
+            606.,
+            "capped by the render's own height"
+        );
+        assert!(tray_cap(band, 0.) <= 600. * 1.01);
+    }
+
+    /// A tray anchored low is squeezed, not extended — until the squeeze would
+    /// leave a peephole, where the floor takes over.
+    #[test]
+    fn a_low_anchor_squeezes_the_tray_down_to_the_floor_and_stops() {
+        let band = (0., 1000.);
+        assert_eq!(tray_cap(band, 500.), 510.);
+        assert_eq!(
+            tray_cap(band, 995.),
+            TRAY_MIN_H,
+            "a three-pixel tray is not an answer"
+        );
+    }
+
+    /// Unknown is not zero: with no panes painted yet there is no band, and
+    /// the fallback is the window — never a render of height 0, which would
+    /// collapse every tray to the floor on the first frame.
+    #[test]
+    fn an_unmeasured_render_is_not_a_render_of_height_zero() {
+        let empty = std::collections::HashMap::new();
+        assert_eq!(Workspace::band_of(&empty), None);
+    }
+
+    /// Every tray's cap is wired, not merely available. Each of these is a
+    /// live call site; deleting one is what this test exists to catch.
+    #[test]
+    fn every_tray_asks_for_its_cap() {
+        let src = shipped_src();
+        let calls =
+            src.matches("self.tray_max_h(").count() + src.matches("self.tray_card_h()").count();
+        assert!(
+            calls >= 8,
+            "only {calls} trays ask for a cap — a tray without one spills over the bezel"
+        );
+        for panel in [
+            "\"theme-panel\"",
+            "\"osd-panel\"",
+            "\"scale-panel\"",
+            "\"more-panel\"",
+            "\"bar-menu-panel\"",
+            "\"group-menu-panel\"",
+            "\"plugins-panel\"",
+            "\"notif-panel\"",
+        ] {
+            assert!(
+                src.contains(panel),
+                "{panel} lost its id, and a scrollable tray needs one"
+            );
+        }
+    }
+
     /// This file's source with the test module cut off.
     ///
     /// Several tests below assert that a particular line of real code exists,
@@ -27190,6 +27802,51 @@ mod tests {
         );
     }
 
+    /// The divider above the loose tasks has to NAME them.
+    ///
+    /// It shipped as a bare hairline, which made it the only boundary in the
+    /// tree that divided without saying what came after it. The consequence was
+    /// not subtle and was not caught by any of the tree's shape tests, because
+    /// the row was structurally present and correct the whole time: with the
+    /// hairline nearly invisible at the bar's contrast, a run of loose tabs read
+    /// as children of whichever branch heading happened to sit above it — for
+    /// Parker, eight ordinary panes filed under a collapsed group called JOB,
+    /// reported as junk processes something had spawned behind his back.
+    ///
+    /// Source-scanned rather than exercised: the row is a gpui element and a
+    /// `Workspace` needs a live `Window`, so a version that draws nothing
+    /// compiles and passes everything else — which is exactly how it got here.
+    #[test]
+    fn the_unfiled_divider_says_what_is_below_it() {
+        let src = include_str!("main.rs");
+        // The arm, not the function: `bar_row` is a long match and the other
+        // arms legitimately carry no such call.
+        let at = src
+            .find("tree::Row::Unfiled { depth } => {")
+            .expect("the unfiled arm of bar_row");
+        let end = src[at..].find("\n            }\n").expect("end of arm");
+        let arm = &src[at..at + end];
+
+        assert!(
+            arm.contains("branch_label(BarBranch::Unfiled)"),
+            "the unfiled row draws no label — a divider with filed rows above it \
+             and loose rows below it has to name which side is which, and the \
+             string belongs to branch_label so the row and the drag chip cannot \
+             disagree about what unfiled is called"
+        );
+        assert!(
+            arm.contains("flex_1()"),
+            "the hairline lost its flex_1 — a label beside a fixed-width rule \
+             leaves the row short of the rail instead of spanning it"
+        );
+        // And the label must be the flex_none half. If both halves flex, the
+        // text is what gives, and a truncated word is worse than no word.
+        assert!(
+            arm.contains("flex_none()"),
+            "the unfiled label must be flex_none so the hairline takes the slack"
+        );
+    }
+
     /// Clicking away from an inline rename box must close EVERY kind of rename
     /// box, not most of them.
     ///
@@ -27372,6 +28029,185 @@ mod tests {
             !sweep.contains("Duration::from_secs(45)") && !sweep.contains("elapsed()"),
             "the stop rule is not allowed to be a clock again: a cooldown shorter \
              than GUARD_PERIOD_SECS silences nothing, and one longer is a guess"
+        );
+    }
+
+    // ---- the census sweep: a mode is reconciled, not announced once --------
+
+    /// A host census row, with only the two fields this rule reads set to
+    /// anything interesting.
+    fn census_row(pane: u64, mode: Option<hostproto::WireMode>) -> hostproto::PaneInfo {
+        hostproto::PaneInfo {
+            pane: hostproto::PaneId(pane),
+            shell_pid: 1000 + pane as u32,
+            cwd: None,
+            resume: None,
+            mode,
+            attached: true,
+            ended: false,
+            geom: hostproto::PaneGeom::default(),
+        }
+    }
+
+    /// The bug, at its seam: a window that believes a running agent is a shell
+    /// takes the host's word for it without any push being sent.
+    ///
+    /// This is #462 reduced to the one decision that was missing. The host had
+    /// every one of those eleven panes classified correctly the whole time —
+    /// `list-panes` said `claude` while the window said `SHELL` for five hours
+    /// — and nothing in the window ever asked a second time. A watcher held
+    /// against that host for forty seconds over 24 panes received no pushes at
+    /// all, so the event channel that was supposed to repair this is one that
+    /// in practice never speaks.
+    #[test]
+    fn the_window_takes_the_hosts_word_for_a_pane_it_has_wrong() {
+        let live = vec![
+            census_row(1, Some(hostproto::WireMode::Claude)),
+            census_row(2, Some(hostproto::WireMode::Codex)),
+        ];
+        let mine = vec![(1, pane::PaneMode::Shell), (2, pane::PaneMode::Unknown)];
+        assert_eq!(
+            modes_to_apply(&live, &mine),
+            vec![(1, pane::PaneMode::Claude), (2, pane::PaneMode::Codex),],
+            "a census that disagrees with the window is the window's mistake, not the host's"
+        );
+    }
+
+    /// And a pane the host has NOT classified is never told it is a shell.
+    ///
+    /// `None` in a census row is the host saying its watcher has not reached
+    /// this pane yet — [`hostproto::PaneInfo`] spells it out: *a pane nobody
+    /// has classified yet is not a pane running a shell*. Converting it here
+    /// would re-create the exact collapse this whole change exists to undo,
+    /// one layer further in.
+    #[test]
+    fn a_pane_the_host_has_not_classified_is_never_told_it_is_a_shell() {
+        let live = vec![census_row(1, None)];
+        for believed in [
+            pane::PaneMode::Unknown,
+            pane::PaneMode::Claude,
+            pane::PaneMode::Shell,
+        ] {
+            assert!(
+                modes_to_apply(&live, &[(1, believed.clone())]).is_empty(),
+                "a census with no answer must change nothing, and it changed a pane \
+                 the window believed was {believed:?}"
+            );
+        }
+    }
+
+    /// Agreement is free, which is what lets the sweep run on a short clock.
+    ///
+    /// Twelve times a minute over twenty-odd panes, the answer is "everything
+    /// already matches". That has to cost no `set_host_mode`, no `notify` and
+    /// no repaint, or the repair for a stale pane becomes a window that
+    /// redraws itself every five seconds forever.
+    #[test]
+    fn a_census_that_agrees_changes_nothing_at_all() {
+        let live = vec![
+            census_row(1, Some(hostproto::WireMode::Claude)),
+            census_row(2, Some(hostproto::WireMode::Shell)),
+            census_row(3, Some(hostproto::WireMode::Other("vim".into()))),
+        ];
+        let mine = vec![
+            (1, pane::PaneMode::Claude),
+            (2, pane::PaneMode::Shell),
+            (3, pane::PaneMode::Other("vim".into())),
+        ];
+        assert!(modes_to_apply(&live, &mine).is_empty());
+    }
+
+    /// A host's census lists every client's panes. Only ours are ours.
+    #[test]
+    fn a_pane_this_window_does_not_hold_is_left_to_whoever_holds_it() {
+        let live = vec![
+            census_row(1, Some(hostproto::WireMode::Claude)),
+            census_row(9, Some(hostproto::WireMode::Claude)),
+        ];
+        assert_eq!(
+            modes_to_apply(&live, &[(1, pane::PaneMode::Shell)]),
+            vec![(1, pane::PaneMode::Claude)],
+            "pane 9 belongs to another window and must not be touched"
+        );
+    }
+
+    /// The architectural half, which no unit test can observe: the window has
+    /// to ASK, on a clock, forever.
+    ///
+    /// Every entry into the wrong state that #462 could have taken — a
+    /// subscription opened after the panes were built, a reader thread that
+    /// breaks and never reconnects, a change that is pushed once and never
+    /// repeated — is a way of missing one message. The defect was not the
+    /// missing message; it was that missing one was permanent. So the property
+    /// worth holding is that something re-reads the census on a timer, and the
+    /// event feed is only ever a shortcut.
+    #[test]
+    fn the_window_re_reads_the_census_on_a_clock_and_not_only_on_a_push() {
+        let sweep = {
+            let src = shipped_src();
+            let at = src.find("fn reconcile_modes").expect("the census sweep");
+            let end = src[at..].find("\n    }\n").expect("end of fn");
+            &src[at..at + end]
+        };
+        assert!(
+            sweep.contains("link.list_panes()"),
+            "the sweep must read the host's census — `list-panes` is documented as \
+             what a client asks for the current mode of every pane"
+        );
+        assert!(
+            sweep.contains("MODE_SWEEP_SECS"),
+            "and it must be on a clock: a sweep that runs once is the attach-time \
+             read that already existed and already lost"
+        );
+        assert!(
+            sweep.contains("loop {"),
+            "forever, not for a startup window — the wrong answer that was measured \
+             had been wrong for five hours"
+        );
+        // How fast it sweeps is held at compile time beside the constant: see
+        // the `const _` next to MODE_SWEEP_SECS.
+
+        // And something has to START it. A sweep that is written, tested and
+        // never spawned is the shape of the last bug filed against this file:
+        // a feature that shipped switched off while every test passed, because
+        // the branch that ships was the one nothing exercised.
+        let src = shipped_src();
+        let restore = {
+            let at = src.find("fn build_attached").expect("the attached restore");
+            let end = src[at..].find("\n    }\n").expect("end of fn");
+            &src[at..at + end]
+        };
+        assert!(
+            restore.contains("Self::reconcile_modes("),
+            "restoring an attached layout must start the census sweep — the panes \
+             this repairs are precisely the ones a restore has just built"
+        );
+    }
+
+    /// And the rail must keep the three answers apart.
+    ///
+    /// Read from the source because the walk needs a live window: the property
+    /// is that `PaneMode::Unknown` reaches `PaneKind::Unknown`, because the one
+    /// thing that must never happen again is an undescribed pane being filed as
+    /// a shell — shells are dropped before a row exists.
+    #[test]
+    fn an_undescribed_pane_is_not_filed_as_a_shell() {
+        let build = {
+            let src = shipped_src();
+            let at = src.find("fn rail_build(").expect("the rail's walk");
+            let end = src[at..].find("\n    }\n").expect("end of fn");
+            &src[at..at + end]
+        };
+        assert!(
+            build.contains("pane::PaneMode::Unknown => PaneKind::Unknown"),
+            "a pane nobody has described must reach the queue as Unknown, or it is \
+             filtered out as a shell and cannot appear in any lane"
+        );
+        assert!(
+            build.contains("PaneKind::Unknown => Some(attention::AttentionKind::Unknown)"),
+            "and it must be given a lane: its four badge signals are all gated on \
+             is_agent and therefore all false, so a badge would say the pane wants \
+             nothing about a pane we know nothing about"
         );
     }
 
@@ -28233,6 +29069,155 @@ mod tests {
             plan.tabs[0][0]
         );
         assert!(plan.orphans.is_empty(), "nor adopted into a tab of its own");
+    }
+
+    /// A pane this session closed is not an orphan, and the difference is the
+    /// whole of #479.
+    ///
+    /// Closing a tab does not end its terminal — `hold::Trash` keeps it running
+    /// for an hour so the close can be taken back. The trash is in the window's
+    /// memory and never reaches disk, so to the NEXT window that terminal is
+    /// simply running with no leaf claiming it: an orphan, adopted as a tab
+    /// with no name, no group and no note. A tab somebody deliberately threw
+    /// away came back as a bare number at the end of the list, and the only way
+    /// to tell it apart from a genuinely stale layout is to have written down
+    /// that it was closed.
+    ///
+    /// Observed on session `1`, 2026-09-17: panes 10, 36 and 49 — two of them
+    /// carrying sticky notes (`TIED OFF`, `SPITBALL`) at 09:15 — were sitting
+    /// at the end of the tree at 12:18 as labels 23, 24 and 25 with all three
+    /// fields gone and their `resume` lines re-derived from the kernel, which
+    /// is the exact signature of the `..Default::default()` in the adoption.
+    #[test]
+    fn a_pane_this_session_closed_is_not_adopted_back() {
+        let now = 1_000_000u64;
+        let held = [
+            ClosedPane {
+                pane: 7,
+                until: now + 600,
+            },
+            // Ran out four minutes ago. An expired hold is an ordinary
+            // terminal again, and adopting it is the right answer.
+            ClosedPane {
+                pane: 8,
+                until: now - 240,
+            },
+        ];
+
+        let live = still_closed(&held, now);
+        assert_eq!(live, vec![7], "only the unexpired hold is still a close");
+
+        // The decision the attach makes, spelled out against a plan: pane 7 was
+        // closed and is hung up, pane 9 was never heard of and is adopted.
+        let plan = plan_attach(
+            &[],
+            &[running(7, false), running(8, false), running(9, false)],
+        );
+        let orphans: Vec<u64> = plan.orphans.iter().map(|p| p.pane.0).collect();
+        assert_eq!(
+            orphans,
+            vec![7, 8, 9],
+            "the plan still sees all three; it is pure and knows nothing about holds"
+        );
+        let adopted: Vec<u64> = orphans
+            .iter()
+            .copied()
+            .filter(|p| !live.contains(p))
+            .collect();
+        assert_eq!(
+            adopted,
+            vec![8, 9],
+            "a pane inside its hold must not come back as a tab, and one whose \
+             hold has run out must"
+        );
+    }
+
+    /// The deadline has to survive being read by a different process.
+    ///
+    /// The trash keeps an `Instant`, which is monotonic and meaningless outside
+    /// the program that took it — and the reader here is the NEXT window, which
+    /// is precisely the process the old one's clock means nothing to. So the
+    /// file carries wall-clock seconds, and a clock that has gone backwards
+    /// reads as expired rather than as a hold with centuries left: that errs
+    /// towards adopting a pane, which loses nothing, instead of hanging up a
+    /// terminal somebody is still using.
+    #[test]
+    fn a_hold_deadline_that_reads_as_stale_adopts_rather_than_kills() {
+        let c = [ClosedPane {
+            pane: 3,
+            until: 500,
+        }];
+        assert_eq!(still_closed(&c, 499), vec![3], "inside the hold");
+        assert!(
+            still_closed(&c, 500).is_empty(),
+            "the boundary is not a hold — an exactly-expired deadline adopts"
+        );
+        assert!(
+            still_closed(&c, u64::MAX).is_empty(),
+            "a clock that jumped forward adopts rather than killing"
+        );
+        assert!(
+            still_closed(&[], 0).is_empty(),
+            "a file written before this field existed holds nothing, which is \
+             not the same as claiming every orphan was closed"
+        );
+    }
+
+    /// The two ends of `closed` — the writer and the reader — are wired up.
+    ///
+    /// Both live where a test cannot reach them: writing needs a live `App` to
+    /// read a leaf's pane id, and the adoption needs a gpui `Window`. So a
+    /// version of this fix that computes `still_closed` perfectly and then never
+    /// consults it compiles, passes the two tests above, and resurrects exactly
+    /// as many tabs as before. That is not hypothetical — it is the shape the
+    /// bug already had: `plan_attach` is correct and heavily tested, and the
+    /// loss happened in the untested twelve lines that consume it.
+    ///
+    /// Scanned by REGION rather than by naming a call site, because a guard that
+    /// names call sites guards those call sites and not the next one somebody
+    /// adds. The region is the adoption loop itself.
+    #[test]
+    fn a_closed_pane_is_both_written_down_and_read_back() {
+        let src = include_str!("main.rs");
+
+        // WRITER: the state a save builds must carry the trash's panes.
+        let at = src
+            .find("fn build_state(&self, cx: &App) -> StateFile {")
+            .expect("build_state");
+        let end = src[at..].find("\n    }\n").expect("end of build_state");
+        assert!(
+            src[at..at + end].contains("closed: self.held_panes(cx)"),
+            "build_state no longer records what the trash is holding, so every \
+             close becomes an orphan again on the next attach"
+        );
+
+        // READER: the adoption loop must consult it before making a tab.
+        let at = src
+            .find("for orphan in &plan.orphans {")
+            .expect("the adoption loop");
+        let end = src[at..].find("\n        }\n").expect("end of the loop");
+        let loop_body = &src[at..at + end];
+        assert!(
+            loop_body.contains("interred.contains(&orphan.pane.0)"),
+            "the adoption loop no longer asks whether this pane was closed; every \
+             held terminal comes back as a nameless tab (#479)"
+        );
+        assert!(
+            loop_body.contains("close_pane(orphan.pane)"),
+            "a held orphan must be hung up rather than skipped: the window that \
+             could have offered the undo is gone, so a pane left running and \
+             unadopted outlives every window with nothing able to reach it"
+        );
+        // And the guard has to come BEFORE the tab is made, not after.
+        let guard = loop_body.find("interred.contains").expect("guard present");
+        let makes_tab = loop_body
+            .find("self.tabs.push")
+            .expect("the loop still makes tabs");
+        assert!(
+            guard < makes_tab,
+            "the closed-pane check runs after the tab is pushed, which adopts it \
+             and then argues about it"
+        );
     }
 
     #[test]
