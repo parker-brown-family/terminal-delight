@@ -2006,12 +2006,22 @@ mod tests {
     #[test]
     fn an_identical_re_present_is_not_a_change() {
         let mut b = Bench::new();
-        assert!(b.apply(doc("same", "First")).is_some(), "the first arrival is a change");
+        assert!(
+            b.apply(doc("same", "First")).is_some(),
+            "the first arrival is a change"
+        );
         b.mark_shelf_seen();
         let seen = b.unseen_total();
         assert!(b.apply(doc("same", "First")).is_none(), "nothing changed");
-        assert_eq!(b.unseen_total(), seen, "an identical re-present is not news");
-        assert!(b.apply(doc("same", "Second")).is_some(), "a different title is a change");
+        assert_eq!(
+            b.unseen_total(),
+            seen,
+            "an identical re-present is not news"
+        );
+        assert!(
+            b.apply(doc("same", "Second")).is_some(),
+            "a different title is a change"
+        );
     }
 
     #[test]
