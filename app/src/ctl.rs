@@ -2096,7 +2096,10 @@ mod tests {
             r#"mcp from tdclip 9 {"id":1}"#,
             "mcp from tdclip 9 rpc ",
         ] {
-            assert!(parse_line(line).is_err(), "accepted a broken caller: {line}");
+            assert!(
+                parse_line(line).is_err(),
+                "accepted a broken caller: {line}"
+            );
         }
     }
 
@@ -2152,9 +2155,8 @@ mod tests {
     /// the one place it costs the most.
     #[test]
     fn only_an_unknown_verb_makes_the_relay_step_back() {
-        let unknown = Ok(
-            "err unknown command \"mcp from 1 - rpc {}\" — try: ping | whoami | …".to_string(),
-        );
+        let unknown =
+            Ok("err unknown command \"mcp from 1 - rpc {}\" — try: ping | whoami | …".to_string());
         assert!(is_unknown_verb(&unknown));
 
         for real_answer in [
@@ -2177,8 +2179,10 @@ mod tests {
     /// drifted, which is how a fallback ends up never firing.
     #[test]
     fn the_step_back_matches_what_this_parser_really_says() {
-        let err = parse_line(r#"mcp from tdclip 9 rpc {"id":1}"#.replace("mcp from", "mcp fromm").as_str())
-            .expect_err("a misspelled verb is unknown");
+        let err = parse_line(
+            r#"mcp from tdclip 9 rpc {"id":1}"#.replace("mcp from", "mcp fromm").as_str(),
+        )
+        .expect_err("a misspelled verb is unknown");
         assert!(
             is_unknown_verb(&Ok(format!("err {err}"))),
             "the fallback would not recognise this parser's own refusal: {err}"

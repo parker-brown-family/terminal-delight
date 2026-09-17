@@ -983,7 +983,10 @@ fn stamp(mut v: Value, snap: &Snapshot) -> Value {
         content.push(json!({ "type": "text", "text": line }));
     }
     let who = serde_json::to_value(&snap.instance).unwrap_or(Value::Null);
-    match v.get_mut("structuredContent").and_then(Value::as_object_mut) {
+    match v
+        .get_mut("structuredContent")
+        .and_then(Value::as_object_mut)
+    {
         Some(obj) => {
             obj.insert("instance".into(), who);
         }
@@ -2038,7 +2041,11 @@ mod tests {
     /// did not mean to reach is the answer most likely to be acted on blind.
     #[test]
     fn a_refusal_names_the_window_that_refused() {
-        let out = call(&snap(false, true, vec![agent_pane(100, true)]), "list_panes", json!({}));
+        let out = call(
+            &snap(false, true, vec![agent_pane(100, true)]),
+            "list_panes",
+            json!({}),
+        );
         assert_eq!(out["isError"], true, "a disabled server must refuse");
         assert!(
             text_of(&out).contains("window 4242"),
@@ -2109,7 +2116,8 @@ mod tests {
         let out = call_writing(&s, "declare_deliverable", json!({ "href": "/tmp/r.html" }));
         assert_ne!(out["isError"], true, "{}", text_of(&out));
         assert_eq!(
-            out["structuredContent"]["pid"], 100,
+            out["structuredContent"]["pid"],
+            100,
             "the deliverable landed on the wrong pane: {}",
             text_of(&out)
         );
