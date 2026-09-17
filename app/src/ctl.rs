@@ -65,7 +65,9 @@ pub(crate) enum Req {
     Skin(String),
     /// Turn every pane in this window to a face. See [`Cmd::Bench`].
     Bench(BenchFace),
-    /// Press an answer on the focused pane's bench. See [`Cmd::BenchChoose`].
+    /// Press an answer on the focused pane's bench — or, when the focused
+    /// pane is not showing one, the first pane that is. See
+    /// [`Cmd::BenchChoose`].
     BenchChoose(usize),
     /// Say a line to the agent through the bench. See [`Cmd::BenchSay`].
     BenchSay(String),
@@ -287,7 +289,9 @@ enum Cmd {
     /// recorded, or tested — and this window is tested by photographing it.
     Bench(BenchFace),
     /// Answer the selected question on the focused pane's bench, by option
-    /// number as the surface shows it.
+    /// number as the surface shows it. When the focused pane is not showing
+    /// a bench with a question, the first pane that is — the same rule the
+    /// two verbs below follow, as a table in `workbench::bench_target`.
     BenchChoose(usize),
     /// Type a line into the agent through the bench, exactly as the composer
     /// does. The scripted half of talking to a pane.

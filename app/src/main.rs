@@ -6555,68 +6555,40 @@ impl Workspace {
     /// thing most worth proving — that answering here reaches the agent — is
     /// the one a script could not perform.
     ///
-    /// Applied to whichever pane is showing its bench with something
-    /// selected, nearest to the active tab first. A caller with no pane ids
-    /// should not have to learn them to press a button.
+    /// Applied to the FOCUSED pane when it is showing its bench with
+    /// something selected, else to the nearest pane that is, the active tab
+    /// first — see [`Self::bench_leaf`]. A caller with no pane ids should not
+    /// have to learn them to press a button.
     pub(crate) fn bench_choose(&mut self, n: usize, cx: &mut Context<Self>) {
-        let mut leaves = Vec::new();
-        if let Some(tab) = self.tabs.get(self.active) {
-            tab.root.leaves(&mut leaves);
-        }
-        for tab in self.tabs.iter() {
-            tab.root.leaves(&mut leaves);
-        }
-        let leaves: Vec<Entity<TerminalView>> = leaves.into_iter().cloned().collect();
-        for leaf in leaves {
-            let took = leaf.update(cx, |view, cx| {
-                if view.bench.face() != workbench::Face::Workbench {
-                    return false;
-                }
-                if view.bench.selected().is_none() {
-                    return false;
-                }
-                view.bench_choose(n.saturating_sub(1), cx);
-                true
-            });
-            if took {
-                cx.notify();
-                return;
-            }
-        }
-        eprintln!("terminal-delight: no pane is showing a bench with a selection");
+        let Some(leaf) = self.bench_leaf(cx, |v| {
+            v.bench.face() == workbench::Face::Workbench && v.bench.selected().is_some()
+        }) else {
+            eprintln!("terminal-delight: no pane is showing a bench with a selection");
+            return;
+        };
+        leaf.update(cx, |view, cx| view.bench_choose(n.saturating_sub(1), cx));
+        cx.notify();
     }
 
     /// Say a line to an agent through its bench — the scripted composer.
     ///
-    /// Goes to the pane showing its bench, and reaches the pseudoterminal by
-    /// the same method the composer does, so this tests the composer rather
-    /// than working around it.
+    /// Goes to the focused agent pane showing its bench (else the nearest
+    /// one that is), and reaches the pseudoterminal by the same method the
+    /// composer does, so this tests the composer rather than working around
+    /// it.
     pub(crate) fn bench_say(&mut self, line: &str, cx: &mut Context<Self>) {
-        let mut leaves = Vec::new();
-        if let Some(tab) = self.tabs.get(self.active) {
-            tab.root.leaves(&mut leaves);
-        }
-        for tab in self.tabs.iter() {
-            tab.root.leaves(&mut leaves);
-        }
-        let leaves: Vec<Entity<TerminalView>> = leaves.into_iter().cloned().collect();
-        for leaf in leaves {
-            let took = leaf.update(cx, |view, cx| {
-                if view.bench.face() != workbench::Face::Workbench || !view.mode.is_agent() {
-                    return false;
-                }
-                view.bench_say(line, cx);
-                true
-            });
-            if took {
-                cx.notify();
-                return;
-            }
-        }
-        eprintln!("terminal-delight: no agent pane is showing its bench");
+        let Some(leaf) = self.bench_leaf(cx, |v| {
+            v.bench.face() == workbench::Face::Workbench && v.mode.is_agent()
+        }) else {
+            eprintln!("terminal-delight: no agent pane is showing its bench");
+            return;
+        };
+        leaf.update(cx, |view, cx| view.bench_say(line, cx));
+        cx.notify();
     }
 
-    /// Put a line in the first showing bench's composer, unsubmitted.
+    /// Put a line in the focused bench's composer (else the first showing
+    /// one's), unsubmitted.
     ///
     /// The sibling of [`Self::bench_say`], and the reason it exists is the
     /// same reason the whole `ctl bench` family exists: every gesture on this
@@ -6625,25 +6597,44 @@ impl Workspace {
     /// caret sitting in it — is where both caret bugs lived, and it could not
     /// be photographed without borrowing somebody's actual keyboard.
     pub(crate) fn bench_type(&mut self, line: &str, cx: &mut Context<Self>) {
+        let Some(leaf) = self.bench_leaf(cx, |v| {
+            v.bench.face() == workbench::Face::Workbench && v.mode.is_agent()
+        }) else {
+            eprintln!("terminal-delight: no agent pane is showing its bench");
+            return;
+        };
+        leaf.update(cx, |view, cx| view.bench_type(line, cx));
+        cx.notify();
+    }
+
+    /// The pane a scripted bench verb reaches.
+    ///
+    /// The FOCUSED pane when it qualifies, else the first qualifying pane
+    /// with the active tab's panes ahead of the rest — the rule is a table in
+    /// [`workbench::bench_target`]. Before this the verbs took the first
+    /// qualifying pane in tab order and nothing more, and against a restored
+    /// window of seventeen tabs `ctl bench type` put its text in a pane
+    /// nobody could see (#489).
+    fn bench_leaf(
+        &self,
+        cx: &App,
+        eligible: impl Fn(&TerminalView) -> bool,
+    ) -> Option<Entity<TerminalView>> {
         let mut leaves = Vec::new();
+        if let Some(tab) = self.tabs.get(self.active) {
+            tab.root.leaves(&mut leaves);
+        }
         for tab in self.tabs.iter() {
             tab.root.leaves(&mut leaves);
         }
         let leaves: Vec<Entity<TerminalView>> = leaves.into_iter().cloned().collect();
-        for leaf in leaves {
-            let took = leaf.update(cx, |view, cx| {
-                if view.bench.face() != workbench::Face::Workbench || !view.mode.is_agent() {
-                    return false;
-                }
-                view.bench_type(line, cx);
-                true
-            });
-            if took {
-                cx.notify();
-                return;
-            }
-        }
-        eprintln!("terminal-delight: no agent pane is showing its bench");
+        let flags: Vec<bool> = leaves.iter().map(|l| eligible(l.read(cx))).collect();
+        let focused = self
+            .tabs
+            .get(self.active)
+            .and_then(|t| t.focused)
+            .and_then(|id| leaves.iter().position(|l| l.entity_id() == id));
+        workbench::bench_target(&flags, focused).map(|i| leaves[i].clone())
     }
 
     /// Ask every agent pane whether it is waiting on a question, and put the

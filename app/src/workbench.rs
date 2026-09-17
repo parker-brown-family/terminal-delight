@@ -98,6 +98,28 @@ pub fn vignette_on(face: Face, vignette: f32) -> f32 {
     }
 }
 
+/// Which pane a scripted bench verb reaches — `ctl bench choose|say|type`.
+///
+/// The FOCUSED pane, when it qualifies: it is the pane a person is looking
+/// at, and it is what the verb's documentation promised from the day it was
+/// written. Otherwise the first qualifying pane in the order given, which the
+/// caller builds with the active tab's panes ahead of the rest. `eligible`
+/// carries one flag per pane in that order; `focused` is the focused pane's
+/// index in the same order, if any.
+///
+/// The rule used to be "the first qualifying pane in tab order" and nothing
+/// more, and against a restored window of seventeen tabs `ctl bench type`
+/// typed into a pane that was not on screen while the one in front of the
+/// person stayed empty — terminal-delight#489.
+pub fn bench_target(eligible: &[bool], focused: Option<usize>) -> Option<usize> {
+    if let Some(i) = focused {
+        if eligible.get(i).copied().unwrap_or(false) {
+            return Some(i);
+        }
+    }
+    eligible.iter().position(|e| *e)
+}
+
 impl Face {
     pub fn other(self) -> Face {
         match self {
@@ -2559,6 +2581,21 @@ mod tests {
         );
         // And an empty rect cannot divide by zero.
         assert_eq!(unwarp((0.0, 0.0, 0.0, 0.0), k1, k2, 3.0, 4.0), (3.0, 4.0));
+    }
+
+    #[test]
+    fn a_scripted_bench_verb_reaches_the_focused_pane_first() {
+        // The focused pane qualifies: it wins, even when an earlier one does.
+        assert_eq!(bench_target(&[true, true, true], Some(2)), Some(2));
+        // The focused pane does not qualify: the first that does.
+        assert_eq!(bench_target(&[false, true, true], Some(0)), Some(1));
+        // Nothing focused: the first that qualifies.
+        assert_eq!(bench_target(&[false, false, true], None), Some(2));
+        // A focus index off the end is not an eligible pane.
+        assert_eq!(bench_target(&[true], Some(5)), Some(0));
+        // Nobody qualifies: nobody, whatever is focused.
+        assert_eq!(bench_target(&[false, false], Some(1)), None);
+        assert_eq!(bench_target(&[], None), None);
     }
 
     #[test]
