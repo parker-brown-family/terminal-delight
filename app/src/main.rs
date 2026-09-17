@@ -19551,7 +19551,7 @@ fn color_mode_btn(th: &theme::Theme, icon: &str, caption: &str, active: bool) ->
     }
 }
 
-fn darken(mut c: Hsla, f: f32) -> Hsla {
+pub(crate) fn darken(mut c: Hsla, f: f32) -> Hsla {
     c.l *= f;
     c
 }

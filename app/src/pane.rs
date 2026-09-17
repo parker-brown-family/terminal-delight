@@ -7826,46 +7826,79 @@ impl TerminalView {
                     }),
                 );
                 let rows = self.bench.rows();
+                // The RAIL wears the attention spine's own frame.
+                //
+                // It is the same object one scale down — a queue of things
+                // wanting a person, at the right edge of a surface — and it
+                // was drawn as a plain panel while the window's spine beside
+                // it had a real border, a darkened fill and a phosphor bloom.
+                // Parker: *"rework the right bar to reflect the styling we
+                // landed on for the outer attention spine - truly that is
+                // GOLD"*. See [`crate::benchdraw::spine_frame`], which uses
+                // the spine's shadows rather than a second recipe that agrees
+                // with them today.
+                //
+                // Tinted by what the shelf is HOLDING: a shelf with something
+                // waiting frames in the waiting colour and lights up, a quiet
+                // one frames dim. The rail then says whether it is worth
+                // looking at before a single row is read.
+                let waiting_here = self
+                    .bench
+                    .rows()
+                    .iter()
+                    .any(|r| r.standing == crate::workbench::Standing::Waiting);
+                let frame_tint = if waiting_here {
+                    crate::benchdraw::ink(crate::workbench::Tint::Waiting, th)
+                } else {
+                    th.accent
+                };
                 Some(
-                    sk.panel()
-                        .w(px(w as f32))
-                        .flex_none()
-                        .flex()
-                        .flex_col()
-                        .gap(px(6.))
-                        .overflow_hidden()
-                        .child(tabs)
-                        .child(sk.rule_h())
-                        // An empty shelf says where work would come from.
-                        // The path is the one an agent computes for itself
-                        // from its own environment, so a person reading it
-                        // can drop a file there by hand and watch it land.
-                        // "No decisions", not a filesystem path. The path is
-                        // how an AGENT delivers a surface and it was written
-                        // where a PERSON looks at an empty shelf — Parker:
-                        // *"default text is for a robot... should be 'No
-                        // artifacts' -- 'No decisions' etc."*. The path lives
-                        // in the protocol doc, which is where somebody asking
-                        // that question is already standing.
-                        .when(rows.is_empty(), |d| {
-                            d.child(
-                                div()
-                                    .text_size(px(11.))
-                                    .text_color(th.faint)
-                                    .font_family(th.font_family.clone())
-                                    .child(format!("No {}", shelf_now.empty_word())),
-                            )
-                        })
-                        .children(rows.into_iter().map(|row| {
-                            let id = row.id.clone();
-                            crate::benchdraw::rail_row(&row, sk, th).on_mouse_down(
-                                MouseButton::Left,
-                                cx.listener(move |view, _ev: &MouseDownEvent, _w, cx| {
-                                    cx.stop_propagation();
-                                    view.bench_open(&id, cx);
-                                }),
-                            )
-                        })),
+                    crate::benchdraw::spine_frame(
+                        div()
+                            .w(px(w as f32))
+                            .flex_none()
+                            .flex()
+                            .flex_col()
+                            .gap(px(6.))
+                            .p(px(7.))
+                            .overflow_hidden(),
+                        frame_tint,
+                        if waiting_here { 1.0 } else { 0.35 },
+                        sk,
+                        th,
+                    )
+                    .child(tabs)
+                    .child(sk.rule_h())
+                    // An empty shelf says where work would come from.
+                    // The path is the one an agent computes for itself
+                    // from its own environment, so a person reading it
+                    // can drop a file there by hand and watch it land.
+                    // "No decisions", not a filesystem path. The path is
+                    // how an AGENT delivers a surface and it was written
+                    // where a PERSON looks at an empty shelf — Parker:
+                    // *"default text is for a robot... should be 'No
+                    // artifacts' -- 'No decisions' etc."*. The path lives
+                    // in the protocol doc, which is where somebody asking
+                    // that question is already standing.
+                    .when(rows.is_empty(), |d| {
+                        d.child(
+                            div()
+                                .text_size(px(11.))
+                                .text_color(th.faint)
+                                .font_family(th.font_family.clone())
+                                .child(format!("No {}", shelf_now.empty_word())),
+                        )
+                    })
+                    .children(rows.into_iter().map(|row| {
+                        let id = row.id.clone();
+                        crate::benchdraw::rail_row(&row, sk, th).on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |view, _ev: &MouseDownEvent, _w, cx| {
+                                cx.stop_propagation();
+                                view.bench_open(&id, cx);
+                            }),
+                        )
+                    })),
                 )
             }
         };

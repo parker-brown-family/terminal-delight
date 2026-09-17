@@ -129,6 +129,32 @@ fn depth() -> Vec<BoxShadow> {
     ]
 }
 
+/// The attention spine's own frame, applied to something on the bench.
+///
+/// **Copied, not re-invented.** The right-hand spine is the surface on this
+/// machine that already knows how to say *look at this* — a real two-pixel
+/// border in the meaning colour, an opaque darkened fill, a crisp outer ring,
+/// a soft phosphor bloom and two shadows underneath it. Parker, after the
+/// title card got bigger and no more urgent: *"ATTENTION is more than mere
+/// size... Look - thicker brighter phosphor... shaded layers... use the right
+/// attention spine as the gold standard!"*.
+///
+/// So it uses the spine's own [`crate::float_shadows`] rather than a second
+/// recipe that agrees with it today. A copy would drift the first time either
+/// was touched, and the bench would slowly stop looking like the window it
+/// lives in.
+///
+/// `strength` dims the whole thing for a state that is present without being
+/// urgent: a frame that shouts at Idle is a frame nobody reads at Waiting.
+pub fn spine_frame<E: Styled>(el: E, tint: Hsla, strength: f32, sk: &Skin, th: &Theme) -> E {
+    let lit = tint.alpha(0.85 * strength);
+    el.rounded(sk.rad_raw(8.))
+        .border_2()
+        .border_color(lit)
+        .bg(crate::darken(th.surface, 0.45))
+        .shadow(crate::float_shadows(tint.alpha(strength)))
+}
+
 /// Depth AND the tube's phosphor — for the one thing on a surface that is
 /// asking to be looked at.
 ///
@@ -205,16 +231,23 @@ pub fn rail_row(row: &Row, sk: &Skin, th: &Theme) -> Div {
             _ => None,
         },
     };
+    // An INSET CARD, the way the spine draws its queue rows: a lighter face
+    // sitting on the panel's darkened fill, with the meaning colour down its
+    // left edge. The rows were bare text on the panel, which is what made a
+    // column of eight of them read as one block of prose.
     let body = sk
         .row()
         .flex()
         .flex_col()
         .gap(px(if row.terse { 0. } else { 2. }))
         .cursor_pointer()
+        .px(px(8.))
+        .py(px(if row.terse { 5. } else { 7. }))
+        .rounded(sk.rad_raw(5.))
         .border_l(px(edge))
         .border_color(tint.alpha(strength))
-        .when(raise, |d| d.bg(th.surface.alpha(0.5)))
-        .when(row.selected, |d| d.bg(th.accent.alpha(0.12)))
+        .bg(th.surface.alpha(if raise { 0.55 } else { 0.28 }))
+        .when(row.selected, |d| d.bg(th.accent.alpha(0.16)))
         .child(
             div()
                 .flex()
@@ -1166,62 +1199,77 @@ pub fn title_card(
 ) -> Div {
     let tint = ink(state.tint(), th);
     let urgent = state.urgent();
-    let card = sk
-        .panel()
-        .flex()
-        .flex_row()
-        .items_center()
-        .gap(px(14.))
-        .px(px(18.))
-        .py(px(16.))
-        .bg(th.surface.alpha(if urgent { 0.7 } else { 0.45 }))
-        .border_l(px(if urgent { 6. } else { 4. }))
-        .border_color(tint.alpha(if urgent { 1.0 } else { 0.75 }))
-        .child(
-            // A LAMP, not a bullet. Ringed rather than merely bigger: a filled
-            // circle reads as punctuation at any size, and a ring around it
-            // reads as an indicator — the difference between a full stop and
-            // something that is on.
-            div()
-                .w(px(18.))
-                .h(px(18.))
-                .flex_none()
-                .rounded(sk.rad_raw(9.))
-                .border_2()
-                .border_color(tint.alpha(0.55))
-                .flex()
-                .items_center()
-                .justify_center()
-                .child(div().w(px(8.)).h(px(8.)).rounded(sk.rad_raw(4.)).bg(tint)),
-        )
-        .child(
-            // THE STATE, at the size of the thing it is reporting on.
-            //
-            // It was thirteen points beside an eight-pixel dot on a surface
-            // whose headings run to eighteen, so the one line answering *what
-            // is this agent doing* was the quietest thing on the bench.
-            // Parker: *"I want about 5x more emphasis on the Agent state"*.
-            //
-            // The SIZE is constant and the COLOUR does the work of saying
-            // which state it is — a calm state that shrinks is a calm state
-            // nobody can find, and finding it is the whole job. Waiting takes
-            // the tint outright; everything else is ordinary text beside a
-            // tinted lamp.
-            div()
-                .text_size(px(26.))
-                .text_color(if urgent { tint } else { th.text.alpha(0.9) })
-                .child(state.word()),
-        )
-        .child(div().flex_1())
-        .when_some(tool.map(str::to_string), |d, t| {
-            d.child(micro(t, 11., th.faint, th))
-        });
-    // Depth, never phosphor. The title card says "Waiting on you" directly
-    // above a waiting block that says the same thing and carries the actual
-    // question — two blooms for one fact, and the one holding the buttons is
-    // the one worth looking at. Emphasis is not the same dial as attention:
-    // this got bigger without getting a bloom.
-    raised(card, tint, th)
+    // The spine's frame, at the strength the state deserves. A frame that
+    // shouts at Idle is a frame nobody reads at Waiting, so the border, the
+    // ring and the bloom all ride one number.
+    let strength = if urgent { 1.0 } else { 0.4 };
+    spine_frame(
+        div().flex().flex_col().gap(px(8.)).px(px(14.)).py(px(12.)),
+        tint,
+        strength,
+        sk,
+        th,
+    )
+    // The spine's header: what this is on the left, what it can tell you on
+    // the right, both in the chrome's small dim voice.
+    .child(
+        div()
+            .flex()
+            .flex_row()
+            .justify_between()
+            .items_center()
+            .child(micro("AGENT", 9.5, th.faint, th))
+            .when_some(tool.map(str::to_string), |d, t| {
+                d.child(micro(t, 9.5, th.faint, th))
+            }),
+    )
+    .child(
+        div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(12.))
+            .child(
+                // A LAMP, not a bullet. Ringed rather than merely bigger: a
+                // filled circle reads as punctuation at any size, and a ring
+                // around it reads as an indicator — the difference between a
+                // full stop and something that is on.
+                div()
+                    .w(px(16.))
+                    .h(px(16.))
+                    .flex_none()
+                    .rounded(sk.rad_raw(8.))
+                    .border_2()
+                    .border_color(tint.alpha(0.5 + 0.5 * strength))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(
+                        div()
+                            .w(px(7.))
+                            .h(px(7.))
+                            .rounded(sk.rad_raw(4.))
+                            .bg(tint.alpha(0.55 + 0.45 * strength)),
+                    ),
+            )
+            .child(
+                // THE STATE, at the size of the thing it is reporting on.
+                //
+                // It was thirteen points beside an eight-pixel dot on a
+                // surface whose headings run to eighteen, so the one line
+                // answering *what is this agent doing* was the quietest thing
+                // on the bench. Size alone was not the answer either — the
+                // frame around it is doing the rest of that work.
+                //
+                // The SIZE is constant and the COLOUR says which state it is:
+                // a calm state that shrinks is a calm state nobody can find,
+                // and finding it is the whole job.
+                div()
+                    .text_size(px(22.))
+                    .text_color(if urgent { tint } else { th.text.alpha(0.85) })
+                    .child(state.word()),
+            ),
+    )
 }
 
 /// Dress an answer as a button: always a button, coloured by what it is.
