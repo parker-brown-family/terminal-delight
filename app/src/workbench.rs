@@ -1274,6 +1274,10 @@ pub enum AgentState {
     Exited,
     /// Mid-turn.
     Working,
+    /// The bench just typed an answer into the terminal and the agent has
+    /// not moved yet. Parker: the on-screen rule *"will need an additional
+    /// agent state for 'reading your instructions'"*.
+    Reading,
     /// Attached, nothing happening.
     Idle,
 }
@@ -1290,6 +1294,7 @@ impl AgentState {
             AgentState::Done => "Finished",
             AgentState::Exited => "Exited",
             AgentState::Working => "Working",
+            AgentState::Reading => "Reading your answer",
             AgentState::Idle => "Idle",
         }
     }
@@ -1300,7 +1305,7 @@ impl AgentState {
         match self {
             AgentState::Asking | AgentState::Blocked => Tint::Waiting,
             AgentState::Done => Tint::Settled,
-            AgentState::Working => Tint::Pending,
+            AgentState::Working | AgentState::Reading => Tint::Pending,
             // Nothing is being claimed about an idle or departed agent, and
             // grey is how this surface says so everywhere else.
             AgentState::Idle | AgentState::Exited => Tint::Unknown,
@@ -1310,6 +1315,44 @@ impl AgentState {
     /// Does this state want a person to look at it now?
     pub fn urgent(self) -> bool {
         matches!(self, AgentState::Asking | AgentState::Blocked)
+    }
+}
+
+/// How long after the bench types into a pane the bar keeps saying the agent
+/// is reading it, if nothing else moves. Long enough for a picker to redraw
+/// and a turn to start; short enough that a dead agent does not read forever.
+pub const READING_WINDOW_MS: u64 = 8_000;
+
+/// What the agent is doing, from the pane's sensors, decided in one place.
+///
+/// The order is the old ladder with one rung added at the top: `reading` —
+/// the bench typed within [`READING_WINDOW_MS`] and the agent has not started
+/// working — outranks `asking`, because a picker stays on screen for a moment
+/// after the keys land, and a bar saying "Waiting on you" over an answer just
+/// given is the surface lying about its own state. It never outranks a pane
+/// that is blocked or gone: nothing is reading there.
+pub fn agent_state(
+    asking: bool,
+    blocked: bool,
+    done: bool,
+    exited: bool,
+    thinking: bool,
+    reading: bool,
+) -> AgentState {
+    if reading && !thinking && !blocked && !exited {
+        AgentState::Reading
+    } else if asking {
+        AgentState::Asking
+    } else if blocked {
+        AgentState::Blocked
+    } else if done {
+        AgentState::Done
+    } else if exited {
+        AgentState::Exited
+    } else if thinking {
+        AgentState::Working
+    } else {
+        AgentState::Idle
     }
 }
 
@@ -1497,6 +1540,40 @@ pub fn typed_line(text: &str) -> Vec<u8> {
         .into_bytes();
     bytes.push(b'\r');
     bytes
+}
+
+/// What pressing a verb will do, in the bytes it will do it with.
+///
+/// The same [`crate::surface::ActionReport::to_prompt`] that types the line
+/// produces the preview, so a chip cannot promise one thing and type another —
+/// the label came from the agent, and the whole point of the click is to be a
+/// check on the agent. Local verbs, the ones the window performs itself, say
+/// what they open instead, and say plainly when they would open nothing.
+pub fn verb_preview(
+    surface: &Surface,
+    action: &crate::surface::Action,
+    target: Option<&str>,
+    comment: Option<&str>,
+    tag: Option<&str>,
+) -> String {
+    use crate::surface::{Action, ActionReport, Kind};
+    match action {
+        Action::Open => match &surface.kind {
+            Kind::Artifact(a) => format!("opens {}", a.href),
+            _ => "opens nothing \u{2014} this surface is not a document".to_string(),
+        },
+        Action::OpenSource => match surface.source.as_ref().and_then(|s| s.files.first()) {
+            Some(f) => format!("opens {f}"),
+            None => "opens nothing \u{2014} this surface names no source".to_string(),
+        },
+        _ => ActionReport {
+            surface: surface.id.clone(),
+            action: action.clone(),
+            target: target.map(str::to_string),
+            comment: comment.map(str::to_string),
+        }
+        .to_prompt(tag),
+    }
 }
 
 impl Default for Bench {
@@ -1710,13 +1787,19 @@ impl Bench {
                 let id = incoming.id.clone();
                 match self.surfaces.iter_mut().find(|s| s.id == id) {
                     Some(existing) if post.op == Op::Update => existing.merge(incoming),
-                    // A present that changes nothing IS nothing: no repaint,
-                    // and the surface does not go back to unseen. The derived
-                    // half re-presents from the transcript, and a bench that
-                    // answered `Some(id)` to an identical re-present made every
-                    // agent pane repaint once a second for as long as it lived.
-                    Some(existing) if *existing == incoming => return None,
-                    Some(existing) => *existing = incoming,
+                    Some(existing) => {
+                        // The same surface presented again is not a change.
+                        // The derived half re-presents every sweep with a
+                        // fresh clock, and taking that as new work reset every
+                        // row's age to zero once a second and repainted the
+                        // pane to say so. Only the clock is allowed to differ.
+                        let mut probe = incoming.clone();
+                        probe.arrived_ms = existing.arrived_ms;
+                        if probe == *existing {
+                            return None;
+                        }
+                        *existing = incoming;
+                    }
                     None => {
                         self.surfaces.push(incoming);
                         // The cap drops the OLDEST, never the newest: a bench
@@ -2025,6 +2108,128 @@ mod tests {
     }
 
     #[test]
+    fn reading_your_answer_outranks_waiting_on_you_and_nothing_else() {
+        // (asking, blocked, done, exited, thinking, reading) → state
+        let rows = [
+            // the window after a press: picker still up, agent not moving
+            (
+                (true, false, false, false, false, true),
+                AgentState::Reading,
+            ),
+            // the agent picked it up
+            (
+                (false, false, false, false, true, true),
+                AgentState::Working,
+            ),
+            // an answer typed into a blocked or dead pane reads nothing —
+            // and asking still outranks blocked, exactly as it did before
+            (
+                (false, true, false, false, false, true),
+                AgentState::Blocked,
+            ),
+            ((true, true, false, false, false, false), AgentState::Asking),
+            ((false, false, false, true, false, true), AgentState::Exited),
+            // the old ladder, untouched when nothing was typed
+            (
+                (true, false, false, false, false, false),
+                AgentState::Asking,
+            ),
+            ((false, false, true, false, false, false), AgentState::Done),
+            (
+                (false, false, false, false, true, false),
+                AgentState::Working,
+            ),
+            ((false, false, false, false, false, false), AgentState::Idle),
+        ];
+        for ((a, b, d, e, t, r), want) in rows {
+            assert_eq!(
+                agent_state(a, b, d, e, t, r),
+                want,
+                "{a} {b} {d} {e} {t} {r}"
+            );
+        }
+        assert_eq!(AgentState::Reading.tint(), Tint::Pending);
+        assert!(
+            !AgentState::Reading.urgent(),
+            "an answer being read is not a demand"
+        );
+    }
+
+    #[test]
+    fn presenting_the_same_surface_again_changes_nothing_and_keeps_its_arrival() {
+        // The derived half re-presents every sweep with a fresh clock. That
+        // is not a change, and treating it as one reset every row's age to
+        // zero once a second and repainted the pane to say so.
+        let mut b = Bench::new();
+        let mut first = doc("same", "First");
+        first.surface.as_mut().unwrap().arrived_ms = 1_000;
+        assert!(b.apply(first).is_some(), "the first arrival is news");
+        let mut again = doc("same", "First");
+        again.surface.as_mut().unwrap().arrived_ms = 61_000;
+        assert!(
+            b.apply(again).is_none(),
+            "the same surface a minute later is not"
+        );
+        assert_eq!(
+            b.get(&SurfaceId("same".into())).unwrap().arrived_ms,
+            1_000,
+            "and it keeps when it first arrived"
+        );
+        let mut changed = doc("same", "Second");
+        changed.surface.as_mut().unwrap().arrived_ms = 62_000;
+        assert!(b.apply(changed).is_some(), "a different title is a change");
+        assert_eq!(b.get(&SurfaceId("same".into())).unwrap().arrived_ms, 62_000);
+    }
+
+    #[test]
+    fn a_verb_preview_is_the_typed_line_and_a_local_verb_says_what_it_opens() {
+        use crate::surface::{Action, ActionReport};
+        // The hunk id is the agent's own text, newline included. The preview
+        // must be exactly what pressing would type — one flattened, tagged
+        // line — because the label alone came from the party being checked.
+        let mut b = Bench::new();
+        b.apply(post(json!({
+            "td":"0.2","kind":"changeset","id":"change-847","title":"x",
+            "model":{"repository":"r","hunks":[{"id":"a\nwhoami","file":"a.rs","patch":"+1"}]}
+        })));
+        let s = b
+            .get(&SurfaceId("change-847".into()))
+            .expect("the changeset");
+        let shown = verb_preview(
+            s,
+            &Action::RejectPart,
+            Some("a\nwhoami"),
+            Some("first\r\nsecond"),
+            Some("k7f2q9ax"),
+        );
+        let typed = ActionReport {
+            surface: s.id.clone(),
+            action: Action::RejectPart,
+            target: Some("a\nwhoami".into()),
+            comment: Some("first\r\nsecond".into()),
+        }
+        .to_prompt(Some("k7f2q9ax"));
+        assert_eq!(shown, typed, "one function produces both");
+        assert!(shown.starts_with("[workbench:k7f2q9ax]"), "{shown}");
+        assert!(!shown.contains('\n') && !shown.contains('\r'), "{shown}");
+
+        let mut b = Bench::new();
+        b.apply(post(json!({
+            "td":"0.2","kind":"artifact","id":"doc","title":"d",
+            "model":{"href":"/tmp/a.pdf"}
+        })));
+        let s = b.get(&SurfaceId("doc".into())).expect("the artifact");
+        assert_eq!(
+            verb_preview(s, &Action::Open, None, None, None),
+            "opens /tmp/a.pdf"
+        );
+        assert!(
+            verb_preview(s, &Action::OpenSource, None, None, None).contains("nothing"),
+            "a verb that would do nothing says so"
+        );
+    }
+
+    #[test]
     fn an_update_merges_and_a_present_replaces() {
         let mut b = Bench::new();
         b.apply(post(json!({
@@ -2185,7 +2390,7 @@ mod tests {
             Dispatch::Tell(report) => {
                 assert_eq!(report.action, Action::RejectPart);
                 assert_eq!(report.target.as_deref(), Some("h1"));
-                assert!(report.to_prompt().contains("wrong seam"));
+                assert!(report.to_prompt(None).contains("wrong seam"));
             }
             other => panic!("{other:?}"),
         }

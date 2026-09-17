@@ -1513,10 +1513,20 @@ where
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
         .unwrap_or_default();
-    let post = match crate::surface::parse(&doc, now) {
+    let mut post = match crate::surface::parse(&doc, now) {
         Ok(p) => p,
         Err(why) => return tool_err(&why),
     };
+    // Who is asking. This runs in the relay the agent spawned over stdio, so
+    // the parent is the agent — or whatever else opened the pipe. Whether that
+    // pid sits under the pane being presented to is the window's to decide,
+    // when the surface lands (`TerminalView::present`).
+    if let Some(s) = post.surface.as_mut() {
+        s.origin = crate::surface::Origin::Mcp {
+            pid: std::os::unix::process::parent_id(),
+            own: None,
+        };
+    }
     let said = match (&post.op, post.surface.as_ref()) {
         (crate::surface::Op::Retire, _) => {
             format!("retired — {} is off the bench", post.id.as_str())

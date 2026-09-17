@@ -1963,6 +1963,22 @@ pub struct TerminalView {
     /// Which agent state the bar is showing and when it began, so the bar can
     /// carry one honest counter instead of the rail carrying one per row.
     wb_state_since: Option<(crate::workbench::AgentState, u64)>,
+    /// Whether this pane is in the active tab, as the workspace last told it.
+    /// The bench types into the pseudoterminal only while this is true; a
+    /// write that arrives otherwise waits in `wb_queued` until the pane is
+    /// seen. A click on the bench sets it, because a click is on a pane that
+    /// is on screen by definition.
+    wb_on_screen: bool,
+    /// Bytes the bench would have typed while the pane was off screen, in
+    /// order, each already journalled. Drained the moment the pane is seen.
+    wb_queued: Vec<Vec<u8>>,
+    /// When the bench last typed into the pseudoterminal, so the bar can say
+    /// "Reading your answer" until the agent's own state moves, and the live
+    /// question is not re-presented as waiting inside that window.
+    wb_delivered_ms: Option<u64>,
+    /// Until when the bench draws that it just typed — a border pulse, so a
+    /// write into a pane is something a person sees happen.
+    wb_flash_until_ms: Option<u64>,
     /// Every click target on the bench this frame, in flat layout pixels and
     /// paint order. Cleared at the top of each bench render, filled by the
     /// elements as they paint, read by the root mouse handler. See
@@ -3051,6 +3067,10 @@ impl TerminalView {
             wb_review: None,
             wb_quiet: 0,
             wb_state_since: None,
+            wb_on_screen: true,
+            wb_queued: Vec::new(),
+            wb_delivered_ms: None,
+            wb_flash_until_ms: None,
             wb_zones: std::rc::Rc::new(std::cell::RefCell::new(Vec::new())),
             wb_pointer: crate::workbench::Pointer::Arrow,
             wb_mirror: false,
@@ -6425,7 +6445,20 @@ impl TerminalView {
     /// dropped file and a fenced block in the transcript all arrive here, so
     /// there is one place where a surface becomes visible and one place to put
     /// a breakpoint when it does not.
-    pub fn present(&mut self, post: crate::surface::Post, cx: &mut Context<Self>) {
+    pub fn present(&mut self, mut post: crate::surface::Post, cx: &mut Context<Self>) {
+        // An MCP caller is "this pane's agent" when its pid runs under this
+        // pane's shell, and "somebody else" otherwise — another pane's agent,
+        // or a script. Decided here, once, where both pids are known, rather
+        // than at every paint; the relay that stamped the pid could not know
+        // which pane it was talking about.
+        if let (Some(s), Some(shell)) = (post.surface.as_mut(), self.shell_pid()) {
+            if let crate::surface::Origin::Mcp { pid, own: None } = s.origin {
+                s.origin = crate::surface::Origin::Mcp {
+                    pid,
+                    own: Some(crate::ctl::descends_from(pid, shell)),
+                };
+            }
+        }
         if self.bench.apply(post).is_some() {
             cx.notify();
         }
@@ -7001,6 +7034,7 @@ impl Render for TerminalView {
         // face is showing and what the other one is called, in one glance.
         let face_now = self.bench.face();
         let unseen = self.bench_unseen();
+        let queued = self.bench_queued();
         let face_toggle = {
             let chip = |face: crate::workbench::Face, cx: &mut Context<Self>| {
                 let lit = face_now == face;
@@ -7023,6 +7057,21 @@ impl Render for TerminalView {
                 .gap(px(2.))
                 .child(chip(crate::workbench::Face::Terminal, cx))
                 .child(chip(crate::workbench::Face::Workbench, cx))
+                // Answers the bench is holding because nobody was looking at
+                // this pane. They land the moment it is on screen, so the
+                // badge is only ever seen from another tab — which is the
+                // one place it is needed.
+                .when(queued > 0, |d| {
+                    d.child(
+                        div()
+                            .text_size(px((hicon * 0.40).max(8.)))
+                            .text_color(th.accent)
+                            .child(format!(
+                                "{queued} answer{} waiting",
+                                if queued == 1 { "" } else { "s" }
+                            )),
+                    )
+                })
                 // The count of work objects nobody has looked at — the only
                 // number on the header, and it is absent rather than zero when
                 // there is nothing waiting.

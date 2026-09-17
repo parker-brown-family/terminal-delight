@@ -517,6 +517,19 @@ fn heading(surface: &Surface, sk: &Skin, th: &Theme) -> Div {
         .when(!matches!(surface.kind, Kind::Question(_)), |d| {
             d.child(micro(surface.subtitle(), 10.5, th.faint, th))
         })
+        // WHO PUT IT HERE, on every card, and at full strength when nobody
+        // can say: a surface that arrived from nowhere is the one to look at
+        // twice, so the unknown is the loud one and the attributed is quiet.
+        .child(micro(
+            surface.origin.label(),
+            9.5,
+            if surface.origin.is_unattributed() {
+                th.faint
+            } else {
+                th.faint.alpha(0.7)
+            },
+            th,
+        ))
 }
 
 /// The shape of the thing, for a pane too small to hold the thing.

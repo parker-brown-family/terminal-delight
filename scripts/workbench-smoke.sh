@@ -54,12 +54,23 @@ shoot() { # shoot <name>
   fi
 }
 
-ctl() { # ctl <words...>
+ctl() { # ctl <words...>  — a verb that must succeed
+  expect 'ok' "$@"
+}
+
+# expect <reply pattern> <words...> — the row is what is checked, not the
+# exit code. The bench verbs now answer with what actually happened (`ok pane
+# 3`, `queued pane 3 …`, `err no pane …`), and a step written to exercise a
+# refusal has to assert the refusal, or it passes for the wrong reason: this
+# script once reported every step green on a run whose window log said no
+# pane had shown a bench at all.
+expect() {
+  local want=$1; shift
   local reply
   reply=$("$TD" ctl --pid "$PID" "$@" 2>&1 | head -1)
   case "$reply" in
-    *ok*) ok "ctl $* -> $reply" ;;
-    *)    bad "ctl $* -> $reply" ;;
+    *"$want"*) ok "ctl $* -> $reply" ;;
+    *)         bad "ctl $* -> $reply (wanted: $want)" ;;
   esac
 }
 
@@ -80,12 +91,12 @@ step "answering the demo decision from the bench"
 # The demo opens on its decision, whose first action is approve. `choose` is
 # for questions, so this one exercises the refusal path: a decision has no
 # options to choose, and the window must say so rather than doing something.
-ctl bench choose 1
+expect 'err no' bench choose 1
 sleep 1; shoot 4-after-choose
 
 step "typing into the agent from the bench"
 # A shell pane has no agent, so this reports honestly rather than pretending.
-ctl bench say "hello from the smoke test"
+expect 'err no' bench say "hello from the smoke test"
 sleep 2; shoot 5-after-say
 
 step "the window survives all of it"

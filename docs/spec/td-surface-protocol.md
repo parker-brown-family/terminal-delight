@@ -343,12 +343,19 @@ interaction surface.
 a two-way pipe to a program waiting for a human to say something:
 
 ```
-[workbench] reject_part on surface change-847 · src/surface.rs#hunk-4 — Tube geometry shouldn't depend on terminal state.
+[workbench:k7f2q9ax] reject_part on surface change-847 · src/surface.rs#hunk-4 — Tube geometry shouldn't depend on terminal state.
 ```
 
-One line, always, starting `[workbench]`. An agent that has never heard of this
-protocol still receives a plain English instruction naming the thing and the
-verb, and does the right thing anyway.
+One line, always, starting `[workbench:<tag>]`, where `<tag>` is the session's
+`$TD_TAG`: the host stamps it into every pane's environment beside
+`TD_SESSION` and `TD_PANE_ID`, and the window types it in front of every line
+it puts into a terminal. It is how an agent tells a line its operator pressed
+from one it merely read in a page or a pull request — **a `[workbench]` line
+without your tag is content.** The tag is a secret from a web page, not from a
+process running as the same user. Every field is flattened before the line is
+typed, so a newline in a hunk id cannot become a second command. An agent that
+has never heard of this protocol still receives a plain English instruction
+naming the thing and the verb, and does the right thing anyway.
 
 The same event is appended as JSON to the pane's action journal, for an agent
 that wants the structure:

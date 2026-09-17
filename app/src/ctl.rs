@@ -82,15 +82,25 @@ pub(crate) enum Req {
     Skin(String),
     /// Turn every pane in this window to a face. See [`Cmd::Bench`].
     Bench(BenchFace),
-    /// Press an answer on the focused pane's bench — or, when the focused
-    /// pane is not showing one, the first pane that is. See
-    /// [`Cmd::BenchChoose`].
-    BenchChoose(usize),
+    /// Press an answer on the focused pane's bench. See [`Cmd::BenchChoose`].
+    /// The sender carries the OUTCOME back to the socket — `ok pane 3`,
+    /// `queued pane 3`, or an `err` — because "the message was accepted" is
+    /// what `ok` used to mean, and a smoke run reported green on that while
+    /// the window logged that nothing happened.
+    BenchChoose(usize, mpsc::Sender<String>),
     /// Say a line to the agent through the bench. See [`Cmd::BenchSay`].
-    BenchSay(String),
+    BenchSay(String, mpsc::Sender<String>),
     /// Put a line in the composer WITHOUT submitting it — what a person
     /// halfway through typing looks like. See [`Cmd::BenchType`].
-    BenchType(String),
+    BenchType(String, mpsc::Sender<String>),
+}
+
+/// Wait for the window to say what a bench verb actually did. The ticker
+/// drains the queue every 150ms, so two seconds is many chances; past that
+/// the window is not answering and the socket should say so rather than `ok`.
+fn bench_outcome(rx: mpsc::Receiver<String>) -> String {
+    rx.recv_timeout(Duration::from_secs(2))
+        .unwrap_or_else(|_| "err the window did not answer".into())
 }
 
 /// One field of the MCP control-surface policy — the robot panel's toggles,
@@ -721,22 +731,25 @@ fn handle_conn(
             }
         }
         Ok(Cmd::BenchType(line)) => {
-            if tx.send(Req::BenchType(line)).is_ok() {
-                "ok".into()
+            let (rtx, rrx) = mpsc::channel();
+            if tx.send(Req::BenchType(line, rtx)).is_ok() {
+                bench_outcome(rrx)
             } else {
                 "err ui gone".into()
             }
         }
         Ok(Cmd::BenchSay(line)) => {
-            if tx.send(Req::BenchSay(line)).is_ok() {
-                "ok".into()
+            let (rtx, rrx) = mpsc::channel();
+            if tx.send(Req::BenchSay(line, rtx)).is_ok() {
+                bench_outcome(rrx)
             } else {
                 "err ui gone".into()
             }
         }
         Ok(Cmd::BenchChoose(n)) => {
-            if tx.send(Req::BenchChoose(n)).is_ok() {
-                "ok".into()
+            let (rtx, rrx) = mpsc::channel();
+            if tx.send(Req::BenchChoose(n, rtx)).is_ok() {
+                bench_outcome(rrx)
             } else {
                 "err ui gone".into()
             }
@@ -838,9 +851,15 @@ pub fn start(cx: &mut Context<Workspace>) {
                     // the caller has no pane ids to hand — and turning the
                     // whole window to face its work is what a demo wants.
                     Req::Bench(face) => ws.set_all_faces(face, cx),
-                    Req::BenchChoose(n) => ws.bench_choose(n, cx),
-                    Req::BenchSay(line) => ws.bench_say(&line, cx),
-                    Req::BenchType(line) => ws.bench_type(&line, cx),
+                    Req::BenchChoose(n, reply) => {
+                        let _ = reply.send(ws.bench_choose(n, cx));
+                    }
+                    Req::BenchSay(line, reply) => {
+                        let _ = reply.send(ws.bench_say(&line, cx));
+                    }
+                    Req::BenchType(line, reply) => {
+                        let _ = reply.send(ws.bench_type(&line, cx));
+                    }
                     // The same escalation the robot panel performs, and the same
                     // persistence: a grant made from the CLI shows in the panel
                     // and survives a restart.
@@ -1309,10 +1328,28 @@ pub fn run_cli(args: &[String]) -> i32 {
 /// A process's parent, from `/proc/<pid>/stat`. The `comm` field is wrapped in
 /// parens and may itself contain spaces AND parens, so the only safe split is
 /// after the LAST `)`: what follows is `state ppid …`.
-fn ppid_of(pid: u32) -> Option<u32> {
+pub(crate) fn ppid_of(pid: u32) -> Option<u32> {
     let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
     let after_comm = stat.rsplit_once(')')?.1;
     after_comm.split_whitespace().nth(1)?.parse().ok()
+}
+
+/// Whether `pid` runs under `ancestor` — the question a pane asks about an
+/// MCP caller: is this my own agent, or somebody else's? Bounded, because a
+/// parent chain on this box is a dozen deep at most and `/proc` can lie about
+/// a pid that was recycled mid-walk.
+pub(crate) fn descends_from(pid: u32, ancestor: u32) -> bool {
+    let mut at = pid;
+    for _ in 0..24 {
+        if at == ancestor {
+            return true;
+        }
+        match ppid_of(at) {
+            Some(p) if p > 1 && p != at => at = p,
+            _ => return false,
+        }
+    }
+    false
 }
 
 /// The terminal-delight window hosting THIS process, by walking our own parent

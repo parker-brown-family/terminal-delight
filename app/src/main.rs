@@ -2820,6 +2820,9 @@ struct AgentLauncher {
     /// because the two lists are different lengths.
     model_ix: usize,
     effort: launcher::Effort,
+    /// How far the launched agent may reach without asking. Defaults to the
+    /// machine posture; see [`launcher::Reach`].
+    reach: launcher::Reach,
 }
 
 impl AgentLauncher {
@@ -6882,45 +6885,114 @@ impl Workspace {
     /// thing most worth proving — that answering here reaches the agent — is
     /// the one a script could not perform.
     ///
-    /// Applied to the FOCUSED pane when it is showing its bench with
-    /// something selected, else to the nearest pane that is, the active tab
-    /// first — see [`Self::bench_leaf`]. A caller with no pane ids should not
-    /// have to learn them to press a button.
-    pub(crate) fn bench_choose(&mut self, n: usize, cx: &mut Context<Self>) {
-        // A selection, OR a live question: the answer chips for a question the
-        // agent is waiting on are drawn inline in the conversation, where
-        // nothing is selected at all — `Bench::act` already falls back to
-        // `waiting_question()` for exactly that case, and this router used to
-        // refuse before it could get there. A script pressing chip 2 on a
-        // question could not reach the one gesture most worth proving.
-        let Some(leaf) = self.bench_leaf(cx, |v| {
-            v.bench.face() == workbench::Face::Workbench
-                && (v.bench.selected().is_some() || v.bench.waiting_question().is_some())
-        }) else {
-            eprintln!(
-                "terminal-delight: no pane is showing a bench with a selection or a waiting question"
-            );
-            return;
+    /// Applied to whichever pane is showing its bench with something
+    /// selected, nearest to the active tab first. A caller with no pane ids
+    /// should not have to learn them to press a button.
+    ///
+    /// Answers on the OUTCOME — `ok pane 3`, `queued pane 3`, or an `err` —
+    /// because a reply that only meant "the message was accepted" let a whole
+    /// smoke run report green while the window logged that nothing happened.
+    pub(crate) fn bench_choose(&mut self, n: usize, cx: &mut Context<Self>) -> String {
+        // A card open, or a question waiting with nothing selected: the two
+        // places the chips are drawn, and `Bench::act` already falls back from
+        // one to the other. Requiring a selection here refused the case that
+        // matters most.
+        self.bench_apply(
+            cx,
+            |v| {
+                v.bench.face() == workbench::Face::Workbench
+                    && (v.bench.selected().is_some() || v.bench.waiting_question().is_some())
+            },
+            "no pane is showing a bench with a question",
+            |view, cx| view.bench_choose(n.saturating_sub(1), cx),
+        )
+    }
+
+    /// Every leaf, the active tab's first, plus which ones are on screen.
+    /// Every leaf, the active tab's first, plus which ones are on screen and
+    /// where the FOCUSED pane sits in that order. The pick itself is
+    /// [`workbench::bench_target`]: the focused pane when it qualifies, else
+    /// the first qualifying pane in this order — against a restored window of
+    /// seventeen tabs, "first qualifying in tab order" typed into a pane that
+    /// was not on screen while the one in front of the person stayed empty
+    /// (#489).
+    #[allow(clippy::type_complexity)]
+    fn bench_targets(
+        &self,
+    ) -> (
+        Vec<Entity<TerminalView>>,
+        Vec<Entity<TerminalView>>,
+        Option<usize>,
+    ) {
+        let mut active = Vec::new();
+        if let Some(tab) = self.tabs.get(self.active) {
+            tab.root.leaves(&mut active);
+        }
+        let active: Vec<Entity<TerminalView>> = active.into_iter().cloned().collect();
+        let mut leaves: Vec<Entity<TerminalView>> = active.clone();
+        for tab in self.tabs.iter() {
+            let mut more = Vec::new();
+            tab.root.leaves(&mut more);
+            leaves.extend(more.into_iter().cloned());
+        }
+        let focused = self
+            .tabs
+            .get(self.active)
+            .and_then(|t| t.focused)
+            .and_then(|id| leaves.iter().position(|l| l.entity_id() == id));
+        (active, leaves, focused)
+    }
+
+    /// Apply a scripted bench verb to the pane [`workbench::bench_target`]
+    /// picks, and answer with the OUTCOME — `ok pane 3`, `queued pane 3`, or
+    /// an `err` — because a reply that only meant "the message was accepted"
+    /// let a whole smoke run report green while the window logged that
+    /// nothing happened.
+    fn bench_apply(
+        &mut self,
+        cx: &mut Context<Self>,
+        qualifies: impl Fn(&TerminalView) -> bool,
+        refusal: &str,
+        act: impl FnOnce(&mut TerminalView, &mut Context<TerminalView>),
+    ) -> String {
+        let (active, leaves, focused) = self.bench_targets();
+        let flags: Vec<bool> = leaves.iter().map(|l| qualifies(l.read(cx))).collect();
+        let Some(i) = workbench::bench_target(&flags, focused) else {
+            eprintln!("terminal-delight: {refusal}");
+            return format!("err {refusal}");
         };
-        leaf.update(cx, |view, cx| view.bench_choose(n.saturating_sub(1), cx));
+        let leaf = &leaves[i];
+        let on_screen = active.iter().any(|a| a.entity_id() == leaf.entity_id());
+        let said = leaf.update(cx, |view, cx| {
+            view.set_on_screen(on_screen, cx);
+            act(view, cx);
+            Self::outcome(on_screen, view.pane_id())
+        });
         cx.notify();
+        said
+    }
+
+    fn outcome(on_screen: bool, pane: Option<u64>) -> String {
+        let pane = pane.map_or_else(|| "?".to_string(), |p| p.to_string());
+        if on_screen {
+            format!("ok pane {pane}")
+        } else {
+            format!("queued pane {pane} — off screen until you look")
+        }
     }
 
     /// Say a line to an agent through its bench — the scripted composer.
     ///
-    /// Goes to the focused agent pane showing its bench (else the nearest
-    /// one that is), and reaches the pseudoterminal by the same method the
-    /// composer does, so this tests the composer rather than working around
-    /// it.
-    pub(crate) fn bench_say(&mut self, line: &str, cx: &mut Context<Self>) {
-        let Some(leaf) = self.bench_leaf(cx, |v| {
-            v.bench.face() == workbench::Face::Workbench && v.mode.is_agent()
-        }) else {
-            eprintln!("terminal-delight: no agent pane is showing its bench");
-            return;
-        };
-        leaf.update(cx, |view, cx| view.bench_say(line, cx));
-        cx.notify();
+    /// Goes to the pane showing its bench, and reaches the pseudoterminal by
+    /// the same method the composer does, so this tests the composer rather
+    /// than working around it.
+    pub(crate) fn bench_say(&mut self, line: &str, cx: &mut Context<Self>) -> String {
+        self.bench_apply(
+            cx,
+            |v| v.bench.face() == workbench::Face::Workbench && v.mode.is_agent(),
+            "no agent pane is showing its bench",
+            |view, cx| view.bench_say(line, cx),
+        )
     }
 
     /// Put a line in the focused bench's composer (else the first showing
@@ -6932,45 +7004,13 @@ impl Workspace {
     /// has neither. The state this reaches — a person halfway through a line,
     /// caret sitting in it — is where both caret bugs lived, and it could not
     /// be photographed without borrowing somebody's actual keyboard.
-    pub(crate) fn bench_type(&mut self, line: &str, cx: &mut Context<Self>) {
-        let Some(leaf) = self.bench_leaf(cx, |v| {
-            v.bench.face() == workbench::Face::Workbench && v.mode.is_agent()
-        }) else {
-            eprintln!("terminal-delight: no agent pane is showing its bench");
-            return;
-        };
-        leaf.update(cx, |view, cx| view.bench_type(line, cx));
-        cx.notify();
-    }
-
-    /// The pane a scripted bench verb reaches.
-    ///
-    /// The FOCUSED pane when it qualifies, else the first qualifying pane
-    /// with the active tab's panes ahead of the rest — the rule is a table in
-    /// [`workbench::bench_target`]. Before this the verbs took the first
-    /// qualifying pane in tab order and nothing more, and against a restored
-    /// window of seventeen tabs `ctl bench type` put its text in a pane
-    /// nobody could see (#489).
-    fn bench_leaf(
-        &self,
-        cx: &App,
-        eligible: impl Fn(&TerminalView) -> bool,
-    ) -> Option<Entity<TerminalView>> {
-        let mut leaves = Vec::new();
-        if let Some(tab) = self.tabs.get(self.active) {
-            tab.root.leaves(&mut leaves);
-        }
-        for tab in self.tabs.iter() {
-            tab.root.leaves(&mut leaves);
-        }
-        let leaves: Vec<Entity<TerminalView>> = leaves.into_iter().cloned().collect();
-        let flags: Vec<bool> = leaves.iter().map(|l| eligible(l.read(cx))).collect();
-        let focused = self
-            .tabs
-            .get(self.active)
-            .and_then(|t| t.focused)
-            .and_then(|id| leaves.iter().position(|l| l.entity_id() == id));
-        workbench::bench_target(&flags, focused).map(|i| leaves[i].clone())
+    pub(crate) fn bench_type(&mut self, line: &str, cx: &mut Context<Self>) -> String {
+        self.bench_apply(
+            cx,
+            |v| v.bench.face() == workbench::Face::Workbench && v.mode.is_agent(),
+            "no agent pane is showing its bench",
+            |view, cx| view.bench_type(line, cx),
+        )
     }
 
     /// Ask every agent pane whether it is waiting on a question, and put the
@@ -6982,13 +7022,24 @@ impl Workspace {
     /// same question.
     fn sweep_live_questions(&mut self, cx: &mut Context<Self>) {
         let now = surfacefeed::now_ms();
+        // Which panes are on screen: the active tab's leaves. Told to every
+        // pane each pass, because the bench types into a pseudoterminal only
+        // while its pane is visible and holds the write otherwise — and a
+        // pane going visible is when its held writes land.
+        let mut active = Vec::new();
+        if let Some(tab) = self.tabs.get(self.active) {
+            tab.root.leaves(&mut active);
+        }
+        let active: Vec<Entity<TerminalView>> = active.into_iter().cloned().collect();
         let mut leaves = Vec::new();
         for tab in self.tabs.iter() {
             tab.root.leaves(&mut leaves);
         }
         let leaves: Vec<Entity<TerminalView>> = leaves.into_iter().cloned().collect();
         for leaf in leaves {
+            let on_screen = active.iter().any(|a| a.entity_id() == leaf.entity_id());
             leaf.update(cx, |view, cx| {
+                view.set_on_screen(on_screen, cx);
                 if !view.mode.is_agent() {
                     return;
                 }
@@ -11077,6 +11128,7 @@ impl Workspace {
             harness: launcher::Harness::Claude,
             model_ix: 0,
             effort: launcher::Effort::Standard,
+            reach: launcher::Reach::Anywhere,
         };
         lp.recompute();
         // Pre-select where the person already is, by path rather than by name:
@@ -11116,6 +11168,7 @@ impl Workspace {
             harness: lp.harness,
             model: lp.model().id,
             effort: lp.effort,
+            reach: lp.reach,
             cwd: project.path.clone(),
             opener: None,
         };
@@ -11141,6 +11194,32 @@ impl Workspace {
         };
         let line = recipe.command_line(briefing_path.as_deref());
         eprintln!("terminal-delight: launching — {line}");
+        // What the button was made of, on the record: the command, the reach,
+        // and a fingerprint of the briefing the agent was actually handed —
+        // so a briefing that changed between being written and being read is
+        // detectable afterwards rather than silent. An integrity mark, not an
+        // authentication; the field name says which algorithm.
+        if let Some(dir) = surfacefeed::session_dir() {
+            let briefing_fnv = briefing_path
+                .as_deref()
+                .and_then(|p| std::fs::read_to_string(p).ok())
+                .map(|t| launcher::fingerprint(&t));
+            let _ = surfacefeed::journal_event(
+                &dir.join("launches.jsonl"),
+                &serde_json::json!({
+                    "td": crate::surface::TDSP_VERSION,
+                    "type": "launch",
+                    "at_ms": surfacefeed::now_ms(),
+                    "harness": recipe.harness.binary(),
+                    "model": recipe.model,
+                    "effort": recipe.effort.label(),
+                    "reach": recipe.reach.id(),
+                    "cwd": project.path.to_string_lossy(),
+                    "command": line,
+                    "briefing_fnv1a64": briefing_fnv,
+                }),
+            );
+        }
         self.adopt_pane(
             Some(project.path.to_string_lossy().to_string()),
             Some(line),
@@ -12372,12 +12451,40 @@ impl Workspace {
                         )
                 }));
 
+        // How far it may reach without asking. `anywhere` is lit by default
+        // and adds nothing; the other two add the harness's own flags, which
+        // the command line underneath prints like everything else. A dial,
+        // not a policy — for the one launch in twenty whose first job is a
+        // stranger's pull request.
+        let reach_row =
+            div()
+                .flex()
+                .flex_row()
+                .gap_1()
+                .children(launcher::Reach::ALL.into_iter().map(|r| {
+                    sk.chip(r == lp.reach)
+                        .cursor_pointer()
+                        .text_size(px(11.))
+                        .child(r.label())
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                                cx.stop_propagation();
+                                if let Some(lp) = ws.agent_launcher.as_mut() {
+                                    lp.reach = r;
+                                }
+                                cx.notify();
+                            }),
+                        )
+                }));
+
         // What it will actually run. Whole, on its own line, never elided.
         let preview = {
             let recipe = launcher::Recipe {
                 harness: lp.harness,
                 model: lp.model().id,
                 effort: lp.effort,
+                reach: lp.reach,
                 cwd: lp
                     .project()
                     .map(|p| p.path.clone())
@@ -12452,6 +12559,8 @@ impl Workspace {
             .child(model_row)
             .child(head("EFFORT"))
             .child(effort_row)
+            .child(head("REACH"))
+            .child(reach_row)
             .child(
                 div()
                     .mt_1()
@@ -33451,6 +33560,9 @@ fn main() {
     // later — that variable names the session of whatever pane LAUNCHED this
     // window, which is usually a different one.
     surfacefeed::adopt_session(&key);
+    // And the tag its bench signs with, minted beside the host's socket by
+    // whichever side asked first — see [`crate::hostproto::session_tag`].
+    surfacefeed::adopt_tag(crate::hostproto::session_tag(&key));
     // Bind the key either way: a scratch window still reads the workspace's
     // theme so it looks like the rest of the session — it just never writes.
     instance::bind(key.clone(), claim.lock);
