@@ -50,6 +50,7 @@ mod mcp_tail;
 mod mcp_transport;
 mod notify;
 mod notifpref;
+mod paint;
 mod palette;
 mod pane;
 mod plugins;
@@ -223,18 +224,40 @@ enum RailAction {
 /// fails. A row may say the surface is deliberately flat — some things should be
 /// — but it has to say WHY, in the row, where the next person will read it.
 #[cfg(test)]
-const OVERLAYS_OVER_PANES: [(&str, Warped); 4] = [
+const OVERLAYS_OVER_PANES: [(&str, Warped); 6] = [
     (
         "render_rail",
-        Warped::FlatByDesign(
-            "a menu, not a decal. Flat is BOUGHT by `rail_open` in the \
-             `warp::set_suppressed` list, exactly as the menu-bar scale popup \
-             buys it — the border, opaque fill and shadow only make a flat \
-             surface read as floating rather than stuck on, and on their own \
-             they left it bending. Registered as a tube once and the rows \
-             sheared into parallelograms: a tall stack of thin rows shows every \
-             bit of a barrel map a compact panel hides. Hit-tested flat, to match.",
-        ),
+        Warped::FlatByDesign {
+            flag: "rail_open",
+            why: "a menu, not a decal. Flat is BOUGHT by `rail_open` in the \
+                  suppression list, exactly as the menu-bar scale popup buys it — \
+                  the border, opaque fill and shadow only make a flat surface \
+                  read as floating rather than stuck on, and on their own they \
+                  left it bending. Registered as a tube once and the rows sheared \
+                  into parallelograms: a tall stack of thin rows shows every bit \
+                  of a barrel map a compact panel hides. Hit-tested flat, to match.",
+        },
+    ),
+    (
+        "paint wall",
+        Warped::FlatByDesign {
+            flag: "paint_mode",
+            why: "the most thoroughly over-the-panes surface there is: every pane \
+                  draws its own card INSIDE its own tube, so the whole wall bowed \
+                  at once while each tile's click box stayed on the flat layout \
+                  box gpui laid out. Bought flat by `theme::paint_mode(cx)` in the \
+                  suppression list, the way the theme tray next door buys it.",
+        },
+    ),
+    (
+        "paint cabinet card",
+        Warped::FlatByDesign {
+            flag: "paint_mode",
+            why: "hangs off the top edge and crosses the panes below it, so the \
+                  part of it over a tube bent and the part over the chrome did \
+                  not — one card wearing two curvatures, which is the tell that a \
+                  surface is being warped BY WHAT IS UNDER IT. Same flag buys it.",
+        },
     ),
     ("mcp_menu panel", Warped::Tube("register_focus_tube")),
     ("pane ghost", Warped::Tube("register_overlay_tube")),
@@ -252,9 +275,17 @@ enum Warped {
     Tube(&'static str),
     /// Draws itself through the map so the pass undoes it — the note's way.
     Predistorted(&'static str),
-    /// Deliberately flat, with the reason. Allowed, never silent.
+    /// Deliberately flat, and it must name the FLAG that buys that: the entry in
+    /// the `warp::set_suppressed` list which empties the tube set while this
+    /// surface is up. The reason is for the reader, the flag is for the test —
+    /// [`every_overlay_over_panes_decides_about_the_warp`] looks it up in the
+    /// list, because "flat by design" is the one claim on this enum a surface
+    /// can make while doing nothing, and two surfaces have now made it falsely.
     #[allow(dead_code)]
-    FlatByDesign(&'static str),
+    FlatByDesign {
+        flag: &'static str,
+        why: &'static str,
+    },
 }
 
 /// The tiling tree: splits divide only the targeted leaf. Generic over the
@@ -12483,14 +12514,52 @@ impl Workspace {
         // With nothing that way — a lone pane, or the edge of the layout — the
         // press is simply eaten. It must NOT fall through to the terminal: the
         // pane is behind a modal and cannot be typed into.
-        if theme::paint_mode(cx)
-            && !m.control
-            && !m.alt
-            && !m.shift
-            && matches!(ks.key.as_str(), "left" | "right" | "up" | "down")
-        {
-            self.focus_dir(ks.key.as_str(), window, cx);
-            return;
+        if theme::paint_mode(cx) && !m.control && !m.alt && !m.shift {
+            let key = ks.key.as_str();
+            if matches!(key, "left" | "right" | "up" | "down") {
+                match paint::arrow(theme::paint_target(cx), key) {
+                    paint::Arrow::Walk => {
+                        self.focus_dir(key, window, cx);
+                    }
+                    // The cabinet's card HANGS above the wall, so the gesture
+                    // that reaches it is the one that runs out of wall going up
+                    // — no new chord for a surface that is already in the
+                    // direction you would point at it.
+                    paint::Arrow::WalkThenOuter => {
+                        if !self.focus_dir("up", window, cx) {
+                            theme::set_paint_target(cx, theme::Target::Outer);
+                        }
+                    }
+                    paint::Arrow::AimWall => {
+                        theme::set_paint_target(cx, theme::Target::Pane);
+                    }
+                    paint::Arrow::Nothing => {}
+                }
+                return;
+            }
+            // The overlay's keyboard is normally run by the FOCUSED PANE, which
+            // is what makes "the letter paints the selected terminal" true with
+            // no selection state to keep. With the cabinet aimed there may be no
+            // pane holding focus at all (a click on the chrome, a window whose
+            // panes have all gone), and a card you cannot paint from is worse
+            // than no card — so the same three verbs and the same chord table
+            // are answered here too.
+            if theme::paint_target(cx) == theme::Target::Outer {
+                if key.eq_ignore_ascii_case("z") {
+                    theme::cycle_paint_shelf(cx, 1);
+                    return;
+                }
+                if key.eq_ignore_ascii_case("f") {
+                    theme::set_paint_shelf(cx, theme::Shelf::Favourites);
+                    return;
+                }
+                let worn = paint::outer_wearing(cx);
+                if let Some(pick) = paint::chord(cx, key, theme::paint_shelf(cx), &worn) {
+                    paint::apply_outer(cx, &pick);
+                    self.save(cx);
+                    return;
+                }
+            }
         }
         // Esc closes whatever popup (modal or menu) is open — one consistent path
         // for the whole app. A capture-phase handler (see render) catches it even
@@ -17438,6 +17507,173 @@ impl Workspace {
             )
     }
 
+    /// The OUTER's paint card — the cabinet's own tiles, floating just under the
+    /// mother bar while the paint overlay is up.
+    ///
+    /// **It is built from the menu recipe, and that is the whole of its chrome:**
+    /// a real border, an opaque darkened fill, a float shadow and a radius —
+    /// copied from the menu-bar scale popup and the queue panel rather than
+    /// invented. That recipe is what earns a FLAT surface its place above BENT
+    /// glass. The first build of this card was translucent and hugged the top
+    /// edge, and it read as a decal smeared across the tube: the panes behind it
+    /// curve with the CRT warp, the card did not, and nothing about it said it
+    /// was a separate object floating in front. The queue panel learned the same
+    /// lesson the hard way and the fix, recorded there, was the chrome and not
+    /// the curve — this surface does not register a warp tube either.
+    ///
+    /// It sits below the bar rather than flush to the window's edge for the same
+    /// reason: the popups it is a sibling of hang there, and a gap is what makes
+    /// a panel read as in front of something. It also leaves the mother bar, the
+    /// left bar, the status bar and the bezel in plain sight to recolour under it
+    /// as the letters land.
+    ///
+    /// Dimmed until it is aimed — but dimmed in its BORDER and its ink, never by
+    /// going transparent. The wall and the cabinet are one overlay with one
+    /// spotlight, and a card you can see the chrome through is the decal again.
+    fn render_paint_outer(&self, cx: &mut Context<Self>) -> Option<gpui::Div> {
+        if !theme::paint_mode(cx) {
+            return None;
+        }
+        let th = theme::theme(cx);
+        let scale = theme::outer_choice(cx).grade.scale;
+        let sk = skin::skin(cx, scale);
+        let aimed = theme::paint_target(cx) == theme::Target::Outer;
+        let shelf = theme::paint_shelf(cx);
+        let shelves = theme::shelves(cx);
+        // What the cabinet wears — which tile is lit, where a letter-cycle
+        // starts, and whether `⇧F` has anything to star.
+        let worn = paint::outer_wearing(cx);
+        let mut grid = div()
+            .flex()
+            .flex_row()
+            .flex_wrap()
+            .justify_center()
+            .items_start()
+            .gap(px(paint::TILE_GAP))
+            .max_w(px(paint::grid_w(self.last_win.map(|(_, _, w, _)| w))));
+        for e in paint::entries(cx, shelf, &worn, "EFAULT") {
+            let pick = e.pick.clone();
+            grid = grid.child(paint::tile(&e, &th, &sk).on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                    // A click is unambiguous about which surface it means, so it
+                    // takes the aim with it — the keyboard follows the mouse
+                    // instead of painting somewhere else on the next letter.
+                    theme::set_paint_target(cx, theme::Target::Outer);
+                    paint::apply_outer(cx, &pick);
+                    ws.save(cx);
+                    cx.stop_propagation();
+                }),
+            ));
+        }
+        // Label on the left, live value on the right — the scale popup's header,
+        // where "menu bar" sits opposite "85%". Here the value is what the
+        // cabinet has on, which is the one thing a person cannot read off the
+        // tiles when the worn look is scrolled onto a shelf they are not looking
+        // at.
+        let head = div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .justify_between()
+            .gap(px(10. * scale))
+            .w_full()
+            .child(
+                div()
+                    .text_size(px(10.5 * scale))
+                    .font_weight(gpui::FontWeight::BOLD)
+                    .text_color(if aimed { th.complement } else { th.faint })
+                    // "OUTER" is the theme tray's own word for this scope
+                    // (`lang::Strings::scope_outer`); the overlay says it in the
+                    // same English the wall's card does.
+                    .child("PAINT THE OUTER"),
+            )
+            .child(
+                div()
+                    .text_size(px(10. * scale))
+                    .text_color(th.accent)
+                    .child(paint::worn_label(&worn)),
+            );
+        // The shelf pills — the visible half of `z`, on their own row so the
+        // header keeps the label/value shape it borrowed.
+        let pills = (shelves.len() > 1).then(|| {
+            let mut row = div().flex().flex_row().gap(px(4. * scale));
+            for s in shelves.iter().copied() {
+                row = row.child(paint::pill(s, s == shelf, &sk).on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |_ws, _: &MouseDownEvent, _w, cx| {
+                        theme::set_paint_shelf(cx, s);
+                        cx.stop_propagation();
+                    }),
+                ));
+            }
+            row
+        });
+        let legend = if aimed {
+            paint::legend(cx, &["↓ panes"], "d default", &worn)
+        } else {
+            // Un-aimed it teaches the one gesture that aims it, and nothing
+            // else: a legend of keys that would currently land on a PANE is
+            // worse than no legend at all.
+            "↑ aims here · a click paints".to_string()
+        };
+        let card = div()
+            .occlude()
+            .flex()
+            .flex_col()
+            .items_center()
+            .gap(px(8. * scale))
+            .p(px(12. * scale))
+            .rounded(sk.rad_raw(8.))
+            .border_2()
+            .border_color(if aimed {
+                th.accent.alpha(0.85)
+            } else {
+                th.accent.alpha(0.3)
+            })
+            .bg(darken(th.surface, 0.45))
+            .text_color(th.text)
+            .font_family(th.font_family.clone())
+            .shadow(float_shadows(if aimed {
+                th.accent
+            } else {
+                th.accent.alpha(0.35)
+            }))
+            .child(head)
+            .children(pills)
+            .child(grid)
+            .child(
+                div()
+                    .text_size(px(9. * scale))
+                    .text_color(th.faint)
+                    .child(legend),
+            )
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|_ws, _: &MouseDownEvent, _w, cx| {
+                    // A click that MISSED a tile still says which surface the
+                    // person means, so it aims — and it must not fall through to
+                    // the mother bar underneath, which would open a menu behind
+                    // a modal overlay.
+                    theme::set_paint_target(cx, theme::Target::Outer);
+                    cx.stop_propagation();
+                }),
+            );
+        Some(
+            div()
+                .absolute()
+                // The same drop the scale popup uses to clear the mother bar, so
+                // the two land on the same line when they are up together.
+                .top(px(74. * scale))
+                .left_0()
+                .w_full()
+                .flex()
+                .flex_row()
+                .justify_center()
+                .child(card),
+        )
+    }
+
     /// The queue as an OVERLAY: drawn over the right-hand panes, dismissed by
     /// clicking beside it.
     ///
@@ -19114,6 +19350,15 @@ impl Render for Workspace {
                              // of reach of its own flat hit box. Suppress so the menu reads true.
         warp::set_suppressed(
             pane_popup_open
+                // PAINT raises a card over EVERY pane at once, each one drawn
+                // inside its own pane and therefore inside its own tube, plus the
+                // cabinet's card over the top of them — so it is the largest
+                // surface this list has ever had to flatten, and it shipped
+                // bending. The flag is why it was missed: `paint_mode` is an app
+                // global rather than a field on this struct, so the gate derived
+                // from `close_popups` (which reads `self.` names) could not see
+                // it, and the card's own chrome made it look handled.
+                || theme::paint_mode(cx)
                 // The attention queue is a menu and floats FLAT above the glass —
                 // and this line is the whole of what makes that true. Giving it a
                 // border and a shadow and taking its warp tube away does not: the
@@ -25234,6 +25479,10 @@ impl Render for Workspace {
                     .children(lang_picker_overlay)
                     // the per-pane logo picker rides on top too (its scrim locks input)
                     .children(logo_picker_overlay)
+                    // the cabinet's own paint card, hung from the top edge —
+                    // over every pane's card, because the surface it paints is
+                    // the one all of them sit in
+                    .children(self.render_paint_outer(cx))
                     // a tube going dark rides over everything: it is drawn on
                     // space that no longer belongs to any pane
                     .children(shutdown_ghosts),
@@ -27536,16 +27785,62 @@ mod tests {
     /// list is the decision record; the counting below is what stops the list
     /// from drifting away from the code, because a list nobody has to keep true
     /// is a comment.
+    ///
+    /// Three claims, three checks: a tube names its registration and the
+    /// registrations are counted, the note's pre-warp is looked up in
+    /// `sticky.rs`, and — since 2026-09-16 — a flat-by-design row names the flag
+    /// that flattens the glass for it and that flag is looked up in the
+    /// suppression list. The last one was missing while the paint wall sat in
+    /// front of every pane, bending.
     #[test]
     fn every_overlay_over_panes_decides_about_the_warp() {
+        // The suppression list, read out of the shipped source with its COMMENTS
+        // STRIPPED — every `FlatByDesign` row is checked against it below, and
+        // that list is half prose explaining why each flag is in it. Written
+        // without this stripping the test passed with the paint entry deleted:
+        // the comment left in its place still said the word `paint_mode`, so a
+        // gate meant to prove a line exists was reading the sentence about it.
+        let shipped = shipped_src();
+        let at = shipped
+            .find("warp::set_suppressed(")
+            .expect("the suppression list in render");
+        let flattens: String = shipped[at..at
+            + shipped[at..]
+                .find("\n        );")
+                .expect("end of the suppression list")]
+            .lines()
+            .map(|l| l.split("//").next().unwrap_or(""))
+            .collect::<Vec<_>>()
+            .join("\n");
+
         for (name, how) in OVERLAYS_OVER_PANES {
             match how {
                 Warped::Tube(sym) => assert!(
                     !sym.is_empty(),
                     "{name} claims a tube and does not name the call"
                 ),
-                Warped::Predistorted(why) | Warped::FlatByDesign(why) => {
+                Warped::Predistorted(why) => {
                     assert!(why.len() > 12, "{name} has to say why in more than a word")
+                }
+                // Flat is not a property a surface has, it is one the frame is
+                // given: the pass is screen-space, so a panel over a registered
+                // tube bends whatever its own chrome says. A row claiming flat
+                // therefore has to name the flag that empties the tube set while
+                // it is up, and the flag has to be in the list. Both surfaces
+                // that ever claimed this falsely — the queue, then the paint
+                // wall — had a border, a shadow and a row saying "flat", and bent
+                // anyway; this is the assertion that tells those two states apart.
+                Warped::FlatByDesign { flag, why } => {
+                    assert!(why.len() > 12, "{name} has to say why in more than a word");
+                    assert!(
+                        flattens.contains(flag),
+                        "{name} is declared flat by design and names `{flag}` as \
+                         what buys that — but `{flag}` is not in the \
+                         `warp::set_suppressed` list in `render`, so nothing \
+                         empties the tube set while it is up and it is composited \
+                         into the frame the pass then bends. Add it to the list, \
+                         or change the row to say what really happens."
+                    );
                 }
             }
         }
@@ -27678,7 +27973,7 @@ mod tests {
                  same map the shader applies — otherwise clicks land where the \
                  row is drawn flat, and the error grows towards the edge"
             ),
-            Warped::FlatByDesign(_) => assert!(
+            Warped::FlatByDesign { .. } => assert!(
                 !unbends,
                 "the queue is flat, so rail_hit_at must NOT un-bend the pointer \
                  — the pixels never moved, and undoing a map nothing applied \
