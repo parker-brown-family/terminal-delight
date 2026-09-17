@@ -143,16 +143,25 @@ fn micro(text: impl Into<String>, size: f32, colour: Hsla, th: &Theme) -> Div {
 pub fn rail_row(row: &Row, sk: &Skin, th: &Theme) -> Div {
     use crate::workbench::Standing;
     let tint = ink(row.tint, th);
-    // Three weights for three states, so the head of the shelf is legible from
-    // across the room and the record underneath it stays readable rather than
-    // shouting. See [`crate::workbench::Standing`] for why there are three.
-    let (edge, strength, raise) = match row.standing {
-        Standing::Waiting => (5., 1.0, true),
-        Standing::Current => (5., 1.0, true),
-        Standing::Past => (2., 0.62, false),
+    // A weight per state, so the head of the shelf is legible from across the
+    // room and everything under it recedes in the right order. See
+    // [`crate::workbench::Standing`] for why there are four.
+    //
+    // The GLOW is the top of this ladder and it is spent on one row, because
+    // it is a claim about where to look and three of them is no claim at all.
+    // `Standing::lit` is the single place that decides, and a test walks seven
+    // shelf shapes demanding at most one lit row in each.
+    let (edge, strength) = match row.standing {
+        Standing::Waiting | Standing::Current => (5., 1.0),
+        // Still unanswered, and deliberately quieter: the edge thins and
+        // dims, and the phosphor goes out entirely.
+        Standing::Queued => (3., 0.72),
+        Standing::Past => (2., 0.55),
     };
+    let raise = row.standing.lit();
     let head = match row.standing {
         Standing::Waiting => Some("WAITING ON YOU"),
+        Standing::Queued => Some("ALSO WAITING"),
         Standing::Current => Some("STANDS NOW"),
         Standing::Past => None,
     };
@@ -192,8 +201,8 @@ pub fn rail_row(row: &Row, sk: &Skin, th: &Theme) -> Div {
                             .px(px(5.))
                             .py(px(1.))
                             .rounded(sk.rad_raw(3.))
-                            .bg(tint.alpha(0.18))
-                            .child(micro(h, 8.5, tint, th)),
+                            .bg(tint.alpha(0.18 * strength))
+                            .child(micro(h, 8.5, tint.alpha(strength), th)),
                     )
                 }),
         )
@@ -940,50 +949,59 @@ fn verdict_word(v: Verdict) -> &'static str {
     }
 }
 
-/// The agent, above its work.
+/// The bench's title card: what this agent is doing, in words.
 ///
-/// A bench that showed only finished objects would answer "what did it make"
-/// and leave "what is it doing" to the other face — so a person would flip
-/// back to the terminal every few seconds to check, which is the sweeping
-/// this whole surface exists to end. The strip is deliberately thin: a state,
-/// a tool, and the last few lines it printed, dimmed, in the terminal's own
-/// font. It is a glance, not a mirror; the mirror is one keystroke away and
-/// always will be better at being a terminal.
-pub fn live_strip(state: &str, tool: Option<&str>, tail: &[String], sk: &Skin, th: &Theme) -> Div {
-    // The state word carries the only colour on the strip, so it is the thing
-    // the eye finds: waiting on a person is the complement, everything else
-    // recedes.
-    let waiting = state.contains("your turn") || state.contains("blocked");
-    sk.panel()
+/// The first version was a status line — a glyph, a lowercase phrase and a
+/// tool name at eleven points — sitting above a surface of raised cards and
+/// large type, and it read as debug output that had wandered in. It also had
+/// to work out its own colour by looking for the substring `"your turn"` in
+/// its own label, which is how a word and a colour end up disagreeing.
+///
+/// It is now the one thing at the top of the bench that answers *what is
+/// happening here*: a dot in the state's colour, the state in sentence case,
+/// and whatever tool is running beside it. Urgent states earn the phosphor,
+/// the same way the head of the rail does and for the same reason.
+pub fn title_card(
+    state: crate::workbench::AgentState,
+    tool: Option<&str>,
+    sk: &Skin,
+    th: &Theme,
+) -> Div {
+    let tint = ink(state.tint(), th);
+    let card = sk
+        .panel()
         .flex()
-        .flex_col()
-        .gap(px(5.))
+        .flex_row()
+        .items_center()
+        .gap(px(10.))
+        .px(px(12.))
+        .py(px(9.))
+        .bg(th.surface.alpha(if state.urgent() { 0.6 } else { 0.35 }))
+        .border_l(px(if state.urgent() { 4. } else { 2. }))
+        .border_color(tint.alpha(if state.urgent() { 1.0 } else { 0.6 }))
         .child(
             div()
-                .flex()
-                .flex_row()
-                .gap(px(9.))
-                .items_baseline()
-                .child(micro(
-                    state.to_string(),
-                    11.,
-                    if waiting { th.complement } else { th.accent },
-                    th,
-                ))
-                .when_some(tool.map(str::to_string), |d, t| {
-                    d.child(micro(t, 10., th.faint, th))
-                }),
+                .w(px(8.))
+                .h(px(8.))
+                .flex_none()
+                .rounded(sk.rad_raw(4.))
+                .bg(tint),
         )
-        .when(!tail.is_empty(), |d| {
-            d.child(sk.rule_h())
-                .child(div().flex().flex_col().children(tail.iter().map(|line| {
-                    div()
-                        .text_size(px(10.5))
-                        .text_color(th.text.alpha(0.55))
-                        .font_family(th.font_family.clone())
-                        .child(clip(line, 110))
-                })))
-        })
+        .child(
+            div()
+                .text_size(px(13.))
+                .text_color(th.text.alpha(if state.urgent() { 1.0 } else { 0.8 }))
+                .child(state.word()),
+        )
+        .child(div().flex_1())
+        .when_some(tool.map(str::to_string), |d, t| {
+            d.child(micro(t, 10., th.faint, th))
+        });
+    if state.urgent() {
+        raised(card, tint, th)
+    } else {
+        card
+    }
 }
 
 /// Dress a verb as a button: big enough to hit, lit if it is the main one.

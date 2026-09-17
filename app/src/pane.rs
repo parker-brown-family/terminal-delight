@@ -6705,19 +6705,25 @@ impl TerminalView {
     /// computed again here. Two surfaces disagreeing about whether an agent is
     /// waiting on you is the class of bug the attention rail's lane mapping
     /// was built to end, and it starts with a second copy of the rule.
-    fn bench_status(&self) -> String {
+    /// What this pane's agent is doing.
+    ///
+    /// The order is a priority: a pane can be several of these at once — an
+    /// agent that finished its turn and is now asking is asking — and the
+    /// question is always the one to report.
+    fn bench_status(&self) -> crate::workbench::AgentState {
+        use crate::workbench::AgentState;
         if self.needs_input {
-            "❓ your turn".into()
+            AgentState::Asking
         } else if self.bell_blocked() {
-            "✘ blocked".into()
+            AgentState::Blocked
         } else if self.bell {
-            "✔ done".into()
+            AgentState::Done
         } else if self.exited {
-            "exited".into()
+            AgentState::Exited
         } else if self.agent_is_thinking() {
-            "◍ working".into()
+            AgentState::Working
         } else {
-            "live".into()
+            AgentState::Idle
         }
     }
 
@@ -7346,10 +7352,9 @@ impl TerminalView {
 
         // ── what the agent is doing, in one line ────────────────────────────
         let live = self.mode.is_agent().then(|| {
-            crate::benchdraw::live_strip(
-                &self.bench_status(),
+            crate::benchdraw::title_card(
+                self.bench_status(),
                 self.tool_face.as_ref().map(|f| f.verb.as_str()),
-                &[],
                 sk,
                 th,
             )

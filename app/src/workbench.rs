@@ -134,15 +134,34 @@ pub enum Tint {
 /// unanswered one would be a lie told in bold.
 pub fn stand(rows: &mut [Row]) {
     rows.sort_by_key(|r| r.tint != Tint::Waiting);
-    let waiting = rows.iter().any(|r| r.tint == Tint::Waiting);
+    let mut head_seen = false;
     for (i, row) in rows.iter_mut().enumerate() {
         row.standing = if row.tint == Tint::Waiting {
-            Standing::Waiting
-        } else if i == 0 && !waiting {
+            if head_seen {
+                Standing::Queued
+            } else {
+                head_seen = true;
+                Standing::Waiting
+            }
+        } else if i == 0 {
+            // Reachable only when nothing is waiting, since waiting rows sort
+            // first: while a question is open, what stands is *nothing yet*.
             Standing::Current
         } else {
             Standing::Past
         };
+    }
+}
+
+impl Standing {
+    /// Does this row get the phosphor?
+    ///
+    /// The glow is a claim about attention, so exactly one row in a shelf may
+    /// make it — and [`stand`] guarantees exactly that, since `Waiting` is the
+    /// head of the queue and `Current` only exists when the queue is empty. A
+    /// surface where three things glow has told the reader nothing.
+    pub fn lit(self) -> bool {
+        matches!(self, Standing::Waiting | Standing::Current)
     }
 }
 
@@ -552,6 +571,70 @@ pub const RAIL_MIN_W: f32 = 132.0;
 // the bench
 // ---------------------------------------------------------------------------
 
+/// What the agent in this pane is doing, as a value rather than as a string.
+///
+/// It was a `String` with a glyph baked into it — `"\u{2753} your turn"` — drawn
+/// at eleven points in the terminal font, and it looked like a log line on a
+/// surface that is otherwise a designed object. Parker: *"This your turn looks
+/// goinky given the slick modern design ---- kill that. OR PERHAPS MAKE A
+/// TITLE card which prompts the user to the agent state."*
+///
+/// A type rather than a tidier string, because the card needs three things
+/// from it — a word, a colour and whether it is urgent — and a string can only
+/// answer the first by being parsed, which is what the old strip did
+/// (`state.contains("your turn")`) and how the colour got out of step with
+/// the word.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum AgentState {
+    /// Stopped, and cannot continue without a person.
+    Asking,
+    /// Stopped on something that went wrong.
+    Blocked,
+    /// Finished its turn.
+    Done,
+    /// The process is gone.
+    Exited,
+    /// Mid-turn.
+    Working,
+    /// Attached, nothing happening.
+    Idle,
+}
+
+impl AgentState {
+    /// What to call it, in the words a person would use out loud.
+    ///
+    /// Sentence case and no glyph: the card carries a coloured dot, and a
+    /// glyph plus a colour plus a word is the same fact said three times.
+    pub fn word(self) -> &'static str {
+        match self {
+            AgentState::Asking => "Waiting on you",
+            AgentState::Blocked => "Blocked",
+            AgentState::Done => "Finished",
+            AgentState::Exited => "Exited",
+            AgentState::Working => "Working",
+            AgentState::Idle => "Idle",
+        }
+    }
+
+    /// Which meaning-colour it borrows, so the card is tinted by the same
+    /// table as everything else on the bench.
+    pub fn tint(self) -> Tint {
+        match self {
+            AgentState::Asking | AgentState::Blocked => Tint::Waiting,
+            AgentState::Done => Tint::Settled,
+            AgentState::Working => Tint::Pending,
+            // Nothing is being claimed about an idle or departed agent, and
+            // grey is how this surface says so everywhere else.
+            AgentState::Idle | AgentState::Exited => Tint::Unknown,
+        }
+    }
+
+    /// Does this state want a person to look at it now?
+    pub fn urgent(self) -> bool {
+        matches!(self, AgentState::Asking | AgentState::Blocked)
+    }
+}
+
 /// Where a row stands in its shelf's story.
 ///
 /// A rail of decisions is not a list, it is a HISTORY with a head, and the
@@ -566,9 +649,24 @@ pub const RAIL_MIN_W: f32 = 132.0;
 /// record of how it got there.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Standing {
-    /// Nobody has answered it. Loudest, and pinned to the top whatever its
-    /// arrival order — an unanswered question is not history.
+    /// Unanswered, and the one to deal with. Loudest, pinned to the top
+    /// whatever its arrival order — an unanswered question is not history.
+    ///
+    /// At most ONE row in a shelf is ever this, which is what makes the glow
+    /// mean something.
     Waiting,
+    /// Also unanswered, and behind something else.
+    ///
+    /// Three questions all marked WAITING ON YOU, all glowing, all with the
+    /// same red edge, is three rows shouting the same thing and no answer to
+    /// *which one first* — Parker: *"The GLOW implies elevated attention...
+    /// so then DEGLOW the demoted older ones and EVEN tone down the intensity
+    /// of their left border"*.
+    ///
+    /// It is a real state rather than a rendering trick: the agent's picker
+    /// takes one answer at a time, so everything behind the head genuinely is
+    /// queued. Still marked as waiting, because it is — just not first.
+    Queued,
     /// The newest settled row: what stands right now.
     Current,
     /// How it got here. Still readable, deliberately quieter.
@@ -1795,17 +1893,92 @@ mod tests {
         b.apply(decision("new"));
         b.set_shelf(Shelf::Decisions);
 
-        // Two unanswered: both are waiting, neither pretends to stand.
+        // Two unanswered: the newest is the one to deal with, the other is
+        // queued behind it. Neither pretends to stand.
         let rows = b.rows_for(Shelf::Decisions);
         assert_eq!(rows.len(), 2);
-        assert!(
-            rows.iter().all(|r| r.standing == Standing::Waiting),
-            "an unanswered question is not history"
-        );
+        assert_eq!(rows[0].standing, Standing::Waiting);
+        assert_eq!(rows[1].standing, Standing::Queued);
         assert!(
             !rows.iter().any(|r| r.standing == Standing::Current),
             "nothing stands while a question is open"
         );
+    }
+
+    #[test]
+    fn every_agent_state_says_something_a_person_would_say() {
+        use AgentState::*;
+        for st in [Asking, Blocked, Done, Exited, Working, Idle] {
+            let w = st.word();
+            assert!(!w.is_empty(), "{st:?} has no word");
+            assert!(
+                w.chars().all(|c| c.is_alphanumeric() || c == ' '),
+                "{st:?} still carries a glyph: {w:?}"
+            );
+            assert!(
+                w.chars().next().is_some_and(char::is_uppercase),
+                "{st:?} is not sentence case: {w:?}"
+            );
+        }
+        // The two that stop an agent are the two that are urgent, and they are
+        // the only two — a "Finished" agent needs nothing from anybody.
+        assert!(Asking.urgent() && Blocked.urgent());
+        for st in [Done, Exited, Working, Idle] {
+            assert!(!st.urgent(), "{st:?} should not be shouting");
+        }
+        // And the colour comes from the same table as every other meaning on
+        // the bench, rather than from parsing the word.
+        assert_eq!(Asking.tint(), Tint::Waiting);
+        assert_eq!(Done.tint(), Tint::Settled);
+        assert_eq!(Idle.tint(), Tint::Unknown);
+    }
+
+    #[test]
+    fn exactly_one_row_in_a_shelf_is_ever_lit() {
+        // The invariant the whole hierarchy rests on. A glow is a claim about
+        // where to look, so two of them is no claim at all — and the shelf
+        // that prompted this had three, all identical.
+        let cases: Vec<Vec<Tint>> = vec![
+            vec![],
+            vec![Tint::Settled],
+            vec![Tint::Waiting],
+            vec![Tint::Waiting, Tint::Waiting, Tint::Waiting],
+            vec![Tint::Settled, Tint::Settled, Tint::Settled],
+            vec![Tint::Settled, Tint::Waiting, Tint::Settled, Tint::Waiting],
+            vec![Tint::Pending, Tint::Ident, Tint::Unknown],
+        ];
+        for tints in cases {
+            let mut rows: Vec<Row> = tints
+                .iter()
+                .enumerate()
+                .map(|(i, t)| row_stub(&format!("r{i}"), *t))
+                .collect();
+            let n = rows.len();
+            stand(&mut rows);
+            let lit = rows.iter().filter(|r| r.standing.lit()).count();
+            assert!(lit <= 1, "{n} rows of {tints:?} lit {lit} of them at once");
+            if n > 0 {
+                assert_eq!(lit, 1, "{tints:?}: a non-empty shelf has a head");
+                assert!(rows[0].standing.lit(), "and the head is the first row");
+            }
+        }
+    }
+
+    #[test]
+    fn the_queue_behind_the_head_is_still_unanswered_but_not_shouting() {
+        let mut rows = vec![
+            row_stub("newest", Tint::Waiting),
+            row_stub("older", Tint::Waiting),
+            row_stub("oldest", Tint::Waiting),
+        ];
+        stand(&mut rows);
+        assert_eq!(rows[0].standing, Standing::Waiting);
+        assert_eq!(rows[1].standing, Standing::Queued);
+        assert_eq!(rows[2].standing, Standing::Queued);
+        assert!(!rows[1].standing.lit() && !rows[2].standing.lit());
+        // Queued is NOT Past: these are still unanswered, and a row that says
+        // it is history when somebody is still waiting on it is a lie.
+        assert!(!rows.iter().any(|r| r.standing == Standing::Past));
     }
 
     #[test]
@@ -1847,6 +2020,7 @@ mod tests {
         stand(&mut rows);
         assert_eq!(rows[0].id.0, "asked-long-ago");
         assert_eq!(rows[0].standing, Standing::Waiting);
+        assert!(rows[0].standing.lit(), "and it is the only lit row");
         assert!(
             !rows.iter().any(|r| r.standing == Standing::Current),
             "while somebody is being waited on, nothing else stands"
