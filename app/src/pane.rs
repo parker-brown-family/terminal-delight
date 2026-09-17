@@ -6897,19 +6897,35 @@ impl TerminalView {
                                 }
                                 None => label.clone(),
                             };
+                            // The PRIMARY verb is a button you can hit without
+                            // aiming. `open` on an artifact is the whole point
+                            // of the card — the reason a person opened it was
+                            // to get to the thing — and it was drawn as a
+                            // ten-point word in a row of ten-point words, all
+                            // the same weight, none of them looking pressable.
+                            // Parker: *"click to open the artifact needs to be
+                            // a chunky button!"*. The rest stay chips: a card
+                            // with five buttons has no primary verb either.
+                            let primary = matches!(
+                                action,
+                                crate::surface::Action::Open | crate::surface::Action::Approve
+                            );
                             let action = action.clone();
-                            sk.chip(false)
-                                .cursor_pointer()
-                                .text_size(px(10.5))
-                                .font_family(th.font_family.clone())
-                                .child(text)
-                                .on_mouse_down(
-                                    MouseButton::Left,
-                                    cx.listener(move |view, _ev: &MouseDownEvent, _w, cx| {
-                                        cx.stop_propagation();
-                                        view.bench_act(action.clone(), target.clone(), cx);
-                                    }),
-                                )
+                            crate::benchdraw::verb_button(
+                                sk.chip(primary)
+                                    .cursor_pointer()
+                                    .font_family(th.font_family.clone())
+                                    .child(text),
+                                primary,
+                                th,
+                            )
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |view, _ev: &MouseDownEvent, _w, cx| {
+                                    cx.stop_propagation();
+                                    view.bench_act(action.clone(), target.clone(), cx);
+                                }),
+                            )
                         })
                         .collect::<Vec<_>>()
                 })),
@@ -6937,19 +6953,28 @@ impl TerminalView {
             self.wb_compose = Some(crate::workbench::Line::new());
             return;
         }
-        let Some(left) = self
-            .wb_text_origin
-            .lock()
-            .ok()
-            .and_then(|b| *b)
-            .map(|b| f32::from(b.origin.x))
-        else {
+        let Some(bounds) = self.wb_text_origin.lock().ok().and_then(|b| *b) else {
             // Never painted, so there is no column to compute. Arming the line
             // is still the right half of the gesture.
             return;
         };
+        let left = f32::from(bounds.origin.x);
+        let drawn = f32::from(bounds.size.width);
         let Some(line) = self.wb_compose.as_mut() else {
             return;
+        };
+        // One character's width, taken from the line the renderer ACTUALLY
+        // drew: its measured width over its character count. Every attempt to
+        // compute this ahead of time was wrong — the grid's cell scaled by the
+        // point-size ratio, then the text system's advance for `M` — because
+        // both answer a question about a font rather than about this string in
+        // this box. Dividing the drawn width is self-correcting: it is right
+        // for a proportional font too, on average, which is the best any
+        // single number can do.
+        let advance = match line.chars() {
+            0 => advance,
+            n if drawn > 1.0 => drawn / n as f32,
+            _ => advance,
         };
         let to = crate::workbench::caret_for_click(x - left, advance, line.chars());
         let bytes = crate::workbench::caret_move(line.caret(), to);
@@ -7445,35 +7470,36 @@ impl TerminalView {
         };
 
         // ── the composer ────────────────────────────────────────────────────
-        let composer =
-            (self.mode.is_agent() && how != crate::workbench::Embodiment::Summary).then(|| {
-                // Measured for this font at this size in `sync_size`. Until
-                // the first measurement lands it falls back to the scaled
-                // cell, which is close enough to draw one frame with and is
-                // never what the caret settles on.
-                let advance = if self.wb_advance > 1.0 {
-                    self.wb_advance
-                } else {
-                    self.cell_w * crate::benchdraw::COMPOSER_PT / th.font_size
-                };
-                crate::benchdraw::composer(
-                    self.wb_compose.as_ref(),
-                    focused,
-                    advance,
-                    self.wb_text_origin.clone(),
-                    sk,
-                    th,
-                )
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(move |view, ev: &MouseDownEvent, window, cx| {
-                        cx.stop_propagation();
-                        view.bench_click(ev.position.x.into(), advance, cx);
-                        window.focus(&view.focus_handle, cx);
-                        cx.notify();
-                    }),
-                )
-            });
+        // Always, on any agent pane, at any size. See [`benchdraw::composer`].
+        let composer = self.mode.is_agent().then(|| {
+            // Measured for this font at this size in `sync_size`. Until
+            // the first measurement lands it falls back to the scaled
+            // cell, which is close enough to draw one frame with and is
+            // never what the caret settles on.
+            let advance = if self.wb_advance > 1.0 {
+                self.wb_advance
+            } else {
+                self.cell_w * crate::benchdraw::COMPOSER_PT / th.font_size
+            };
+            crate::benchdraw::composer(
+                self.wb_compose.as_ref(),
+                focused,
+                advance,
+                how == crate::workbench::Embodiment::Summary,
+                self.wb_text_origin.clone(),
+                sk,
+                th,
+            )
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |view, ev: &MouseDownEvent, window, cx| {
+                    cx.stop_propagation();
+                    view.bench_click(ev.position.x.into(), advance, cx);
+                    window.focus(&view.focus_handle, cx);
+                    cx.notify();
+                }),
+            )
+        });
 
         // ── the rail, and the handle that closes it ─────────────────────────
         let handle = (fit != RailFit::Hidden).then(|| {

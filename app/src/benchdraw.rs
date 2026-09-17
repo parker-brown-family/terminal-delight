@@ -950,6 +950,26 @@ pub fn live_strip(state: &str, tool: Option<&str>, tail: &[String], sk: &Skin, t
         })
 }
 
+/// Dress a verb as a button: big enough to hit, lit if it is the main one.
+///
+/// The size IS the affordance. A row of identical small words says every verb
+/// is equally likely and none of them is a button; one chunky lit control and
+/// a few quiet ones says what the card is FOR, and the quiet ones still work.
+/// Kept here rather than at the call site so that every future verb row —
+/// changesets, decisions, whatever arrives next — gets the same shape by
+/// asking for it.
+pub fn verb_button<E: Styled>(el: E, primary: bool, th: &Theme) -> E {
+    let el = el
+        .px(px(if primary { 18. } else { 12. }))
+        .py(px(if primary { 10. } else { 6. }))
+        .text_size(px(if primary { 13.5 } else { 11. }));
+    if primary {
+        raised(el.border_color(th.accent.alpha(0.75)), th.accent, th)
+    } else {
+        el
+    }
+}
+
 /// The composer's type size. Named because two places have to agree on it:
 /// the text that draws at this size, and the pane that scales the measured
 /// cell width to it in order to know where column N is.
@@ -1011,21 +1031,32 @@ pub fn composer(
     line: Option<&crate::workbench::Line>,
     focused: bool,
     advance: f32,
+    tight: bool,
     origin: std::sync::Arc<std::sync::Mutex<Option<gpui::Bounds<gpui::Pixels>>>>,
     sk: &Skin,
     th: &Theme,
 ) -> Div {
     let open = line.is_some();
     let live = open && focused;
+    // It SHRINKS in a small pane; it never leaves. This used to be dropped
+    // below the Full embodiment, on the reasoning that a pane too small for a
+    // conversation is too small for a text box — which had it backwards.
+    // Parker, on a tiled column showing a card and nothing to type into:
+    // *"The render size can cut off the text entry — interaction surface... it
+    // should ALWAYS be on screen! it is the MAIN REASON to have a workbench
+    // open!"*. A bench you cannot answer from is a viewer.
+    let pt = if tight { 13.5 } else { COMPOSER_PT };
+    let tall = if tight { 46. } else { 84. };
     raised(
         sk.panel()
             .flex()
             .flex_col()
-            .gap(px(10.))
+            .gap(px(if tight { 5. } else { 10. }))
             .justify_center()
-            .min_h(px(84.))
-            .px(px(18.))
-            .py(px(16.))
+            .min_h(px(tall))
+            .flex_none()
+            .px(px(if tight { 10. } else { 18. }))
+            .py(px(if tight { 8. } else { 16. }))
             .bg(th.surface)
             .cursor_text()
             // Lit whether or not it is armed. The border was the only thing
@@ -1040,7 +1071,7 @@ pub fn composer(
         div()
             .flex()
             .items_center()
-            .gap(px(12.))
+            .gap(px(if tight { 7. } else { 12. }))
             .child(
                 // The text and its caret share one relative box, and the caret
                 // is placed ABSOLUTELY at `caret * advance` from the left.
@@ -1062,38 +1093,76 @@ pub fn composer(
                     .relative()
                     .flex_1()
                     .min_w(px(0.))
-                    .h(px(26.))
-                    // Inside the text box, not on the panel: the probe has to
-                    // report where the TEXT starts, and the panel's left edge
-                    // is a padding and a border away from that. Measuring the
-                    // wrong box put every click about two characters right of
-                    // where it was pointed.
-                    .child(text_origin_probe(origin))
+                    .h(px(if tight { 20. } else { 26. }))
+                    .child(
+                        // The line itself, and the probe that reports where it
+                        // landed and how wide it came out.
+                        //
+                        // Inside the text box, not on the panel: the probe has
+                        // to report where the TEXT starts, and the panel's
+                        // left edge is a padding and a border away from that.
+                        // Measuring the wrong box put every click about two
+                        // characters right of where it was pointed.
+                        div().absolute().left(px(0.)).top(px(3.)).child(
+                            div().relative().child(text_origin_probe(origin)).child(
+                                div()
+                                    .text_size(px(pt))
+                                    .font_family(th.font_family.clone())
+                                    .text_color(if open { th.text } else { th.text.alpha(0.72) })
+                                    .child(match line {
+                                        Some(l) if !l.is_empty() => l.text().to_string(),
+                                        _ => "type to the agent".to_string(),
+                                    }),
+                            ),
+                        ),
+                    )
                     .when_some(line, |d, l| {
+                        // The caret is placed by LAYING OUT the text in front
+                        // of it, invisibly, and letting the block fall where
+                        // that ends.
+                        //
+                        // The arithmetic version — column times a measured
+                        // advance — was wrong twice for two different reasons,
+                        // and the second one is the instructive one: the
+                        // advance of `M` is not the advance this string is
+                        // drawn with, so the caret ran six characters past the
+                        // end of a sixty-character line. Any number computed
+                        // here is a guess about what the text system will do.
+                        // An invisible copy of the prefix is not a guess: it
+                        // is the text system doing it, in the same font at the
+                        // same size, and it is exact for a proportional font
+                        // as well as a monospaced one.
+                        let (before, _) = l.text().split_at(
+                            l.text()
+                                .char_indices()
+                                .nth(l.caret())
+                                .map(|(i, _)| i)
+                                .unwrap_or(l.text().len()),
+                        );
                         d.child(
                             div()
                                 .absolute()
-                                .left(px(l.caret() as f32 * advance))
+                                .left(px(0.))
                                 .top(px(1.))
-                                .w(px(advance.max(3.)))
-                                .h(px(24.))
-                                .bg(th.human.alpha(if live { 0.45 } else { 0.2 })),
+                                .flex()
+                                .flex_row()
+                                .items_start()
+                                .child(
+                                    div()
+                                        .text_size(px(pt))
+                                        .font_family(th.font_family.clone())
+                                        .text_color(gpui::transparent_black())
+                                        .child(before.to_string()),
+                                )
+                                .child(
+                                    div()
+                                        .w(px(advance.max(3.)))
+                                        .h(px(if tight { 18. } else { 24. }))
+                                        .bg(th.human.alpha(if live { 0.45 } else { 0.2 })),
+                                ),
                         )
                     })
-                    .when(!open, |d| d.child(caret_block(live, th)))
-                    .child(
-                        div()
-                            .absolute()
-                            .left(px(0.))
-                            .top(px(3.))
-                            .text_size(px(COMPOSER_PT))
-                            .font_family(th.font_family.clone())
-                            .text_color(if open { th.text } else { th.text.alpha(0.72) })
-                            .child(match line {
-                                Some(l) if !l.is_empty() => l.text().to_string(),
-                                _ => "type to the agent".to_string(),
-                            }),
-                    ),
+                    .when(!open, |d| d.child(caret_block(live, th))),
             )
             // Only while it is armed, and then unmissable. This is the answer
             // to the question the surface kept failing: *am I typing to the
@@ -1109,7 +1178,7 @@ pub fn composer(
                 )
             }),
     )
-    .when(!open, |d| {
+    .when(!open && !tight, |d| {
         d.child(micro(
             "TYPE ANYWHERE \u{b7} ENTER SENDS \u{b7} PASTE TEXT, FILES OR AN IMAGE",
             9.5,
