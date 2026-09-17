@@ -3425,6 +3425,13 @@ struct Workspace {
     /// back with the results — so the record of what has been read lives in
     /// one place and cannot be updated by two passes at once.
     surface_feed: Option<surfacefeed::Feed>,
+    /// Per agent pane, the (modified, length) of its transcript the last time
+    /// the derived half parsed it. A transcript that has not moved is not
+    /// parsed again: `derive::from_transcript` re-reads and re-parses the tail
+    /// of every agent pane's transcript on every sweep otherwise — 256 KiB a
+    /// pane a second, which on a twenty-pane desktop was five megabytes a
+    /// second of work whose answer had not changed.
+    derived_stamps: std::collections::HashMap<u64, (u64, u64)>,
     /// 🎨 toggle in the MCP panel: tint each pane row with that pane's own
     /// resolved screen background + text colour. Defaults off (session-scoped).
     mcp_theme_preview: bool,
@@ -4837,6 +4844,7 @@ impl Workspace {
             agent_vitals: std::collections::HashMap::new(),
             vitals_refreshing: false,
             surface_feed: Some(surfacefeed::Feed::new()),
+            derived_stamps: std::collections::HashMap::new(),
             // Headless-capture hook: TD_WALL_THEME=1 arms the "theme · on" wall
             // skin (per-card logo warp) from boot so the curved-glass cards can be
             // screenshotted without a mouse. Leak-safe — only flips the visual
@@ -6996,7 +7004,7 @@ impl Workspace {
     /// Keyed by host pane id rather than pid, because that is what a surface
     /// is addressed to — and the pid changes when a conversation is resumed
     /// while the pane, and its bench, do not.
-    fn derive_requests(&self, cx: &App) -> Vec<(u64, std::path::PathBuf)> {
+    fn derive_requests(&mut self, cx: &App) -> Vec<(u64, std::path::PathBuf)> {
         let home = session::home_dir();
         let mut out = Vec::new();
         for tab in self.tabs.iter() {
@@ -7017,6 +7025,26 @@ impl Workspace {
                 ) else {
                     continue;
                 };
+                // Only a transcript that MOVED is worth parsing again. One
+                // stat per agent pane per sweep replaces one 256 KiB read and
+                // parse per agent pane per sweep; a stat that fails (the file
+                // is gone, or mid-rotation) falls through and lets the parse
+                // decide, exactly as before.
+                let stamp = std::fs::metadata(&path).ok().map(|m| {
+                    let modified = m
+                        .modified()
+                        .ok()
+                        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                        .map(|d| d.as_millis() as u64)
+                        .unwrap_or(0);
+                    (modified, m.len())
+                });
+                if let Some(stamp) = stamp {
+                    if self.derived_stamps.get(&pane) == Some(&stamp) {
+                        continue;
+                    }
+                    self.derived_stamps.insert(pane, stamp);
+                }
                 out.push((pane, path));
             }
         }

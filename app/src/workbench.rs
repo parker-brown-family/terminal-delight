@@ -1710,6 +1710,12 @@ impl Bench {
                 let id = incoming.id.clone();
                 match self.surfaces.iter_mut().find(|s| s.id == id) {
                     Some(existing) if post.op == Op::Update => existing.merge(incoming),
+                    // A present that changes nothing IS nothing: no repaint,
+                    // and the surface does not go back to unseen. The derived
+                    // half re-presents from the transcript, and a bench that
+                    // answered `Some(id)` to an identical re-present made every
+                    // agent pane repaint once a second for as long as it lived.
+                    Some(existing) if *existing == incoming => return None,
                     Some(existing) => *existing = incoming,
                     None => {
                         self.surfaces.push(incoming);
@@ -1991,6 +1997,21 @@ mod tests {
         b.apply(doc("same", "Second"));
         assert_eq!(b.all_newest_first().count(), 1);
         assert_eq!(b.rows()[0].title, "Second");
+    }
+
+    /// The derived half re-presents whatever it read from the transcript on
+    /// every sweep. A present that changes nothing must answer `None`, or every
+    /// agent pane repaints once a second for as long as it lives — and a
+    /// surface the person has already looked at must not go back to unseen.
+    #[test]
+    fn an_identical_re_present_is_not_a_change() {
+        let mut b = Bench::new();
+        assert!(b.apply(doc("same", "First")).is_some(), "the first arrival is a change");
+        b.mark_shelf_seen();
+        let seen = b.unseen_total();
+        assert!(b.apply(doc("same", "First")).is_none(), "nothing changed");
+        assert_eq!(b.unseen_total(), seen, "an identical re-present is not news");
+        assert!(b.apply(doc("same", "Second")).is_some(), "a different title is a change");
     }
 
     #[test]
