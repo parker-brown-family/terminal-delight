@@ -7147,6 +7147,20 @@ impl TerminalView {
         Some(dir.join(&name).display().to_string())
     }
 
+    /// Type a line into the composer and into the agent — without sending it.
+    ///
+    /// The bytes go down the pseudoterminal exactly as a person's keystrokes
+    /// would, so the agent's own line editor holds the same text and its caret
+    /// sits where ours does; what is missing is the return. See
+    /// [`crate::workbench::Line`] on why the two are mirrored rather than one
+    /// owning the other.
+    pub fn bench_type(&mut self, line: &str, cx: &mut Context<Self>) {
+        let text = line.replace(['\n', '\r'], " ");
+        self.wb_compose = Some(crate::workbench::Line::holding(text.clone()));
+        self.send(text.into_bytes(), cx);
+        cx.notify();
+    }
+
     /// Say a whole line to the agent through the bench.
     ///
     /// The scripted composer: same destination, same encoding, one call. Used

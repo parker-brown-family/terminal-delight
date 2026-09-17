@@ -69,6 +69,9 @@ pub(crate) enum Req {
     BenchChoose(usize),
     /// Say a line to the agent through the bench. See [`Cmd::BenchSay`].
     BenchSay(String),
+    /// Put a line in the composer WITHOUT submitting it — what a person
+    /// halfway through typing looks like. See [`Cmd::BenchType`].
+    BenchType(String),
 }
 
 /// One field of the MCP control-surface policy — the robot panel's toggles,
@@ -289,6 +292,16 @@ enum Cmd {
     /// Type a line into the agent through the bench, exactly as the composer
     /// does. The scripted half of talking to a pane.
     BenchSay(String),
+    /// The same, WITHOUT the return: a composer holding a line somebody is
+    /// still writing.
+    ///
+    /// It exists for the same reason the rest of this family does — the
+    /// gestures on this surface belong to a hand, and the shell that builds it
+    /// has none — and it earns its place specifically because the half-typed
+    /// state is where both caret defects lived. Neither was reachable by a
+    /// script, so both were found by borrowing a person's keyboard, once by
+    /// accident into the wrong window.
+    BenchType(String),
 }
 
 /// Which face `ctl bench` asks for.
@@ -356,7 +369,7 @@ pub fn socket_path(pid: u32) -> PathBuf {
 /// Everything the grammar accepts, in one place — the usage string and the
 /// unknown-command error both quote it, so they can't drift from the match.
 const USAGE: &str = "ping | paint on|off|toggle|status | \
-     skin <name>|theme|status | bench on|off|toggle|choose <n>|say <text> | \
+     skin <name>|theme|status | bench on|off|toggle|choose <n>|say <text>|type <text> | \
      mcp status|on|off | mcp writes on|off | mcp expose agents|all | \
      mcp rpc <json> | adopt {\"cwd\":\"/…\",\"run\":\"…\"} | \
      tabs [{\"op\":\"name\",\"pane\":1234,\"name\":\"DEV\"}, …] | \
@@ -370,6 +383,13 @@ fn parse_line(s: &str) -> Result<Cmd, String> {
     }
     // `bench say` carries a whole sentence: take the remainder VERBATIM
     // rather than splitting it into words, or every prompt loses its spacing.
+    if let Some(rest) = s.strip_prefix("bench type ") {
+        let line = rest.trim_end_matches(['\r', '\n']);
+        if line.is_empty() {
+            return Err("bench type: nothing to type".into());
+        }
+        return Ok(Cmd::BenchType(line.to_string()));
+    }
     if let Some(rest) = s.strip_prefix("bench say ") {
         let line = rest.trim();
         if line.is_empty() {
@@ -583,6 +603,13 @@ fn handle_conn(
                 "err ui gone".into()
             }
         }
+        Ok(Cmd::BenchType(line)) => {
+            if tx.send(Req::BenchType(line)).is_ok() {
+                "ok".into()
+            } else {
+                "err ui gone".into()
+            }
+        }
         Ok(Cmd::BenchSay(line)) => {
             if tx.send(Req::BenchSay(line)).is_ok() {
                 "ok".into()
@@ -696,6 +723,7 @@ pub fn start(cx: &mut Context<Workspace>) {
                     Req::Bench(face) => ws.set_all_faces(face, cx),
                     Req::BenchChoose(n) => ws.bench_choose(n, cx),
                     Req::BenchSay(line) => ws.bench_say(&line, cx),
+                    Req::BenchType(line) => ws.bench_type(&line, cx),
                     // The same escalation the robot panel performs, and the same
                     // persistence: a grant made from the CLI shows in the panel
                     // and survives a restart.

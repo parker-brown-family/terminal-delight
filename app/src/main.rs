@@ -6572,6 +6572,36 @@ impl Workspace {
         eprintln!("terminal-delight: no agent pane is showing its bench");
     }
 
+    /// Put a line in the first showing bench's composer, unsubmitted.
+    ///
+    /// The sibling of [`Self::bench_say`], and the reason it exists is the
+    /// same reason the whole `ctl bench` family exists: every gesture on this
+    /// surface is a mouse or keyboard gesture, and the shell that builds it
+    /// has neither. The state this reaches — a person halfway through a line,
+    /// caret sitting in it — is where both caret bugs lived, and it could not
+    /// be photographed without borrowing somebody's actual keyboard.
+    pub(crate) fn bench_type(&mut self, line: &str, cx: &mut Context<Self>) {
+        let mut leaves = Vec::new();
+        for tab in self.tabs.iter() {
+            tab.root.leaves(&mut leaves);
+        }
+        let leaves: Vec<Entity<TerminalView>> = leaves.into_iter().cloned().collect();
+        for leaf in leaves {
+            let took = leaf.update(cx, |view, cx| {
+                if view.bench.face() != workbench::Face::Workbench || !view.mode.is_agent() {
+                    return false;
+                }
+                view.bench_type(line, cx);
+                true
+            });
+            if took {
+                cx.notify();
+                return;
+            }
+        }
+        eprintln!("terminal-delight: no agent pane is showing its bench");
+    }
+
     /// Ask every agent pane whether it is waiting on a question, and put the
     /// answer on its own bench.
     ///
