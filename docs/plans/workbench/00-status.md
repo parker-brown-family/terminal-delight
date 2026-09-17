@@ -82,15 +82,23 @@ twenty lines because the host already types a recipe into a fresh pane.
 
 ## NOT verified
 
-**No mouse gesture in this branch has ever been pressed.** This shell has a
-virtual keyboard (`wtype`) and no virtual pointer, so the toggle, the rail
-rows, the action chips and the launcher are compiled, rendered and unclicked.
-Parker pressed the header toggle once on the first demo window and it worked;
-everything else is his to try.
+*(As written the morning of 2026-09-17; superseded by the day's live rounds,
+kept for the record.)* **No mouse gesture in this branch has ever been
+pressed.** This shell has a virtual keyboard (`wtype`) and no virtual pointer,
+so the toggle, the rail rows, the action chips and the launcher are compiled,
+rendered and unclicked. Parker pressed the header toggle once on the first demo
+window and it worked; everything else is his to try.
 
 `alt+w` did not fire when injected through `wtype`, which is unexplained — it
 may be the injection rather than the chord, and it is the first thing to check
 by hand.
+
+*Since then:* Parker pressed the whole surface through a day of live rounds —
+the toggle, the rail, the composer, the question flow, the review gallery.
+`wtype` is never used at a window again (it types into whatever has focus;
+`ctl bench type` replaced it). One click under the warp has been read back
+from the log, at the centre; the corners are tested numerically and still
+unpressed by a hand.
 
 ## Next
 
@@ -120,11 +128,21 @@ there; the backend is spaghetti and needs a refactor plan and pass.* The plan is
 - [x] The composer diagnostic's four findings dispositioned in the plan; its
       first finding root-caused to the mirror replacing where the PTY appended.
       (`72950ad`)
-- [ ] `body()` — one kind-match per embodiment (slice 3)
-- [ ] Mechanical guard for "a renderer contains no decisions" (slice 4)
+- [x] `body()` — one kind-match per embodiment (slice 3): **disproved.** The
+      kind matches are already exhaustive, so a new kind fails to compile
+      until every embodiment draws it. Nothing to collapse. (#486)
+- [x] Mechanical guard for "a renderer contains no decisions" — a scan of
+      the renderer's code for a threshold or an environment/clock read,
+      mutation-tested three plants caught, two allowed shapes passing.
+      (`47cbc76`)
 - [x] The warp on the bench — Parker decided, built, hit-tested through the
-      inverse; residue and verification channel in the plan. (`46ec6b6`)
-- [ ] One decision left for Parker: the bench in the vignette
+      inverse. (`46ec6b6`) Then the residue closed: the wheel and the pointer
+      go through the same inverse and the corners are tested. (5299c1d)
+- [x] The bench in the vignette: exempt. (`5b3f1d6`)
+- [x] `ctl bench` verbs reach the focused pane first. (`2d63f9a`)
+- [x] `host_socket` root-caused — the tests' wait, not the host. (`9722402`)
+- [x] The spec's map names `screenread.rs` and the debugging flags. (`120ab9c`)
+- [ ] The mirror's future — a design pin, #490
 
 **Surprises.** A test written as `for i in 0..SETTLE_SWEEPS` passed with the
 constant set to zero — vacuous under the exact mutation it existed to catch.
@@ -139,3 +157,27 @@ were mechanical and the compiler and 1,172 tests caught every mistake the mover
 made — including two of its own. What was NOT cheap was the day before it: nine
 of the day's defects were rules written where no assertion could reach them,
 which is the thing the pass exists to end.
+
+## The second pass — 2026-09-17, evening
+
+Parker: *"can you fix everything?"* Six follow-ups had been filed at the
+tie-off; five are fixed and one is a design question. Each was falsified
+before it was fixed, and two did not survive it whole:
+
+- **The warp's residue was not what its commit said.** "`ScrollHandle` has no
+  public setter" was false, and "the displacement at the composer is small"
+  was false too: measured at the live curvature, a corner control is shown
+  76.8 px from where it was laid and the composer's corner 62.5 px. The
+  wheel and the pointer now go through the inverse, and the corners are a
+  test. (#485)
+- **The flake was in the tests.** Reproduced one run in eight under load; the
+  wait returned on the terminal's echo of a line before `cat`'s copy of it,
+  which then arrived live after a snapshot that held the echo. The host's
+  fence was keeping its promise. (#438)
+- **Slice 3 was already true.** The renderer's kind matches are exhaustive;
+  only the guard was missing. (#486)
+
+**Verified:** fmt, clippy `-D warnings`, the full release suite, on their own
+exit codes, before each of the seven commits. **Not verified by a hand:** a
+corner click and a wheel over the bent edge of a long draft under
+`TD_HITDEBUG=1` — the numbers are tested, the gesture is not.
