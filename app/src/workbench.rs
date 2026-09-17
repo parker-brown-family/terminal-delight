@@ -508,13 +508,33 @@ pub enum LiveMove {
     Replace,
 }
 
+/// How many consecutive sweeps of "the agent is not waiting" before a live
+/// question comes down.
+///
+/// The screen is a SENSOR, and one sample of it is not a state change. Making
+/// the window fullscreen resizes the pseudoterminal, the agent redraws its
+/// whole TUI, and for a beat in the middle of that redraw the picker's footer
+/// is not on screen — so `needs_input` reads false, and a question nobody had
+/// answered was retired on the strength of one blink. Parker, having found the
+/// trigger himself: *"it really seems linked to when i hit fullscreen super f
+/// ... yes confirmed - it takes about 3 seconds while the waiting on you and
+/// question element just disappear"*.
+///
+/// Three sweeps at one a second, which covers a redraw comfortably. The cost
+/// is that a genuinely answered question lingers about two seconds longer than
+/// it used to, and that is the right side to be wrong on: a stale card is read
+/// and dismissed, a vanished one is a person wondering what they did.
+pub const SETTLE_SWEEPS: u8 = 3;
+
 /// Decide it. `waiting` is whether the agent is still stopped on a person,
-/// `parsed` what the screen could be read as this instant, and `tracked` the
-/// live question already on the bench.
+/// `parsed` what the screen could be read as this instant, `tracked` the live
+/// question already on the bench, and `quiet_for` how many sweeps in a row
+/// the agent has looked like it is no longer waiting.
 pub fn live_move(
     waiting: bool,
     parsed: Option<&crate::surface::SurfaceId>,
     tracked: Option<&crate::surface::SurfaceId>,
+    quiet_for: u8,
 ) -> LiveMove {
     match (waiting, parsed, tracked) {
         // Nothing up, nothing tracked.
@@ -522,8 +542,16 @@ pub fn live_move(
         // Something to show and nothing showing it.
         (true, Some(_), None) => LiveMove::Replace,
         (false, Some(_), None) => LiveMove::Keep,
-        // The agent has moved on. This is the ONLY retirement.
-        (false, _, Some(_)) => LiveMove::Retire,
+        // The agent looks like it has moved on — but only once it has looked
+        // that way for long enough to be believed. This is the ONLY
+        // retirement, and it is now the only DEBOUNCED one.
+        (false, _, Some(_)) => {
+            if quiet_for >= SETTLE_SWEEPS {
+                LiveMove::Retire
+            } else {
+                LiveMove::Keep
+            }
+        }
         // Still waiting, and the screen cannot be read: keep what we have.
         (true, None, Some(_)) => LiveMove::Keep,
         (true, Some(now), Some(was)) => {
@@ -2024,31 +2052,63 @@ mod tests {
         let a = SurfaceId("a".into());
         let b = SurfaceId("b".into());
 
-        // The bug, exactly: still waiting, screen unreadable because the
-        // picker scrolled its own question line off the top. Keep the card.
-        assert_eq!(live_move(true, None, Some(&a)), LiveMove::Keep);
+        let settled = SETTLE_SWEEPS;
 
-        // The only thing that takes a card down.
-        assert_eq!(live_move(false, None, Some(&a)), LiveMove::Retire);
+        // The first bug: still waiting, screen unreadable because the picker
+        // scrolled its own question line off the top. Keep the card.
+        assert_eq!(live_move(true, None, Some(&a), 0), LiveMove::Keep);
+
+        // The only thing that takes a card down, and only once it has been
+        // true for long enough to believe.
+        assert_eq!(live_move(false, None, Some(&a), settled), LiveMove::Retire);
         assert_eq!(
-            live_move(false, Some(&a), Some(&a)),
+            live_move(false, Some(&a), Some(&a), settled),
             LiveMove::Retire,
             "not waiting wins over a stale parse"
         );
 
         // Ordinary progress through a round.
-        assert_eq!(live_move(true, Some(&b), Some(&a)), LiveMove::Replace);
-        assert_eq!(live_move(true, Some(&a), Some(&a)), LiveMove::Keep);
+        assert_eq!(live_move(true, Some(&b), Some(&a), 0), LiveMove::Replace);
+        assert_eq!(live_move(true, Some(&a), Some(&a), 0), LiveMove::Keep);
 
         // First arrival, and the quiet cases.
-        assert_eq!(live_move(true, Some(&a), None), LiveMove::Replace);
-        assert_eq!(live_move(true, None, None), LiveMove::Keep);
-        assert_eq!(live_move(false, None, None), LiveMove::Keep);
+        assert_eq!(live_move(true, Some(&a), None, 0), LiveMove::Replace);
+        assert_eq!(live_move(true, None, None, 0), LiveMove::Keep);
+        assert_eq!(live_move(false, None, None, settled), LiveMove::Keep);
         assert_eq!(
-            live_move(false, Some(&a), None),
+            live_move(false, Some(&a), None, settled),
             LiveMove::Keep,
             "a question read off a screen nobody is waiting on is not live"
         );
+    }
+
+    #[test]
+    fn a_redraw_does_not_answer_a_question() {
+        // Fullscreen resizes the pseudoterminal and the agent repaints its
+        // whole TUI. For a beat in the middle of that the picker's footer is
+        // not on screen, so the pane reads "not waiting" — and the card used
+        // to come down on the strength of that one blink.
+        let a = SurfaceId("a".into());
+        // LITERAL sweep counts, not `0..SETTLE_SWEEPS`.
+        //
+        // Written against the constant, this test goes vacuous the moment
+        // somebody sets the constant to zero: the loop body never runs and the
+        // retirement assertion passes on the very first sample. A mutation run
+        // caught exactly that — the debounce was disabled and the test stayed
+        // green, which is worse than having no test at all.
+        assert_eq!(
+            live_move(false, None, Some(&a), 0),
+            LiveMove::Keep,
+            "the blink itself must not retire anything"
+        );
+        assert_eq!(live_move(false, None, Some(&a), 1), LiveMove::Keep);
+        assert_eq!(live_move(false, None, Some(&a), 2), LiveMove::Keep);
+        // And a genuine answer still lands, a sweep later.
+        assert_eq!(live_move(false, None, Some(&a), 3), LiveMove::Retire);
+        assert_eq!(live_move(false, None, Some(&a), 9), LiveMove::Retire);
+        // The constant and the numbers above have to agree, or this test is
+        // asserting something other than what ships.
+        assert_eq!(SETTLE_SWEEPS, 3, "the numbers in this test are literal");
     }
 
     #[test]

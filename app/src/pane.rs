@@ -2175,6 +2175,13 @@ pub struct TerminalView {
     /// a surface id because the gallery is a walk through a list and the list
     /// is rebuilt each frame from the bench.
     wb_review: Option<usize>,
+    /// How many sweeps in a row this pane has looked like it is no longer
+    /// waiting on a person.
+    ///
+    /// A counter rather than a flag, because the screen is a sensor and one
+    /// sample of it is not a state change — see
+    /// [`crate::workbench::SETTLE_SWEEPS`].
+    wb_quiet: u8,
     /// The live question currently on this pane's bench, if one is up.
     ///
     /// Held so it can be RETIRED the moment the pane stops waiting — the
@@ -3242,6 +3249,7 @@ impl TerminalView {
             wb_text_layout: std::rc::Rc::new(std::cell::RefCell::new(None)),
             wb_scroll: gpui::ScrollHandle::new(),
             wb_review: None,
+            wb_quiet: 0,
             wb_live_q: None,
         }
     }
@@ -6770,7 +6778,15 @@ impl TerminalView {
     /// question is always the one to report.
     fn bench_status(&self) -> crate::workbench::AgentState {
         use crate::workbench::AgentState;
-        if self.needs_input {
+        // The live question is part of the answer, not just `needs_input`.
+        //
+        // Both read the same sensor, and the sensor blinks during a redraw —
+        // so the title card said "Idle" directly above a question card that
+        // was still up and still waiting on somebody. A surface that
+        // contradicts itself is worse than either half of it alone, and the
+        // card is the half with the evidence: it is holding an actual
+        // question. See [`crate::workbench::SETTLE_SWEEPS`].
+        if self.needs_input || self.wb_live_q.is_some() {
             AgentState::Asking
         } else if self.bell_blocked() {
             AgentState::Blocked
@@ -6812,8 +6828,20 @@ impl TerminalView {
             .flatten();
         let now_id = asking.as_ref().map(crate::derive::screen_question_id);
         let was = self.wb_live_q.clone();
+        // Counted here rather than in the rule, because the rule is a pure
+        // decision and this is the pane remembering what it has seen.
+        self.wb_quiet = if self.needs_input {
+            0
+        } else {
+            self.wb_quiet.saturating_add(1)
+        };
 
-        match crate::workbench::live_move(self.needs_input, now_id.as_ref(), was.as_ref()) {
+        match crate::workbench::live_move(
+            self.needs_input,
+            now_id.as_ref(),
+            was.as_ref(),
+            self.wb_quiet,
+        ) {
             LiveMove::Keep => return out,
             LiveMove::Retire => {
                 if let Some(id) = was {
