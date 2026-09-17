@@ -3181,8 +3181,22 @@ impl TerminalView {
     }
 
     /// Is the agent in this pane "thinking" right now? We scan the visible grid
-    /// for the spinner hint Claude/Codex print while a turn runs ("esc to
-    /// interrupt"). `TD_GAMBA_DEMO=1` forces it on for demos/screenshots.
+    /// for the furniture Claude/Codex print while a turn runs — the footer's
+    /// "esc to interrupt", or the spinner line above it.
+    /// `TD_GAMBA_DEMO=1` forces it on for demos/screenshots.
+    ///
+    /// The needles themselves live in [`crate::hud::rows_say_working`], which is
+    /// also what the rail's parser asks. They were two lists until 2026-09-17,
+    /// and they disagreed: the rail knew about "still thinking" and this did
+    /// not. One ranking, or the tab badge and the rail argue about whether you
+    /// are the bottleneck.
+    ///
+    /// Reads [`Self::live_rows`] — the LIVE bottom screen (Line(0)..screen_lines),
+    /// NOT `renderable_content().display_iter`, which honours the display offset:
+    /// when ▲ scrolls back to a human message the running agent's status block
+    /// leaves the *viewport* and the scan falsely reads "done". The agent is
+    /// still working at the buffer bottom, so detection must read the live screen
+    /// regardless of how far the user has scrolled up.
     fn agent_is_thinking(&self) -> bool {
         if std::env::var("TD_GAMBA_DEMO").is_ok() {
             return true;
@@ -3190,32 +3204,7 @@ impl TerminalView {
         if !self.mode.is_agent() {
             return false;
         }
-        let term = self.session.term.lock();
-        // Scan the LIVE bottom screen directly (Line(0)..screen_lines), NOT
-        // `renderable_content().display_iter` — that honours the display offset, so
-        // when ▲ scrolls back to a human message the running agent's "esc to
-        // interrupt" spinner leaves the *viewport* and the scan falsely reads
-        // "done". The agent is still working at the buffer bottom, so detection
-        // must read the live screen regardless of how far the user has scrolled up.
-        let grid = term.grid();
-        let rows = grid.screen_lines();
-        let cols = grid.columns();
-        for line in 0..rows as i32 {
-            let row = &grid[Line(line)];
-            let mut s = String::with_capacity(cols);
-            for col in 0..cols {
-                let cell = &row[Column(col)];
-                if cell.flags.contains(Flags::WIDE_CHAR_SPACER) {
-                    continue;
-                }
-                s.push(if cell.c == '\0' { ' ' } else { cell.c });
-            }
-            let low = s.to_ascii_lowercase();
-            if low.contains("esc to interrupt") || low.contains("interrupt)") {
-                return true;
-            }
-        }
-        false
+        crate::hud::rows_say_working(&self.live_rows())
     }
 
     /// Snapshot the live bottom screen as plain-text rows (top→bottom) — the same
