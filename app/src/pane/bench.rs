@@ -22,6 +22,80 @@
 use super::*;
 
 impl TerminalView {
+    /// Un-bend a pointer and find the bench control under it.
+    ///
+    /// Returns the hit and the FLAT point, because the composer needs the
+    /// point as well as the fact — it turns it into a caret position through
+    /// the text layout, which was laid out flat.
+    pub(super) fn bench_hit_at(
+        &self,
+        at: gpui::Point<gpui::Pixels>,
+    ) -> Option<(crate::workbench::Hit, gpui::Point<gpui::Pixels>)> {
+        let b = (*self.content_bounds.lock().ok()?)?;
+        let rect = (
+            f32::from(b.origin.x),
+            f32::from(b.origin.y),
+            f32::from(b.size.width),
+            f32::from(b.size.height),
+        );
+        let (k1, k2) = self.warp_k;
+        let (fx, fy) = crate::workbench::unwarp(rect, k1, k2, f32::from(at.x), f32::from(at.y));
+        let zones = self.wb_zones.borrow();
+        let hit = crate::workbench::hit_at(&zones, fx, fy)?.clone();
+        Some((hit, gpui::point(gpui::px(fx), gpui::px(fy))))
+    }
+
+    /// Act on a bench click. One `match`, so a control added to [`Hit`] is a
+    /// control the compiler makes this handle.
+    pub(super) fn bench_hit(
+        &mut self,
+        hit: crate::workbench::Hit,
+        flat: gpui::Point<gpui::Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use crate::workbench::Hit;
+        match hit {
+            Hit::Choose(i) => self.bench_choose(i, cx),
+            Hit::PressNav(at) => self.bench_press_nav(at, cx),
+            Hit::Verb { action, target } => self.bench_act(action, target, cx),
+            Hit::Review => {
+                self.wb_review = Some(0);
+            }
+            Hit::CloseCard => {
+                self.bench.close_card();
+            }
+            Hit::Launch => cx.emit(OpenAgentLauncher),
+            Hit::Composer => {
+                self.bench_click(flat, cx);
+                window.focus(&self.focus_handle, cx);
+            }
+            Hit::Arm => {
+                if self.wb_compose.is_none() {
+                    self.wb_compose = Some(crate::workbench::Line::new());
+                }
+                window.focus(&self.focus_handle, cx);
+            }
+            Hit::ToggleRail => self.bench.toggle_rail(),
+            Hit::Shelf(shelf) => self.bench.set_shelf(shelf),
+            Hit::OpenRow(id) => self.bench_open(&id, cx),
+            Hit::GalleryBack => {
+                if let Some(n) = self.wb_review.as_mut() {
+                    *n = n.saturating_sub(1);
+                }
+            }
+            Hit::GalleryForward => {
+                let total = self.bench.reviewable().len();
+                if let Some(n) = self.wb_review.as_mut() {
+                    *n = (*n + 1).min(total.saturating_sub(1));
+                }
+            }
+            Hit::GalleryClose => self.wb_review = None,
+            Hit::Nothing => {}
+        }
+        cx.notify();
+    }
+
     /// The bench's own keys, ahead of the terminal's.
     ///
     /// `true` when the bench took the keystroke — the gallery, the escape
@@ -381,7 +455,6 @@ impl TerminalView {
         q: &crate::surface::Question,
         sk: &crate::skin::Skin,
         th: &Theme,
-        cx: &mut Context<Self>,
     ) -> gpui::Div {
         // The picker calls it `Next` on every question of a round but the
         // last, and the bench says whichever word the picker is showing —
@@ -445,13 +518,12 @@ impl TerminalView {
                     // menu that has already closed.
                     return chip;
                 }
-                chip.cursor_pointer().on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(move |view, _ev: &MouseDownEvent, _w, cx| {
-                        cx.stop_propagation();
-                        view.bench_choose(i, cx);
-                    }),
-                )
+                chip.cursor_pointer()
+                    .relative()
+                    .child(crate::benchdraw::zone(
+                        self.wb_zones.clone(),
+                        crate::workbench::Hit::Choose(i),
+                    ))
             })
             .collect();
         div()
@@ -475,14 +547,11 @@ impl TerminalView {
                             .cursor_pointer()
                             .text_size(px(11.5))
                             .child("\u{21ba} REVIEW ANSWERS".to_string())
-                            .on_mouse_down(
-                                MouseButton::Left,
-                                cx.listener(|view, _ev: &MouseDownEvent, _w, cx| {
-                                    cx.stop_propagation();
-                                    view.wb_review = Some(0);
-                                    cx.notify();
-                                }),
-                            ),
+                            .relative()
+                            .child(crate::benchdraw::zone(
+                                self.wb_zones.clone(),
+                                crate::workbench::Hit::Review,
+                            )),
                     ),
                 )
             })
@@ -506,24 +575,17 @@ impl TerminalView {
                             true,
                             th,
                         )
-                        .on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(move |view, _ev: &MouseDownEvent, _w, cx| {
-                                cx.stop_propagation();
-                                view.bench_press_nav(at, cx);
-                            }),
-                        ),
+                        .relative()
+                        .child(crate::benchdraw::zone(
+                            self.wb_zones.clone(),
+                            crate::workbench::Hit::PressNav(at),
+                        )),
                     ),
                 )
             })
     }
 
-    pub(super) fn bench_verbs(
-        &mut self,
-        sk: &crate::skin::Skin,
-        th: &Theme,
-        cx: &mut Context<Self>,
-    ) -> Option<gpui::Div> {
+    pub(super) fn bench_verbs(&mut self, sk: &crate::skin::Skin, th: &Theme) -> Option<gpui::Div> {
         let surface = self.bench.selected()?;
         let actions = surface.actions.clone();
         let hunks: Vec<String> = match &surface.kind {
@@ -582,13 +644,14 @@ impl TerminalView {
                                 primary,
                                 th,
                             )
-                            .on_mouse_down(
-                                MouseButton::Left,
-                                cx.listener(move |view, _ev: &MouseDownEvent, _w, cx| {
-                                    cx.stop_propagation();
-                                    view.bench_act(action.clone(), target.clone(), cx);
-                                }),
-                            )
+                            .relative()
+                            .child(crate::benchdraw::zone(
+                                self.wb_zones.clone(),
+                                crate::workbench::Hit::Verb {
+                                    action: action.clone(),
+                                    target: target.clone(),
+                                },
+                            ))
                         })
                         .collect::<Vec<_>>()
                 })),
@@ -1018,9 +1081,10 @@ impl TerminalView {
         pane_w: f32,
         pane_h: f32,
         focused: bool,
-        cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
         use crate::workbench::RailFit;
+        // A fresh zone list per frame: the elements about to paint fill it.
+        self.wb_zones.borrow_mut().clear();
         // Every size decision on this surface, resolved in one call and
         // asserted by a table of panes in `workbench`. The render draws what
         // this says; it no longer decides anything itself. Each of these was
@@ -1110,8 +1174,8 @@ impl TerminalView {
                     crate::surface::Kind::Question(q) => Some(q.clone()),
                     _ => None,
                 };
-                let answers = asked.map(|q| self.answer_chips(&q, sk, th, cx));
-                let verbs = self.bench_verbs(sk, th, cx);
+                let answers = asked.map(|q| self.answer_chips(&q, sk, th));
+                let verbs = self.bench_verbs(sk, th);
                 // One title, not two. The card drew `kind · title` here and
                 // then [`benchdraw::body`] drew its own heading directly
                 // underneath — the same two strings twice, six pixels apart,
@@ -1141,14 +1205,11 @@ impl TerminalView {
                         .text_color(th.faint)
                         .cursor_pointer()
                         .child("\u{2715}")
-                        .on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(|view, _ev: &MouseDownEvent, _w, cx| {
-                                cx.stop_propagation();
-                                view.bench.close_card();
-                                cx.notify();
-                            }),
-                        ),
+                        .relative()
+                        .child(crate::benchdraw::zone(
+                            self.wb_zones.clone(),
+                            crate::workbench::Hit::CloseCard,
+                        )),
                 )
                 .child(drawn)
                 .children(answers)
@@ -1172,13 +1233,11 @@ impl TerminalView {
                                     .cursor_pointer()
                                     .text_size(px(12.))
                                     .child("\u{2301} LAUNCH AGENT")
-                                    .on_mouse_down(
-                                        MouseButton::Left,
-                                        cx.listener(|_view, _ev: &MouseDownEvent, _w, cx| {
-                                            cx.stop_propagation();
-                                            cx.emit(OpenAgentLauncher);
-                                        }),
-                                    ),
+                                    .relative()
+                                    .child(crate::benchdraw::zone(
+                                        self.wb_zones.clone(),
+                                        crate::workbench::Hit::Launch,
+                                    )),
                             ),
                         )
                     })
@@ -1186,7 +1245,7 @@ impl TerminalView {
                         d.child(crate::benchdraw::conversation(&tail, th))
                     })
                     .when_some(waiting, |d, q| {
-                        let chips = self.answer_chips(&q, sk, th, cx);
+                        let chips = self.answer_chips(&q, sk, th);
                         d.child(crate::benchdraw::waiting_block(&q, sk, th).child(chips))
                     })
             }
@@ -1202,27 +1261,21 @@ impl TerminalView {
                 sk,
                 th,
             )
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(move |view, ev: &MouseDownEvent, window, cx| {
-                    cx.stop_propagation();
-                    view.bench_click(ev.position, cx);
-                    window.focus(&view.focus_handle, cx);
-                    cx.notify();
-                }),
-            )
+            .relative()
+            .child(crate::benchdraw::zone(
+                self.wb_zones.clone(),
+                crate::workbench::Hit::Composer,
+            ))
         });
 
         // ── the rail, and the handle that closes it ─────────────────────────
         let handle = (fit != RailFit::Hidden).then(|| {
-            crate::benchdraw::rail_handle(matches!(fit, RailFit::Open(_)), th).on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|view, _ev: &MouseDownEvent, _w, cx| {
-                    cx.stop_propagation();
-                    view.bench.toggle_rail();
-                    cx.notify();
-                }),
-            )
+            crate::benchdraw::rail_handle(matches!(fit, RailFit::Open(_)), th)
+                .relative()
+                .child(crate::benchdraw::zone(
+                    self.wb_zones.clone(),
+                    crate::workbench::Hit::ToggleRail,
+                ))
         });
         let rail = match fit {
             RailFit::Hidden => None,
@@ -1251,14 +1304,11 @@ impl TerminalView {
                         .pt(px(6.))
                         .cursor_pointer()
                         .children(ticks)
-                        .on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(|view, _ev: &MouseDownEvent, _w, cx| {
-                                cx.stop_propagation();
-                                view.bench.toggle_rail();
-                                cx.notify();
-                            }),
-                        ),
+                        .relative()
+                        .child(crate::benchdraw::zone(
+                            self.wb_zones.clone(),
+                            crate::workbench::Hit::ToggleRail,
+                        )),
                 )
             }
             RailFit::Open(w) => {
@@ -1274,14 +1324,11 @@ impl TerminalView {
                             sk,
                             th,
                         )
-                        .on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(move |view, _ev: &MouseDownEvent, _w, cx| {
-                                cx.stop_propagation();
-                                view.bench.set_shelf(shelf);
-                                cx.notify();
-                            }),
-                        )
+                        .relative()
+                        .child(crate::benchdraw::zone(
+                            self.wb_zones.clone(),
+                            crate::workbench::Hit::Shelf(shelf),
+                        ))
                     }),
                 );
                 let rows = self.bench.rows();
@@ -1350,12 +1397,11 @@ impl TerminalView {
                     })
                     .children(rows.into_iter().map(|row| {
                         let id = row.id.clone();
-                        crate::benchdraw::rail_row(&row, sk, th).on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(move |view, _ev: &MouseDownEvent, _w, cx| {
-                                cx.stop_propagation();
-                                view.bench_open(&id, cx);
-                            }),
+                        crate::benchdraw::rail_row(&row, sk, th).relative().child(
+                            crate::benchdraw::zone(
+                                self.wb_zones.clone(),
+                                crate::workbench::Hit::OpenRow(id.clone()),
+                            ),
                         )
                     })),
                 )
@@ -1382,6 +1428,11 @@ impl TerminalView {
                 div()
                     .absolute()
                     .inset_0()
+                    .relative()
+                    .child(crate::benchdraw::zone(
+                        self.wb_zones.clone(),
+                        crate::workbench::Hit::Nothing,
+                    ))
                     .flex()
                     .items_center()
                     .justify_center()
@@ -1404,47 +1455,32 @@ impl TerminalView {
                                     sk.chip(back)
                                         .cursor_pointer()
                                         .child("\u{2190}".to_string())
-                                        .on_mouse_down(
-                                            MouseButton::Left,
-                                            cx.listener(|view, _ev: &MouseDownEvent, _w, cx| {
-                                                cx.stop_propagation();
-                                                if let Some(n) = view.wb_review.as_mut() {
-                                                    *n = n.saturating_sub(1);
-                                                }
-                                                cx.notify();
-                                            }),
-                                        ),
+                                        .relative()
+                                        .child(crate::benchdraw::zone(
+                                            self.wb_zones.clone(),
+                                            crate::workbench::Hit::GalleryBack,
+                                        )),
                                 )
                                 .child(
                                     sk.chip(fwd)
                                         .cursor_pointer()
                                         .child("\u{2192}".to_string())
-                                        .on_mouse_down(
-                                            MouseButton::Left,
-                                            cx.listener(
-                                                move |view, _ev: &MouseDownEvent, _w, cx| {
-                                                    cx.stop_propagation();
-                                                    if let Some(n) = view.wb_review.as_mut() {
-                                                        *n = (*n + 1).min(total.saturating_sub(1));
-                                                    }
-                                                    cx.notify();
-                                                },
-                                            ),
-                                        ),
+                                        .relative()
+                                        .child(crate::benchdraw::zone(
+                                            self.wb_zones.clone(),
+                                            crate::workbench::Hit::GalleryForward,
+                                        )),
                                 )
                                 .child(div().flex_1())
                                 .child(
                                     sk.chip(false)
                                         .cursor_pointer()
                                         .child("CLOSE".to_string())
-                                        .on_mouse_down(
-                                            MouseButton::Left,
-                                            cx.listener(|view, _ev: &MouseDownEvent, _w, cx| {
-                                                cx.stop_propagation();
-                                                view.wb_review = None;
-                                                cx.notify();
-                                            }),
-                                        ),
+                                        .relative()
+                                        .child(crate::benchdraw::zone(
+                                            self.wb_zones.clone(),
+                                            crate::workbench::Hit::GalleryClose,
+                                        )),
                                 ),
                         ),
                     ),
@@ -1491,16 +1527,10 @@ impl TerminalView {
                             .when(!card_open, |d| d.justify_end())
                             .cursor_text()
                             .when(self.mode.is_agent(), |d| {
-                                d.on_mouse_down(
-                                    MouseButton::Left,
-                                    cx.listener(|view, _ev: &MouseDownEvent, window, cx| {
-                                        if view.wb_compose.is_none() {
-                                            view.wb_compose = Some(crate::workbench::Line::new());
-                                        }
-                                        window.focus(&view.focus_handle, cx);
-                                        cx.notify();
-                                    }),
-                                )
+                                d.relative().child(crate::benchdraw::zone(
+                                    self.wb_zones.clone(),
+                                    crate::workbench::Hit::Arm,
+                                ))
                             })
                             .child(body),
                     )

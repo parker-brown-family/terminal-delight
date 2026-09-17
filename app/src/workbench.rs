@@ -549,6 +549,93 @@ pub fn peel(gallery: bool, typing: bool, card_open: bool, card_waits: bool) -> P
     Peel::Face
 }
 
+/// A gesture the bench can take from a click.
+///
+/// One enum, so that hit-testing is one table and dispatch is one `match`,
+/// and so that a new control is a new variant the compiler makes you handle
+/// rather than a new closure nobody audits.
+#[derive(Clone, PartialEq, Debug)]
+pub enum Hit {
+    /// Press an option of the open question.
+    Choose(usize),
+    /// Press a row of the agent's own menu by its navigation index — the
+    /// picker's Submit or Next button.
+    PressNav(usize),
+    /// One of the card's verbs.
+    Verb {
+        action: crate::surface::Action,
+        target: Option<String>,
+    },
+    /// Open the review gallery.
+    Review,
+    /// The card's close.
+    CloseCard,
+    /// The launcher, on a shell pane's empty bench.
+    Launch,
+    /// The composer's text box: arm it, or move the caret.
+    Composer,
+    /// The body beneath the composer: arm the line.
+    Arm,
+    /// The rail's collapse handle, and its collapsed ticks.
+    ToggleRail,
+    Shelf(crate::surface::Shelf),
+    OpenRow(crate::surface::SurfaceId),
+    GalleryBack,
+    GalleryForward,
+    GalleryClose,
+    /// The dim field around the gallery: a click there does nothing, and
+    /// must not fall through to the card underneath.
+    Nothing,
+}
+
+/// A flat rectangle and what pressing it means.
+///
+/// Recorded by the element itself at paint, in the same flat coordinates gpui
+/// lays out in. The barrel warp is a pixel post-pass; layout never moves.
+#[derive(Clone, PartialEq, Debug)]
+pub struct Zone {
+    pub x: f32,
+    pub y: f32,
+    pub w: f32,
+    pub h: f32,
+    pub hit: Hit,
+}
+
+/// Which zone a FLAT point lands in.
+///
+/// The LAST zone that contains the point wins, because zones are recorded in
+/// paint order and a later element paints over an earlier one: the gallery,
+/// registered last, takes a click that a card underneath it would otherwise
+/// have claimed. Left and top edges are inclusive, right and bottom exclusive,
+/// so two zones sharing an edge do not both claim it.
+pub fn hit_at(zones: &[Zone], x: f32, y: f32) -> Option<&Hit> {
+    zones
+        .iter()
+        .rev()
+        .find(|z| x >= z.x && x < z.x + z.w && y >= z.y && y < z.y + z.h)
+        .map(|z| &z.hit)
+}
+
+/// Undo the tube's barrel warp for one pointer position.
+///
+/// `rect` is the tube in window pixels, `(px, py)` the pointer in the same
+/// space, and the answer is where that pointer would be on the FLAT layout —
+/// the coordinates every zone was recorded in. This is the terminal's own
+/// inverse, [`crate::pane::warp_screen_to_content`], applied to a point
+/// instead of to a cell: the bench is bent by exactly the shader the grid is
+/// bent by, so it un-bends by exactly the same map.
+///
+/// The centre is a fixed point and `k = 0` is the identity, both by the
+/// formula rather than by special case, and the tests hold it to that.
+pub fn unwarp(rect: (f32, f32, f32, f32), k1: f32, k2: f32, px: f32, py: f32) -> (f32, f32) {
+    let (rx, ry, rw, rh) = rect;
+    if rw <= 0.0 || rh <= 0.0 {
+        return (px, py);
+    }
+    let (lx, ly) = crate::pane::warp_screen_to_content((px - rx) / rw, (py - ry) / rh, k1, k2);
+    (rx + lx * rw, ry + ly * rh)
+}
+
 /// Where a key takes the review gallery.
 ///
 /// Its own function because the gallery is MODAL and modal key handling is
@@ -2399,6 +2486,60 @@ mod tests {
             Peel::Face,
             "a waiting question with no card open is on the rail, not under escape"
         );
+    }
+
+    #[test]
+    fn the_last_zone_painted_takes_the_click_and_edges_do_not_double_claim() {
+        let z = |x, y, w, h, hit| Zone { x, y, w, h, hit };
+        let zones = vec![
+            z(0.0, 0.0, 100.0, 100.0, Hit::CloseCard),
+            // Painted later, on top of the first.
+            z(50.0, 50.0, 100.0, 100.0, Hit::Review),
+        ];
+        assert_eq!(hit_at(&zones, 10.0, 10.0), Some(&Hit::CloseCard));
+        assert_eq!(
+            hit_at(&zones, 75.0, 75.0),
+            Some(&Hit::Review),
+            "the one on top"
+        );
+        assert_eq!(hit_at(&zones, 200.0, 200.0), None);
+        // Left/top inclusive, right/bottom exclusive: the shared edge at 100
+        // belongs to the later zone only.
+        assert_eq!(hit_at(&zones, 100.0, 60.0), Some(&Hit::Review));
+        assert_eq!(hit_at(&zones, 99.9, 10.0), Some(&Hit::CloseCard));
+        assert_eq!(hit_at(&[], 1.0, 1.0), None);
+    }
+
+    #[test]
+    fn unwarping_is_the_identity_when_the_tube_is_flat_and_at_its_centre() {
+        let rect = (100.0, 50.0, 800.0, 600.0);
+        // No curvature: every point maps to itself.
+        for (x, y) in [
+            (100.0, 50.0),
+            (500.0, 350.0),
+            (899.0, 649.0),
+            (137.5, 612.25),
+        ] {
+            let (fx, fy) = unwarp(rect, 0.0, 0.0, x, y);
+            assert!(
+                (fx - x).abs() < 1e-3 && (fy - y).abs() < 1e-3,
+                "{x},{y} -> {fx},{fy}"
+            );
+        }
+        // Real curvature: the centre does not move, and the map is symmetric
+        // about it — a point left of centre un-bends by as much as its mirror
+        // right of centre. Both follow from the formula being radial.
+        let (k1, k2) = (0.12, 0.04);
+        let (cx, cy) = unwarp(rect, k1, k2, 500.0, 350.0);
+        assert!((cx - 500.0).abs() < 1e-3 && (cy - 350.0).abs() < 1e-3);
+        let (lx, _) = unwarp(rect, k1, k2, 300.0, 350.0);
+        let (rx, _) = unwarp(rect, k1, k2, 700.0, 350.0);
+        assert!(
+            ((500.0 - lx) - (rx - 500.0)).abs() < 1e-3,
+            "symmetric: {lx} {rx}"
+        );
+        // And an empty rect cannot divide by zero.
+        assert_eq!(unwarp((0.0, 0.0, 0.0, 0.0), k1, k2, 3.0, 4.0), (3.0, 4.0));
     }
 
     #[test]

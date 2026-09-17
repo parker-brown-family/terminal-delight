@@ -1936,6 +1936,11 @@ pub struct TerminalView {
     /// Which agent state the bar is showing and when it began, so the bar can
     /// carry one honest counter instead of the rail carrying one per row.
     wb_state_since: Option<(crate::workbench::AgentState, u64)>,
+    /// Every click target on the bench this frame, in flat layout pixels and
+    /// paint order. Cleared at the top of each bench render, filled by the
+    /// elements as they paint, read by the root mouse handler. See
+    /// [`crate::benchdraw::zone`].
+    wb_zones: std::rc::Rc<std::cell::RefCell<Vec<crate::workbench::Zone>>>,
     /// The live question currently on this pane's bench, if one is up.
     ///
     /// Held so it can be RETIRED the moment the pane stops waiting — the
@@ -3004,6 +3009,7 @@ impl TerminalView {
             wb_review: None,
             wb_quiet: 0,
             wb_state_since: None,
+            wb_zones: std::rc::Rc::new(std::cell::RefCell::new(Vec::new())),
             wb_live_q: None,
         }
     }
@@ -5281,6 +5287,24 @@ impl TerminalView {
         // latched while this pane already held idle focus froze the ✅ badge —
         // the edge never came). ack_bell is a no-op when nothing is latched.
         self.ack_bell(cx);
+        // THE BENCH, through the warp's inverse.
+        //
+        // The bench is bent by the same barrel post-pass as the grid, and gpui
+        // hit-tests the flat tree — so a button drawn inside a bent tube is
+        // clicked where it is not. The grid survives that because its clicks
+        // go through `viewport_cell`, which un-bends the point; this is the
+        // same move for a tree of controls. Every bench element records its
+        // flat rectangle as it paints, the pointer is un-bent here with the
+        // pane's own curvature, and the flat point is looked up. No bench
+        // element carries a gpui click handler of its own any more.
+        if ev.button == MouseButton::Left && self.bench.face() == crate::workbench::Face::Workbench
+        {
+            if let Some((hit, flat)) = self.bench_hit_at(ev.position) {
+                self.bench_hit(hit, flat, window, cx);
+                cx.stop_propagation();
+                return;
+            }
+        }
         // The note is a physical object lying on the glass, so a click lands on
         // it before anything underneath: the bottom-left corner tears it off,
         // anywhere else picks the pen back up. Resolved here rather than with a
@@ -6985,7 +7009,7 @@ impl Render for TerminalView {
             .map(|b| f32::from(b.size.height))
             .unwrap_or(0.0);
         let bench_el = if on_bench {
-            self.bench_el(&th, &sk, pane_w, pane_h, focused_now, cx)
+            self.bench_el(&th, &sk, pane_w, pane_h, focused_now)
         } else {
             div().into_any_element()
         };
@@ -7545,11 +7569,14 @@ impl Render for TerminalView {
                                     // for choosing interaction over curvature is
                                     // already here too: `warp::is_suppressed()`
                                     // flattens every pane while a modal is up.
-                                    let (k1, k2) = if on_bench {
-                                        (0.0, 0.0)
-                                    } else {
-                                        crate::theme::warp_coeffs(th.warp)
-                                    };
+                                    // The bench bends with the grid now. It
+                                    // was registered flat because gpui hit-
+                                    // tests the element tree flat and a tree
+                                    // of chips could not survive the mismatch;
+                                    // the bench does its own hit-testing
+                                    // through the warp's inverse since — see
+                                    // `bench_hit_at` — so the reason is gone.
+                                    let (k1, k2) = crate::theme::warp_coeffs(th.warp);
                                     // Per-pane crawl: this tube recedes by THIS
                                     // pane's own crawl perspective (grade.crawl →
                                     // th.crawl/angle/depth). Identity when off, so

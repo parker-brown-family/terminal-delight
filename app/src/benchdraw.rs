@@ -1333,6 +1333,36 @@ pub struct Slots {
     pub scroll: gpui::ScrollHandle,
 }
 
+/// Make the element this is a child of a click target under the warp.
+///
+/// A canvas that covers its parent and, at paint, records the parent's FLAT
+/// bounds and what a press there means into the pane's zone list. The pane's
+/// root mouse handler then un-bends the pointer and looks the point up — see
+/// [`crate::workbench::hit_at`] — instead of letting gpui hit-test a flat tree
+/// against a bent picture.
+///
+/// The parent must be `relative()` so `inset_0` measures it and not some
+/// ancestor; the call sites add that alongside this.
+pub fn zone(
+    into: std::rc::Rc<std::cell::RefCell<Vec<crate::workbench::Zone>>>,
+    hit: crate::workbench::Hit,
+) -> impl gpui::IntoElement {
+    gpui::canvas(
+        move |bounds, _window, _cx| {
+            into.borrow_mut().push(crate::workbench::Zone {
+                x: f32::from(bounds.origin.x),
+                y: f32::from(bounds.origin.y),
+                w: f32::from(bounds.size.width),
+                h: f32::from(bounds.size.height),
+                hit: hit.clone(),
+            });
+        },
+        |_, _, _, _| {},
+    )
+    .absolute()
+    .inset_0()
+}
+
 /// The line into the agent's own terminal.
 ///
 /// Not a text box. While it is armed, every keystroke is encoded by the same
