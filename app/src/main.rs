@@ -4200,6 +4200,60 @@ fn collect_saved_leaves<'a>(node: &'a SavedNode, out: &mut Vec<&'a SavedNode>) {
 /// against its own correctness.
 const GUARD_PERIOD_SECS: u64 = 30;
 
+/// How often an attached window re-reads the host's census to check what its
+/// panes are running.
+///
+/// Six times as often as the guard above, and far cheaper: one NDJSON request
+/// and one reply for the whole session, against the guard's hash of every row of
+/// scrollback per quiet pane. Frequent because what it repairs is visible —
+/// a pane's phosphor, its header, and whether the attention queue can see it at
+/// all — and a colour that is wrong for half a minute is a colour somebody
+/// reads and believes.
+const MODE_SWEEP_SECS: u64 = 5;
+
+/// A pane's mode decides its phosphor, its header, and whether the attention
+/// queue is allowed to see it at all. It must never be repaired more slowly
+/// than a scrollback hash is checked — held at compile time rather than in a
+/// test, because it is a relationship between two constants and a test of one
+/// of those is a test of nothing.
+const _: () = assert!(MODE_SWEEP_SECS <= GUARD_PERIOD_SECS);
+
+/// Which panes the host's census disagrees with this window about, and what the
+/// host says they are.
+///
+/// Pulled out of the sweep so the rule can be asserted without a host, a window
+/// or a clock — the same reason [`repair_step`] is a function. Three decisions
+/// live here and each one is a thing that was got wrong before:
+///
+/// - **A pane the host has no mode for is left alone.** `None` in a census row
+///   means the host's watcher has not classified that pane yet, and
+///   [`hostproto::PaneInfo`] says so in as many words: *a pane nobody has
+///   classified yet is not a pane running a shell*. Converting it would be the
+///   original defect with a new author.
+/// - **A pane this window does not hold is not this window's business.** The
+///   host owns panes for every client; the census lists them all.
+/// - **Agreement produces nothing**, so the common case — every pane already
+///   right, twelve times a minute — costs no `set_host_mode`, no `notify` and
+///   no repaint.
+fn modes_to_apply(
+    live: &[hostproto::PaneInfo],
+    mine: &[(u64, pane::PaneMode)],
+) -> Vec<(u64, pane::PaneMode)> {
+    let mut out = Vec::new();
+    for info in live {
+        let Some(wire) = info.mode.as_ref() else {
+            continue;
+        };
+        let said = pane::PaneMode::from_wire(wire);
+        for (id, believed) in mine {
+            if *id == info.pane.0 && *believed != said {
+                out.push((*id, said.clone()));
+            }
+        }
+    }
+    out
+}
+
 /// What a guard pass does about a pane it has just found at odds with the host.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Repair {
@@ -5209,18 +5263,112 @@ impl Workspace {
         self.save(cx);
         Self::watch_for_divergence(ctx.clone(), window, cx);
         self.listen_to_the_host(ctx.clone(), cx);
+        Self::reconcile_modes(ctx.clone(), cx);
+    }
+
+    /// Ask the host what its panes are running, and keep asking.
+    ///
+    /// **The repair for #462, and the reason it is a sweep rather than a
+    /// better event.** The window had exactly one way to learn a hosted pane's
+    /// mode after the pane was built — a [`hostproto::Push::Mode`] event — and
+    /// four independent things could lose it: the subscription is opt-in and is
+    /// taken out at the END of a restore, after every pane exists; the reader
+    /// thread breaks on any read error and is never restarted; a push is sent
+    /// on the change and nothing re-asks; and the change itself is rare. That
+    /// last one is what made the other three fatal rather than transient. A
+    /// watcher held open against a live host for forty seconds, over 24 panes
+    /// and some twenty working agents, received **no** mode pushes at all:
+    /// `next_mode`'s sticky rule is doing its job and an agent's
+    /// classification simply does not move. So a window that was wrong once
+    /// stayed wrong for five hours, and the panes it was wrong about were
+    /// filtered out of the attention queue before they could say so.
+    ///
+    /// The protocol already said where the answer lives — `list-panes` is
+    /// documented as what a client asks "for the current mode of every pane"
+    /// ([`hostproto::Push`]) — and nothing was asking it twice.
+    ///
+    /// One NDJSON round trip every [`MODE_SWEEP_SECS`] seconds, taken on the
+    /// background executor so the shared control connection is never waited on
+    /// from the render thread. Cheaper than the divergence guard beside it,
+    /// which spends one round trip per quiet pane every thirty seconds.
+    ///
+    /// Immediately, then on the clock: the first sweep is what closes the
+    /// startup race, where the host classifies a pane while the window is still
+    /// building the rest of the layout.
+    fn reconcile_modes(ctx: AttachCtx, cx: &mut Context<Self>) {
+        cx.spawn(async move |this, cx| {
+            loop {
+                let link = ctx.link.clone();
+                let census = cx
+                    .background_executor()
+                    .spawn(async move { link.list_panes() })
+                    .await;
+                // A host that will not answer is the divergence guard's problem
+                // and the link's `lost` flag's problem, not this sweep's. It
+                // keeps asking on the next turn of the loop: a host that
+                // answers again is exactly the case this exists for.
+                if let Ok(live) = census {
+                    let applied = this.update(cx, |ws: &mut Workspace, cx| {
+                        ws.apply_census_modes(&live, cx)
+                    });
+                    // The window has gone. Nothing left to reconcile.
+                    if applied.is_err() {
+                        break;
+                    }
+                }
+                cx.background_executor()
+                    .timer(Duration::from_secs(MODE_SWEEP_SECS))
+                    .await;
+            }
+        })
+        .detach();
+    }
+
+    /// Apply a host census to the panes this window holds.
+    ///
+    /// Split from the sweep so the rule can be tested without a window: see
+    /// [`modes_to_apply`], which decides, while this one only carries out.
+    fn apply_census_modes(&mut self, live: &[hostproto::PaneInfo], cx: &mut Context<Self>) {
+        let mut mine: Vec<(u64, pane::PaneMode)> = Vec::new();
+        for tab in &self.tabs {
+            let mut leaves = vec![];
+            tab.root.leaves(&mut leaves);
+            for leaf in leaves {
+                let view = leaf.read(cx);
+                if let Some(id) = view.pane_id() {
+                    mine.push((id, view.mode.clone()));
+                }
+            }
+        }
+        let changes = modes_to_apply(live, &mine);
+        if changes.is_empty() {
+            return;
+        }
+        for (id, mode) in changes {
+            for tab in &self.tabs {
+                let mut leaves = vec![];
+                tab.root.leaves(&mut leaves);
+                for leaf in leaves {
+                    if leaf.read(cx).pane_id() == Some(id) {
+                        leaf.update(cx, |view, cx| view.set_host_mode(mode.clone(), cx));
+                    }
+                }
+            }
+        }
+        cx.notify();
     }
 
     /// Take the host's word for what its panes are running.
     ///
     /// The host watches the pseudoterminals it owns, so it knows what is in the
     /// foreground of each one before this window could work it out from
-    /// outside. It says so when it changes rather than on a clock, which is
-    /// also the only time the answer is new — so a window that has heard
-    /// nothing has not fallen behind, it has nothing to hear.
+    /// outside. It says so when it changes rather than on a clock.
     ///
-    /// The current mode of every pane arrives with the pane itself, from
-    /// `list-panes` at attach. This is only the changes after that.
+    /// **A shortcut, and no longer the only path.** Until #462 this was the
+    /// whole of how a mode reached a built pane, which made every way of losing
+    /// one message a permanent wrong answer. [`Workspace::reconcile_modes`]
+    /// now re-reads the census on a clock, so this feed is what makes a change
+    /// arrive in milliseconds rather than what makes it arrive at all.
     fn listen_to_the_host(&mut self, ctx: AttachCtx, cx: &mut Context<Self>) {
         let news = match hostctl::watch(ctx.link.socket()) {
             Ok(news) => news,
@@ -16499,11 +16647,15 @@ impl Workspace {
             let priority = self.level_of(ti).priority;
             for leaf in leaves {
                 let view = leaf.read(cx);
-                let agent = view.mode.is_agent();
-                let pane_kind = if agent {
-                    PaneKind::Agent
-                } else {
-                    PaneKind::Shell
+                // Three answers, because there are three things to say. A pane
+                // nobody has classified is not a shell, and storing it as one
+                // is what deleted eleven running agents from this queue for an
+                // afternoon (#462): shells are filtered out before a row
+                // exists, so the absence had nowhere to show up.
+                let pane_kind = match view.mode {
+                    pane::PaneMode::Unknown => PaneKind::Unknown,
+                    ref mode if mode.is_agent() => PaneKind::Agent,
+                    _ => PaneKind::Shell,
                 };
                 // The same four signals the tab strip ranks, ranked once.
                 let badge = agent_badge(
@@ -16512,7 +16664,15 @@ impl Workspace {
                     view.has_bell(),
                     view.bell_blocked(),
                 );
-                let kind = rail_kind(badge, view.rail_state());
+                // A pane we cannot describe goes in the unknown lane on that
+                // ground alone. Its four signals are all gated on `is_agent`
+                // and therefore all false, so the badge would say "wants
+                // nothing" about a pane we know nothing about — which is the
+                // same silent zero one layer up.
+                let kind = match pane_kind {
+                    PaneKind::Unknown => Some(attention::AttentionKind::Unknown),
+                    _ => rail_kind(badge, view.rail_state()),
+                };
                 // The words and the instrument used to be chosen here, by a
                 // `match` on the very value above, and stored on the row. They
                 // are `AttentionKind::reason()` and `::source()` now — a caption
@@ -17477,7 +17637,7 @@ impl Workspace {
                     div()
                         .text_size(px(11. * s))
                         .text_color(sk.ink.ink)
-                        .child(it.kind.reason()),
+                        .child(it.reason()),
                 )
                 // The line the classifier read, quoted. `reason` is our words
                 // for what happened; this is the agent's own, and it is what
@@ -17505,7 +17665,7 @@ impl Workspace {
                         .text_color(sk.ink.ink_dim)
                         .child(format!(
                             "{} \u{b7} {}",
-                            it.kind.source(),
+                            it.source(),
                             attention::age_label(it.age(now))
                         )),
                 )
@@ -26862,6 +27022,185 @@ mod tests {
             !sweep.contains("Duration::from_secs(45)") && !sweep.contains("elapsed()"),
             "the stop rule is not allowed to be a clock again: a cooldown shorter \
              than GUARD_PERIOD_SECS silences nothing, and one longer is a guess"
+        );
+    }
+
+    // ---- the census sweep: a mode is reconciled, not announced once --------
+
+    /// A host census row, with only the two fields this rule reads set to
+    /// anything interesting.
+    fn census_row(pane: u64, mode: Option<hostproto::WireMode>) -> hostproto::PaneInfo {
+        hostproto::PaneInfo {
+            pane: hostproto::PaneId(pane),
+            shell_pid: 1000 + pane as u32,
+            cwd: None,
+            resume: None,
+            mode,
+            attached: true,
+            ended: false,
+            geom: hostproto::PaneGeom::default(),
+        }
+    }
+
+    /// The bug, at its seam: a window that believes a running agent is a shell
+    /// takes the host's word for it without any push being sent.
+    ///
+    /// This is #462 reduced to the one decision that was missing. The host had
+    /// every one of those eleven panes classified correctly the whole time —
+    /// `list-panes` said `claude` while the window said `SHELL` for five hours
+    /// — and nothing in the window ever asked a second time. A watcher held
+    /// against that host for forty seconds over 24 panes received no pushes at
+    /// all, so the event channel that was supposed to repair this is one that
+    /// in practice never speaks.
+    #[test]
+    fn the_window_takes_the_hosts_word_for_a_pane_it_has_wrong() {
+        let live = vec![
+            census_row(1, Some(hostproto::WireMode::Claude)),
+            census_row(2, Some(hostproto::WireMode::Codex)),
+        ];
+        let mine = vec![(1, pane::PaneMode::Shell), (2, pane::PaneMode::Unknown)];
+        assert_eq!(
+            modes_to_apply(&live, &mine),
+            vec![(1, pane::PaneMode::Claude), (2, pane::PaneMode::Codex),],
+            "a census that disagrees with the window is the window's mistake, not the host's"
+        );
+    }
+
+    /// And a pane the host has NOT classified is never told it is a shell.
+    ///
+    /// `None` in a census row is the host saying its watcher has not reached
+    /// this pane yet — [`hostproto::PaneInfo`] spells it out: *a pane nobody
+    /// has classified yet is not a pane running a shell*. Converting it here
+    /// would re-create the exact collapse this whole change exists to undo,
+    /// one layer further in.
+    #[test]
+    fn a_pane_the_host_has_not_classified_is_never_told_it_is_a_shell() {
+        let live = vec![census_row(1, None)];
+        for believed in [
+            pane::PaneMode::Unknown,
+            pane::PaneMode::Claude,
+            pane::PaneMode::Shell,
+        ] {
+            assert!(
+                modes_to_apply(&live, &[(1, believed.clone())]).is_empty(),
+                "a census with no answer must change nothing, and it changed a pane \
+                 the window believed was {believed:?}"
+            );
+        }
+    }
+
+    /// Agreement is free, which is what lets the sweep run on a short clock.
+    ///
+    /// Twelve times a minute over twenty-odd panes, the answer is "everything
+    /// already matches". That has to cost no `set_host_mode`, no `notify` and
+    /// no repaint, or the repair for a stale pane becomes a window that
+    /// redraws itself every five seconds forever.
+    #[test]
+    fn a_census_that_agrees_changes_nothing_at_all() {
+        let live = vec![
+            census_row(1, Some(hostproto::WireMode::Claude)),
+            census_row(2, Some(hostproto::WireMode::Shell)),
+            census_row(3, Some(hostproto::WireMode::Other("vim".into()))),
+        ];
+        let mine = vec![
+            (1, pane::PaneMode::Claude),
+            (2, pane::PaneMode::Shell),
+            (3, pane::PaneMode::Other("vim".into())),
+        ];
+        assert!(modes_to_apply(&live, &mine).is_empty());
+    }
+
+    /// A host's census lists every client's panes. Only ours are ours.
+    #[test]
+    fn a_pane_this_window_does_not_hold_is_left_to_whoever_holds_it() {
+        let live = vec![
+            census_row(1, Some(hostproto::WireMode::Claude)),
+            census_row(9, Some(hostproto::WireMode::Claude)),
+        ];
+        assert_eq!(
+            modes_to_apply(&live, &[(1, pane::PaneMode::Shell)]),
+            vec![(1, pane::PaneMode::Claude)],
+            "pane 9 belongs to another window and must not be touched"
+        );
+    }
+
+    /// The architectural half, which no unit test can observe: the window has
+    /// to ASK, on a clock, forever.
+    ///
+    /// Every entry into the wrong state that #462 could have taken — a
+    /// subscription opened after the panes were built, a reader thread that
+    /// breaks and never reconnects, a change that is pushed once and never
+    /// repeated — is a way of missing one message. The defect was not the
+    /// missing message; it was that missing one was permanent. So the property
+    /// worth holding is that something re-reads the census on a timer, and the
+    /// event feed is only ever a shortcut.
+    #[test]
+    fn the_window_re_reads_the_census_on_a_clock_and_not_only_on_a_push() {
+        let sweep = {
+            let src = shipped_src();
+            let at = src.find("fn reconcile_modes").expect("the census sweep");
+            let end = src[at..].find("\n    }\n").expect("end of fn");
+            &src[at..at + end]
+        };
+        assert!(
+            sweep.contains("link.list_panes()"),
+            "the sweep must read the host's census — `list-panes` is documented as \
+             what a client asks for the current mode of every pane"
+        );
+        assert!(
+            sweep.contains("MODE_SWEEP_SECS"),
+            "and it must be on a clock: a sweep that runs once is the attach-time \
+             read that already existed and already lost"
+        );
+        assert!(
+            sweep.contains("loop {"),
+            "forever, not for a startup window — the wrong answer that was measured \
+             had been wrong for five hours"
+        );
+        // How fast it sweeps is held at compile time beside the constant: see
+        // the `const _` next to MODE_SWEEP_SECS.
+
+        // And something has to START it. A sweep that is written, tested and
+        // never spawned is the shape of the last bug filed against this file:
+        // a feature that shipped switched off while every test passed, because
+        // the branch that ships was the one nothing exercised.
+        let src = shipped_src();
+        let restore = {
+            let at = src.find("fn build_attached").expect("the attached restore");
+            let end = src[at..].find("\n    }\n").expect("end of fn");
+            &src[at..at + end]
+        };
+        assert!(
+            restore.contains("Self::reconcile_modes("),
+            "restoring an attached layout must start the census sweep — the panes \
+             this repairs are precisely the ones a restore has just built"
+        );
+    }
+
+    /// And the rail must keep the three answers apart.
+    ///
+    /// Read from the source because the walk needs a live window: the property
+    /// is that `PaneMode::Unknown` reaches `PaneKind::Unknown`, because the one
+    /// thing that must never happen again is an undescribed pane being filed as
+    /// a shell — shells are dropped before a row exists.
+    #[test]
+    fn an_undescribed_pane_is_not_filed_as_a_shell() {
+        let build = {
+            let src = shipped_src();
+            let at = src.find("fn rail_build(").expect("the rail's walk");
+            let end = src[at..].find("\n    }\n").expect("end of fn");
+            &src[at..at + end]
+        };
+        assert!(
+            build.contains("pane::PaneMode::Unknown => PaneKind::Unknown"),
+            "a pane nobody has described must reach the queue as Unknown, or it is \
+             filtered out as a shell and cannot appear in any lane"
+        );
+        assert!(
+            build.contains("PaneKind::Unknown => Some(attention::AttentionKind::Unknown)"),
+            "and it must be given a lane: its four badge signals are all gated on \
+             is_agent and therefore all false, so a badge would say the pane wants \
+             nothing about a pane we know nothing about"
         );
     }
 
