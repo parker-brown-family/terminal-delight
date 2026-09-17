@@ -877,33 +877,34 @@ mod tests {
     }
 
     #[test]
-    fn the_demo_opens_on_the_decision_rather_than_on_the_unclassified_block() {
-        // What the first frame of a demo shows is the first thing anyone
-        // judges the feature by, and it is decided by two things a long way
-        // apart: the order `sweep_pane` returns files in, and the rule in
-        // `Bench::apply` that the first arrival selects itself. This asserts
-        // the pair, because each half is correct alone and the combination is
-        // what put an "unknown kind" block on screen first.
+    fn the_demo_arrives_decision_first() {
+        // Files land in the same millisecond, so the sweep's tie-break is the
+        // filename — which is why the demo's are numbered. Nothing is
+        // selected by an arrival any more (the rail is a shelf, not a remote
+        // control), so what this pins is the ORDER, which is what the rail
+        // shows and what the numbering exists to control.
         let scratch = Scratch::new("demo-order");
         seed_demo(scratch.path()).expect("seeded");
         let mut feed = Feed::new();
         let posts = feed.sweep_pane(scratch.path(), NOW);
+        let kinds: Vec<&str> = posts
+            .iter()
+            .filter_map(|p| p.surface.as_ref())
+            .map(|s| s.kind.id())
+            .collect();
+        assert_eq!(kinds.first(), Some(&"decision"), "{kinds:?}");
 
         let mut bench = crate::workbench::Bench::new();
         bench.set_face(crate::workbench::Face::Workbench);
         for post in posts {
             bench.apply(post);
         }
-        let selected = bench.selected().expect("something is selected");
-        assert_eq!(
-            selected.kind.id(),
-            "decision",
-            "the demo should open on the decision, not on {:?}",
-            selected.title
+        assert!(
+            bench.selected().is_none(),
+            "an arrival opens nothing; the conversation is the default"
         );
-        assert_eq!(bench.shelf(), crate::surface::Shelf::Decisions);
+        assert_eq!(bench.rows_for(crate::surface::Shelf::Decisions).len(), 1);
     }
-
     #[test]
     fn seeding_the_demo_lands_as_readable_files() {
         let scratch = Scratch::new("demo");

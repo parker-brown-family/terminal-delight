@@ -117,7 +117,10 @@ impl Role {
         })
     }
 
-    fn of(self, th: &Theme) -> Hsla {
+    /// Resolve the role against a theme. `pub(crate)` because the workbench
+    /// borrows this vocabulary rather than inventing a second one — see
+    /// [`crate::benchdraw::ink`].
+    pub(crate) fn of(self, th: &Theme) -> Hsla {
         match self {
             Role::Bg => th.bg,
             Role::Surface => th.surface,

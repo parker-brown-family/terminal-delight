@@ -26,25 +26,106 @@
 //! [`crate::skin`] exists because that has happened before.
 
 use gpui::prelude::FluentBuilder;
-use gpui::{div, px, Div, Hsla, ParentElement, Styled};
+use gpui::{
+    div, point, px, AnimationExt, AnyElement, BoxShadow, Div, Hsla, IntoElement, ParentElement,
+    Styled,
+};
+use std::time::Duration;
 
-use crate::skin::Skin;
+use crate::skin::{Role, Skin};
 use crate::surface::{Confidence, Depth, Kind, Shelf, Surface, Verdict, Weight};
 use crate::theme::Theme;
 use crate::workbench::{Embodiment, Row, Tint};
+
+/// Which palette role each meaning borrows.
+///
+/// A table, and a table of [`Role`]s rather than of colours, because `Role` is
+/// the skin's existing vocabulary for "a name the palette answers to" — so the
+/// day a skin file wants to re-cast the bench, this is already the shape it
+/// would set, and nothing here has to change to let it.
+///
+/// **The roles are the theme's SECONDARY inks, not the accent.** The first
+/// version resolved three of these five to the accent and one to its
+/// complement, and the result is what a bench looked like on a magenta theme:
+/// magenta markers on magenta chips beside a magenta border, with the colour
+/// carrying no information because there was only ever one of it. Parker,
+/// looking at that: *"The colour palette should REALLY leverage the secondary
+/// colours of the theme!"*
+///
+/// The hues are his own, from the house palette he uses in every decision
+/// brief — red a decision is waiting, green ready, amber yours to argue with,
+/// blue structure, grey unknown — mapped onto the ANSI slots so they arrive in
+/// each theme's OWN red and green rather than in a hard-coded one. A terminal
+/// palette is built to be mutually distinguishable; borrowing it is how the
+/// bench gets four separable hues on every theme for free.
+fn role_of(tint: Tint) -> Role {
+    match tint {
+        // Documents, drawings, tables: structure.
+        Tint::Ident => Role::Ansi(12),
+        // A person is the blocker.
+        Tint::Waiting => Role::Ansi(9),
+        // Proposed, and yours to argue with.
+        Tint::Pending => Role::Ansi(11),
+        // Settled, accepted, done.
+        Tint::Settled => Role::Ansi(10),
+        // Grey, and deliberately not a hue: an unknown that arrives in a
+        // colour looks like a claim, and no claim has been made.
+        Tint::Unknown => Role::Faint,
+    }
+}
 
 /// Resolve a kind's meaning to this theme's ink.
 ///
 /// The one place a [`Tint`] becomes a colour, so a palette change moves every
 /// marker on the bench at once.
 pub fn ink(tint: Tint, th: &Theme) -> Hsla {
-    match tint {
-        Tint::Ident => th.accent,
-        Tint::Waiting => th.complement,
-        Tint::Pending => th.accent.alpha(0.72),
-        Tint::Settled => th.text.alpha(0.66),
-        Tint::Unknown => th.faint,
+    role_of(tint).of(th)
+}
+
+/// Lift an element off the pane, and let the tube's phosphor bleed around it.
+///
+/// One function, used by every layered thing on the bench — the waiting
+/// block, the card, the composer, the rail — so depth is a property of the
+/// vocabulary rather than a decision taken four times with four different
+/// numbers. Add a fifth layer later and it arrives already looking like the
+/// other four.
+///
+/// The glow rides `th.glow`, the same dial the header's own bloom uses, so a
+/// flat theme stays flat and a phosphor theme gets phosphor without this
+/// having an opinion of its own. `tint` is the element's meaning-colour,
+/// which is what makes a question bloom in the complement and a document in
+/// the accent: the depth carries the same information the border does.
+pub fn raised<E: Styled>(el: E, tint: Hsla, th: &Theme) -> E {
+    let mut shadows = vec![
+        // The drop: the layer casting onto what it covers.
+        BoxShadow {
+            color: gpui::black().alpha(0.42),
+            offset: point(px(0.), px(2.)),
+            blur_radius: px(14.),
+            spread_radius: px(0.),
+            inset: false,
+        },
+        // A bright inner top edge — the same reflection the pane header
+        // draws, which is what makes a surface read as a solid face rather
+        // than as a rectangle of a different colour.
+        BoxShadow {
+            color: gpui::white().alpha(0.06),
+            offset: point(px(0.), px(1.)),
+            blur_radius: px(0.),
+            spread_radius: px(0.),
+            inset: true,
+        },
+    ];
+    if th.glow > 0.001 {
+        shadows.push(BoxShadow {
+            color: tint.alpha((th.glow * 0.45).min(0.5)),
+            offset: point(px(0.), px(0.)),
+            blur_radius: px(22.),
+            spread_radius: px(1.),
+            inset: false,
+        });
     }
+    el.shadow(shadows)
 }
 
 /// A small mono label — the chrome's own voice, used for every kind chip,
@@ -811,47 +892,222 @@ pub fn live_strip(state: &str, tool: Option<&str>, tail: &[String], sk: &Skin, t
 /// pseudoterminal, so the agent's own line editor does the work: slash
 /// commands complete, history recalls, ctrl+c interrupts, and a paste is a
 /// paste. What shows here is a shadow of what has already been sent, kept
-/// only so there is something to look at before the agent's echo arrives in
-/// the strip above.
+/// only so there is something to look at before the agent's echo arrives.
 ///
-/// The alternative — buffering a string and sending it on return — was the
-/// first version, and it was a form pretending to be a terminal: no
-/// completion, no history, no interrupt, and a second editing model to keep
-/// working forever.
+/// It is deliberately the biggest thing on the bench. The first version was a
+/// one-line strip carrying three hints, and it read as a status bar rather
+/// than as somewhere to type — so it got explained instead of used.
+///
+/// The second version was a large quiet rectangle, on the theory that it
+/// needed no caption, and that was wrong in the other direction: a big empty
+/// panel with a grey sentence in the corner reads as a DISABLED panel. Parker,
+/// looking at it: *"type to the agent has to be about 6x more obvious that
+/// there is something here.. TOO subtle!"*
+///
+/// So the affordance is a caret — a fat accent block sitting where the first
+/// character will land, which is the one shape on a screen that means "your
+/// cursor is here" to everybody, and which no amount of grey caption
+/// substitutes for. The prompt beside it is large enough to read across a
+/// room, and one line underneath says what the keys do, because the three
+/// things it names (type without clicking first, enter sends, paste takes an
+/// image) are each invisible otherwise.
 pub fn composer(text: Option<&str>, focused: bool, sk: &Skin, th: &Theme) -> Div {
     let open = text.is_some();
-    sk.panel()
-        .flex()
-        .flex_row()
-        .items_center()
-        .gap(px(8.))
-        .cursor_pointer()
-        .when(open, |d| {
-            d.border_color(th.accent.alpha(if focused { 0.85 } else { 0.5 }))
-        })
-        .child(micro("›".to_string(), 12., th.accent, th))
-        .child(
-            div()
-                .flex_1()
-                .text_size(px(12.5))
-                .font_family(th.font_family.clone())
-                .text_color(if open { th.text } else { th.faint })
-                .child(match text {
-                    Some("") => "typing to the agent…".to_string(),
-                    Some(t) => format!("{t}▋"),
-                    None => "just start typing — it goes to the agent".to_string(),
-                }),
-        )
-        .child(micro(
-            if open {
-                "keys go straight through · esc stops".to_string()
-            } else {
-                "↑↓ walk · 1-9 answer · ↵ act".to_string()
-            },
+    let live = open && focused;
+    raised(
+        sk.panel()
+            .flex()
+            .flex_col()
+            .gap(px(10.))
+            .justify_center()
+            .min_h(px(84.))
+            .px(px(18.))
+            .py(px(16.))
+            .bg(th.surface)
+            .cursor_text()
+            // Lit whether or not it is armed. The border was the only thing
+            // saying "this is an input" and it only said so AFTER the first
+            // click, which is the wrong way round: the invitation has to be
+            // legible before anyone has accepted it.
+            .border_color(th.human.alpha(if live { 0.9 } else { 0.5 })),
+        th.human,
+        th,
+    )
+    .child(
+        div()
+            .flex()
+            .items_center()
+            .gap(px(12.))
+            .child(caret(live, th))
+            .child(
+                div()
+                    .flex_1()
+                    .text_size(px(17.))
+                    .font_family(th.font_family.clone())
+                    .text_color(if open { th.text } else { th.text.alpha(0.72) })
+                    .child(match text {
+                        Some("") | None => "type to the agent".to_string(),
+                        Some(t) => t.to_string(),
+                    }),
+            )
+            // Only while it is armed, and then unmissable. This is the answer
+            // to the question the surface kept failing: *am I typing to the
+            // agent right now, or do I have to click something first?*
+            .when(live, |d| {
+                d.child(
+                    div()
+                        .px(px(7.))
+                        .py(px(2.))
+                        .rounded(px(3.))
+                        .bg(th.human.alpha(0.16))
+                        .child(micro("LIVE \u{2192} AGENT", 9., th.human, th)),
+                )
+            }),
+    )
+    .when(!open, |d| {
+        d.child(micro(
+            "TYPE ANYWHERE \u{b7} ENTER SENDS \u{b7} PASTE TEXT, FILES OR AN IMAGE",
             9.5,
-            th.faint,
+            th.human.alpha(0.72),
             th,
         ))
+    })
+}
+
+/// The block cursor, at the size a terminal draws one — and BLINKING when the
+/// keyboard is really going to the agent.
+///
+/// Its own function because it is the load-bearing pixel of the composer. A
+/// still block says "an input lives here"; a blinking one says "and it is
+/// yours, now", which is a different sentence and the one that was missing:
+/// Parker typed into the bench and still asked whether he had to click
+/// somewhere else first. Nothing on a screen says *the keyboard is here* like
+/// a blink, and no amount of caption substitutes for it.
+///
+/// Off while the pane is unfocused or the line is not armed, because a caret
+/// blinking in a window that would swallow the keystrokes is a lie.
+fn caret(live: bool, th: &Theme) -> AnyElement {
+    let block = div()
+        .w(px(11.))
+        .h(px(24.))
+        .bg(th.human.alpha(if live { 1.0 } else { 0.55 }))
+        .when(th.glow > 0.001, |d| {
+            d.shadow(vec![BoxShadow {
+                color: th.human.alpha((th.glow * 0.8).min(0.7)),
+                offset: point(px(0.), px(0.)),
+                blur_radius: px(12.),
+                spread_radius: px(1.),
+                inset: false,
+            }])
+        });
+    if !live {
+        return block.into_any_element();
+    }
+    block
+        .with_animation(
+            "bench-caret",
+            gpui::Animation::new(Duration::from_millis(1100)).repeat(),
+            |el, t| el.opacity(caret_alpha(t)),
+        )
+        .into_any_element()
+}
+
+/// On for most of the cycle, off for a beat. A 50/50 blink reads as flashing;
+/// what a terminal actually does is sit lit and wink.
+fn caret_alpha(t: f32) -> f32 {
+    if t < 0.62 {
+        1.0
+    } else {
+        0.15
+    }
+}
+
+/// The agent, talking. The main area's ordinary state.
+///
+/// Its own recent output, in its own font, with nothing drawn around it. This
+/// is the bench's answer to "what is it doing" and it is the default because
+/// that is the question a person arriving at a pane actually has — the rail
+/// is for what it MADE, which is a different and rarer question.
+pub fn conversation(tail: &[String], th: &Theme) -> Div {
+    div()
+        .flex()
+        .flex_col()
+        .gap(px(1.))
+        .children(tail.iter().map(|line| {
+            // The person's own turns are the landmarks in a scroll, so they
+            // keep full strength and everything else recedes. Claude marks
+            // them with a leading chevron; a shell has none, and then nothing
+            // is emphasised, which is correct rather than a fallback.
+            let mine =
+                line.trim_start().starts_with('\u{203a}') || line.trim_start().starts_with('>');
+            div()
+                .text_size(px(12.))
+                .font_family(th.font_family.clone())
+                .text_color(if mine { th.human } else { th.text.alpha(0.62) })
+                .child(line.clone())
+        }))
+}
+
+/// The question the agent has stopped on, drawn where it is talking.
+///
+/// In the conversation rather than behind a click: an agent that cannot
+/// continue without a person is the one thing on this surface nobody should
+/// have to go looking for. The chips are attached by the pane, because
+/// pressing one reaches a pseudoterminal.
+pub fn waiting_block(q: &crate::surface::Question, sk: &Skin, th: &Theme) -> Div {
+    raised(
+        sk.panel()
+            .flex()
+            .flex_col()
+            .gap(px(12.))
+            .p(px(16.))
+            .border_l(px(3.))
+            .border_color(ink(Tint::Waiting, th))
+            .bg(th.surface),
+        ink(Tint::Waiting, th),
+        th,
+    )
+    .child(micro("WAITING ON YOU", 9.5, ink(Tint::Waiting, th), th))
+    .child(
+        div()
+            .text_size(px(15.))
+            .text_color(th.text)
+            .child(q.question.clone()),
+    )
+    .child(div().flex().flex_col().gap(px(5.)).children(
+        q.options.iter().enumerate().filter_map(|(i, o)| {
+            o.what_happens.as_ref().map(|what| {
+                micro(
+                    format!("{} \u{b7} {}", i + 1, what),
+                    10.5,
+                    th.text.alpha(0.55),
+                    th,
+                )
+            })
+        }),
+    ))
+}
+
+/// The collapse handle on the rail's inner edge.
+///
+/// A tray's affordance: one chevron, vertically centred on the border it
+/// moves, pointing the way it will go. It is drawn at the edge rather than in
+/// the rail's header because the thing it closes is the whole column, and a
+/// control that lives inside what it hides is a control you cannot find again.
+pub fn rail_handle(open: bool, th: &Theme) -> Div {
+    div()
+        .w(px(14.))
+        .flex_none()
+        .flex()
+        .items_center()
+        .justify_center()
+        .cursor_pointer()
+        .child(
+            div()
+                .text_size(px(13.))
+                .text_color(th.faint)
+                .child(if open { "\u{203a}" } else { "\u{2039}" }),
+        )
 }
 
 /// An empty bench says what would fill it.
@@ -944,6 +1200,44 @@ mod tests {
             .join("\n");
         assert!(first_lines(&text, 3).ends_with('…'));
         assert!(!first_lines("one\ntwo", 5).ends_with('…'));
+    }
+
+    #[test]
+    fn the_five_meanings_are_five_different_colours() {
+        // The bug this guards is not "the wrong colour", it is "one colour":
+        // three of these five resolved to the accent, so a magenta theme drew
+        // a magenta bench and the ink said nothing. Any theme, four hues plus
+        // a grey — checked on every builtin, since a palette that separates on
+        // one theme and collapses on another is the same failure a week later.
+        for id in [
+            "quiet-command",
+            "field-command",
+            "tactical-overdrive",
+            "gamba",
+            "deco",
+            "hacker",
+        ] {
+            let toml = crate::theme::builtin_toml(id).expect("a builtin theme");
+            let th = crate::theme::parse(toml).expect("a builtin theme parses");
+            let inks: Vec<Hsla> = [
+                Tint::Ident,
+                Tint::Waiting,
+                Tint::Pending,
+                Tint::Settled,
+                Tint::Unknown,
+            ]
+            .iter()
+            .map(|t| ink(*t, &th))
+            .collect();
+            for (i, a) in inks.iter().enumerate() {
+                for (j, b) in inks.iter().enumerate().skip(i + 1) {
+                    assert!(
+                        a != b,
+                        "{id}: meanings {i} and {j} resolve to the same ink {a:?}"
+                    );
+                }
+            }
+        }
     }
 
     #[test]

@@ -162,15 +162,22 @@ pub enum Embodiment {
     Summary,
 }
 
-/// Decide the body from the room available and whether anyone is looking.
+/// Decide the body from the room available.
+///
+/// Room only. An earlier version also asked whether the pane was FOCUSED and
+/// dropped an unfocused one to a summary — which meant the bench changed
+/// shape depending on which pane held the keyboard, so a person glancing at
+/// the pane beside the one they were typing in saw a smaller surface with no
+/// way to type into it. In a tiled window every visible pane is being read,
+/// so "nobody is looking" was never true of any of them.
 ///
 /// The thresholds are this machine's real widths rather than round numbers:
 /// 968 is a tiled pane, and a two-column tab inside it is about 470 each.
-pub fn embodiment(content_w: f32, content_h: f32, focused: bool) -> Embodiment {
-    if !focused && content_w < 640.0 {
+pub fn embodiment(content_w: f32, content_h: f32) -> Embodiment {
+    if content_w < 300.0 || content_h < 160.0 {
         return Embodiment::Summary;
     }
-    if content_w < 460.0 || content_h < 220.0 {
+    if content_w < 460.0 || content_h < 260.0 {
         return Embodiment::Compact;
     }
     Embodiment::Full
@@ -196,14 +203,74 @@ pub fn rail_fit(pane_w: f32, wanted: bool) -> RailFit {
     if pane_w < RAIL_HIDE_BELOW {
         return RailFit::Hidden;
     }
-    if !wanted {
+    if !wanted || pane_w < RAIL_COLLAPSE_BELOW {
         return RailFit::Ticks;
     }
-    if pane_w < RAIL_COLLAPSE_BELOW {
-        return RailFit::Ticks;
-    }
-    RailFit::Open(RAIL_W as u32)
+    // A SHARE of the pane, not a fixed 208. Matching the left bar's width
+    // sounded right and was measured against the wrong thing: the left bar
+    // divides a WINDOW and this divides a PANE, so the number that is a tenth
+    // of one is more than a third of the other — and the body it left behind
+    // was too narrow to hold the conversation the bench exists for.
+    let want = (pane_w * RAIL_SHARE).clamp(RAIL_MIN_W, RAIL_W);
+    RailFit::Open(want as u32)
 }
+
+/// The image type to ask a clipboard for, out of everything it is offering.
+///
+/// Wayland clipboards are a LIST of types, and a copied image usually arrives
+/// alongside a text one — a browser offers `text/html` next to its
+/// `image/png`, and whoever reads the text first gets markup instead of the
+/// picture. gpui's own clipboard read does exactly that, so a paste that a
+/// person means as an image comes back as a paragraph of HTML. Asking the
+/// list directly is how that is caught, and it is a list rather than a single
+/// guess because `image/png` is not the only answer.
+///
+/// Ordered by what an agent can actually do with the file, not by fidelity:
+/// PNG first because every model reads it, SVG last because it is really text
+/// and only some do. Returns [`None`] when nothing on offer is an image —
+/// which is a fact, not a failure, and the caller then pastes the text.
+pub fn best_image_mime<S: AsRef<str>>(offered: &[S]) -> Option<&'static str> {
+    const ORDER: [&str; 7] = [
+        "image/png",
+        "image/jpeg",
+        "image/webp",
+        "image/gif",
+        "image/bmp",
+        "image/tiff",
+        "image/svg+xml",
+    ];
+    ORDER.into_iter().find(|want| {
+        offered
+            .iter()
+            .any(|o| o.as_ref().trim().eq_ignore_ascii_case(want))
+    })
+}
+
+/// The file extension to save an image mime type under.
+///
+/// The extension is not decoration: it is the whole reason the path works.
+/// An agent handed `/tmp/x` opens bytes; handed `/tmp/x.png` it knows to look
+/// at a picture, and so does every viewer the desktop would launch.
+pub fn ext_of_image_mime(mime: &str) -> Option<&'static str> {
+    Some(match mime.trim().to_ascii_lowercase().as_str() {
+        "image/png" => "png",
+        "image/jpeg" => "jpg",
+        "image/webp" => "webp",
+        "image/gif" => "gif",
+        "image/bmp" => "bmp",
+        "image/tiff" => "tiff",
+        "image/svg+xml" => "svg",
+        _ => return None,
+    })
+}
+
+/// How much of a pane the rail may take. Roughly a third is the most a shelf
+/// can have before the thing it is a shelf FOR stops being the main event.
+pub const RAIL_SHARE: f32 = 0.30;
+
+/// Narrower than this and the rows stop being readable, so it is ticks or
+/// nothing.
+pub const RAIL_MIN_W: f32 = 132.0;
 
 // ---------------------------------------------------------------------------
 // the bench
@@ -431,10 +498,6 @@ impl Bench {
         self.surfaces.is_empty()
     }
 
-    pub fn len(&self) -> usize {
-        self.surfaces.len()
-    }
-
     /// Everything, newest first — what the ticks strip draws.
     pub fn all_newest_first(&self) -> impl Iterator<Item = &Surface> {
         self.surfaces.iter().rev()
@@ -483,16 +546,39 @@ impl Bench {
             .collect()
     }
 
-    /// The surface whose body is on the bench.
+    /// The surface OPENED as a card over the conversation, if any.
+    ///
+    /// `None` is the ordinary state, and the main area then shows the
+    /// conversation. Opening a card is a deliberate act — a click on a rail
+    /// row — and closing it returns to the conversation rather than to
+    /// another card.
     pub fn selected(&self) -> Option<&Surface> {
         self.selected.as_ref().and_then(|id| self.get(id))
     }
 
+    /// Open one as a card. Marks it seen, because opening is looking.
     pub fn select(&mut self, id: &SurfaceId) {
         if self.get(id).is_some() {
             self.selected = Some(id.clone());
             self.unseen.remove(id);
         }
+    }
+
+    /// Close the card and go back to the conversation.
+    pub fn close_card(&mut self) -> bool {
+        self.selected.take().is_some()
+    }
+
+    /// The question this bench is waiting on, if one is.
+    ///
+    /// Drawn inline in the conversation rather than needing to be found and
+    /// clicked: an agent that has stopped and cannot continue is the one
+    /// thing on this surface a person must not have to go looking for.
+    pub fn waiting_question(&self) -> Option<&Surface> {
+        self.surfaces.iter().rev().find(|s| {
+            matches!(&s.kind, Kind::Question(q)
+                if q.answer == crate::surface::Answered::Waiting)
+        })
     }
 
     /// Move the selection within the active shelf. `+1` is down the rail.
@@ -515,8 +601,11 @@ impl Bench {
                 let before = self.surfaces.len();
                 self.surfaces.retain(|s| s.id != post.id);
                 self.unseen.remove(&post.id);
+                // Closes the card if it was the one open. It does NOT open a
+                // neighbour: a surface appearing under the reader because
+                // another one was retired is the rail choosing for them.
                 if self.selected.as_ref() == Some(&post.id) {
-                    self.selected = self.rows().first().map(|r| r.id.clone());
+                    self.selected = None;
                 }
                 (self.surfaces.len() != before).then_some(post.id)
             }
@@ -547,27 +636,18 @@ impl Bench {
                 } else {
                     self.unseen.insert(id.clone());
                 }
-                // A bench with nothing chosen chooses the arrival, so the
-                // first surface an agent ever sends is already on screen.
+                // NOTHING is selected by an arrival, and no arrival moves the
+                // shelf. Both used to happen, and both were wrong for the
+                // same reason: the rail is a shelf a person browses, not a
+                // remote control for the main area. A live question stealing
+                // the shelf meant clicking `artifacts` bounced straight back
+                // to `decisions` a second later, which is the surface
+                // fighting the hand.
                 //
-                // And a question that is WAITING takes the bench from
-                // whatever was on it. That is the one arrival allowed to
-                // steal the selection, because it is the one that means the
-                // agent has stopped and cannot continue without a person —
-                // showing a finished document instead, while a picker sits
-                // unanswered in the terminal, is the bench pointing at the
-                // wrong thing at the only moment it matters.
-                let waiting = matches!(
-                    self.get(&id).map(|s| &s.kind),
-                    Some(Kind::Question(q)) if q.answer == crate::surface::Answered::Waiting
-                );
-                if self.selected.is_none() || waiting {
-                    if let Some(s) = self.get(&id) {
-                        let shelf = s.kind.shelf();
-                        self.shelf = shelf;
-                        self.selected = Some(id.clone());
-                    }
-                }
+                // What a waiting question DOES get is the conversation: it is
+                // drawn inline where the agent is talking, by
+                // [`Bench::waiting_question`], because that is where the
+                // person is already looking.
                 Some(id)
             }
         }
@@ -597,8 +677,11 @@ impl Bench {
         target: Option<String>,
         comment: Option<String>,
     ) -> Dispatch {
-        let Some(surface) = self.selected().cloned() else {
-            return Dispatch::Refused("nothing is selected on this bench".into());
+        // The card if one is open, else whatever the agent is waiting on —
+        // because the answer chips are drawn in the conversation, where
+        // nothing is "selected" at all.
+        let Some(surface) = self.selected().or_else(|| self.waiting_question()).cloned() else {
+            return Dispatch::Refused("nothing on this bench to act on".into());
         };
         // A verdict on one hunk is recorded here as well as sent: the person
         // has answered, and a row that still reads "undecided" after they
@@ -740,11 +823,67 @@ mod tests {
     }
 
     #[test]
-    fn the_first_surface_selects_itself_and_its_shelf() {
+    fn an_arrival_opens_nothing_and_moves_no_shelf() {
+        // The rail is a shelf a person browses, not a remote control for the
+        // main area. Parker found this the hard way: a live question arriving
+        // every second stole the shelf, so clicking `artifacts` bounced
+        // straight back to `decisions` — the surface fighting the hand.
         let mut b = Bench::new();
+        b.set_shelf(Shelf::Artifacts);
         b.apply(decision("d1"));
-        assert_eq!(b.shelf(), Shelf::Decisions, "the bench follows the arrival");
-        assert_eq!(b.selected().map(|s| s.id.as_str()), Some("d1"));
+        assert_eq!(
+            b.shelf(),
+            Shelf::Artifacts,
+            "the shelf stays where it was put"
+        );
+        assert!(b.selected().is_none(), "nothing opens itself");
+    }
+
+    #[test]
+    fn a_waiting_question_is_found_without_being_selected() {
+        // It is drawn in the conversation instead, where the person is
+        // already looking — so it needs to be findable, not selected.
+        let mut b = Bench::new();
+        b.apply(doc("a", "A document"));
+        b.apply(question("q", Some(0)));
+        assert!(b.selected().is_none());
+        assert_eq!(b.waiting_question().map(|s| s.id.as_str()), Some("q"));
+    }
+
+    #[test]
+    fn an_answered_question_is_no_longer_waiting() {
+        let mut b = Bench::new();
+        b.apply(question("q", Some(0)));
+        b.act(&Action::Choose, Some("0".into()), None);
+        assert!(
+            b.waiting_question().is_none(),
+            "answered is not waiting, or the conversation keeps asking"
+        );
+    }
+
+    #[test]
+    fn a_card_opens_on_a_click_and_closes_back_to_the_conversation() {
+        let mut b = Bench::new();
+        b.apply(doc("a", "A document"));
+        assert!(b.selected().is_none(), "the conversation is the default");
+        b.select(&SurfaceId("a".into()));
+        assert_eq!(b.selected().map(|s| s.id.as_str()), Some("a"));
+        assert!(b.close_card());
+        assert!(b.selected().is_none());
+        assert!(!b.close_card(), "closing a closed card is not an event");
+    }
+
+    #[test]
+    fn answering_works_from_the_conversation_with_nothing_selected() {
+        // The chips live in the conversation, where nothing is selected at
+        // all — so `act` has to find the waiting question by itself.
+        let mut b = Bench::new();
+        b.apply(question("q", Some(0)));
+        assert!(b.selected().is_none());
+        match b.act(&Action::Choose, Some("1".into()), None) {
+            Dispatch::Keys { bytes, .. } => assert_eq!(bytes, b"\x1b[B\r"),
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]
@@ -752,7 +891,7 @@ mod tests {
         let mut b = Bench::new();
         b.apply(doc("same", "First"));
         b.apply(doc("same", "Second"));
-        assert_eq!(b.len(), 1);
+        assert_eq!(b.all_newest_first().count(), 1);
         assert_eq!(b.rows()[0].title, "Second");
     }
 
@@ -791,11 +930,10 @@ mod tests {
         b.apply(doc("b", "B"));
         b.select(&SurfaceId("b".into()));
         b.apply(post(json!({ "td":"0.1","op":"retire","id":"b" })));
-        assert_eq!(b.len(), 1);
-        assert_eq!(
-            b.selected().map(|s| s.id.as_str()),
-            Some("a"),
-            "the bench does not sit on an empty selection"
+        assert_eq!(b.all_newest_first().count(), 1);
+        assert!(
+            b.selected().is_none(),
+            "retiring the open card returns to the conversation, not to another card"
         );
     }
 
@@ -805,7 +943,10 @@ mod tests {
         for i in 0..(crate::surface::PANE_HISTORY_CAP + 5) {
             b.apply(doc(&format!("s{i}"), &format!("Doc {i}")));
         }
-        assert_eq!(b.len(), crate::surface::PANE_HISTORY_CAP);
+        assert_eq!(
+            b.all_newest_first().count(),
+            crate::surface::PANE_HISTORY_CAP
+        );
         assert!(b.get(&SurfaceId("s0".into())).is_none(), "the oldest went");
         let newest = format!("s{}", crate::surface::PANE_HISTORY_CAP + 4);
         assert!(b.get(&SurfaceId(newest)).is_some(), "the newest stayed");
@@ -844,20 +985,6 @@ mod tests {
         assert_eq!(b.counts(Shelf::Artifacts), (2, 2));
         assert_eq!(b.counts(Shelf::Decisions), (1, 1));
         assert_eq!(b.counts(Shelf::Other), (0, 0));
-    }
-
-    #[test]
-    fn switching_shelves_moves_the_selection_onto_that_shelf() {
-        let mut b = Bench::new();
-        b.apply(doc("a", "A"));
-        b.apply(decision("d"));
-        b.select(&SurfaceId("a".into()));
-        b.set_shelf(Shelf::Decisions);
-        assert_eq!(
-            b.selected().map(|s| s.id.as_str()),
-            Some("d"),
-            "the body always belongs to a row the rail is showing"
-        );
     }
 
     #[test]
@@ -984,7 +1111,7 @@ mod tests {
     fn acting_on_an_empty_bench_is_refused_rather_than_ignored() {
         let mut b = Bench::new();
         match b.act(&Action::Approve, None, None) {
-            Dispatch::Refused(why) => assert!(why.contains("nothing is selected"), "{why}"),
+            Dispatch::Refused(why) => assert!(why.contains("nothing on this bench"), "{why}"),
             other => panic!("{other:?}"),
         }
     }
@@ -1022,31 +1149,6 @@ mod tests {
             }
         }
         p
-    }
-
-    #[test]
-    fn a_waiting_question_takes_the_bench_from_whatever_was_on_it() {
-        // The agent has stopped and cannot continue. A finished document on
-        // screen while a picker waits unanswered in the terminal is the bench
-        // pointing at the wrong thing at the only moment it matters.
-        let mut b = Bench::new();
-        b.apply(doc("a", "A document"));
-        assert_eq!(b.selected().map(|s| s.id.as_str()), Some("a"));
-        b.apply(question("q", Some(0)));
-        assert_eq!(b.selected().map(|s| s.id.as_str()), Some("q"));
-        assert_eq!(b.shelf(), Shelf::Decisions);
-
-        // An ANSWERED one does not: it is history, and stealing the bench for
-        // history is how a surface becomes something people close.
-        b.select(&SurfaceId("a".into()));
-        let mut answered = question("q2", None);
-        if let Some(s) = answered.surface.as_mut() {
-            if let Kind::Question(q) = &mut s.kind {
-                q.answer = crate::surface::Answered::Chose(0);
-            }
-        }
-        b.apply(answered);
-        assert_eq!(b.selected().map(|s| s.id.as_str()), Some("a"));
     }
 
     #[test]
@@ -1182,7 +1284,11 @@ mod tests {
 
     #[test]
     fn the_rail_yields_to_the_pane_before_it_yields_to_the_person() {
-        assert_eq!(rail_fit(900.0, true), RailFit::Open(RAIL_W as u32));
+        assert_eq!(
+            rail_fit(900.0, true),
+            RailFit::Open(RAIL_W as u32),
+            "capped"
+        );
         assert_eq!(rail_fit(900.0, false), RailFit::Ticks, "closed by hand");
         assert_eq!(rail_fit(300.0, true), RailFit::Ticks, "too narrow to open");
         assert_eq!(
@@ -1193,25 +1299,75 @@ mod tests {
     }
 
     #[test]
-    fn a_pane_nobody_is_looking_at_gets_a_summary() {
-        assert_eq!(embodiment(1200.0, 800.0, true), Embodiment::Full);
-        assert_eq!(embodiment(500.0, 800.0, true), Embodiment::Full);
+    fn an_image_on_the_clipboard_beats_the_text_beside_it() {
+        // Exactly what a browser offers when you copy an image. Before this,
+        // the text won and the paste was a line of markup.
+        let firefox = ["text/html", "text/_moz_htmlcontext", "image/png"];
+        assert_eq!(best_image_mime(&firefox), Some("image/png"));
+
+        // A screenshot tool offers only the one type.
+        assert_eq!(best_image_mime(&["image/png"]), Some("image/png"));
+
+        // Preference order, not list order.
         assert_eq!(
-            embodiment(400.0, 800.0, true),
-            Embodiment::Compact,
-            "narrow"
+            best_image_mime(&["image/svg+xml", "image/jpeg"]),
+            Some("image/jpeg")
         );
-        assert_eq!(embodiment(900.0, 180.0, true), Embodiment::Compact, "short");
+
+        // Nothing here is an image, and that is an answer.
         assert_eq!(
-            embodiment(500.0, 800.0, false),
-            Embodiment::Summary,
-            "unfocused"
+            best_image_mime(&["text/plain", "STRING", "UTF8_STRING"]),
+            None
         );
-        assert_eq!(
-            embodiment(1200.0, 800.0, false),
-            Embodiment::Full,
-            "a wide unfocused pane is still worth drawing properly"
-        );
+
+        // Compositors vary the spelling and the whitespace.
+        assert_eq!(best_image_mime(&[" IMAGE/PNG "]), Some("image/png"));
+    }
+
+    #[test]
+    fn every_offered_image_type_has_an_extension_to_save_it_under() {
+        // The two lists have to agree or a paste writes a file whose name
+        // says nothing about what is in it. Walk the preference order and
+        // demand an extension for each.
+        for mime in [
+            "image/png",
+            "image/jpeg",
+            "image/webp",
+            "image/gif",
+            "image/bmp",
+            "image/tiff",
+            "image/svg+xml",
+        ] {
+            assert!(
+                best_image_mime(&[mime]) == Some(mime) && ext_of_image_mime(mime).is_some(),
+                "{mime} is offered but cannot be saved"
+            );
+        }
+        assert_eq!(ext_of_image_mime("text/plain"), None);
+    }
+
+    #[test]
+    fn the_rail_takes_a_share_of_a_middling_pane_rather_than_a_third_of_it() {
+        // 540 is a real pane on this machine — a tiled half beside a left bar.
+        // At a flat 208 the rail took 38% of it and left the conversation 332
+        // pixels, which is below every readable threshold there is.
+        match rail_fit(540.0, true) {
+            RailFit::Open(w) => {
+                assert!(w <= 170, "{w} is still too much of 540");
+                assert!(540.0 - w as f32 >= 370.0, "the body keeps the bulk");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn what_fits_depends_on_the_room_and_nothing_else() {
+        assert_eq!(embodiment(1200.0, 800.0), Embodiment::Full);
+        assert_eq!(embodiment(573.0, 900.0), Embodiment::Full, "a tiled half");
+        assert_eq!(embodiment(400.0, 800.0), Embodiment::Compact, "narrow");
+        assert_eq!(embodiment(900.0, 200.0), Embodiment::Compact, "short");
+        assert_eq!(embodiment(250.0, 800.0), Embodiment::Summary, "a strip");
+        assert_eq!(embodiment(900.0, 120.0), Embodiment::Summary, "a sliver");
     }
 
     #[test]
