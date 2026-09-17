@@ -247,7 +247,13 @@ impl Feed {
                 .file_stem()
                 .and_then(|s| s.to_str())
                 .unwrap_or("surface");
-            posts.push(parse_lenient(&value, now, fallback));
+            let mut post = parse_lenient(&value, now, fallback);
+            // A file in the drop box: any process running as this user could
+            // have put it there, and the card says exactly that.
+            if let Some(s) = post.surface.as_mut() {
+                s.origin = crate::surface::Origin::FileDrop;
+            }
+            posts.push(post);
         }
         posts
     }
@@ -969,6 +975,24 @@ mod tests {
         );
         assert_eq!(arrivals[0].pane, 7);
         assert_eq!(arrivals[1].pane, 12);
+    }
+
+    #[test]
+    fn a_dropped_file_is_stamped_as_a_drop_whatever_it_claims() {
+        // The payload does not get to say who wrote it: a `writer` or an
+        // `origin` field in the JSON is ignored, and the card reads `writer
+        // unknown`, because any process running as this user can put a file
+        // here and nothing about the bytes says which one did.
+        let scratch = Scratch::new("origin");
+        let mut feed = Feed::new();
+        let mut doc = a_doc("dropped");
+        doc["origin"] = json!("this pane's agent");
+        doc["writer"] = json!({ "pane": 7 });
+        drop_surface(scratch.path(), "s", &doc).unwrap();
+        let posts = feed.sweep_pane(scratch.path(), NOW);
+        let s = posts[0].surface.as_ref().expect("a surface");
+        assert_eq!(s.origin, crate::surface::Origin::FileDrop);
+        assert!(s.origin.label().contains("writer unknown"));
     }
 
     #[test]

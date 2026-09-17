@@ -1186,10 +1186,28 @@ pub fn run_cli(args: &[String]) -> i32 {
 /// A process's parent, from `/proc/<pid>/stat`. The `comm` field is wrapped in
 /// parens and may itself contain spaces AND parens, so the only safe split is
 /// after the LAST `)`: what follows is `state ppid …`.
-fn ppid_of(pid: u32) -> Option<u32> {
+pub(crate) fn ppid_of(pid: u32) -> Option<u32> {
     let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
     let after_comm = stat.rsplit_once(')')?.1;
     after_comm.split_whitespace().nth(1)?.parse().ok()
+}
+
+/// Whether `pid` runs under `ancestor` — the question a pane asks about an
+/// MCP caller: is this my own agent, or somebody else's? Bounded, because a
+/// parent chain on this box is a dozen deep at most and `/proc` can lie about
+/// a pid that was recycled mid-walk.
+pub(crate) fn descends_from(pid: u32, ancestor: u32) -> bool {
+    let mut at = pid;
+    for _ in 0..24 {
+        if at == ancestor {
+            return true;
+        }
+        match ppid_of(at) {
+            Some(p) if p > 1 && p != at => at = p,
+            _ => return false,
+        }
+    }
+    false
 }
 
 /// The terminal-delight window hosting THIS process, by walking our own parent

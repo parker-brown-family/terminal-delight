@@ -153,6 +153,7 @@ impl Asked {
                 actions,
                 source: None,
                 arrived_ms: now_ms,
+                origin: crate::surface::Origin::Derived,
             }),
             id,
         }
@@ -427,6 +428,7 @@ fn deliverable_post(label: &str, href: &str, now_ms: u64) -> Post {
                 reference: Some("Deliverable: line".into()),
             }),
             arrived_ms: now_ms,
+            origin: crate::surface::Origin::Derived,
         }),
         id,
     }

@@ -6384,7 +6384,20 @@ impl TerminalView {
     /// dropped file and a fenced block in the transcript all arrive here, so
     /// there is one place where a surface becomes visible and one place to put
     /// a breakpoint when it does not.
-    pub fn present(&mut self, post: crate::surface::Post, cx: &mut Context<Self>) {
+    pub fn present(&mut self, mut post: crate::surface::Post, cx: &mut Context<Self>) {
+        // An MCP caller is "this pane's agent" when its pid runs under this
+        // pane's shell, and "somebody else" otherwise — another pane's agent,
+        // or a script. Decided here, once, where both pids are known, rather
+        // than at every paint; the relay that stamped the pid could not know
+        // which pane it was talking about.
+        if let (Some(s), Some(shell)) = (post.surface.as_mut(), self.shell_pid()) {
+            if let crate::surface::Origin::Mcp { pid, own: None } = s.origin {
+                s.origin = crate::surface::Origin::Mcp {
+                    pid,
+                    own: Some(crate::ctl::descends_from(pid, shell)),
+                };
+            }
+        }
         if self.bench.apply(post).is_some() {
             cx.notify();
         }

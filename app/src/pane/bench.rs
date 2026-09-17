@@ -426,6 +426,7 @@ impl TerminalView {
                     actions,
                     source: None,
                     arrived_ms: now_ms,
+                    origin: crate::surface::Origin::Derived,
                 }),
                 id,
             });
