@@ -6621,7 +6621,7 @@ impl Workspace {
                 if !view.mode.is_agent() {
                     return;
                 }
-                if let Some(post) = view.live_question(now) {
+                for post in view.live_questions(now) {
                     view.present(post, cx);
                 }
             });

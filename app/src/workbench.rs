@@ -1934,6 +1934,27 @@ mod tests {
     }
 
     #[test]
+    fn a_shelf_never_shows_two_live_questions_waiting_at_once() {
+        // Only one picker can be on a screen, so two LIVE waiting questions on
+        // one pane is not a state that exists — it is the bench failing to
+        // retire one. Four of them had stacked up when Parker looked at it.
+        //
+        // Asserted over the bench rather than over `stand`, because the defect
+        // was in what reached the bench: a sweep that could report the new
+        // question or the retirement of the old one, but never both, so the
+        // old one was simply left behind.
+        let mut b = Bench::new();
+        b.apply(decision("first"));
+        b.apply(retire("first"));
+        b.apply(decision("second"));
+        b.set_shelf(Shelf::Decisions);
+        let rows = b.rows_for(Shelf::Decisions);
+        assert_eq!(rows.len(), 1, "the answered one should have gone: {rows:?}");
+        assert_eq!(rows[0].id.0, "second");
+        assert_eq!(rows[0].standing, Standing::Waiting);
+    }
+
+    #[test]
     fn exactly_one_row_in_a_shelf_is_ever_lit() {
         // The invariant the whole hierarchy rests on. A glow is a claim about
         // where to look, so two of them is no claim at all — and the shelf
@@ -2032,6 +2053,15 @@ mod tests {
         let mut rows: Vec<Row> = Vec::new();
         stand(&mut rows);
         assert!(rows.is_empty());
+    }
+
+    fn retire(id: &str) -> crate::surface::Post {
+        crate::surface::Post {
+            op: crate::surface::Op::Retire,
+            id: SurfaceId(id.into()),
+            pane: None,
+            surface: None,
+        }
     }
 
     fn row_stub(id: &str, tint: Tint) -> Row {

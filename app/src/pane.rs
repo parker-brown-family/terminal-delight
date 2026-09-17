@@ -6735,16 +6735,47 @@ impl TerminalView {
     /// `AskUserQuestion` is buffered until its result arrives, so a pending
     /// question exists only as pixels until it stops being pending. See
     /// [`crate::derive::question_on_screen`].
-    pub fn live_question(&mut self, now_ms: u64) -> Option<crate::surface::Post> {
+    pub fn live_questions(&mut self, now_ms: u64) -> Vec<crate::surface::Post> {
         use crate::surface::{Kind, Op, Post, Surface, Weight};
-        if self.needs_input {
-            let q = crate::derive::question_on_screen(&self.live_rows())?;
-            let id = crate::derive::screen_question_id(&q);
+        // A LIST, because answering one question and being asked the next
+        // happens between two sweeps and produces two facts at once: the old
+        // one is over, and a new one has started.
+        //
+        // Returning a single Post could only report the second, so the first
+        // was never retired — and a question the person had already answered
+        // stayed on the bench, red, labelled WAITING ON YOU, forever. Four of
+        // them had piled up when Parker looked: *"the workbench does not feel
+        // like it is up to date with the answer"*. It was not. Only one picker
+        // can be on a screen at a time, so more than one live waiting question
+        // per pane was never a state that could exist.
+        let mut out = Vec::new();
+        let asking = self
+            .needs_input
+            .then(|| crate::derive::question_on_screen(&self.live_rows()))
+            .flatten();
+        let now_id = asking.as_ref().map(crate::derive::screen_question_id);
+
+        // Whatever we were tracking, if it is not what is on screen now, is
+        // over. The transcript's own copy arrives carrying the answer and
+        // takes its place on the bench.
+        if let Some(was) = self.wb_live_q.clone() {
+            if now_id.as_ref() != Some(&was) {
+                out.push(Post {
+                    op: Op::Retire,
+                    id: was,
+                    pane: None,
+                    surface: None,
+                });
+                self.wb_live_q = None;
+            }
+        }
+
+        if let (Some(q), Some(id)) = (asking, now_id) {
             let title: String = q.question.chars().take(72).collect();
             let kind = Kind::Question(q);
             let actions = kind.default_actions();
             self.wb_live_q = Some(id.clone());
-            return Some(Post {
+            out.push(Post {
                 op: Op::Present,
                 pane: None,
                 surface: Some(Surface {
@@ -6759,15 +6790,7 @@ impl TerminalView {
                 id,
             });
         }
-        // Not waiting any more. The live row goes, and the transcript's own
-        // copy — which arrives carrying the answer — takes its place.
-        let id = self.wb_live_q.take()?;
-        Some(Post {
-            op: Op::Retire,
-            id,
-            pane: None,
-            surface: None,
-        })
+        out
     }
 
     /// A single click on a rail row.

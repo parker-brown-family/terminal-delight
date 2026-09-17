@@ -159,11 +159,20 @@ pub fn rail_row(row: &Row, sk: &Skin, th: &Theme) -> Div {
         Standing::Past => (2., 0.55),
     };
     let raise = row.standing.lit();
+    // Every row says what it IS, including the settled ones. A green row with
+    // no label made a reader work the colour out — Parker, looking at one: *"A
+    // green question ... that is one that is answered?"*. If the question has
+    // to be asked, the colour was carrying the whole message and colour alone
+    // is not a message.
     let head = match row.standing {
         Standing::Waiting => Some("WAITING ON YOU"),
         Standing::Queued => Some("ALSO WAITING"),
         Standing::Current => Some("STANDS NOW"),
-        Standing::Past => None,
+        Standing::Past => match (row.tint, row.kind) {
+            (Tint::Settled, "question") | (Tint::Settled, "decision") => Some("ANSWERED"),
+            (Tint::Settled, _) => Some("DONE"),
+            _ => None,
+        },
     };
     let body = sk
         .row()
@@ -516,7 +525,7 @@ fn question(q: &crate::surface::Question, sk: &Skin, th: &Theme) -> Div {
         if waiting {
             "WAITING ON YOU"
         } else {
-            "ANSWERED"
+            "ANSWERED \u{b7} THE PICKER HAS CLOSED"
         },
         9.5,
         tint,
