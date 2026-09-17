@@ -11,6 +11,17 @@ use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
+/// How long any one wait in this file is allowed to take.
+///
+/// A limit bounds the FAILING case only — a passing run returns the moment
+/// its condition holds — so the number can be generous without slowing
+/// anything green. It was ten seconds, which is plenty on a quiet machine
+/// and was not obviously plenty with a release build on every core beside
+/// it; the one failure of this suite that was ever read out was a race
+/// rather than a timeout (see the takeover test), so this is insurance
+/// against the other shape, not a fix for that one.
+const PATIENCE: Duration = Duration::from_secs(30);
+
 struct Session {
     child: Child,
     socket: PathBuf,
@@ -49,7 +60,7 @@ fn start_host(name: &str) -> Session {
     let socket = runtime
         .join("terminal-delight")
         .join(format!("session-{name}.sock"));
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let deadline = Instant::now() + PATIENCE;
     while Instant::now() < deadline && !socket.exists() {
         std::thread::sleep(Duration::from_millis(10));
     }
@@ -70,9 +81,7 @@ struct Control {
 impl Control {
     fn open(session: &Session) -> Self {
         let writer = UnixStream::connect(&session.socket).expect("connect");
-        writer
-            .set_read_timeout(Some(Duration::from_secs(10)))
-            .unwrap();
+        writer.set_read_timeout(Some(PATIENCE)).unwrap();
         let reader = BufReader::new(writer.try_clone().unwrap());
         Self { reader, writer }
     }
@@ -113,25 +122,32 @@ fn a_window_can_start_a_terminal_take_it_over_and_type_into_it() {
     early
         .write_all(format!("stream {pane}\n").as_bytes())
         .expect("greet");
-    early
-        .set_read_timeout(Some(Duration::from_secs(10)))
-        .unwrap();
+    early.set_read_timeout(Some(PATIENCE)).unwrap();
     early.write_all(b"printed before\n").expect("type");
 
-    // Wait until that line has actually come back, rather than until the
-    // attachment exists — the two are seconds apart and only the first means
-    // the terminal has the content.
+    // Wait until that line has come back TWICE, rather than until the
+    // attachment exists — the attachment is seconds earlier and means
+    // nothing about content.
     //
-    // It is also the exact moment the fence's promise becomes testable: bytes
-    // are copied to a client and parsed into the grid inside one reader cycle,
-    // and an attach cannot interleave with a cycle. So once any client has
-    // seen a byte, every later snapshot must contain it.
-    let first_saw = read_until(&mut early, Duration::from_secs(10), |text| {
-        text.contains("printed before")
+    // Twice, because `cat` is this pane's shell: the terminal echoes what is
+    // typed, and then cat prints the line again. Waiting for the first copy
+    // alone let the second — cat's, which is the one that arrives late when
+    // the machine is busy — land in the NEXT window's live stream after a
+    // snapshot that already held the first, and the fence assertion below
+    // then read that, correctly, as a byte sent twice. One run in eight
+    // under a parallel build, reproduced 2026-09-17; the assertion was
+    // right and this wait was short.
+    //
+    // Once both copies are back, the fence's promise is exactly testable:
+    // bytes are copied to a client and parsed into the grid inside one reader
+    // cycle, and an attach cannot interleave with a cycle. So once any client
+    // has seen a byte, every later snapshot must contain it.
+    let first_saw = read_until(&mut early, PATIENCE, |text| {
+        text.matches("printed before").count() >= 2
     });
     assert!(
-        first_saw.contains("printed before"),
-        "the first window never saw its own echo: {first_saw:?}"
+        first_saw.matches("printed before").count() >= 2,
+        "the first window never saw both copies of its own line: {first_saw:?}"
     );
 
     // A second window arrives. It missed everything, and must not stay behind.
@@ -139,11 +155,9 @@ fn a_window_can_start_a_terminal_take_it_over_and_type_into_it() {
     window
         .write_all(format!("stream {pane}\n").as_bytes())
         .expect("greet");
-    window
-        .set_read_timeout(Some(Duration::from_secs(10)))
-        .unwrap();
+    window.set_read_timeout(Some(PATIENCE)).unwrap();
 
-    let seen = read_until(&mut window, Duration::from_secs(10), |text| {
+    let seen = read_until(&mut window, PATIENCE, |text| {
         text.contains("printed before")
     });
     let (snapshot, live) = split_snapshot(&seen);
@@ -158,9 +172,7 @@ fn a_window_can_start_a_terminal_take_it_over_and_type_into_it() {
 
     // And it is live: what it types comes back to it.
     window.write_all(b"typed after\n").expect("type");
-    let echoed = read_until(&mut window, Duration::from_secs(10), |text| {
-        text.contains("typed after")
-    });
+    let echoed = read_until(&mut window, PATIENCE, |text| text.contains("typed after"));
     assert!(
         echoed.contains("typed after"),
         "the attached window is not live: {echoed:?}"
@@ -173,7 +185,7 @@ fn a_window_can_start_a_terminal_take_it_over_and_type_into_it() {
     let closed = control.ask(&format!(r#"{{"verb":"close-pane","pane":{pane}}}"#));
     assert_eq!(closed["outcome"]["ok"]["signalled"], true, "{closed}");
     assert!(
-        wait_for(Duration::from_secs(10), || {
+        wait_for(PATIENCE, || {
             !PathBuf::from(format!("/proc/{shell_pid}")).exists()
         }),
         "the child outlived the close"
@@ -191,7 +203,7 @@ fn a_window_can_start_a_terminal_take_it_over_and_type_into_it() {
     assert_eq!(bye["reply"], "shutting-down", "{bye}");
     let mut session = session;
     assert!(
-        wait_for(Duration::from_secs(10), || {
+        wait_for(PATIENCE, || {
             matches!(session.child.try_wait(), Ok(Some(_)))
         }),
         "the host ignored shutdown and is still running"
@@ -216,13 +228,9 @@ fn a_terminal_outlives_the_window_that_was_watching_it() {
         window
             .write_all(format!("stream {pane}\n").as_bytes())
             .expect("greet");
-        window
-            .set_read_timeout(Some(Duration::from_secs(10)))
-            .unwrap();
+        window.set_read_timeout(Some(PATIENCE)).unwrap();
         window.write_all(b"work in progress\n").expect("type");
-        read_until(&mut window, Duration::from_secs(10), |t| {
-            t.contains("work in progress")
-        });
+        read_until(&mut window, PATIENCE, |t| t.contains("work in progress"));
         // The window dies here, abruptly, exactly as a crash would.
     }
 
@@ -236,12 +244,8 @@ fn a_terminal_outlives_the_window_that_was_watching_it() {
     reopened
         .write_all(format!("stream {pane}\n").as_bytes())
         .expect("greet");
-    reopened
-        .set_read_timeout(Some(Duration::from_secs(10)))
-        .unwrap();
-    let restored = read_until(&mut reopened, Duration::from_secs(10), |t| {
-        t.contains("work in progress")
-    });
+    reopened.set_read_timeout(Some(PATIENCE)).unwrap();
+    let restored = read_until(&mut reopened, PATIENCE, |t| t.contains("work in progress"));
     assert!(
         restored.contains("work in progress"),
         "the relaunched window was not shown what survived: {restored:?}"
@@ -264,11 +268,9 @@ fn asking_the_host_questions_never_takes_a_pane_away_from_a_window() {
     window
         .write_all(format!("stream {pane}\n").as_bytes())
         .expect("greet");
-    window
-        .set_read_timeout(Some(Duration::from_secs(10)))
-        .unwrap();
+    window.set_read_timeout(Some(PATIENCE)).unwrap();
     window.write_all(b"mine\n").expect("type");
-    read_until(&mut window, Duration::from_secs(10), |t| t.contains("mine"));
+    read_until(&mut window, PATIENCE, |t| t.contains("mine"));
 
     for _ in 0..5 {
         let mut probe = Control::open(&session);
@@ -277,9 +279,7 @@ fn asking_the_host_questions_never_takes_a_pane_away_from_a_window() {
     }
 
     window.write_all(b"still mine\n").expect("type again");
-    let after = read_until(&mut window, Duration::from_secs(10), |t| {
-        t.contains("still mine")
-    });
+    let after = read_until(&mut window, PATIENCE, |t| t.contains("still mine"));
     assert!(
         after.contains("still mine"),
         "a probe cost the window its pane: {after:?}"
@@ -332,7 +332,7 @@ fn a_connection_that_never_negotiated_is_served_like_any_other() {
         "a connection that skipped the greeting was refused: {closed}"
     );
     assert!(
-        wait_for(Duration::from_secs(10), || {
+        wait_for(PATIENCE, || {
             !PathBuf::from(format!("/proc/{shell_pid}")).exists()
         }),
         "the child outlived a close asked for without a greeting"
@@ -344,7 +344,7 @@ fn a_connection_that_never_negotiated_is_served_like_any_other() {
     assert_eq!(bye["reply"], "shutting-down", "{bye}");
     let mut session = session;
     assert!(
-        wait_for(Duration::from_secs(10), || {
+        wait_for(PATIENCE, || {
             matches!(session.child.try_wait(), Ok(Some(_)))
         }),
         "a host asked to stand down by an un-negotiated peer stayed up"
@@ -383,9 +383,7 @@ fn a_second_host_for_a_live_session_refuses_instead_of_taking_its_socket() {
     // It must decline and go, rather than settle in. Asserted before anything
     // else, because a second host that keeps running is the bug itself and
     // every assertion after this one would be measuring its aftermath.
-    let left = wait_for(Duration::from_secs(10), || {
-        matches!(second.try_wait(), Ok(Some(_)))
-    });
+    let left = wait_for(PATIENCE, || matches!(second.try_wait(), Ok(Some(_))));
     if !left {
         let _ = second.kill();
         let _ = second.wait();
