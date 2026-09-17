@@ -479,6 +479,23 @@ fn parse_adopt(json: &str) -> Result<AdoptReq, String> {
 /// so the relay client can drop it silently instead of logging a non-problem.
 const MCP_NONE: &str = "mcp-none";
 
+/// The unnamed RPC form — what every window has understood since the verb
+/// existed, and what a relay falls back to when it meets one that predates
+/// `mcp from`.
+const BARE_RPC: &str = "mcp rpc ";
+
+/// Whether a reply is a window saying it does not know this verb.
+///
+/// Matched on the shape `parse_line` produces for an unrecognised command, and
+/// deliberately narrow: an `err` that is anything else — a malformed payload, a
+/// refusal — is a real answer and must not be retried into a form that hides
+/// it. A version negotiation would be tidier and is not worth a handshake on a
+/// wire whose every other verb has been stable since it was written; this is
+/// the one verb that has ever been added to it.
+fn is_unknown_verb(reply: &std::io::Result<String>) -> bool {
+    matches!(reply, Ok(r) if r.starts_with("err ") && r.contains("unknown command"))
+}
+
 /// Serve one connection: read a line, answer a line. Short timeouts on both
 /// directions so a wedged client can never stall the single accept loop.
 /// The skin mirror's payload: the active id, then every id that can be selected.
@@ -1417,13 +1434,13 @@ pub fn run_mcp_cli(args: &[String]) -> i32 {
     // refuse a call meant for a different instance, and lets a pane-scoped verb
     // act on the pane we are actually in. A caller that could locate nothing
     // sends the bare form and is served as before — degraded, never blocked.
-    let prefix = match &located {
+    let mut prefix = match &located {
         Some(l) => format!(
             "mcp from {} {} rpc ",
             l.session,
             l.pane.map(|p| p.to_string()).unwrap_or_else(|| "-".into())
         ),
-        None => "mcp rpc ".to_string(),
+        None => BARE_RPC.to_string(),
     };
     let path = socket_path(pid);
 
@@ -1443,7 +1460,29 @@ pub fn run_mcp_cli(args: &[String]) -> i32 {
         if req.is_empty() {
             continue;
         }
-        match send_within(&path, &format!("{prefix}{req}"), budget) {
+        let mut sent = send_within(&path, &format!("{prefix}{req}"), budget);
+        // A window from a build that predates `mcp from` calls it an unknown
+        // command. That window is running somebody's terminals and cannot be
+        // replaced without ending them, so the relay steps back to the form it
+        // does understand and stays stepped back for the rest of the run.
+        //
+        // Without this the agent hangs: an `err` line is logged to stderr and
+        // nothing is written to stdout, so the tool call never returns. The
+        // relay is whatever `~/.local/bin` points at while the windows are
+        // whatever was running before the cutover, so new-relay-old-window is
+        // the NORMAL state for as long as it takes to restart them — not an
+        // edge case, and not one to leave as a hang.
+        if is_unknown_verb(&sent) && prefix != BARE_RPC {
+            eprintln!(
+                "terminal-delight mcp: window {pid} predates `mcp from` — \
+                 falling back to the unnamed form for this run. It cannot refuse \
+                 a call meant for another instance, and pane-scoped verbs will \
+                 need an explicit pid. Restart that window to get both back."
+            );
+            prefix = BARE_RPC.to_string();
+            sent = send_within(&path, &format!("{prefix}{req}"), budget);
+        }
+        match sent {
             // A notification: JSON-RPC says answer nothing, so write nothing.
             Ok(r) if r == MCP_NONE => {}
             // A protocol-level refusal from ctl (never from the MCP handler,
@@ -1988,6 +2027,45 @@ mod tests {
         ] {
             assert!(parse_line(line).is_err(), "accepted a broken caller: {line}");
         }
+    }
+
+    /// An older window's refusal of `mcp from` is recognised, and nothing else
+    /// is. Retrying a real error into the unnamed form would hide it — and the
+    /// unnamed form skips the wrong-window guard, so hiding an error there is
+    /// the one place it costs the most.
+    #[test]
+    fn only_an_unknown_verb_makes_the_relay_step_back() {
+        let unknown = Ok(
+            "err unknown command \"mcp from 1 - rpc {}\" — try: ping | whoami | …".to_string(),
+        );
+        assert!(is_unknown_verb(&unknown));
+
+        for real_answer in [
+            "err ui gone".to_string(),
+            "err mcp from: empty payload".to_string(),
+            r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32001,"message":"wrong window: …"}}"#
+                .to_string(),
+            MCP_NONE.to_string(),
+        ] {
+            assert!(
+                !is_unknown_verb(&Ok(real_answer.clone())),
+                "would have retried a real answer: {real_answer}"
+            );
+        }
+        assert!(!is_unknown_verb(&Err(std::io::Error::other("gone"))));
+    }
+
+    /// The refusal an old window actually produces is the one being matched.
+    /// Asserting against a hand-written string would pass while the real text
+    /// drifted, which is how a fallback ends up never firing.
+    #[test]
+    fn the_step_back_matches_what_this_parser_really_says() {
+        let err = parse_line(r#"mcp from tdclip 9 rpc {"id":1}"#.replace("mcp from", "mcp fromm").as_str())
+            .expect_err("a misspelled verb is unknown");
+        assert!(
+            is_unknown_verb(&Ok(format!("err {err}"))),
+            "the fallback would not recognise this parser's own refusal: {err}"
+        );
     }
 
     /// `mcp from … - rpc …` survives the CLI's flag parser.
