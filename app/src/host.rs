@@ -48,8 +48,8 @@ use polling::{Event, PollMode, Poller};
 use crate::gridwire;
 use crate::hostproto::{
     host_socket_path, parse_stream_greeting, ClosedPane, GridCheck, Outcome, PaneGeom, PaneId,
-    PaneInfo, Persisted, Push, Reply, Request, WireMode, ENV_PANE_ID, ENV_SESSION, LAYOUT_SCHEMA,
-    PROTO_VERSION,
+    PaneInfo, Persisted, Push, Reply, Request, WireMode, ENV_PANE_ID, ENV_SESSION, ENV_TAG,
+    LAYOUT_SCHEMA, PROTO_VERSION,
 };
 use crate::session::PaneRuntime;
 use crate::term::GridSize;
@@ -656,6 +656,14 @@ impl Host {
         options
             .env
             .insert(ENV_PANE_ID.to_string(), pane.0.to_string());
+        // And the tag the window's bench signs its typed lines with, so what
+        // runs here can tell an operator's line from one it merely read.
+        // Minted on first use by whichever side asks first — see
+        // [`crate::hostproto::session_tag`].
+        options.env.insert(
+            ENV_TAG.to_string(),
+            crate::hostproto::session_tag(&self.key),
+        );
         if let Some(program) = &self.shell {
             options.shell = Some(tty::Shell::new(program.clone(), vec![]));
         }
@@ -2846,6 +2854,11 @@ mod owning {
         assert!(
             environ.contains(&format!("TD_PANE_ID={}", info.pane)),
             "the child was not told its pane"
+        );
+        let tag = crate::hostproto::session_tag("session-under-test");
+        assert!(
+            environ.contains(&format!("TD_TAG={tag}")),
+            "the child was not told the tag its bench signs with"
         );
     }
 

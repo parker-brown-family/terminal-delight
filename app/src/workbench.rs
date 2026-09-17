@@ -1589,7 +1589,19 @@ impl Bench {
                 let id = incoming.id.clone();
                 match self.surfaces.iter_mut().find(|s| s.id == id) {
                     Some(existing) if post.op == Op::Update => existing.merge(incoming),
-                    Some(existing) => *existing = incoming,
+                    Some(existing) => {
+                        // The same surface presented again is not a change.
+                        // The derived half re-presents every sweep with a
+                        // fresh clock, and taking that as new work reset every
+                        // row's age to zero once a second and repainted the
+                        // pane to say so. Only the clock is allowed to differ.
+                        let mut probe = incoming.clone();
+                        probe.arrived_ms = existing.arrived_ms;
+                        if probe == *existing {
+                            return None;
+                        }
+                        *existing = incoming;
+                    }
                     None => {
                         self.surfaces.push(incoming);
                         // The cap drops the OLDEST, never the newest: a bench
@@ -1873,6 +1885,32 @@ mod tests {
     }
 
     #[test]
+    fn presenting_the_same_surface_again_changes_nothing_and_keeps_its_arrival() {
+        // The derived half re-presents every sweep with a fresh clock. That
+        // is not a change, and treating it as one reset every row's age to
+        // zero once a second and repainted the pane to say so.
+        let mut b = Bench::new();
+        let mut first = doc("same", "First");
+        first.surface.as_mut().unwrap().arrived_ms = 1_000;
+        assert!(b.apply(first).is_some(), "the first arrival is news");
+        let mut again = doc("same", "First");
+        again.surface.as_mut().unwrap().arrived_ms = 61_000;
+        assert!(
+            b.apply(again).is_none(),
+            "the same surface a minute later is not"
+        );
+        assert_eq!(
+            b.get(&SurfaceId("same".into())).unwrap().arrived_ms,
+            1_000,
+            "and it keeps when it first arrived"
+        );
+        let mut changed = doc("same", "Second");
+        changed.surface.as_mut().unwrap().arrived_ms = 62_000;
+        assert!(b.apply(changed).is_some(), "a different title is a change");
+        assert_eq!(b.get(&SurfaceId("same".into())).unwrap().arrived_ms, 62_000);
+    }
+
+    #[test]
     fn an_update_merges_and_a_present_replaces() {
         let mut b = Bench::new();
         b.apply(post(json!({
@@ -2033,7 +2071,7 @@ mod tests {
             Dispatch::Tell(report) => {
                 assert_eq!(report.action, Action::RejectPart);
                 assert_eq!(report.target.as_deref(), Some("h1"));
-                assert!(report.to_prompt().contains("wrong seam"));
+                assert!(report.to_prompt(None).contains("wrong seam"));
             }
             other => panic!("{other:?}"),
         }

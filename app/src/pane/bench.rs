@@ -1046,9 +1046,13 @@ impl TerminalView {
                         &report,
                     );
                 }
-                let mut line = report.to_prompt();
-                line.push('\n');
-                self.session.notifier.notify(line.into_bytes());
+                // Tagged with this session's secret and typed the way the
+                // composer types — a carriage return submits it and nothing
+                // inside it can. See [`crate::hostproto::session_tag`].
+                let line = report.to_prompt(crate::surfacefeed::tag());
+                self.session
+                    .notifier
+                    .notify(crate::workbench::typed_line(&line));
                 // Answering is looking: the person has dealt with this surface,
                 // so the pane turns back to the conversation it just fed,
                 // where the reply to what they said will appear.

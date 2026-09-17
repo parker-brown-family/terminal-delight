@@ -90,6 +90,19 @@ pub fn session() -> Option<&'static str> {
     SESSION.get().map(String::as_str)
 }
 
+/// This session's tag: what the bench types in front of every line it puts
+/// into a pane. See [`crate::hostproto::session_tag`].
+static TAG: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+/// Record the session tag, once, beside the key.
+pub fn adopt_tag(tag: String) {
+    let _ = TAG.set(tag);
+}
+
+pub fn tag() -> Option<&'static str> {
+    TAG.get().map(String::as_str)
+}
+
 /// The directory this window watches: every pane of its own session.
 pub fn session_dir() -> Option<PathBuf> {
     session().map(|key| surfaces_root().join(sanitise(key)))

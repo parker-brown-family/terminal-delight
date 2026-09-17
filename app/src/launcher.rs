@@ -355,9 +355,21 @@ fn shell_quote(raw: &str) -> String {
 /// it is useful to read when something is not working, and it is swept with
 /// everything else when the session goes.
 pub fn write_briefing(dir: &Path, text: &str) -> std::io::Result<PathBuf> {
+    use std::io::Write as _;
+    use std::os::unix::fs::{OpenOptionsExt as _, PermissionsExt as _};
     std::fs::create_dir_all(dir)?;
     let path = dir.join("briefing.txt");
-    std::fs::write(&path, text)?;
+    // A system prompt is an instruction to an agent: keep it to this user
+    // from the first byte, and re-assert it on a file that already existed
+    // with the old mode.
+    let mut f = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(&path)?;
+    f.write_all(text.as_bytes())?;
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
     Ok(path)
 }
 

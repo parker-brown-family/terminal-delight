@@ -30,12 +30,19 @@ is deliberate. Authorisation is a property of the connection, and the moment it
 becomes a field in a message, every future transport inherits a security model
 that was only ever true of a local pipe.
 
-The host stamps two variables into every pane it starts, so a program inside a
-terminal can say which session and which pane it is in without walking `/proc`
-and guessing:
+The host stamps three variables into every pane it starts, so a program inside
+a terminal can say which session and which pane it is in without walking
+`/proc` and guessing — and can tell a line its operator typed from one it
+merely read:
 
 - `TD_SESSION` — the session key.
 - `TD_PANE_ID` — the pane's durable id.
+- `TD_TAG` — the session's tag. The window's bench types it in front of every
+  line it puts into a pane (`[workbench:<tag>] …`), so an agent that reads a
+  `[workbench]` line without its tag knows nobody pressed anything. Minted
+  once per session into `session-<key>.tag` beside the socket, `0600`, by
+  whichever of the host or the window asks first — a secret from a web page,
+  not from a process running as the same user.
 
 ## Framing
 

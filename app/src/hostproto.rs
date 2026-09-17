@@ -30,6 +30,10 @@ pub const PROTO_VERSION: u32 = 1;
 /// walking `/proc` and guessing.
 pub const ENV_SESSION: &str = "TD_SESSION";
 pub const ENV_PANE_ID: &str = "TD_PANE_ID";
+/// The session's tag: what the window types in front of every line the bench
+/// puts into a pane, so an agent can tell an operator's line from text it
+/// merely read. Minted by [`session_tag`].
+pub const ENV_TAG: &str = "TD_TAG";
 
 /// A pane's durable name.
 ///
@@ -474,6 +478,106 @@ fn write_window_pid_at(path: &Path, pid: u32) {
         let _ = std::fs::create_dir_all(dir);
     }
     let _ = std::fs::write(path, pid.to_string());
+}
+
+/// Where a session keeps the tag its bench signs with. See [`session_tag`].
+pub fn tag_path(key: &str) -> PathBuf {
+    runtime_dir().join(format!("session-{key}.tag"))
+}
+
+/// The tag this session's bench types in front of every line it puts into a
+/// pane — `[workbench:<tag>] …` — and that the host stamps into every pane as
+/// `$TD_TAG`, so an agent can tell a line its operator pressed from one it
+/// merely read somewhere.
+///
+/// A file beside the socket rather than a field on the host, because the host
+/// is the half that only upgrades by dying: a window from this build attached
+/// to a host from an older one still needs the same tag the panes will carry
+/// once that host is replaced, and whichever side asks first mints it. Eight
+/// characters from `/dev/urandom`, written `0600` and never rewritten. It is a
+/// secret from a web page — not from anything running as this user, which can
+/// read the file or the environment either way.
+pub fn session_tag(key: &str) -> String {
+    session_tag_at(&tag_path(key))
+}
+
+/// The same, at an explicit path — the seam the tests use.
+pub fn session_tag_at(path: &Path) -> String {
+    if let Some(existing) = read_tag(path) {
+        return existing;
+    }
+    let fresh = mint_tag();
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    use std::io::Write as _;
+    use std::os::unix::fs::OpenOptionsExt as _;
+    // `create_new`: if two processes mint at once, exactly one write lands
+    // and the other reads it back — the panes and the bench must agree.
+    match std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(path)
+    {
+        Ok(mut f) => {
+            let _ = f.write_all(fresh.as_bytes());
+            fresh
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => match read_tag(path) {
+            Some(theirs) => theirs,
+            None => {
+                // Something is there and it is not a tag. Replace it, so the
+                // next asker — the host, stamping a pane — reads this one
+                // rather than minting a third.
+                if let Ok(mut f) = std::fs::OpenOptions::new()
+                    .write(true)
+                    .truncate(true)
+                    .mode(0o600)
+                    .open(path)
+                {
+                    let _ = f.write_all(fresh.as_bytes());
+                }
+                fresh
+            }
+        },
+        Err(_) => fresh,
+    }
+}
+
+fn read_tag(path: &Path) -> Option<String> {
+    let s = std::fs::read_to_string(path).ok()?;
+    let s = s.trim();
+    (s.len() == TAG_LEN && s.bytes().all(|b| TAG_ALPHABET.contains(&b))).then(|| s.to_string())
+}
+
+const TAG_LEN: usize = 8;
+/// Lowercase letters and digits minus the four a person misreads in a
+/// terminal: no `l`, `1`, `o`, `0`. Thirty-two symbols, so a byte modulo the
+/// alphabet is uniform.
+const TAG_ALPHABET: &[u8] = b"abcdefghijkmnpqrstuvwxyz23456789";
+
+fn mint_tag() -> String {
+    let mut raw = [0u8; TAG_LEN];
+    let read = std::fs::File::open("/dev/urandom").and_then(|mut f| {
+        use std::io::Read as _;
+        f.read_exact(&mut raw)
+    });
+    if read.is_err() {
+        // Not a machine this runs on. Still never hand out the same tag twice:
+        // the clock and the pid are a poor secret and a fine tie-breaker.
+        let seed = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos() as u64)
+            .unwrap_or(0)
+            ^ (std::process::id() as u64).rotate_left(32);
+        for (i, b) in raw.iter_mut().enumerate() {
+            *b = (seed >> (i * 8)) as u8;
+        }
+    }
+    raw.iter()
+        .map(|b| TAG_ALPHABET[(*b as usize) % TAG_ALPHABET.len()] as char)
+        .collect()
 }
 
 /// The private, per-user directory the sockets live in — the same one the
@@ -1111,11 +1215,50 @@ mod contract {
             doc.contains(name),
             "the page does not name the socket the host binds: {name}"
         );
-        for var in [ENV_SESSION, ENV_PANE_ID] {
+        for var in [ENV_SESSION, ENV_PANE_ID, ENV_TAG] {
             assert!(
                 doc.contains(var),
                 "the page does not name {var}, which every pane is stamped with"
             );
         }
+    }
+
+    #[test]
+    fn a_session_tag_is_minted_once_and_read_back_the_same() {
+        let dir = std::env::temp_dir().join(format!("td-tag-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let path = dir.join("session-t.tag");
+        let first = session_tag_at(&path);
+        let second = session_tag_at(&path);
+        assert_eq!(first, second, "the second ask reads what the first minted");
+        assert_eq!(first.len(), TAG_LEN);
+        assert!(first.bytes().all(|b| TAG_ALPHABET.contains(&b)), "{first}");
+        use std::os::unix::fs::PermissionsExt as _;
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "the tag file is private to the user");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn two_sessions_do_not_share_a_tag_and_a_corrupt_file_is_replaced() {
+        let dir = std::env::temp_dir().join(format!("td-tag-test2-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let a = session_tag_at(&dir.join("session-a.tag"));
+        let b = session_tag_at(&dir.join("session-b.tag"));
+        assert_ne!(a, b, "two sessions minted the same tag");
+        let bad = dir.join("session-c.tag");
+        std::fs::write(&bad, "not a tag at all\n").unwrap();
+        let c = session_tag_at(&bad);
+        assert_eq!(
+            c.len(),
+            TAG_LEN,
+            "a corrupt file yields a well-formed tag: {c}"
+        );
+        assert_eq!(
+            session_tag_at(&bad),
+            c,
+            "and the replacement is what the next asker reads"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

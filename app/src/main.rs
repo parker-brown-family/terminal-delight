@@ -32438,6 +32438,9 @@ fn main() {
     // later — that variable names the session of whatever pane LAUNCHED this
     // window, which is usually a different one.
     surfacefeed::adopt_session(&key);
+    // And the tag its bench signs with, minted beside the host's socket by
+    // whichever side asked first — see [`crate::hostproto::session_tag`].
+    surfacefeed::adopt_tag(crate::hostproto::session_tag(&key));
     // Bind the key either way: a scratch window still reads the workspace's
     // theme so it looks like the rest of the session — it just never writes.
     instance::bind(key.clone(), claim.lock);
