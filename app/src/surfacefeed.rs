@@ -327,6 +327,23 @@ pub fn journal(path: &Path, report: &ActionReport) -> std::io::Result<()> {
     file.write_all(line.as_bytes())
 }
 
+/// Append one JSON event that is not an action report — a launch, say — to a
+/// journal of its own beside the action ones. Same append, same one-object-
+/// per-line shape, so a reader walking either file needs one parser.
+pub fn journal_event(path: &Path, event: &Value) -> std::io::Result<()> {
+    use std::io::Write;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let mut file = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)?;
+    let mut line = serde_json::to_string(event).unwrap_or_default();
+    line.push('\n');
+    file.write_all(line.as_bytes())
+}
+
 /// Write a surface from inside this process — the CLI's front door, and the
 /// path every test uses to put something on a bench.
 pub fn drop_surface(dir: &Path, name: &str, value: &Value) -> std::io::Result<PathBuf> {

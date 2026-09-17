@@ -273,12 +273,71 @@ pub fn filter(projects: &[Project], query: &str) -> Vec<usize> {
     scored.into_iter().map(|(_, i)| i).collect()
 }
 
+/// How far a launched agent may reach without asking, in the harness's own
+/// terms.
+///
+/// `Anywhere` is the machine posture and adds nothing to the command line —
+/// the launcher prints the same line it printed before this row existed. The
+/// other two exist for the one launch in twenty whose first job is to read a
+/// stranger's pull request: the agents that were owned in the OpenClaw
+/// incidents were the ones with the widest reach reading the least trusted
+/// input. It is a dial, not a policy; it changes nothing until touched.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum Reach {
+    /// Edits inside the project are taken; anything else asks.
+    Repo,
+    /// The harness's own middle setting — its classifier or its full sandbox.
+    Machine,
+    /// Whatever the machine's own configuration says. The default.
+    #[default]
+    Anywhere,
+}
+
+impl Reach {
+    pub const ALL: [Reach; 3] = [Reach::Repo, Reach::Machine, Reach::Anywhere];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Reach::Repo => "this repo",
+            Reach::Machine => "this machine",
+            Reach::Anywhere => "anywhere",
+        }
+    }
+
+    /// The word in the launch journal.
+    pub fn id(self) -> &'static str {
+        match self {
+            Reach::Repo => "repo",
+            Reach::Machine => "machine",
+            Reach::Anywhere => "anywhere",
+        }
+    }
+
+    /// The flags this reach adds, per harness. Checked against `claude --help`
+    /// (2.1.270) and `codex --help` (0.151.0) on this machine, 2026-09-17,
+    /// rather than remembered: `--permission-mode` offers `acceptEdits`,
+    /// `auto`, `bypassPermissions`, `manual`, `dontAsk`, `plan`; `--sandbox`
+    /// offers `read-only`, `workspace-write`, `danger-full-access`.
+    pub fn flags(self, harness: Harness) -> Vec<String> {
+        let words: &[&str] = match (harness, self) {
+            (_, Reach::Anywhere) => &[],
+            (Harness::Claude, Reach::Repo) => &["--permission-mode", "acceptEdits"],
+            (Harness::Claude, Reach::Machine) => &["--permission-mode", "auto"],
+            (Harness::Codex, Reach::Repo) => &["--sandbox", "workspace-write"],
+            (Harness::Codex, Reach::Machine) => &["--sandbox", "danger-full-access"],
+        };
+        words.iter().map(|w| w.to_string()).collect()
+    }
+}
+
 /// Everything a launch needs.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Recipe {
     pub harness: Harness,
     pub model: &'static str,
     pub effort: Effort,
+    /// How far the agent may reach without asking. See [`Reach`].
+    pub reach: Reach,
     /// The directory the terminal starts in.
     pub cwd: PathBuf,
     /// What to say to the agent first, if anything. Optional on purpose: an
@@ -300,6 +359,7 @@ impl Recipe {
             Harness::Claude => {
                 parts.push("--model".into());
                 parts.push(self.model.to_string());
+                parts.extend(self.reach.flags(self.harness));
                 if let Some(path) = briefing {
                     parts.push("--append-system-prompt".into());
                     parts.push(format!(
@@ -311,6 +371,7 @@ impl Recipe {
             Harness::Codex => {
                 parts.push("--model".into());
                 parts.push(self.model.to_string());
+                parts.extend(self.reach.flags(self.harness));
                 parts.push("-c".into());
                 parts.push(format!(
                     "model_reasoning_effort={}",
@@ -373,6 +434,22 @@ pub fn write_briefing(dir: &Path, text: &str) -> std::io::Result<PathBuf> {
     Ok(path)
 }
 
+/// FNV-1a 64 over the briefing bytes, as sixteen hex digits.
+///
+/// An integrity mark for the launch journal — a briefing that changed between
+/// the launcher writing it and the recipe's `$(cat …)` reading it is
+/// detectable afterwards rather than silent — and not an authentication: a
+/// process that can rewrite the file can recompute this, and the journal
+/// line names the algorithm so nobody reads more into it than that.
+pub fn fingerprint(text: &str) -> String {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in text.bytes() {
+        hash ^= b as u64;
+        hash = hash.wrapping_mul(0x100_0000_01b3);
+    }
+    format!("{hash:016x}")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -382,9 +459,48 @@ mod tests {
             harness,
             model: harness.models()[0].id,
             effort,
+            reach: Reach::Anywhere,
             cwd: PathBuf::from("/home/parker/Work/terminal-delight"),
             opener: None,
         }
+    }
+
+    #[test]
+    fn anywhere_adds_nothing_and_the_other_reaches_add_the_harness_own_flags() {
+        let plain = recipe(Harness::Claude, Effort::Standard).command_line(None);
+        let mut r = recipe(Harness::Claude, Effort::Standard);
+        r.reach = Reach::Anywhere;
+        assert_eq!(
+            r.command_line(None),
+            plain,
+            "anywhere is the machine posture: the line the panel always printed"
+        );
+        r.reach = Reach::Repo;
+        assert!(
+            r.command_line(None)
+                .contains("--permission-mode acceptEdits"),
+            "{}",
+            r.command_line(None)
+        );
+        r.reach = Reach::Machine;
+        assert!(r.command_line(None).contains("--permission-mode auto"));
+        let mut c = recipe(Harness::Codex, Effort::Hard);
+        c.reach = Reach::Repo;
+        assert!(c.command_line(None).contains("--sandbox workspace-write"));
+        c.reach = Reach::Machine;
+        assert!(c
+            .command_line(None)
+            .contains("--sandbox danger-full-access"));
+        c.reach = Reach::Anywhere;
+        assert!(!c.command_line(None).contains("--sandbox"));
+        assert_eq!(Reach::default(), Reach::Anywhere);
+    }
+
+    #[test]
+    fn a_briefing_fingerprint_is_stable_and_tells_two_texts_apart() {
+        assert_eq!(fingerprint("abc"), fingerprint("abc"));
+        assert_ne!(fingerprint("abc"), fingerprint("abd"));
+        assert_eq!(fingerprint("").len(), 16, "sixteen hex digits, always");
     }
 
     #[test]

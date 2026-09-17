@@ -2727,6 +2727,9 @@ struct AgentLauncher {
     /// because the two lists are different lengths.
     model_ix: usize,
     effort: launcher::Effort,
+    /// How far the launched agent may reach without asking. Defaults to the
+    /// machine posture; see [`launcher::Reach`].
+    reach: launcher::Reach,
 }
 
 impl AgentLauncher {
@@ -10714,6 +10717,7 @@ impl Workspace {
             harness: launcher::Harness::Claude,
             model_ix: 0,
             effort: launcher::Effort::Standard,
+            reach: launcher::Reach::Anywhere,
         };
         lp.recompute();
         // Pre-select where the person already is, by path rather than by name:
@@ -10753,6 +10757,7 @@ impl Workspace {
             harness: lp.harness,
             model: lp.model().id,
             effort: lp.effort,
+            reach: lp.reach,
             cwd: project.path.clone(),
             opener: None,
         };
@@ -10778,6 +10783,32 @@ impl Workspace {
         };
         let line = recipe.command_line(briefing_path.as_deref());
         eprintln!("terminal-delight: launching — {line}");
+        // What the button was made of, on the record: the command, the reach,
+        // and a fingerprint of the briefing the agent was actually handed —
+        // so a briefing that changed between being written and being read is
+        // detectable afterwards rather than silent. An integrity mark, not an
+        // authentication; the field name says which algorithm.
+        if let Some(dir) = surfacefeed::session_dir() {
+            let briefing_fnv = briefing_path
+                .as_deref()
+                .and_then(|p| std::fs::read_to_string(p).ok())
+                .map(|t| launcher::fingerprint(&t));
+            let _ = surfacefeed::journal_event(
+                &dir.join("launches.jsonl"),
+                &serde_json::json!({
+                    "td": crate::surface::TDSP_VERSION,
+                    "type": "launch",
+                    "at_ms": surfacefeed::now_ms(),
+                    "harness": recipe.harness.binary(),
+                    "model": recipe.model,
+                    "effort": recipe.effort.label(),
+                    "reach": recipe.reach.id(),
+                    "cwd": project.path.to_string_lossy(),
+                    "command": line,
+                    "briefing_fnv1a64": briefing_fnv,
+                }),
+            );
+        }
         self.adopt_pane(
             Some(project.path.to_string_lossy().to_string()),
             Some(line),
@@ -12003,12 +12034,40 @@ impl Workspace {
                         )
                 }));
 
+        // How far it may reach without asking. `anywhere` is lit by default
+        // and adds nothing; the other two add the harness's own flags, which
+        // the command line underneath prints like everything else. A dial,
+        // not a policy — for the one launch in twenty whose first job is a
+        // stranger's pull request.
+        let reach_row =
+            div()
+                .flex()
+                .flex_row()
+                .gap_1()
+                .children(launcher::Reach::ALL.into_iter().map(|r| {
+                    sk.chip(r == lp.reach)
+                        .cursor_pointer()
+                        .text_size(px(11.))
+                        .child(r.label())
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                                cx.stop_propagation();
+                                if let Some(lp) = ws.agent_launcher.as_mut() {
+                                    lp.reach = r;
+                                }
+                                cx.notify();
+                            }),
+                        )
+                }));
+
         // What it will actually run. Whole, on its own line, never elided.
         let preview = {
             let recipe = launcher::Recipe {
                 harness: lp.harness,
                 model: lp.model().id,
                 effort: lp.effort,
+                reach: lp.reach,
                 cwd: lp
                     .project()
                     .map(|p| p.path.clone())
@@ -12083,6 +12142,8 @@ impl Workspace {
             .child(model_row)
             .child(head("EFFORT"))
             .child(effort_row)
+            .child(head("REACH"))
+            .child(reach_row)
             .child(
                 div()
                     .mt_1()
