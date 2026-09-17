@@ -4414,9 +4414,11 @@ impl TerminalView {
                 // Paste is the one keystroke that cannot go straight through,
                 // because what is on the clipboard may not be text at all.
                 // See [`Self::bench_paste`].
-                let paste = matches!(ks.key.as_str(), "v") && ks.modifiers.control
-                    || (ks.key.as_str() == "insert" && ks.modifiers.shift);
-                if paste {
+                if crate::workbench::is_paste_chord(
+                    &ks.key,
+                    ks.modifiers.control,
+                    ks.modifiers.shift,
+                ) {
                     self.bench_paste(cx);
                     cx.stop_propagation();
                     return;

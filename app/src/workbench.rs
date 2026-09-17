@@ -215,6 +215,22 @@ pub fn rail_fit(pane_w: f32, wanted: bool) -> RailFit {
     RailFit::Open(want as u32)
 }
 
+/// Is this keystroke a paste?
+///
+/// All three chords a person might use, because they arrive from three
+/// different habits and getting one wrong means an image silently does not
+/// paste: `ctrl+v` from every graphical app, `ctrl+shift+v` from every
+/// terminal, and `shift+insert` from X11 and from anyone who learned this
+/// before either. The key is matched case-insensitively — a keyboard with
+/// shift held reports `V` on some platforms and `v` on others, and that
+/// difference has nothing to do with what the person meant.
+pub fn is_paste_chord(key: &str, ctrl: bool, shift: bool) -> bool {
+    if key.eq_ignore_ascii_case("v") && ctrl {
+        return true;
+    }
+    key.eq_ignore_ascii_case("insert") && shift
+}
+
 /// The image type to ask a clipboard for, out of everything it is offering.
 ///
 /// Wayland clipboards are a LIST of types, and a copied image usually arrives
@@ -1296,6 +1312,22 @@ mod tests {
             RailFit::Hidden,
             "too narrow for anything"
         );
+    }
+
+    #[test]
+    fn every_paste_chord_a_person_might_use_is_a_paste() {
+        assert!(is_paste_chord("v", true, false), "the graphical chord");
+        assert!(is_paste_chord("v", true, true), "the terminal chord");
+        assert!(
+            is_paste_chord("V", true, true),
+            "shift may capitalise the key"
+        );
+        assert!(is_paste_chord("insert", false, true), "the old chord");
+        // And nothing else is. `v` alone is a letter someone is typing to an
+        // agent, and swallowing it would make the composer eat a character.
+        assert!(!is_paste_chord("v", false, false));
+        assert!(!is_paste_chord("c", true, false));
+        assert!(!is_paste_chord("insert", false, false));
     }
 
     #[test]
