@@ -4116,26 +4116,28 @@ impl TerminalView {
         crate::sticky::layout(bounds, note.tilt(), self.note_corner(bounds))
     }
 
-    /// Where this pane's note belongs, and how much it has to keep clear.
+    /// Where this pane's note belongs.
     ///
-    /// The clearance is the TALLEST the composer can grow to, not its height
-    /// this frame: a note that is clear of a one-line box and buried under a
-    /// four-line one would move under the person's hands as they typed, which
-    /// is worse than sitting a little higher than it needs to.
-    fn note_corner(&self, bounds: gpui::Bounds<gpui::Pixels>) -> crate::sticky::Corner {
+    /// The first version cleared a FULLY GROWN composer, on the reasoning that
+    /// a note which is clear of one line and buried under four would move
+    /// under somebody's hands while they typed. That reasoning was sound and
+    /// the result was a note hovering a third of the way up the pane, which is
+    /// not the corner anybody asked for — Parker, looking at it: *"I mean ---
+    /// lower?"*.
+    ///
+    /// So it sits in the corner, and the collision it was avoiding is the one
+    /// he had already permitted: the note is 128–200 wide at the right edge,
+    /// the composer's badge is what lives there, and covering the badge was
+    /// explicitly fine. A long wrapped line CAN reach under it, which is the
+    /// cost of the corner and is his call to make rather than mine to prevent.
+    fn note_corner(&self, _bounds: gpui::Bounds<gpui::Pixels>) -> crate::sticky::Corner {
         if self.bench.face() != crate::workbench::Face::Workbench || !self.mode.is_agent() {
             return crate::sticky::Corner::TopRight;
         }
-        let shows = crate::workbench::shows(
-            f32::from(bounds.size.width),
-            f32::from(bounds.size.height),
-            true,
-            self.bench.rail_wanted(),
-            self.wb_compose.is_some(),
-        );
-        crate::sticky::Corner::BottomRight {
-            clear: shows.composer_max + 40.0,
-        }
+        // Zero, because the layout already insets by 22 plus a tenth of the
+        // note's own height — the same inset the top corner uses, so the two
+        // sit at the same distance by eye rather than by number.
+        crate::sticky::Corner::BottomRight { clear: 0.0 }
     }
 
     /// `alt+s`, or a click on the paper: stick a note on, or pick the pen back up
