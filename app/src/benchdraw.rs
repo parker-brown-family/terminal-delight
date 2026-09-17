@@ -393,11 +393,23 @@ pub fn weights(w: &Weight, sk: &Skin, th: &Theme) -> Div {
 /// The body of whatever is selected, at the size this pane can honestly show.
 pub fn body(surface: &Surface, how: Embodiment, sk: &Skin, th: &Theme) -> Div {
     let frame = div().flex().flex_col().gap(px(10.)).w_full();
+    // A QUESTION gets neither the subtitle nor the weights strip.
+    //
+    // `2 options · waiting on you` counts something the reader can see and
+    // repeats what the label already said, and `unweighed` is the agent
+    // declining to estimate a picker it did not declare. Both are true and
+    // neither is worth a line in front of somebody who has been asked a
+    // question. Parker: *"2 options (we can see it is 2 options, no need to
+    // show this... if the machine needs it fine, but don't show user)"*.
+    let asking = matches!(surface.kind, Kind::Question(_));
     match how {
         Embodiment::Summary => frame.child(summary_line(surface, th)),
         Embodiment::Compact => frame
             .child(heading(surface, sk, th))
             .child(compact(surface, sk, th)),
+        Embodiment::Full if asking => frame
+            .child(heading(surface, sk, th))
+            .child(full(surface, sk, th)),
         Embodiment::Full => frame
             .child(heading(surface, sk, th))
             .child(weights(&surface.weight, sk, th))
@@ -451,7 +463,14 @@ fn heading(surface: &Surface, sk: &Skin, th: &Theme) -> Div {
                         .child(surface.title.clone()),
                 ),
         )
-        .child(micro(surface.subtitle(), 10.5, th.faint, th))
+        // The subtitle, for the kinds whose subtitle says something a reader
+        // cannot already see. A question's is a count of its own visible
+        // options beside a state its own colour already carries, so it is
+        // omitted rather than dimmed: a line nobody needs is noise at any
+        // opacity.
+        .when(!matches!(surface.kind, Kind::Question(_)), |d| {
+            d.child(micro(surface.subtitle(), 10.5, th.faint, th))
+        })
 }
 
 /// The shape of the thing, for a pane too small to hold the thing.
@@ -570,6 +589,82 @@ pub fn round_progress(round: &crate::surface::Round, sk: &Skin, th: &Theme) -> D
         ))
 }
 
+/// The review flyout: one answered question at a time, with arrows.
+///
+/// A round of five leaves five answers scattered down a rail, and checking
+/// what you said means opening each one and losing the question you are in the
+/// middle of. Parker: *"a button to REVIEW answers -> clicking this would open
+/// a flyout overlay (so that we don't navigate around) which has a left arrow
+/// right arrow gallery type of a feel for questions asked and answered"*.
+///
+/// An OVERLAY rather than a card, deliberately: the thing underneath is a
+/// question somebody is part-way through answering, and replacing it with a
+/// history is exactly the navigation this exists to avoid. It draws over, and
+/// closing it puts the person back where they were with nothing to restore.
+///
+/// The pane attaches the arrows and the close, because pressing one is a
+/// change of state rather than a change of picture.
+pub fn review_flyout(
+    at: usize,
+    total: usize,
+    title: &str,
+    answer: &str,
+    sk: &Skin,
+    th: &Theme,
+) -> Div {
+    let tint = ink(crate::workbench::Tint::Settled, th);
+    aglow(
+        sk.panel()
+            .absolute()
+            .left(px(18.))
+            .right(px(18.))
+            .bottom(px(18.))
+            .flex()
+            .flex_col()
+            .gap(px(10.))
+            .p(px(16.))
+            .bg(th.surface)
+            .border_l(px(3.))
+            .border_color(tint)
+            // Over everything, and taking its own clicks: an overlay that
+            // let a press through to the card underneath would answer a
+            // question while somebody was reading an old one.
+            .occlude(),
+        tint,
+        th,
+    )
+    .child(
+        div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(8.))
+            .child(micro("REVIEW", 9.5, tint, th))
+            .child(div().flex_1())
+            // Where you are in the gallery, said plainly. This is a count a
+            // person cannot see — unlike the option count, which was printed
+            // over the top of the options themselves.
+            .child(micro(
+                format!("{} of {}", at + 1, total.max(1)),
+                9.5,
+                th.faint,
+                th,
+            )),
+    )
+    .child(
+        div()
+            .text_size(px(15.))
+            .text_color(th.text)
+            .child(title.to_string()),
+    )
+    .child(
+        div()
+            .text_size(px(13.))
+            .text_color(tint)
+            .child(answer.to_string()),
+    )
+}
+
 /// A question, opened from the rail.
 ///
 /// Deliberately the same object as [`waiting_block`] — the same tint, the same
@@ -581,116 +676,85 @@ pub fn round_progress(round: &crate::surface::Round, sk: &Skin, th: &Theme) -> D
 /// The heading above already asks the question, so this does not ask it again:
 /// what it adds is what each option COSTS, which is the part a person is
 /// actually weighing. The pane attaches the pressable chips underneath.
+/// A question, opened from the rail — the QUESTION, and what you can do
+/// about it.
+///
+/// It used to ask three times. The heading asked it, then a nested block
+/// carrying its own WAITING ON YOU asked it again, then the options appeared
+/// twice: once as a list of labelled panels and once as the chips the pane
+/// attaches underneath. Parker: *"declaring question then asking a question is
+/// an anti-pattern in UX (can i ask you a question? question ... just ASK THE
+/// QUESTION!"*.
+///
+/// So this renders only what the heading and the chips cannot: what each
+/// option COSTS, where the agent said so, and how a settled question was
+/// settled. On a question with no descriptions and no answer — which is what
+/// `Ready to submit your answers?` is — it renders nothing at all, and the
+/// card is a question and two buttons.
 fn question(q: &crate::surface::Question, sk: &Skin, th: &Theme) -> Div {
     use crate::surface::Answered;
     let chosen = match q.answer {
         Answered::Chose(i) => Some(i),
         _ => None,
     };
-    let waiting = q.answer == Answered::Waiting;
-    let tint = if waiting {
-        ink(crate::workbench::Tint::Waiting, th)
-    } else {
-        ink(crate::workbench::Tint::Settled, th)
-    };
-    // Waiting earns the phosphor; answered is a record and records do not
-    // ask for attention.
-    let dress = if waiting { aglow } else { raised };
-    dress(
-        sk.panel()
-            .flex()
-            .flex_col()
-            .gap(px(10.))
-            .p(px(14.))
-            .bg(th.surface)
-            .border_l(px(3.))
-            .border_color(tint),
-        tint,
-        th,
-    )
-    .child(micro(
-        if waiting {
-            "WAITING ON YOU"
-        } else {
-            "ANSWERED \u{b7} THE PICKER HAS CLOSED"
-        },
-        9.5,
-        tint,
-        th,
-    ))
-    .children(q.options.iter().enumerate().map(|(i, o)| {
-        let lit = chosen == Some(i);
-        let recommended = q.recommend == Some(i);
-        let panel = sk.panel().flex().flex_col().gap(px(2.));
-        let panel = if lit {
-            panel.border_l(px(3.)).border_color(th.accent)
-        } else {
-            panel
-        };
-        panel
-            .child(
+    let _ = sk;
+    div()
+        .flex()
+        .flex_col()
+        .gap(px(6.))
+        // What an option costs, for the options that say. Never the label —
+        // the chip underneath is the label, and printing it here is the
+        // duplication that made this card unreadable.
+        .children(q.options.iter().enumerate().filter_map(|(i, o)| {
+            let what = o.what_happens.clone()?;
+            let dim = chosen.is_some() && chosen != Some(i);
+            Some(
                 div()
                     .flex()
                     .flex_row()
-                    .gap(px(7.))
+                    .gap(px(8.))
                     .items_baseline()
-                    .child(micro(format!("{}", i + 1), 11., th.faint, th))
-                    .child(
-                        div()
-                            .text_size(px(12.5))
-                            .text_color(if chosen.is_some() && !lit {
-                                th.faint
-                            } else {
-                                th.text
-                            })
-                            .child(o.label.clone()),
-                    )
-                    .when(recommended, |x| {
-                        x.child(micro("recommended", 9., th.accent, th))
-                    })
-                    .when(lit, |x| x.child(micro("chosen", 9., th.accent, th))),
+                    .child(micro(
+                        format!("{}", i + 1),
+                        10.,
+                        th.faint.alpha(if dim { 0.5 } else { 1.0 }),
+                        th,
+                    ))
+                    .child(micro(
+                        what,
+                        11.5,
+                        th.text.alpha(if dim { 0.4 } else { 0.75 }),
+                        th,
+                    )),
             )
-            .when_some(o.what_happens.clone(), |x, what| {
-                x.child(micro(what, 11., th.text.alpha(0.75), th))
-            })
-    }))
-    .child(match &q.answer {
-        // Three states, drawn as three states. "Answered, and the
-        // transcript does not say how" is a real reading — somebody typed
-        // prose instead of picking — and showing it as the first option
-        // would invent a decision nobody made.
-        Answered::Waiting => micro(
-            match q.cursor {
-                Some(_) => "waiting on you · answering here drives the menu in the terminal",
-                None => "waiting on you",
-            }
-            .to_string(),
-            10.,
-            th.complement,
-            th,
-        ),
-        Answered::Chose(_) => micro("answered".to_string(), 10., th.faint, th),
-        // The words, when there are words. A free-text answer is the one
-        // an agent most needs read back, and it is the one a menu cannot
-        // show at all.
-        Answered::Typed(said) => micro(
-            format!("answered in the terminal · \u{201c}{said}\u{201d}"),
-            10.5,
-            th.text.alpha(0.8),
-            th,
-        ),
-        Answered::ChoseUnknown => micro(
-            "answered in the terminal · how is unavailable".to_string(),
-            10.,
-            th.faint,
-            th,
-        ),
-    })
-    // UNDER the options, because the question is what you read and the
-    // progress is what you check afterwards.
-    .when_some(q.round.as_ref(), |d, round| {
-        d.child(round_progress(round, sk, th))
-    })
+        }))
+        // How it was settled, when it was. Three states drawn as three,
+        // because "answered, and the transcript does not say how" is a real
+        // reading — somebody typed prose instead of picking — and showing it
+        // as the first option would invent a decision nobody made.
+        //
+        // Nothing at all while it is waiting: the chips are right there, and
+        // a line of prose explaining that a button is a button is the noise
+        // this card was drowning in.
+        .children(match &q.answer {
+            Answered::Waiting => None,
+            Answered::Chose(_) => Some(micro("answered".to_string(), 10., th.faint, th)),
+            Answered::Typed(said) => Some(micro(
+                format!("answered in the terminal \u{b7} \u{201c}{said}\u{201d}"),
+                10.5,
+                th.text.alpha(0.8),
+                th,
+            )),
+            Answered::ChoseUnknown => Some(micro(
+                "answered in the terminal \u{b7} how is unavailable".to_string(),
+                10.,
+                th.faint,
+                th,
+            )),
+        })
+        .when_some(q.round.as_ref(), |d, round| {
+            d.child(round_progress(round, sk, th))
+        })
 }
 
 fn artifact(a: &crate::surface::Artifact, sk: &Skin, th: &Theme) -> Div {

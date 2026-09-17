@@ -411,6 +411,53 @@ impl Line {
     }
 }
 
+/// One answered question, as the review gallery shows it.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct Reviewed {
+    pub title: String,
+    /// What was chosen, in the words it was chosen by. Never a number — the
+    /// point of reviewing is to read the answer, not to decode it.
+    pub answer: String,
+}
+
+/// Every answered question on this bench, oldest first.
+///
+/// Oldest first because a review is a story of how you got here, and the rail
+/// — which is newest first, because a rail is about what just happened — reads
+/// the other way. The two orders are not a disagreement; they answer different
+/// questions.
+///
+/// An empty list is a real answer: nothing has been answered yet, and the
+/// button that opens this is simply not offered.
+pub fn reviewed(surfaces: &[crate::surface::Surface]) -> Vec<Reviewed> {
+    use crate::surface::{Answered, Kind};
+    surfaces
+        .iter()
+        .filter_map(|s| {
+            let Kind::Question(q) = &s.kind else {
+                return None;
+            };
+            let answer = match &q.answer {
+                Answered::Waiting => return None,
+                Answered::Chose(i) => q
+                    .options
+                    .get(*i)
+                    .map(|o| o.label.clone())
+                    // A chosen index with no option at it is a bench and a
+                    // transcript that disagree, and saying so beats printing
+                    // the number nobody can read.
+                    .unwrap_or_else(|| "answered \u{b7} the option is unavailable".into()),
+                Answered::Typed(said) => said.clone(),
+                Answered::ChoseUnknown => "answered \u{b7} how is unavailable".into(),
+            };
+            Some(Reviewed {
+                title: s.title.clone(),
+                answer,
+            })
+        })
+        .collect()
+}
+
 /// What to do with the live question we are tracking, given what the screen
 /// says right now.
 ///
@@ -1072,6 +1119,12 @@ impl Bench {
             .collect();
         stand(&mut rows);
         rows
+    }
+
+    /// Every answered question on this bench, oldest first — what the review
+    /// gallery walks. See [`reviewed`].
+    pub fn reviewable(&self) -> Vec<Reviewed> {
+        reviewed(&self.surfaces)
     }
 
     /// The surface OPENED as a card over the conversation, if any.
@@ -1909,6 +1962,16 @@ mod tests {
         l.end();
         l.insert("z");
         assert!(l.text().ends_with("bz"), "{}", l.text());
+    }
+
+    #[test]
+    fn the_review_gallery_reads_oldest_first_and_names_the_answer() {
+        let mut b = Bench::new();
+        b.apply(decision("one"));
+        b.apply(decision("two"));
+        // Nothing answered yet: an empty gallery, and the button that opens
+        // it is simply not offered.
+        assert!(reviewed(&b.all_newest_first().cloned().collect::<Vec<_>>()).is_empty());
     }
 
     #[test]

@@ -2169,6 +2169,12 @@ pub struct TerminalView {
     /// The composer's own scroll position, so a wheel over the draft moves
     /// the draft and not the agent's transcript behind it.
     wb_scroll: gpui::ScrollHandle,
+    /// Which answered question the review flyout is showing, if it is open.
+    ///
+    /// [`None`] is closed, and it is the ordinary state. An index rather than
+    /// a surface id because the gallery is a walk through a list and the list
+    /// is rebuilt each frame from the bench.
+    wb_review: Option<usize>,
     /// The live question currently on this pane's bench, if one is up.
     ///
     /// Held so it can be RETIRED the moment the pane stops waiting — the
@@ -3235,6 +3241,7 @@ impl TerminalView {
             wb_compose: None,
             wb_text_layout: std::rc::Rc::new(std::cell::RefCell::new(None)),
             wb_scroll: gpui::ScrollHandle::new(),
+            wb_review: None,
             wb_live_q: None,
         }
     }
@@ -4427,7 +4434,12 @@ impl TerminalView {
                 // One layer at a time, innermost first: the typing, then the
                 // card over the conversation, then the face. Closing two at
                 // once throws away something the person was in the middle of.
-                if talking {
+                // Outermost first, and the gallery is the outermost thing
+                // there is: it is drawn over the card, so esc has to take it
+                // off before esc can mean anything about what is underneath.
+                if self.wb_review.take().is_some() {
+                    cx.notify();
+                } else if talking {
                     self.wb_compose = None;
                     cx.notify();
                 } else if self.bench.close_card() {
@@ -6886,10 +6898,17 @@ impl TerminalView {
                 // one second apart — and this is where that state lands now.
                 let lit = matches!(q.answer, crate::surface::Answered::Chose(n) if n == i)
                     || o.checked == Some(true);
+                // No leading number.
+                //
+                // The digit is the TERMINAL's affordance — it is there so a
+                // person can press 1 — and on a chip you click it is a
+                // catalogue number in front of the word that matters. Parker:
+                // *"1, and 2... no that is for the terminal if someone wants
+                // to TYPE 1 or two - we are assuming a mouse user at this
+                // point"*. The tick stays, because that is state.
                 let label = match o.checked {
-                    Some(true) => format!("\u{2713} {} \u{b7} {}", i + 1, o.label),
-                    Some(false) => format!("\u{2022} {} \u{b7} {}", i + 1, o.label),
-                    None => format!("{} \u{b7} {}", i + 1, o.label),
+                    Some(true) => format!("\u{2713} {}", o.label),
+                    _ => o.label.clone(),
                 };
                 // LIT MEANS CHOSEN, and nothing else.
                 //
@@ -6929,6 +6948,26 @@ impl TerminalView {
                     .gap(px(6.))
                     .children(chips),
             )
+            // Review, beside Submit, and only once there is something to
+            // review. A gallery of nothing is a button that punishes a press.
+            .when(!self.bench.reviewable().is_empty() && !answered, |d| {
+                d.child(sk.rule_h()).child(
+                    div().flex().flex_row().gap(px(8.)).justify_end().child(
+                        sk.chip(false)
+                            .cursor_pointer()
+                            .text_size(px(11.5))
+                            .child("\u{21ba} REVIEW ANSWERS".to_string())
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|view, _ev: &MouseDownEvent, _w, cx| {
+                                    cx.stop_propagation();
+                                    view.wb_review = Some(0);
+                                    cx.notify();
+                                }),
+                            ),
+                    ),
+                )
+            })
             // The picker's own Submit, where it has one — on a row of its
             // own, behind a rule.
             //
@@ -7513,7 +7552,6 @@ impl TerminalView {
         let card_open = self.bench.selected().is_some();
         let body = match self.bench.selected() {
             Some(surface) => {
-                let sid = surface.id.clone();
                 let tint = crate::benchdraw::ink(crate::workbench::tint_of(&surface.kind), th);
                 let drawn = crate::benchdraw::body(surface, how, sk, th);
                 // A question opened from the rail is still a question, so it
@@ -7566,12 +7604,6 @@ impl TerminalView {
                 .child(drawn)
                 .children(answers)
                 .children(verbs)
-                .child(
-                    div()
-                        .text_size(px(9.))
-                        .text_color(th.faint.alpha(0.6))
-                        .child(format!("surface {}", sid.as_str())),
-                )
             }
             // No card: the conversation, and whatever the agent is waiting on.
             None => {
@@ -7749,7 +7781,78 @@ impl TerminalView {
             }
         };
 
+        // The review gallery, drawn OVER everything rather than in place of
+        // it. The thing underneath is a question somebody is part-way
+        // through answering, and replacing it with a history is exactly the
+        // navigation the flyout exists to avoid.
+        let gallery = self.wb_review.and_then(|at| {
+            let all = self.bench.reviewable();
+            if all.is_empty() {
+                return None;
+            }
+            let at = at.min(all.len() - 1);
+            let item = all[at].clone();
+            let total = all.len();
+            let back = at > 0;
+            let fwd = at + 1 < total;
+            Some(
+                crate::benchdraw::review_flyout(at, total, &item.title, &item.answer, sk, th)
+                    .child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .gap(px(8.))
+                            .items_center()
+                            .child(
+                                sk.chip(back)
+                                    .cursor_pointer()
+                                    .child("\u{2190}".to_string())
+                                    .on_mouse_down(
+                                        MouseButton::Left,
+                                        cx.listener(|view, _ev: &MouseDownEvent, _w, cx| {
+                                            cx.stop_propagation();
+                                            if let Some(n) = view.wb_review.as_mut() {
+                                                *n = n.saturating_sub(1);
+                                            }
+                                            cx.notify();
+                                        }),
+                                    ),
+                            )
+                            .child(
+                                sk.chip(fwd)
+                                    .cursor_pointer()
+                                    .child("\u{2192}".to_string())
+                                    .on_mouse_down(
+                                        MouseButton::Left,
+                                        cx.listener(move |view, _ev: &MouseDownEvent, _w, cx| {
+                                            cx.stop_propagation();
+                                            if let Some(n) = view.wb_review.as_mut() {
+                                                *n = (*n + 1).min(total.saturating_sub(1));
+                                            }
+                                            cx.notify();
+                                        }),
+                                    ),
+                            )
+                            .child(div().flex_1())
+                            .child(
+                                sk.chip(false)
+                                    .cursor_pointer()
+                                    .child("CLOSE".to_string())
+                                    .on_mouse_down(
+                                        MouseButton::Left,
+                                        cx.listener(|view, _ev: &MouseDownEvent, _w, cx| {
+                                            cx.stop_propagation();
+                                            view.wb_review = None;
+                                            cx.notify();
+                                        }),
+                                    ),
+                            ),
+                    ),
+            )
+        });
+
         div()
+            .relative()
             .size_full()
             .flex()
             .flex_row()
@@ -7805,6 +7908,7 @@ impl TerminalView {
             )
             .children(handle)
             .children(rail)
+            .children(gallery)
             .into_any_element()
     }
 }
