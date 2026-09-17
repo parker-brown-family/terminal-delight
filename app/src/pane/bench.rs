@@ -41,7 +41,25 @@ impl TerminalView {
         let (k1, k2) = self.warp_k;
         let (fx, fy) = crate::workbench::unwarp(rect, k1, k2, f32::from(at.x), f32::from(at.y));
         let zones = self.wb_zones.borrow();
-        let hit = crate::workbench::hit_at(&zones, fx, fy)?.clone();
+        let hit = crate::workbench::hit_at(&zones, fx, fy).cloned();
+        // TD_HITDEBUG=1 prints the whole chain for a click — where the pointer
+        // was, where it un-bent to, and what that landed on — because a
+        // shell with no virtual pointer cannot press the surface itself, and
+        // the only honest verification of the warp's inverse is a person's
+        // click read back from the log. The grid's `viewport_cell` prints
+        // under the same flag for the same reason.
+        if std::env::var_os("TD_HITDEBUG").is_some() {
+            eprintln!(
+                "[bench-hit] pointer=({:.1},{:.1}) k=({:.3},{:.3}) flat=({fx:.1},{fy:.1}) zones={} -> {:?}",
+                f32::from(at.x),
+                f32::from(at.y),
+                k1,
+                k2,
+                zones.len(),
+                hit
+            );
+        }
+        let hit = hit?;
         Some((hit, gpui::point(gpui::px(fx), gpui::px(fy))))
     }
 
