@@ -478,6 +478,36 @@ pub fn run_cli(args: &[String]) -> i32 {
         );
         return 0;
     }
+    // `--derive <transcript>` — what this build would put on a bench for an
+    // agent that never called anything. The read-back verb for the derived
+    // half: a data layer nobody can inspect is a data layer nobody can debug,
+    // and this is how a missing surface gets diagnosed without a screenshot.
+    if let Some(at) = args.iter().position(|a| a == "--derive") {
+        let Some(path) = args.get(at + 1) else {
+            eprintln!("terminal-delight surface --derive <transcript.jsonl>");
+            return 2;
+        };
+        let posts = crate::derive::from_transcript(Path::new(path), now_ms());
+        if posts.is_empty() {
+            println!("nothing derivable in {path}");
+            return 0;
+        }
+        for post in &posts {
+            let Some(s) = post.surface.as_ref() else {
+                continue;
+            };
+            println!(
+                "{:<12} {:<14} {}\n{:>13}{}",
+                s.kind.id(),
+                post.id.as_str(),
+                s.title,
+                "",
+                s.subtitle()
+            );
+        }
+        return 0;
+    }
+
     let (Ok(key), Ok(pane)) = (
         std::env::var("TD_SESSION"),
         std::env::var("TD_PANE_ID").map(|p| p.parse::<u64>()),

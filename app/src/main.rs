@@ -34,6 +34,7 @@ mod crt;
 mod csd;
 mod ctl;
 mod demo;
+mod derive;
 mod dirlogo;
 mod doc;
 mod fav;
@@ -5051,6 +5052,46 @@ impl Workspace {
                     demo_seeded = true;
                 }
             }
+            // THE DERIVED HALF, and it runs first because it is the one that
+            // needs nothing from the agent. A pane whose agent has never
+            // heard of this protocol still gets its questions and its
+            // deliverable on the bench — which is the whole answer to the
+            // night the declared half sat empty beside an agent that had
+            // plainly just produced something.
+            // The live question first, and on the MAIN thread: it is read off
+            // a screen this process already holds in memory, so there is
+            // nothing to send to the pool, and it is the one surface whose
+            // whole value is being current.
+            if this
+                .update(cx, |ws: &mut Workspace, cx| ws.sweep_live_questions(cx))
+                .is_err()
+            {
+                break;
+            }
+            let Ok(reqs) = this.update(cx, |ws: &mut Workspace, cx| ws.derive_requests(cx)) else {
+                break;
+            };
+            if !reqs.is_empty() {
+                let found = cx
+                    .background_executor()
+                    .spawn(async move {
+                        let now = surfacefeed::now_ms();
+                        reqs.into_iter()
+                            .map(|(pane, path)| surfacefeed::Arrivals {
+                                pane,
+                                posts: derive::from_transcript(&path, now),
+                            })
+                            .filter(|a| !a.posts.is_empty())
+                            .collect::<Vec<_>>()
+                    })
+                    .await;
+                if this
+                    .update(cx, |ws: &mut Workspace, cx| ws.deliver_surfaces(found, cx))
+                    .is_err()
+                {
+                    break;
+                }
+            }
             let Ok(taken) = this.update(cx, |ws: &mut Workspace, _cx| {
                 surfacefeed::session_dir().and_then(|dir| ws.surface_feed.take().map(|f| (f, dir)))
             }) else {
@@ -6435,6 +6476,130 @@ impl Workspace {
     /// bars rather than keeping a stale set — a FATIGUE reading is a shutdown
     /// decision, and one taken on a conversation that has moved on is worse than
     /// none.
+    /// Turn every pane in this window to a face — the scriptable half of the
+    /// header toggle, reached over the control socket.
+    ///
+    /// It exists because of a gap this feature hit on its first night: every
+    /// gesture on the bench is a mouse gesture, and an agent testing its own
+    /// work has a keyboard and no pointer. A surface that can only be
+    /// demonstrated by hand cannot be photographed by a script, and this
+    /// window is verified by photographs.
+    pub(crate) fn set_all_faces(&mut self, face: ctl::BenchFace, cx: &mut Context<Self>) {
+        let want = match face {
+            ctl::BenchFace::Terminal => Some(workbench::Face::Terminal),
+            ctl::BenchFace::Workbench => Some(workbench::Face::Workbench),
+            ctl::BenchFace::Toggle => None,
+        };
+        let mut leaves = Vec::new();
+        for tab in self.tabs.iter() {
+            tab.root.leaves(&mut leaves);
+        }
+        let leaves: Vec<Entity<TerminalView>> = leaves.into_iter().cloned().collect();
+        for leaf in leaves {
+            leaf.update(cx, |view, cx| match want {
+                Some(f) => view.set_face(f, cx),
+                None => view.toggle_face(cx),
+            });
+        }
+        cx.notify();
+    }
+
+    /// Press an answer on a bench, by option number.
+    ///
+    /// The other half of what a pointer would do, and the reason it exists is
+    /// the same: every gesture on this surface is a mouse gesture, and the
+    /// thing most worth proving — that answering here reaches the agent — is
+    /// the one a script could not perform.
+    ///
+    /// Applied to whichever pane is showing its bench with something
+    /// selected, nearest to the active tab first. A caller with no pane ids
+    /// should not have to learn them to press a button.
+    pub(crate) fn bench_choose(&mut self, n: usize, cx: &mut Context<Self>) {
+        let mut leaves = Vec::new();
+        if let Some(tab) = self.tabs.get(self.active) {
+            tab.root.leaves(&mut leaves);
+        }
+        for tab in self.tabs.iter() {
+            tab.root.leaves(&mut leaves);
+        }
+        let leaves: Vec<Entity<TerminalView>> = leaves.into_iter().cloned().collect();
+        for leaf in leaves {
+            let took = leaf.update(cx, |view, cx| {
+                if view.bench.face() != workbench::Face::Workbench {
+                    return false;
+                }
+                if view.bench.selected().is_none() {
+                    return false;
+                }
+                view.bench_choose(n.saturating_sub(1), cx);
+                true
+            });
+            if took {
+                cx.notify();
+                return;
+            }
+        }
+        eprintln!("terminal-delight: no pane is showing a bench with a selection");
+    }
+
+    /// Ask every agent pane whether it is waiting on a question, and put the
+    /// answer on its own bench.
+    ///
+    /// Each pane keeps its own live-question id, so this is a present while
+    /// the picker is up and a retire the moment it is not — which is why a
+    /// bench does not end up holding a live copy and a recorded copy of the
+    /// same question.
+    fn sweep_live_questions(&mut self, cx: &mut Context<Self>) {
+        let now = surfacefeed::now_ms();
+        let mut leaves = Vec::new();
+        for tab in self.tabs.iter() {
+            tab.root.leaves(&mut leaves);
+        }
+        let leaves: Vec<Entity<TerminalView>> = leaves.into_iter().cloned().collect();
+        for leaf in leaves {
+            leaf.update(cx, |view, cx| {
+                if !view.mode.is_agent() {
+                    return;
+                }
+                if let Some(post) = view.live_question(now) {
+                    view.present(post, cx);
+                }
+            });
+        }
+    }
+
+    /// Which agent panes have a transcript worth deriving surfaces from.
+    ///
+    /// Keyed by host pane id rather than pid, because that is what a surface
+    /// is addressed to — and the pid changes when a conversation is resumed
+    /// while the pane, and its bench, do not.
+    fn derive_requests(&self, cx: &App) -> Vec<(u64, std::path::PathBuf)> {
+        let home = session::home_dir();
+        let mut out = Vec::new();
+        for tab in self.tabs.iter() {
+            let mut leaves = Vec::new();
+            tab.root.leaves(&mut leaves);
+            for e in leaves {
+                let view = e.read(cx);
+                if !view.mode.is_agent() {
+                    continue;
+                }
+                let Some(pane) = view.pane_id() else { continue };
+                let rt = view.runtime();
+                let Some(path) = mcp_tail::transcript_for(
+                    view.mode.label(),
+                    rt.cwd.as_deref(),
+                    rt.resume.as_deref(),
+                    &home,
+                ) else {
+                    continue;
+                };
+                out.push((pane, path));
+            }
+        }
+        out
+    }
+
     /// The host pane id of the first leaf of the active tab, if it has one.
     ///
     /// Only hosted panes have one, which is also the only kind an agent can

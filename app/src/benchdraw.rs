@@ -315,6 +315,12 @@ fn compact(surface: &Surface, sk: &Skin, th: &Theme) -> Div {
                 th,
             )
         })),
+        Kind::Question(q) => list.children(
+            q.options
+                .iter()
+                .enumerate()
+                .map(|(i, o)| micro(format!("{} · {}", i + 1, o.label), 11.5, th.text, th)),
+        ),
         Kind::Artifact(a) => list.child(micro(a.href.clone(), 11., th.faint, th)),
         Kind::Unclassified(u) => list.child(micro(u.reason.clone(), 11., th.faint, th)),
     }
@@ -329,8 +335,100 @@ fn full(surface: &Surface, sk: &Skin, th: &Theme) -> Div {
         Kind::Architecture(a) => architecture(a, sk, th),
         Kind::Changeset(c) => changeset(c, sk, th),
         Kind::Decision(d) => decision(d, sk, th),
+        Kind::Question(q) => question(q, sk, th),
         Kind::Unclassified(u) => unclassified(u, sk, th),
     }
+}
+
+/// A question the agent is waiting on, with its options numbered.
+///
+/// Numbered because the numbers are real: they are the option's position in
+/// the agent's own menu, and the bench answers by walking that menu. A reader
+/// who prefers the terminal can flip to TERM and press the same number.
+fn question(q: &crate::surface::Question, sk: &Skin, th: &Theme) -> Div {
+    use crate::surface::Answered;
+    let chosen = match q.answer {
+        Answered::Chose(i) => Some(i),
+        _ => None,
+    };
+    div()
+        .flex()
+        .flex_col()
+        .gap(px(8.))
+        .child(
+            div()
+                .text_size(px(13.5))
+                .text_color(th.text)
+                .child(q.question.clone()),
+        )
+        .children(q.options.iter().enumerate().map(|(i, o)| {
+            let lit = chosen == Some(i);
+            let recommended = q.recommend == Some(i);
+            let panel = sk.panel().flex().flex_col().gap(px(2.));
+            let panel = if lit {
+                panel.border_l(px(3.)).border_color(th.accent)
+            } else {
+                panel
+            };
+            panel
+                .child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .gap(px(7.))
+                        .items_baseline()
+                        .child(micro(format!("{}", i + 1), 11., th.faint, th))
+                        .child(
+                            div()
+                                .text_size(px(12.5))
+                                .text_color(if chosen.is_some() && !lit {
+                                    th.faint
+                                } else {
+                                    th.text
+                                })
+                                .child(o.label.clone()),
+                        )
+                        .when(recommended, |x| {
+                            x.child(micro("recommended", 9., th.accent, th))
+                        })
+                        .when(lit, |x| x.child(micro("chosen", 9., th.accent, th))),
+                )
+                .when_some(o.what_happens.clone(), |x, what| {
+                    x.child(micro(what, 11., th.text.alpha(0.75), th))
+                })
+        }))
+        .child(match &q.answer {
+            // Three states, drawn as three states. "Answered, and the
+            // transcript does not say how" is a real reading — somebody typed
+            // prose instead of picking — and showing it as the first option
+            // would invent a decision nobody made.
+            Answered::Waiting => micro(
+                match q.cursor {
+                    Some(_) => "waiting on you · answering here drives the menu in the terminal",
+                    None => "waiting on you",
+                }
+                .to_string(),
+                10.,
+                th.complement,
+                th,
+            ),
+            Answered::Chose(_) => micro("answered".to_string(), 10., th.faint, th),
+            // The words, when there are words. A free-text answer is the one
+            // an agent most needs read back, and it is the one a menu cannot
+            // show at all.
+            Answered::Typed(said) => micro(
+                format!("answered in the terminal · \u{201c}{said}\u{201d}"),
+                10.5,
+                th.text.alpha(0.8),
+                th,
+            ),
+            Answered::ChoseUnknown => micro(
+                "answered in the terminal · how is unavailable".to_string(),
+                10.,
+                th.faint,
+                th,
+            ),
+        })
 }
 
 fn artifact(a: &crate::surface::Artifact, sk: &Skin, th: &Theme) -> Div {
@@ -658,6 +756,87 @@ fn verdict_word(v: Verdict) -> &'static str {
         Verdict::Accepted => "accepted",
         Verdict::Rejected => "rejected",
     }
+}
+
+/// The agent, above its work.
+///
+/// A bench that showed only finished objects would answer "what did it make"
+/// and leave "what is it doing" to the other face — so a person would flip
+/// back to the terminal every few seconds to check, which is the sweeping
+/// this whole surface exists to end. The strip is deliberately thin: a state,
+/// a tool, and the last few lines it printed, dimmed, in the terminal's own
+/// font. It is a glance, not a mirror; the mirror is one keystroke away and
+/// always will be better at being a terminal.
+pub fn live_strip(state: &str, tool: Option<&str>, tail: &[String], sk: &Skin, th: &Theme) -> Div {
+    // The state word carries the only colour on the strip, so it is the thing
+    // the eye finds: waiting on a person is the complement, everything else
+    // recedes.
+    let waiting = state.contains("your turn") || state.contains("blocked");
+    sk.panel()
+        .flex()
+        .flex_col()
+        .gap(px(5.))
+        .child(
+            div()
+                .flex()
+                .flex_row()
+                .gap(px(9.))
+                .items_baseline()
+                .child(micro(
+                    state.to_string(),
+                    11.,
+                    if waiting { th.complement } else { th.accent },
+                    th,
+                ))
+                .when_some(tool.map(str::to_string), |d, t| {
+                    d.child(micro(t, 10., th.faint, th))
+                }),
+        )
+        .when(!tail.is_empty(), |d| {
+            d.child(sk.rule_h())
+                .child(div().flex().flex_col().children(tail.iter().map(|line| {
+                    div()
+                        .text_size(px(10.5))
+                        .text_color(th.text.alpha(0.55))
+                        .font_family(th.font_family.clone())
+                        .child(clip(line, 110))
+                })))
+        })
+}
+
+/// The prompt box: the bench's own way of saying something to the agent.
+///
+/// A terminal is a far better text editor than this will ever be — it has the
+/// agent's own completion, its slash commands, its history and its paste
+/// handling — and that is an argument for this box being small and honest
+/// rather than for it not existing. What it buys is that a person answering a
+/// question, or sending one more instruction, does not have to leave the
+/// surface they are reading to do it.
+pub fn composer(text: Option<&str>, focused: bool, sk: &Skin, th: &Theme) -> Div {
+    let open = text.is_some();
+    sk.panel()
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap(px(8.))
+        .cursor_pointer()
+        .when(open && focused, |d| d.border_color(th.accent.alpha(0.8)))
+        .child(micro("›".to_string(), 12., th.accent, th))
+        .child(
+            div()
+                .flex_1()
+                .text_size(px(12.5))
+                .font_family(th.font_family.clone())
+                .text_color(if open { th.text } else { th.faint })
+                .child(match text {
+                    Some("") => "type a prompt, ↵ to send".to_string(),
+                    Some(t) => format!("{t}▋"),
+                    None => "click to write to this agent".to_string(),
+                }),
+        )
+        .when(open, |d| {
+            d.child(micro("↵ send · esc cancel".to_string(), 9.5, th.faint, th))
+        })
 }
 
 /// An empty bench says what would fill it.

@@ -125,6 +125,10 @@ pub enum Tint {
 pub fn tint_of(kind: &Kind) -> Tint {
     match kind {
         Kind::Decision(_) => Tint::Waiting,
+        Kind::Question(q) => match q.answer {
+            crate::surface::Answered::Waiting => Tint::Waiting,
+            _ => Tint::Settled,
+        },
         Kind::Changeset(c) => {
             if c.hunks.iter().all(|h| h.verdict != Verdict::Undecided) && !c.hunks.is_empty() {
                 Tint::Settled
@@ -242,8 +246,59 @@ pub enum Dispatch {
     Open(String),
     /// The agent hears about it, as a line typed into its own terminal.
     Tell(ActionReport),
+    /// Raw bytes into the pane's pseudoterminal — keystrokes, not a sentence.
+    ///
+    /// The difference from [`Dispatch::Tell`] is who is listening. `Tell`
+    /// writes a line for an agent to READ on its next turn; this drives a
+    /// program that is waiting at a prompt right now, which is how a menu
+    /// gets answered and how typed text reaches a REPL.
+    Keys {
+        bytes: Vec<u8>,
+        /// What it did, for whoever is looking at the surface afterwards.
+        note: String,
+    },
     /// Nothing to do, and a reason worth showing rather than a silent no-op.
     Refused(String),
+}
+
+/// The keystrokes that move a terminal menu from `cursor` to `target` and
+/// press return.
+///
+/// Arrow keys rather than the option's number, deliberately. A digit is
+/// ambiguous across pickers — in some it jumps, in some it selects
+/// immediately, in some it types into a filter — while up, down and return
+/// mean the same thing in every one of them. It also degrades honestly: if
+/// the cursor is not where we believe, the selection lands on the wrong row
+/// rather than on a row nobody can predict.
+pub fn menu_keys(target: usize, cursor: usize) -> Vec<u8> {
+    let mut out = Vec::new();
+    let (step, n) = if target >= cursor {
+        (&b"\x1b[B"[..], target - cursor)
+    } else {
+        (&b"\x1b[A"[..], cursor - target)
+    };
+    for _ in 0..n {
+        out.extend_from_slice(step);
+    }
+    out.push(b'\r');
+    out
+}
+
+/// One line of text typed at whatever is waiting in the pane.
+///
+/// A carriage return, not a newline: a line editor reading a pseudoterminal
+/// sees `\r` as "submit" and `\n` as a literal newline in the buffer, which is
+/// how a prompt ends up with a blank line in it instead of being sent.
+pub fn typed_line(text: &str) -> Vec<u8> {
+    // CRLF collapses to ONE space, not two. Pasted text is full of it, and a
+    // prompt with doubled gaps everywhere reads as the box mangling what was
+    // pasted into it.
+    let mut bytes: Vec<u8> = text
+        .replace("\r\n", "\n")
+        .replace(['\n', '\r'], " ")
+        .into_bytes();
+    bytes.push(b'\r');
+    bytes
 }
 
 impl Default for Bench {
@@ -443,9 +498,21 @@ impl Bench {
                 } else {
                     self.unseen.insert(id.clone());
                 }
-                // A bench with nothing chosen chooses the arrival, so the first
-                // surface an agent ever sends is already on screen.
-                if self.selected.is_none() {
+                // A bench with nothing chosen chooses the arrival, so the
+                // first surface an agent ever sends is already on screen.
+                //
+                // And a question that is WAITING takes the bench from
+                // whatever was on it. That is the one arrival allowed to
+                // steal the selection, because it is the one that means the
+                // agent has stopped and cannot continue without a person —
+                // showing a finished document instead, while a picker sits
+                // unanswered in the terminal, is the bench pointing at the
+                // wrong thing at the only moment it matters.
+                let waiting = matches!(
+                    self.get(&id).map(|s| &s.kind),
+                    Some(Kind::Question(q)) if q.answer == crate::surface::Answered::Waiting
+                );
+                if self.selected.is_none() || waiting {
                     if let Some(s) = self.get(&id) {
                         let shelf = s.kind.shelf();
                         self.shelf = shelf;
@@ -508,6 +575,51 @@ impl Bench {
             if !found {
                 return Dispatch::Refused(format!("no part called {t} on this surface"));
             }
+        }
+        // Answering a question drives the agent's own menu. Recorded here as
+        // well as sent, for the same reason a hunk verdict is: a row that
+        // still reads "waiting on you" after you answered is the surface
+        // lying about its own state.
+        if *action == Action::Choose {
+            let Some(pick) = target.as_ref().and_then(|t| t.parse::<usize>().ok()) else {
+                return Dispatch::Refused("choosing needs an option to choose".into());
+            };
+            let mut keys = None;
+            let mut label = String::new();
+            if let Some(live) = self.surfaces.iter_mut().find(|s| s.id == surface.id) {
+                if let Kind::Question(q) = &mut live.kind {
+                    match q.options.get(pick) {
+                        None => {
+                            return Dispatch::Refused(format!(
+                                "this question has no option {}",
+                                pick + 1
+                            ))
+                        }
+                        Some(option) => {
+                            label = option.label.clone();
+                            // A question we merely observed carries a cursor,
+                            // and only those can be answered by driving the
+                            // menu. A declared one has no menu behind it, so
+                            // the answer goes as a sentence instead.
+                            keys = q.cursor.map(|at| menu_keys(pick, at));
+                            q.answer = crate::surface::Answered::Chose(pick);
+                            q.cursor = None;
+                        }
+                    }
+                }
+            }
+            return match keys {
+                Some(bytes) => Dispatch::Keys {
+                    bytes,
+                    note: format!("chose {label:?}"),
+                },
+                None => Dispatch::Tell(ActionReport {
+                    surface: surface.id.clone(),
+                    action: Action::Choose,
+                    target: Some(label),
+                    comment,
+                }),
+            };
         }
         // Local first, and asked of the action rather than pattern-matched
         // here: [`Action::is_local`] is the one place that decides which verbs
@@ -846,6 +958,121 @@ mod tests {
             b.act(&Action::OpenSource, None, None),
             Dispatch::Refused(_)
         ));
+    }
+
+    fn question(id: &str, cursor: Option<usize>) -> Post {
+        let mut p = post(json!({
+            "td": "0.1", "kind": "question", "id": id, "title": "Which page?",
+            "model": { "question": "Which page?", "options": [
+                { "label": "Status page" }, { "label": "Decision brief" }, { "label": "Delete it" }
+            ]}
+        }));
+        if let Some(s) = p.surface.as_mut() {
+            if let Kind::Question(q) = &mut s.kind {
+                q.cursor = cursor;
+            }
+        }
+        p
+    }
+
+    #[test]
+    fn a_waiting_question_takes_the_bench_from_whatever_was_on_it() {
+        // The agent has stopped and cannot continue. A finished document on
+        // screen while a picker waits unanswered in the terminal is the bench
+        // pointing at the wrong thing at the only moment it matters.
+        let mut b = Bench::new();
+        b.apply(doc("a", "A document"));
+        assert_eq!(b.selected().map(|s| s.id.as_str()), Some("a"));
+        b.apply(question("q", Some(0)));
+        assert_eq!(b.selected().map(|s| s.id.as_str()), Some("q"));
+        assert_eq!(b.shelf(), Shelf::Decisions);
+
+        // An ANSWERED one does not: it is history, and stealing the bench for
+        // history is how a surface becomes something people close.
+        b.select(&SurfaceId("a".into()));
+        let mut answered = question("q2", None);
+        if let Some(s) = answered.surface.as_mut() {
+            if let Kind::Question(q) = &mut s.kind {
+                q.answer = crate::surface::Answered::Chose(0);
+            }
+        }
+        b.apply(answered);
+        assert_eq!(b.selected().map(|s| s.id.as_str()), Some("a"));
+    }
+
+    #[test]
+    fn answering_a_derived_question_drives_the_menu_and_records_the_answer() {
+        let mut b = Bench::new();
+        b.apply(question("q1", Some(0)));
+        b.select(&SurfaceId("q1".into()));
+        match b.act(&Action::Choose, Some("1".into()), None) {
+            Dispatch::Keys { bytes, note } => {
+                assert_eq!(bytes, b"\x1b[B\r", "one down, then return");
+                assert!(note.contains("Decision brief"), "{note}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match &b.get(&SurfaceId("q1".into())).unwrap().kind {
+            Kind::Question(q) => {
+                assert_eq!(q.answer, crate::surface::Answered::Chose(1));
+                assert_eq!(q.cursor, None, "the menu is gone once it has been answered");
+            }
+            other => panic!("{}", other.id()),
+        }
+        assert_eq!(
+            b.rows_for(Shelf::Decisions)[0].tint,
+            Tint::Settled,
+            "an answered question stops shouting"
+        );
+    }
+
+    #[test]
+    fn a_declared_question_has_no_menu_so_the_answer_is_a_sentence() {
+        let mut b = Bench::new();
+        b.apply(question("q2", None));
+        b.select(&SurfaceId("q2".into()));
+        match b.act(&Action::Choose, Some("2".into()), None) {
+            Dispatch::Tell(report) => {
+                assert_eq!(report.action, Action::Choose);
+                assert_eq!(report.target.as_deref(), Some("Delete it"));
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn choosing_an_option_that_is_not_there_is_refused_by_number() {
+        let mut b = Bench::new();
+        b.apply(question("q3", Some(0)));
+        b.select(&SurfaceId("q3".into()));
+        match b.act(&Action::Choose, Some("9".into()), None) {
+            Dispatch::Refused(why) => assert!(why.contains("option 10"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match b.act(&Action::Choose, None, None) {
+            Dispatch::Refused(why) => assert!(why.contains("needs an option"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn menu_keys_walk_in_both_directions_and_always_press_return() {
+        assert_eq!(menu_keys(0, 0), b"\r".to_vec(), "already there");
+        assert_eq!(menu_keys(2, 0), b"\x1b[B\x1b[B\r".to_vec());
+        assert_eq!(menu_keys(0, 2), b"\x1b[A\x1b[A\r".to_vec());
+        assert!(menu_keys(5, 1).ends_with(b"\r"));
+    }
+
+    #[test]
+    fn a_typed_line_ends_in_a_carriage_return_and_holds_no_newlines() {
+        // A newline inside the text would put a blank line in the agent's
+        // prompt buffer instead of submitting it, which looks exactly like
+        // the send having silently failed.
+        let bytes = typed_line("fix the login bug");
+        assert_eq!(bytes.last(), Some(&b'\r'));
+        assert_eq!(bytes.iter().filter(|b| **b == b'\n').count(), 0);
+        let pasted = typed_line("first\nsecond\r\nthird");
+        assert_eq!(String::from_utf8_lossy(&pasted), "first second third\r");
     }
 
     #[test]

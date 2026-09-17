@@ -2143,6 +2143,12 @@ pub struct TerminalView {
     /// same as empty: a composer that is open and holding nothing is a person
     /// who has started answering, and closing it under them loses that.
     wb_compose: Option<String>,
+    /// The live question currently on this pane's bench, if one is up.
+    ///
+    /// Held so it can be RETIRED the moment the pane stops waiting — the
+    /// transcript's own copy of the same question then arrives carrying the
+    /// answer, and without this the bench would show both.
+    wb_live_q: Option<crate::surface::SurfaceId>,
 }
 
 /// Click on the header's theme icon — the workspace opens the breakout menu.
@@ -3201,6 +3207,7 @@ impl TerminalView {
             tok_was_working: false,
             bench: crate::workbench::Bench::new(),
             wb_compose: None,
+            wb_live_q: None,
         }
     }
 
@@ -4374,9 +4381,14 @@ impl TerminalView {
         if self.bench.face() == crate::workbench::Face::Workbench {
             match ks.key.as_str() {
                 "escape" => {
-                    // Back to the conversation. Esc never leaves a person on a
-                    // face they cannot type into.
-                    self.set_face(crate::workbench::Face::Terminal, cx);
+                    // Esc peels one layer at a time: an open composer first,
+                    // then the face. Closing both at once loses a half-typed
+                    // prompt to a keystroke that meant "never mind the box".
+                    if self.wb_compose.take().is_some() {
+                        cx.notify();
+                    } else {
+                        self.set_face(crate::workbench::Face::Terminal, cx);
+                    }
                     cx.stop_propagation();
                     return;
                 }
@@ -4406,9 +4418,10 @@ impl TerminalView {
                 "o" | "enter" => {
                     // A composer that is open is what enter is for: the person
                     // is mid-sentence, and the first action would throw the
-                    // sentence away.
+                    // sentence away. It goes to the agent as typing, not as a
+                    // [workbench] line — a prompt is a prompt.
                     if self.wb_compose.is_some() {
-                        self.bench_act(crate::surface::Action::Comment, None, cx);
+                        self.bench_send(cx);
                         cx.stop_propagation();
                         return;
                     }
@@ -6615,6 +6628,97 @@ impl TerminalView {
         self.bench.unseen_total()
     }
 
+    /// What the agent is doing, in the header's own words.
+    ///
+    /// Read off the same three flags the header status uses rather than
+    /// computed again here. Two surfaces disagreeing about whether an agent is
+    /// waiting on you is the class of bug the attention rail's lane mapping
+    /// was built to end, and it starts with a second copy of the rule.
+    fn bench_status(&self) -> String {
+        if self.needs_input {
+            "❓ your turn".into()
+        } else if self.bell_blocked() {
+            "✘ blocked".into()
+        } else if self.bell {
+            "✔ done".into()
+        } else if self.exited {
+            "exited".into()
+        } else if self.agent_is_thinking() {
+            "◍ working".into()
+        } else {
+            "live".into()
+        }
+    }
+
+    /// The question this pane is asking right now, as a surface — or the
+    /// retirement of the one it has stopped asking.
+    ///
+    /// Called once a second from the workspace sweep, and it reads the SCREEN
+    /// rather than the transcript because the transcript does not have it: an
+    /// `AskUserQuestion` is buffered until its result arrives, so a pending
+    /// question exists only as pixels until it stops being pending. See
+    /// [`crate::derive::question_on_screen`].
+    pub fn live_question(&mut self, now_ms: u64) -> Option<crate::surface::Post> {
+        use crate::surface::{Kind, Op, Post, Surface, Weight};
+        if self.needs_input {
+            let q = crate::derive::question_on_screen(&self.live_rows())?;
+            let id = crate::derive::screen_question_id(&q);
+            let title: String = q.question.chars().take(72).collect();
+            let kind = Kind::Question(q);
+            let actions = kind.default_actions();
+            self.wb_live_q = Some(id.clone());
+            return Some(Post {
+                op: Op::Present,
+                pane: None,
+                surface: Some(Surface {
+                    id: id.clone(),
+                    title,
+                    kind,
+                    weight: Weight::default(),
+                    actions,
+                    source: None,
+                    arrived_ms: now_ms,
+                }),
+                id,
+            });
+        }
+        // Not waiting any more. The live row goes, and the transcript's own
+        // copy — which arrives carrying the answer — takes its place.
+        let id = self.wb_live_q.take()?;
+        Some(Post {
+            op: Op::Retire,
+            id,
+            pane: None,
+            surface: None,
+        })
+    }
+
+    /// Press one of the selected question's answers, by zero-based index.
+    ///
+    /// Public so the control socket can reach it: the chip and this call end
+    /// up in exactly the same place, which is what makes the socket a test of
+    /// the button rather than a second implementation of it.
+    pub fn bench_choose(&mut self, index: usize, cx: &mut Context<Self>) {
+        self.bench_act(crate::surface::Action::Choose, Some(index.to_string()), cx);
+    }
+
+    /// Send whatever is in the composer to the agent, as if typed.
+    fn bench_send(&mut self, cx: &mut Context<Self>) {
+        let Some(text) = self.wb_compose.take().filter(|t| !t.trim().is_empty()) else {
+            self.wb_compose = None;
+            cx.notify();
+            return;
+        };
+        self.session
+            .notifier
+            .notify(crate::workbench::typed_line(&text));
+        // Stay on the bench. Flipping to the terminal on send was the first
+        // thing that felt wrong about this surface: a person who just asked
+        // something wants to watch the answer arrive where they asked it, and
+        // the live strip above already shows the agent picking it up.
+        cx.notify();
+    }
+
     /// Where this pane's agent should drop its surfaces.
     ///
     /// Empty when the pane has no host id, which is the honest answer: a
@@ -6668,6 +6772,28 @@ impl TerminalView {
                     self.bench.set_face(crate::workbench::Face::Terminal);
                 }
             }
+            crate::workbench::Dispatch::Keys { bytes, note } => {
+                // Straight into the pane's pseudoterminal, because whatever is
+                // waiting there is waiting for a person — a menu with its
+                // cursor on the first option, or a REPL at a prompt. This is
+                // the same path a keystroke takes; the bench is just typing.
+                self.session.notifier.notify(bytes);
+                if let (Some(key), Some(pane)) = (crate::surfacefeed::session(), self.pane_id) {
+                    let _ = crate::surfacefeed::journal(
+                        &crate::surfacefeed::actions_path(key, pane),
+                        &crate::surface::ActionReport {
+                            surface: self
+                                .bench
+                                .selected()
+                                .map(|s| s.id.clone())
+                                .unwrap_or(crate::surface::SurfaceId(String::new())),
+                            action: action.clone(),
+                            target: Some(note),
+                            comment: None,
+                        },
+                    );
+                }
+            }
             crate::workbench::Dispatch::Refused(_why) => {
                 // Refusals are shown by the button being absent rather than by
                 // a toast. Nothing to do but repaint.
@@ -6695,6 +6821,27 @@ impl TerminalView {
         };
         let how = crate::workbench::embodiment(pane_w - rail_px, pane_h, focused);
 
+        // ── what the agent is doing, above its work ─────────────────────────
+        //
+        // Built before the body so the bench answers "is it working" before it
+        // answers "what did it make" — the first question a person arriving at
+        // a pane actually has, and the one that used to send them back to the
+        // terminal every few seconds.
+        let live = self.mode.is_agent().then(|| {
+            let tail: Vec<String> = if how == crate::workbench::Embodiment::Full {
+                self.recent_lines(5)
+            } else {
+                Vec::new()
+            };
+            crate::benchdraw::live_strip(
+                &self.bench_status(),
+                self.tool_face.as_ref().map(|f| f.verb.as_str()),
+                &tail,
+                sk,
+                th,
+            )
+        });
+
         // ── the body ────────────────────────────────────────────────────────
         let body = match self.bench.selected() {
             Some(surface) => {
@@ -6708,8 +6855,22 @@ impl TerminalView {
                         .collect(),
                     _ => Vec::new(),
                 };
+                // A question's options are its verbs. Built here rather than
+                // in the renderer because pressing one drives the agent's own
+                // menu, and only the pane can reach a pseudoterminal.
+                let choices: Vec<(String, String)> = match &surface.kind {
+                    crate::surface::Kind::Question(q)
+                        if q.answer == crate::surface::Answered::Waiting =>
+                    {
+                        q.options
+                            .iter()
+                            .enumerate()
+                            .map(|(i, o)| (i.to_string(), format!("{} · {}", i + 1, o.label)))
+                            .collect()
+                    }
+                    _ => Vec::new(),
+                };
                 let drawn = crate::benchdraw::body(surface, how, sk, th);
-                let composing = self.wb_compose.clone();
                 div()
                     .flex()
                     .flex_col()
@@ -6726,6 +6887,28 @@ impl TerminalView {
                                 .flex_wrap()
                                 .gap(px(6.))
                                 .items_center()
+                                // The answers, first and lit: when an agent is
+                                // waiting on a question, picking one IS the
+                                // action and everything else is secondary.
+                                .children(choices.into_iter().map(|(index, label)| {
+                                    sk.chip(true)
+                                        .cursor_pointer()
+                                        .text_size(px(11.))
+                                        .child(label)
+                                        .on_mouse_down(
+                                            MouseButton::Left,
+                                            cx.listener(
+                                                move |view, _ev: &MouseDownEvent, _w, cx| {
+                                                    cx.stop_propagation();
+                                                    view.bench_act(
+                                                        crate::surface::Action::Choose,
+                                                        Some(index.clone()),
+                                                        cx,
+                                                    );
+                                                },
+                                            ),
+                                        )
+                                }))
                                 .children(actions.into_iter().flat_map(|action| {
                                     let needs_part = matches!(
                                         action,
@@ -6768,38 +6951,7 @@ impl TerminalView {
                                                 )
                                         })
                                         .collect::<Vec<_>>()
-                                }))
-                                .child(
-                                    // The composer is a chip until it is opened,
-                                    // then it is a line of text the pane's own
-                                    // keystrokes go into.
-                                    match composing {
-                                        Some(text) => div()
-                                            .px(px(8.))
-                                            .py(px(3.))
-                                            .border_1()
-                                            .border_color(th.accent.alpha(0.7))
-                                            .rounded(sk.radius())
-                                            .text_size(px(11.))
-                                            .text_color(th.text)
-                                            .child(format!("› {text}▋")),
-                                        None => sk
-                                            .chip(false)
-                                            .cursor_pointer()
-                                            .text_size(px(10.5))
-                                            .child("say…")
-                                            .on_mouse_down(
-                                                MouseButton::Left,
-                                                cx.listener(
-                                                    |view, _ev: &MouseDownEvent, _w, cx| {
-                                                        cx.stop_propagation();
-                                                        view.wb_compose = Some(String::new());
-                                                        cx.notify();
-                                                    },
-                                                ),
-                                            ),
-                                    },
-                                ),
+                                })),
                         )
                     })
                     .child(
@@ -6960,13 +7112,48 @@ impl TerminalView {
             }
         };
 
+        // ── the composer ────────────────────────────────────────────────────
+        // Last, and always present on an agent pane: a bench you can read but
+        // not answer from is a viewer, and the terminal is one keystroke away
+        // for everything this box is deliberately worse at.
+        let composer =
+            (self.mode.is_agent() && how != crate::workbench::Embodiment::Summary).then(|| {
+                crate::benchdraw::composer(self.wb_compose.as_deref(), focused, sk, th)
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|view, _ev: &MouseDownEvent, window, cx| {
+                            cx.stop_propagation();
+                            if view.wb_compose.is_none() {
+                                view.wb_compose = Some(String::new());
+                            }
+                            // The pane has to hold the keyboard for typing to
+                            // land anywhere: the bench's key handler runs in
+                            // this view, and a click on chrome does not focus
+                            // it by itself.
+                            window.focus(&view.focus_handle, cx);
+                            cx.notify();
+                        }),
+                    )
+            });
+
         div()
             .size_full()
             .flex()
             .flex_row()
             .gap(px(8.))
             .p(px(10.))
-            .child(div().flex_1().min_w(px(0.)).overflow_hidden().child(body))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w(px(0.))
+                    .overflow_hidden()
+                    .flex()
+                    .flex_col()
+                    .gap(px(9.))
+                    .children(live)
+                    .child(div().flex_1().min_h(px(0.)).overflow_hidden().child(body))
+                    .children(composer),
+            )
             .children(rail)
             .into_any_element()
     }

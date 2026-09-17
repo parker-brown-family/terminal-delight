@@ -35,8 +35,8 @@
 //! an agent that can invent layout will eventually invent a layout that does
 //! not belong in this window.
 //!
-//! The catalogue is therefore **six kinds and a variant for everything else**.
-//! Six is small enough to render each one excellently and to hold the whole
+//! The catalogue is therefore **seven kinds and a variant for everything else**.
+//! Seven is small enough to render each one excellently and to hold the whole
 //! vocabulary in your head, and every one of them is something this house
 //! already produces in prose today.
 //!
@@ -398,6 +398,12 @@ pub enum Action {
     AcceptPart,
     /// Leave this specific part.
     RejectPart,
+    /// Answer a question by picking one of its options.
+    ///
+    /// The target is the option's index. Unlike every other verb here, this
+    /// one is not a sentence typed at the agent — it drives the agent's own
+    /// menu, which is why a derived question carries a cursor position.
+    Choose,
     /// Put the question back to the agent in its own terminal.
     AskAgent,
     /// Go to where this came from — a file, a line, a turn.
@@ -417,6 +423,7 @@ impl Action {
             "reject" => Action::Reject,
             "accept_part" | "accept_hunk" => Action::AcceptPart,
             "reject_part" | "reject_hunk" => Action::RejectPart,
+            "choose" => Action::Choose,
             "ask_agent" => Action::AskAgent,
             "open_source" => Action::OpenSource,
             other => Action::Custom(other.to_string()),
@@ -432,6 +439,7 @@ impl Action {
             Action::Reject => "reject",
             Action::AcceptPart => "accept_part",
             Action::RejectPart => "reject_part",
+            Action::Choose => "choose",
             Action::AskAgent => "ask_agent",
             Action::OpenSource => "open_source",
             Action::Custom(s) => s,
@@ -447,6 +455,7 @@ impl Action {
             Action::Reject => "reject".into(),
             Action::AcceptPart => "accept".into(),
             Action::RejectPart => "reject".into(),
+            Action::Choose => "choose".into(),
             Action::AskAgent => "ask".into(),
             Action::OpenSource => "source".into(),
             Action::Custom(s) => s.replace('_', " "),
@@ -638,6 +647,70 @@ pub struct Decision {
     pub consequences: Vec<String>,
 }
 
+/// One way a question could be answered.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct Choice_ {
+    pub label: String,
+    /// What happens if this one is picked. Optional, because a menu of five
+    /// words is still a menu.
+    pub what_happens: Option<String>,
+}
+
+/// The agent is waiting, and these are the answers it will accept.
+///
+/// The kind that matters most and was hardest to justify leaving out: an agent
+/// that has stopped to ask something is the single most common reason a person
+/// is needed, and until now the only place that question existed was as a TUI
+/// menu painted into a terminal nobody was looking at.
+///
+/// `answer` is `None` until someone answers, and **null is not "no"** — an
+/// unanswered question and a question answered with the first option are
+/// different states, and a renderer that showed them the same way would be
+/// claiming a decision nobody made.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct Question {
+    pub question: String,
+    pub options: Vec<Choice_>,
+    /// Which option the agent would pick if it had to. Optional.
+    pub recommend: Option<usize>,
+    /// Whether it has been answered, and with what.
+    pub answer: Answered,
+    /// Where the highlight sits in the agent's own menu right now, if this
+    /// question was derived from a live TUI rather than declared.
+    ///
+    /// The bench answers by driving that menu — arrow keys and a return — so
+    /// it has to know where the cursor starts. `None` means the question was
+    /// declared rather than observed, and there is no menu to drive.
+    pub cursor: Option<usize>,
+}
+
+/// Three states, because "answered" and "answered with option 2" are not the
+/// same fact and neither is "nobody has answered".
+///
+/// A person can reply to an agent's question by typing prose instead of
+/// picking, and a transcript that records the reply without naming an option
+/// is telling us it was answered and refusing to say how. That is a real
+/// reading, and it is not the same as the first option having been chosen.
+#[derive(Clone, PartialEq, Eq, Debug, Default)]
+pub enum Answered {
+    /// Still waiting on a person.
+    #[default]
+    Waiting,
+    /// Answered by picking this option.
+    Chose(usize),
+    /// Answered in words rather than by picking, and here they are.
+    ///
+    /// The commonest real answer, as it turns out: the first question this
+    /// ever derived from a live transcript was answered "All good - just
+    /// diagnostics for now", which is not any of the options and is the most
+    /// informative thing on the surface. Recording it as "some option" would
+    /// have thrown away the only part worth reading.
+    Typed(String),
+    /// Answered, and how is unavailable — a result shape this build cannot
+    /// read. Distinct from [`Answered::Typed`], which knows what was said.
+    ChoseUnknown,
+}
+
 /// Something arrived and this build cannot type it.
 ///
 /// Not an error state. It is what most output honestly is, and it renders as
@@ -659,6 +732,7 @@ pub enum Kind {
     Architecture(Architecture),
     Changeset(Changeset),
     Decision(Decision),
+    Question(Question),
     Unclassified(Unclassified),
 }
 
@@ -672,6 +746,7 @@ impl Kind {
             Kind::Architecture(_) => "architecture",
             Kind::Changeset(_) => "changeset",
             Kind::Decision(_) => "decision",
+            Kind::Question(_) => "question",
             Kind::Unclassified(_) => "unclassified",
         }
     }
@@ -682,7 +757,11 @@ impl Kind {
     /// being a shortlist and become a second file manager.
     pub fn shelf(&self) -> Shelf {
         match self {
-            Kind::Decision(_) => Shelf::Decisions,
+            // A live question is the loudest thing a bench can hold, so it
+            // files beside decisions rather than under "other": both are the
+            // agent waiting on a person, which is the only sorting rule this
+            // shelf has.
+            Kind::Decision(_) | Kind::Question(_) => Shelf::Decisions,
             Kind::Artifact(_) | Kind::Markdown(_) | Kind::Table(_) | Kind::Architecture(_) => {
                 Shelf::Artifacts
             }
@@ -704,6 +783,10 @@ impl Kind {
                 Action::Approve,
             ],
             Kind::Decision(_) => vec![Action::Approve, Action::Reject, Action::Comment],
+            // A question's verbs are its own options, built per-option by the
+            // renderer. `Comment` is here so a person who wants to say
+            // something other than one of the answers still can.
+            Kind::Question(_) => vec![Action::Comment],
             Kind::Unclassified(_) => vec![Action::AskAgent],
         }
     }
@@ -779,6 +862,15 @@ impl Surface {
             Kind::Decision(d) => match d.options.iter().find(|o| o.recommended) {
                 Some(o) => format!("{} options · recommends {}", d.options.len(), o.name),
                 None => format!("{} options · no recommendation", d.options.len()),
+            },
+            Kind::Question(q) => match &q.answer {
+                Answered::Chose(i) => format!(
+                    "answered · {}",
+                    q.options.get(*i).map(|o| o.label.as_str()).unwrap_or("?")
+                ),
+                Answered::Typed(said) => format!("answered · {said}"),
+                Answered::ChoseUnknown => "answered · how is unavailable".into(),
+                Answered::Waiting => format!("{} options · waiting on you", q.options.len()),
             },
             Kind::Unclassified(u) => u.reason.clone(),
         }
@@ -979,6 +1071,7 @@ fn default_title(kind: &Kind) -> String {
         Kind::Architecture(a) => format!("{} nodes", a.nodes.len()),
         Kind::Changeset(c) => format!("{} hunks", c.hunks.len()),
         Kind::Decision(d) => d.question.chars().take(TITLE_MAX_CHARS).collect(),
+        Kind::Question(q) => q.question.chars().take(TITLE_MAX_CHARS).collect(),
         Kind::Unclassified(_) => "unclassified".into(),
     }
 }
@@ -1112,6 +1205,55 @@ fn parse_kind(name: &str, model: Option<&Value>) -> Result<Kind, KindError> {
                             .collect()
                     })
                     .unwrap_or_default(),
+            })
+        }
+        "question" => {
+            let question =
+                text("question").ok_or_else(|| err("a question needs a `question`".into()))?;
+            let options: Vec<Choice_> = m
+                .get("options")
+                .and_then(Value::as_array)
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|v| {
+                            let label = match v {
+                                Value::String(s) => s.clone(),
+                                other => other.get("label").and_then(Value::as_str)?.to_string(),
+                            };
+                            Some(Choice_ {
+                                what_happens: v
+                                    .get("what_happens")
+                                    .or_else(|| v.get("description"))
+                                    .and_then(Value::as_str)
+                                    .map(str::to_string),
+                                label,
+                            })
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            if options.is_empty() {
+                return Err(err(
+                    "a question needs `options` — an array of strings, or of \
+                     {label, what_happens}"
+                        .into(),
+                ));
+            }
+            let within = |key: &str| {
+                m.get(key)
+                    .and_then(Value::as_u64)
+                    .map(|n| n as usize)
+                    .filter(|n| *n < options.len())
+            };
+            Kind::Question(Question {
+                question,
+                recommend: within("recommend"),
+                answer: match within("answer") {
+                    Some(i) => Answered::Chose(i),
+                    None => Answered::Waiting,
+                },
+                cursor: within("cursor"),
+                options,
             })
         }
         other => {
@@ -1281,6 +1423,7 @@ pub fn catalogue_names() -> Vec<&'static str> {
         "architecture",
         "changeset",
         "decision",
+        "question",
     ]
 }
 

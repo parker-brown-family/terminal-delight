@@ -48,6 +48,15 @@ pub fn tail_tool_events(path: &Path, limit: usize) -> Vec<ToolEvent> {
     events
 }
 
+/// The tail of a transcript, for a second reader.
+///
+/// [`crate::derive`] wants exactly the bytes this module already knows how to
+/// read — same cap, same partial-line handling — and a second copy of that
+/// logic is how the two would come to disagree about where a line starts.
+pub fn read_tail_public(path: &Path) -> Option<String> {
+    read_tail(path).ok()
+}
+
 /// Read only the final `TAIL_BYTES` of the file, dropping the leading partial
 /// line if we seeked into the middle of one.
 fn read_tail(path: &Path) -> std::io::Result<String> {
