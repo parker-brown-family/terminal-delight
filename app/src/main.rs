@@ -873,7 +873,13 @@ impl SavedNode {
     /// is built.
     fn migrate_grades(&mut self, outer: &ThemeChoice) {
         match self {
-            SavedNode::Leaf { appearance, .. } => appearance.migrate_legacy_grade(outer),
+            SavedNode::Leaf { appearance, .. } => {
+                appearance.migrate_legacy_grade(outer);
+                // …and the theme half of the same argument: a pane still
+                // wearing exactly what birth stamped on it never chose that,
+                // so it goes back to following outer.
+                appearance.release_birth_theme();
+            }
             SavedNode::Split { a, b, .. } => {
                 a.migrate_grades(outer);
                 b.migrate_grades(outer);
