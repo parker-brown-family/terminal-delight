@@ -239,6 +239,17 @@ pub struct ConfigPatch {
     /// rides the same pipeline as the note for the same reasons. Pane targets
     /// only.
     pub deliverable: Option<DeliverableChange>,
+    /// A work object for the pane's WORKBENCH, already parsed and validated by
+    /// [`crate::surface::parse`]. Filled in by `present_surface`; rides the
+    /// same pipeline as the note and the deliverable, so a surface write
+    /// shares the one writes gate, the one pane lookup and the one GUI-thread
+    /// apply with every other pane mutation.
+    ///
+    /// `skip`, not a wire field: this is the only member of the patch never
+    /// deserialised from an agent's JSON, because the agent's JSON is the
+    /// *payload* and the verb parses it into this.
+    #[serde(skip)]
+    pub surface: Option<crate::surface::Post>,
 }
 
 /// A validated deliverable declaration on its way to the GUI thread.
@@ -911,6 +922,39 @@ fn tool_defs() -> Value {
             }
         },
         {
+            "name": "present_surface",
+            "description":
+                "Put a WORK OBJECT on this pane's workbench — the pane's second \
+                 face, toggled from its header beside the terminal. Describe what \
+                 the thing MEANS and Terminal Delight renders it natively: a \
+                 decision with its options, an architecture with its nodes and \
+                 edges, a changeset whose hunks a person can accept or reject, a \
+                 table, a document, an artifact to open. Never describe layout — \
+                 no widths, no colours, no components; the window owns all of \
+                 that. `surface` is one TDSP document: {\"td\":\"0.1\", \
+                 \"kind\":\"decision\", \"title\":\"…\", \"model\":{…}}. Send the \
+                 same `id` again to update it in place, or op \"retire\" to take \
+                 it off the bench. An unknown kind is shown as unclassified \
+                 rather than dropped, so it is always safe to send. When a person \
+                 acts on it you receive a line beginning [workbench] in this \
+                 terminal. Call surface_catalogue for the kinds and their models. \
+                 Requires the writes toggle (TD_MCP_WRITE).",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "pid": { "type": "integer", "description": "pid of the pane whose bench this belongs on, from list_panes — usually your own" },
+                    "surface": { "type": "object", "description": "one TDSP document: td, kind, title, model, and optionally id, op, weight, source, actions" }
+                },
+                "required": ["pid", "surface"],
+                "additionalProperties": false
+            }
+        },
+        {
+            "name": "surface_catalogue",
+            "description": "What kinds of work object this build of Terminal Delight can render, the actions a person can take on them, and the weights a surface may carry. Read-only. Ask before presenting if you are unsure a kind exists — an unknown kind still lands, but as unclassified.",
+            "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false }
+        },
+        {
             "name": "grep",
             "description": "Search the recent scrollback of every EXPOSED pane for an exact, case-insensitive substring. Returns, per matching pane, its identity (pid/tab/title/mode) and the matching lines with the match column. Read-only — it reads on-screen text, never writes. Use it to find where something is across the whole window (an error, a path, a TODO, a value).",
             "inputSchema": {
@@ -956,6 +1000,8 @@ where
         "set_pane_config" => set_pane_config(&args, snap, apply),
         "leave_note" => leave_note(&args, snap, apply),
         "declare_deliverable" => declare_deliverable(&args, snap, apply),
+        "present_surface" => present_surface(&args, snap, apply),
+        "surface_catalogue" => surface_catalogue(),
         "grep" => grep(&args, snap, search),
         other => return Err((-32602, format!("unknown tool: {other}"))),
     };
@@ -970,8 +1016,8 @@ where
 /// is exactly the answer somebody would act on without ever asking which
 /// terminal refused.
 ///
-/// Done here rather than inside each verb on purpose. Seven tools would be
-/// seven chances to forget, and the eighth would ship without it.
+/// Done here rather than inside each verb on purpose. Nine tools would be
+/// nine chances to forget, and the tenth would ship without it.
 fn stamp(mut v: Value, snap: &Snapshot) -> Value {
     let line = match &snap.instance {
         Some(i) => i.line(),
@@ -1417,6 +1463,111 @@ where
         Some((_, Err(e))) => tool_err(&e),
         None => tool_err("the window did not answer the deliverable write"),
     }
+}
+
+/// `present_surface` — put a work object on a pane's workbench.
+///
+/// The strict half of the protocol. A file dropped in the watched directory is
+/// parsed leniently, because nobody is there to be told what was wrong with
+/// it; a verb call has an agent on the other end that can read a sentence and
+/// try again, so this one refuses and says why.
+fn present_surface<G>(args: &Value, snap: &Snapshot, apply: &G) -> Value
+where
+    G: Fn(&[ConfigUpdate]) -> Vec<ApplyOutcome>,
+{
+    if !snap.config.enabled {
+        return tool_err("MCP exposure is disabled. Enable it in the MCP CONTROL panel.");
+    }
+    if !snap.config.writable {
+        return tool_err(
+            "MCP writes are disabled. This server is a read-only watch surface \
+             until you opt in: enable \"writes\" in the MCP CONTROL panel (or set \
+             TD_MCP_WRITE=1) to let an agent present a surface.",
+        );
+    }
+    let Some(pid) = args.get("pid").and_then(Value::as_u64) else {
+        return tool_err("present_surface requires a `pid` (an integer, from list_panes).");
+    };
+    // `surface` is where the document belongs, but an agent that sent the
+    // envelope at the top level meant the same thing and being pedantic about
+    // it would cost a round trip to say so.
+    let doc = match args.get("surface") {
+        Some(v) if v.is_object() => v.clone(),
+        Some(_) => return tool_err("`surface` must be a TDSP document (a JSON object)."),
+        None => {
+            let mut inline = args.clone();
+            if let Some(map) = inline.as_object_mut() {
+                map.remove("pid");
+            }
+            if inline.get("td").is_none() {
+                return tool_err(
+                    "present_surface requires a `surface` — one TDSP document, \
+                     starting {\"td\":\"0.1\",\"kind\":…}. Call surface_catalogue \
+                     for the kinds this build renders.",
+                );
+            }
+            inline
+        }
+    };
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or_default();
+    let post = match crate::surface::parse(&doc, now) {
+        Ok(p) => p,
+        Err(why) => return tool_err(&why),
+    };
+    let said = match (&post.op, post.surface.as_ref()) {
+        (crate::surface::Op::Retire, _) => {
+            format!("retired — {} is off the bench", post.id.as_str())
+        }
+        (_, Some(s)) => format!(
+            "on the bench — {:?} ({}) is on pane {pid}'s WORKBENCH face",
+            s.title,
+            s.kind.id()
+        ),
+        (_, None) => "nothing to draw".to_string(),
+    };
+    let kind = post
+        .surface
+        .as_ref()
+        .map(|s| s.kind.id().to_string())
+        .unwrap_or_else(|| "retired".into());
+    let id = post.id.as_str().to_string();
+    // The op is echoed back because `present` on an id that already exists is
+    // a replacement rather than an addition, and an agent that meant to update
+    // should be able to see from the reply which of the two it just did.
+    let op = post.op.as_str();
+    let patch = ConfigPatch {
+        surface: Some(post),
+        ..Default::default()
+    };
+    match apply(&[(Target::Pane(pid as u32), patch)])
+        .into_iter()
+        .next()
+    {
+        Some((_, Ok(_))) => tool_ok(
+            said,
+            json!({ "pid": pid, "surface": id, "kind": kind, "op": op }),
+        ),
+        Some((_, Err(e))) => tool_err(&e),
+        None => tool_err("the window did not answer the surface write"),
+    }
+}
+
+/// `surface_catalogue` — what this build can draw, said out loud.
+///
+/// A2UI's host-advertised catalogue. An agent that asks is told, rather than
+/// guessing and having its work quietly downgraded to unclassified.
+fn surface_catalogue() -> Value {
+    let cat = crate::surface::catalogue();
+    tool_ok(
+        format!(
+            "This build renders: {}. Unknown kinds are shown as unclassified, never dropped.",
+            crate::surface::catalogue_names().join(", ")
+        ),
+        cat,
+    )
 }
 
 fn tool_ok(text: String, structured: Value) -> Value {

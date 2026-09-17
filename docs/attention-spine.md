@@ -75,7 +75,7 @@ These are not omissions. Each one was decided, and each is load-bearing:
 | What | Where |
 |---|---|
 | The lanes, the sort, the lifecycle types | `app/src/attention.rs` — pure, no UI, no pane reads, no filesystem |
-| Reading a screen; capturing the quote | `app/src/pane.rs` — `wants_human_row`, `blocked_row`, `clip_evidence` |
+| Reading a screen; capturing the quote | `app/src/screenread.rs` — `wants_human_row`, `blocked_row`, `clip_evidence` |
 | The one precedence both surfaces read | `app/src/main.rs` — `agent_badge`, `rail_kind` |
 | Building observations from live panes | `app/src/main.rs` — `rail_build`, memoised by `rail_rows` |
 | Queue lifecycle (open, freeze, seen, close) | `app/src/main.rs` — `rail_toggle`, `rail_close`, `rail_key` |

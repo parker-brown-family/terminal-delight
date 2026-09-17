@@ -210,17 +210,12 @@ pub fn is_live_spinner(row: &str) -> bool {
 /// the defect this file already names elsewhere: two rankings of one pane, free
 /// to disagree about whether the person is the bottleneck.
 pub fn rows_say_working(rows: &[String]) -> bool {
-    rows.iter().any(|r| {
-        // Stock Claude/Codex print "esc to interrupt" on the footer; Parker's
-        // custom status line says "still thinking …". The spinner line is what
-        // is left when the footer has been truncated to the pane's width.
-        let l = r.to_ascii_lowercase();
-        l.contains("esc to interrupt")
-            || l.contains("interrupt)")
-            || l.contains("still thinking")
-            || (l.contains("tokens") && l.contains("thinking"))
-            || is_live_spinner(r)
-    })
+    // ONE rule, shared with `TerminalView::agent_is_thinking`: the needles live
+    // in `screenread::row_is_working`, and the spinner line joined them there.
+    // These were two copies of one heuristic, and when the CLI stopped printing
+    // `esc to interrupt` on a narrow pane only one of them would have been
+    // noticed.
+    rows.iter().any(|r| crate::screenread::row_is_working(r))
 }
 
 /// Parse the visible bottom rows of an agent pane into an [`AgentStatus`].
@@ -439,6 +434,7 @@ pub fn fmt_tokens(n: u64) -> String {
 
 #[cfg(test)]
 mod tests {
+
     use super::*;
 
     fn rows(s: &[&str]) -> Vec<String> {

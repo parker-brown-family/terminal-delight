@@ -2265,8 +2265,14 @@ mod owning {
         // first line still sees it, and sees the second line after it, once.
         let (host, pane) = host_with_cat_pane();
         host.write_to(pane, b"before you arrived\n".to_vec());
+        // BOTH copies before attaching — the terminal's echo on row 0 and
+        // cat's own print on row 1. The comment on the last assertion knew
+        // every line appears twice; this wait did not, and let cat's copy
+        // land live after a snapshot that held the echo. Same race as the
+        // socket test, same fix.
         assert!(within(Duration::from_secs(5), || {
             host.row_text(pane, 0).as_deref() == Some("before you arrived")
+                && host.row_text(pane, 1).as_deref() == Some("before you arrived")
         }));
 
         let (client, server) = UnixStream::pair().expect("socket pair");
