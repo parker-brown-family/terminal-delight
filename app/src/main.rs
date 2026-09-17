@@ -14783,9 +14783,25 @@ impl Workspace {
             }
             tree::Row::Task { index, depth } => self.task_row(index, depth, step, &th, s, cx),
             tree::Row::Unfiled { depth } => {
-                // A hairline and nothing else. It is also a drop target — "file
-                // this under nothing" is an answer — so it registers its box and
-                // lights up like a branch when a drag is over it.
+                // A word, then a hairline. It used to be the hairline alone,
+                // which made this the one boundary in the tree that divided
+                // without naming what came after it: the loose tasks below took
+                // their caption from whichever branch heading happened to sit
+                // above them, so a run of eight ordinary panes read as junk
+                // filed under JOB. Every other row in this bar says what it is,
+                // and the one row whose whole job is to say "these belong to
+                // nobody" was the one saying nothing.
+                //
+                // Not in tension with the strip heading, which deliberately
+                // stays a bare mark for a loose tab (see `place_name`):
+                // there "unfiled" would be the only heading in an unorganised
+                // session, shouting a state. Here it is a divider, and a
+                // divider with filed rows above it and loose rows below has to
+                // name which side is which.
+                //
+                // It is also a drop target — "file this under nothing" is an
+                // answer — so it registers its box and lights up like a branch
+                // when a drag is over it.
                 let store = self.bar_bounds.clone();
                 let hot = self
                     .bar_drag
@@ -14808,6 +14824,18 @@ impl Workspace {
                     .flex()
                     .flex_row()
                     .items_center()
+                    // Margin on the label rather than a row `gap`: the third
+                    // child here is an absolutely-positioned hit canvas, and a
+                    // gap is a rule about EVERY pair in the row rather than
+                    // about the pair you were looking at.
+                    .child(
+                        div()
+                            .flex_none()
+                            .mr(px(5. * s))
+                            .text_size(px(CHROME_NAME_PT * s))
+                            .text_color(if hot { th.accent } else { th.faint })
+                            .child(self.branch_label(BarBranch::Unfiled).to_uppercase()),
+                    )
                     .child(div().h(px(if hot { 2. } else { 1. })).flex_1().bg(if hot {
                         th.accent
                     } else {
@@ -26257,6 +26285,51 @@ mod tests {
             !label.trim().is_empty() && label.contains('7'),
             "an unnamed group labelled {label:?} — the heading needs a name that \
              identifies WHICH unnamed branch it is"
+        );
+    }
+
+    /// The divider above the loose tasks has to NAME them.
+    ///
+    /// It shipped as a bare hairline, which made it the only boundary in the
+    /// tree that divided without saying what came after it. The consequence was
+    /// not subtle and was not caught by any of the tree's shape tests, because
+    /// the row was structurally present and correct the whole time: with the
+    /// hairline nearly invisible at the bar's contrast, a run of loose tabs read
+    /// as children of whichever branch heading happened to sit above it — for
+    /// Parker, eight ordinary panes filed under a collapsed group called JOB,
+    /// reported as junk processes something had spawned behind his back.
+    ///
+    /// Source-scanned rather than exercised: the row is a gpui element and a
+    /// `Workspace` needs a live `Window`, so a version that draws nothing
+    /// compiles and passes everything else — which is exactly how it got here.
+    #[test]
+    fn the_unfiled_divider_says_what_is_below_it() {
+        let src = include_str!("main.rs");
+        // The arm, not the function: `bar_row` is a long match and the other
+        // arms legitimately carry no such call.
+        let at = src
+            .find("tree::Row::Unfiled { depth } => {")
+            .expect("the unfiled arm of bar_row");
+        let end = src[at..].find("\n            }\n").expect("end of arm");
+        let arm = &src[at..at + end];
+
+        assert!(
+            arm.contains("branch_label(BarBranch::Unfiled)"),
+            "the unfiled row draws no label — a divider with filed rows above it \
+             and loose rows below it has to name which side is which, and the \
+             string belongs to branch_label so the row and the drag chip cannot \
+             disagree about what unfiled is called"
+        );
+        assert!(
+            arm.contains("flex_1()"),
+            "the hairline lost its flex_1 — a label beside a fixed-width rule \
+             leaves the row short of the rail instead of spanning it"
+        );
+        // And the label must be the flex_none half. If both halves flex, the
+        // text is what gives, and a truncated word is worse than no word.
+        assert!(
+            arm.contains("flex_none()"),
+            "the unfiled label must be flex_none so the hairline takes the slack"
         );
     }
 
