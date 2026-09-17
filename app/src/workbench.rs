@@ -420,6 +420,31 @@ pub struct Reviewed {
     pub answer: String,
 }
 
+/// Where a key takes the review gallery.
+///
+/// Its own function because the gallery is MODAL and modal key handling is
+/// where surfaces quietly go wrong: a key the overlay does not use must not
+/// fall through to the thing underneath, or a left arrow aimed at the gallery
+/// walks the caret in a composer nobody can see. Every key is answered here,
+/// including the ones whose answer is "nothing".
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Gallery {
+    Back,
+    Forward,
+    Close,
+    /// Used by the gallery and meaning nothing — swallowed, not passed on.
+    Ignore,
+}
+
+pub fn gallery_key(key: &str) -> Gallery {
+    match key {
+        "left" | "up" | "h" => Gallery::Back,
+        "right" | "down" | "l" | "space" => Gallery::Forward,
+        "escape" | "q" | "enter" => Gallery::Close,
+        _ => Gallery::Ignore,
+    }
+}
+
 /// Every answered question on this bench, oldest first.
 ///
 /// Oldest first because a review is a story of how you got here, and the rail
@@ -1962,6 +1987,26 @@ mod tests {
         l.end();
         l.insert("z");
         assert!(l.text().ends_with("bz"), "{}", l.text());
+    }
+
+    #[test]
+    fn the_gallery_answers_every_key_including_the_ones_it_ignores() {
+        // The pair a person reaches for, and the pair beside them on a
+        // keyboard somebody is already resting a hand on.
+        assert_eq!(gallery_key("left"), Gallery::Back);
+        assert_eq!(gallery_key("right"), Gallery::Forward);
+        assert_eq!(gallery_key("up"), Gallery::Back);
+        assert_eq!(gallery_key("down"), Gallery::Forward);
+        // Three ways out, because a modal nobody can close is a trap.
+        for out in ["escape", "q", "enter"] {
+            assert_eq!(gallery_key(out), Gallery::Close, "{out}");
+        }
+        // And everything else is SWALLOWED rather than passed down. A key
+        // that fell through would reach the composer underneath, which the
+        // person cannot see and did not mean to type into.
+        for other in ["a", "f5", "tab", "backspace", "1"] {
+            assert_eq!(gallery_key(other), Gallery::Ignore, "{other}");
+        }
     }
 
     #[test]

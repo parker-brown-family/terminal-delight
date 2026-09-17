@@ -615,10 +615,18 @@ pub fn review_flyout(
     let tint = ink(crate::workbench::Tint::Settled, th);
     aglow(
         sk.panel()
-            .absolute()
-            .left(px(18.))
-            .right(px(18.))
-            .bottom(px(18.))
+            // CENTRED on what it covers, not parked at the bottom.
+            //
+            // A flyout opens because somebody pressed a button in the middle
+            // of the card, and their eye is already there; putting the answer
+            // at the foot of the pane asks them to go and find it. Parker:
+            // *"the POSITION should be CENTERED on the question element and
+            // overlapping it ... if the person CLICKED review, the popup will
+            // be where they JUST clicked"*. The centring is done by the
+            // wrapper the pane puts this in, so this only has to say how wide
+            // it is willing to be.
+            .max_w(px(620.))
+            .w_full()
             .flex()
             .flex_col()
             .gap(px(10.))
@@ -1167,6 +1175,32 @@ pub fn title_card(
     // question — two blooms for one fact, and the one holding the buttons is
     // the one worth looking at.
     raised(card, tint, th)
+}
+
+/// Dress an answer as a button: always a button, coloured by what it is.
+///
+/// Three states and they are genuinely three. `primary` is the row the agent's
+/// own cursor is on — what pressing return in the terminal would do — and it
+/// gets the accent and the weight. `chosen` is what a person already picked,
+/// and it keeps its colour without the emphasis, because a decision already
+/// taken is a record. Everything else is a plain bordered control: pressable,
+/// legible, quiet.
+///
+/// The border and the padding never vary. An option that looks like a word
+/// instead of a button is one nobody presses, whatever colour it is.
+pub fn option_button<E: Styled>(el: E, primary: bool, chosen: bool, th: &Theme) -> E {
+    let el = el
+        .px(px(if primary { 16. } else { 12. }))
+        .py(px(if primary { 9. } else { 7. }))
+        .text_size(px(if primary { 13. } else { 12. }))
+        .border_1();
+    if primary {
+        el.border_color(th.accent.alpha(0.9))
+    } else if chosen {
+        el.border_color(ink(crate::workbench::Tint::Settled, th).alpha(0.7))
+    } else {
+        el.border_color(th.text.alpha(0.28))
+    }
 }
 
 /// Dress a verb as a button: big enough to hit, lit if it is the main one.

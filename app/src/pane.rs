@@ -4429,17 +4429,44 @@ impl TerminalView {
         // rather than travelling, because esc into a working agent kills its
         // turn and a person leaving a text box does not mean that.
         if self.bench.face() == crate::workbench::Face::Workbench {
+            // The GALLERY first, and it takes every key.
+            //
+            // It is drawn over everything and it was opened by a deliberate
+            // press, so attention is there — the arrows belong to it until it
+            // closes. Swallowing the keys it does not use is the other half:
+            // a left arrow falling through would walk the caret in a composer
+            // hidden behind the overlay.
+            if self.wb_review.is_some() {
+                use crate::workbench::Gallery;
+                let total = self.bench.reviewable().len();
+                match crate::workbench::gallery_key(&ks.key) {
+                    Gallery::Back => {
+                        if let Some(n) = self.wb_review.as_mut() {
+                            *n = n.saturating_sub(1);
+                        }
+                    }
+                    Gallery::Forward => {
+                        if let Some(n) = self.wb_review.as_mut() {
+                            *n = (*n + 1).min(total.saturating_sub(1));
+                        }
+                    }
+                    Gallery::Close => self.wb_review = None,
+                    Gallery::Ignore => {}
+                }
+                cx.notify();
+                cx.stop_propagation();
+                return;
+            }
             let talking = self.wb_compose.is_some();
             if ks.key.as_str() == "escape" {
                 // One layer at a time, innermost first: the typing, then the
                 // card over the conversation, then the face. Closing two at
                 // once throws away something the person was in the middle of.
-                // Outermost first, and the gallery is the outermost thing
-                // there is: it is drawn over the card, so esc has to take it
-                // off before esc can mean anything about what is underneath.
-                if self.wb_review.take().is_some() {
-                    cx.notify();
-                } else if talking {
+                // The gallery is not a rung here: it is handled above,
+                // where it takes EVERY key rather than only this one, because
+                // an overlay that swallows esc and leaks the arrows is worse
+                // than one that swallows neither.
+                if talking {
                     self.wb_compose = None;
                     cx.notify();
                 } else if self.bench.close_card() {
@@ -6910,16 +6937,29 @@ impl TerminalView {
                     Some(true) => format!("\u{2713} {}", o.label),
                     _ => o.label.clone(),
                 };
-                // LIT MEANS CHOSEN, and nothing else.
+                // LIT MEANS CHOSEN, and nothing else — but an unlit option
+                // is still a BUTTON.
                 //
-                // Every chip was lit while the question was open, on the
-                // reasoning that every chip was pressable — so six options
-                // came up glowing at once and the glow stopped saying
-                // anything. Parker: *"the amount of glow is just way too much
-                // ... glow should MEAN something, this is noise"*. Pressable
-                // is what the cursor and the border are for; the bloom is
-                // reserved for state a person put there.
-                let chip = sk.chip(lit).text_size(px(11.5)).child(label);
+                // Taking the bloom off every chip was right and went one step
+                // too far: it took the button with it, and `Submit answers`
+                // and `Cancel` came out as two grey words in a row. Parker:
+                // *"should look like buttons - and be coloured"*. So the
+                // border and the padding are unconditional, and the three
+                // things that vary are colour, weight and bloom.
+                //
+                // PRIMARY is where the agent's own cursor is sitting. That is
+                // measured — the picker draws its gutter mark on the row it
+                // would take if you pressed return — rather than guessed from
+                // the label, which on a confirm would mean sniffing for the
+                // word "submit" and getting it wrong in every other language
+                // the agent might answer in.
+                let primary = !answered && q.cursor == Some(i);
+                let chip = crate::benchdraw::option_button(
+                    sk.chip(lit || primary).child(label),
+                    primary,
+                    lit,
+                    th,
+                );
                 if answered {
                     // A question already answered keeps its chips so the
                     // record reads the same as the decision did, but they do
@@ -7796,57 +7836,76 @@ impl TerminalView {
             let back = at > 0;
             let fwd = at + 1 < total;
             Some(
-                crate::benchdraw::review_flyout(at, total, &item.title, &item.answer, sk, th)
+                // The centring wrapper: it fills the bench and puts the panel
+                // in the middle of it, over whatever is underneath.
+                div()
+                    .absolute()
+                    .inset_0()
+                    .flex()
+                    .items_center()
+                    .justify_center()
                     .child(
-                        div()
-                            .flex()
-                            .flex_row()
-                            .gap(px(8.))
-                            .items_center()
-                            .child(
-                                sk.chip(back)
-                                    .cursor_pointer()
-                                    .child("\u{2190}".to_string())
-                                    .on_mouse_down(
-                                        MouseButton::Left,
-                                        cx.listener(|view, _ev: &MouseDownEvent, _w, cx| {
-                                            cx.stop_propagation();
-                                            if let Some(n) = view.wb_review.as_mut() {
-                                                *n = n.saturating_sub(1);
-                                            }
-                                            cx.notify();
-                                        }),
-                                    ),
-                            )
-                            .child(
-                                sk.chip(fwd)
-                                    .cursor_pointer()
-                                    .child("\u{2192}".to_string())
-                                    .on_mouse_down(
-                                        MouseButton::Left,
-                                        cx.listener(move |view, _ev: &MouseDownEvent, _w, cx| {
-                                            cx.stop_propagation();
-                                            if let Some(n) = view.wb_review.as_mut() {
-                                                *n = (*n + 1).min(total.saturating_sub(1));
-                                            }
-                                            cx.notify();
-                                        }),
-                                    ),
-                            )
-                            .child(div().flex_1())
-                            .child(
-                                sk.chip(false)
-                                    .cursor_pointer()
-                                    .child("CLOSE".to_string())
-                                    .on_mouse_down(
-                                        MouseButton::Left,
-                                        cx.listener(|view, _ev: &MouseDownEvent, _w, cx| {
-                                            cx.stop_propagation();
-                                            view.wb_review = None;
-                                            cx.notify();
-                                        }),
-                                    ),
-                            ),
+                        crate::benchdraw::review_flyout(
+                            at,
+                            total,
+                            &item.title,
+                            &item.answer,
+                            sk,
+                            th,
+                        )
+                        .child(
+                            div()
+                                .flex()
+                                .flex_row()
+                                .gap(px(8.))
+                                .items_center()
+                                .child(
+                                    sk.chip(back)
+                                        .cursor_pointer()
+                                        .child("\u{2190}".to_string())
+                                        .on_mouse_down(
+                                            MouseButton::Left,
+                                            cx.listener(|view, _ev: &MouseDownEvent, _w, cx| {
+                                                cx.stop_propagation();
+                                                if let Some(n) = view.wb_review.as_mut() {
+                                                    *n = n.saturating_sub(1);
+                                                }
+                                                cx.notify();
+                                            }),
+                                        ),
+                                )
+                                .child(
+                                    sk.chip(fwd)
+                                        .cursor_pointer()
+                                        .child("\u{2192}".to_string())
+                                        .on_mouse_down(
+                                            MouseButton::Left,
+                                            cx.listener(
+                                                move |view, _ev: &MouseDownEvent, _w, cx| {
+                                                    cx.stop_propagation();
+                                                    if let Some(n) = view.wb_review.as_mut() {
+                                                        *n = (*n + 1).min(total.saturating_sub(1));
+                                                    }
+                                                    cx.notify();
+                                                },
+                                            ),
+                                        ),
+                                )
+                                .child(div().flex_1())
+                                .child(
+                                    sk.chip(false)
+                                        .cursor_pointer()
+                                        .child("CLOSE".to_string())
+                                        .on_mouse_down(
+                                            MouseButton::Left,
+                                            cx.listener(|view, _ev: &MouseDownEvent, _w, cx| {
+                                                cx.stop_propagation();
+                                                view.wb_review = None;
+                                                cx.notify();
+                                            }),
+                                        ),
+                                ),
+                        ),
                     ),
             )
         });
