@@ -42,8 +42,8 @@ The three rules the pass installs, each with a mechanical guard:
 | 4 | Mechanical guard for rule three: a scan of `benchdraw.rs` for `if`/`match` on state that is not a `Shows`/`Standing`/`Peel` value | after 3 | |
 | 5 | `bench_type` appended on the PTY and replaced in the mirror — the diagnostic's first finding, root-caused (§3) | **landed** | `72950ad` |
 | 6 | TDSP 0.2 with a compatibility test that parses 0.1, 0.2, 0.9 and refuses 1.0 | **landed** | `03a1358` |
-| 7 | `host_socket`'s PTY-timing test — flaked four times under a parallel release build, green every time in isolation | file as a falsifiable issue when the branch lands | |
-| 8 | The CRT warp on the bench | **decision** — §4 | |
+| 7 | `host_socket` — flaked FIVE times under a parallel release build across TWO different tests, green every time alone; that points at the binary's shared PTY/socket harness, not at either test | file as a falsifiable issue when the branch lands | |
+| 8 | The CRT warp on the bench — Parker decided; the bench bends and hit-tests through the warp's inverse | **landed** | `46ec6b6` |
 | 9 | The composer sits in the vignette's darkest band — confirmed from code, §3-03 | **decision** — §4 | |
 
 What each landed slice cost and found is in its commit message; they are written
@@ -97,16 +97,23 @@ said so. That is the standard.
 
 ## 4 · Parker's decisions, not the code's
 
-**The warp.** The bench is registered flat on purpose, and the reason is in
-`pane.rs` beside the tube registration: the barrel warp is a pixel post-pass
-while gpui hit-tests the element tree flat, so a button drawn inside a bent tube
-is clicked where it is not. The terminal survives because its clicks resolve
-through `viewport_cell`, which inverts the warp; a tree of chips, a Submit
-button and a click-to-place caret cannot. The inverse exists
-(`warp_screen_to_content`), so it is buildable — as the bench doing its own
-hit-testing against registered element bounds, with every future control
-registering. **Recommendation: not before release.** It is a click-model
-rebuild at the wrong moment, and the surface is entirely clicks.
+**The warp — decided by Parker, and built.** The concern was real and is
+written in `46ec6b6`: the barrel warp is a pixel post-pass while gpui hit-tests
+the element tree flat. The bench now does its own hit-testing. Every control
+records its flat rectangle as it paints (`benchdraw::zone`), the root mouse
+handler un-bends the pointer with the pane's own coefficients through the
+grid's inverse (`workbench::unwarp`, tested for fixed centre, identity at
+`k = 0`, radial symmetry) and looks the flat point up (`workbench::hit_at`,
+last-painted wins, edges do not double-claim). Fifteen closures became fifteen
+`Hit` variants dispatched by one `match` the compiler makes complete.
+
+*Residue, so nobody rediscovers it as a bug:* the scroll wheel and hover
+cursors are still gpui-dispatched flat — `ScrollHandle` has no public setter.
+The composer sits bottom-centre where barrel displacement is smallest, and a
+wheel a few pixels off scrolls the same box. *Verification channel:* a shell
+with no virtual pointer cannot press the surface, so `TD_HITDEBUG=1` prints
+each click's whole chain — pointer, curvature, un-bent point, zone count, hit —
+and a person's clicks are read back from the window's log.
 
 **The composer in the vignette.** If §3-03 confirms, the options are to exempt
 the bench body from the vignette (it is flat already, so the grade is the only
@@ -123,6 +130,7 @@ document it in the spec's implementation map.**
 ## 5 · What "done" looks like for this pass
 
 - Rules one and two are mechanical and mutation-tested (they are).
+- The warp is on the bench and every control still lands (it is; verify by clicking under `TD_HITDEBUG=1`).
 - Rule three is mechanical (slice 4).
 - `body()` matches each kind once per embodiment (slice 3).
 - The three decisions in §4 have an answer written next to them.

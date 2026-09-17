@@ -122,7 +122,9 @@ there; the backend is spaghetti and needs a refactor plan and pass.* The plan is
       (`72950ad`)
 - [ ] `body()` — one kind-match per embodiment (slice 3)
 - [ ] Mechanical guard for "a renderer contains no decisions" (slice 4)
-- [ ] Two decisions for Parker: the warp on the bench, the bench in the vignette
+- [x] The warp on the bench — Parker decided, built, hit-tested through the
+      inverse; residue and verification channel in the plan. (`46ec6b6`)
+- [ ] One decision left for Parker: the bench in the vignette
 
 **Surprises.** A test written as `for i in 0..SETTLE_SWEEPS` passed with the
 constant set to zero — vacuous under the exact mutation it existed to catch.
