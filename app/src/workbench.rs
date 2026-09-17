@@ -79,6 +79,47 @@ pub enum Face {
     Workbench,
 }
 
+/// How much of the tube's vignette a face gets.
+///
+/// The bench gets none. The vignette is an inset shadow on the pane's content
+/// box, darkest at the edges, and the composer is the bench's bottom-most
+/// element — so on the bench the line a person was typing was the darkest
+/// text on the pane, by construction. The composer diagnostic measured it
+/// from photographs (*text dims toward the newest line*); the plan's §3-03
+/// confirmed it from `crt.rs`. The terminal keeps its grade untouched: the
+/// vignette is the tube's, and the bench is not in the tube. It keeps the
+/// scanlines, the bloom and the bend, which are.
+///
+/// Decided 2026-09-17, the recommendation taken.
+pub fn vignette_on(face: Face, vignette: f32) -> f32 {
+    match face {
+        Face::Terminal => vignette,
+        Face::Workbench => 0.0,
+    }
+}
+
+/// Which pane a scripted bench verb reaches — `ctl bench choose|say|type`.
+///
+/// The FOCUSED pane, when it qualifies: it is the pane a person is looking
+/// at, and it is what the verb's documentation promised from the day it was
+/// written. Otherwise the first qualifying pane in the order given, which the
+/// caller builds with the active tab's panes ahead of the rest. `eligible`
+/// carries one flag per pane in that order; `focused` is the focused pane's
+/// index in the same order, if any.
+///
+/// The rule used to be "the first qualifying pane in tab order" and nothing
+/// more, and against a restored window of seventeen tabs `ctl bench type`
+/// typed into a pane that was not on screen while the one in front of the
+/// person stayed empty — terminal-delight#489.
+pub fn bench_target(eligible: &[bool], focused: Option<usize>) -> Option<usize> {
+    if let Some(i) = focused {
+        if eligible.get(i).copied().unwrap_or(false) {
+            return Some(i);
+        }
+    }
+    eligible.iter().position(|e| *e)
+}
+
 impl Face {
     pub fn other(self) -> Face {
         match self {
@@ -586,6 +627,86 @@ pub enum Hit {
     /// The dim field around the gallery: a click there does nothing, and
     /// must not fall through to the card underneath.
     Nothing,
+}
+
+impl Hit {
+    /// The pointer a control asks for.
+    ///
+    /// The composer is text. The field around it — which arms the line — and
+    /// the dim field around the gallery are nothing to point at. Everything
+    /// else is pressed, and says so with a hand.
+    pub fn pointer(&self) -> Pointer {
+        match self {
+            Hit::Composer => Pointer::Text,
+            Hit::Arm | Hit::Nothing => Pointer::Arrow,
+            _ => Pointer::Hand,
+        }
+    }
+}
+
+/// What the pointer looks like over the bench.
+///
+/// Decided from the UN-BENT position, like a click, so the hand appears over
+/// what the tube shows as a button rather than over where gpui laid it — a
+/// child's own `cursor_pointer()` is hit-tested flat and would put the hand
+/// beside the button under any real curvature.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum Pointer {
+    #[default]
+    Arrow,
+    Text,
+    Hand,
+}
+
+/// What a wheel turn over the bench moves.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Wheel {
+    /// The composer's draft, by the delta.
+    Composer,
+    /// The agent's scrollback, when the mirror is showing.
+    Mirror,
+    /// Nothing — and the turn is consumed, so nothing under the bench moves
+    /// flat either.
+    Nothing,
+}
+
+/// Where a wheel turn goes, given what the UN-BENT pointer is over.
+///
+/// The composer takes the wheel when the pointer is on it. Otherwise the
+/// mirror takes it if the mirror is showing — it is the agent's own
+/// scrollback, and scrolling it is what the wheel did on the bench before
+/// there was a composer. Otherwise nothing, and the turn is consumed rather
+/// than handed back to gpui, because gpui would hit-test it FLAT and scroll
+/// the composer while the eye is on the card above it — the same
+/// displacement clicks already un-bend. See [`unwarp`].
+pub fn wheel_target(over: Option<&Hit>, mirror: bool) -> Wheel {
+    match over {
+        Some(Hit::Composer) => Wheel::Composer,
+        _ if mirror => Wheel::Mirror,
+        _ => Wheel::Nothing,
+    }
+}
+
+/// A scroll offset after a wheel delta, in gpui's convention.
+///
+/// The offset is the distance from the container's top to the content's top:
+/// zero with the first line showing, `-max` with the last, and a turn is
+/// added and then held inside that range. A container with nothing hidden
+/// (`max <= 0`) stays at zero whatever the wheel does.
+pub fn wheel_offset(offset: f32, delta: f32, max: f32) -> f32 {
+    (offset + delta).clamp(-max.max(0.0), 0.0)
+}
+
+/// Whether the composer's view follows an edit — asks for its bottom before
+/// the next frame — or stays where the person scrolled it.
+///
+/// It follows while the caret is at the end of the line, which is where the
+/// caret is for almost every keystroke, and where "keep the end on screen"
+/// means keeping the caret on screen. A caret parked earlier in a long draft
+/// was put there on purpose, and a view that jumps to the bottom under a
+/// hand is worse than one that has to be scrolled back.
+pub fn follows(caret: usize, len: usize) -> bool {
+    caret >= len
 }
 
 /// A flat rectangle and what pressing it means.
@@ -1961,6 +2082,31 @@ mod tests {
         assert_eq!(b.rows()[0].title, "Second");
     }
 
+    /// The derived half re-presents whatever it read from the transcript on
+    /// every sweep. A present that changes nothing must answer `None`, or every
+    /// agent pane repaints once a second for as long as it lives — and a
+    /// surface the person has already looked at must not go back to unseen.
+    #[test]
+    fn an_identical_re_present_is_not_a_change() {
+        let mut b = Bench::new();
+        assert!(
+            b.apply(doc("same", "First")).is_some(),
+            "the first arrival is a change"
+        );
+        b.mark_shelf_seen();
+        let seen = b.unseen_total();
+        assert!(b.apply(doc("same", "First")).is_none(), "nothing changed");
+        assert_eq!(
+            b.unseen_total(),
+            seen,
+            "an identical re-present is not news"
+        );
+        assert!(
+            b.apply(doc("same", "Second")).is_some(),
+            "a different title is a change"
+        );
+    }
+
     #[test]
     fn reading_your_answer_outranks_waiting_on_you_and_nothing_else() {
         // (asking, blocked, done, exited, thinking, reading) → state
@@ -2751,6 +2897,178 @@ mod tests {
         );
         // And an empty rect cannot divide by zero.
         assert_eq!(unwarp((0.0, 0.0, 0.0, 0.0), k1, k2, 3.0, 4.0), (3.0, 4.0));
+    }
+
+    #[test]
+    fn a_scripted_bench_verb_reaches_the_focused_pane_first() {
+        // The focused pane qualifies: it wins, even when an earlier one does.
+        assert_eq!(bench_target(&[true, true, true], Some(2)), Some(2));
+        // The focused pane does not qualify: the first that does.
+        assert_eq!(bench_target(&[false, true, true], Some(0)), Some(1));
+        // Nothing focused: the first that qualifies.
+        assert_eq!(bench_target(&[false, false, true], None), Some(2));
+        // A focus index off the end is not an eligible pane.
+        assert_eq!(bench_target(&[true], Some(5)), Some(0));
+        // Nobody qualifies: nobody, whatever is focused.
+        assert_eq!(bench_target(&[false, false], Some(1)), None);
+        assert_eq!(bench_target(&[], None), None);
+    }
+
+    #[test]
+    fn the_bench_is_exempt_from_the_tubes_vignette_and_the_terminal_is_not() {
+        assert_eq!(vignette_on(Face::Workbench, 0.7), 0.0);
+        assert_eq!(vignette_on(Face::Workbench, 0.0), 0.0);
+        assert_eq!(vignette_on(Face::Terminal, 0.7), 0.7);
+        assert_eq!(vignette_on(Face::Terminal, 0.0), 0.0);
+    }
+
+    #[test]
+    fn the_pointer_is_a_hand_over_a_control_text_over_the_composer_and_nothing_elsewhere() {
+        assert_eq!(Hit::Composer.pointer(), Pointer::Text);
+        assert_eq!(Hit::Arm.pointer(), Pointer::Arrow);
+        assert_eq!(Hit::Nothing.pointer(), Pointer::Arrow);
+        for pressed in [
+            Hit::Choose(0),
+            Hit::PressNav(3),
+            Hit::Review,
+            Hit::CloseCard,
+            Hit::Launch,
+            Hit::ToggleRail,
+            Hit::Shelf(crate::surface::Shelf::Decisions),
+            Hit::OpenRow(crate::surface::SurfaceId("s".to_string())),
+            Hit::GalleryBack,
+            Hit::GalleryForward,
+            Hit::GalleryClose,
+        ] {
+            assert_eq!(pressed.pointer(), Pointer::Hand, "{pressed:?}");
+        }
+    }
+
+    #[test]
+    fn a_wheel_over_the_composer_moves_the_composer_and_elsewhere_moves_only_the_mirror() {
+        // The composer wins whether or not a mirror is showing.
+        assert_eq!(wheel_target(Some(&Hit::Composer), false), Wheel::Composer);
+        assert_eq!(wheel_target(Some(&Hit::Composer), true), Wheel::Composer);
+        // Off the composer with the mirror showing: the mirror, whatever zone
+        // the body records there.
+        assert_eq!(wheel_target(Some(&Hit::Arm), true), Wheel::Mirror);
+        assert_eq!(wheel_target(None, true), Wheel::Mirror);
+        // Off the composer with no mirror: nothing moves — and the turn is
+        // consumed, so the flat hit-test underneath never sees it.
+        assert_eq!(wheel_target(Some(&Hit::Arm), false), Wheel::Nothing);
+        assert_eq!(wheel_target(Some(&Hit::Choose(1)), false), Wheel::Nothing);
+        assert_eq!(wheel_target(None, false), Wheel::Nothing);
+    }
+
+    #[test]
+    fn a_wheel_turn_is_held_between_the_top_of_the_draft_and_its_end() {
+        // From the top, a turn down (a negative delta, gpui's sign) reveals
+        // more; past the end it stops at the end.
+        assert_eq!(wheel_offset(0.0, -30.0, 100.0), -30.0);
+        assert_eq!(wheel_offset(-90.0, -30.0, 100.0), -100.0);
+        // Back up past the first line stops at the first line.
+        assert_eq!(wheel_offset(-10.0, 30.0, 100.0), 0.0);
+        // Nothing hidden: the wheel does nothing, in either direction.
+        assert_eq!(wheel_offset(0.0, -30.0, 0.0), 0.0);
+        assert_eq!(wheel_offset(0.0, 30.0, 0.0), 0.0);
+        // A negative "max" is a container smaller than its content has ever
+        // been — treated as nothing hidden, never as a range that flips.
+        assert_eq!(wheel_offset(0.0, -30.0, -5.0), 0.0);
+    }
+
+    #[test]
+    fn the_view_follows_the_caret_only_while_the_caret_is_at_the_end() {
+        assert!(follows(0, 0));
+        assert!(follows(12, 12));
+        assert!(!follows(11, 12));
+        assert!(!follows(0, 12));
+    }
+
+    /// The warp's inverse at the CORNERS, where it matters, with the live
+    /// window's rectangle and the tube's real coefficients.
+    ///
+    /// There is no forward map on the CPU — the shader is the forward map —
+    /// so where the tube SHOWS a flat point is found by fixed-point iteration
+    /// on the inverse: the screen point whose un-bend is the flat point. Then
+    /// the two things a person's click would prove are asserted for each
+    /// corner: a flat lookup of the eye's point MISSES the control (so the
+    /// un-bend is doing real work, and this test cannot pass vacuously), and
+    /// the un-bent lookup lands on it. The one live click ever read back
+    /// under the warp was at the centre, where the displacement was 0.1 px;
+    /// this is the test of the other 0.1% of the pane.
+    #[test]
+    fn a_control_in_the_corner_is_hit_where_the_tube_shows_it_not_where_it_was_laid() {
+        let rect = (80.0_f32, 60.0_f32, 1500.0_f32, 1000.0_f32);
+        let (k1, k2) = (0.2_f32, 0.086_f32);
+        let (rx, ry, rw, rh) = rect;
+        let side = 20.0;
+        let corners = [
+            (rx, ry, Hit::CloseCard),
+            (rx + rw - side, ry, Hit::ToggleRail),
+            (rx, ry + rh - side, Hit::GalleryBack),
+            (rx + rw - side, ry + rh - side, Hit::GalleryForward),
+        ];
+        let zones: Vec<Zone> = corners
+            .iter()
+            .map(|(x, y, hit)| Zone {
+                x: *x,
+                y: *y,
+                w: side,
+                h: side,
+                hit: hit.clone(),
+            })
+            .collect();
+        // Where the tube shows a flat point.
+        let shown = |flat: (f32, f32)| {
+            let (mut sx, mut sy) = flat;
+            for _ in 0..64 {
+                let (ux, uy) = unwarp(rect, k1, k2, sx, sy);
+                sx += flat.0 - ux;
+                sy += flat.1 - uy;
+            }
+            let (ux, uy) = unwarp(rect, k1, k2, sx, sy);
+            assert!(
+                (ux - flat.0).abs() < 0.01 && (uy - flat.1).abs() < 0.01,
+                "the iteration did not converge for {flat:?}: {ux},{uy}"
+            );
+            (sx, sy)
+        };
+        for (x, y, hit) in &corners {
+            let flat = (x + side / 2.0, y + side / 2.0);
+            let (sx, sy) = shown(flat);
+            let moved = ((sx - flat.0).powi(2) + (sy - flat.1).powi(2)).sqrt();
+            eprintln!(
+                "corner {hit:?}: flat {flat:?} shown at ({sx:.1},{sy:.1}), {moved:.1}px away"
+            );
+            // Measured 76.8 px at this curvature — nearly four times the
+            // control — so a flat lookup of the eye's point MUST miss, or
+            // the un-bend below is proving nothing.
+            assert!(
+                moved > 40.0,
+                "the tube barely moves {hit:?} ({moved:.1}px); the test would prove nothing"
+            );
+            assert_ne!(
+                hit_at(&zones, sx, sy),
+                Some(hit),
+                "a flat lookup of where the tube shows {hit:?} must miss it"
+            );
+            let (fx, fy) = unwarp(rect, k1, k2, sx, sy);
+            assert_eq!(
+                hit_at(&zones, fx, fy),
+                Some(hit),
+                "un-bent lookup of {hit:?}"
+            );
+        }
+        // The composer's top-left corner, where the wheel question was asked
+        // (#485): if the tube moved it under two pixels the wheel could have
+        // stayed flat. It moves it 62.5 px at this curvature.
+        let composer_tl = (rx + 16.0, ry + rh - 90.0);
+        let (sx, sy) = shown(composer_tl);
+        let moved = ((sx - composer_tl.0).powi(2) + (sy - composer_tl.1).powi(2)).sqrt();
+        eprintln!(
+            "composer top-left: flat {composer_tl:?} shown at ({sx:.1},{sy:.1}), {moved:.1}px away"
+        );
+        assert!(moved > 20.0, "composer corner moves {moved:.1}px");
     }
 
     #[test]

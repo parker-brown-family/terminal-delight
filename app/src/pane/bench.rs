@@ -22,15 +22,17 @@
 use super::*;
 
 impl TerminalView {
-    /// Un-bend a pointer and find the bench control under it.
+    /// Un-bend a pointer and look it up, quietly.
     ///
-    /// Returns the hit and the FLAT point, because the composer needs the
-    /// point as well as the fact — it turns it into a caret position through
-    /// the text layout, which was laid out flat.
-    pub(super) fn bench_hit_at(
+    /// The half of [`Self::bench_hit_at`] that the wheel and the hover share:
+    /// both fire far more often than a click and neither wants a log line.
+    /// `None` only while the pane has no content bounds yet; a point over no
+    /// zone is `Some((None, flat))`, because "on the bench but on nothing" is
+    /// an answer the wheel needs.
+    pub(super) fn bench_flat(
         &self,
         at: gpui::Point<gpui::Pixels>,
-    ) -> Option<(crate::workbench::Hit, gpui::Point<gpui::Pixels>)> {
+    ) -> Option<(Option<crate::workbench::Hit>, gpui::Point<gpui::Pixels>)> {
         let b = (*self.content_bounds.lock().ok()?)?;
         let rect = (
             f32::from(b.origin.x),
@@ -40,8 +42,20 @@ impl TerminalView {
         );
         let (k1, k2) = self.warp_k;
         let (fx, fy) = crate::workbench::unwarp(rect, k1, k2, f32::from(at.x), f32::from(at.y));
-        let zones = self.wb_zones.borrow();
-        let hit = crate::workbench::hit_at(&zones, fx, fy).cloned();
+        let hit = crate::workbench::hit_at(&self.wb_zones.borrow(), fx, fy).cloned();
+        Some((hit, gpui::point(gpui::px(fx), gpui::px(fy))))
+    }
+
+    /// Un-bend a pointer and find the bench control under it.
+    ///
+    /// Returns the hit and the FLAT point, because the composer needs the
+    /// point as well as the fact — it turns it into a caret position through
+    /// the text layout, which was laid out flat.
+    pub(super) fn bench_hit_at(
+        &self,
+        at: gpui::Point<gpui::Pixels>,
+    ) -> Option<(crate::workbench::Hit, gpui::Point<gpui::Pixels>)> {
+        let (hit, flat) = self.bench_flat(at)?;
         // TD_HITDEBUG=1 prints the whole chain for a click — where the pointer
         // was, where it un-bent to, and what that landed on — because a
         // shell with no virtual pointer cannot press the surface itself, and
@@ -49,18 +63,20 @@ impl TerminalView {
         // click read back from the log. The grid's `viewport_cell` prints
         // under the same flag for the same reason.
         if std::env::var_os("TD_HITDEBUG").is_some() {
+            let (k1, k2) = self.warp_k;
             eprintln!(
-                "[bench-hit] pointer=({:.1},{:.1}) k=({:.3},{:.3}) flat=({fx:.1},{fy:.1}) zones={} -> {:?}",
+                "[bench-hit] pointer=({:.1},{:.1}) k=({:.3},{:.3}) flat=({:.1},{:.1}) zones={} -> {:?}",
                 f32::from(at.x),
                 f32::from(at.y),
                 k1,
                 k2,
-                zones.len(),
+                f32::from(flat.x),
+                f32::from(flat.y),
+                self.wb_zones.borrow().len(),
                 hit
             );
         }
-        let hit = hit?;
-        Some((hit, gpui::point(gpui::px(fx), gpui::px(fy))))
+        Some((hit?, flat))
     }
 
     /// Act on a bench click. One `match`, so a control added to [`Hit`] is a
@@ -115,6 +131,112 @@ impl TerminalView {
             Hit::Nothing => {}
         }
         cx.notify();
+    }
+
+    /// A wheel turn over the bench, un-bent.
+    ///
+    /// Registered in the CAPTURE phase by [`Self::pointer_hook`], ahead of
+    /// every bubble handler — gpui's own scroll container on the composer,
+    /// and the pane root's terminal scroll — and it stops propagation
+    /// whenever the pointer is on the bench, so neither of those ever runs
+    /// flat. What it moves is [`crate::workbench::wheel_target`]'s call; how
+    /// far, [`crate::workbench::wheel_offset`]'s.
+    pub(super) fn bench_wheel(
+        &mut self,
+        ev: &ScrollWheelEvent,
+        line_height: Pixels,
+        cx: &mut Context<Self>,
+    ) {
+        if self.bench.face() != crate::workbench::Face::Workbench {
+            return;
+        }
+        let Some((hit, _)) = self.bench_flat(ev.position) else {
+            return;
+        };
+        match crate::workbench::wheel_target(hit.as_ref(), self.wb_mirror) {
+            crate::workbench::Wheel::Composer => {
+                let delta = ev.delta.pixel_delta(line_height);
+                let at = self.wb_slots.scroll.offset();
+                let max = self.wb_slots.scroll.max_offset();
+                let y = crate::workbench::wheel_offset(
+                    f32::from(at.y),
+                    f32::from(delta.y),
+                    f32::from(max.y),
+                );
+                self.wb_slots
+                    .scroll
+                    .set_offset(gpui::point(at.x, gpui::px(y)));
+                cx.notify();
+            }
+            crate::workbench::Wheel::Mirror => self.scroll_by_wheel(ev, cx),
+            crate::workbench::Wheel::Nothing => {}
+        }
+        cx.stop_propagation();
+    }
+
+    /// The pointer's shape over the bench, from the UN-BENT position.
+    ///
+    /// Called from the pane's mouse-move handler. It only notifies on a
+    /// change, so ordinary mousing costs nothing; [`Self::pointer_hook`]
+    /// paints whatever this last decided.
+    pub(super) fn bench_hover(&mut self, at: gpui::Point<gpui::Pixels>, cx: &mut Context<Self>) {
+        let pointer = self
+            .bench_flat(at)
+            .and_then(|(hit, _)| hit)
+            .map_or(crate::workbench::Pointer::Arrow, |h| h.pointer());
+        if pointer != self.wb_pointer {
+            self.wb_pointer = pointer;
+            cx.notify();
+        }
+    }
+
+    /// The bench's pointer hook: one element, painted last and covering the
+    /// bench, that owns the two things gpui would otherwise decide FLAT — the
+    /// wheel, and the shape of the pointer.
+    ///
+    /// Its hitbox is what makes both honest. The wheel handler runs only
+    /// while that hitbox is hovered, so a modal scrim occluding the pane —
+    /// the FOCUS reader — keeps its own wheel. And the cursor request is made
+    /// against that hitbox, painted after every child's, so it wins whenever
+    /// the pointer is on the bench: a child's `cursor_pointer()` would have
+    /// put the hand over where gpui laid the button, not where the tube shows
+    /// it, so no child on the bench asks for a cursor any more.
+    fn pointer_hook(&self, weak: gpui::WeakEntity<Self>) -> impl IntoElement {
+        let pointer = match self.wb_pointer {
+            crate::workbench::Pointer::Arrow => gpui::CursorStyle::Arrow,
+            crate::workbench::Pointer::Text => gpui::CursorStyle::IBeam,
+            crate::workbench::Pointer::Hand => gpui::CursorStyle::PointingHand,
+        };
+        gpui::canvas(
+            |bounds, window, _cx| window.insert_hitbox(bounds, gpui::HitboxBehavior::Normal),
+            move |_bounds, hitbox, window, _cx| {
+                window.set_cursor_style(pointer, &hitbox);
+                window.on_mouse_event(move |ev: &ScrollWheelEvent, phase, window, cx| {
+                    if phase != gpui::DispatchPhase::Capture || !hitbox.is_hovered(window) {
+                        return;
+                    }
+                    let line_height = window.line_height();
+                    let _ = weak.update(cx, |view, cx| view.bench_wheel(ev, line_height, cx));
+                });
+            },
+        )
+        .absolute()
+        .inset_0()
+    }
+
+    /// Keep the end of the draft on screen after an edit at the end of it.
+    ///
+    /// The composer scrolls like a chat box (see `benchdraw::composer`), so an
+    /// edit with the caret at its usual place asks the box for its bottom
+    /// before the next frame. Whether it follows at all is
+    /// [`crate::workbench::follows`]'s call: a caret parked earlier in a long
+    /// draft leaves the view where the person scrolled it.
+    fn composer_follows(&self) {
+        if let Some(line) = self.wb_compose.as_ref() {
+            if crate::workbench::follows(line.caret(), line.chars()) {
+                self.wb_slots.scroll.scroll_to_bottom();
+            }
+        }
     }
 
     /// The bench's own keys, ahead of the terminal's.
@@ -233,6 +355,7 @@ impl TerminalView {
                         }
                     }
                 }
+                self.composer_follows();
                 self.send(bytes, cx);
             }
             cx.stop_propagation();
@@ -296,6 +419,7 @@ impl TerminalView {
                     {
                         line.insert(c);
                     }
+                    self.composer_follows();
                     self.send(bytes, cx);
                 }
             }
@@ -557,12 +681,10 @@ impl TerminalView {
                     // menu that has already closed.
                     return chip;
                 }
-                chip.cursor_pointer()
-                    .relative()
-                    .child(crate::benchdraw::zone(
-                        self.wb_zones.clone(),
-                        crate::workbench::Hit::Choose(i),
-                    ))
+                chip.relative().child(crate::benchdraw::zone(
+                    self.wb_zones.clone(),
+                    crate::workbench::Hit::Choose(i),
+                ))
             })
             .collect();
         div()
@@ -583,7 +705,6 @@ impl TerminalView {
                 d.child(sk.rule_h()).child(
                     div().flex().flex_row().gap(px(8.)).justify_end().child(
                         sk.chip(false)
-                            .cursor_pointer()
                             .text_size(px(11.5))
                             .child("\u{21ba} REVIEW ANSWERS".to_string())
                             .relative()
@@ -608,9 +729,7 @@ impl TerminalView {
                 d.child(sk.rule_h()).child(
                     div().flex().flex_row().justify_end().child(
                         crate::benchdraw::verb_button(
-                            sk.chip(true)
-                                .cursor_pointer()
-                                .child(format!("\u{2714} {submit_word}")),
+                            sk.chip(true).child(format!("\u{2714} {submit_word}")),
                             true,
                             th,
                         )
@@ -878,6 +997,7 @@ impl TerminalView {
                 if let Some(line) = self.wb_compose.as_mut() {
                     line.note_paste();
                 }
+                self.composer_follows();
                 cx.notify();
                 return;
             }
@@ -923,6 +1043,7 @@ impl TerminalView {
         if let Some(line) = self.wb_compose.as_mut() {
             line.insert(&text);
         }
+        self.composer_follows();
         self.send(text.into_bytes(), cx);
     }
 
@@ -1061,6 +1182,7 @@ impl TerminalView {
             Some(existing) => existing.insert(&text),
             None => self.wb_compose = Some(crate::workbench::Line::holding(text.clone())),
         }
+        self.composer_follows();
         // The same on-screen rule as a submitted line: keystrokes into a pane
         // nobody is looking at wait until somebody is.
         if self.wb_on_screen {
@@ -1244,6 +1366,7 @@ impl TerminalView {
         pane_w: f32,
         pane_h: f32,
         focused: bool,
+        weak: gpui::WeakEntity<Self>,
     ) -> gpui::AnyElement {
         use crate::workbench::RailFit;
         // A fresh zone list per frame: the elements about to paint fill it.
@@ -1261,6 +1384,9 @@ impl TerminalView {
             self.bench.rail_wanted(),
             self.wb_compose.is_some(),
         );
+        // The wheel handler asks this between frames, so it is kept rather
+        // than recomputed there — one decision, made once, in `shows`.
+        self.wb_mirror = shows.mirror;
         let fit = shows.rail;
         let rail_px = match fit {
             RailFit::Open(w) => w as f32,
@@ -1375,7 +1501,6 @@ impl TerminalView {
                         .top(px(8.))
                         .text_size(px(13.))
                         .text_color(th.faint)
-                        .cursor_pointer()
                         .child("\u{2715}")
                         .relative()
                         .child(crate::benchdraw::zone(
@@ -1402,7 +1527,6 @@ impl TerminalView {
                         d.child(
                             crate::benchdraw::empty(false, "", sk, th).child(
                                 sk.chip(true)
-                                    .cursor_pointer()
                                     .text_size(px(12.))
                                     .child("\u{2301} LAUNCH AGENT")
                                     .relative()
@@ -1474,7 +1598,6 @@ impl TerminalView {
                         .items_center()
                         .gap(px(4.))
                         .pt(px(6.))
-                        .cursor_pointer()
                         .children(ticks)
                         .relative()
                         .child(crate::benchdraw::zone(
@@ -1625,7 +1748,6 @@ impl TerminalView {
                                 .items_center()
                                 .child(
                                     sk.chip(back)
-                                        .cursor_pointer()
                                         .child("\u{2190}".to_string())
                                         .relative()
                                         .child(crate::benchdraw::zone(
@@ -1633,27 +1755,19 @@ impl TerminalView {
                                             crate::workbench::Hit::GalleryBack,
                                         )),
                                 )
-                                .child(
-                                    sk.chip(fwd)
-                                        .cursor_pointer()
-                                        .child("\u{2192}".to_string())
-                                        .relative()
-                                        .child(crate::benchdraw::zone(
-                                            self.wb_zones.clone(),
-                                            crate::workbench::Hit::GalleryForward,
-                                        )),
-                                )
+                                .child(sk.chip(fwd).child("\u{2192}".to_string()).relative().child(
+                                    crate::benchdraw::zone(
+                                        self.wb_zones.clone(),
+                                        crate::workbench::Hit::GalleryForward,
+                                    ),
+                                ))
                                 .child(div().flex_1())
-                                .child(
-                                    sk.chip(false)
-                                        .cursor_pointer()
-                                        .child("CLOSE".to_string())
-                                        .relative()
-                                        .child(crate::benchdraw::zone(
-                                            self.wb_zones.clone(),
-                                            crate::workbench::Hit::GalleryClose,
-                                        )),
-                                ),
+                                .child(sk.chip(false).child("CLOSE".to_string()).relative().child(
+                                    crate::benchdraw::zone(
+                                        self.wb_zones.clone(),
+                                        crate::workbench::Hit::GalleryClose,
+                                    ),
+                                )),
                         ),
                     ),
             )
@@ -1697,7 +1811,6 @@ impl TerminalView {
                             .flex()
                             .flex_col()
                             .when(!card_open, |d| d.justify_end())
-                            .cursor_text()
                             .when(self.mode.is_agent(), |d| {
                                 d.relative().child(crate::benchdraw::zone(
                                     self.wb_zones.clone(),
@@ -1711,6 +1824,9 @@ impl TerminalView {
             .children(handle)
             .children(rail)
             .children(gallery)
+            // Last, so its hitbox and its cursor request are painted after
+            // every control's — see the hook for why that order is the rule.
+            .child(self.pointer_hook(weak))
             .into_any_element()
     }
 }

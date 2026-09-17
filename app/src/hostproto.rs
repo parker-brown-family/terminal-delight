@@ -264,6 +264,20 @@ pub enum Reply {
         /// Whether any window is attached. A host with panes and nobody
         /// looking at them is precisely what a relaunch should find and adopt.
         attended: bool,
+        /// This host's own pid.
+        ///
+        /// Here so that a process running inside one of its panes can recognise
+        /// it. The host IS an ancestor of everything in its panes — it is what
+        /// forked them — so a process that walks its own parents and then asks
+        /// each live session socket "what is your pid" finds its own session
+        /// without reading an environment variable anybody could have set,
+        /// unset, or inherited from the wrong place.
+        ///
+        /// `0` from a host built before this field, which is not a pid and can
+        /// never match one, so an older host simply fails to be recognised
+        /// rather than claiming to be somebody.
+        #[serde(default)]
+        host: u32,
     },
     Panes {
         panes: Vec<PaneInfo>,
@@ -660,6 +674,7 @@ fn every_reply() -> Vec<Reply> {
             session: "2".into(),
             panes: 2,
             attended: false,
+            host: 4141,
         },
         Reply::Panes {
             panes: vec![info.clone(), other],

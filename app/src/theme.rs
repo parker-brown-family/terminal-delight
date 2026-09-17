@@ -1128,6 +1128,20 @@ impl PaneTheme {
         self.pins.is_empty()
     }
 
+    /// True when the theme group tracks outer — the pane wears whatever the
+    /// window wears. Drives the OUTER tray's "pass down" count.
+    pub fn follows_outer_theme(&self) -> bool {
+        self.inherit_theme
+    }
+
+    /// Re-attach the theme group to outer, KEEPING the retained override so a
+    /// later detach hands the pane its own look back rather than freezing
+    /// whatever outer says then. Idempotent, so the "pass the outer theme down"
+    /// gesture can call it on every pane, including ones already following.
+    pub fn follow_theme(&mut self) {
+        self.inherit_theme = true;
+    }
+
     /// The choice this pane actually renders with. The theme group resolves as a
     /// group (pinned or inherited); the grade resolves PER CHANNEL — outer is
     /// the base and the pane overlays only what it owns.
@@ -1252,25 +1266,39 @@ impl PaneTheme {
         }
     }
 
-    /// A brand-new terminal pane's shipped appearance: pin the green
-    /// [`house_terminal`] THEME and do NOT follow the warm outer cabinet, so a
-    /// fresh terminal is the green phosphor CRT regardless of the mother theme.
-    /// The "follow outer" toggle still re-attaches it on demand.
+    /// A brand-new terminal pane's shipped appearance: **nothing of its own**.
+    /// Both groups track the outer scope, so a fresh pane wears the cabinet you
+    /// are actually looking at and a single edit to the outer theme reaches
+    /// every pane nobody has dressed.
     ///
-    /// The GRADE is deliberately left un-pinned. The grade is the monitor, and
-    /// the monitor is the window: a fresh pane owns no channel, so every dial
-    /// tracks outer live until a human moves one here. This is what makes a
-    /// single change to the outer scope reach every pane nobody has dressed —
-    /// stamping the house grade in at birth (what the old `from_legacy` call did)
-    /// detached each new pane from outer before it had ever been looked at.
+    /// It used to pin the green [`house_terminal`] Wood design here, which meant
+    /// a pane was born DETACHED: you chose an outer theme, every terminal you
+    /// then opened ignored it, and the only repair was that pane's own tray, one
+    /// pane at a time. The Wood set did not need pinning at birth to stay
+    /// reachable — it is one click in the dynamics column — and a pane carrying
+    /// an override nobody chose is the same mistake the grade half already
+    /// learned not to make (see the note on [`Self::migrate_legacy_grade`]).
+    ///
+    /// Panes already stamped by the old birth are released on load by
+    /// [`Self::release_birth_theme`].
     pub fn house() -> Self {
-        Self {
-            theme: Some(ThemeGroup::of(&house_terminal())),
-            grade: None,
-            pins: GradePins::NONE,
-            retained: GradePins::NONE,
-            inherit_theme: false,
-            inherit_grade: None,
+        Self::default()
+    }
+
+    /// Release a theme override that was stamped at BIRTH rather than chosen.
+    ///
+    /// Same provenance argument as [`Self::migrate_legacy_grade`], and the same
+    /// single test: the retained group is still byte-identical to what
+    /// [`house_terminal`] stamps, so nobody has touched it since the pane
+    /// opened. Such a pane goes back to following outer, keeping the Wood group
+    /// retained — flip "follow outer" off and it is exactly where it was.
+    ///
+    /// The one false negative is a human who deliberately dialled a pane to
+    /// precisely the house Wood design; that reads as untouched, and is one
+    /// click to restore.
+    pub fn release_birth_theme(&mut self) {
+        if !self.inherit_theme && self.theme.as_ref() == Some(&ThemeGroup::of(&house_terminal())) {
+            self.inherit_theme = true;
         }
     }
 }
@@ -2866,6 +2894,76 @@ mod tests {
         );
     }
 
+    /// A pane stamped with the old birth theme is released on load; one that
+    /// somebody actually dressed is left exactly alone.
+    #[test]
+    fn a_birth_stamped_theme_is_released_and_a_chosen_one_is_not() {
+        let mut outer = house_outer();
+        outer.id = "quiet".into();
+
+        // born under the old rule: pinned to the house Wood group
+        let mut born = PaneTheme {
+            theme: Some(ThemeGroup::of(&house_terminal())),
+            inherit_theme: false,
+            ..Default::default()
+        };
+        born.release_birth_theme();
+        assert!(
+            born.follows_outer_theme(),
+            "nobody chose that, so let it go"
+        );
+        assert_eq!(born.effective(&outer).id, "quiet");
+        // and the Wood group is still retained, so a detach is where it was
+        born.toggle_theme(&outer);
+        assert_eq!(born.effective(&outer).dynamic, Dynamic::Wood);
+
+        // dressed by a human: one field differs from birth, so it survives
+        let mut dressed_group = ThemeGroup::of(&house_terminal());
+        dressed_group.id = "tactical".into();
+        let mut dressed = PaneTheme {
+            theme: Some(dressed_group),
+            inherit_theme: false,
+            ..Default::default()
+        };
+        dressed.release_birth_theme();
+        assert!(
+            !dressed.follows_outer_theme(),
+            "a chosen theme is untouched"
+        );
+        assert_eq!(dressed.effective(&outer).id, "tactical");
+    }
+
+    /// Passing the outer theme down re-attaches a detached pane WITHOUT eating
+    /// its retained override: the pane wears outer immediately, and detaching
+    /// again hands its own look back rather than freezing outer.
+    #[test]
+    fn pass_down_re_attaches_and_keeps_the_retained_override() {
+        let mut outer = house_outer();
+        outer.id = "quiet".into();
+
+        let mut p = PaneTheme::default();
+        let mut mine = ThemeGroup::of(&outer);
+        mine.id = "hacker".into();
+        p.set_theme(mine);
+        assert!(!p.follows_outer_theme());
+        assert_eq!(p.effective(&outer).id, "hacker");
+
+        p.follow_theme();
+        assert!(p.follows_outer_theme());
+        assert_eq!(p.effective(&outer).id, "quiet", "it wears outer now");
+
+        // and it is idempotent — the gesture hits every pane, following or not
+        p.follow_theme();
+        assert_eq!(p.effective(&outer).id, "quiet");
+
+        p.toggle_theme(&outer);
+        assert_eq!(
+            p.effective(&outer).id,
+            "hacker",
+            "the pane's own theme survived the pass-down"
+        );
+    }
+
     #[test]
     fn legacy_group_detach_keeps_only_the_channels_that_differ_from_outer() {
         // An old state file's `inherit_grade = false` pinned all thirteen
@@ -3486,7 +3584,7 @@ mod tests {
     }
 
     #[test]
-    fn house_terminal_is_the_wood_design_and_does_not_follow_the_warm_outer() {
+    fn a_fresh_pane_wears_the_cabinet_it_was_opened_in() {
         // The shipped INNER design: WOOD colour set · HACKER base · AGENTIC
         // syntax · THEME (OnTheme) program colour, GAUGES neutral but warped.
         let t = house_terminal();
@@ -3504,25 +3602,22 @@ mod tests {
             "GAUGES sliders start neutral"
         );
 
+        // …but a pane is no longer BORN wearing it. Birth carries nothing:
+        // both groups track outer, so the pane wears the cabinet it opened in.
         let p = PaneTheme::house();
-        assert!(
-            !p.inherit_theme,
-            "the THEME is pinned, NOT following the warm cabinet"
-        );
+        assert!(p.follows_outer_theme(), "the THEME follows the cabinet");
         assert!(
             p.follows_outer_grade() && p.grade.is_none(),
             "the GRADE is owned by nobody — a fresh pane tracks the outer monitor"
         );
-        assert!(!p.is_pristine());
-        // rendered against the amber cabinet, the pane keeps its own Wood design
-        // but wears the cabinet's monitor grade, dials and all.
+        assert!(p.is_pristine(), "nothing of its own, so nothing to save");
         let outer = house_outer();
         let eff = p.effective(&outer);
         assert_eq!(
-            eff.dynamic,
-            Dynamic::Wood,
-            "the pane's own Wood design inside the cabinet"
+            eff.dynamic, outer.dynamic,
+            "the cabinet's design, not the Wood set"
         );
+        assert_eq!(eff.id, outer.id, "and the cabinet's theme id");
         assert_eq!(
             eff.grade, outer.grade,
             "every grade channel comes from outer"

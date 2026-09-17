@@ -78,8 +78,18 @@ host requires it.
 ```
 
 ```json reply
-{"reply":"hello","proto":1,"session":"2","panes":2,"attended":true}
+{"reply":"hello","proto":1,"session":"2","panes":2,"attended":true,"host":4141}
 ```
+
+`host` is the host process's own pid, and it is here so that something running
+**inside** one of its panes can recognise it. A host forks every pane's shell,
+so it is an ancestor of everything in that pane; a process that walks its own
+parents and then asks each live session socket for this number finds out which
+session it is in without reading an environment variable — which anything can
+set, unset, or inherit from the wrong place, and which an agent that scrubs its
+children's environment does not pass on at all. A host built before this field
+sends `0`, which is not a pid and so matches nothing: an older host fails to be
+recognised rather than claiming to be somebody.
 
 **The boundary is the peer-uid check above, and nothing else.** It is a property
 of the connection, taken at accept, before a byte is parsed — which is what

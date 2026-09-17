@@ -280,7 +280,6 @@ pub fn rail_row(row: &Row, sk: &Skin, th: &Theme) -> Div {
         .pl(px(7.))
         .pr(px(6.))
         .py(px(5.))
-        .cursor_pointer()
         .border_l(px(if on_cursor { 4. } else { 2. }))
         .border_color(tint)
         .rounded(sk.radius())
@@ -349,7 +348,6 @@ pub fn shelf_tab(
     th: &Theme,
 ) -> Div {
     sk.chip(active)
-        .cursor_pointer()
         .text_size(px(10.))
         .font_family(th.font_family.clone())
         .when(unseen > 0 && !active, |d| {
@@ -1492,7 +1490,6 @@ pub fn composer(
             .px(px(if tight { 10. } else { 18. }))
             .py(px(if tight { 8. } else { 16. }))
             .bg(th.surface)
-            .cursor_text()
             // Lit whether or not it is armed. The border was the only thing
             // saying "this is an input" and it only said so AFTER the first
             // click, which is the wrong way round: the invitation has to be
@@ -1524,7 +1521,7 @@ pub fn composer(
                     .min_w(px(0.))
                     .max_h(px(shows.composer_max))
                     // A SCROLL CONTAINER, so the wheel over this box moves
-                    // this box.
+                    // this box and not the terminal behind it.
                     //
                     // The pane's own wheel handler sits on its root element
                     // and scrolls the terminal, so a scroll anywhere inside a
@@ -1534,26 +1531,31 @@ pub fn composer(
                     // up and down there... we must still be adhering to good
                     // programming principles!!!!"*
                     //
-                    // Which is exactly why this is a container and not a
-                    // pointer-position test. Working out which region the
-                    // mouse is over means duplicating layout in a hit-test
-                    // that has no way to stay in step with it; gpui already
-                    // hit-tests every element it laid out, so declaring this
-                    // one scrollable puts the routing in the one place that
-                    // cannot disagree with where the box actually is.
+                    // gpui does the clipping, the offset and the clamping.
+                    // It does NOT decide which box the wheel is over: under
+                    // the tube its hit-test is flat and the picture is bent,
+                    // so the pane's pointer hook un-bends the wheel the way
+                    // it un-bends clicks and drives this container's
+                    // `ScrollHandle` itself — `TerminalView::bench_wheel`.
                     .overflow_y_scroll()
                     .track_scroll(&scroll)
                     .flex()
                     .flex_col()
-                    // The END stays visible, not the beginning.
+                    // The END stays visible, not the beginning — by following
+                    // the caret, not by pinning the layout.
                     //
-                    // A box that clips the bottom hides the one part of a
-                    // draft a person is actually looking at: the words they
-                    // are typing right now. Overflowing upward is what a
-                    // terminal does with scrollback and what every chat
-                    // composer does with a long message, and it is the reason
-                    // the caret is never off screen.
-                    .justify_end()
+                    // This box was `justify_end`, which puts a long draft's
+                    // tail at the bottom by overflowing the TOP, and a gpui
+                    // scroll container cannot scroll into that: its offset is
+                    // held between zero and the content's overhang, and an
+                    // overhang at the top is on the wrong side of zero. So a
+                    // long draft showed its last lines and the wheel could
+                    // never reach its first. Now the box lays out from the
+                    // top like any scroll container, and the view asks for
+                    // its bottom after every edit made at the end of the line
+                    // (`TerminalView::composer_follows`) — which is what every
+                    // chat composer does: the caret stays on screen while you
+                    // type, and the wheel reads back over what you wrote.
                     .text_size(px(pt))
                     .font_family(th.font_family.clone())
                     .text_color(th.text)
@@ -1706,7 +1708,6 @@ pub fn rail_handle(open: bool, th: &Theme) -> Div {
         .flex()
         .items_center()
         .justify_center()
-        .cursor_pointer()
         .child(
             // BIGGER and BOLD. It was a thirteen-point chevron in the faint
             // ink — the dimmest mark on the surface, holding the only gesture
@@ -1784,6 +1785,132 @@ fn join_cells(row: &[Option<String>], sep: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A renderer contains no decisions — rule three of the architecture
+    /// pass, made mechanical.
+    ///
+    /// Two shapes a decision takes when it hides in a renderer, both scanned
+    /// for in the CODE half of this file (the tests are split off first, so
+    /// this test's own text is never read):
+    ///
+    /// 1. a comparison against a number other than zero — `if pane_w < 400.`
+    ///    is a threshold, and a threshold is a rule that belongs in
+    ///    `workbench.rs` as a named constant with a table test;
+    /// 2. a read of the environment or the clock — a mode or a timing, which
+    ///    belongs in `workbench.rs` as an input the view resolves and hands
+    ///    in.
+    ///
+    /// Zero is allowed on either side of a comparison because "is there any"
+    /// is presence, not policy (`unseen > 0`, and `> 0.001` for a theme
+    /// float's zero). Equality is not scanned: `n == 1` picks a plural, and
+    /// that is grammar. Counts like `.take(5)` are not scanned: how many rows
+    /// a compact card shows is typography, and typography is what a renderer
+    /// is for. Comments are stripped first: prose may say "more than 3".
+    ///
+    /// Mutation-tested 2026-09-17 against the file as it stood — see the
+    /// commit that added it for the three plants and the lines they were
+    /// caught at. The unmutated file passes, so this is a guard and not an
+    /// alarm; a scan that cries wolf gets switched off, and then nothing is
+    /// enforced.
+    #[test]
+    fn a_renderer_contains_no_decisions() {
+        let src = include_str!("benchdraw.rs");
+        let (code, _tests) = src.split_once("\n#[cfg(test)]").expect("a test module");
+        let mut found = Vec::new();
+        for (n, raw) in code.lines().enumerate() {
+            let line = raw.split("//").next().unwrap_or("");
+            for needle in [
+                "std::env",
+                "env::var",
+                "Instant",
+                "SystemTime",
+                ".elapsed(",
+                "::now(",
+            ] {
+                if line.contains(needle) {
+                    found.push(format!("{}: reads {needle}: {}", n + 1, raw.trim()));
+                }
+            }
+            if let Some(lit) = threshold(line) {
+                found.push(format!("{}: compares against {lit}: {}", n + 1, raw.trim()));
+            }
+        }
+        assert!(
+            found.is_empty(),
+            "decisions in the renderer:\n{}",
+            found.join("\n")
+        );
+    }
+
+    /// A numeric literal other than zero on either side of `<`, `>`, `<=` or
+    /// `>=` in one line of code, if there is one. `->`, `=>` and the `<` of a
+    /// generic are not comparisons and are skipped.
+    fn threshold(line: &str) -> Option<String> {
+        let b = line.as_bytes();
+        let mut i = 0;
+        while i < b.len() {
+            let c = b[i];
+            if c != b'<' && c != b'>' {
+                i += 1;
+                continue;
+            }
+            let prev = if i > 0 { b[i - 1] } else { b' ' };
+            let mut end = i + 1;
+            if end < b.len() && b[end] == b'=' {
+                end += 1;
+            }
+            if prev != b'-' && prev != b'=' {
+                if let Some(lit) = leading_number(line[end..].trim_start()) {
+                    if !is_zero(&lit) {
+                        return Some(lit);
+                    }
+                }
+                if let Some(lit) = trailing_number(line[..i].trim_end()) {
+                    if !is_zero(&lit) {
+                        return Some(lit);
+                    }
+                }
+            }
+            i = end;
+        }
+        None
+    }
+
+    fn leading_number(s: &str) -> Option<String> {
+        let n: String = s
+            .chars()
+            .take_while(|c| c.is_ascii_digit() || *c == '.' || *c == '_')
+            .collect();
+        n.starts_with(|c: char| c.is_ascii_digit()).then_some(n)
+    }
+
+    fn trailing_number(s: &str) -> Option<String> {
+        let tail: String = s
+            .chars()
+            .rev()
+            .take_while(|c| c.is_ascii_digit() || *c == '.' || *c == '_')
+            .collect::<String>()
+            .chars()
+            .rev()
+            .collect();
+        if !tail.ends_with(|c: char| c.is_ascii_digit()) {
+            return None;
+        }
+        // `k1 >` is a name ending in a digit, not a literal.
+        let head = &s[..s.len() - tail.len()];
+        if head.ends_with(|c: char| c.is_alphanumeric() || c == '_') {
+            return None;
+        }
+        Some(tail)
+    }
+
+    /// Zero, or the theme's zero.
+    fn is_zero(lit: &str) -> bool {
+        lit.replace('_', "")
+            .parse::<f64>()
+            .map(|v| v == 0.0 || v == 0.001)
+            .unwrap_or(true)
+    }
 
     #[test]
     fn clipping_marks_that_it_clipped() {

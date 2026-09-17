@@ -517,6 +517,14 @@ impl ActionReport {
     /// `tag` is the session's — see [`crate::hostproto::session_tag`]. With
     /// it the line opens `[workbench:<tag>]`, which is how an agent that was
     /// briefed tells a line its operator pressed from one it merely read.
+    ///
+    /// Both free-text halves are typed into a pseudoterminal as ONE line.
+    /// The target is not ours: for `reject_part` it is `hunks[].id` verbatim
+    /// out of the agent's payload, and a payload that put a newline or an
+    /// escape sequence in a hunk id would have had it typed into the terminal
+    /// as a second command. Every control character in either half becomes a
+    /// space — the same flattening the composer applies to what a person
+    /// pastes.
     pub fn to_prompt(&self, tag: Option<&str>) -> String {
         let mut line = match tag {
             Some(tag) => format!(
@@ -531,19 +539,29 @@ impl ActionReport {
             ),
         };
         if let Some(t) = &self.target {
-            line.push_str(&format!(" · {t}"));
+            line.push_str(&format!(" · {}", plain(t)));
         }
         if let Some(c) = &self.comment {
-            line.push_str(&format!(" — {c}"));
+            line.push_str(&format!(" — {}", plain(c)));
         }
         // ONE line, whatever was in the fields. The target is the agent's own
         // text — a hunk id straight out of its JSON — and a newline or a
         // carriage return in it is a second line typed into whatever is
         // reading the terminal. The same rule as
-        // [`crate::workbench::typed_line`], applied to every field, here,
-        // where the fields are joined.
-        line.replace("\r\n", "\n").replace(['\n', '\r'], " ")
+        // [`crate::workbench::typed_line`], applied to every field above and
+        // once more to the joined line, so nothing added later can miss it.
+        plain(&line)
     }
+}
+
+/// Free text that is about to be typed into a terminal, flattened to one line:
+/// every control character (newline, carriage return, tab, ESC and the rest of
+/// C0/C1) becomes a space. Nothing else changes — the text is somebody's
+/// comment or somebody's hunk id, and it should still read as what they wrote.
+fn plain(s: &str) -> String {
+    s.chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -2185,6 +2203,30 @@ mod tests {
         assert_eq!(s.origin, Origin::Unknown);
         assert!(Origin::FileDrop.is_unattributed());
         assert!(!Origin::Derived.is_unattributed());
+    }
+
+    /// The target is the agent's own bytes — for `reject_part` it is a hunk id
+    /// straight out of the payload — and the line is typed into a real
+    /// pseudoterminal. A newline in it was a second command; an escape
+    /// sequence was whatever the terminal made of it. Neither survives.
+    #[test]
+    fn a_hostile_hunk_id_cannot_type_a_second_line_or_an_escape() {
+        let report = ActionReport {
+            surface: SurfaceId("change-1".into()),
+            action: Action::RejectPart,
+            target: Some("evil.rs#one\necho INJECTED\r\u{1b}[2J\t#two".into()),
+            comment: Some("looks\u{85}wrong\u{7f}".into()),
+        };
+        let line = report.to_prompt(None);
+        assert!(
+            !line.chars().any(char::is_control),
+            "a control character reached the prompt: {line:?}"
+        );
+        // Flattened, not dropped: the person can still read what was there.
+        assert!(line.contains("evil.rs#one echo INJECTED"), "{line}");
+        assert!(line.contains("#two"), "{line}");
+        assert!(line.contains("looks wrong"), "{line}");
+        assert_eq!(line.lines().count(), 1);
     }
 
     #[test]

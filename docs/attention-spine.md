@@ -186,9 +186,17 @@ every one of them shipped green.
 - Most agents still report `Unknown`, because nothing positively identifies a
   resting one. The queue collapses them to a single line, which makes the flood
   survivable rather than solved.
-- A hosted pane's mode is announced once and never reconciled, so an agent in
+- ~~A hosted pane's mode is announced once and never reconciled, so an agent in
   one is classified `SHELL` and is invisible to the rail entirely — not even in
-  the unknown lane.
+  the unknown lane.~~ **Closed (#462).** The window re-reads the host's census
+  every five seconds (`reconcile_modes`), so the `Mode` push is a shortcut
+  rather than the only path — which mattered because, measured against a live
+  host over forty seconds and 24 panes, that push fires *never*: an agent's
+  classification is stable, so the one channel that could repair a wrong answer
+  is the one that does not speak. A hosted pane nobody has described now holds
+  `PaneMode::Unknown` rather than `Shell`, reaches the queue as
+  `PaneKind::Unknown`, and draws a row reading **"Not described by the host"**
+  in the unknown lane — shown, never counted.
 - Held panes are out of scope, and deferred close is not built, so the exclusion
   has never been tested against real behaviour.
 - The evaluation contract's baseline expired before it was recorded.
