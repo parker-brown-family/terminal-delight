@@ -1,0 +1,1065 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Two Passes, One Overlap</title>
+<style>
+/* decision-brief — surfaces, ink, and the three structural components.
+ *
+ * ONE palette. No theme system, no theme toggle. tps-report shipped four themes and
+ * 165 theme-related rules; nobody ever switched. A brief is read once, quickly, to make
+ * a decision — the reader is not shopping for a skin.
+ *
+ * Categorical colours are the validated dataviz default palette (dark steps), which
+ * clears the CVD, chroma, lightness and contrast gates on the adjacent pairlist.
+ * If you change them, re-run the validator; do not eyeball it.
+ *
+ * What is here: tokens, the modal shell, tables, callouts, code. Everything else —
+ * cards, escalation lists, stat tiles, charts — is the brief's own business.
+ * Build what the material needs.
+ */
+:root {
+  color-scheme: dark;
+
+  --surface-0: #111110;   /* page */
+  --surface-1: #1a1a19;   /* panel */
+  --surface-2: #232321;   /* raised */
+  --surface-3: #2e2e2b;   /* control */
+  --line:      #3a3a36;
+
+  --text-primary:   #ffffff;
+  --text-secondary: #c3c2b7;
+  --text-muted:     #8b8a80;
+
+  /* categorical — assign in fixed order, never cycle */
+  --s1: #3987e5;  --s2: #d95926;  --s3: #199e70;  --s4: #c98500;
+  --s5: #d55181;  --s6: #008300;  --s7: #9085e9;  --s8: #e66767;
+
+  /* status — reserved. Never reuse as "series 5". Always ship with a label. */
+  --good:     #0ca30c;
+  --warning:  #fab219;
+  --serious:  #ec835a;
+  --critical: #d03b3b;
+
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, "JetBrains Mono", Menlo, Consolas, monospace;
+  --sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif;
+}
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  margin: 0; background: var(--surface-0); color: var(--text-primary);
+  font-family: var(--sans); font-size: 15px; line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+.wrap { max-width: 1180px; margin: 0 auto; padding: 0 24px 120px; }
+header.top .wrap { padding-bottom: 0; }   /* the wrap's bottom padding is for the page, not the header */
+
+/* ---- headings ----
+   A heading names the thing. It does not explain it — an em-dash gloss after a
+   heading breaks the heading. The body does the explaining. */
+h1 { font-size: 34px; line-height: 1.18; margin: 0 0 16px; letter-spacing: -.02em; font-weight: 650; }
+h2.sec {
+  font-size: 13px; font-family: var(--mono); letter-spacing: .13em; text-transform: uppercase;
+  color: var(--text-muted); margin: 56px 0 18px; padding-bottom: 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+/* ---- modal shell: where depth lives ---- */
+dialog {
+  border: 1px solid var(--line); border-radius: 12px;
+  background: var(--surface-1); color: var(--text-primary);
+  max-width: 880px; width: calc(100vw - 44px); max-height: 86vh; padding: 0; overflow: hidden;
+}
+dialog::backdrop { background: rgba(0,0,0,.76); backdrop-filter: blur(3px); }
+.dlg-head {
+  position: sticky; top: 0; background: var(--surface-2);
+  border-bottom: 1px solid var(--line); padding: 20px 26px;
+  display: flex; justify-content: space-between; align-items: flex-start; gap: 20px; z-index: 2;
+}
+.dlg-head h3 { margin: 0 0 5px; font-size: 20px; letter-spacing: -.015em; }
+.dlg-head .repo { font-family: var(--mono); font-size: 11.5px; color: var(--text-muted); margin: 0; }
+.x {
+  background: var(--surface-3); border: 1px solid var(--line); color: var(--text-secondary);
+  border-radius: 6px; width: 30px; height: 30px; font-size: 17px; line-height: 1;
+  cursor: pointer; flex: none;
+}
+.x:hover { background: var(--critical); color: #fff; border-color: var(--critical); }
+.dlg-body { padding: 24px 26px 34px; overflow-y: auto; max-height: calc(86vh - 78px); }
+.dlg-body h4 {
+  font-family: var(--mono); font-size: 11.5px; letter-spacing: .12em; text-transform: uppercase;
+  color: var(--text-muted); margin: 30px 0 12px; padding-bottom: 8px;
+  border-bottom: 1px solid var(--line);
+}
+.dlg-body h4:first-child { margin-top: 0; }
+.dlg-body p  { margin: 0 0 13px; color: var(--text-secondary); font-size: 14.5px; }
+.dlg-body ul { margin: 0 0 15px; padding-left: 20px; color: var(--text-secondary); font-size: 14.5px; }
+.dlg-body li { margin-bottom: 8px; }
+.dlg-body strong { color: var(--text-primary); font-weight: 600; }
+
+/* ---- prose furniture ---- */
+code {
+  font-family: var(--mono); font-size: 12.5px; background: var(--surface-3);
+  padding: 1.5px 5px; border-radius: 4px; color: #e8d9a8; word-break: break-word;
+}
+pre {
+  background: var(--surface-0); border: 1px solid var(--line); border-radius: 7px;
+  padding: 15px 17px; overflow-x: auto; margin: 0 0 15px;
+}
+pre code { background: none; padding: 0; color: var(--text-secondary); font-size: 12.5px; line-height: 1.65; }
+
+table { width: 100%; border-collapse: collapse; margin: 0 0 17px; font-size: 13.5px; }
+th, td { text-align: left; padding: 9px 11px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th {
+  font-family: var(--mono); font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase;
+  color: var(--text-muted); font-weight: 500; background: var(--surface-2);
+}
+td { color: var(--text-secondary); }
+td b, td strong { color: var(--text-primary); }
+
+blockquote {
+  margin: 0 0 15px; padding: 12px 18px; border-left: 3px solid var(--s1);
+  background: var(--surface-2); border-radius: 0 7px 7px 0;
+  color: var(--text-secondary); font-size: 14px; font-style: italic;
+}
+
+.callout {
+  border-left: 3px solid var(--warning); background: rgba(250,178,25,.07);
+  padding: 14px 18px; border-radius: 0 7px 7px 0; margin: 0 0 17px;
+}
+.callout.crit { border-color: var(--critical); background: rgba(208,59,59,.08); }
+.callout.good { border-color: var(--good);     background: rgba(12,163,12,.08); }
+.callout p:last-child { margin-bottom: 0; }
+.callout .lbl {
+  font-family: var(--mono); font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase;
+  color: var(--text-muted); margin: 0 0 7px; display: block;
+}
+
+/* ---- confidence labels. Never assert without one. ---- */
+.tag {
+  display: inline-block; font-family: var(--mono); font-size: 10px; letter-spacing: .07em;
+  text-transform: uppercase; padding: 2.5px 7px; border-radius: 4px;
+  margin-right: 6px; font-weight: 600;
+}
+.tag.v { background: rgba(12,163,12,.18);  color: #6cd46c; border: 1px solid rgba(12,163,12,.4); }   /* measured */
+.tag.w { background: rgba(250,178,25,.14); color: #f5c95f; border: 1px solid rgba(250,178,25,.38); } /* inferred */
+.tag.c { background: rgba(208,59,59,.16);  color: #f08a8a; border: 1px solid rgba(208,59,59,.4); }   /* contradicted / hunch */
+
+footer {
+  margin-top: 70px; padding-top: 26px; border-top: 1px solid var(--line);
+  font-family: var(--mono); font-size: 11.5px; color: var(--text-muted);
+}
+footer p { margin: 0 0 7px; }
+
+@media (max-width: 640px) {
+  h1 { font-size: 26px; }
+  .wrap { padding: 0 16px 80px; }
+}
+
+/* decision-brief — reader notes, styling.
+   Depends on the surface/ink/status custom properties in base.css. */
+
+.notable { position: relative; }
+
+.note-btn {
+  position: absolute; top: 8px; right: 8px; z-index: 6;
+  width: 26px; height: 26px; line-height: 1; padding: 0;
+  background: var(--surface-3); border: 1px solid var(--line); border-radius: 6px;
+  color: var(--text-muted); font-size: 13px; cursor: pointer; opacity: 0;
+  transition: opacity .12s, background .12s, color .12s, border-color .12s;
+}
+/* Hidden until hover: a brief with 130 always-visible affordances reads as a form. */
+.notable:hover > .note-btn,
+.note-btn:focus-visible { opacity: 1; }
+.note-btn:hover { background: var(--warning); border-color: var(--warning); color: var(--surface-1); }
+
+.notable.has-note > .note-btn {
+  opacity: 1; background: var(--warning); border-color: var(--warning);
+  color: var(--surface-1); font-weight: 700;
+}
+.notable.has-note { box-shadow: inset 3px 0 0 var(--warning); }
+tr.notable.has-note > td:first-child { box-shadow: inset 3px 0 0 var(--warning); }
+
+/* Table rows can't host an absolutely-positioned child reliably — inline it. */
+tr.notable .note-btn {
+  position: static; opacity: .35; width: 22px; height: 22px; font-size: 11px;
+  margin-left: 6px; vertical-align: middle; display: inline-block;
+}
+tr.notable:hover .note-btn { opacity: 1; }
+
+/* ---- floating bar ---- */
+.notebar {
+  position: fixed; right: 18px; bottom: 18px; z-index: 900;
+  display: flex; gap: 8px; align-items: center;
+  background: var(--surface-2); border: 1px solid var(--line); border-radius: 10px;
+  padding: 9px 11px; box-shadow: 0 10px 32px rgba(0,0,0,.55);
+  font-family: var(--mono); font-size: 11.5px;
+}
+.notebar .cnt { color: var(--text-muted); padding-right: 4px; }
+.notebar .cnt b { color: var(--warning); font-size: 14px; }
+.notebar button {
+  font-family: var(--mono); font-size: 11px; letter-spacing: .03em; cursor: pointer;
+  background: var(--surface-3); border: 1px solid var(--line); color: var(--text-secondary);
+  border-radius: 6px; padding: 6px 10px;
+  transition: background .12s, color .12s, border-color .12s;
+}
+.notebar button:hover { background: var(--warning); color: var(--surface-1); border-color: var(--warning); }
+.notebar button.primary {
+  background: rgba(250,178,25,.14); border-color: rgba(250,178,25,.45); color: #f5c95f;
+}
+.notebar button:disabled {
+  opacity: .4; cursor: default; background: var(--surface-3);
+  color: var(--text-muted); border-color: var(--line);
+}
+@media (max-width: 640px) {
+  .notebar { right: 8px; bottom: 8px; flex-wrap: wrap; max-width: calc(100vw - 16px); }
+}
+
+/* ---- note dialog ---- */
+dialog#d-note { max-width: 620px; }
+#note-list { margin: 0 0 18px; padding: 0; list-style: none; }
+#note-list li {
+  background: var(--surface-2); border: 1px solid var(--line);
+  border-left: 3px solid var(--warning); border-radius: 0 7px 7px 0;
+  padding: 11px 14px; margin-bottom: 9px; font-size: 14px; color: var(--text-secondary);
+}
+#note-list .nts {
+  font-family: var(--mono); font-size: 10px; color: var(--text-muted);
+  display: flex; justify-content: space-between; gap: 10px; margin-bottom: 6px;
+}
+#note-list .ndel {
+  background: none; border: none; color: var(--text-muted);
+  cursor: pointer; font-size: 11px; padding: 0;
+}
+#note-list .ndel:hover { color: var(--critical); }
+#note-none { color: var(--text-muted); font-size: 13.5px; margin: 0 0 16px; }
+
+#note-text {
+  width: 100%; min-height: 104px; background: var(--surface-0);
+  border: 1px solid var(--line); border-radius: 7px; color: var(--text-primary);
+  padding: 11px 13px; font-family: var(--sans); font-size: 14.5px;
+  resize: vertical; line-height: 1.55;
+}
+#note-text:focus { outline: none; border-color: var(--warning); }
+
+.note-actions { display: flex; gap: 9px; align-items: center; margin-top: 11px; }
+.note-actions button {
+  font-family: var(--mono); font-size: 11.5px; cursor: pointer; border-radius: 6px;
+  padding: 8px 14px; border: 1px solid var(--line);
+  background: var(--surface-3); color: var(--text-secondary);
+}
+.note-actions button.save {
+  background: var(--warning); border-color: var(--warning);
+  color: var(--surface-1); font-weight: 600;
+}
+.note-actions .hintk {
+  font-family: var(--mono); font-size: 10.5px; color: var(--text-muted); margin-left: auto;
+}
+
+/* ---- export dialog ---- */
+dialog#d-export { max-width: 780px; }
+#export-out {
+  width: 100%; min-height: 320px; background: var(--surface-0);
+  border: 1px solid var(--line); border-radius: 7px; color: var(--text-secondary);
+  padding: 13px; font-family: var(--mono); font-size: 12px; line-height: 1.55;
+  resize: vertical; white-space: pre;
+}
+.tokest { font-family: var(--mono); font-size: 11px; color: var(--text-muted); margin: 9px 0 0; }
+
+.kicker { font-family: var(--mono); font-size: 11.5px; letter-spacing: .06em;
+  text-transform: uppercase; color: var(--text-muted); margin: 0 0 6px; }
+.lede { font-size: 16.5px; line-height: 1.62; max-width: 74ch; margin: 26px 0 30px;
+  color: var(--text); }
+
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(148px, 1fr));
+  gap: 12px; margin: 26px 0 30px; }
+.tile { border: 1px solid var(--line); border-radius: 9px; padding: 15px 16px;
+  background: var(--panel); }
+.tile b { display: block; font-family: var(--mono); font-size: 27px; line-height: 1;
+  color: var(--accent); margin-bottom: 7px; font-weight: 600; }
+.tile span { font-size: 12.5px; color: var(--text-muted); line-height: 1.4; display: block; }
+
+.esc-list { list-style: none; padding: 0; margin: 22px 0 34px; counter-reset: none; }
+.esc-list li { position: relative; border: 1px solid var(--line); border-left: 3px solid var(--accent);
+  border-radius: 8px; padding: 15px 18px 15px 52px; margin-bottom: 11px; background: var(--panel);
+  font-size: 14px; line-height: 1.6; }
+.esc-n { position: absolute; left: 17px; top: 15px; font-family: var(--mono); font-size: 15px;
+  color: var(--accent); font-weight: 600; }
+.esc-list li b { display: block; margin-bottom: 5px; color: var(--text); }
+.esc-list li em { display: block; margin-top: 7px; font-style: normal; font-size: 12.5px;
+  color: var(--text-muted); font-family: var(--mono); }
+
+.finding { border: 1px solid var(--line); border-radius: 10px; padding: 18px 20px;
+  margin-bottom: 16px; background: var(--panel); }
+.finding.p1 { border-left: 3px solid #d03b3b; }
+.finding.p2 { border-left: 3px solid #fab219; }
+.finding.p3 { border-left: 3px solid var(--line-strong, #444); }
+.finding.mine { border-left-style: dashed; }
+.finding.p1.mine { border-left-color: #d03b3b; }
+.finding.reversed { border-left: 3px solid #6cd46c; opacity: .92; }
+.finding.reversed .sev { background: rgba(12,163,12,.18); color: #6cd46c; }
+.did { border-top: 1px solid var(--line); padding-top: 11px; font-size: 13.5px !important; }
+.did b { color: var(--accent); }
+.callout.good .lbl { color: #6cd46c; }
+.fhead { display: flex; align-items: center; flex-wrap: wrap; gap: 9px; margin-bottom: 11px; }
+.fhead h3 { margin: 0; font-size: 15.5px; flex: 1 1 auto; }
+.sev { font-family: var(--mono); font-size: 10.5px; font-weight: 700; letter-spacing: .06em;
+  padding: 3px 8px; border-radius: 4px; background: rgba(255,255,255,.07); color: var(--text-muted); }
+.finding.p1 .sev { background: rgba(208,59,59,.18); color: #f08a8a; }
+.finding.p2 .sev { background: rgba(250,178,25,.14); color: #f5c95f; }
+.src { font-family: var(--mono); font-size: 11px; color: var(--text-muted); }
+.finding p { font-size: 14px; line-height: 1.62; margin: 0 0 11px; }
+.finding p:last-child { margin-bottom: 0; }
+.repro { border-top: 1px solid var(--line); padding-top: 11px; font-size: 13px !important;
+  color: var(--text-muted); }
+.note-intro { font-size: 13.5px; color: var(--text-muted); max-width: 72ch; margin-bottom: 20px; }
+
+.grill { margin: 22px 0 34px; }
+.ask { border: 1px solid var(--line); border-radius: 10px; padding: 18px 20px;
+  margin-bottom: 14px; background: var(--panel); border-top: 3px solid var(--accent); }
+.ask h3 { margin: 0 0 11px; font-size: 15.5px; }
+.ask p { font-size: 14px; line-height: 1.62; margin: 0 0 10px; }
+.ask p:last-child { margin-bottom: 0; }
+
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px;
+  margin: 22px 0 34px; }
+.card { border: 1px solid var(--line); border-radius: 10px; padding: 17px 19px; background: var(--panel); }
+.card h3 { margin: 0 0 10px; font-size: 14.5px; }
+.card p { font-size: 13.5px; line-height: 1.6; margin: 0; }
+
+table.wide { width: 100%; margin: 20px 0 30px; }
+table.wide td { font-size: 13.5px; }
+
+@media (max-width: 640px) {
+  .finding, .ask, .card { padding: 15px 14px; }
+  .esc-list li { padding: 14px 14px 14px 46px; }
+}
+
+</style>
+</head><body>
+<header class="top"><div class="wrap">
+  <p class="kicker">Reconciled review · client-server-split · tip 139e27e · 2026-09-09</p>
+  <h1>Two Passes, One Overlap</h1>
+</div></header>
+
+<div class="wrap">
+
+<p class="lede">Two adversarial reviews of this branch produced eight findings and agreed on one
+of them. Seven stand at the tip, two more were found here, and the biggest of the eight turns out
+to be pointing the wrong way — the wire both reviewers wanted locked down is the only route an
+upgrade has. Every open question is answered on this page rather than handed back. What is left is
+smaller than it looked: two lines of behaviour, two paragraphs of documentation, and three harness
+legs.</p>
+
+<div class="tiles">
+  <div class="tile"><b>10</b><span>findings, two new here</span></div>
+  <div class="tile"><b>1</b><span>both reviewers found</span></div>
+  <div class="tile"><b>1</b><span>reversed on the evidence</span></div>
+  <div class="tile"><b>18</b><span>commits since review one</span></div>
+</div>
+
+<div class="callout good">
+  <span class="lbl">The comparison that settled it</span>
+  <p><b>herdr</b> is the same product, shipped: a Rust binary that owns coding agents' terminals so
+  they outlive the window. Thirty-seven thousand stars. Its socket API takes
+  <em>"one request per line"</em> with no handshake and no token, its trust model is the socket
+  file, and its README states the survival boundary in its first bullet — the layout comes back,
+  <em>"the original processes do not survive"</em> a restart. Two of the three open questions
+  dissolve against that: the stateless wire is the shipped answer, not a breach, and the two
+  lifetimes belong on the label rather than in a design note. What herdr does not have is the
+  undo window on a close, which as of this morning is ours.</p>
+</div>
+
+<div class="callout crit">
+  <span class="lbl">Read this before the findings</span>
+  <p>Neither review saw the tip, and neither saw the gate it is now measured against. The
+  first pass read <code>09ebe2b</code>, the second <code>b46fa8f</code> four commits later,
+  and the tip is <code>139e27e</code> — eighteen and fourteen commits on. Two of those commits
+  matter to the findings rather than being cleanup: <code>3963320</code> moved the resume line
+  onto <code>spawn-pane</code> so the host types it, and <code>139e27e</code> amended Gate 1 so
+  a close defers instead of killing. The second of those reshapes the top finding of the first
+  review. Every line reference below was re-anchored at the tip by hand.</p>
+</div>
+
+<h2 class="sec">Read first</h2>
+<ol class="esc-list">
+  <li><span class="esc-n">1</span>
+    <b>Shutdown throws away the layout, and nobody had noticed.</b>
+    The verb a client can actually call stops the host without a final checkpoint, losing up to
+    five minutes of work. The twelve-hour idle exit checkpoints properly and has a comment saying
+    why. This is also the missing half of <em>ask the old host to checkpoint and stand down</em>,
+    which is why the approved upgrade path could not be built.
+    <em>Two lines, and it unblocks the version fix.</em></li>
+  <li><span class="esc-n">2</span>
+    <b>The two-writers bug is client-side and was never a protocol problem.</b>
+    A version refusal and an absent host come back as the same error, so the client opens a
+    serverless window beside a live host. Tell them apart and the second writer never exists.
+    <em>A typed error and one branch.</em></li>
+  <li><span class="esc-n">3</span>
+    <b>The finding both reviewers agreed on points the wrong way.</b>
+    They wanted the wire locked behind a hello. The shipped competitor in this category has no
+    handshake at all, and locking it would close the one door an upgrade walks through.
+    <em>Delete two paragraphs of documentation instead of building a state machine.</em></li>
+  <li><span class="esc-n">4</span>
+    <b>The host will spawn terminals until the machine runs out.</b>
+    No cap exists anywhere in <code>host.rs</code>, and the window's four-pane limit does not
+    reach the protocol. The plainest real defect on the list.
+    <em>A refusal at <code>spawn_pane</code> and a test that sends one too many.</em></li>
+  <li><span class="esc-n">5</span>
+    <b>Stop reviewing this branch; give the harness three more legs.</b>
+    Two passes overlapped on one finding in eight. Everything that actually mattered here was
+    caught by something that could fail on its own.
+    <em>Three legs, each proven by breaking it first.</em></li>
+</ol>
+
+<h2 class="sec">What happened when each invalidation criterion was run</h2>
+
+<p class="note-intro">Each finding below carries the check its author wrote to disprove it. That
+check was run first, at the tip. A finding that dies is a result.</p>
+
+<div class="finding p3 reversed">
+  <div class="fhead"><span class="sev">REVERSED</span><h3>The wire has no connection state</h3>
+  <span class="tag v">measured</span><span class="src">found by both · downgraded here</span></div>
+  <p><b>The facts below stand; the conclusion does not.</b> Both reviews read a stateless wire as
+  a defect. It is the design, it matches what the category leader ships, and enforcing a
+  handshake would break the upgrade path this branch still needs to build. What survives is a
+  documentation defect: two approved promises that no code keeps. The decision is carried below.</p>
+  <p><b>Invalidation run:</b> connect and send a verb cold. <code>handle_control_line</code> at
+  <code>host.rs:1619</code> parses one JSON line and dispatches whatever verb it carries;
+  <code>Hello</code> is an arm in that match like any other, and its handler discards the client
+  kind outright — <code>let _ = kind;</code> at <code>host.rs:1631</code>. The finding stands.</p>
+  <p>The branch's own integration test relies on it: <code>host_socket.rs:170</code> opens a fresh
+  control connection and issues <code>close-pane</code>, then another and issues
+  <code>shutdown</code>, neither preceded by a hello. The gap is codified rather than merely
+  present.</p>
+  <p><b>The Gate 1 condition, and why it is already met.</b> Gate 1 deferred remote attach on one
+  named condition: <em>"same uid, therefore authorised" must not leak out of the transport into
+  the protocol. Keep authorisation a checkable property of a connection.</em> The peer-uid check at
+  <code>peer_is_us</code> is exactly that — a property of the connection, checked on every one,
+  before a byte is parsed. It is not a handshake, and it does not need to be. What would violate
+  the condition is a verb that trusts a claim in its own payload, and none does.</p>
+  <p><b>Two findings, one root.</b> The second review filed the discarded client kind separately,
+  as window-level steal not being implemented. It is the same line of code. Gate 3 says a
+  <code>Window</code> hello drops the previous GUI connection and tool clients never steal; with
+  the kind discarded there is nothing to implement that against, and pane sinks are replaced
+  individually while both control connections stay live.</p>
+  <p class="repro"><b>Disprove it:</b> send <code>{"verb":"shutdown"}</code> as the first line to a
+  throwaway host. If it returns an error and stays alive, this is wrong.</p>
+</div>
+
+<div class="finding p1">
+  <div class="fhead"><span class="sev">P1</span><h3>A version bump leaves two writers on one file</h3>
+  <span class="tag c">contradicted</span><span class="src">first review only</span></div>
+  <p><b>Invalidation run:</b> read the attach path at the tip. <code>main.rs:19913</code> attaches;
+  the <code>Err</code> arm at <code>main.rs:19926–19934</code> catches <em>every</em> attach error
+  and opens a local serverless window, comment included — <em>"Say it plainly and open anyway."</em>
+  Nothing asks the old host to checkpoint, nothing marks the session unavailable. The live host
+  keeps its pseudoterminals and its checkpoint writer while the fallback window writes the same
+  session file directly. The finding stands, at shifted lines.</p>
+  <p>The approved path in Gate 3 is version break, then graceful shutdown, then TOML recovery.
+  That path cannot be built while item one is open: a peer refused for version skew needs some
+  channel on which to say <em>checkpoint and stand down</em>, and a strict hello gate closes it.
+  The two findings have to be fixed in one pass or they fight.</p>
+  <p class="repro"><b>Disprove it:</b> run a host at protocol 1, launch a client built at protocol
+  2 against the same session, watch processes and session-file writes. Wrong if the old host exits
+  after a final checkpoint before the new window writes.</p>
+</div>
+
+<div class="finding p1">
+  <div class="fhead"><span class="sev">P1</span><h3>The final close never reaches its save</h3>
+  <span class="tag c">contradicted</span><span class="src">first review only · reshaped since</span></div>
+  <p><b>Invalidation run:</b> both close paths still return above their save.
+  <code>main.rs:8284</code> (tab close) and <code>main.rs:9259</code> (pane close) each call
+  <code>cx.quit()</code> and <code>return</code> while <code>permit_shrink.set(true)</code> and
+  <code>self.save(cx)</code> sit below the early return. The host keeps the pre-close layout. The
+  finding stands.</p>
+  <p><b>What changed underneath it.</b> Gate 1 was amended at the tip: a manual close now defers
+  rather than kills — one pane held an hour, two or more held four, capped at ten, processes
+  still running, <code>ctrl+shift+z</code> to reopen. The defect is now that the saved layout
+  cannot express the difference between a live leaf and a held one, which is why a closed pane
+  comes back as a respawn. The repair target moved; the code is still wrong.</p>
+  <p><b>A third site, and it is not a bug.</b> There is a third <code>cx.quit()</code> at
+  <code>main.rs:9477</code> that neither review reached. It is the reap path, and it declines to
+  persist on purpose — a shell exiting on its own marks the session degraded so the richer
+  on-disk copy survives for resurrection. That distinction is worth keeping: the branch already
+  retains on natural exit and deletes on manual close, so the amendment is closer to the
+  existing grain than it first looks.</p>
+  <p class="repro"><b>Disprove it:</b> hosted session, one pane, close it through the UI, wait for
+  the process to die, relaunch. Wrong if no replacement is spawned and the saved layout no longer
+  carries the closed leaf.</p>
+</div>
+
+<div class="finding p2">
+  <div class="fhead"><span class="sev">P2</span><h3>The host will spawn until the machine stops</h3>
+  <span class="tag c">contradicted</span><span class="src">second review only</span></div>
+  <p><b>Invalidation run:</b> <code>Host::spawn_pane</code> at <code>host.rs:542</code> holds the
+  pane table from check to insert, dedupes against a running recipe, and then spawns. Nothing
+  counts the panes it already has, and no cap constant exists anywhere in the file. Gate 3
+  specifies a generous host cap of 64. The finding stands.</p>
+  <p>The window's own limits are real but live elsewhere and do not reach the wire — four for a
+  new split, eight for what a tab may hold. Neither is consulted by the host.</p>
+  <p class="repro"><b>Disprove it:</b> send 65 <code>spawn-pane</code> requests to a throwaway
+  host. Wrong if the sixty-fifth is refused truthfully.</p>
+</div>
+
+<div class="finding p2">
+  <div class="fhead"><span class="sev">P2</span><h3>Exited panes are never reaped</h3>
+  <span class="tag w">inferred</span><span class="src">first review only</span></div>
+  <p><b>Invalidation run:</b> the only <code>panes.remove</code> in the file is inside
+  <code>close_pane</code> at <code>host.rs:863</code>. A child exit sets <code>ended</code> and
+  drops the stream; nothing takes the entry out. Restore filters ended panes and starts
+  replacements, so every natural exit can leave a corpse until the twelve-hour idle exit. The
+  finding stands on reading; the growth itself is not measured here.</p>
+  <p>The amendment above changes what a fix should look like. A pane held for a person and a pane
+  whose child exited are now different things, and reaping them the same way would throw away the
+  undo window before anyone could use it.</p>
+  <p class="repro"><b>Disprove it:</b> spawn and exit short-lived panes for a hundred cycles in one
+  host; compare RSS and <code>list-panes</code> length. Wrong if dead entries are bounded
+  elsewhere.</p>
+</div>
+
+<div class="finding p2">
+  <div class="fhead"><span class="sev">P2</span><h3>The concurrency test does not force concurrency</h3>
+  <span class="tag c">contradicted</span><span class="src">second review only</span></div>
+  <p><b>Invalidation run:</b> <code>two_things_writing_at_once_still_leave_one_good_file</code> at
+  <code>host.rs:3498</code> starts eight threads, and there is no <code>Barrier</code> anywhere in
+  <code>host.rs</code>. Nothing forces two writers into the vulnerable interval together. The
+  finding stands.</p>
+  <p>This is a gap in what the test proves, not evidence the lock is wrong. The commit that added
+  the lock records five failures in five runs against its parent, which is real evidence for the
+  lock. What no single green run establishes is the ordering property the test's own name claims.</p>
+  <p class="repro"><b>Disprove it:</b> run it repeatedly against the parent of the writer-lock
+  commit. Wrong if every run fails there.</p>
+</div>
+
+<div class="finding p3">
+  <div class="fhead"><span class="sev">P3</span><h3>Scratch cleanup has no regression assertion</h3>
+  <span class="tag w">inferred</span><span class="src">second review only · not re-verified here</span></div>
+  <p><b>Invalidation run: not performed.</b> This one was carried forward from the second review
+  without independent checking, and it is labelled accordingly. Its own criterion — run the
+  affected tests against the cleanup commit's parent and look for surviving test roots — is cheap,
+  and it should be run before anyone acts on it.</p>
+</div>
+
+<div class="finding p1 mine">
+  <div class="fhead"><span class="sev">NEW</span><h3>Shutdown does not checkpoint</h3>
+  <span class="tag v">measured</span><span class="src">this pass</span></div>
+  <p>In neither review, and it is the piece that makes the version-break repair possible.
+  <code>Request::Shutdown</code> at <code>host.rs:1705</code> replies
+  <code>ShuttingDown</code>; the control loop calls <code>stop()</code> at
+  <code>host.rs:1148</code>, which sets a flag, rings the upkeep and knocks its own socket to wake
+  the accept loop. The loop breaks, the socket file is removed, the claim is dropped, and the
+  process returns — with no <code>persist_now</code> anywhere on that path.</p>
+  <p>The twelve-hour idle exit does checkpoint before stopping, deliberately and with a comment
+  saying why (<code>host.rs:1137</code>). The verb a person or a client can actually call does not.
+  Anything asked to shut down today loses up to thirty seconds of layout while a window is
+  attached, and up to five minutes while none is.</p>
+  <p>This is why the graceful version-break handoff cannot be built as the docs describe it:
+  <em>ask the old host to checkpoint and stand down</em> has no verb that does the first half.
+  The repair is to give <code>stop()</code> the same final checkpoint the idle path already has.</p>
+  <p class="repro"><b>Disprove it:</b> start a host, spawn a pane, send <code>shutdown</code> inside
+  the checkpoint window, and read the session file. Wrong if the pane is in it.</p>
+</div>
+
+<div class="finding p3 mine">
+  <div class="fhead"><span class="sev">NEW</span><h3>A comment claims a safety property the function does not provide</h3>
+  <span class="tag w">inferred</span><span class="src">this pass</span></div>
+  <p>Not in either review. The host now types a client-supplied resume line into a fresh pane
+  (<code>host.rs:690</code>), and the comment above it says whether a recipe is safe to resume is
+  settled at <code>session::safe_resume_id</code>. That function
+  (<code>session.rs:294</code>) validates an <em>extracted session id</em> — alphanumerics, dashes,
+  underscores, 128 characters — for the purpose of matching a live pane against a transcript. It
+  never sees the recipe string that gets typed, and nothing else validates it either.</p>
+  <p>The same comment states the mitigation correctly: a same-uid client could open a byte stream
+  and type the identical thing, so no new capability is created. What wants repairing is the
+  sentence. It is worth a line because the commit immediately before the tip is
+  <em>"The dir-logo comment stops promising a safety property the code does not have"</em> — the
+  third instance of that pattern on this branch, and comments are what the next reader trusts.</p>
+</div>
+
+<h2 class="sec">Decisions, carried</h2>
+
+<p class="note-intro">Three questions were open. They are answered here rather than handed back,
+and the reasoning is on the page so any of them can be overturned by disagreeing with a sentence
+rather than by reopening the whole review.</p>
+
+<div class="grill">
+  <div class="ask">
+    <h3>The stateless wire stays. It is the upgrade path, not a breach.</h3>
+    <p>Both reviews filed it as P1. The stronger evidence runs the other way. <b>herdr</b> — the
+    same product category, thirty-seven thousand stars — documents its socket API as
+    <em>"send one request per line"</em> with no handshake, no token, and trust resting on the
+    socket file. This branch's own comments at <code>host.rs:2266</code> and
+    <code>host.rs:2981</code> argue the same position deliberately.</p>
+    <p>And the version-break path <em>needs</em> the wire to stay open. A new binary meeting an
+    old host has to be able to say <code>shutdown</code> to a peer it never negotiated with.
+    Enforcing hello would close the only door the upgrade can walk through — the breach and the
+    repair are the same mechanism.</p>
+    <p>The code was never wrong here. The protocol doc that promises hello opens a connection is
+    wrong, and so is the Gate 3 window-steal policy that has no implementation and no user asking
+    for it. Both get deleted. The wire is already selectively stateful exactly where it needs to
+    be — <code>host.rs:1702</code> refuses to start watching on a connection that is not
+    watching — which is the pattern to keep.</p>
+    <p class="did"><b>Do:</b> delete the hello-first line from <code>docs/protocol/session-host-v1.md</code>
+    and the steal policy from Gate 3. Keep the peer-uid check as the boundary. No state machine,
+    no carve-out list, no test rewrite.</p>
+  </div>
+
+  <div class="ask">
+    <h3>Two lines fix the real bug, and neither is on the wire.</h3>
+    <p>Strip the protocol argument away and the two-writers hazard is client-side.
+    <code>main.rs:19926</code> opens a serverless window on <em>any</em> attach error, so a version
+    refusal looks exactly like an absent host. Tell those two apart and the second writer never
+    exists.</p>
+    <p>The other line is <code>shutdown</code>, which does not checkpoint — see the finding below.
+    Fix that and a new client can ask an old host to stand down without losing the layout, which
+    is the whole of the approved graceful path.</p>
+    <p class="did"><b>Do:</b> a typed error out of <code>attach_at</code> so version skew is
+    distinguishable from absence; refuse to open serverless on skew and ask the old host to stand
+    down instead; make <code>stop()</code> checkpoint the way <code>idle_once</code> already does.</p>
+  </div>
+
+  <div class="ask">
+    <h3>No third reviewer. The next finding comes from a harness leg.</h3>
+    <p>Two passes shared one finding in eight, which says review is a leaky instrument on a branch
+    this size. Every defect on this branch that actually mattered was caught by something that
+    could fail on its own: the mutation-tested encoder, the <code>floor-control</code> leg that
+    loses twenty of twenty, the <code>pane-exit</code> leg built because every other leg measured
+    survival and none measured endings.</p>
+    <p><code>scripts/td-survival-test.sh</code> already exists and already has four legs. The
+    three findings that need a session launched are three more legs, and a leg proves the thing
+    every time it runs rather than once, in one reader's head.</p>
+    <p class="did"><b>Do:</b> add <code>close-undo</code>, <code>version-skew</code> and
+    <code>pane-churn</code> legs, each proven by breaking it first. One time-boxed read of the
+    diff since <code>b46fa8f</code> — not the whole branch again — and after that the standing
+    instrument is the harness.</p>
+  </div>
+</div>
+
+<h2 class="sec">What the overlap says</h2>
+
+<table class="wide">
+  <thead><tr><th>Finding</th><th>First pass</th><th>Second pass</th><th>At the tip</th></tr></thead>
+  <tbody>
+    <tr><td>Hello not required</td><td>found</td><td>found</td><td>reversed · the wire is the design</td></tr>
+    <tr><td>Window steal unimplemented</td><td>missed</td><td>found</td><td>real, and the policy gets deleted</td></tr>
+    <tr><td>Shutdown loses the layout</td><td>missed</td><td>missed</td><td>new · unblocks the upgrade path</td></tr>
+    <tr><td>Version bump, two writers</td><td>found</td><td>missed</td><td>stands</td></tr>
+    <tr><td>Final close not saved</td><td>found</td><td>missed</td><td>stands · target moved</td></tr>
+    <tr><td>No host pane cap</td><td>missed</td><td>found</td><td>stands</td></tr>
+    <tr><td>Exited panes accumulate</td><td>found</td><td>missed</td><td>stands</td></tr>
+    <tr><td>Concurrency test too weak</td><td>missed</td><td>found</td><td>stands</td></tr>
+    <tr><td>Scratch cleanup assertion</td><td>missed</td><td>found</td><td>not re-checked</td></tr>
+    <tr><td>Comment overstates a guard</td><td>missed</td><td>missed</td><td>new this pass</td></tr>
+  </tbody>
+</table>
+
+<div class="callout">
+  <span class="lbl">The claim that did die</span>
+  <p>The second review recorded the branch moving under it as <em>"three cleanup commits"</em> that
+  did not touch its findings. It was ten by then and fourteen now, touching <code>host.rs</code>,
+  <code>hostctl.rs</code>, <code>main.rs</code>, <code>instance.rs</code>, <code>session.rs</code>
+  and the architecture gate doc — and one of them changed the protocol. The reassurance was
+  wrong, which is the ordinary hazard of reviewing a branch that people are still working on
+  rather than any failure of that reviewer.</p>
+</div>
+
+<h2 class="sec">The whole of the work</h2>
+
+<div class="cards">
+  <div class="card">
+    <h3>Behaviour — four small changes</h3>
+    <p>Give <code>stop()</code> a final checkpoint. Give <code>attach_at</code> a typed error so
+    version skew is not an absent host, and refuse to open a serverless window on skew. Refuse the
+    sixty-fifth pane. Bound the exited-pane table, keeping a pane held for a person distinct from
+    one whose child ended. None of these touches the protocol.</p>
+  </div>
+  <div class="card">
+    <h3>Documentation — two deletions</h3>
+    <p>The hello-first sentence in the protocol contract, and the window-steal policy in Gate 3.
+    Both describe a design nobody built and nobody has asked for, and leaving them standing is
+    what produced two P1 findings against working code. A promise a repository does not keep costs
+    a reviewer a day every time it is read.</p>
+  </div>
+  <div class="card">
+    <h3>Proof — three harness legs</h3>
+    <p><code>close-undo</code> holds a pane, waits out its window, and requires the process alive
+    at fifty-nine minutes and gone at sixty-one. <code>version-skew</code> stands an old host
+    against a new client and requires one writer. <code>pane-churn</code> runs a hundred exits and
+    requires the table bounded. Each proven by breaking it first, the way
+    <code>floor-control</code> earned its place.</p>
+  </div>
+  <div class="card">
+    <h3>Not doing</h3>
+    <p>No connection state machine. No carve-out verb list. No rewrite of the integration test
+    that opens cold sockets — it was testing the wire correctly all along. No third review pass,
+    beyond one time-boxed read of the diff since the second one.</p>
+  </div>
+</div>
+
+<footer><p>Reconciled at tip 139e27e from the first review's brief (09ebe2b) and the second's
+handoff (b46fa8f), by a reader who wrote neither. Read-only: no branch edits, no commits, no
+installs, no GUI, no issues filed. Line references re-anchored by hand at the tip. One finding
+carried forward unverified and labelled as such; one reversed on evidence from outside this
+repository. Comparison drawn from herdr's own published README and socket-api documentation, read
+2026-09-09.</p></footer>
+
+</div>
+
+
+
+<div class="notebar" id="notebar">
+  <span class="cnt"><b id="note-count">0</b> notes</span>
+  <button id="btn-export" class="primary" data-note-action="export"
+          title="Anchored note map for pasting into a prompt">&#x1F4CB; copy map</button>
+  <button id="btn-embed" data-note-action="embed"
+          title="Download this file with your notes baked in">&#x1F4BE; save into file</button>
+  <button id="btn-clear" data-note-action="clear" title="Delete every note">&#x2715;</button>
+</div>
+
+<dialog id="d-note">
+  <div class="dlg-head">
+    <div>
+      <h3 id="note-title">Note</h3>
+      <p class="repo" id="note-anchor">&nbsp;</p>
+    </div>
+    <button class="x" data-close>&times;</button>
+  </div>
+  <div class="dlg-body">
+    <ul id="note-list"></ul>
+    <p id="note-none">No notes on this yet.</p>
+    <textarea id="note-text"
+      placeholder="Your note. Saved against this element and readable by an agent once you save into the file."></textarea>
+    <div class="note-actions">
+      <button class="save" data-note-action="add">Add note</button>
+      <button data-close>Close</button>
+      <span class="hintk">Ctrl+Enter to add</span>
+    </div>
+  </div>
+</dialog>
+
+<dialog id="d-export">
+  <div class="dlg-head">
+    <div>
+      <h3>Note map</h3>
+      <p class="repo">Anchored to element ids in this file &middot; paste straight into a prompt</p>
+    </div>
+    <button class="x" data-close>&times;</button>
+  </div>
+  <div class="dlg-body">
+    <p style="margin-bottom:12px">
+      Each line is anchored to an element id, so an agent can locate the passage without you
+      pasting the file. Prompt shape: <em>"read my notes in <code>&lt;filename&gt;</code> and act
+      on them."</em>
+    </p>
+    <textarea id="export-out" readonly></textarea>
+    <p class="tokest" id="export-est"></p>
+    <div class="note-actions">
+      <button class="save" data-note-action="copy">Copy to clipboard</button>
+      <button data-close>Close</button>
+    </div>
+  </div>
+</dialog>
+
+<!-- Notes are baked in here by "save into file". Leave it empty and leave it in. -->
+<script type="application/json" id="report-notes">{}</script>
+
+
+
+
+<script>window.NOTES_FILE = '2026-09-09-client-server-review.html';</script>
+<script>
+/* decision-brief — reader notes.
+ *
+ * Drop-in. No build step, no dependencies. Paste this file's contents inline inside a
+ * script element, after the document body — a decision brief must survive being emailed
+ * as one file, so never load it with a src attribute.
+ *
+ * NOTHING IN THIS FILE MAY CONTAIN THE LITERAL CLOSING SCRIPT TAG, not even inside a
+ * comment or a string: an HTML parser ends the script element at the first one it sees,
+ * and everything after it silently becomes page content. Write it broken up, e.g.
+ * "<\/script>", if you ever need to emit one.
+ *
+ * Three outputs, in the order they matter:
+ *   1. copy map    — anchored note map, ~1% of the tokens of the whole document
+ *   2. save into   — bakes notes into a downloadable copy so an agent can READ them
+ *   3. localStorage — live persistence between reloads
+ *
+ * Why the map exists: pasting a whole annotated report into a prompt costs thousands of
+ * tokens; pasting bare notes loses which passage each one is about. The map is the third
+ * option — [element-id] + note, so the agent greps the id and finds the passage itself.
+ *
+ * Configure before this script runs (all optional):
+ *   window.NOTES_FILE    — filename used for the storage key and the download. Default: location basename.
+ *   window.NOTES_TARGETS — [[selector, prefix], ...] overriding what gets an affordance.
+ */
+(function () {
+  'use strict';
+
+  var FILE = window.NOTES_FILE ||
+    (location.pathname.split('/').pop() || 'decision-brief.html');
+  var KEY = 'notes:' + FILE;
+
+  /* Default targets. A prefix keeps exported anchors readable and grouped.
+     Override wholesale with window.NOTES_TARGETS if a brief's shape differs.
+
+     THE GRILL COMES FIRST, AND IT IS NOT OPTIONAL. Until 2026-09-02 this list
+     covered five of the seven components layout.md tells you to build and
+     omitted the grill — so the one section whose entire purpose is a decision
+     the reader has to make was the one section the reader could not comment on.
+     Two briefs shipped that way, each having invented its own class name
+     (`grill-q`, then `q`) because nothing here named one. Both spellings are
+     matched below; `.ask` is the name to use going forward. If you add a
+     component, add it here in the same commit. */
+  var TARGETS = window.NOTES_TARGETS || [
+    ['.grill .q, .grill-q, .ask', 'ask'],
+    ['.card', 'verdict'],
+    ['.esc-list li', 'readfirst'],
+    ['.finding', 'finding'],
+    ['.tile', 'stat'],
+    ['table.wide tr', 'row'],
+    ['.bar-row', 'chart'],
+    ['.callout', 'callout'],
+    ['dialog .dlg-body > h4', 'sub']
+  ];
+
+  /* Notes baked into the file win on first load — a fresh browser should see what the
+     author saved. After that localStorage is the live copy. */
+  var baked = {};
+  try {
+    var island = document.getElementById('report-notes');
+    if (island) baked = JSON.parse(island.textContent || '{}');
+  } catch (e) { /* a malformed island must not break the page */ }
+
+  var N;
+  try { N = JSON.parse(localStorage.getItem(KEY) || 'null') || baked; }
+  catch (e) { N = baked; }
+
+  var active = null, activeTitle = '';
+
+  function save() {
+    try { localStorage.setItem(KEY, JSON.stringify(N)); } catch (e) {}
+  }
+  function esc(s) {
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+  function slug(s) {
+    return String(s || 'x').toLowerCase().replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-|-$/g, '').slice(0, 44) || 'x';
+  }
+  function titleOf(el) {
+    var h = el.querySelector('h2,h3,h4,.bar-lab,.k,.lbl,td:first-child,th:first-child');
+    var t = ((h ? h.textContent : el.textContent) || 'item').replace(/\s+/g, ' ').trim();
+    return t.length > 72 ? t.slice(0, 69) + '…' : t;
+  }
+
+  /* ---- give every target a stable anchor id and a note affordance ---- */
+  function tag() {
+    var used = {};
+    TARGETS.forEach(function (pair) {
+      var sel = pair[0], pre = pair[1];
+      Array.prototype.forEach.call(document.querySelectorAll(sel), function (el, i) {
+        if (el.classList.contains('notable')) return;
+        if (el.tagName === 'TR' && el.querySelector('th')) return;   // header rows
+        if (el.closest('#d-note, #d-export, .notebar')) return;
+
+        /* Numbered lists anchor by position; everything else by a SHORT title slug.
+           Long slugs make the exported map unreadable, which defeats the map. */
+        var id;
+        var num = el.querySelector('.esc-n');
+        if (num) id = pre + '-' + num.textContent.trim();
+        else id = pre + '-' + slug(titleOf(el)).split('-').slice(0, 4).join('-');
+
+        var base = id, n = 2;
+        while (used[id]) id = base + '-' + (n++);
+        used[id] = 1;
+
+        el.classList.add('notable');
+        el.dataset.nid = id;
+        el.dataset.ntitle = titleOf(el);
+        if (!el.id) el.id = id;                      // a real anchor in the file
+
+        var b = document.createElement('button');
+        b.className = 'note-btn';
+        b.type = 'button';
+        b.title = 'Add a note';
+        b.innerHTML = '&#x1F4AC;';
+        b.addEventListener('click', function (ev) {
+          ev.preventDefault(); ev.stopPropagation(); open(el);
+        });
+        el.appendChild(b);
+      });
+    });
+  }
+
+  function badges() {
+    var total = 0;
+    Array.prototype.forEach.call(document.querySelectorAll('.notable'), function (el) {
+      var n = (N[el.dataset.nid] || []).length;
+      total += n;
+      el.classList.toggle('has-note', n > 0);
+      var b = el.querySelector(':scope > .note-btn');
+      if (b) b.innerHTML = n ? String(n) : '&#x1F4AC;';
+    });
+    var c = document.getElementById('note-count');
+    if (c) c.textContent = total;
+    ['btn-export', 'btn-embed', 'btn-clear'].forEach(function (id) {
+      var b = document.getElementById(id);
+      if (b) b.disabled = total === 0;
+    });
+  }
+
+  function render() {
+    var list = N[active] || [];
+    var ul = document.getElementById('note-list');
+    document.getElementById('note-none').style.display = list.length ? 'none' : 'block';
+    ul.innerHTML = list.map(function (n, i) {
+      return '<li><div class="nts"><span>' + esc(n.ts) + '</span>' +
+        '<button class="ndel" data-i="' + i + '">delete</button></div>' + esc(n.text) + '</li>';
+    }).join('');
+    Array.prototype.forEach.call(ul.querySelectorAll('.ndel'), function (b) {
+      b.addEventListener('click', function () { del(+b.dataset.i); });
+    });
+  }
+
+  function open(el) {
+    active = el.dataset.nid;
+    activeTitle = el.dataset.ntitle;
+    document.getElementById('note-title').textContent = activeTitle;
+    document.getElementById('note-anchor').textContent = '#' + active;
+    render();
+    document.getElementById('d-note').showModal();
+    document.getElementById('note-text').focus();
+  }
+
+  function add() {
+    var ta = document.getElementById('note-text');
+    var t = ta.value.trim();
+    if (!t || !active) return;
+    (N[active] = N[active] || []).push({
+      text: t,
+      title: activeTitle,
+      ts: new Date().toISOString().slice(0, 16).replace('T', ' ')
+    });
+    ta.value = '';
+    save(); render(); badges();
+  }
+
+  function del(i) {
+    N[active].splice(i, 1);
+    if (!N[active].length) delete N[active];
+    save(); render(); badges();
+  }
+
+  /* ---- the map: anchored, compact, prompt-ready ---- */
+  function buildMap() {
+    var count = 0, els = 0;
+    for (var k in N) { if (N.hasOwnProperty(k)) { els++; count += N[k].length; } }
+    var out = [
+      'NOTES — ' + FILE,
+      count + ' notes on ' + els + ' elements.',
+      'Each [anchor] is an element id in that file — search it to find the passage.',
+      ''
+    ];
+    /* Document order, not object order: the map should read the way the brief reads. */
+    Array.prototype.forEach.call(document.querySelectorAll('.notable'), function (el) {
+      var list = N[el.dataset.nid];
+      if (!list || !list.length) return;
+      out.push('[' + el.dataset.nid + '] ' + el.dataset.ntitle);
+      list.forEach(function (n) { out.push('  · ' + n.text.replace(/\n+/g, ' ')); });
+      out.push('');
+    });
+    return out.join('\n');
+  }
+
+  function exportNotes() {
+    var txt = buildMap();
+    document.getElementById('export-out').value = txt;
+    var est = document.getElementById('export-est');
+    if (est) {
+      est.textContent = txt.length + ' characters ≈ ' + Math.ceil(txt.length / 4) +
+        ' tokens — versus ~' + Math.ceil(document.body.innerText.length / 4) +
+        ' for the whole document.';
+    }
+    document.getElementById('d-export').showModal();
+  }
+
+  function copyExport(btn) {
+    var ta = document.getElementById('export-out');
+    ta.select();
+    try { document.execCommand('copy'); } catch (e) {}
+    if (btn) {
+      var o = btn.textContent;
+      btn.textContent = 'Copied';
+      setTimeout(function () { btn.textContent = o; }, 1400);
+    }
+  }
+
+  /* ---- bake notes into a downloadable copy of this file ----
+     localStorage is invisible to an agent. This is what makes
+     "read my notes in <file>" work. */
+  function embedNotes() {
+    var doc = document.documentElement.cloneNode(true);
+    Array.prototype.forEach.call(doc.querySelectorAll('.note-btn'), function (n) { n.remove(); });
+    Array.prototype.forEach.call(doc.querySelectorAll('.notable'), function (n) {
+      n.classList.remove('notable', 'has-note');
+    });
+    var island = doc.querySelector('#report-notes');
+    if (island) island.textContent = JSON.stringify(N, null, 1);
+    /* A plain-text mirror as well, so grep and ctx_read find the notes
+       without anyone having to parse JSON out of a script tag. */
+    var body = doc.querySelector('body');
+    if (body) body.appendChild(document.createComment('\nREADER NOTES —\n' + buildMap() + '\n'));
+
+    var blob = new Blob(['<!DOCTYPE html>\n' + doc.outerHTML], { type: 'text/html' });
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = FILE;
+    a.click();
+    setTimeout(function () { URL.revokeObjectURL(a.href); }, 4000);
+
+    var b = document.getElementById('btn-embed');
+    if (b) { var o = b.innerHTML; b.innerHTML = 'saved &#x2713;'; setTimeout(function () { b.innerHTML = o; }, 2200); }
+  }
+
+  function clearNotes() {
+    if (!confirm('Delete every note in this brief?')) return;
+    N = {}; save(); badges();
+  }
+
+  /* ---- wiring ---- */
+  function init() {
+    var ta = document.getElementById('note-text');
+    if (ta) {
+      ta.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); add(); }
+      });
+    }
+    document.addEventListener('click', function (e) {
+      var t = e.target.closest('[data-note-action]');
+      if (!t) return;
+      var a = t.dataset.noteAction;
+      if (a === 'add') add();
+      else if (a === 'export') exportNotes();
+      else if (a === 'embed') embedNotes();
+      else if (a === 'clear') clearNotes();
+      else if (a === 'copy') copyExport(t);
+    });
+    ['d-note', 'd-export'].forEach(function (id) {
+      var d = document.getElementById(id);
+      if (!d) return;
+      Array.prototype.forEach.call(d.querySelectorAll('[data-close]'), function (x) {
+        x.addEventListener('click', function () { d.close(); });
+      });
+      d.addEventListener('click', function (e) { if (e.target === d) d.close(); });
+    });
+    tag();
+    badges();
+  }
+
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
+  else init();
+})();
+
+</script>
+</body></html>
