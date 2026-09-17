@@ -68,7 +68,7 @@ use serde_json::{json, Map, Value};
 /// A payload naming a **newer major** is refused: the envelope may have been
 /// re-cut under it. A newer minor is accepted, because a minor bump may only
 /// add optional fields — that is the promise the number makes.
-pub const TDSP_VERSION: &str = "0.1";
+pub const TDSP_VERSION: &str = "0.2";
 
 /// Longest title a rail row can carry before it stops being readable at the
 /// rail's width. Measured against [`crate::workbench::RAIL_W`], not guessed.
@@ -1664,6 +1664,45 @@ pub fn launch_briefing(dir: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn an_older_minor_still_parses_which_is_the_whole_promise_of_the_number() {
+        // The bump to 0.2 added optional fields to `question`. By this
+        // protocol's own rule a minor bump may only do that, and the payoff is
+        // that nothing written against 0.1 has to be rewritten.
+        //
+        // Several tests in this file still send `"td": "0.1"` and pass, which
+        // is that promise working by accident. This is the one that asserts it
+        // on purpose — including the version AFTER the current one, since a
+        // reader on an older build meeting a newer minor is the case the rule
+        // exists for and the case nobody ever has to hand.
+        for v in ["0.1", TDSP_VERSION, "0.9"] {
+            let doc = json!({
+                "td": v,
+                "kind": "artifact",
+                "title": "A report",
+                "model": { "href": "/tmp/report.html" }
+            });
+            assert!(
+                parse(&doc, 0).is_ok(),
+                "a {v} payload must parse on a build speaking {TDSP_VERSION}: {:?}",
+                parse(&doc, 0).err()
+            );
+        }
+        // A newer MAJOR is refused rather than guessed at: the envelope may
+        // have been re-cut under it, so a hopeful parse would be reading a
+        // shape that no longer means what it says.
+        let future = json!({
+            "td": "1.0",
+            "kind": "artifact",
+            "title": "A report",
+            "model": { "href": "/tmp/report.html" }
+        });
+        assert!(
+            parse(&future, 0).is_err(),
+            "a newer major is refused by name"
+        );
+    }
     use super::*;
 
     const NOW: u64 = 1_758_000_000_000;

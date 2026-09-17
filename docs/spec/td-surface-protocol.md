@@ -1,6 +1,6 @@
 # TDSP — the Terminal Delight Surface Protocol
 
-**Version 0.1 · 2026-09-17 · implemented in `app/src/surface.rs`**
+**Version 0.2 · 2026-09-17 · implemented in `app/src/surface.rs`**
 
 An agent hands Terminal Delight a small JSON object describing **what it made**.
 Terminal Delight decides how that thing looks. This document is the contract
@@ -473,6 +473,19 @@ and a payload naming a newer major is refused rather than guessed at.
 New kinds are additive by design: an older build renders a newer kind as
 `unclassified` with a reason naming what it does know, which is a degradation
 the sender can read.
+
+### What changed
+
+**0.2** — `question` gained `cursor`, `submit` and `round`, and each of its
+options gained `checked`. All optional, all describing a live picker rather than
+a document, so a 0.1 payload is unchanged and still correct.
+
+This bump is worth a note about how it was nearly missed. Every one of those
+fields arrived while chasing a defect in front of a running build, none of them
+felt like a protocol change at the time, and the number sat at 0.1 through all
+of them — which would have left two different wire shapes both claiming to be
+0.1, and the promise the number makes is the only thing a reader has. **A field
+added to a payload is a version bump even when it was added for a bug.**
 
 ---
 
