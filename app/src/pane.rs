@@ -158,6 +158,21 @@ pub fn row_wants_human(text: &str) -> bool {
     if t.contains("enter to select") || t.contains("esc to cancel") {
         return true;
     }
+    // The review step at the end of a multi-select or a round, which draws no
+    // footer at all — so the picker was live, the person was being waited on,
+    // and the bench said Idle. Pressing the bench's Submit reached exactly
+    // this screen and then appeared to do nothing, because the surface that
+    // would have shown the second half of the commit was never raised.
+    //
+    // Matched as the CLI's own literal rather than by loosening the rule to
+    // "any line ending in a question mark": the agent's prose ends in question
+    // marks constantly, and a detector that fires on those would report a
+    // working agent as blocked. Verified against the strings in the binary —
+    // `Ready to submit your answers?` beside `Review your answers` and the
+    // `Submit answers` / `Cancel` pair.
+    if t == "ready to submit your answers?" || t == "review your answers" {
+        return true;
+    }
     t.ends_with('?')
         && (t.starts_with("do you want to")
             || t.starts_with("do you trust")
@@ -6741,35 +6756,47 @@ impl TerminalView {
     /// [`crate::derive::question_on_screen`].
     pub fn live_questions(&mut self, now_ms: u64) -> Vec<crate::surface::Post> {
         use crate::surface::{Kind, Op, Post, Surface, Weight};
+        use crate::workbench::LiveMove;
         // A LIST, because answering one question and being asked the next
         // happens between two sweeps and produces two facts at once: the old
-        // one is over, and a new one has started.
+        // one is over, and a new one has started. Returning a single Post
+        // could only report the second, so the first was never retired.
         //
-        // Returning a single Post could only report the second, so the first
-        // was never retired — and a question the person had already answered
-        // stayed on the bench, red, labelled WAITING ON YOU, forever. Four of
-        // them had piled up when Parker looked: *"the workbench does not feel
-        // like it is up to date with the answer"*. It was not. Only one picker
-        // can be on a screen at a time, so more than one live waiting question
-        // per pane was never a state that could exist.
+        // WHAT to do is decided by [`crate::workbench::live_move`] rather than
+        // here, because the rule has a case that is easy to get wrong and
+        // impossible to see: a parse that fails while the agent is still
+        // waiting means the screen scrolled, NOT that the question is over.
         let mut out = Vec::new();
         let asking = self
             .needs_input
             .then(|| crate::derive::question_on_screen(&self.live_rows()))
             .flatten();
         let now_id = asking.as_ref().map(crate::derive::screen_question_id);
+        let was = self.wb_live_q.clone();
 
-        // Whatever we were tracking, if it is not what is on screen now, is
-        // over. The transcript's own copy arrives carrying the answer and
-        // takes its place on the bench.
-        if let Some(was) = self.wb_live_q.clone() {
-            if now_id.as_ref() != Some(&was) {
-                out.push(Post {
-                    op: Op::Retire,
-                    id: was,
-                    pane: None,
-                    surface: None,
-                });
+        match crate::workbench::live_move(self.needs_input, now_id.as_ref(), was.as_ref()) {
+            LiveMove::Keep => return out,
+            LiveMove::Retire => {
+                if let Some(id) = was {
+                    out.push(Post {
+                        op: Op::Retire,
+                        id,
+                        pane: None,
+                        surface: None,
+                    });
+                }
+                self.wb_live_q = None;
+                return out;
+            }
+            LiveMove::Replace => {
+                if let Some(id) = was {
+                    out.push(Post {
+                        op: Op::Retire,
+                        id,
+                        pane: None,
+                        surface: None,
+                    });
+                }
                 self.wb_live_q = None;
             }
         }
@@ -9100,6 +9127,40 @@ mod tests {
 
     fn rows(lines: &[&str]) -> Vec<String> {
         lines.iter().map(|s| s.to_string()).collect()
+    }
+
+    /// The review step at the end of a round draws no footer, so the rule
+    /// that catches every other picker misses this one entirely.
+    #[test]
+    fn the_review_step_is_a_question_even_with_no_footer_under_it() {
+        // Transcribed from the screen after pressing the picker's Submit.
+        // There is no "Enter to select" line here — that is the whole
+        // problem, and it is why the bench read Idle while the agent was
+        // plainly waiting on somebody.
+        let review = rows(&[
+            "Review your answers",
+            "  \u{25cf} Round 3. Which of these belong on a desk?",
+            "     \u{2192} A second keyboard",
+            "Ready to submit your answers?",
+            "  ) 1. Submit answers",
+            "    2. Cancel",
+        ]);
+        assert!(
+            wants_human(&review),
+            "the second half of a commit is still a question"
+        );
+
+        // And the strictness it must not cost: an agent WRITING about
+        // submitting answers is an agent working, not an agent blocked.
+        let prose = rows(&[
+            "I will review your answers and then submit them.",
+            "Should I go ahead and submit your answers?",
+            "Running the suite now.",
+        ]);
+        assert!(
+            !wants_human(&prose),
+            "prose about submitting is not the picker asking"
+        );
     }
 
     /// The pin, and the edge that clears it.

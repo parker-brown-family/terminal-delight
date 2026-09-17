@@ -411,6 +411,59 @@ impl Line {
     }
 }
 
+/// What to do with the live question we are tracking, given what the screen
+/// says right now.
+///
+/// **A failed parse is not an answered question.** The picker scrolls: on a
+/// long multi-select the question line and the first option slide off the top,
+/// and the reader that looks for a question above the first numbered row finds
+/// nothing and returns [`None`]. Treating that as "the question is over"
+/// retired a surface while the agent was still visibly waiting, and the whole
+/// card vanished out from under a person mid-click — Parker, after unticking
+/// one box: *"unclicking an option makes the entire element disappear"*.
+///
+/// The evidence that a question is over is the agent no longer waiting. That
+/// is the only thing that retires one here. Everything else keeps what we have,
+/// which is the same rule as everywhere else on this surface: if we cannot say
+/// what changed, change nothing.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum LiveMove {
+    /// Leave the bench exactly as it is.
+    Keep,
+    /// The agent has stopped waiting; take the live copy down.
+    Retire,
+    /// A different question is up; take the old one down and put this one up.
+    Replace,
+}
+
+/// Decide it. `waiting` is whether the agent is still stopped on a person,
+/// `parsed` what the screen could be read as this instant, and `tracked` the
+/// live question already on the bench.
+pub fn live_move(
+    waiting: bool,
+    parsed: Option<&crate::surface::SurfaceId>,
+    tracked: Option<&crate::surface::SurfaceId>,
+) -> LiveMove {
+    match (waiting, parsed, tracked) {
+        // Nothing up, nothing tracked.
+        (_, None, None) => LiveMove::Keep,
+        // Something to show and nothing showing it.
+        (true, Some(_), None) => LiveMove::Replace,
+        (false, Some(_), None) => LiveMove::Keep,
+        // The agent has moved on. This is the ONLY retirement.
+        (false, _, Some(_)) => LiveMove::Retire,
+        // Still waiting, and the screen cannot be read: keep what we have.
+        (true, None, Some(_)) => LiveMove::Keep,
+        (true, Some(now), Some(was)) => {
+            if now == was {
+                LiveMove::Keep
+            } else {
+                LiveMove::Replace
+            }
+        }
+    }
+}
+
 /// Where an option sits in the picker's own up/down order.
 ///
 /// Not the same number as its position in the options list, and the gap is a
@@ -1856,6 +1909,38 @@ mod tests {
         l.end();
         l.insert("z");
         assert!(l.text().ends_with("bz"), "{}", l.text());
+    }
+
+    #[test]
+    fn a_question_only_goes_away_when_the_agent_stops_waiting() {
+        let a = SurfaceId("a".into());
+        let b = SurfaceId("b".into());
+
+        // The bug, exactly: still waiting, screen unreadable because the
+        // picker scrolled its own question line off the top. Keep the card.
+        assert_eq!(live_move(true, None, Some(&a)), LiveMove::Keep);
+
+        // The only thing that takes a card down.
+        assert_eq!(live_move(false, None, Some(&a)), LiveMove::Retire);
+        assert_eq!(
+            live_move(false, Some(&a), Some(&a)),
+            LiveMove::Retire,
+            "not waiting wins over a stale parse"
+        );
+
+        // Ordinary progress through a round.
+        assert_eq!(live_move(true, Some(&b), Some(&a)), LiveMove::Replace);
+        assert_eq!(live_move(true, Some(&a), Some(&a)), LiveMove::Keep);
+
+        // First arrival, and the quiet cases.
+        assert_eq!(live_move(true, Some(&a), None), LiveMove::Replace);
+        assert_eq!(live_move(true, None, None), LiveMove::Keep);
+        assert_eq!(live_move(false, None, None), LiveMove::Keep);
+        assert_eq!(
+            live_move(false, Some(&a), None),
+            LiveMove::Keep,
+            "a question read off a screen nobody is waiting on is not live"
+        );
     }
 
     #[test]
