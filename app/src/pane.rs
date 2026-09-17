@@ -6836,16 +6836,34 @@ impl TerminalView {
         &mut self,
         q: &crate::surface::Question,
         sk: &crate::skin::Skin,
+        th: &Theme,
         cx: &mut Context<Self>,
     ) -> gpui::Div {
+        // The picker calls it `Next` on every question of a round but the
+        // last, and the bench says whichever word the picker is showing —
+        // promising "Submit" and delivering "Next" is a small lie that costs
+        // a person one wasted press and all of their trust in the button.
+        let submit_word = match &q.round {
+            Some(r) if !r.submitting && r.answered() + 1 < r.total() => "NEXT",
+            _ => "SUBMIT",
+        };
         let answered = q.answer != crate::surface::Answered::Waiting;
         let chips: Vec<gpui::Div> = q
             .options
             .iter()
             .enumerate()
             .map(|(i, o)| {
-                let lit = matches!(q.answer, crate::surface::Answered::Chose(n) if n == i);
-                let label = format!("{} \u{b7} {}", i + 1, o.label);
+                // A ticked box is lit the same way a chosen option is: it IS
+                // the answer so far. Reading the tick out of the label was
+                // what made a click flicker — the same option parsed two ways
+                // one second apart — and this is where that state lands now.
+                let lit = matches!(q.answer, crate::surface::Answered::Chose(n) if n == i)
+                    || o.checked == Some(true);
+                let label = match o.checked {
+                    Some(true) => format!("\u{2713} {} \u{b7} {}", i + 1, o.label),
+                    Some(false) => format!("\u{2022} {} \u{b7} {}", i + 1, o.label),
+                    None => format!("{} \u{b7} {}", i + 1, o.label),
+                };
                 let chip = sk.chip(lit || !answered).text_size(px(11.5)).child(label);
                 if answered {
                     // A question already answered keeps its chips so the
@@ -6869,6 +6887,27 @@ impl TerminalView {
             .flex_wrap()
             .gap(px(6.))
             .children(chips)
+            // The picker's own Submit, where it has one. Ticking boxes
+            // commits nothing without it, so a multi-select without this chip
+            // is a question the bench can ask and cannot answer.
+            .when_some(q.submit.filter(|_| !answered), |d, at| {
+                d.child(
+                    crate::benchdraw::verb_button(
+                        sk.chip(true)
+                            .cursor_pointer()
+                            .child(format!("\u{2714} {}", submit_word)),
+                        true,
+                        th,
+                    )
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |view, _ev: &MouseDownEvent, _w, cx| {
+                            cx.stop_propagation();
+                            view.bench_press_nav(at, cx);
+                        }),
+                    ),
+                )
+            })
     }
 
     fn bench_verbs(
@@ -6954,7 +6993,17 @@ impl TerminalView {
     /// up in exactly the same place, which is what makes the socket a test of
     /// the button rather than a second implementation of it.
     pub fn bench_choose(&mut self, index: usize, cx: &mut Context<Self>) {
-        self.bench_act(crate::surface::Action::Choose, Some(index.to_string()), cx);
+        // OPTION index in, NAVIGATION index out. The picker puts its Submit
+        // button between the last real option and the trailing `Chat about
+        // this`, so from option five onward the two lists disagree by one and
+        // an answer sent by option index lands on the wrong row. See
+        // [`crate::workbench::nav_index`].
+        let submit = match self.bench.selected().map(|s| &s.kind) {
+            Some(crate::surface::Kind::Question(q)) => q.submit,
+            _ => None,
+        };
+        let nav = crate::workbench::nav_index(index, submit);
+        self.bench_act(crate::surface::Action::Choose, Some(nav.to_string()), cx);
     }
 
     /// A click in the composer: arm it, and put the caret where the pointer is.
@@ -6994,6 +7043,16 @@ impl TerminalView {
         if !bytes.is_empty() {
             self.send(bytes, cx);
         }
+    }
+
+    /// Press a row of the agent's menu by its NAVIGATION index.
+    ///
+    /// The raw half of [`Self::bench_choose`], for the rows that are not
+    /// options at all: the picker's Submit button sits in the same up/down
+    /// order and is pressed the same way, but it has no option number to be
+    /// translated from.
+    fn bench_press_nav(&mut self, nav: usize, cx: &mut Context<Self>) {
+        self.bench_act(crate::surface::Action::Choose, Some(nav.to_string()), cx);
     }
 
     /// Paste into the agent — text, files, or an IMAGE.
@@ -7413,7 +7472,7 @@ impl TerminalView {
                     crate::surface::Kind::Question(q) => Some(q.clone()),
                     _ => None,
                 };
-                let answers = asked.map(|q| self.answer_chips(&q, sk, cx));
+                let answers = asked.map(|q| self.answer_chips(&q, sk, th, cx));
                 let verbs = self.bench_verbs(sk, th, cx);
                 // One title, not two. The card drew `kind · title` here and
                 // then [`benchdraw::body`] drew its own heading directly
@@ -7495,7 +7554,7 @@ impl TerminalView {
                         d.child(crate::benchdraw::conversation(&tail, th))
                     })
                     .when_some(waiting, |d, q| {
-                        let chips = self.answer_chips(&q, sk, cx);
+                        let chips = self.answer_chips(&q, sk, th, cx);
                         d.child(crate::benchdraw::waiting_block(&q, sk, th).child(chips))
                     })
             }

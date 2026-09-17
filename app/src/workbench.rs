@@ -411,6 +411,23 @@ impl Line {
     }
 }
 
+/// Where an option sits in the picker's own up/down order.
+///
+/// Not the same number as its position in the options list, and the gap is a
+/// real defect rather than a tidiness point. The picker draws its Submit
+/// button BETWEEN the last real option and the trailing `Chat about this`, so
+/// on a five-option multi-select the order is 1,2,3,4,5,Submit,6 — and
+/// pressing down five times from the top lands on Submit, not on option six.
+/// Answering by option index would have committed the wrong thing on every
+/// multi-select that carries a trailing option, silently, in a menu the person
+/// cannot see while the bench is up.
+pub fn nav_index(option: usize, submit_at: Option<usize>) -> usize {
+    match submit_at {
+        Some(at) if option >= at => option + 1,
+        _ => option,
+    }
+}
+
 /// The bytes that move an agent's own line editor from one column to another.
 ///
 /// The column itself is no longer computed here. It used to be — `x` over a
@@ -1839,6 +1856,22 @@ mod tests {
         l.end();
         l.insert("z");
         assert!(l.text().ends_with("bz"), "{}", l.text());
+    }
+
+    #[test]
+    fn an_option_after_the_submit_button_is_one_arrow_further_down() {
+        // The picker's order on a five-option multi-select with a trailing
+        // "Chat about this": 1,2,3,4,5,Submit,6. Submit is at 5.
+        let at = Some(5);
+        for before in 0..5 {
+            assert_eq!(nav_index(before, at), before, "options above Submit");
+        }
+        assert_eq!(nav_index(5, at), 6, "the option BELOW Submit shifts down");
+        assert_eq!(nav_index(6, at), 7);
+        // No Submit button, no shift — which is every single-choice question.
+        for i in 0..8 {
+            assert_eq!(nav_index(i, None), i);
+        }
     }
 
     #[test]

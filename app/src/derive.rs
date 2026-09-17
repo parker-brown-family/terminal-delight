@@ -211,7 +211,7 @@ pub fn round_on_screen(rows: &[String]) -> Option<Round> {
 
 pub fn question_on_screen(rows: &[String]) -> Option<Question> {
     let numbered = collect_options(rows)?;
-    let (first_line, options, cursor) = numbered;
+    let (first_line, options, cursor, submit) = numbered;
     // The question is the nearest non-empty line above the first option that
     // is not the picker's own header chrome.
     let question = rows[..first_line]
@@ -232,22 +232,38 @@ pub fn question_on_screen(rows: &[String]) -> Option<Question> {
         recommend: None,
         answer: Answered::Waiting,
         cursor: Some(cursor),
+        submit,
         round: round_on_screen(rows),
     })
 }
 
 /// The consecutive `N. label` block, its first row, and which one the cursor
 /// is on.
-fn collect_options(rows: &[String]) -> Option<(usize, Vec<Choice_>, usize)> {
+fn collect_options(rows: &[String]) -> Option<(usize, Vec<Choice_>, usize, Option<usize>)> {
     let mut first_line = None;
     let mut options: Vec<Choice_> = Vec::new();
     let mut cursor = 0usize;
+    let mut submit_at: Option<usize> = None;
     for (i, row) in rows.iter().enumerate() {
         let Some((n, label, marked)) = numbered_option(row) else {
             // A description line belongs to the option above it: indented,
             // non-empty, and we are already inside the block.
             if let Some(last) = options.last_mut() {
                 let t = row.trim();
+                // `Submit` indented under the last option is the
+                // picker's own button, not something that option does, and
+                // reading it as a description put the word where a sentence
+                // about the choice belongs.
+                // The picker's own button, which it calls `Submit` on the
+                // last question of a round and `Next` on the others. It is
+                // not an option and it is not a description of one — it is a
+                // POSITION in the up/down order, and recording where it sits
+                // is the only way an answer sent from here lands on the row
+                // the person pointed at.
+                if matches!(t, "Submit" | "Submit answers" | "Next") {
+                    submit_at.get_or_insert(options.len());
+                    continue;
+                }
                 if !t.is_empty()
                     && row.starts_with("    ")
                     && last.what_happens.is_none()
@@ -278,17 +294,58 @@ fn collect_options(rows: &[String]) -> Option<(usize, Vec<Choice_>, usize)> {
         if marked {
             cursor = options.len();
         }
+        let (label, checked) = split_checkbox(&label);
         options.push(Choice_ {
             label,
             what_happens: None,
+            checked,
         });
     }
     let first = first_line?;
-    (options.len() >= 2).then_some((first, options, cursor))
+    (options.len() >= 2).then_some((first, options, cursor, submit_at))
 }
 
 /// `  1. Cast it into the fire` → `(1, "Cast it into the fire", false)`.
 /// A non-space glyph before the number means the cursor is on that row.
+/// Split a multi-select checkbox off the front of an option label.
+///
+/// The picker writes `[ ] A plant, thriving` for an unticked box and `[✓] …`
+/// for a ticked one, and those five characters were landing in the LABEL — so
+/// a chip read `1 · [✓] A plant, thriving`, and the instant the terminal
+/// redrew mid-click it read `1 · A plant, thriving` instead. Nothing was
+/// loading; the same option was being parsed two different ways one second
+/// apart. Parker, watching a click flicker through a state he had not asked
+/// for: *"if we are UNABLE to make it respond INSTANTLY then we must not
+/// CHANGE anything"*.
+///
+/// The tick is real information — it is the answer so far — so it comes out of
+/// the text and becomes state the chip can draw. [`None`] for a row with no
+/// box, which is every ordinary single-choice option.
+fn split_checkbox(label: &str) -> (String, Option<bool>) {
+    let t = label.trim_start();
+    if !t.starts_with('[') {
+        return (label.to_string(), None);
+    }
+    let Some(close) = t.find(']') else {
+        return (label.to_string(), None);
+    };
+    let inside = t[1..close].trim();
+    // Measured in CHARACTERS. `\u{2713}` is three bytes, so a byte-length
+    // guard rejected the one case this exists for — a ticked box — and let
+    // the empty one through, which is the most confusing half to get right.
+    if inside.chars().count() > 1 {
+        return (label.to_string(), None);
+    }
+    let ticked = match inside {
+        "" => false,
+        "✓" | "✔" | "x" | "X" | "*" => true,
+        // A bracket that is not a checkbox — `[1]`, `[note]` — is part of what
+        // the option is called, and taking it off would rename it.
+        _ => return (label.to_string(), None),
+    };
+    (t[close + 1..].trim().to_string(), Some(ticked))
+}
+
 fn numbered_option(row: &str) -> Option<(usize, String, bool)> {
     let trimmed = row.trim_start();
     let lead = &row[..row.len() - trimmed.len()];
@@ -349,6 +406,7 @@ impl Asked {
             // and a question somebody declared does not.
             cursor: waiting.then_some(0),
             round: None,
+            submit: None,
         });
         let mut actions = kind.default_actions();
         actions.push(crate::surface::Action::AskAgent);
@@ -387,6 +445,7 @@ fn parse_ask(block: &Value) -> Option<Asked> {
             a.iter()
                 .filter_map(|o| {
                     Some(Choice_ {
+                        checked: None,
                         label: match o {
                             Value::String(s) => s.clone(),
                             other => other.get("label").and_then(Value::as_str)?.to_string(),
@@ -692,6 +751,54 @@ fn short_hash(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_multi_select_parses_its_boxes_as_state_and_its_submit_as_a_position() {
+        // Transcribed from a photograph of the running picker. Two things
+        // here were landing in the wrong place: the checkbox was part of the
+        // LABEL, so the chip read "1 · [✓] A second keyboard" until the
+        // terminal redrew mid-click and it read "1 · A second keyboard"
+        // instead — the flicker Parker saw was one option parsed two ways.
+        // And Submit was being read as a description of option five.
+        let rows: Vec<String> = [
+            ") 1. [✓] A second keyboard",
+            "    Not plugged in. Kept for the day the first one dies.",
+            "  2. [ ] A plant, thriving",
+            "    Watered on a schedule somebody actually keeps.",
+            "  3. [ ] A plant, not thriving",
+            "  4. [ ] Cable you cannot identify",
+            "  5. [ ] Type something",
+            "      Submit",
+            "  6. Chat about this",
+            "Enter to select · ↑/↓ to navigate · Esc to cancel",
+        ]
+        .iter()
+        .map(|r| r.to_string())
+        .collect();
+
+        let (_, options, _, submit) = collect_options(&rows).expect("a multi-select");
+        assert_eq!(options.len(), 6, "six options, Submit is not one of them");
+        assert_eq!(options[0].label, "A second keyboard", "no box in the name");
+        assert_eq!(options[0].checked, Some(true), "the box is state");
+        assert_eq!(options[1].checked, Some(false));
+        assert_eq!(
+            options[5].checked, None,
+            "the trailing option has no box at all, which is not the same as an empty one"
+        );
+        assert_eq!(
+            options[4].what_happens, None,
+            "Submit is the picker's button, not a description of option five"
+        );
+
+        // And it sits at five in the up/down order, between option five and
+        // the trailing `Chat about this`.
+        assert_eq!(submit, Some(5));
+        assert_eq!(
+            crate::workbench::nav_index(5, submit),
+            6,
+            "option six shifts"
+        );
+    }
 
     #[test]
     fn the_pickers_own_tab_bar_says_how_far_through_the_round_we_are() {

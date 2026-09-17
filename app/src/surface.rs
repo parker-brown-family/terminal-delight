@@ -654,6 +654,14 @@ pub struct Choice_ {
     /// What happens if this one is picked. Optional, because a menu of five
     /// words is still a menu.
     pub what_happens: Option<String>,
+    /// Ticked, in a pick-as-many-as-apply question.
+    ///
+    /// Three states in an [`Option`], and all three occur: `Some(true)` is a
+    /// box the person has ticked, `Some(false)` one they have not, and `None`
+    /// means this is not a multi-select at all and has no box to be in either
+    /// state. A `bool` here would make every single-choice option claim to be
+    /// an unticked checkbox.
+    pub checked: Option<bool>,
 }
 
 /// The agent is waiting, and these are the answers it will accept.
@@ -682,6 +690,20 @@ pub struct Question {
     /// it has to know where the cursor starts. `None` means the question was
     /// declared rather than observed, and there is no menu to drive.
     pub cursor: Option<usize>,
+    /// Where the picker's own Submit button sits in its up/down order, when
+    /// it has one.
+    ///
+    /// A multi-select needs it — ticking boxes commits nothing until you press
+    /// it — and so does every step of a round, where it reads `Next` instead.
+    /// [`None`] for a single-choice question, which commits the moment you
+    /// pick.
+    ///
+    /// It is an index into the NAVIGATION order rather than into the options,
+    /// and the two are not the same list: the picker draws Submit between the
+    /// last real option and its trailing `Chat about this`, so every option
+    /// after it is one arrow further down than its own position suggests. See
+    /// [`crate::workbench::nav_index`].
+    pub submit: Option<usize>,
     /// The ROUND this question belongs to, when the agent asked several at
     /// once.
     ///
@@ -1300,6 +1322,7 @@ fn parse_kind(name: &str, model: Option<&Value>) -> Result<Kind, KindError> {
                                 other => other.get("label").and_then(Value::as_str)?.to_string(),
                             };
                             Some(Choice_ {
+                                checked: None,
                                 what_happens: v
                                     .get("what_happens")
                                     .or_else(|| v.get("description"))
@@ -1333,6 +1356,7 @@ fn parse_kind(name: &str, model: Option<&Value>) -> Result<Kind, KindError> {
                 },
                 cursor: within("cursor"),
                 round: None,
+                submit: None,
                 options,
             })
         }
