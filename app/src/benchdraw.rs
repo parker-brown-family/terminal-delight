@@ -145,14 +145,30 @@ fn micro(text: impl Into<String>, size: f32, colour: Hsla, th: &Theme) -> Div {
 /// record why that matters: at 2px against no other lines a marker reads as a
 /// scratch. The number is not carried over from a denser surface.
 pub fn rail_row(row: &Row, sk: &Skin, th: &Theme) -> Div {
+    use crate::workbench::Standing;
     let tint = ink(row.tint, th);
-    sk.row()
+    // Three weights for three states, so the head of the shelf is legible from
+    // across the room and the record underneath it stays readable rather than
+    // shouting. See [`crate::workbench::Standing`] for why there are three.
+    let (edge, strength, raise) = match row.standing {
+        Standing::Waiting => (5., 1.0, true),
+        Standing::Current => (5., 1.0, true),
+        Standing::Past => (2., 0.62, false),
+    };
+    let head = match row.standing {
+        Standing::Waiting => Some("WAITING ON YOU"),
+        Standing::Current => Some("STANDS NOW"),
+        Standing::Past => None,
+    };
+    let body = sk
+        .row()
         .flex()
         .flex_col()
         .gap(px(2.))
         .cursor_pointer()
-        .border_l(px(3.))
-        .border_color(tint)
+        .border_l(px(edge))
+        .border_color(tint.alpha(strength))
+        .when(raise, |d| d.bg(th.surface.alpha(0.5)))
         .when(row.selected, |d| d.bg(th.accent.alpha(0.12)))
         .child(
             div()
@@ -160,7 +176,7 @@ pub fn rail_row(row: &Row, sk: &Skin, th: &Theme) -> Div {
                 .flex_row()
                 .items_center()
                 .gap(px(6.))
-                .child(micro(row.kind.to_string(), 9.5, tint, th))
+                .child(micro(row.kind.to_string(), 9.5, tint.alpha(strength), th))
                 .when(row.unseen, |d| {
                     d.child(
                         div()
@@ -169,15 +185,39 @@ pub fn rail_row(row: &Row, sk: &Skin, th: &Theme) -> Div {
                             .rounded(sk.rad_raw(3.))
                             .bg(th.complement),
                     )
+                })
+                // The word, not just a weight. A reader who has never seen
+                // this rail before cannot infer "this is the one in force"
+                // from a thicker edge, and the whole complaint was that the
+                // distinction has to be OBVIOUS.
+                .when_some(head, |d, h| {
+                    d.child(
+                        div()
+                            .px(px(5.))
+                            .py(px(1.))
+                            .rounded(sk.rad_raw(3.))
+                            .bg(tint.alpha(0.18))
+                            .child(micro(h, 8.5, tint, th)),
+                    )
                 }),
         )
         .child(
             div()
-                .text_size(px(12.5))
-                .text_color(th.text)
+                .text_size(px(if raise { 13. } else { 12. }))
+                .text_color(th.text.alpha(strength))
                 .child(clip(&row.title, 34)),
         )
-        .child(micro(clip(&row.subtitle, 38), 9.5, th.faint, th))
+        .child(micro(
+            clip(&row.subtitle, 38),
+            9.5,
+            th.faint.alpha(strength),
+            th,
+        ));
+    if raise {
+        raised(body, tint, th)
+    } else {
+        body
+    }
 }
 
 /// The rail collapsed: one tick per surface, newest at the top.
@@ -1031,13 +1071,17 @@ pub fn composer(
     line: Option<&crate::workbench::Line>,
     focused: bool,
     advance: f32,
-    tight: bool,
+    shows: &crate::workbench::Shows,
     origin: std::sync::Arc<std::sync::Mutex<Option<gpui::Bounds<gpui::Pixels>>>>,
     sk: &Skin,
     th: &Theme,
 ) -> Div {
     let open = line.is_some();
     let live = open && focused;
+    // The two size decisions arrive as one value rather than as a pair of
+    // booleans, because they are one decision — what a pane this size shows —
+    // and they are made and asserted in `workbench::shows`.
+    let (tight, hint) = (shows.tight, shows.hint);
     // It SHRINKS in a small pane; it never leaves. This used to be dropped
     // below the Full embodiment, on the reasoning that a pane too small for a
     // conversation is too small for a text box — which had it backwards.
@@ -1178,7 +1222,7 @@ pub fn composer(
                 )
             }),
     )
-    .when(!open && !tight, |d| {
+    .when(hint, |d| {
         d.child(micro(
             "TYPE ANYWHERE \u{b7} ENTER SENDS \u{b7} PASTE TEXT, FILES OR AN IMAGE",
             9.5,

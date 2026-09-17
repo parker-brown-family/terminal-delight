@@ -487,7 +487,20 @@ pub fn run_cli(args: &[String]) -> i32 {
             eprintln!("terminal-delight surface --derive <transcript.jsonl>");
             return 2;
         };
-        let posts = crate::derive::from_transcript(Path::new(path), now_ms());
+        // A file that is not there is not a file with nothing in it.
+        //
+        // `from_transcript` cannot tell the two apart — it answers with an
+        // empty list either way — so this verb was reporting a typo'd path as
+        // a quiet, successful "nothing derivable", exit code and all. Anyone
+        // diagnosing a missing surface would have read that as *the transcript
+        // holds nothing worth showing* and gone looking in the wrong half of
+        // the system. Found by the regression suite on its first run.
+        let file = Path::new(path);
+        if !file.exists() {
+            eprintln!("terminal-delight surface --derive: no such transcript: {path}");
+            return 2;
+        }
+        let posts = crate::derive::from_transcript(file, now_ms());
         if posts.is_empty() {
             println!("nothing derivable in {path}");
             return 0;

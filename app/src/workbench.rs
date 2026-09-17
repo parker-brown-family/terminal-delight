@@ -121,6 +121,31 @@ pub enum Tint {
     Unknown,
 }
 
+/// Sort a shelf into waiting, then what stands, then the record.
+///
+/// In place, on rows that arrive newest-first, because both facts this needs —
+/// which rows are unanswered, and which settled row is newest — are properties
+/// of the list rather than of any row in it.
+///
+/// Waiting rows keep their own newest-first order among themselves and move
+/// above everything settled. Exactly one row is [`Standing::Current`], and only
+/// when nothing is waiting: while a question is open, what stands is *nothing
+/// yet*, and promoting a superseded answer to "current" underneath an
+/// unanswered one would be a lie told in bold.
+pub fn stand(rows: &mut [Row]) {
+    rows.sort_by_key(|r| r.tint != Tint::Waiting);
+    let waiting = rows.iter().any(|r| r.tint == Tint::Waiting);
+    for (i, row) in rows.iter_mut().enumerate() {
+        row.standing = if row.tint == Tint::Waiting {
+            Standing::Waiting
+        } else if i == 0 && !waiting {
+            Standing::Current
+        } else {
+            Standing::Past
+        };
+    }
+}
+
 /// The one place a kind becomes a colour role.
 pub fn tint_of(kind: &Kind) -> Tint {
     match kind {
@@ -431,6 +456,51 @@ pub fn ext_of_image_mime(mime: &str) -> Option<&'static str> {
     })
 }
 
+/// What a bench of this size, on a pane of this kind, actually shows.
+///
+/// Every one of these was a condition written inline in the render, and each
+/// one cost a round trip with a photograph to find: the rail took a third of a
+/// pane, the composer vanished below a size threshold, the hint line stayed
+/// when there was no room for it. A render is not a testable position — you
+/// cannot assert a screenshot — so the decisions moved out here where a table
+/// of sizes can hold them still.
+///
+/// The render's job is now to draw this, not to decide it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Shows {
+    pub rail: RailFit,
+    pub how: Embodiment,
+    /// The line into the agent. Present on every agent pane at every size —
+    /// see [`crate::benchdraw::composer`] for why this is not negotiable.
+    pub composer: bool,
+    /// The composer at its small size: no hint line, tighter padding.
+    pub tight: bool,
+    /// One line naming what the keys do, under an unarmed composer.
+    pub hint: bool,
+}
+
+/// Resolve what a pane of this size shows.
+///
+/// `armed` is whether the composer already holds a line, because the hint is
+/// an invitation and an invitation to something already accepted is clutter.
+pub fn shows(pane_w: f32, pane_h: f32, is_agent: bool, rail_wanted: bool, armed: bool) -> Shows {
+    let rail = rail_fit(pane_w, rail_wanted);
+    let rail_px = match rail {
+        RailFit::Open(w) => w as f32,
+        RailFit::Ticks => RAIL_TICK_W,
+        RailFit::Hidden => 0.0,
+    };
+    let how = embodiment(pane_w - rail_px, pane_h);
+    let tight = how == Embodiment::Summary;
+    Shows {
+        rail,
+        how,
+        composer: is_agent,
+        tight,
+        hint: is_agent && !tight && !armed,
+    }
+}
+
 /// How much of a pane the rail may take. Roughly a third is the most a shelf
 /// can have before the thing it is a shelf FOR stops being the main event.
 pub const RAIL_SHARE: f32 = 0.30;
@@ -443,6 +513,29 @@ pub const RAIL_MIN_W: f32 = 132.0;
 // the bench
 // ---------------------------------------------------------------------------
 
+/// Where a row stands in its shelf's story.
+///
+/// A rail of decisions is not a list, it is a HISTORY with a head, and the
+/// head is the only row most readers are looking for: what is in force right
+/// now. Drawn as a flat newest-first column with every row the same weight,
+/// nothing says which one that is — Parker, on two answered questions in
+/// identical green: *"the ORDER of the decision items is not clear what the
+/// CURRENT STANDING decision is --- that needs DISTINCTION visually!"*.
+///
+/// Three states, because there are three: something is waiting on a person,
+/// something is the answer that currently holds, and everything else is the
+/// record of how it got there.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Standing {
+    /// Nobody has answered it. Loudest, and pinned to the top whatever its
+    /// arrival order — an unanswered question is not history.
+    Waiting,
+    /// The newest settled row: what stands right now.
+    Current,
+    /// How it got here. Still readable, deliberately quieter.
+    Past,
+}
+
 /// One row of the rail, ready to draw.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Row {
@@ -451,6 +544,7 @@ pub struct Row {
     pub subtitle: String,
     pub kind: &'static str,
     pub tint: Tint,
+    pub standing: Standing,
     pub selected: bool,
     /// Arrived while the person was on the other face, or on another shelf.
     pub unseen: bool,
@@ -697,7 +791,8 @@ impl Bench {
     }
 
     pub fn rows_for(&self, shelf: Shelf) -> Vec<Row> {
-        self.surfaces
+        let mut rows: Vec<Row> = self
+            .surfaces
             .iter()
             .rev()
             .filter(|s| shelf.holds(s.kind.shelf()))
@@ -709,8 +804,13 @@ impl Bench {
                 subtitle: s.subtitle(),
                 kind: s.kind.id(),
                 tint: tint_of(&s.kind),
+                // Filled in below: standing is a property of a row's place in
+                // the shelf, which no row can know about itself.
+                standing: Standing::Past,
             })
-            .collect()
+            .collect();
+        stand(&mut rows);
+        rows
     }
 
     /// The surface OPENED as a card over the conversation, if any.
@@ -1552,6 +1652,162 @@ mod tests {
         assert_eq!(caret_move(3, 3), Vec::<u8>::new(), "already there");
         assert_eq!(caret_move(0, 2), b"\x1b[C\x1b[C".to_vec());
         assert_eq!(caret_move(5, 3), b"\x1b[D\x1b[D".to_vec());
+    }
+
+    // -----------------------------------------------------------------
+    // What a pane of a given size shows.
+    //
+    // A table, because these arrived one photograph at a time and each one
+    // cost a round trip: the rail taking a third of a pane, the composer
+    // disappearing below a threshold, the hint line staying where there was
+    // no room for it. None of them was a rendering bug — each was a rule
+    // written where no assertion could reach it.
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn an_agent_pane_always_has_somewhere_to_type() {
+        // The rule with no exceptions. A bench you cannot answer from is a
+        // viewer, and it is the main reason to have the bench open at all.
+        for (w, h) in [
+            (1400., 900.),
+            (700., 600.),
+            (460., 400.),
+            (300., 200.),
+            (220., 150.),
+            (120., 90.),
+        ] {
+            let sh = shows(w, h, true, true, false);
+            assert!(sh.composer, "{w}x{h} left an agent pane with no composer");
+        }
+        // And a shell has none at any size: "type to the agent" with no agent
+        // on the far end is an offer nobody can accept.
+        assert!(!shows(1400., 900., false, true, false).composer);
+    }
+
+    #[test]
+    fn a_small_pane_tightens_the_composer_rather_than_dropping_it() {
+        let roomy = shows(1400., 900., true, true, false);
+        assert!(!roomy.tight, "a big pane draws the full composer");
+        assert!(roomy.hint, "and says what the keys do");
+
+        let cramped = shows(260., 200., true, true, false);
+        assert!(cramped.composer, "still there");
+        assert!(cramped.tight, "at its small size");
+        assert!(!cramped.hint, "without the hint it has no room for");
+    }
+
+    #[test]
+    fn the_hint_is_an_invitation_and_stops_once_it_is_accepted() {
+        assert!(shows(1400., 900., true, true, false).hint);
+        assert!(
+            !shows(1400., 900., true, true, true).hint,
+            "a line is already being typed; the invitation is clutter"
+        );
+    }
+
+    #[test]
+    fn the_rail_never_takes_the_pane_the_bench_needs() {
+        // 540 is a real pane on this machine — a tiled half beside a left
+        // bar. At a flat 208 the rail took 38% of it.
+        for w in [540., 700., 900., 1400.] {
+            let sh = shows(w, 800., true, true, false);
+            if let RailFit::Open(rail) = sh.rail {
+                let body = w - rail as f32;
+                assert!(
+                    body >= w * 0.66,
+                    "{w}: the rail took {rail}, leaving {body} for the bench"
+                );
+            }
+        }
+    }
+
+    // -----------------------------------------------------------------
+    // Which decision is the one in force.
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn the_shelf_puts_what_is_waiting_first_and_names_what_stands() {
+        let mut b = Bench::new();
+        b.apply(decision("old"));
+        b.apply(decision("new"));
+        b.set_shelf(Shelf::Decisions);
+
+        // Two unanswered: both are waiting, neither pretends to stand.
+        let rows = b.rows_for(Shelf::Decisions);
+        assert_eq!(rows.len(), 2);
+        assert!(
+            rows.iter().all(|r| r.standing == Standing::Waiting),
+            "an unanswered question is not history"
+        );
+        assert!(
+            !rows.iter().any(|r| r.standing == Standing::Current),
+            "nothing stands while a question is open"
+        );
+    }
+
+    #[test]
+    fn the_newest_settled_row_is_the_one_that_stands() {
+        // Built directly, because what matters is the RULE over a list and
+        // not how the list was filled.
+        let mut rows = vec![
+            row_stub("c", Tint::Settled),
+            row_stub("b", Tint::Settled),
+            row_stub("a", Tint::Settled),
+        ];
+        stand(&mut rows);
+        assert_eq!(
+            rows[0].standing,
+            Standing::Current,
+            "newest first, so row 0"
+        );
+        assert_eq!(rows[1].standing, Standing::Past);
+        assert_eq!(rows[2].standing, Standing::Past);
+        assert_eq!(
+            rows.iter()
+                .filter(|r| r.standing == Standing::Current)
+                .count(),
+            1,
+            "exactly one thing can stand"
+        );
+    }
+
+    #[test]
+    fn a_waiting_row_rises_above_settled_ones_however_late_it_arrived() {
+        // Arrival order newest-first: two settled, then an older unanswered
+        // one. The unanswered one is what a person has to deal with, so it
+        // goes to the top and nothing below it claims to be current.
+        let mut rows = vec![
+            row_stub("newest", Tint::Settled),
+            row_stub("middle", Tint::Settled),
+            row_stub("asked-long-ago", Tint::Waiting),
+        ];
+        stand(&mut rows);
+        assert_eq!(rows[0].id.0, "asked-long-ago");
+        assert_eq!(rows[0].standing, Standing::Waiting);
+        assert!(
+            !rows.iter().any(|r| r.standing == Standing::Current),
+            "while somebody is being waited on, nothing else stands"
+        );
+    }
+
+    #[test]
+    fn an_empty_shelf_does_not_panic_and_nothing_stands() {
+        let mut rows: Vec<Row> = Vec::new();
+        stand(&mut rows);
+        assert!(rows.is_empty());
+    }
+
+    fn row_stub(id: &str, tint: Tint) -> Row {
+        Row {
+            id: SurfaceId(id.into()),
+            title: id.into(),
+            subtitle: String::new(),
+            kind: "question",
+            tint,
+            standing: Standing::Past,
+            selected: false,
+            unseen: false,
+        }
     }
 
     #[test]

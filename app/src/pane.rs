@@ -7316,13 +7316,26 @@ impl TerminalView {
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
         use crate::workbench::RailFit;
-        let fit = crate::workbench::rail_fit(pane_w, self.bench.rail_wanted());
+        // Every size decision on this surface, resolved in one call and
+        // asserted by a table of panes in `workbench`. The render draws what
+        // this says; it no longer decides anything itself. Each of these was
+        // once a condition written inline here, and each cost a round trip
+        // with a photograph to find — a render is not a position you can make
+        // an assertion about. See [`crate::workbench::shows`].
+        let shows = crate::workbench::shows(
+            pane_w,
+            pane_h,
+            self.mode.is_agent(),
+            self.bench.rail_wanted(),
+            self.wb_compose.is_some(),
+        );
+        let fit = shows.rail;
         let rail_px = match fit {
             RailFit::Open(w) => w as f32,
             RailFit::Ticks => crate::workbench::RAIL_TICK_W,
             RailFit::Hidden => 0.0,
         };
-        let how = crate::workbench::embodiment(pane_w - rail_px, pane_h);
+        let how = shows.how;
         let full = how == crate::workbench::Embodiment::Full;
         // TD_BENCHDEBUG=1 prints the numbers that decide this whole layout. It
         // found the rail-width bug in one run after two rounds of guessing from
@@ -7470,8 +7483,7 @@ impl TerminalView {
         };
 
         // ── the composer ────────────────────────────────────────────────────
-        // Always, on any agent pane, at any size. See [`benchdraw::composer`].
-        let composer = self.mode.is_agent().then(|| {
+        let composer = shows.composer.then(|| {
             // Measured for this font at this size in `sync_size`. Until
             // the first measurement lands it falls back to the scaled
             // cell, which is close enough to draw one frame with and is
@@ -7485,7 +7497,7 @@ impl TerminalView {
                 self.wb_compose.as_ref(),
                 focused,
                 advance,
-                how == crate::workbench::Embodiment::Summary,
+                &shows,
                 self.wb_text_origin.clone(),
                 sk,
                 th,
