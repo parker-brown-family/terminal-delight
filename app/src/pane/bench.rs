@@ -868,7 +868,25 @@ impl TerminalView {
     /// owning the other.
     pub fn bench_type(&mut self, line: &str, cx: &mut Context<Self>) {
         let text = line.replace(['\n', '\r'], " ");
-        self.wb_compose = Some(crate::workbench::Line::holding(text.clone()));
+        // APPEND to the mirror, because the bytes append on the far end.
+        //
+        // This REPLACED the shadow with the new text while sending the bytes
+        // down a pseudoterminal whose line editor added them to what was
+        // already there — so after a second call the box showed one fragment
+        // and the agent held two, and the caret was wrong by the length of
+        // the first. The composer diagnostic saw the result as three seams in
+        // one submission, `sentencehalf` and `grow.Spin` and `Delight.I'm`,
+        // and read them as a missing separator. They are not: a keystroke
+        // stream has no separators either, and the verb is a keystroke
+        // stream. What was missing was the mirror keeping up.
+        //
+        // No space is inserted. The caller controls spacing exactly as a
+        // person typing does, and a verb that quietly added one would make
+        // `bench type "half"` then `bench type "way"` unable to spell a word.
+        match self.wb_compose.as_mut() {
+            Some(existing) => existing.insert(&text),
+            None => self.wb_compose = Some(crate::workbench::Line::holding(text.clone())),
+        }
         self.send(text.into_bytes(), cx);
         cx.notify();
     }
