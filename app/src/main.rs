@@ -6879,10 +6879,19 @@ impl Workspace {
     /// first — see [`Self::bench_leaf`]. A caller with no pane ids should not
     /// have to learn them to press a button.
     pub(crate) fn bench_choose(&mut self, n: usize, cx: &mut Context<Self>) {
+        // A selection, OR a live question: the answer chips for a question the
+        // agent is waiting on are drawn inline in the conversation, where
+        // nothing is selected at all — `Bench::act` already falls back to
+        // `waiting_question()` for exactly that case, and this router used to
+        // refuse before it could get there. A script pressing chip 2 on a
+        // question could not reach the one gesture most worth proving.
         let Some(leaf) = self.bench_leaf(cx, |v| {
-            v.bench.face() == workbench::Face::Workbench && v.bench.selected().is_some()
+            v.bench.face() == workbench::Face::Workbench
+                && (v.bench.selected().is_some() || v.bench.waiting_question().is_some())
         }) else {
-            eprintln!("terminal-delight: no pane is showing a bench with a selection");
+            eprintln!(
+                "terminal-delight: no pane is showing a bench with a selection or a waiting question"
+            );
             return;
         };
         leaf.update(cx, |view, cx| view.bench_choose(n.saturating_sub(1), cx));
