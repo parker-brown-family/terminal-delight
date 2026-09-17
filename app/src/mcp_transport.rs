@@ -244,6 +244,27 @@ fn snapshot_of(ws: &mut Workspace, cx: &mut Context<Workspace>) -> mcp::Snapshot
         config: ws.mcp.clone(),
         panes: ws.mcp_snapshot(cx),
         outer_grade: ws.mcp_outer_grade(cx),
+        instance: Some(here()),
+    }
+}
+
+/// Who this window is, for the stamp on every tool result.
+///
+/// Built here rather than in [`mcp`] so that module stays pure protocol: it
+/// needs the process-wide session binding and this executable's own path, and
+/// neither belongs in a file that is otherwise data and JSON.
+///
+/// The build is the executable's file name because that is what actually
+/// differs between two windows on one box — they are installed as
+/// `td-<sha>-<label>` and cut over by moving a symlink, so `CARGO_PKG_VERSION`
+/// reads the same in a window three commits behind and in one built from HEAD.
+fn here() -> mcp::Instance {
+    mcp::Instance {
+        session: crate::instance::key().to_string(),
+        window: std::process::id(),
+        build: std::env::current_exe()
+            .ok()
+            .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned())),
     }
 }
 
@@ -396,6 +417,7 @@ mod tests {
                 mode: "CLAUDE".into(),
                 is_agent: true,
                 pid,
+                pane_id: Some(1),
                 cwd: Some(cwd.into()),
                 session: Some("claude --resume x".into()),
                 tool: None,
@@ -404,6 +426,11 @@ mod tests {
                 grade: mcp::GradeReport::default(),
             }],
             outer_grade: mcp::GradeReport::default(),
+            instance: Some(mcp::Instance {
+                session: "1".into(),
+                window: 99,
+                build: Some("td-test".into()),
+            }),
         }
     }
 
