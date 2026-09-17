@@ -1784,6 +1784,11 @@ fn handle_control_line(host: &Arc<Host>, line: &str, conn: Option<&Arc<Conn>>) -
                     session: host.key.clone(),
                     panes: host.pane_count(),
                     attended: host.attended(),
+                    // Read live rather than stored: a pid that came out of
+                    // `getpid` cannot be stale, and the whole point of the
+                    // field is that a caller compares it against its own
+                    // parent chain.
+                    host: std::process::id(),
                 }
             }
             // Refused by name, and nothing else changes. This is the

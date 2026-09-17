@@ -6042,6 +6042,10 @@ impl Workspace {
                     mode: p.mode.label().to_string(),
                     is_agent,
                     pid,
+                    // `None` for a pane this window owns outright (no host).
+                    // That is a real state, not a missing reading, and the wire
+                    // keeps the two apart.
+                    pane_id: p.pane_id(),
                     cwd: rt.cwd,
                     session: rt.resume,
                     tool: p.tool_face.as_ref().map(|f| f.tool.clone()),
