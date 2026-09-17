@@ -48,8 +48,8 @@ mod lang;
 mod mcp;
 mod mcp_tail;
 mod mcp_transport;
-mod notify;
 mod notifpref;
+mod notify;
 mod paint;
 mod palette;
 mod pane;
@@ -1041,11 +1041,7 @@ fn slider_switch(on: bool, th: &theme::Theme) -> gpui::Div {
         .flex_none()
         .rounded_full()
         .border_1()
-        .border_color(if on {
-            th.accent
-        } else {
-            th.text.alpha(0.25)
-        })
+        .border_color(if on { th.accent } else { th.text.alpha(0.25) })
         .bg(if on {
             th.accent.alpha(0.35)
         } else {
@@ -1092,17 +1088,11 @@ fn marquee_banner(text: &str, age: f32, th: &theme::Theme) -> gpui::Div {
         let mut m = div().flex().flex_row().items_center().gap_1();
         for k in 0..6 {
             let lit = (((t * 6.0) as i64 + k + phase) % 3) == 0;
-            m = m.child(
-                div()
-                    .w(px(6.))
-                    .h(px(6.))
-                    .rounded_full()
-                    .bg(if lit {
-                        th.accent.alpha(fade)
-                    } else {
-                        th.text.alpha(0.25 * fade)
-                    }),
-            );
+            m = m.child(div().w(px(6.)).h(px(6.)).rounded_full().bg(if lit {
+                th.accent.alpha(fade)
+            } else {
+                th.text.alpha(0.25 * fade)
+            }));
         }
         m
     };
@@ -10891,11 +10881,7 @@ impl Workspace {
     /// submit; these take effect the instant they are thrown and write
     /// themselves to disk, and the slider is the control that says so — the
     /// knob is already where the setting is.
-    fn render_notif_overlay(
-        &self,
-        th: &theme::Theme,
-        cx: &mut Context<Self>,
-    ) -> Option<gpui::Div> {
+    fn render_notif_overlay(&self, th: &theme::Theme, cx: &mut Context<Self>) -> Option<gpui::Div> {
         if !self.notif_menu {
             return None;
         }
@@ -10920,7 +10906,11 @@ impl Workspace {
                 } else {
                     th.text.alpha(0.12)
                 })
-                .child(div().text_size(px(15.)).child(SharedString::from(glyph.to_string())))
+                .child(
+                    div()
+                        .text_size(px(15.))
+                        .child(SharedString::from(glyph.to_string())),
+                )
                 .child(
                     div()
                         .flex()
@@ -23863,16 +23853,18 @@ impl Render for Workspace {
                         cx.notify();
                     }),
                 ))
-                .child(entry("\u{1f514}", s.notifications, "more-notif").on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                        cx.stop_propagation();
-                        ws.more_menu = false;
-                        ws.notif = notifpref::load();
-                        ws.notif_menu = true;
-                        cx.notify();
-                    }),
-                ))
+                .child(
+                    entry("\u{1f514}", s.notifications, "more-notif").on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                            cx.stop_propagation();
+                            ws.more_menu = false;
+                            ws.notif = notifpref::load();
+                            ws.notif_menu = true;
+                            cx.notify();
+                        }),
+                    ),
+                )
                 .child(entry("\u{1f9e9}", s.plugins, "more-plugins").on_mouse_down(
                     MouseButton::Left,
                     cx.listener(|ws, _: &MouseDownEvent, _w, cx| {

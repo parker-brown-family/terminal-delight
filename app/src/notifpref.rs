@@ -87,7 +87,10 @@ mod tests {
     fn an_absent_file_is_the_behaviour_that_already_shipped() {
         let missing = PathBuf::from("/nonexistent/terminal-delight/notifications.toml");
         let p = load_from(&missing);
-        assert!(p.system, "an unconfigured machine still bumps to the system");
+        assert!(
+            p.system,
+            "an unconfigured machine still bumps to the system"
+        );
         assert!(!p.marquee, "and does not start shouting a marquee unasked");
     }
 
@@ -99,7 +102,10 @@ mod tests {
         std::fs::write(&path, "marquee = true\n").unwrap();
         let p = load_from(&path);
         assert!(p.marquee);
-        assert!(p.system, "the omitted field falls back to the default, not false");
+        assert!(
+            p.system,
+            "the omitted field falls back to the default, not false"
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 
