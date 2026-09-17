@@ -212,18 +212,40 @@ enum RailAction {
 /// fails. A row may say the surface is deliberately flat — some things should be
 /// — but it has to say WHY, in the row, where the next person will read it.
 #[cfg(test)]
-const OVERLAYS_OVER_PANES: [(&str, Warped); 4] = [
+const OVERLAYS_OVER_PANES: [(&str, Warped); 6] = [
     (
         "render_rail",
-        Warped::FlatByDesign(
-            "a menu, not a decal. Flat is BOUGHT by `rail_open` in the \
-             `warp::set_suppressed` list, exactly as the menu-bar scale popup \
-             buys it — the border, opaque fill and shadow only make a flat \
-             surface read as floating rather than stuck on, and on their own \
-             they left it bending. Registered as a tube once and the rows \
-             sheared into parallelograms: a tall stack of thin rows shows every \
-             bit of a barrel map a compact panel hides. Hit-tested flat, to match.",
-        ),
+        Warped::FlatByDesign {
+            flag: "rail_open",
+            why: "a menu, not a decal. Flat is BOUGHT by `rail_open` in the \
+                  suppression list, exactly as the menu-bar scale popup buys it — \
+                  the border, opaque fill and shadow only make a flat surface \
+                  read as floating rather than stuck on, and on their own they \
+                  left it bending. Registered as a tube once and the rows sheared \
+                  into parallelograms: a tall stack of thin rows shows every bit \
+                  of a barrel map a compact panel hides. Hit-tested flat, to match.",
+        },
+    ),
+    (
+        "paint wall",
+        Warped::FlatByDesign {
+            flag: "paint_mode",
+            why: "the most thoroughly over-the-panes surface there is: every pane \
+                  draws its own card INSIDE its own tube, so the whole wall bowed \
+                  at once while each tile's click box stayed on the flat layout \
+                  box gpui laid out. Bought flat by `theme::paint_mode(cx)` in the \
+                  suppression list, the way the theme tray next door buys it.",
+        },
+    ),
+    (
+        "paint cabinet card",
+        Warped::FlatByDesign {
+            flag: "paint_mode",
+            why: "hangs off the top edge and crosses the panes below it, so the \
+                  part of it over a tube bent and the part over the chrome did \
+                  not — one card wearing two curvatures, which is the tell that a \
+                  surface is being warped BY WHAT IS UNDER IT. Same flag buys it.",
+        },
     ),
     ("mcp_menu panel", Warped::Tube("register_focus_tube")),
     ("pane ghost", Warped::Tube("register_overlay_tube")),
@@ -241,9 +263,17 @@ enum Warped {
     Tube(&'static str),
     /// Draws itself through the map so the pass undoes it — the note's way.
     Predistorted(&'static str),
-    /// Deliberately flat, with the reason. Allowed, never silent.
+    /// Deliberately flat, and it must name the FLAG that buys that: the entry in
+    /// the `warp::set_suppressed` list which empties the tube set while this
+    /// surface is up. The reason is for the reader, the flag is for the test —
+    /// [`every_overlay_over_panes_decides_about_the_warp`] looks it up in the
+    /// list, because "flat by design" is the one claim on this enum a surface
+    /// can make while doing nothing, and two surfaces have now made it falsely.
     #[allow(dead_code)]
-    FlatByDesign(&'static str),
+    FlatByDesign {
+        flag: &'static str,
+        why: &'static str,
+    },
 }
 
 /// The tiling tree: splits divide only the targeted leaf. Generic over the
@@ -18953,6 +18983,15 @@ impl Render for Workspace {
                              // of reach of its own flat hit box. Suppress so the menu reads true.
         warp::set_suppressed(
             pane_popup_open
+                // PAINT raises a card over EVERY pane at once, each one drawn
+                // inside its own pane and therefore inside its own tube, plus the
+                // cabinet's card over the top of them — so it is the largest
+                // surface this list has ever had to flatten, and it shipped
+                // bending. The flag is why it was missed: `paint_mode` is an app
+                // global rather than a field on this struct, so the gate derived
+                // from `close_popups` (which reads `self.` names) could not see
+                // it, and the card's own chrome made it look handled.
+                || theme::paint_mode(cx)
                 // The attention queue is a menu and floats FLAT above the glass —
                 // and this line is the whole of what makes that true. Giving it a
                 // border and a shadow and taking its warp tube away does not: the
@@ -27333,16 +27372,62 @@ mod tests {
     /// list is the decision record; the counting below is what stops the list
     /// from drifting away from the code, because a list nobody has to keep true
     /// is a comment.
+    ///
+    /// Three claims, three checks: a tube names its registration and the
+    /// registrations are counted, the note's pre-warp is looked up in
+    /// `sticky.rs`, and — since 2026-09-16 — a flat-by-design row names the flag
+    /// that flattens the glass for it and that flag is looked up in the
+    /// suppression list. The last one was missing while the paint wall sat in
+    /// front of every pane, bending.
     #[test]
     fn every_overlay_over_panes_decides_about_the_warp() {
+        // The suppression list, read out of the shipped source with its COMMENTS
+        // STRIPPED — every `FlatByDesign` row is checked against it below, and
+        // that list is half prose explaining why each flag is in it. Written
+        // without this stripping the test passed with the paint entry deleted:
+        // the comment left in its place still said the word `paint_mode`, so a
+        // gate meant to prove a line exists was reading the sentence about it.
+        let shipped = shipped_src();
+        let at = shipped
+            .find("warp::set_suppressed(")
+            .expect("the suppression list in render");
+        let flattens: String = shipped[at..at
+            + shipped[at..]
+                .find("\n        );")
+                .expect("end of the suppression list")]
+            .lines()
+            .map(|l| l.split("//").next().unwrap_or(""))
+            .collect::<Vec<_>>()
+            .join("\n");
+
         for (name, how) in OVERLAYS_OVER_PANES {
             match how {
                 Warped::Tube(sym) => assert!(
                     !sym.is_empty(),
                     "{name} claims a tube and does not name the call"
                 ),
-                Warped::Predistorted(why) | Warped::FlatByDesign(why) => {
+                Warped::Predistorted(why) => {
                     assert!(why.len() > 12, "{name} has to say why in more than a word")
+                }
+                // Flat is not a property a surface has, it is one the frame is
+                // given: the pass is screen-space, so a panel over a registered
+                // tube bends whatever its own chrome says. A row claiming flat
+                // therefore has to name the flag that empties the tube set while
+                // it is up, and the flag has to be in the list. Both surfaces
+                // that ever claimed this falsely — the queue, then the paint
+                // wall — had a border, a shadow and a row saying "flat", and bent
+                // anyway; this is the assertion that tells those two states apart.
+                Warped::FlatByDesign { flag, why } => {
+                    assert!(why.len() > 12, "{name} has to say why in more than a word");
+                    assert!(
+                        flattens.contains(flag),
+                        "{name} is declared flat by design and names `{flag}` as \
+                         what buys that — but `{flag}` is not in the \
+                         `warp::set_suppressed` list in `render`, so nothing \
+                         empties the tube set while it is up and it is composited \
+                         into the frame the pass then bends. Add it to the list, \
+                         or change the row to say what really happens."
+                    );
                 }
             }
         }
@@ -27475,7 +27560,7 @@ mod tests {
                  same map the shader applies — otherwise clicks land where the \
                  row is drawn flat, and the error grows towards the edge"
             ),
-            Warped::FlatByDesign(_) => assert!(
+            Warped::FlatByDesign { .. } => assert!(
                 !unbends,
                 "the queue is flat, so rail_hit_at must NOT un-bend the pointer \
                  — the pixels never moved, and undoing a map nothing applied \
