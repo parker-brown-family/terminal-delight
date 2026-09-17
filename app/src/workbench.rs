@@ -420,6 +420,55 @@ pub struct Reviewed {
     pub answer: String,
 }
 
+/// What escape takes off, innermost first.
+///
+/// **It never takes off a question somebody is being waited on.** Escape on
+/// this surface has always meant "close the outermost thing", and the ladder
+/// ran gallery, then typing, then the open card, then the face — which is
+/// correct right up until the open card is the question an agent has stopped
+/// on. Then a key that means *give me less* removes the one thing that cannot
+/// be got back without going to the terminal, and it did: Parker, tracing his
+/// vanishing question, *"i may have pressed ESC while the review pane was up
+/// ... and that is what killed the question interaction ... that interaction
+/// surface for answering questions must be MORE persistent and the target for
+/// hitting esc should always land on the overlay"*.
+///
+/// So a waiting question is a FLOOR. Escape peels everything above it and
+/// stops there, and the way out of a pane that is waiting on you is the TERM
+/// chip — a deliberate move rather than the same key you have been dismissing
+/// things with.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Peel {
+    /// The review gallery, drawn over everything.
+    Gallery,
+    /// A half-typed line in the composer.
+    Typing,
+    /// The opened card — but only when it is not holding a live question.
+    Card,
+    /// Back to the terminal face.
+    Face,
+    /// Nothing, because what is left is a question waiting on a person.
+    Nothing,
+}
+
+pub fn peel(gallery: bool, typing: bool, card_open: bool, card_waits: bool) -> Peel {
+    if gallery {
+        return Peel::Gallery;
+    }
+    if typing {
+        return Peel::Typing;
+    }
+    if card_open {
+        // The floor.
+        return if card_waits {
+            Peel::Nothing
+        } else {
+            Peel::Card
+        };
+    }
+    Peel::Face
+}
+
 /// Where a key takes the review gallery.
 ///
 /// Its own function because the gallery is MODAL and modal key handling is
@@ -725,6 +774,22 @@ pub struct Shows {
     pub tight: bool,
     /// One line naming what the keys do, under an unarmed composer.
     pub hint: bool,
+    /// Draw the agent's own scrollback into the bench's main area.
+    ///
+    /// **Off.** The mirror was scaffolding: it proved the bench was attached
+    /// to a real terminal at a point when that was in doubt, and every round of
+    /// feedback since has been about the surfaces beside it. Parker: *"we are
+    /// ready to HIDE the terminal mirror scroll ... I feel like the machine
+    /// might need this to EXIST, but the user should not see it after today"*.
+    ///
+    /// He is right that it still has to exist, and it does — but not here. The
+    /// machine reads the SCREEN, not this rendering of it: `live_rows` feeds
+    /// the question reader, `recent_lines` feeds the dashboard card, and both
+    /// run whether or not a single pixel of scrollback is drawn on the bench.
+    /// Nothing was disconnected to turn this off, which is why it is a flag
+    /// rather than a deletion: `TD_BENCHMIRROR=1` puts it back for anybody
+    /// debugging what the reader is seeing.
+    pub mirror: bool,
     /// How wide the composer's text area is, for choosing a type size.
     pub composer_w: f32,
     /// How tall the composer may grow before it starts scrolling instead.
@@ -755,6 +820,7 @@ pub fn shows(pane_w: f32, pane_h: f32, is_agent: bool, rail_wanted: bool, armed:
         composer: is_agent,
         tight,
         hint: is_agent && !tight && !armed,
+        mirror: is_agent && std::env::var_os("TD_BENCHMIRROR").is_some(),
         composer_max: (pane_h * COMPOSER_SHARE).max(COMPOSER_MIN_MAX),
         // The pane, less the rail beside it and the composer's own padding
         // and chrome. An estimate, and only ever used to pick a SIZE.
@@ -939,6 +1005,12 @@ pub struct Row {
     pub title: String,
     pub subtitle: String,
     pub kind: &'static str,
+    /// The short word this row wears, or [`None`] where the state chip
+    /// already says everything. See [`crate::surface::Shelf::badge`].
+    pub badge: Option<String>,
+    /// One line instead of three. The overview is a census — what is on this
+    /// bench — and a census is read by scanning, which three-line rows defeat.
+    pub terse: bool,
     pub tint: Tint,
     pub standing: Standing,
     pub selected: bool,
@@ -1199,6 +1271,8 @@ impl Bench {
                 title: s.title.clone(),
                 subtitle: s.subtitle(),
                 kind: s.kind.id(),
+                badge: shelf.badge(&s.kind, false),
+                terse: shelf == Shelf::Overview,
                 tint: tint_of(&s.kind),
                 // Filled in below: standing is a property of a row's place in
                 // the shelf, which no row can know about itself.
@@ -2053,6 +2127,30 @@ mod tests {
     }
 
     #[test]
+    fn escape_peels_overlays_and_stops_at_a_question() {
+        // Outermost first.
+        assert_eq!(peel(true, true, true, true), Peel::Gallery);
+        assert_eq!(peel(false, true, true, true), Peel::Typing);
+
+        // THE FLOOR. A card holding a question somebody is being waited on is
+        // not something escape may take away — every other meaning of the key
+        // here removes the thing the agent is waiting with.
+        assert_eq!(peel(false, false, true, true), Peel::Nothing);
+
+        // An ANSWERED card is a record, and a record closes like anything
+        // else.
+        assert_eq!(peel(false, false, true, false), Peel::Card);
+
+        // Nothing open: back to the terminal, as before.
+        assert_eq!(peel(false, false, false, false), Peel::Face);
+        assert_eq!(
+            peel(false, false, false, true),
+            Peel::Face,
+            "a waiting question with no card open is on the rail, not under escape"
+        );
+    }
+
+    #[test]
     fn the_gallery_answers_every_key_including_the_ones_it_ignores() {
         // The pair a person reaches for, and the pair beside them on a
         // keyboard somebody is already resting a hand on.
@@ -2259,6 +2357,17 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn the_terminal_mirror_is_off_unless_somebody_asks_for_it() {
+        // It is scaffolding, and the surfaces beside it are the product. The
+        // flag exists so that a person debugging the screen reader can see
+        // what it sees, not so that anybody has to live with it.
+        assert!(
+            !shows(1400., 900., true, true, false).mirror,
+            "the bench does not draw the agent's scrollback by default"
+        );
     }
 
     #[test]
@@ -2474,6 +2583,8 @@ mod tests {
             title: id.into(),
             subtitle: String::new(),
             kind: "question",
+            badge: None,
+            terse: false,
             tint,
             standing: Standing::Past,
             selected: false,

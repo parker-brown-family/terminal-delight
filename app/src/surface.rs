@@ -664,6 +664,52 @@ pub struct Choice_ {
     pub checked: Option<bool>,
 }
 
+impl Artifact {
+    /// HTML, MD, IMG — what this thing IS, in the three or four letters a
+    /// person reads without stopping.
+    ///
+    /// From the declared mime where there is one, and from the filename where
+    /// there is not, because an agent that dropped a path without a type still
+    /// produced something openable. `FILE` is the honest last answer: it says
+    /// "something you can open" rather than guessing a format from nothing.
+    pub fn format_word(&self) -> String {
+        let from_mime = self.mime.as_deref().and_then(|m| {
+            Some(match m.trim().to_ascii_lowercase().as_str() {
+                "text/html" | "application/xhtml+xml" => "HTML",
+                "text/markdown" | "text/x-markdown" => "MD",
+                "application/pdf" => "PDF",
+                "application/json" => "JSON",
+                "text/csv" => "CSV",
+                "text/plain" => "TXT",
+                other if other.starts_with("image/") => "IMG",
+                other if other.starts_with("video/") => "VIDEO",
+                other if other.starts_with("audio/") => "AUDIO",
+                _ => return None,
+            })
+        });
+        if let Some(word) = from_mime {
+            return word.to_string();
+        }
+        let tail = self.href.rsplit(['/', '.']).next().unwrap_or("");
+        match tail.to_ascii_lowercase().as_str() {
+            "html" | "htm" => "HTML".into(),
+            "md" | "markdown" => "MD".into(),
+            "pdf" => "PDF".into(),
+            "json" => "JSON".into(),
+            "csv" => "CSV".into(),
+            "txt" | "log" => "TXT".into(),
+            "png" | "jpg" | "jpeg" | "gif" | "webp" | "svg" => "IMG".into(),
+            ext if !ext.is_empty()
+                && ext.len() <= 5
+                && ext.chars().all(|c| c.is_ascii_alphanumeric()) =>
+            {
+                ext.to_ascii_uppercase()
+            }
+            _ => "FILE".into(),
+        }
+    }
+}
+
 /// The agent is waiting, and these are the answers it will accept.
 ///
 /// The kind that matters most and was hardest to justify leaving out: an agent
@@ -896,6 +942,27 @@ impl Shelf {
     /// disagrees with its own count is the kind of defect nobody photographs.
     pub fn holds(self, home: Shelf) -> bool {
         self == Shelf::Overview || self == home
+    }
+
+    /// The short word a row wears on THIS shelf, where its kind used to be.
+    ///
+    /// On a shelf of artifacts, "artifact" distinguishes nothing — the shelf
+    /// already said it. What a person wants at a glance is the FORMAT, since
+    /// that is what decides whether clicking it opens a browser, a reader or
+    /// an image viewer. Parker: *"we know they will be artifacts in here.. we
+    /// see the type HTML, MD, IMG, etc... and the state"*.
+    ///
+    /// [`None`] where a state chip is already carrying the whole message: a
+    /// question that says ANSWERED has no use for the word `question` in front
+    /// of it.
+    pub fn badge(self, kind: &Kind, lettered: bool) -> Option<String> {
+        match (self, kind) {
+            // The state chip says everything a decision row needs.
+            (_, Kind::Decision(_)) | (_, Kind::Question(_)) => None,
+            (Shelf::Artifacts, Kind::Artifact(a)) => Some(a.format_word()),
+            (Shelf::Overview, Kind::Artifact(a)) if lettered => Some(a.format_word()),
+            _ => Some(kind.id().to_string()),
+        }
     }
 
     /// What an empty shelf is empty OF, in the words a person would use.

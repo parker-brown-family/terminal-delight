@@ -209,7 +209,7 @@ pub fn rail_row(row: &Row, sk: &Skin, th: &Theme) -> Div {
         .row()
         .flex()
         .flex_col()
-        .gap(px(2.))
+        .gap(px(if row.terse { 0. } else { 2. }))
         .cursor_pointer()
         .border_l(px(edge))
         .border_color(tint.alpha(strength))
@@ -221,7 +221,14 @@ pub fn rail_row(row: &Row, sk: &Skin, th: &Theme) -> Div {
                 .flex_row()
                 .items_center()
                 .gap(px(6.))
-                .child(micro(row.kind.to_string(), 9.5, tint.alpha(strength), th))
+                // The kind word only where it is still telling somebody
+                // something. `question ANSWERED` says one thing twice, and
+                // `artifact` on the artifacts shelf says nothing at all.
+                .children(
+                    row.badge
+                        .clone()
+                        .map(|b| micro(b, 9.5, tint.alpha(strength), th)),
+                )
                 .when(row.unseen, |d| {
                     d.child(
                         div()
@@ -250,14 +257,27 @@ pub fn rail_row(row: &Row, sk: &Skin, th: &Theme) -> Div {
             div()
                 .text_size(px(if raise { 13. } else { 12. }))
                 .text_color(th.text.alpha(strength))
-                .child(clip(&row.title, 34)),
+                // ONE line on the overview, wrapping on a shelf.
+                //
+                // The overview is a census of what this bench holds, and a
+                // census is read by scanning down it — which three-line rows
+                // defeat, as six of them filled a rail and said very little.
+                // A shelf is where you go to read, so there the title wraps
+                // and keeps its description.
+                .child(if row.terse {
+                    clip(&row.title, 30)
+                } else {
+                    row.title.clone()
+                }),
         )
-        .child(micro(
-            clip(&row.subtitle, 38),
-            9.5,
-            th.faint.alpha(strength),
-            th,
-        ));
+        .when(!row.terse, |d| {
+            d.child(micro(
+                clip(&row.subtitle, 38),
+                9.5,
+                th.faint.alpha(strength),
+                th,
+            ))
+        });
     if raise {
         // The head of the rail: one row in a shelf, guaranteed by
         // `Standing::lit`.
@@ -508,12 +528,16 @@ fn compact(surface: &Surface, sk: &Skin, th: &Theme) -> Div {
                 th,
             )
         })),
-        Kind::Question(q) => list.children(
-            q.options
-                .iter()
-                .enumerate()
-                .map(|(i, o)| micro(format!("{} · {}", i + 1, o.label), 11.5, th.text, th)),
-        ),
+        // A question's options are the BUTTONS underneath, and listing
+        // them here printed every one of them twice — six labels as text
+        // directly above the same six as chips. Parker, on the second
+        // time this shipped: *"Again -- repeating ourselves ... just
+        // ummm... just the buttons"*.
+        //
+        // The full renderer was trimmed for exactly this and this one was
+        // missed, so it now DELEGATES: one renderer for a question at
+        // either size, and no second list of kinds to keep in step.
+        Kind::Question(q) => question(q, sk, th),
         Kind::Artifact(a) => list.child(micro(a.href.clone(), 11., th.faint, th)),
         Kind::Unclassified(u) => list.child(micro(u.reason.clone(), 11., th.faint, th)),
     }

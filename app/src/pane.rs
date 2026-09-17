@@ -4467,20 +4467,39 @@ impl TerminalView {
             }
             let talking = self.wb_compose.is_some();
             if ks.key.as_str() == "escape" {
-                // One layer at a time, innermost first: the typing, then the
-                // card over the conversation, then the face. Closing two at
-                // once throws away something the person was in the middle of.
-                // The gallery is not a rung here: it is handled above,
-                // where it takes EVERY key rather than only this one, because
-                // an overlay that swallows esc and leaks the arrows is worse
-                // than one that swallows neither.
-                if talking {
-                    self.wb_compose = None;
-                    cx.notify();
-                } else if self.bench.close_card() {
-                    cx.notify();
-                } else {
-                    self.set_face(crate::workbench::Face::Terminal, cx);
+                // One layer at a time, and a question waiting on a person is
+                // the floor — see [`crate::workbench::peel`] for why escape is
+                // not allowed to take that one.
+                use crate::workbench::Peel;
+                let card_waits = matches!(
+                    self.bench.selected().map(|s| &s.kind),
+                    Some(crate::surface::Kind::Question(q))
+                        if q.answer == crate::surface::Answered::Waiting
+                );
+                match crate::workbench::peel(
+                    self.wb_review.is_some(),
+                    talking,
+                    self.bench.selected().is_some(),
+                    card_waits,
+                ) {
+                    Peel::Gallery => {
+                        self.wb_review = None;
+                        cx.notify();
+                    }
+                    Peel::Typing => {
+                        self.wb_compose = None;
+                        cx.notify();
+                    }
+                    Peel::Card => {
+                        self.bench.close_card();
+                        cx.notify();
+                    }
+                    Peel::Face => self.set_face(crate::workbench::Face::Terminal, cx),
+                    // Deliberately nothing. The TERM chip is the way out of a
+                    // pane that is waiting on you, because leaving should be a
+                    // move a person makes rather than the same key they have
+                    // been dismissing overlays with.
+                    Peel::Nothing => {}
                 }
                 cx.stop_propagation();
                 return;
@@ -7701,7 +7720,7 @@ impl TerminalView {
                             ),
                         )
                     })
-                    .when(self.mode.is_agent(), |d| {
+                    .when(shows.mirror, |d| {
                         d.child(crate::benchdraw::conversation(&tail, th))
                     })
                     .when_some(waiting, |d, q| {
