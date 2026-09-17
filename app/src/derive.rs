@@ -431,6 +431,100 @@ fn deliverable_lines(text: &str) -> Vec<(String, String)> {
     out
 }
 
+/// Turn whatever the agent wrote into a name a person would give the thing.
+///
+/// A derived surface's title is the first and often the only thing anybody
+/// reads about it, and it arrives from two untidy places: a label an agent
+/// typed, or a filename. Both carry machine debris — a content hash, an ISO
+/// date, an extension, a session id — and the bench was showing it. Parker, on
+/// an artifact called *Bench Paste 15868dd2*: *"artifact names are UNHELPFUL!
+/// ... These artifacts should be a HUMAN READABLE VERY SHORT NAME!"*
+///
+/// So the debris is removed here rather than asked for in a prompt. An
+/// instruction in `AGENTS.md` telling agents to write short titles is worth
+/// having and is not a mechanism: it is advisory, unversioned, and silently
+/// absent for every agent that has not read it, whereas every derived title in
+/// this window passes through this function.
+///
+/// Conservative on purpose — it drops tokens that cannot be words and touches
+/// nothing else. A real title stays exactly as written.
+pub fn human_title(raw: &str) -> String {
+    let base = raw.trim();
+    // A bare path or URL becomes its filename first; a label is already a
+    // label and keeps its spaces.
+    let base = if base.contains(' ') {
+        base.to_string()
+    } else {
+        // A path or URL names itself with its LAST segment that is a word.
+        // `…/artifact/DhG556CDbtwZHQ3RPbsqR6` is named by the collection it
+        // sits in, because the id is the one part of it that says nothing —
+        // which is the same rule a person uses reading the URL aloud.
+        base.rsplit('/')
+            .map(strip_extension)
+            .find(|seg| !seg.is_empty() && !seg.split(['-', '_', '.']).all(is_debris))
+            .unwrap_or_else(|| base.to_string())
+    };
+    let words: Vec<String> = base
+        .split(['-', '_', ' ', '.'])
+        .map(str::trim)
+        .filter(|w| !w.is_empty() && !is_debris(w))
+        .map(|w| w.to_string())
+        .collect();
+    if words.is_empty() {
+        // Everything was debris. The raw string, clipped, beats an empty
+        // heading — a card with no title is a card nobody can refer to.
+        return raw.chars().take(48).collect();
+    }
+    // Six words is the length of a name somebody says out loud. Past that it
+    // is a sentence, and a sentence belongs in the summary underneath.
+    let mut out = words.iter().take(6).cloned().collect::<Vec<_>>().join(" ");
+    if words.len() > 6 {
+        out.push('\u{2026}');
+    }
+    let mut c = out.chars();
+    match c.next() {
+        Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
+        None => out,
+    }
+}
+
+/// A token that cannot be a word: a hash, an id, a date, a bare number.
+///
+/// The digit is what makes this safe. `deadbeef` is hex and is also a word
+/// somebody might legitimately title something, so hex alone would eat real
+/// titles; hex WITH a digit in it, six characters or more, is a checksum every
+/// time. `2026` and `08` go because a date is metadata the bench already has.
+fn is_debris(w: &str) -> bool {
+    let lower = w.to_ascii_lowercase();
+    if lower.chars().all(|c| c.is_ascii_digit()) {
+        return true;
+    }
+    let hexish = lower.len() >= 6
+        && lower.chars().all(|c| c.is_ascii_hexdigit())
+        && lower.chars().any(|c| c.is_ascii_digit());
+    // A long unbroken run of letters and digits with no vowel is an id, not a
+    // word: `DhG556CDbtwZHQ3RPbsqR6`, which is what a published artifact's
+    // own URL ends in.
+    let idish = w.len() >= 12
+        && w.chars().all(|c| c.is_ascii_alphanumeric())
+        && w.chars().any(|c| c.is_ascii_digit())
+        && !lower.chars().any(|c| "aeiou".contains(c));
+    hexish || idish
+}
+
+fn strip_extension(s: &str) -> String {
+    match s.rsplit_once('.') {
+        Some((stem, ext))
+            if !stem.is_empty()
+                && ext.len() <= 5
+                && ext.chars().all(|c| c.is_ascii_alphanumeric()) =>
+        {
+            stem.to_string()
+        }
+        _ => s.to_string(),
+    }
+}
+
 fn find_href(s: &str) -> Option<usize> {
     ["file:///", "https://", "http://", "/"]
         .iter()
@@ -454,7 +548,7 @@ fn deliverable_post(label: &str, href: &str, now_ms: u64) -> Post {
         pane: None,
         surface: Some(Surface {
             id: id.clone(),
-            title: label.chars().take(72).collect(),
+            title: human_title(label),
             kind,
             weight: Weight::default(),
             actions,
@@ -520,6 +614,53 @@ fn short_hash(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_title_a_person_would_give_it() {
+        // The specimen: what the bench actually showed.
+        assert_eq!(human_title("Bench Paste 15868dd2"), "Bench Paste");
+        // A filename, with everything a filename carries.
+        assert_eq!(
+            human_title("/tmp/x/2026-09-17-workbench-brief.html"),
+            "Workbench brief"
+        );
+        // A published artifact's URL ends in an id, not a word.
+        assert_eq!(
+            human_title("https://claude.ai/artifact/DhG556CDbtwZHQ3RPbsqR6"),
+            "Artifact"
+        );
+        // A real title is left alone. This is the case worth protecting: a
+        // cleaner that improves nine titles and mangles the tenth is not an
+        // improvement.
+        assert_eq!(
+            human_title("Why the agent describes meaning"),
+            "Why the agent describes meaning"
+        );
+        // Words that merely LOOK like hex survive, because they have no digit.
+        assert_eq!(
+            human_title("decade-facade-effaced"),
+            "Decade facade effaced"
+        );
+        // Long ones are cut on a word and say they were cut.
+        let long = human_title("one two three four five six seven eight");
+        assert!(long.starts_with("One two three four five six"), "{long}");
+        assert!(long.ends_with('\u{2026}'), "{long}");
+        // And a name made of nothing but debris keeps the raw string rather
+        // than becoming an untitled card.
+        assert_eq!(human_title("15868dd2"), "15868dd2");
+    }
+
+    #[test]
+    fn a_derived_deliverable_carries_the_tidied_title() {
+        // Through the real path, not just the helper: the tidy has to be
+        // wired in, and asserting the function alone would pass either way.
+        let post = deliverable_post("Bench Paste 15868dd2", "file:///tmp/pastes/15868dd2.png", 0);
+        assert_eq!(
+            post.surface.expect("a surface").title,
+            "Bench Paste",
+            "the hash must not reach the rail"
+        );
+    }
     use serde_json::json;
 
     const NOW: u64 = 1_758_000_000_000;

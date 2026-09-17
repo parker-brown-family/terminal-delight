@@ -194,27 +194,33 @@ pub fn rail_tick(tint: Tint, unseen: bool, sk: &Skin, th: &Theme) -> Div {
 }
 
 /// The shelf tabs at the top of the rail: artifacts · decisions · other.
+/// A shelf tab: its NAME, and nothing else.
+///
+/// It read `artifacts 1·1`, a total beside an unseen count, and the
+/// pair answered a question nobody asks of a tab. Parker: *"the 1-1 and 3-3
+/// enumerations needs to die... just titles"*. The rows beneath ARE the
+/// count, and they are already on screen.
+///
+/// The unseen signal survives, because "something arrived while you were
+/// elsewhere" is worth knowing and is what the second number was really for
+/// — but it is carried by the word's own COLOUR rather than by a digit. One
+/// glance, no arithmetic, and the tab stays a tab.
 pub fn shelf_tab(
     shelf: Shelf,
     active: bool,
-    count: usize,
+    _count: usize,
     unseen: usize,
     sk: &Skin,
     th: &Theme,
 ) -> Div {
-    let label = if unseen > 0 {
-        format!("{} {}·{}", shelf.label(), count, unseen)
-    } else if count > 0 {
-        format!("{} {}", shelf.label(), count)
-    } else {
-        shelf.label().to_string()
-    };
     sk.chip(active)
         .cursor_pointer()
-        .text_size(px(9.5))
+        .text_size(px(10.))
         .font_family(th.font_family.clone())
-        .when(unseen > 0 && !active, |d| d.text_color(th.complement))
-        .child(label)
+        .when(unseen > 0 && !active, |d| {
+            d.text_color(ink(crate::workbench::Tint::Waiting, th))
+        })
+        .child(shelf.label().to_string())
 }
 
 /// The weights strip: effort, complexity, depth, confidence.
@@ -353,7 +359,7 @@ fn heading(surface: &Surface, sk: &Skin, th: &Theme) -> Div {
                     div()
                         .flex_1()
                         .min_w(px(0.))
-                        .text_size(px(16.))
+                        .text_size(px(18.))
                         .text_color(th.text)
                         .child(surface.title.clone()),
                 ),
@@ -426,90 +432,119 @@ fn full(surface: &Surface, sk: &Skin, th: &Theme) -> Div {
 /// Numbered because the numbers are real: they are the option's position in
 /// the agent's own menu, and the bench answers by walking that menu. A reader
 /// who prefers the terminal can flip to TERM and press the same number.
+/// A question, opened from the rail.
+///
+/// Deliberately the same object as [`waiting_block`] — the same tint, the same
+/// left edge, the same numbered lines — because it is the same question, and
+/// the only difference between the two is whether the person went looking for
+/// it or it arrived in front of them. Two designs for one thing taught the
+/// reader that the bench has two kinds of question, which it does not.
+///
+/// The heading above already asks the question, so this does not ask it again:
+/// what it adds is what each option COSTS, which is the part a person is
+/// actually weighing. The pane attaches the pressable chips underneath.
 fn question(q: &crate::surface::Question, sk: &Skin, th: &Theme) -> Div {
     use crate::surface::Answered;
     let chosen = match q.answer {
         Answered::Chose(i) => Some(i),
         _ => None,
     };
-    div()
-        .flex()
-        .flex_col()
-        .gap(px(8.))
-        .child(
-            div()
-                .text_size(px(13.5))
-                .text_color(th.text)
-                .child(q.question.clone()),
-        )
-        .children(q.options.iter().enumerate().map(|(i, o)| {
-            let lit = chosen == Some(i);
-            let recommended = q.recommend == Some(i);
-            let panel = sk.panel().flex().flex_col().gap(px(2.));
-            let panel = if lit {
-                panel.border_l(px(3.)).border_color(th.accent)
-            } else {
-                panel
-            };
+    let waiting = q.answer == Answered::Waiting;
+    let tint = if waiting {
+        ink(crate::workbench::Tint::Waiting, th)
+    } else {
+        ink(crate::workbench::Tint::Settled, th)
+    };
+    raised(
+        sk.panel()
+            .flex()
+            .flex_col()
+            .gap(px(10.))
+            .p(px(14.))
+            .bg(th.surface)
+            .border_l(px(3.))
+            .border_color(tint),
+        tint,
+        th,
+    )
+    .child(micro(
+        if waiting {
+            "WAITING ON YOU"
+        } else {
+            "ANSWERED"
+        },
+        9.5,
+        tint,
+        th,
+    ))
+    .children(q.options.iter().enumerate().map(|(i, o)| {
+        let lit = chosen == Some(i);
+        let recommended = q.recommend == Some(i);
+        let panel = sk.panel().flex().flex_col().gap(px(2.));
+        let panel = if lit {
+            panel.border_l(px(3.)).border_color(th.accent)
+        } else {
             panel
-                .child(
-                    div()
-                        .flex()
-                        .flex_row()
-                        .gap(px(7.))
-                        .items_baseline()
-                        .child(micro(format!("{}", i + 1), 11., th.faint, th))
-                        .child(
-                            div()
-                                .text_size(px(12.5))
-                                .text_color(if chosen.is_some() && !lit {
-                                    th.faint
-                                } else {
-                                    th.text
-                                })
-                                .child(o.label.clone()),
-                        )
-                        .when(recommended, |x| {
-                            x.child(micro("recommended", 9., th.accent, th))
-                        })
-                        .when(lit, |x| x.child(micro("chosen", 9., th.accent, th))),
-                )
-                .when_some(o.what_happens.clone(), |x, what| {
-                    x.child(micro(what, 11., th.text.alpha(0.75), th))
-                })
-        }))
-        .child(match &q.answer {
-            // Three states, drawn as three states. "Answered, and the
-            // transcript does not say how" is a real reading — somebody typed
-            // prose instead of picking — and showing it as the first option
-            // would invent a decision nobody made.
-            Answered::Waiting => micro(
-                match q.cursor {
-                    Some(_) => "waiting on you · answering here drives the menu in the terminal",
-                    None => "waiting on you",
-                }
-                .to_string(),
-                10.,
-                th.complement,
-                th,
-            ),
-            Answered::Chose(_) => micro("answered".to_string(), 10., th.faint, th),
-            // The words, when there are words. A free-text answer is the one
-            // an agent most needs read back, and it is the one a menu cannot
-            // show at all.
-            Answered::Typed(said) => micro(
-                format!("answered in the terminal · \u{201c}{said}\u{201d}"),
-                10.5,
-                th.text.alpha(0.8),
-                th,
-            ),
-            Answered::ChoseUnknown => micro(
-                "answered in the terminal · how is unavailable".to_string(),
-                10.,
-                th.faint,
-                th,
-            ),
-        })
+        };
+        panel
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .gap(px(7.))
+                    .items_baseline()
+                    .child(micro(format!("{}", i + 1), 11., th.faint, th))
+                    .child(
+                        div()
+                            .text_size(px(12.5))
+                            .text_color(if chosen.is_some() && !lit {
+                                th.faint
+                            } else {
+                                th.text
+                            })
+                            .child(o.label.clone()),
+                    )
+                    .when(recommended, |x| {
+                        x.child(micro("recommended", 9., th.accent, th))
+                    })
+                    .when(lit, |x| x.child(micro("chosen", 9., th.accent, th))),
+            )
+            .when_some(o.what_happens.clone(), |x, what| {
+                x.child(micro(what, 11., th.text.alpha(0.75), th))
+            })
+    }))
+    .child(match &q.answer {
+        // Three states, drawn as three states. "Answered, and the
+        // transcript does not say how" is a real reading — somebody typed
+        // prose instead of picking — and showing it as the first option
+        // would invent a decision nobody made.
+        Answered::Waiting => micro(
+            match q.cursor {
+                Some(_) => "waiting on you · answering here drives the menu in the terminal",
+                None => "waiting on you",
+            }
+            .to_string(),
+            10.,
+            th.complement,
+            th,
+        ),
+        Answered::Chose(_) => micro("answered".to_string(), 10., th.faint, th),
+        // The words, when there are words. A free-text answer is the one
+        // an agent most needs read back, and it is the one a menu cannot
+        // show at all.
+        Answered::Typed(said) => micro(
+            format!("answered in the terminal · \u{201c}{said}\u{201d}"),
+            10.5,
+            th.text.alpha(0.8),
+            th,
+        ),
+        Answered::ChoseUnknown => micro(
+            "answered in the terminal · how is unavailable".to_string(),
+            10.,
+            th.faint,
+            th,
+        ),
+    })
 }
 
 fn artifact(a: &crate::surface::Artifact, sk: &Skin, th: &Theme) -> Div {
@@ -785,27 +820,57 @@ fn unclassified(u: &crate::surface::Unclassified, sk: &Skin, th: &Theme) -> Div 
         .child(paragraph(first_lines(&u.raw, 20), th))
 }
 
+/// One fact per row, and each row its OWN surface.
+///
+/// These were four lines of text stacked four pixels apart on the pane's bare
+/// background, and at that spacing a name, its value and the next name read as
+/// one paragraph — Parker, on the opened card: *"there needs to be cards /
+/// visual hierarchy // borders / depth for each element!"*. A row is a fact,
+/// facts are separate things, and the cheapest way to say so is to give each
+/// one a floor of its own.
+///
+/// An unavailable value keeps its row and dims BOTH halves, so a fact nobody
+/// has is visibly a fact nobody has rather than a row that looks broken.
 fn field_grid(fields: Vec<(&str, Option<String>)>, sk: &Skin, th: &Theme) -> Div {
-    sk.panel()
+    div()
         .flex()
         .flex_col()
-        .gap(px(4.))
+        .gap(px(6.))
         .children(fields.into_iter().map(|(name, value)| {
-            div()
+            let known = value.is_some();
+            sk.panel()
                 .flex()
                 .flex_row()
-                .gap(px(10.))
+                .gap(px(12.))
                 .items_baseline()
-                .child(
-                    div()
-                        .w(px(76.))
-                        .child(micro(name.to_uppercase(), 9.5, th.faint, th)),
-                )
+                .px(px(11.))
+                .py(px(8.))
+                .bg(th.surface.alpha(if known { 0.55 } else { 0.3 }))
+                .border_l(px(2.))
+                .border_color(if known {
+                    th.accent.alpha(0.35)
+                } else {
+                    th.faint.alpha(0.35)
+                })
+                .child(div().w(px(76.)).flex_none().child(micro(
+                    name.to_uppercase(),
+                    9.5,
+                    th.faint,
+                    th,
+                )))
                 .child(match value {
-                    Some(v) => micro(v, 11.5, th.text, th),
+                    Some(v) => div()
+                        .flex_1()
+                        .min_w(px(0.))
+                        .child(micro(v, 12., th.text, th)),
                     // Shown missing rather than omitted: an omitted row leaves a
                     // hole a reader fills in themselves.
-                    None => micro("unavailable", 11.5, th.faint, th),
+                    None => {
+                        div()
+                            .flex_1()
+                            .min_w(px(0.))
+                            .child(micro("unavailable", 12., th.faint, th))
+                    }
                 })
         }))
 }
@@ -885,6 +950,37 @@ pub fn live_strip(state: &str, tool: Option<&str>, tail: &[String], sk: &Skin, t
         })
 }
 
+/// The composer's type size. Named because two places have to agree on it:
+/// the text that draws at this size, and the pane that scales the measured
+/// cell width to it in order to know where column N is.
+pub const COMPOSER_PT: f32 = 17.0;
+
+/// An invisible element that records where the composer's text actually
+/// landed, so a click can be turned into a column.
+///
+/// Layout is the only authority on this — padding, the skin's own inset and
+/// the caret gutter all move the text's left edge, and a click handler that
+/// assumed any of them would drift the moment a skin changed one. A `canvas`
+/// is how gpui lets an element report its own bounds, and the pane reads the
+/// captured value on the next click rather than guessing.
+pub fn text_origin_probe(
+    into: std::sync::Arc<std::sync::Mutex<Option<gpui::Bounds<gpui::Pixels>>>>,
+) -> impl gpui::IntoElement {
+    gpui::canvas(
+        move |bounds, _window, _cx| {
+            if let Ok(mut slot) = into.lock() {
+                *slot = Some(bounds);
+            }
+        },
+        |_, _, _, _| {},
+    )
+    .absolute()
+    .left(px(0.))
+    .top(px(0.))
+    .w_full()
+    .h(px(1.))
+}
+
 /// The line into the agent's own terminal.
 ///
 /// Not a text box. While it is armed, every keystroke is encoded by the same
@@ -911,8 +1007,14 @@ pub fn live_strip(state: &str, tool: Option<&str>, tail: &[String], sk: &Skin, t
 /// room, and one line underneath says what the keys do, because the three
 /// things it names (type without clicking first, enter sends, paste takes an
 /// image) are each invisible otherwise.
-pub fn composer(text: Option<&str>, focused: bool, sk: &Skin, th: &Theme) -> Div {
-    let open = text.is_some();
+pub fn composer(
+    line: Option<&crate::workbench::Line>,
+    focused: bool,
+    advance: f32,
+    sk: &Skin,
+    th: &Theme,
+) -> Div {
+    let open = line.is_some();
     let live = open && focused;
     raised(
         sk.panel()
@@ -938,17 +1040,53 @@ pub fn composer(text: Option<&str>, focused: bool, sk: &Skin, th: &Theme) -> Div
             .flex()
             .items_center()
             .gap(px(12.))
-            .child(caret(live, th))
             .child(
+                // The text and its caret share one relative box, and the caret
+                // is placed ABSOLUTELY at `caret * advance` from the left.
+                //
+                // Absolute rather than a third text span between two halves:
+                // splitting the line into prefix + block + suffix pushes every
+                // character after the caret one cell right, so the line moves
+                // under the reader every time the caret does. Laid over the
+                // top, the glyph under the caret stays exactly where it is and
+                // the block reads as a terminal's own cursor — which is what
+                // this is a mirror of.
+                //
+                // Exact, not estimated: the composer is monospace, `advance`
+                // is the width the text system measured for this font at this
+                // size, and column N therefore begins at N advances. A
+                // proportional font would need a real layout here and this
+                // would be a lie.
                 div()
+                    .relative()
                     .flex_1()
-                    .text_size(px(17.))
-                    .font_family(th.font_family.clone())
-                    .text_color(if open { th.text } else { th.text.alpha(0.72) })
-                    .child(match text {
-                        Some("") | None => "type to the agent".to_string(),
-                        Some(t) => t.to_string(),
-                    }),
+                    .min_w(px(0.))
+                    .h(px(26.))
+                    .when_some(line, |d, l| {
+                        d.child(
+                            div()
+                                .absolute()
+                                .left(px(l.caret() as f32 * advance))
+                                .top(px(1.))
+                                .w(px(advance.max(3.)))
+                                .h(px(24.))
+                                .bg(th.human.alpha(if live { 0.45 } else { 0.2 })),
+                        )
+                    })
+                    .when(!open, |d| d.child(caret_block(live, th)))
+                    .child(
+                        div()
+                            .absolute()
+                            .left(px(0.))
+                            .top(px(3.))
+                            .text_size(px(COMPOSER_PT))
+                            .font_family(th.font_family.clone())
+                            .text_color(if open { th.text } else { th.text.alpha(0.72) })
+                            .child(match line {
+                                Some(l) if !l.is_empty() => l.text().to_string(),
+                                _ => "type to the agent".to_string(),
+                            }),
+                    ),
             )
             // Only while it is armed, and then unmissable. This is the answer
             // to the question the surface kept failing: *am I typing to the
@@ -986,8 +1124,11 @@ pub fn composer(text: Option<&str>, focused: bool, sk: &Skin, th: &Theme) -> Div
 ///
 /// Off while the pane is unfocused or the line is not armed, because a caret
 /// blinking in a window that would swallow the keystrokes is a lie.
-fn caret(live: bool, th: &Theme) -> AnyElement {
+fn caret_block(live: bool, th: &Theme) -> AnyElement {
     let block = div()
+        .absolute()
+        .left(px(0.))
+        .top(px(1.))
         .w(px(11.))
         .h(px(24.))
         .bg(th.human.alpha(if live { 1.0 } else { 0.55 }))

@@ -765,7 +765,7 @@ impl Kind {
             Kind::Artifact(_) | Kind::Markdown(_) | Kind::Table(_) | Kind::Architecture(_) => {
                 Shelf::Artifacts
             }
-            Kind::Changeset(_) | Kind::Unclassified(_) => Shelf::Other,
+            Kind::Changeset(_) | Kind::Unclassified(_) => Shelf::Overview,
         }
     }
 
@@ -795,20 +795,55 @@ impl Kind {
 /// The three shelves of a pane's own rail.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash, Default)]
 pub enum Shelf {
+    /// Everything, newest first — the shelf you land on.
+    ///
+    /// It was called `other` and sat on the right holding the leftovers, which
+    /// made the bench's first impression a shelf of things it could not
+    /// classify. Parker: *"The OTHER tab should then move ALL the way left and
+    /// be called OVERVIEW"*, and the word he chose is the design: an overview
+    /// is a view OVER everything, not a bin for the remainder. So it shows
+    /// every surface, `artifacts` and `decisions` become filtered views of it,
+    /// and the unclassifiable still land here — by being surfaces, rather than
+    /// by being unwanted.
     #[default]
+    Overview,
     Artifacts,
     Decisions,
-    Other,
 }
 
 impl Shelf {
-    pub const ALL: [Shelf; 3] = [Shelf::Artifacts, Shelf::Decisions, Shelf::Other];
+    pub const ALL: [Shelf; 3] = [Shelf::Overview, Shelf::Artifacts, Shelf::Decisions];
 
     pub fn label(self) -> &'static str {
         match self {
             Shelf::Artifacts => "artifacts",
             Shelf::Decisions => "decisions",
-            Shelf::Other => "other",
+            Shelf::Overview => "overview",
+        }
+    }
+
+    /// Does a surface filed on `home` show on this shelf?
+    ///
+    /// Everything shows on the overview; the other two are filters. One
+    /// function rather than a condition written at each of the three call
+    /// sites (the rows, the counts, the unseen tally), because a filter that
+    /// disagrees with its own count is the kind of defect nobody photographs.
+    pub fn holds(self, home: Shelf) -> bool {
+        self == Shelf::Overview || self == home
+    }
+
+    /// What an empty shelf is empty OF, in the words a person would use.
+    ///
+    /// Separate from [`Self::label`] because the tab and the empty state are
+    /// different sentences: `other 2·2` is a count on a tab, and "No other" is
+    /// not English. An empty shelf is the one place on this surface where the
+    /// only thing to read is the absence, so the absence is what it has to
+    /// say.
+    pub fn empty_word(self) -> &'static str {
+        match self {
+            Shelf::Artifacts => "artifacts yet",
+            Shelf::Decisions => "decisions yet",
+            Shelf::Overview => "work yet",
         }
     }
 }

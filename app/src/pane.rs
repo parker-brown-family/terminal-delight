@@ -2142,7 +2142,11 @@ pub struct TerminalView {
     /// A comment being typed against the selected surface. `None` is not the
     /// same as empty: a composer that is open and holding nothing is a person
     /// who has started answering, and closing it under them loses that.
-    wb_compose: Option<String>,
+    wb_compose: Option<crate::workbench::Line>,
+    /// Where the composer's text begins on screen, so a click can be turned
+    /// into a column. Captured by the element itself at paint time because
+    /// only the element knows where the layout put it.
+    wb_text_origin: std::sync::Arc<std::sync::Mutex<Option<gpui::Bounds<gpui::Pixels>>>>,
     /// The live question currently on this pane's bench, if one is up.
     ///
     /// Held so it can be RETIRED the moment the pane stops waiting — the
@@ -3207,6 +3211,7 @@ impl TerminalView {
             tok_was_working: false,
             bench: crate::workbench::Bench::new(),
             wb_compose: None,
+            wb_text_origin: std::sync::Arc::new(std::sync::Mutex::new(None)),
             wb_live_q: None,
         }
     }
@@ -4427,20 +4432,33 @@ impl TerminalView {
                 // comes back from the agent itself, which is why this needs
                 // no local editing model at all.
                 if let Some(bytes) = keystroke_bytes(ks) {
-                    // Keep a local shadow of the line purely so the box can
-                    // show something while the agent's echo catches up. It is
-                    // a display artefact, not the source of truth — the bytes
-                    // have already gone.
-                    if let Some(buf) = self.wb_compose.as_mut() {
+                    // The bytes have already gone; this applies the SAME edit
+                    // to the local mirror so the box can draw where the
+                    // agent's caret now is. See [`crate::workbench::Line`] for
+                    // why a mirror and not a model.
+                    if let Some(line) = self.wb_compose.as_mut() {
                         match ks.key.as_str() {
                             "backspace" => {
-                                buf.pop();
+                                line.backspace();
                             }
-                            "enter" => buf.clear(),
+                            "delete" => {
+                                line.delete();
+                            }
+                            "left" => line.left(),
+                            "right" => line.right(),
+                            "home" => line.home(),
+                            "end" => line.end(),
+                            // ctrl+a / ctrl+e are the same two keys on every
+                            // line editor the far end might be running, and a
+                            // person who reaches for them expects the caret to
+                            // move here too.
+                            "a" if ks.modifiers.control => line.home(),
+                            "e" if ks.modifiers.control => line.end(),
+                            "enter" => line.clear(),
                             _ => {
                                 if let Some(c) = ks.key_char.as_deref() {
                                     if !c.is_empty() && !c.chars().any(char::is_control) {
-                                        buf.push_str(c);
+                                        line.insert(c);
                                     }
                                 }
                             }
@@ -4491,7 +4509,7 @@ impl TerminalView {
                         .and_then(|s| s.actions.first().cloned());
                     if let Some(action) = first {
                         if action.wants_comment() {
-                            self.wb_compose = Some(String::new());
+                            self.wb_compose = Some(crate::workbench::Line::new());
                             cx.notify();
                         } else {
                             self.bench_act(action, None, cx);
@@ -4502,12 +4520,12 @@ impl TerminalView {
                 crate::workbench::Reading::Talk => {
                     // Start talking, carrying the character that started it —
                     // so there is no "click here first".
-                    self.wb_compose = Some(String::new());
+                    self.wb_compose = Some(crate::workbench::Line::new());
                     if let Some(bytes) = keystroke_bytes(ks) {
-                        if let (Some(buf), Some(c)) =
+                        if let (Some(line), Some(c)) =
                             (self.wb_compose.as_mut(), ks.key_char.as_deref())
                         {
-                            buf.push_str(c);
+                            line.insert(c);
                         }
                         self.send(bytes, cx);
                     }
@@ -6768,6 +6786,54 @@ impl TerminalView {
     }
 
     /// The verb chips for the card that is open, if it has any.
+    /// The answer chips for a question: one per option, each pressing the
+    /// agent's own menu.
+    ///
+    /// One builder for both places a question can appear, because they are the
+    /// same gesture and were built twice. The inline block had chips and the
+    /// opened CARD had a list of numbered sentences and a `comment` button —
+    /// so answering worked in the place you were not looking. Parker, with the
+    /// two side by side: *"The decision tab work surface should look a LOT
+    /// more like [the waiting block]"*.
+    fn answer_chips(
+        &mut self,
+        q: &crate::surface::Question,
+        sk: &crate::skin::Skin,
+        cx: &mut Context<Self>,
+    ) -> gpui::Div {
+        let answered = q.answer != crate::surface::Answered::Waiting;
+        let chips: Vec<gpui::Div> = q
+            .options
+            .iter()
+            .enumerate()
+            .map(|(i, o)| {
+                let lit = matches!(q.answer, crate::surface::Answered::Chose(n) if n == i);
+                let label = format!("{} \u{b7} {}", i + 1, o.label);
+                let chip = sk.chip(lit || !answered).text_size(px(11.5)).child(label);
+                if answered {
+                    // A question already answered keeps its chips so the
+                    // record reads the same as the decision did, but they do
+                    // not press: answering twice sends a second keystroke to a
+                    // menu that has already closed.
+                    return chip;
+                }
+                chip.cursor_pointer().on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |view, _ev: &MouseDownEvent, _w, cx| {
+                        cx.stop_propagation();
+                        view.bench_choose(i, cx);
+                    }),
+                )
+            })
+            .collect();
+        div()
+            .flex()
+            .flex_row()
+            .flex_wrap()
+            .gap(px(6.))
+            .children(chips)
+    }
+
     fn bench_verbs(
         &mut self,
         sk: &crate::skin::Skin,
@@ -6838,6 +6904,40 @@ impl TerminalView {
         self.bench_act(crate::surface::Action::Choose, Some(index.to_string()), cx);
     }
 
+    /// A click in the composer: arm it, and put the caret where the pointer is.
+    ///
+    /// The caret does not merely move here — the agent's own line editor is
+    /// told to move too, one arrow per column, because ITS caret is the one
+    /// that decides where the next character lands. Moving only the drawing
+    /// would put the block where the person clicked and the text somewhere
+    /// else, which is worse than not offering the gesture at all.
+    fn bench_click(&mut self, x: f32, advance: f32, cx: &mut Context<Self>) {
+        if self.wb_compose.is_none() {
+            self.wb_compose = Some(crate::workbench::Line::new());
+            return;
+        }
+        let Some(left) = self
+            .wb_text_origin
+            .lock()
+            .ok()
+            .and_then(|b| *b)
+            .map(|b| f32::from(b.origin.x))
+        else {
+            // Never painted, so there is no column to compute. Arming the line
+            // is still the right half of the gesture.
+            return;
+        };
+        let Some(line) = self.wb_compose.as_mut() else {
+            return;
+        };
+        let to = crate::workbench::caret_for_click(x - left, advance, line.chars());
+        let bytes = crate::workbench::caret_move(line.caret(), to);
+        line.seek(to);
+        if !bytes.is_empty() {
+            self.send(bytes, cx);
+        }
+    }
+
     /// Paste into the agent — text, files, or an IMAGE.
     ///
     /// A pseudoterminal carries bytes, so an image cannot be typed into one.
@@ -6853,13 +6953,31 @@ impl TerminalView {
     fn bench_paste(&mut self, cx: &mut Context<Self>) {
         use gpui::ClipboardEntry;
         // An image on the clipboard WINS over the text beside it, because a
-        // person who copied a picture meant the picture. This is the branch
-        // gpui's own read cannot take: it tries text first and only falls
-        // back to an image when no text type is offered at all, so a browser
-        // copy — which offers `text/html` next to `image/png` — pastes markup.
-        if let Some(path) = self.clipboard_image_path() {
-            self.bench_typed(path, cx);
-            return;
+        // person who copied a picture meant the picture. gpui's own read
+        // cannot make that call: it tries text first and only falls back to an
+        // image when no text type is offered at all, so a browser copy — which
+        // offers `text/html` next to `image/png` — pastes markup.
+        if self.clipboard_holds_an_image() {
+            // On an AGENT pane the agent does this better than we can. Claude
+            // Code binds ctrl+v to its own image paste, reads the clipboard
+            // with `wl-paste --type image/png`, and puts `[Image #1]` in the
+            // prompt — a chip it can then delete with one backspace. Typing a
+            // path instead produced a hundred-character filename in the middle
+            // of a sentence; Parker, on seeing both: *"the terminal shows
+            // `[Image #n]` --- We want the terminal short style"*.
+            //
+            // So on an agent pane the chord goes straight down the PTY and the
+            // agent shows its own short form. We only save a file where there
+            // is nobody on the far end to do it — a shell has no idea what an
+            // image is, and there a path is the only thing that can be typed.
+            if self.mode.is_agent() {
+                self.send(vec![0x16], cx);
+                return;
+            }
+            if let Some(path) = self.clipboard_image_path() {
+                self.bench_typed(path, cx);
+                return;
+            }
         }
         let Some(item) = cx.read_from_clipboard() else {
             return;
@@ -6895,10 +7013,36 @@ impl TerminalView {
         if text.is_empty() {
             return;
         }
-        if let Some(buf) = self.wb_compose.as_mut() {
-            buf.push_str(&text);
+        if let Some(line) = self.wb_compose.as_mut() {
+            line.insert(&text);
         }
         self.send(text.into_bytes(), cx);
+    }
+
+    /// Does the clipboard hold an image at all?
+    ///
+    /// The type LIST, asked once, rather than attempting a read and reading
+    /// the failure — a compositor with nothing on the clipboard and one
+    /// holding a picture fail an image read identically, and the difference
+    /// decides which of two quite different pastes happens.
+    fn clipboard_holds_an_image(&self) -> bool {
+        self.clipboard_image_mime().is_some()
+    }
+
+    /// Which image type the clipboard is offering, if any.
+    fn clipboard_image_mime(&self) -> Option<&'static str> {
+        use std::process::Command;
+        std::env::var_os("WAYLAND_DISPLAY")?;
+        let listed = Command::new("wl-paste").arg("--list-types").output().ok()?;
+        if !listed.status.success() {
+            return None;
+        }
+        let types: Vec<String> = String::from_utf8_lossy(&listed.stdout)
+            .lines()
+            .map(|l| l.trim().to_string())
+            .filter(|l| !l.is_empty())
+            .collect();
+        crate::workbench::best_image_mime(&types)
     }
 
     /// Ask the compositor's clipboard for an image, saved, and give its path.
@@ -6914,17 +7058,7 @@ impl TerminalView {
     /// and the caller simply pastes text instead.
     fn clipboard_image_path(&self) -> Option<String> {
         use std::process::Command;
-        std::env::var_os("WAYLAND_DISPLAY")?;
-        let listed = Command::new("wl-paste").arg("--list-types").output().ok()?;
-        if !listed.status.success() {
-            return None;
-        }
-        let types: Vec<String> = String::from_utf8_lossy(&listed.stdout)
-            .lines()
-            .map(|l| l.trim().to_string())
-            .filter(|l| !l.is_empty())
-            .collect();
-        let mime = crate::workbench::best_image_mime(&types)?;
+        let mime = self.clipboard_image_mime()?;
         let ext = crate::workbench::ext_of_image_mime(mime)?;
         let got = Command::new("wl-paste")
             .args(["--no-newline", "--type", mime])
@@ -6958,20 +7092,38 @@ impl TerminalView {
 
     /// The writing half, shared by both routes in.
     ///
-    /// Named by the CONTENT's hash, so pasting the same screenshot twice
-    /// writes one file and the second paste costs nothing; a counter would
-    /// have filled the directory with copies of one picture.
+    /// Named `pasted-<n>.<ext>`, counting up, deduplicated by content.
+    ///
+    /// The first version named the file by its content hash, which was tidy
+    /// and produced `15868dd2f4a1c093.png` — and an agent that then declared
+    /// it put "Bench Paste 15868dd2" on the bench as a TITLE. A filename is
+    /// not private: it travels into deliverable lines, into rails, into
+    /// whatever a person reads next, so it has to be a name rather than a
+    /// checksum.
+    ///
+    /// Dedupe survives, because it was worth having: the hash moves to a
+    /// sidecar, so the same screenshot pasted twice still resolves to one
+    /// file, and the file is still called something a person can say out loud.
     fn write_paste(&self, bytes: &[u8], ext: &str) -> Option<String> {
         use std::hash::{Hash, Hasher};
         let dir = self.bench_dir()?.join("pastes");
         std::fs::create_dir_all(&dir).ok()?;
         let mut h = std::collections::hash_map::DefaultHasher::new();
         bytes.hash(&mut h);
-        let path = dir.join(format!("{:016x}.{ext}", h.finish()));
-        if !path.exists() {
-            std::fs::write(&path, bytes).ok()?;
+        let stamp = dir.join(format!(".{:016x}", h.finish()));
+        if let Ok(known) = std::fs::read_to_string(&stamp) {
+            let path = dir.join(known.trim());
+            if path.exists() {
+                return Some(path.display().to_string());
+            }
         }
-        Some(path.display().to_string())
+        let n = (1..)
+            .find(|n| !dir.join(format!("pasted-{n}.{ext}")).exists())
+            .unwrap_or(1);
+        let name = format!("pasted-{n}.{ext}");
+        std::fs::write(dir.join(&name), bytes).ok()?;
+        let _ = std::fs::write(&stamp, &name);
+        Some(dir.join(&name).display().to_string())
     }
 
     /// Say a whole line to the agent through the bench.
@@ -6980,13 +7132,18 @@ impl TerminalView {
     /// by `ctl bench say`, which is how a caller with no pointer tests the
     /// thing a pointer would do.
     pub fn bench_say(&mut self, line: &str, cx: &mut Context<Self>) {
-        self.wb_compose = Some(line.to_string());
+        self.wb_compose = Some(crate::workbench::Line::holding(line));
         self.bench_send(cx);
     }
 
     /// Send whatever is in the composer to the agent, as if typed.
     fn bench_send(&mut self, cx: &mut Context<Self>) {
-        let Some(text) = self.wb_compose.take().filter(|t| !t.trim().is_empty()) else {
+        let Some(text) = self
+            .wb_compose
+            .take()
+            .map(|l| l.text().to_string())
+            .filter(|t| !t.trim().is_empty())
+        else {
             self.wb_compose = None;
             cx.notify();
             return;
@@ -7026,7 +7183,11 @@ impl TerminalView {
         target: Option<String>,
         cx: &mut Context<Self>,
     ) {
-        let comment = self.wb_compose.take().filter(|c| !c.trim().is_empty());
+        let comment = self
+            .wb_compose
+            .take()
+            .map(|l| l.text().to_string())
+            .filter(|c| !c.trim().is_empty());
         match self.bench.act(&action, target, comment) {
             crate::workbench::Dispatch::Open(href) => open_with_system(&href),
             crate::workbench::Dispatch::Tell(report) => {
@@ -7119,7 +7280,7 @@ impl TerminalView {
                 "[bench] w={pane_w} h={pane_h} rail={rail_px} how={how:?} agent={} armed={} chars={} focus={focused}",
                 self.mode.is_agent(),
                 self.wb_compose.is_some(),
-                self.wb_compose.as_ref().map_or(0, |c| c.chars().count())
+                self.wb_compose.as_ref().map_or(0, |l| l.chars())
             );
         }
 
@@ -7151,59 +7312,64 @@ impl TerminalView {
         let body = match self.bench.selected() {
             Some(surface) => {
                 let sid = surface.id.clone();
-                let kind = surface.kind.id().to_string();
-                let title = surface.title.clone();
+                let tint = crate::benchdraw::ink(crate::workbench::tint_of(&surface.kind), th);
                 let drawn = crate::benchdraw::body(surface, how, sk, th);
+                // A question opened from the rail is still a question, so it
+                // gets the chips the inline block gets. Built before the verb
+                // row because both borrow `self`.
+                let asked = match &surface.kind {
+                    crate::surface::Kind::Question(q) => Some(q.clone()),
+                    _ => None,
+                };
+                let answers = asked.map(|q| self.answer_chips(&q, sk, cx));
                 let verbs = self.bench_verbs(sk, th, cx);
-                sk.panel()
-                    .flex()
-                    .flex_col()
-                    .gap(px(9.))
-                    .child(
-                        div()
-                            .flex()
-                            .flex_row()
-                            .items_start()
-                            .gap(px(9.))
-                            .child(
-                                div()
-                                    .text_size(px(9.5))
-                                    .text_color(th.faint)
-                                    .font_family(th.font_family.clone())
-                                    .child(kind),
-                            )
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .min_w(px(0.))
-                                    .text_size(px(15.))
-                                    .text_color(th.text)
-                                    .child(title),
-                            )
-                            .child(
-                                div()
-                                    .text_size(px(13.))
-                                    .text_color(th.faint)
-                                    .cursor_pointer()
-                                    .child("\u{2715}")
-                                    .on_mouse_down(
-                                        MouseButton::Left,
-                                        cx.listener(|view, _ev: &MouseDownEvent, _w, cx| {
-                                            cx.stop_propagation();
-                                            view.bench.close_card();
-                                            cx.notify();
-                                        }),
-                                    ),
-                            ),
-                    )
-                    .child(drawn)
-                    .children(verbs)
-                    .child(
-                        div()
-                            .text_size(px(9.))
-                            .text_color(th.faint.alpha(0.6))
-                            .child(format!("surface {}", sid.as_str())),
-                    )
+                // One title, not two. The card drew `kind · title` here and
+                // then [`benchdraw::body`] drew its own heading directly
+                // underneath — the same two strings twice, six pixels apart,
+                // which is what an opened artifact looked like in Parker's
+                // screenshot. The renderer owns the heading, because the
+                // renderer is what knows how a KIND wants to introduce
+                // itself; the card keeps only the close, which is chrome.
+                crate::benchdraw::raised(
+                    sk.panel()
+                        .relative()
+                        .flex()
+                        .flex_col()
+                        .gap(px(12.))
+                        .p(px(16.))
+                        .bg(th.surface)
+                        .border_l(px(3.))
+                        .border_color(tint),
+                    tint,
+                    th,
+                )
+                .child(
+                    div()
+                        .absolute()
+                        .right(px(10.))
+                        .top(px(8.))
+                        .text_size(px(13.))
+                        .text_color(th.faint)
+                        .cursor_pointer()
+                        .child("\u{2715}")
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|view, _ev: &MouseDownEvent, _w, cx| {
+                                cx.stop_propagation();
+                                view.bench.close_card();
+                                cx.notify();
+                            }),
+                        ),
+                )
+                .child(drawn)
+                .children(answers)
+                .children(verbs)
+                .child(
+                    div()
+                        .text_size(px(9.))
+                        .text_color(th.faint.alpha(0.6))
+                        .child(format!("surface {}", sid.as_str())),
+                )
             }
             // No card: the conversation, and whatever the agent is waiting on.
             None => {
@@ -7237,35 +7403,8 @@ impl TerminalView {
                         d.child(crate::benchdraw::conversation(&tail, th))
                     })
                     .when_some(waiting, |d, q| {
-                        let chips: Vec<gpui::Div> = q
-                            .options
-                            .iter()
-                            .enumerate()
-                            .map(|(i, o)| {
-                                let label = format!("{} \u{b7} {}", i + 1, o.label);
-                                sk.chip(true)
-                                    .cursor_pointer()
-                                    .text_size(px(11.5))
-                                    .child(label)
-                                    .on_mouse_down(
-                                        MouseButton::Left,
-                                        cx.listener(move |view, _ev: &MouseDownEvent, _w, cx| {
-                                            cx.stop_propagation();
-                                            view.bench_choose(i, cx);
-                                        }),
-                                    )
-                            })
-                            .collect();
-                        d.child(
-                            crate::benchdraw::waiting_block(&q, sk, th).child(
-                                div()
-                                    .flex()
-                                    .flex_row()
-                                    .flex_wrap()
-                                    .gap(px(6.))
-                                    .children(chips),
-                            ),
-                        )
+                        let chips = self.answer_chips(&q, sk, cx);
+                        d.child(crate::benchdraw::waiting_block(&q, sk, th).child(chips))
                     })
             }
         };
@@ -7273,14 +7412,21 @@ impl TerminalView {
         // ── the composer ────────────────────────────────────────────────────
         let composer =
             (self.mode.is_agent() && how != crate::workbench::Embodiment::Summary).then(|| {
-                crate::benchdraw::composer(self.wb_compose.as_deref(), focused, sk, th)
+                // The composer is monospace at 17px and the grid's own cell
+                // was measured for `th.font_size`, so one is the other scaled.
+                // Deriving it beats measuring again: the two can then never
+                // disagree about what a column is, which is the whole basis of
+                // placing a caret by arithmetic.
+                let advance = self.cell_w * crate::benchdraw::COMPOSER_PT / th.font_size;
+                crate::benchdraw::composer(self.wb_compose.as_ref(), focused, advance, sk, th)
+                    .child(crate::benchdraw::text_origin_probe(
+                        self.wb_text_origin.clone(),
+                    ))
                     .on_mouse_down(
                         MouseButton::Left,
-                        cx.listener(|view, _ev: &MouseDownEvent, window, cx| {
+                        cx.listener(move |view, ev: &MouseDownEvent, window, cx| {
                             cx.stop_propagation();
-                            if view.wb_compose.is_none() {
-                                view.wb_compose = Some(String::new());
-                            }
+                            view.bench_click(ev.position.x.into(), advance, cx);
                             window.focus(&view.focus_handle, cx);
                             cx.notify();
                         }),
@@ -7373,16 +7519,20 @@ impl TerminalView {
                         // The path is the one an agent computes for itself
                         // from its own environment, so a person reading it
                         // can drop a file there by hand and watch it land.
+                        // "No decisions", not a filesystem path. The path is
+                        // how an AGENT delivers a surface and it was written
+                        // where a PERSON looks at an empty shelf — Parker:
+                        // *"default text is for a robot... should be 'No
+                        // artifacts' -- 'No decisions' etc."*. The path lives
+                        // in the protocol doc, which is where somebody asking
+                        // that question is already standing.
                         .when(rows.is_empty(), |d| {
                             d.child(
                                 div()
-                                    .text_size(px(9.5))
+                                    .text_size(px(11.))
                                     .text_color(th.faint)
                                     .font_family(th.font_family.clone())
-                                    .child(match self.bench_dir() {
-                                        Some(dir) => format!("drop a .json in {}", dir.display()),
-                                        None => "nothing here yet".to_string(),
-                                    }),
+                                    .child(format!("No {}", shelf_now.empty_word())),
                             )
                         })
                         .children(rows.into_iter().map(|row| {
@@ -7442,7 +7592,7 @@ impl TerminalView {
                                     MouseButton::Left,
                                     cx.listener(|view, _ev: &MouseDownEvent, window, cx| {
                                         if view.wb_compose.is_none() {
-                                            view.wb_compose = Some(String::new());
+                                            view.wb_compose = Some(crate::workbench::Line::new());
                                         }
                                         window.focus(&view.focus_handle, cx);
                                         cx.notify();

@@ -215,6 +215,157 @@ pub fn rail_fit(pane_w: f32, wanted: bool) -> RailFit {
     RailFit::Open(want as u32)
 }
 
+/// The composer's local shadow of the agent's own input line, WITH a caret.
+///
+/// The bench types straight into a pseudoterminal, so the real line editor is
+/// the agent's: Claude's own history, completion and kill-ring do the work,
+/// and nothing here should try to replace them. What this holds is a mirror,
+/// and it exists for one reason — a person cannot put their cursor in the
+/// middle of a line they cannot see the cursor in. Parker: *"I cannot CURSOR
+/// around inside the CHATBOX, I need to be able to click here to add
+/// something, click there to add something."*
+///
+/// **Mirroring, not owning.** Every edit here has already been sent as bytes;
+/// this applies the same edit to the copy so the box can draw where the agent's
+/// caret now is. Both start empty and in sync, and every operation a person can
+/// perform moves both by the same amount, so they stay in sync. When they do
+/// drift — a history recall, a completion, anything the agent's editor does on
+/// its own — the drift is visible in the agent's echo directly above, and
+/// pressing enter resets both to empty.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Line {
+    text: String,
+    /// In CHARACTERS, not bytes. A byte index would put the caret inside a
+    /// multi-byte glyph the first time somebody pastes an em dash.
+    caret: usize,
+}
+
+impl Line {
+    pub fn new() -> Line {
+        Line::default()
+    }
+
+    /// A line already holding text, caret at the end — what a paste or a
+    /// scripted `ctl bench say` produces.
+    pub fn holding(text: impl Into<String>) -> Line {
+        let text = text.into();
+        let caret = text.chars().count();
+        Line { text, caret }
+    }
+
+    pub fn text(&self) -> &str {
+        &self.text
+    }
+
+    pub fn caret(&self) -> usize {
+        self.caret
+    }
+
+    pub fn chars(&self) -> usize {
+        self.text.chars().count()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.text.is_empty()
+    }
+
+    /// Insert at the caret and step over it.
+    pub fn insert(&mut self, s: &str) {
+        let at = self.byte_at(self.caret);
+        self.text.insert_str(at, s);
+        self.caret += s.chars().count();
+    }
+
+    /// Delete the character BEFORE the caret. `false` when there is none,
+    /// which is how the caller knows the agent's own editor did nothing
+    /// either.
+    pub fn backspace(&mut self) -> bool {
+        if self.caret == 0 {
+            return false;
+        }
+        let from = self.byte_at(self.caret - 1);
+        let to = self.byte_at(self.caret);
+        self.text.replace_range(from..to, "");
+        self.caret -= 1;
+        true
+    }
+
+    /// Delete the character AT the caret.
+    pub fn delete(&mut self) -> bool {
+        if self.caret >= self.chars() {
+            return false;
+        }
+        let from = self.byte_at(self.caret);
+        let to = self.byte_at(self.caret + 1);
+        self.text.replace_range(from..to, "");
+        true
+    }
+
+    /// Put the caret at a character index, clamped to the line.
+    pub fn seek(&mut self, to: usize) {
+        self.caret = to.min(self.chars());
+    }
+
+    pub fn left(&mut self) {
+        self.caret = self.caret.saturating_sub(1);
+    }
+
+    pub fn right(&mut self) {
+        self.caret = (self.caret + 1).min(self.chars());
+    }
+
+    pub fn home(&mut self) {
+        self.caret = 0;
+    }
+
+    pub fn end(&mut self) {
+        self.caret = self.chars();
+    }
+
+    pub fn clear(&mut self) {
+        self.text.clear();
+        self.caret = 0;
+    }
+
+    fn byte_at(&self, chars: usize) -> usize {
+        self.text
+            .char_indices()
+            .nth(chars)
+            .map(|(i, _)| i)
+            .unwrap_or(self.text.len())
+    }
+}
+
+/// Which character a click at `x` means, in a monospace line.
+///
+/// `x` is measured from the left edge of the TEXT, not of the box. Rounding
+/// rather than truncating, because clicking the right half of a character
+/// means "after this one" to everybody who has ever used a text field — a
+/// truncating version puts the caret one place left of where the person
+/// pointed and feels broken without being wrong.
+pub fn caret_for_click(x: f32, advance: f32, chars: usize) -> usize {
+    if advance <= 0.0 || x <= 0.0 {
+        return 0;
+    }
+    ((x / advance).round() as usize).min(chars)
+}
+
+/// The bytes that move an agent's own line editor from one column to another.
+///
+/// Arrow keys, one per column, because that is the only movement every line
+/// editor on the far end agrees on. `home`/`end` would be fewer bytes and are
+/// not portable: readline, Claude's editor and a raw shell all answer
+/// differently to the several escape sequences that claim to mean "start of
+/// line", and a wrong guess moves the caret somewhere nobody asked for.
+pub fn caret_move(from: usize, to: usize) -> Vec<u8> {
+    let (seq, n) = if to > from {
+        (b"\x1b[C", to - from)
+    } else {
+        (b"\x1b[D", from - to)
+    };
+    seq.repeat(n)
+}
+
 /// Is this keystroke a paste?
 ///
 /// All three chords a person might use, because they arrive from three
@@ -493,7 +644,7 @@ impl Bench {
             .selected
             .as_ref()
             .and_then(|id| self.get(id))
-            .is_some_and(|s| s.kind.shelf() == shelf)
+            .is_some_and(|s| shelf.holds(s.kind.shelf()))
         {
             self.selected = self.rows().first().map(|r| r.id.clone());
         }
@@ -525,7 +676,7 @@ impl Bench {
 
     /// How many surfaces sit on each shelf, and how many of those are unseen.
     pub fn counts(&self, shelf: Shelf) -> (usize, usize) {
-        let on = self.surfaces.iter().filter(|s| s.kind.shelf() == shelf);
+        let on = self.surfaces.iter().filter(|s| shelf.holds(s.kind.shelf()));
         let mut total = 0;
         let mut unseen = 0;
         for s in on {
@@ -549,7 +700,7 @@ impl Bench {
         self.surfaces
             .iter()
             .rev()
-            .filter(|s| s.kind.shelf() == shelf)
+            .filter(|s| shelf.holds(s.kind.shelf()))
             .map(|s| Row {
                 selected: self.selected.as_ref() == Some(&s.id),
                 unseen: self.unseen.contains(&s.id),
@@ -646,7 +797,9 @@ impl Bench {
                     }
                 }
                 let on_screen = self.face == Face::Workbench
-                    && self.get(&id).is_some_and(|s| s.kind.shelf() == self.shelf);
+                    && self
+                        .get(&id)
+                        .is_some_and(|s| self.shelf.holds(s.kind.shelf()));
                 if on_screen {
                     self.unseen.remove(&id);
                 } else {
@@ -673,7 +826,7 @@ impl Bench {
         let ids: Vec<SurfaceId> = self
             .surfaces
             .iter()
-            .filter(|s| s.kind.shelf() == self.shelf)
+            .filter(|s| self.shelf.holds(s.kind.shelf()))
             .map(|s| s.id.clone())
             .collect();
         for id in ids {
@@ -974,6 +1127,7 @@ mod tests {
         b.apply(doc("a", "A"));
         assert_eq!(b.unseen_total(), 1, "it arrived behind the terminal face");
 
+        b.set_shelf(Shelf::Artifacts);
         b.toggle_face();
         assert_eq!(b.face(), Face::Workbench);
         assert_eq!(
@@ -993,14 +1147,24 @@ mod tests {
     }
 
     #[test]
-    fn counts_are_per_shelf_and_report_their_own_unseen() {
+    fn the_overview_is_a_view_over_everything_and_the_others_are_filters() {
+        // The shelf this replaced held the leftovers, so it was empty here and
+        // the test said so. An overview that can be empty while the bench holds
+        // three surfaces is the misnomer the rename was supposed to fix, and
+        // this is the assertion that keeps it fixed.
         let mut b = Bench::new();
         b.apply(doc("a", "A"));
         b.apply(doc("b", "B"));
         b.apply(decision("d"));
         assert_eq!(b.counts(Shelf::Artifacts), (2, 2));
         assert_eq!(b.counts(Shelf::Decisions), (1, 1));
-        assert_eq!(b.counts(Shelf::Other), (0, 0));
+        assert_eq!(b.counts(Shelf::Overview), (3, 3), "everything, once each");
+        assert_eq!(b.rows_for(Shelf::Overview).len(), 3);
+        // And looking at the overview marks the whole bench seen, because the
+        // whole bench is what was on screen.
+        b.set_shelf(Shelf::Overview);
+        b.set_face(Face::Workbench);
+        assert_eq!(b.unseen_total(), 0);
     }
 
     #[test]
@@ -1035,16 +1199,16 @@ mod tests {
     fn a_changeset_is_pending_until_every_part_has_a_verdict() {
         let mut b = Bench::new();
         b.apply(changeset("c"));
-        assert_eq!(b.rows_for(Shelf::Other)[0].tint, Tint::Pending);
+        assert_eq!(b.rows_for(Shelf::Overview)[0].tint, Tint::Pending);
         b.select(&SurfaceId("c".into()));
         b.act(&Action::AcceptPart, Some("h1".into()), None);
         assert_eq!(
-            b.rows_for(Shelf::Other)[0].tint,
+            b.rows_for(Shelf::Overview)[0].tint,
             Tint::Pending,
             "one answered part is not an answered changeset"
         );
         b.act(&Action::RejectPart, Some("h2".into()), None);
-        assert_eq!(b.rows_for(Shelf::Other)[0].tint, Tint::Settled);
+        assert_eq!(b.rows_for(Shelf::Overview)[0].tint, Tint::Settled);
     }
 
     #[test]
@@ -1315,6 +1479,82 @@ mod tests {
     }
 
     #[test]
+    fn the_caret_moves_through_a_line_the_way_a_text_field_does() {
+        let mut l = Line::new();
+        l.insert("hello");
+        assert_eq!((l.text(), l.caret()), ("hello", 5));
+
+        // Back three and type: the insert lands where the caret is.
+        l.left();
+        l.left();
+        l.left();
+        assert_eq!(l.caret(), 2);
+        l.insert("X");
+        assert_eq!((l.text(), l.caret()), ("heXllo", 3));
+
+        // Backspace takes what is behind, delete takes what is in front.
+        assert!(l.backspace());
+        assert_eq!((l.text(), l.caret()), ("hello", 2));
+        assert!(l.delete());
+        assert_eq!((l.text(), l.caret()), ("helo", 2));
+
+        // The ends hold rather than wrapping or panicking.
+        l.home();
+        assert_eq!(l.caret(), 0);
+        assert!(!l.backspace(), "nothing behind the start");
+        l.left();
+        assert_eq!(l.caret(), 0);
+        l.end();
+        assert_eq!(l.caret(), 4);
+        assert!(!l.delete(), "nothing in front of the end");
+        l.right();
+        assert_eq!(l.caret(), 4);
+    }
+
+    #[test]
+    fn a_caret_in_characters_survives_text_that_is_not_ascii() {
+        // The bug a byte index would have: the caret lands INSIDE a glyph and
+        // the next insert splits it into mojibake. Every one of these is
+        // multi-byte, and one is multi-CHAR (a flag is two scalars).
+        let mut l = Line::holding("a—é🇨🇦b");
+        assert_eq!(l.caret(), l.chars());
+        for _ in 0..l.chars() {
+            l.left();
+        }
+        assert_eq!(l.caret(), 0);
+        l.right();
+        l.insert("!");
+        assert!(l.text().starts_with("a!—"), "{}", l.text());
+        // And the byte index the caret resolves to is still a char
+        // boundary, which is the whole point: `insert` panics otherwise.
+        l.end();
+        l.insert("z");
+        assert!(l.text().ends_with("bz"), "{}", l.text());
+    }
+
+    #[test]
+    fn a_click_lands_on_the_character_it_points_at() {
+        // 9px cells, 5 characters. Left of everything is the start; past the
+        // end is the end, never beyond it.
+        assert_eq!(caret_for_click(-40.0, 9.0, 5), 0);
+        assert_eq!(caret_for_click(0.0, 9.0, 5), 0);
+        // The right half of a character means after it, the left half before.
+        assert_eq!(caret_for_click(3.0, 9.0, 5), 0);
+        assert_eq!(caret_for_click(6.0, 9.0, 5), 1);
+        assert_eq!(caret_for_click(9.0, 9.0, 5), 1);
+        assert_eq!(caret_for_click(400.0, 9.0, 5), 5, "clamped to the line");
+        // A font that has not been measured yet must not divide by zero.
+        assert_eq!(caret_for_click(40.0, 0.0, 5), 0);
+    }
+
+    #[test]
+    fn moving_the_agents_caret_costs_one_arrow_per_column() {
+        assert_eq!(caret_move(3, 3), Vec::<u8>::new(), "already there");
+        assert_eq!(caret_move(0, 2), b"\x1b[C\x1b[C".to_vec());
+        assert_eq!(caret_move(5, 3), b"\x1b[D\x1b[D".to_vec());
+    }
+
+    #[test]
     fn every_paste_chord_a_person_might_use_is_a_paste() {
         assert!(is_paste_chord("v", true, false), "the graphical chord");
         assert!(is_paste_chord("v", true, true), "the terminal chord");
@@ -1415,7 +1655,7 @@ mod tests {
         ));
         assert_eq!(b.rows_for(Shelf::Artifacts)[0].tint, Tint::Ident);
         assert_eq!(b.rows_for(Shelf::Decisions)[0].tint, Tint::Waiting);
-        let other = b.rows_for(Shelf::Other);
+        let other = b.rows_for(Shelf::Overview);
         assert!(other.iter().any(|r| r.tint == Tint::Unknown));
         assert!(other.iter().any(|r| r.tint == Tint::Pending));
     }
