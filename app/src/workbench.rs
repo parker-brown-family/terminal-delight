@@ -79,6 +79,25 @@ pub enum Face {
     Workbench,
 }
 
+/// How much of the tube's vignette a face gets.
+///
+/// The bench gets none. The vignette is an inset shadow on the pane's content
+/// box, darkest at the edges, and the composer is the bench's bottom-most
+/// element — so on the bench the line a person was typing was the darkest
+/// text on the pane, by construction. The composer diagnostic measured it
+/// from photographs (*text dims toward the newest line*); the plan's §3-03
+/// confirmed it from `crt.rs`. The terminal keeps its grade untouched: the
+/// vignette is the tube's, and the bench is not in the tube. It keeps the
+/// scanlines, the bloom and the bend, which are.
+///
+/// Decided 2026-09-17, the recommendation taken.
+pub fn vignette_on(face: Face, vignette: f32) -> f32 {
+    match face {
+        Face::Terminal => vignette,
+        Face::Workbench => 0.0,
+    }
+}
+
 impl Face {
     pub fn other(self) -> Face {
         match self {
@@ -2540,6 +2559,14 @@ mod tests {
         );
         // And an empty rect cannot divide by zero.
         assert_eq!(unwarp((0.0, 0.0, 0.0, 0.0), k1, k2, 3.0, 4.0), (3.0, 4.0));
+    }
+
+    #[test]
+    fn the_bench_is_exempt_from_the_tubes_vignette_and_the_terminal_is_not() {
+        assert_eq!(vignette_on(Face::Workbench, 0.7), 0.0);
+        assert_eq!(vignette_on(Face::Workbench, 0.0), 0.0);
+        assert_eq!(vignette_on(Face::Terminal, 0.7), 0.7);
+        assert_eq!(vignette_on(Face::Terminal, 0.0), 0.0);
     }
 
     #[test]

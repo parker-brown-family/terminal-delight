@@ -7693,7 +7693,13 @@ impl Render for TerminalView {
                     }),
             )
             .when(std::env::var("TD_NOGLASS").is_err(), |el| {
-                el.child(crt::glass(&th, &self.fx))
+                // The bench is not in the tube. It keeps the scanlines, the
+                // bloom and the bend, and loses the edge fade that put the
+                // composer — the bench's bottom-most element — in the darkest
+                // band of the pane. See [`crate::workbench::vignette_on`].
+                let mut glass_th = th.clone();
+                glass_th.vignette = crate::workbench::vignette_on(face_now, th.vignette);
+                el.child(crt::glass(&glass_th, &self.fx))
             })
             // raised bezel frame sits above the glass, framing the whole pane
             .when(th.bezel > 0.001, |el| el.child(crt::bezel(&th)))
