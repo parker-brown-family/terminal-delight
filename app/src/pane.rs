@@ -1941,6 +1941,12 @@ pub struct TerminalView {
     /// elements as they paint, read by the root mouse handler. See
     /// [`crate::benchdraw::zone`].
     wb_zones: std::rc::Rc<std::cell::RefCell<Vec<crate::workbench::Zone>>>,
+    /// What the pointer looks like over the bench, decided from the un-bent
+    /// position on every mouse move and painted by the bench's pointer hook.
+    wb_pointer: crate::workbench::Pointer,
+    /// Whether the bench is showing the agent's own scrollback this frame —
+    /// `shows.mirror`, kept for the wheel handler that runs between frames.
+    wb_mirror: bool,
     /// The live question currently on this pane's bench, if one is up.
     ///
     /// Held so it can be RETIRED the moment the pane stops waiting — the
@@ -3010,6 +3016,8 @@ impl TerminalView {
             wb_quiet: 0,
             wb_state_since: None,
             wb_zones: std::rc::Rc::new(std::cell::RefCell::new(Vec::new())),
+            wb_pointer: crate::workbench::Pointer::Arrow,
+            wb_mirror: false,
             wb_live_q: None,
         }
     }
@@ -5398,6 +5406,12 @@ impl TerminalView {
     }
 
     fn on_mouse_move(&mut self, ev: &MouseMoveEvent, _w: &mut Window, cx: &mut Context<Self>) {
+        // On the bench, the pointer's shape follows the UN-BENT position —
+        // a hand over what the tube shows as a button. Notifies on a change
+        // only, like the two below.
+        if self.bench.face() == crate::workbench::Face::Workbench {
+            self.bench_hover(ev.position, cx);
+        }
         // The peel corner curls under the pointer. No-op with no note stuck here,
         // and it only notifies on a change, so ordinary mousing costs nothing.
         self.sticky_hover(ev.position, cx);
@@ -7009,7 +7023,7 @@ impl Render for TerminalView {
             .map(|b| f32::from(b.size.height))
             .unwrap_or(0.0);
         let bench_el = if on_bench {
-            self.bench_el(&th, &sk, pane_w, pane_h, focused_now)
+            self.bench_el(&th, &sk, pane_w, pane_h, focused_now, cx.weak_entity())
         } else {
             div().into_any_element()
         };

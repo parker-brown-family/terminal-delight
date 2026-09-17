@@ -280,7 +280,6 @@ pub fn rail_row(row: &Row, sk: &Skin, th: &Theme) -> Div {
         .pl(px(7.))
         .pr(px(6.))
         .py(px(5.))
-        .cursor_pointer()
         .border_l(px(if on_cursor { 4. } else { 2. }))
         .border_color(tint)
         .rounded(sk.radius())
@@ -349,7 +348,6 @@ pub fn shelf_tab(
     th: &Theme,
 ) -> Div {
     sk.chip(active)
-        .cursor_pointer()
         .text_size(px(10.))
         .font_family(th.font_family.clone())
         .when(unseen > 0 && !active, |d| {
@@ -1479,7 +1477,6 @@ pub fn composer(
             .px(px(if tight { 10. } else { 18. }))
             .py(px(if tight { 8. } else { 16. }))
             .bg(th.surface)
-            .cursor_text()
             // Lit whether or not it is armed. The border was the only thing
             // saying "this is an input" and it only said so AFTER the first
             // click, which is the wrong way round: the invitation has to be
@@ -1511,7 +1508,7 @@ pub fn composer(
                     .min_w(px(0.))
                     .max_h(px(shows.composer_max))
                     // A SCROLL CONTAINER, so the wheel over this box moves
-                    // this box.
+                    // this box and not the terminal behind it.
                     //
                     // The pane's own wheel handler sits on its root element
                     // and scrolls the terminal, so a scroll anywhere inside a
@@ -1521,26 +1518,31 @@ pub fn composer(
                     // up and down there... we must still be adhering to good
                     // programming principles!!!!"*
                     //
-                    // Which is exactly why this is a container and not a
-                    // pointer-position test. Working out which region the
-                    // mouse is over means duplicating layout in a hit-test
-                    // that has no way to stay in step with it; gpui already
-                    // hit-tests every element it laid out, so declaring this
-                    // one scrollable puts the routing in the one place that
-                    // cannot disagree with where the box actually is.
+                    // gpui does the clipping, the offset and the clamping.
+                    // It does NOT decide which box the wheel is over: under
+                    // the tube its hit-test is flat and the picture is bent,
+                    // so the pane's pointer hook un-bends the wheel the way
+                    // it un-bends clicks and drives this container's
+                    // `ScrollHandle` itself — `TerminalView::bench_wheel`.
                     .overflow_y_scroll()
                     .track_scroll(&scroll)
                     .flex()
                     .flex_col()
-                    // The END stays visible, not the beginning.
+                    // The END stays visible, not the beginning — by following
+                    // the caret, not by pinning the layout.
                     //
-                    // A box that clips the bottom hides the one part of a
-                    // draft a person is actually looking at: the words they
-                    // are typing right now. Overflowing upward is what a
-                    // terminal does with scrollback and what every chat
-                    // composer does with a long message, and it is the reason
-                    // the caret is never off screen.
-                    .justify_end()
+                    // This box was `justify_end`, which puts a long draft's
+                    // tail at the bottom by overflowing the TOP, and a gpui
+                    // scroll container cannot scroll into that: its offset is
+                    // held between zero and the content's overhang, and an
+                    // overhang at the top is on the wrong side of zero. So a
+                    // long draft showed its last lines and the wheel could
+                    // never reach its first. Now the box lays out from the
+                    // top like any scroll container, and the view asks for
+                    // its bottom after every edit made at the end of the line
+                    // (`TerminalView::composer_follows`) — which is what every
+                    // chat composer does: the caret stays on screen while you
+                    // type, and the wheel reads back over what you wrote.
                     .text_size(px(pt))
                     .font_family(th.font_family.clone())
                     .text_color(th.text)
@@ -1693,7 +1695,6 @@ pub fn rail_handle(open: bool, th: &Theme) -> Div {
         .flex()
         .items_center()
         .justify_center()
-        .cursor_pointer()
         .child(
             // BIGGER and BOLD. It was a thirteen-point chevron in the faint
             // ink — the dimmest mark on the surface, holding the only gesture
