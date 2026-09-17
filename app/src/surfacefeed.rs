@@ -592,6 +592,209 @@ pub fn run_cli(args: &[String]) -> i32 {
 }
 
 // ---------------------------------------------------------------------------
+// retention
+// ---------------------------------------------------------------------------
+
+/// How many surfaces one pane keeps ON DISK.
+///
+/// Eight times [`crate::surface::PANE_HISTORY_CAP`], and deliberately not equal
+/// to it. That constant's own comment promises "the store on disk is what
+/// remembers, and this is what is at hand" — a disk cap equal to the shelf cap
+/// would make that sentence false, because nothing would be remembered that was
+/// not already at hand. This number is here to bound a runaway writer, not to
+/// decide what is worth keeping.
+pub const PANE_DISK_CAP: usize = 512;
+
+/// How long a session's directory outlives the session that wrote it.
+///
+/// The growth that was actually measured is not files piling up inside one
+/// pane — it is whole session directories. Nine appeared in one day on this
+/// machine, eight of them one-shot demo and screenshot keys that will never be
+/// opened again, and every one of them was still there. A session that is gone
+/// cannot produce a surface, so its directory has a final mtime, and that is
+/// the honest clock to age it by.
+pub const DEAD_SESSION_DAYS: u64 = 30;
+
+const DAY_MS: u64 = 24 * 60 * 60 * 1000;
+
+/// What one prune did — and, separately, what it declined to judge.
+///
+/// `unknown` is its own field on purpose. An entry whose age could not be read
+/// is not an entry of age zero, and the two must not reach the caller as the
+/// same number: one says nothing was old enough to delete, the other says the
+/// question could not be asked. Anything counted here was KEPT.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct Pruned {
+    /// Whole session directories removed, their panes with them.
+    pub sessions: usize,
+    /// Individual surface files removed for sitting past [`PANE_DISK_CAP`].
+    pub files: usize,
+    /// Entries kept because their age could not be established.
+    pub unknown: usize,
+}
+
+impl Pruned {
+    fn add(&mut self, other: Pruned) {
+        self.sessions += other.sessions;
+        self.files += other.files;
+        self.unknown += other.unknown;
+    }
+}
+
+/// Bound the surface store: drop dead sessions whole, cap what one pane keeps.
+///
+/// `live` is this window's own session key, and it is not optional in spirit —
+/// a caller that does not yet know which directory is its own must not run
+/// this, because the rule protecting the live session cannot be applied by a
+/// process that cannot name it. Passing `None` therefore prunes nothing at all
+/// rather than guessing.
+///
+/// Nothing here deletes a directory this module could not itself have made: a
+/// name that does not survive [`sanitise`] unchanged was written by something
+/// else and is left exactly where it is, as is anything that is not a plain
+/// directory.
+pub fn prune(root: &Path, live: Option<&str>, now: u64) -> Pruned {
+    let mut out = Pruned::default();
+    let Some(live) = live.map(sanitise) else {
+        return out; // no session key: the protection cannot be applied, so nothing is
+    };
+    let Ok(entries) = fs::read_dir(root) else {
+        return out; // no store yet is not a failure; it is the ordinary first run
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        if sanitise(name) != name {
+            continue; // not a name this module writes
+        }
+        let Ok(meta) = fs::symlink_metadata(&path) else {
+            out.unknown += 1;
+            continue;
+        };
+        if !meta.is_dir() || meta.file_type().is_symlink() {
+            continue;
+        }
+        if name == live {
+            out.add(cap_session(&path)); // ours: capped, never removed, however old
+            continue;
+        }
+        match newest_ms(&path) {
+            None => out.unknown += 1, // age unknown is not age zero — keep it
+            Some(newest) if now.saturating_sub(newest) > DEAD_SESSION_DAYS * DAY_MS => {
+                if fs::remove_dir_all(&path).is_ok() {
+                    out.sessions += 1;
+                }
+            }
+            Some(_) => out.add(cap_session(&path)),
+        }
+    }
+    out
+}
+
+/// The newest mtime anywhere one level down, or `None` if nothing can be read.
+///
+/// Files first, because a file's mtime is when an agent last actually wrote
+/// something; the directory's own mtime is the fallback, which is what an empty
+/// session has instead of an answer.
+fn newest_ms(session: &Path) -> Option<u64> {
+    let mut newest: Option<u64> = None;
+    let mut consider = |p: &Path| {
+        if let Some(ms) = mtime_ms(p) {
+            newest = Some(newest.map_or(ms, |n: u64| n.max(ms)));
+        }
+    };
+    if let Ok(panes) = fs::read_dir(session) {
+        for pane in panes.flatten() {
+            let dir = pane.path();
+            if !dir.is_dir() {
+                consider(&dir);
+                continue;
+            }
+            if let Ok(files) = fs::read_dir(&dir) {
+                for file in files.flatten() {
+                    consider(&file.path());
+                }
+            }
+        }
+    }
+    newest.or_else(|| mtime_ms(session))
+}
+
+fn mtime_ms(path: &Path) -> Option<u64> {
+    fs::metadata(path)
+        .ok()?
+        .modified()
+        .ok()?
+        .duration_since(UNIX_EPOCH)
+        .ok()
+        .map(|d| d.as_millis() as u64)
+}
+
+/// Apply [`PANE_DISK_CAP`] to every pane directory of one session.
+fn cap_session(session: &Path) -> Pruned {
+    let mut out = Pruned::default();
+    let Ok(panes) = fs::read_dir(session) else {
+        return out;
+    };
+    for pane in panes.flatten() {
+        let dir = pane.path();
+        if dir.is_dir() {
+            out.add(cap_pane(&dir));
+        }
+    }
+    out
+}
+
+/// Keep the newest [`PANE_DISK_CAP`] surfaces in one pane directory.
+///
+/// Only `.json` is a candidate, which is the same line [`Feed::sweep_pane`]
+/// draws: `actions.jsonl` is this window's own journal of what a person
+/// pressed, and a retention rule for surfaces has no business deleting it. A
+/// file whose mtime cannot be read is not sortable against the others, so it is
+/// never a candidate for deletion — it is counted as unknown and kept.
+fn cap_pane(dir: &Path) -> Pruned {
+    let mut out = Pruned::default();
+    let Ok(entries) = fs::read_dir(dir) else {
+        return out;
+    };
+    let mut dated: Vec<(u64, PathBuf)> = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("json") {
+            continue;
+        }
+        let Ok(meta) = fs::symlink_metadata(&path) else {
+            out.unknown += 1;
+            continue;
+        };
+        if meta.is_dir() {
+            continue; // a directory named `something.json` is not a surface
+        }
+        // Through the link rather than at it, because the age that decides this
+        // is the age of what was written. A link pointing at nothing therefore
+        // has no age at all, and something with no age is never a candidate.
+        match mtime_ms(&path) {
+            Some(ms) => dated.push((ms, path)),
+            None => out.unknown += 1,
+        }
+    }
+    if dated.len() <= PANE_DISK_CAP {
+        return out;
+    }
+    // Newest first, and among a tie the later name first, so a filesystem whose
+    // mtime resolution is coarse still evicts deterministically.
+    dated.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| b.1.cmp(&a.1)));
+    for (_, path) in dated.into_iter().skip(PANE_DISK_CAP) {
+        if fs::remove_file(&path).is_ok() {
+            out.files += 1;
+        }
+    }
+    out
+}
+
+// ---------------------------------------------------------------------------
 // tests
 // ---------------------------------------------------------------------------
 
@@ -939,5 +1142,190 @@ mod tests {
         let dir = pane_dir("abc123", 7);
         assert!(dir.ends_with("abc123/7"), "{dir:?}");
         assert_eq!(actions_path("abc123", 7), dir.join("actions.jsonl"));
+    }
+
+    // -----------------------------------------------------------------------
+    // retention
+    // -----------------------------------------------------------------------
+
+    /// Move a file's mtime to an exact instant, so age is a fact of the test
+    /// rather than a fact of how long the test took to run.
+    fn age_file(path: &Path, ms: u64) {
+        let when = UNIX_EPOCH + std::time::Duration::from_millis(ms);
+        let file = fs::OpenOptions::new()
+            .write(true)
+            .open(path)
+            .expect("open to age");
+        file.set_times(fs::FileTimes::new().set_modified(when))
+            .expect("set mtime");
+    }
+
+    fn a_surface_in(root: &Path, session: &str, pane: u64, name: &str) -> PathBuf {
+        let dir = root.join(session).join(pane.to_string());
+        drop_surface(&dir, name, &a_doc(name)).expect("drop")
+    }
+
+    #[test]
+    fn a_session_nobody_has_written_to_in_a_month_is_removed_whole() {
+        let scratch = Scratch::new("prune-dead");
+        let root = scratch.path();
+        let old = a_surface_in(root, "wbshot123", 1, "s");
+        age_file(&old, NOW - 40 * DAY_MS);
+
+        let out = prune(root, Some("live"), NOW);
+
+        assert_eq!(out.sessions, 1, "the dead session directory is gone");
+        assert_eq!(out.unknown, 0);
+        assert!(!root.join("wbshot123").exists());
+    }
+
+    #[test]
+    fn a_session_written_to_this_week_is_left_alone() {
+        let scratch = Scratch::new("prune-recent");
+        let root = scratch.path();
+        let recent = a_surface_in(root, "yesterday", 1, "s");
+        age_file(&recent, NOW - 2 * DAY_MS);
+
+        let out = prune(root, Some("live"), NOW);
+
+        assert_eq!(out.sessions, 0);
+        assert!(root.join("yesterday").exists());
+    }
+
+    #[test]
+    fn this_windows_own_session_is_never_removed_however_old_it_looks() {
+        let scratch = Scratch::new("prune-live");
+        let root = scratch.path();
+        let mine = a_surface_in(root, "live", 1, "s");
+        age_file(&mine, NOW - 400 * DAY_MS);
+
+        let out = prune(root, Some("live"), NOW);
+
+        assert_eq!(out.sessions, 0, "the live session outranks its own mtime");
+        assert!(mine.exists());
+    }
+
+    #[test]
+    fn a_prune_that_cannot_name_the_live_session_deletes_nothing() {
+        let scratch = Scratch::new("prune-nokey");
+        let root = scratch.path();
+        let old = a_surface_in(root, "ancient", 1, "s");
+        age_file(&old, NOW - 400 * DAY_MS);
+
+        let out = prune(root, None, NOW);
+
+        assert_eq!(out, Pruned::default(), "no key, no judgement, no deletions");
+        assert!(old.exists());
+    }
+
+    #[test]
+    fn a_directory_this_module_did_not_write_is_left_where_it_is() {
+        let scratch = Scratch::new("prune-foreign");
+        let root = scratch.path();
+        let foreign = root.join("someone.elses.backup");
+        fs::create_dir_all(&foreign).unwrap();
+        let file = foreign.join("keep.json");
+        fs::write(&file, b"{}").unwrap();
+        age_file(&file, NOW - 400 * DAY_MS);
+
+        let out = prune(root, Some("live"), NOW);
+
+        assert_eq!(out.sessions, 0);
+        assert!(
+            file.exists(),
+            "a name this module cannot have written is not ours to delete"
+        );
+    }
+
+    #[test]
+    fn a_pane_over_the_disk_cap_keeps_the_newest_and_drops_the_oldest() {
+        let scratch = Scratch::new("prune-cap");
+        let root = scratch.path();
+        let over = 5;
+        for n in 0..PANE_DISK_CAP + over {
+            let path = a_surface_in(root, "live", 1, &format!("s{n:04}"));
+            // Lower index, older file — an hour apart so no filesystem's mtime
+            // resolution can blur the order the test is asserting.
+            age_file(&path, NOW - ((PANE_DISK_CAP + over - n) as u64) * 3_600_000);
+        }
+
+        let out = prune(root, Some("live"), NOW);
+
+        assert_eq!(out.files, over, "exactly the overflow is deleted");
+        assert_eq!(out.sessions, 0, "capping a pane never removes the session");
+        let pane = root.join("live").join("1");
+        let left = fs::read_dir(&pane).unwrap().count();
+        assert_eq!(left, PANE_DISK_CAP);
+        assert!(!pane.join("s0000.json").exists(), "the oldest went");
+        assert!(
+            pane.join(format!("s{:04}.json", PANE_DISK_CAP + over - 1))
+                .exists(),
+            "the newest stayed"
+        );
+    }
+
+    #[test]
+    fn a_pane_under_the_disk_cap_loses_nothing() {
+        let scratch = Scratch::new("prune-under");
+        let root = scratch.path();
+        for n in 0..8 {
+            let path = a_surface_in(root, "live", 1, &format!("s{n}"));
+            age_file(&path, NOW - 900 * DAY_MS); // old, and irrelevant: the cap is a count
+        }
+
+        let out = prune(root, Some("live"), NOW);
+
+        assert_eq!(out.files, 0);
+        assert_eq!(
+            fs::read_dir(root.join("live").join("1")).unwrap().count(),
+            8
+        );
+    }
+
+    #[test]
+    fn the_action_journal_is_never_pruned_however_full_the_pane_is() {
+        let scratch = Scratch::new("prune-journal");
+        let root = scratch.path();
+        for n in 0..PANE_DISK_CAP + 3 {
+            let path = a_surface_in(root, "live", 1, &format!("s{n:04}"));
+            age_file(&path, NOW - ((PANE_DISK_CAP + 3 - n) as u64) * 3_600_000);
+        }
+        let journal = root.join("live").join("1").join("actions.jsonl");
+        fs::write(&journal, b"{\"answer\":\"yes\"}\n").unwrap();
+        age_file(&journal, NOW - 900 * DAY_MS);
+
+        let out = prune(root, Some("live"), NOW);
+
+        assert_eq!(
+            out.files, 3,
+            "only surfaces are counted, and only surfaces went"
+        );
+        assert!(
+            journal.exists(),
+            "the journal of what a person pressed is not a surface"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_surface_with_no_readable_age_is_counted_unknown_and_kept() {
+        let scratch = Scratch::new("prune-unknown");
+        let root = scratch.path();
+        let pane = root.join("live").join("1");
+        fs::create_dir_all(&pane).unwrap();
+        let ghost = pane.join("ghost.json");
+        std::os::unix::fs::symlink("/nonexistent/gone.json", &ghost).unwrap();
+
+        let out = prune(root, Some("live"), NOW);
+
+        assert_eq!(
+            out.unknown, 1,
+            "an age that cannot be read is its own answer"
+        );
+        assert_eq!(
+            out.files, 0,
+            "and it is never the answer that deletes something"
+        );
+        assert!(fs::symlink_metadata(&ghost).is_ok());
     }
 }

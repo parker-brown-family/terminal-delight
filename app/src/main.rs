@@ -5118,6 +5118,49 @@ impl Workspace {
             }
         })
         .detach();
+        // WORKBENCH: retention.
+        //
+        // Ten minutes, with the first pass immediate. The growth this bounds is
+        // slow, but a prune that only ran at startup would leave the per-pane
+        // cap unreachable inside exactly the long-lived sessions that are the
+        // only ones able to reach it.
+        //
+        // Scratch windows are excluded. A demo window's session key is itself
+        // the kind of directory this rule exists to collect, and a throwaway
+        // process is the last one that should be deleting the fleet's archive.
+        if !scratch {
+            cx.spawn(async move |this, cx| loop {
+                let live = surfacefeed::session().map(str::to_string);
+                let report = cx
+                    .background_executor()
+                    .spawn(async move {
+                        surfacefeed::prune(
+                            &surfacefeed::surfaces_root(),
+                            live.as_deref(),
+                            surfacefeed::now_ms(),
+                        )
+                    })
+                    .await;
+                if report != surfacefeed::Pruned::default() {
+                    eprintln!(
+                        "terminal-delight: surfaces pruned — {} dead session(s), \
+                         {} file(s) past the per-pane cap of {}, \
+                         {} kept because their age could not be read",
+                        report.sessions,
+                        report.files,
+                        surfacefeed::PANE_DISK_CAP,
+                        report.unknown
+                    );
+                }
+                if this.update(cx, |_ws: &mut Workspace, _cx| ()).is_err() {
+                    break; // window gone
+                }
+                cx.background_executor()
+                    .timer(Duration::from_secs(600))
+                    .await;
+            })
+            .detach();
+        }
         // session checkpoint: live state (pane cwds, agent sessions, window
         // bounds) changes without structural events, so re-snapshot every 30s —
         // a crash loses at most that much recency, never the layout. (Clean quit

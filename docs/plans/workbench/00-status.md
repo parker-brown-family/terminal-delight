@@ -24,6 +24,8 @@ the brief's grill for him to overrule.
 - [x] Launcher: project/model/effort picker → recipe → host spawn, with the protocol prompt
 - [x] Tests green, fmt + clippy clean
 - [x] Decision brief
+- [x] Retention: dead sessions aged out whole, a per-pane disk cap, the live
+      session and the action journal exempt (2026-09-17)
 
 ## Surprises & discoveries
 
@@ -40,6 +42,14 @@ the brief's grill for him to overrule.
 - `mcp_tail.rs` already reads each agent's JSONL transcript. A fenced `td` block in
   an agent's own output is therefore a third writer that needs no cooperation
   beyond printing, which is what makes this work for Codex and Gemini too.
+
+- The retention rule was scored as a per-pane file cap and measurement moved it.
+  On the day the store was first looked at, nine session directories existed and
+  eight were one-shot demo and screenshot keys holding six files each — the
+  growth is whole dead SESSIONS, not files piling up inside a live pane. The cap
+  stayed, at 512 rather than the shelf's 64, because `PANE_HISTORY_CAP`'s own
+  comment promises the disk is the archive and an equal cap would make that a
+  lie; the rule that actually reclaims anything is the thirty-day one.
 
 ## Decisions
 
@@ -87,7 +97,6 @@ by hand.
 - Five minutes of clicking, by a person. That is the whole outstanding test.
 - Slice 0 equivalent: count how many surfaces a real session produces before
   widening the catalogue past six.
-- A retention rule for `surfaces/` — it grows and nothing sweeps it.
 - Held panes and restored panes: a surface is currently per-pane and per-session.
 - The machine-global `AGENTS.md` paragraph (`docs/spec/agents-md-snippet.md`),
   after the build is installed and used for a day.
