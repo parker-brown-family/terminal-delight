@@ -889,6 +889,12 @@ fn parse_cli(args: &[String]) -> Result<(String, Scope), String> {
             }
             "--cwd" => cwd = Some(it.next().ok_or("--cwd needs a value")?.to_string()),
             "--run" => run = Some(it.next().ok_or("--run needs a value")?.to_string()),
+            // A lone `-` is a WORD, not a flag: it is how `mcp from <session>
+            // <pane|-> rpc` says the caller could not find out which pane it is
+            // in. Without this the flag parser refused the only verb that can
+            // reproduce a wrong-window refusal by hand, which is the one a
+            // person debugging instance identity most wants to type.
+            "-" => words.push("-"),
             w if !w.starts_with('-') => words.push(w),
             other => return Err(format!("unknown flag {other:?}")),
         }
@@ -1982,6 +1988,30 @@ mod tests {
         ] {
             assert!(parse_line(line).is_err(), "accepted a broken caller: {line}");
         }
+    }
+
+    /// `mcp from … - rpc …` survives the CLI's flag parser.
+    ///
+    /// Found by running the thing rather than by reading it: the live probe
+    /// could not reproduce a wrong-window refusal by hand, because `-` starts
+    /// with a dash and the parser called it an unknown flag. The wire was
+    /// right the whole time and the only way in was shut.
+    #[test]
+    fn a_bare_dash_is_a_pane_that_is_unknown_not_a_flag() {
+        let args: Vec<String> = ["mcp", "from", "tdclip", "-", "rpc", r#"{"id":1}"#]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let (line, _) = parse_cli(&args).expect("the CLI must be able to send this");
+        match parse_line(&line) {
+            Ok(Cmd::McpRpc(Some(c), _)) => {
+                assert_eq!(c.session, "tdclip");
+                assert_eq!(c.pane, None);
+            }
+            other => panic!("the CLI could not express an unknown pane: {other:?}"),
+        }
+        // And a real flag is still a flag.
+        assert!(parse_cli(&["--nope".to_string()]).is_err());
     }
 
     #[test]
