@@ -6558,32 +6558,61 @@ impl Workspace {
     /// Applied to whichever pane is showing its bench with something
     /// selected, nearest to the active tab first. A caller with no pane ids
     /// should not have to learn them to press a button.
-    pub(crate) fn bench_choose(&mut self, n: usize, cx: &mut Context<Self>) {
-        let mut leaves = Vec::new();
-        if let Some(tab) = self.tabs.get(self.active) {
-            tab.root.leaves(&mut leaves);
-        }
-        for tab in self.tabs.iter() {
-            tab.root.leaves(&mut leaves);
-        }
-        let leaves: Vec<Entity<TerminalView>> = leaves.into_iter().cloned().collect();
+    ///
+    /// Answers on the OUTCOME — `ok pane 3`, `queued pane 3`, or an `err` —
+    /// because a reply that only meant "the message was accepted" let a whole
+    /// smoke run report green while the window logged that nothing happened.
+    pub(crate) fn bench_choose(&mut self, n: usize, cx: &mut Context<Self>) -> String {
+        let (active, leaves) = self.bench_targets();
         for leaf in leaves {
+            let on_screen = active.iter().any(|a| a.entity_id() == leaf.entity_id());
             let took = leaf.update(cx, |view, cx| {
                 if view.bench.face() != workbench::Face::Workbench {
-                    return false;
+                    return None;
                 }
-                if view.bench.selected().is_none() {
-                    return false;
+                // A card open, or a question waiting with nothing selected:
+                // the two places the chips are drawn, and `Bench::act` already
+                // falls back from one to the other. Requiring a selection here
+                // refused the case that matters most.
+                if view.bench.selected().is_none() && view.bench.waiting_question().is_none() {
+                    return None;
                 }
+                view.set_on_screen(on_screen, cx);
                 view.bench_choose(n.saturating_sub(1), cx);
-                true
+                Some(Self::outcome(on_screen, view.pane_id()))
             });
-            if took {
+            if let Some(said) = took {
                 cx.notify();
-                return;
+                return said;
             }
         }
-        eprintln!("terminal-delight: no pane is showing a bench with a selection");
+        eprintln!("terminal-delight: no pane is showing a bench with a question");
+        "err no pane is showing a bench with a question".into()
+    }
+
+    /// Every leaf, the active tab's first, plus which ones are on screen.
+    fn bench_targets(&self) -> (Vec<Entity<TerminalView>>, Vec<Entity<TerminalView>>) {
+        let mut active = Vec::new();
+        if let Some(tab) = self.tabs.get(self.active) {
+            tab.root.leaves(&mut active);
+        }
+        let active: Vec<Entity<TerminalView>> = active.into_iter().cloned().collect();
+        let mut leaves: Vec<Entity<TerminalView>> = active.clone();
+        for tab in self.tabs.iter() {
+            let mut more = Vec::new();
+            tab.root.leaves(&mut more);
+            leaves.extend(more.into_iter().cloned());
+        }
+        (active, leaves)
+    }
+
+    fn outcome(on_screen: bool, pane: Option<u64>) -> String {
+        let pane = pane.map_or_else(|| "?".to_string(), |p| p.to_string());
+        if on_screen {
+            format!("ok pane {pane}")
+        } else {
+            format!("queued pane {pane} — off screen until you look")
+        }
     }
 
     /// Say a line to an agent through its bench — the scripted composer.
@@ -6591,29 +6620,25 @@ impl Workspace {
     /// Goes to the pane showing its bench, and reaches the pseudoterminal by
     /// the same method the composer does, so this tests the composer rather
     /// than working around it.
-    pub(crate) fn bench_say(&mut self, line: &str, cx: &mut Context<Self>) {
-        let mut leaves = Vec::new();
-        if let Some(tab) = self.tabs.get(self.active) {
-            tab.root.leaves(&mut leaves);
-        }
-        for tab in self.tabs.iter() {
-            tab.root.leaves(&mut leaves);
-        }
-        let leaves: Vec<Entity<TerminalView>> = leaves.into_iter().cloned().collect();
+    pub(crate) fn bench_say(&mut self, line: &str, cx: &mut Context<Self>) -> String {
+        let (active, leaves) = self.bench_targets();
         for leaf in leaves {
+            let on_screen = active.iter().any(|a| a.entity_id() == leaf.entity_id());
             let took = leaf.update(cx, |view, cx| {
                 if view.bench.face() != workbench::Face::Workbench || !view.mode.is_agent() {
-                    return false;
+                    return None;
                 }
+                view.set_on_screen(on_screen, cx);
                 view.bench_say(line, cx);
-                true
+                Some(Self::outcome(on_screen, view.pane_id()))
             });
-            if took {
+            if let Some(said) = took {
                 cx.notify();
-                return;
+                return said;
             }
         }
         eprintln!("terminal-delight: no agent pane is showing its bench");
+        "err no agent pane is showing its bench".into()
     }
 
     /// Put a line in the first showing bench's composer, unsubmitted.
@@ -6624,26 +6649,25 @@ impl Workspace {
     /// has neither. The state this reaches — a person halfway through a line,
     /// caret sitting in it — is where both caret bugs lived, and it could not
     /// be photographed without borrowing somebody's actual keyboard.
-    pub(crate) fn bench_type(&mut self, line: &str, cx: &mut Context<Self>) {
-        let mut leaves = Vec::new();
-        for tab in self.tabs.iter() {
-            tab.root.leaves(&mut leaves);
-        }
-        let leaves: Vec<Entity<TerminalView>> = leaves.into_iter().cloned().collect();
+    pub(crate) fn bench_type(&mut self, line: &str, cx: &mut Context<Self>) -> String {
+        let (active, leaves) = self.bench_targets();
         for leaf in leaves {
+            let on_screen = active.iter().any(|a| a.entity_id() == leaf.entity_id());
             let took = leaf.update(cx, |view, cx| {
                 if view.bench.face() != workbench::Face::Workbench || !view.mode.is_agent() {
-                    return false;
+                    return None;
                 }
+                view.set_on_screen(on_screen, cx);
                 view.bench_type(line, cx);
-                true
+                Some(Self::outcome(on_screen, view.pane_id()))
             });
-            if took {
+            if let Some(said) = took {
                 cx.notify();
-                return;
+                return said;
             }
         }
         eprintln!("terminal-delight: no agent pane is showing its bench");
+        "err no agent pane is showing its bench".into()
     }
 
     /// Ask every agent pane whether it is waiting on a question, and put the
@@ -6655,13 +6679,24 @@ impl Workspace {
     /// same question.
     fn sweep_live_questions(&mut self, cx: &mut Context<Self>) {
         let now = surfacefeed::now_ms();
+        // Which panes are on screen: the active tab's leaves. Told to every
+        // pane each pass, because the bench types into a pseudoterminal only
+        // while its pane is visible and holds the write otherwise — and a
+        // pane going visible is when its held writes land.
+        let mut active = Vec::new();
+        if let Some(tab) = self.tabs.get(self.active) {
+            tab.root.leaves(&mut active);
+        }
+        let active: Vec<Entity<TerminalView>> = active.into_iter().cloned().collect();
         let mut leaves = Vec::new();
         for tab in self.tabs.iter() {
             tab.root.leaves(&mut leaves);
         }
         let leaves: Vec<Entity<TerminalView>> = leaves.into_iter().cloned().collect();
         for leaf in leaves {
+            let on_screen = active.iter().any(|a| a.entity_id() == leaf.entity_id());
             leaf.update(cx, |view, cx| {
+                view.set_on_screen(on_screen, cx);
                 if !view.mode.is_agent() {
                     return;
                 }

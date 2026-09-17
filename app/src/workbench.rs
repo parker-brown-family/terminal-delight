@@ -1153,6 +1153,10 @@ pub enum AgentState {
     Exited,
     /// Mid-turn.
     Working,
+    /// The bench just typed an answer into the terminal and the agent has
+    /// not moved yet. Parker: the on-screen rule *"will need an additional
+    /// agent state for 'reading your instructions'"*.
+    Reading,
     /// Attached, nothing happening.
     Idle,
 }
@@ -1169,6 +1173,7 @@ impl AgentState {
             AgentState::Done => "Finished",
             AgentState::Exited => "Exited",
             AgentState::Working => "Working",
+            AgentState::Reading => "Reading your answer",
             AgentState::Idle => "Idle",
         }
     }
@@ -1179,7 +1184,7 @@ impl AgentState {
         match self {
             AgentState::Asking | AgentState::Blocked => Tint::Waiting,
             AgentState::Done => Tint::Settled,
-            AgentState::Working => Tint::Pending,
+            AgentState::Working | AgentState::Reading => Tint::Pending,
             // Nothing is being claimed about an idle or departed agent, and
             // grey is how this surface says so everywhere else.
             AgentState::Idle | AgentState::Exited => Tint::Unknown,
@@ -1189,6 +1194,44 @@ impl AgentState {
     /// Does this state want a person to look at it now?
     pub fn urgent(self) -> bool {
         matches!(self, AgentState::Asking | AgentState::Blocked)
+    }
+}
+
+/// How long after the bench types into a pane the bar keeps saying the agent
+/// is reading it, if nothing else moves. Long enough for a picker to redraw
+/// and a turn to start; short enough that a dead agent does not read forever.
+pub const READING_WINDOW_MS: u64 = 8_000;
+
+/// What the agent is doing, from the pane's sensors, decided in one place.
+///
+/// The order is the old ladder with one rung added at the top: `reading` —
+/// the bench typed within [`READING_WINDOW_MS`] and the agent has not started
+/// working — outranks `asking`, because a picker stays on screen for a moment
+/// after the keys land, and a bar saying "Waiting on you" over an answer just
+/// given is the surface lying about its own state. It never outranks a pane
+/// that is blocked or gone: nothing is reading there.
+pub fn agent_state(
+    asking: bool,
+    blocked: bool,
+    done: bool,
+    exited: bool,
+    thinking: bool,
+    reading: bool,
+) -> AgentState {
+    if reading && !thinking && !blocked && !exited {
+        AgentState::Reading
+    } else if asking {
+        AgentState::Asking
+    } else if blocked {
+        AgentState::Blocked
+    } else if done {
+        AgentState::Done
+    } else if exited {
+        AgentState::Exited
+    } else if thinking {
+        AgentState::Working
+    } else {
+        AgentState::Idle
     }
 }
 
@@ -1916,6 +1959,54 @@ mod tests {
         b.apply(doc("same", "Second"));
         assert_eq!(b.all_newest_first().count(), 1);
         assert_eq!(b.rows()[0].title, "Second");
+    }
+
+    #[test]
+    fn reading_your_answer_outranks_waiting_on_you_and_nothing_else() {
+        // (asking, blocked, done, exited, thinking, reading) → state
+        let rows = [
+            // the window after a press: picker still up, agent not moving
+            (
+                (true, false, false, false, false, true),
+                AgentState::Reading,
+            ),
+            // the agent picked it up
+            (
+                (false, false, false, false, true, true),
+                AgentState::Working,
+            ),
+            // an answer typed into a blocked or dead pane reads nothing —
+            // and asking still outranks blocked, exactly as it did before
+            (
+                (false, true, false, false, false, true),
+                AgentState::Blocked,
+            ),
+            ((true, true, false, false, false, false), AgentState::Asking),
+            ((false, false, false, true, false, true), AgentState::Exited),
+            // the old ladder, untouched when nothing was typed
+            (
+                (true, false, false, false, false, false),
+                AgentState::Asking,
+            ),
+            ((false, false, true, false, false, false), AgentState::Done),
+            (
+                (false, false, false, false, true, false),
+                AgentState::Working,
+            ),
+            ((false, false, false, false, false, false), AgentState::Idle),
+        ];
+        for ((a, b, d, e, t, r), want) in rows {
+            assert_eq!(
+                agent_state(a, b, d, e, t, r),
+                want,
+                "{a} {b} {d} {e} {t} {r}"
+            );
+        }
+        assert_eq!(AgentState::Reading.tint(), Tint::Pending);
+        assert!(
+            !AgentState::Reading.urgent(),
+            "an answer being read is not a demand"
+        );
     }
 
     #[test]

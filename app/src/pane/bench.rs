@@ -73,6 +73,9 @@ impl TerminalView {
         cx: &mut Context<Self>,
     ) {
         use crate::workbench::Hit;
+        // A click is on a pane that is on screen, whatever the sweep last
+        // said: the sweep runs once a second and a tab can have changed since.
+        self.wb_on_screen = true;
         match hit {
             Hit::Choose(i) => self.bench_choose(i, cx),
             Hit::PressNav(at) => self.bench_press_nav(at, cx),
@@ -328,19 +331,27 @@ impl TerminalView {
         // contradicts itself is worse than either half of it alone, and the
         // card is the half with the evidence: it is holding an actual
         // question. See [`crate::workbench::SETTLE_SWEEPS`].
-        if self.needs_input || self.wb_live_q.is_some() {
-            AgentState::Asking
-        } else if self.bell_blocked() {
-            AgentState::Blocked
-        } else if self.bell {
-            AgentState::Done
-        } else if self.exited {
-            AgentState::Exited
-        } else if self.agent_is_thinking() {
-            AgentState::Working
-        } else {
-            AgentState::Idle
-        }
+        //
+        // The ladder itself is [`crate::workbench::agent_state`], a pure
+        // function with a table test; this is only the pane reading its
+        // sensors. `reading` is the one sensor the bench owns: it typed an
+        // answer within the window and nothing has moved since.
+        let _ = AgentState::Idle;
+        crate::workbench::agent_state(
+            self.needs_input || self.wb_live_q.is_some(),
+            self.bell_blocked(),
+            self.bell,
+            self.exited,
+            self.agent_is_thinking(),
+            self.reading_answer(crate::surfacefeed::now_ms()),
+        )
+    }
+
+    /// Did the bench type into this pane recently enough that the agent is
+    /// still taking it in? See [`crate::workbench::READING_WINDOW_MS`].
+    pub(super) fn reading_answer(&self, now_ms: u64) -> bool {
+        self.wb_delivered_ms
+            .is_some_and(|t| now_ms.saturating_sub(t) < crate::workbench::READING_WINDOW_MS)
     }
 
     /// The question this pane is asking right now, as a surface — or the
@@ -364,6 +375,15 @@ impl TerminalView {
         // impossible to see: a parse that fails while the agent is still
         // waiting means the screen scrolled, NOT that the question is over.
         let mut out = Vec::new();
+        // While the agent is reading an answer the bench just typed, the
+        // picker is still on screen and would be read back as a fresh,
+        // unanswered question — which erased the choice the person made and
+        // re-armed the chips, one second after they pressed. Nothing is
+        // presented or retired in that window; the record the press left
+        // stands until the agent moves.
+        if self.reading_answer(now_ms) {
+            return out;
+        }
         let asking = self
             .needs_input
             .then(|| crate::screenread::question_on_screen(&self.live_rows()))
@@ -1041,7 +1061,13 @@ impl TerminalView {
             Some(existing) => existing.insert(&text),
             None => self.wb_compose = Some(crate::workbench::Line::holding(text.clone())),
         }
-        self.send(text.into_bytes(), cx);
+        // The same on-screen rule as a submitted line: keystrokes into a pane
+        // nobody is looking at wait until somebody is.
+        if self.wb_on_screen {
+            self.send(text.into_bytes(), cx);
+        } else {
+            self.wb_queued.push(text.into_bytes());
+        }
         cx.notify();
     }
 
@@ -1053,6 +1079,52 @@ impl TerminalView {
     pub fn bench_say(&mut self, line: &str, cx: &mut Context<Self>) {
         self.wb_compose = Some(crate::workbench::Line::holding(line));
         self.bench_send(cx);
+    }
+
+    /// Put bytes into the pseudoterminal — or, if nobody is looking at this
+    /// pane, hold them until somebody is.
+    ///
+    /// The one place the bench writes to the terminal, so the rule lives
+    /// once: a write happens only while the pane is on screen. Invisible
+    /// authority — an instruction landing in a terminal nobody was watching,
+    /// from a sender nobody could name — is the whole shape of the failure
+    /// this window exists to avoid, and a queue is how it is refused without
+    /// dropping anything. Every delivery stamps the reading window and the
+    /// flash, so a write is something a person sees happen.
+    pub(super) fn bench_deliver(&mut self, bytes: Vec<u8>, cx: &mut Context<Self>) {
+        if self.wb_on_screen {
+            let now = crate::surfacefeed::now_ms();
+            self.session.notifier.notify(bytes);
+            self.wb_delivered_ms = Some(now);
+            self.wb_flash_until_ms = Some(now + 450);
+        } else {
+            self.wb_queued.push(bytes);
+        }
+        cx.notify();
+    }
+
+    /// The workspace telling this pane whether it is in the active tab. Going
+    /// on screen drains the queue, in order, as if each line had just been
+    /// pressed — because for the person now looking, it just was.
+    pub fn set_on_screen(&mut self, on: bool, cx: &mut Context<Self>) {
+        let was = self.wb_on_screen;
+        self.wb_on_screen = on;
+        if on && !was && !self.wb_queued.is_empty() {
+            let queued = std::mem::take(&mut self.wb_queued);
+            for bytes in queued {
+                self.bench_deliver(bytes, cx);
+            }
+        }
+    }
+
+    /// Writes held for this pane because nobody was looking at it.
+    pub fn bench_queued(&self) -> usize {
+        self.wb_queued.len()
+    }
+
+    /// Whether the bench is drawing that it just typed.
+    pub(super) fn bench_flashing(&self, now_ms: u64) -> bool {
+        self.wb_flash_until_ms.is_some_and(|until| now_ms < until)
     }
 
     /// Send whatever is in the composer to the agent, as if typed.
@@ -1067,9 +1139,7 @@ impl TerminalView {
             cx.notify();
             return;
         };
-        self.session
-            .notifier
-            .notify(crate::workbench::typed_line(&text));
+        self.bench_deliver(crate::workbench::typed_line(&text), cx);
         // Stay on the bench. Flipping to the terminal on send was the first
         // thing that felt wrong about this surface: a person who just asked
         // something wants to watch the answer arrive where they asked it, and
@@ -1123,9 +1193,7 @@ impl TerminalView {
                 // composer types — a carriage return submits it and nothing
                 // inside it can. See [`crate::hostproto::session_tag`].
                 let line = report.to_prompt(crate::surfacefeed::tag());
-                self.session
-                    .notifier
-                    .notify(crate::workbench::typed_line(&line));
+                self.bench_deliver(crate::workbench::typed_line(&line), cx);
                 // Answering is looking: the person has dealt with this surface,
                 // so the pane turns back to the conversation it just fed,
                 // where the reply to what they said will appear.
@@ -1143,7 +1211,7 @@ impl TerminalView {
                 // waiting there is waiting for a person — a menu with its
                 // cursor on the first option, or a REPL at a prompt. This is
                 // the same path a keystroke takes; the bench is just typing.
-                self.session.notifier.notify(bytes);
+                self.bench_deliver(bytes, cx);
                 if let (Some(key), Some(pane)) = (crate::surfacefeed::session(), self.pane_id) {
                     let _ = crate::surfacefeed::journal(
                         &crate::surfacefeed::actions_path(key, pane),
@@ -1287,7 +1355,16 @@ impl TerminalView {
                         .p(px(16.))
                         .bg(th.surface)
                         .border_l(px(3.))
-                        .border_color(tint),
+                        // The card's edge goes to the accent for the moment
+                        // after the bench types into the terminal, so a write
+                        // is something a person sees happen where they
+                        // pressed — the agent bar turning to "Reading your
+                        // answer" is the longer signal, this is the flash.
+                        .border_color(if self.bench_flashing(crate::surfacefeed::now_ms()) {
+                            th.accent
+                        } else {
+                            tint
+                        }),
                     tint,
                     th,
                 )
