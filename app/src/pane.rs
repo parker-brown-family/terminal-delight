@@ -1933,6 +1933,9 @@ pub struct TerminalView {
     /// sample of it is not a state change — see
     /// [`crate::workbench::SETTLE_SWEEPS`].
     wb_quiet: u8,
+    /// Which agent state the bar is showing and when it began, so the bar can
+    /// carry one honest counter instead of the rail carrying one per row.
+    wb_state_since: Option<(crate::workbench::AgentState, u64)>,
     /// The live question currently on this pane's bench, if one is up.
     ///
     /// Held so it can be RETIRED the moment the pane stops waiting — the
@@ -3000,6 +3003,7 @@ impl TerminalView {
             wb_slots: crate::benchdraw::Slots::default(),
             wb_review: None,
             wb_quiet: 0,
+            wb_state_since: None,
             wb_live_q: None,
         }
     }

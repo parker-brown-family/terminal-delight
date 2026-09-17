@@ -1064,8 +1064,21 @@ impl TerminalView {
 
         // ── what the agent is doing, in one line ────────────────────────────
         let live = self.mode.is_agent().then(|| {
+            // One counter for the whole agent: how long it has been in the
+            // state the bar names. Reset the moment the state changes, so
+            // "Waiting on you · 2m" means two minutes of THIS wait.
+            let state = self.bench_status();
+            let now = crate::surfacefeed::now_ms();
+            let since = match self.wb_state_since {
+                Some((was, t)) if was == state => t,
+                _ => {
+                    self.wb_state_since = Some((state, now));
+                    now
+                }
+            };
             crate::benchdraw::title_card(
-                self.bench_status(),
+                state,
+                now.saturating_sub(since),
                 self.tool_face.as_ref().map(|f| f.verb.as_str()),
                 sk,
                 th,
@@ -1337,14 +1350,13 @@ impl TerminalView {
                     })
                     .children(rows.into_iter().map(|row| {
                         let id = row.id.clone();
-                        crate::benchdraw::rail_row(&row, crate::surfacefeed::now_ms(), sk, th)
-                            .on_mouse_down(
-                                MouseButton::Left,
-                                cx.listener(move |view, _ev: &MouseDownEvent, _w, cx| {
-                                    cx.stop_propagation();
-                                    view.bench_open(&id, cx);
-                                }),
-                            )
+                        crate::benchdraw::rail_row(&row, sk, th).on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |view, _ev: &MouseDownEvent, _w, cx| {
+                                cx.stop_propagation();
+                                view.bench_open(&id, cx);
+                            }),
+                        )
                     })),
                 )
             }

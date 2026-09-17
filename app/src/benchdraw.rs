@@ -197,7 +197,7 @@ fn micro(text: impl Into<String>, size: f32, colour: Hsla, th: &Theme) -> Div {
 /// column of short rows with almost nothing else on it — and the skin files
 /// record why that matters: at 2px against no other lines a marker reads as a
 /// scratch. The number is not carried over from a denser surface.
-pub fn rail_row(row: &Row, now_ms: u64, sk: &Skin, th: &Theme) -> Div {
+pub fn rail_row(row: &Row, sk: &Skin, th: &Theme) -> Div {
     use crate::workbench::Standing;
     let tint = ink(row.tint, th);
     // The spine's own row, read out of `Workspace::rail_panel` rather than
@@ -239,11 +239,6 @@ pub fn rail_row(row: &Row, now_ms: u64, sk: &Skin, th: &Theme) -> Div {
             _ => None,
         },
     };
-    let age = crate::attention::age_label(
-        now_ms
-            .checked_sub(row.arrived_ms)
-            .map(std::time::Duration::from_millis),
-    );
     let head = div()
         .flex()
         .flex_row()
@@ -271,14 +266,13 @@ pub fn rail_row(row: &Row, now_ms: u64, sk: &Skin, th: &Theme) -> Div {
                 .text_color(th.faint)
                 .child(b)
         }))
-        .child(div().flex_1())
-        .child(
-            div()
-                .flex_none()
-                .text_size(px(9.5))
-                .text_color(th.faint)
-                .child(age),
-        );
+        // No age on the row. The spine puts one on every queue row because each
+        // row there is a different pane; every row HERE belongs to one agent,
+        // so a per-row age said the same fact as many times as there were rows
+        // — Parker: *"those are fine, but repeating them is not... they should
+        // be in the agent state as a collected SINGLE counter"*. It is on the
+        // agent bar now, once, as how long the agent has been in its state.
+        .child(div().flex_1());
     sk.row()
         .flex()
         .flex_col()
@@ -1194,6 +1188,7 @@ fn verdict_word(v: Verdict) -> &'static str {
 /// the same way the head of the rail does and for the same reason.
 pub fn title_card(
     state: crate::workbench::AgentState,
+    in_state_ms: u64,
     tool: Option<&str>,
     sk: &Skin,
     th: &Theme,
@@ -1256,6 +1251,16 @@ pub fn title_card(
             .text_size(px(17.))
             .text_color(if urgent { tint } else { th.text.alpha(0.9) })
             .child(state.word()),
+    )
+    .child(
+        // THE ONE COUNTER: how long the agent has been like this. It replaces
+        // an age on every rail row, which repeated one fact per row.
+        micro(
+            crate::attention::age_label(Some(std::time::Duration::from_millis(in_state_ms))),
+            10.,
+            th.faint,
+            th,
+        ),
     )
     .child(div().flex_1())
     .when_some(tool.map(str::to_string), |d, t| {
