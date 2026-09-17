@@ -26,11 +26,7 @@
 //! [`crate::skin`] exists because that has happened before.
 
 use gpui::prelude::FluentBuilder;
-use gpui::{
-    div, point, px, AnimationExt, AnyElement, BoxShadow, Div, Hsla, IntoElement, ParentElement,
-    Styled,
-};
-use std::time::Duration;
+use gpui::{div, point, px, BoxShadow, Div, Hsla, IntoElement, ParentElement, Styled};
 
 use crate::skin::{Role, Skin};
 use crate::surface::{Confidence, Depth, Kind, Shelf, Surface, Verdict, Weight};
@@ -1015,32 +1011,6 @@ pub fn verb_button<E: Styled>(el: E, primary: bool, th: &Theme) -> E {
 /// cell width to it in order to know where column N is.
 pub const COMPOSER_PT: f32 = 17.0;
 
-/// An invisible element that records where the composer's text actually
-/// landed, so a click can be turned into a column.
-///
-/// Layout is the only authority on this — padding, the skin's own inset and
-/// the caret gutter all move the text's left edge, and a click handler that
-/// assumed any of them would drift the moment a skin changed one. A `canvas`
-/// is how gpui lets an element report its own bounds, and the pane reads the
-/// captured value on the next click rather than guessing.
-pub fn text_origin_probe(
-    into: std::sync::Arc<std::sync::Mutex<Option<gpui::Bounds<gpui::Pixels>>>>,
-) -> impl gpui::IntoElement {
-    gpui::canvas(
-        move |bounds, _window, _cx| {
-            if let Ok(mut slot) = into.lock() {
-                *slot = Some(bounds);
-            }
-        },
-        |_, _, _, _| {},
-    )
-    .absolute()
-    .left(px(0.))
-    .top(px(0.))
-    .w_full()
-    .h(px(1.))
-}
-
 /// The line into the agent's own terminal.
 ///
 /// Not a text box. While it is armed, every keystroke is encoded by the same
@@ -1070,9 +1040,8 @@ pub fn text_origin_probe(
 pub fn composer(
     line: Option<&crate::workbench::Line>,
     focused: bool,
-    advance: f32,
     shows: &crate::workbench::Shows,
-    origin: std::sync::Arc<std::sync::Mutex<Option<gpui::Bounds<gpui::Pixels>>>>,
+    layout: std::rc::Rc<std::cell::RefCell<Option<gpui::TextLayout>>>,
     sk: &Skin,
     th: &Theme,
 ) -> Div {
@@ -1082,15 +1051,59 @@ pub fn composer(
     // booleans, because they are one decision — what a pane this size shows —
     // and they are made and asserted in `workbench::shows`.
     let (tight, hint) = (shows.tight, shows.hint);
-    // It SHRINKS in a small pane; it never leaves. This used to be dropped
-    // below the Full embodiment, on the reasoning that a pane too small for a
-    // conversation is too small for a text box — which had it backwards.
-    // Parker, on a tiled column showing a card and nothing to type into:
-    // *"The render size can cut off the text entry — interaction surface... it
-    // should ALWAYS be on screen! it is the MAIN REASON to have a workbench
-    // open!"*. A bench you cannot answer from is a viewer.
     let pt = if tight { 13.5 } else { COMPOSER_PT };
     let tall = if tight { 46. } else { 84. };
+
+    // The caret rides IN the text, as a highlight on the character it is on.
+    //
+    // Three earlier versions placed it by arithmetic — column times a cell,
+    // column times a measured advance, then an invisible copy of the prefix —
+    // and each was more nearly right than the last while sharing one fatal
+    // assumption: that the line is one line. It is not. A long message wraps,
+    // and a caret positioned along a single axis lands at the end of the first
+    // row while the text continues on the second.
+    //
+    // A highlight has no such assumption. The text system puts the background
+    // behind that character wherever it ends up, which is the same mechanism
+    // that makes a selection follow a wrap, and it is exact for a proportional
+    // font as a side effect of not measuring anything.
+    let body: gpui::AnyElement = match line {
+        Some(l) if !l.is_empty() || open => {
+            // A space to hold the caret when it sits past the last character.
+            // Without it there is nothing at that index to put a background
+            // behind, and the caret at the end of a line — where it is most of
+            // the time — would simply not draw.
+            let text = format!("{} ", l.text());
+            let at = text
+                .char_indices()
+                .nth(l.caret())
+                .map(|(i, _)| i)
+                .unwrap_or(l.text().len());
+            let next = text[at..]
+                .chars()
+                .next()
+                .map(|c| at + c.len_utf8())
+                .unwrap_or(text.len());
+            let caret = gpui::HighlightStyle {
+                background_color: Some(th.human.alpha(if live { 0.85 } else { 0.35 })),
+                color: Some(if live { th.bg } else { th.text }),
+                ..Default::default()
+            };
+            let styled = gpui::StyledText::new(text).with_highlights([(at..next, caret)]);
+            // The layout handle is filled in during prepaint and shared by
+            // reference, so taking it here is taking the real thing. It is how
+            // a click becomes a column — see `TerminalView::bench_click` — and
+            // it replaces both the measured advance and the origin probe,
+            // neither of which could survive a wrapped line.
+            *layout.borrow_mut() = Some(styled.layout().clone());
+            styled.into_any_element()
+        }
+        _ => div()
+            .text_color(th.text.alpha(0.72))
+            .child("type to the agent")
+            .into_any_element(),
+    };
+
     raised(
         sk.panel()
             .flex()
@@ -1114,106 +1127,60 @@ pub fn composer(
     .child(
         div()
             .flex()
-            .items_center()
+            .flex_row()
+            .items_start()
             .gap(px(if tight { 7. } else { 12. }))
             .child(
-                // The text and its caret share one relative box, and the caret
-                // is placed ABSOLUTELY at `caret * advance` from the left.
+                // No fixed height: the box GROWS with what is in it.
                 //
-                // Absolute rather than a third text span between two halves:
-                // splitting the line into prefix + block + suffix pushes every
-                // character after the caret one cell right, so the line moves
-                // under the reader every time the caret does. Laid over the
-                // top, the glyph under the caret stays exactly where it is and
-                // the block reads as a terminal's own cursor — which is what
-                // this is a mirror of.
-                //
-                // Exact, not estimated: the composer is monospace, `advance`
-                // is the width the text system measured for this font at this
-                // size, and column N therefore begins at N advances. A
-                // proportional font would need a real layout here and this
-                // would be a lie.
+                // It was pinned at one line and clipped the second, which on a
+                // surface whose whole job is a long message to an agent is the
+                // one thing it must not do. Parker, with a three-line prompt
+                // cut off mid-sentence: *"LOTS of text which overloads the
+                // interaction text entry needs to auto grow the area"*. It
+                // grows to a third of the pane and then scrolls, because a
+                // composer that can eat the conversation above it has traded
+                // one clipping problem for another.
                 div()
-                    .relative()
                     .flex_1()
                     .min_w(px(0.))
-                    .h(px(if tight { 20. } else { 26. }))
-                    .child(
-                        // The line itself, and the probe that reports where it
-                        // landed and how wide it came out.
-                        //
-                        // Inside the text box, not on the panel: the probe has
-                        // to report where the TEXT starts, and the panel's
-                        // left edge is a padding and a border away from that.
-                        // Measuring the wrong box put every click about two
-                        // characters right of where it was pointed.
-                        div().absolute().left(px(0.)).top(px(3.)).child(
-                            div().relative().child(text_origin_probe(origin)).child(
-                                div()
-                                    .text_size(px(pt))
-                                    .font_family(th.font_family.clone())
-                                    .text_color(if open { th.text } else { th.text.alpha(0.72) })
-                                    .child(match line {
-                                        Some(l) if !l.is_empty() => l.text().to_string(),
-                                        _ => "type to the agent".to_string(),
-                                    }),
-                            ),
-                        ),
-                    )
-                    .when_some(line, |d, l| {
-                        // The caret is placed by LAYING OUT the text in front
-                        // of it, invisibly, and letting the block fall where
-                        // that ends.
-                        //
-                        // The arithmetic version — column times a measured
-                        // advance — was wrong twice for two different reasons,
-                        // and the second one is the instructive one: the
-                        // advance of `M` is not the advance this string is
-                        // drawn with, so the caret ran six characters past the
-                        // end of a sixty-character line. Any number computed
-                        // here is a guess about what the text system will do.
-                        // An invisible copy of the prefix is not a guess: it
-                        // is the text system doing it, in the same font at the
-                        // same size, and it is exact for a proportional font
-                        // as well as a monospaced one.
-                        let (before, _) = l.text().split_at(
-                            l.text()
-                                .char_indices()
-                                .nth(l.caret())
-                                .map(|(i, _)| i)
-                                .unwrap_or(l.text().len()),
-                        );
-                        d.child(
-                            div()
-                                .absolute()
-                                .left(px(0.))
-                                .top(px(1.))
-                                .flex()
-                                .flex_row()
-                                .items_start()
-                                .child(
-                                    div()
-                                        .text_size(px(pt))
-                                        .font_family(th.font_family.clone())
-                                        .text_color(gpui::transparent_black())
-                                        .child(before.to_string()),
-                                )
-                                .child(
-                                    div()
-                                        .w(px(advance.max(3.)))
-                                        .h(px(if tight { 18. } else { 24. }))
-                                        .bg(th.human.alpha(if live { 0.45 } else { 0.2 })),
-                                ),
-                        )
-                    })
-                    .when(!open, |d| d.child(caret_block(live, th))),
+                    .max_h(px(shows.composer_max))
+                    .overflow_hidden()
+                    .text_size(px(pt))
+                    .font_family(th.font_family.clone())
+                    .text_color(th.text)
+                    .child(body),
             )
+            // What went with the line but is not in it. Drawn where an
+            // attachment is drawn in every messaging surface — beside the
+            // text, not inside it — because that is exactly what it is.
+            .when_some(line.map(|l| l.pasted()).filter(|n| *n > 0), |d, n| {
+                d.child(
+                    div()
+                        .flex_none()
+                        .px(px(7.))
+                        .py(px(2.))
+                        .rounded(px(3.))
+                        .bg(th.accent.alpha(0.18))
+                        .child(micro(
+                            if n == 1 {
+                                "\u{1f5ce} 1 IMAGE".to_string()
+                            } else {
+                                format!("\u{1f5ce} {n} IMAGES")
+                            },
+                            9.,
+                            th.accent,
+                            th,
+                        )),
+                )
+            })
             // Only while it is armed, and then unmissable. This is the answer
             // to the question the surface kept failing: *am I typing to the
             // agent right now, or do I have to click something first?*
             .when(live, |d| {
                 d.child(
                     div()
+                        .flex_none()
                         .px(px(7.))
                         .py(px(2.))
                         .rounded(px(3.))
@@ -1230,57 +1197,6 @@ pub fn composer(
             th,
         ))
     })
-}
-
-/// The block cursor, at the size a terminal draws one — and BLINKING when the
-/// keyboard is really going to the agent.
-///
-/// Its own function because it is the load-bearing pixel of the composer. A
-/// still block says "an input lives here"; a blinking one says "and it is
-/// yours, now", which is a different sentence and the one that was missing:
-/// Parker typed into the bench and still asked whether he had to click
-/// somewhere else first. Nothing on a screen says *the keyboard is here* like
-/// a blink, and no amount of caption substitutes for it.
-///
-/// Off while the pane is unfocused or the line is not armed, because a caret
-/// blinking in a window that would swallow the keystrokes is a lie.
-fn caret_block(live: bool, th: &Theme) -> AnyElement {
-    let block = div()
-        .absolute()
-        .left(px(0.))
-        .top(px(1.))
-        .w(px(11.))
-        .h(px(24.))
-        .bg(th.human.alpha(if live { 1.0 } else { 0.55 }))
-        .when(th.glow > 0.001, |d| {
-            d.shadow(vec![BoxShadow {
-                color: th.human.alpha((th.glow * 0.8).min(0.7)),
-                offset: point(px(0.), px(0.)),
-                blur_radius: px(12.),
-                spread_radius: px(1.),
-                inset: false,
-            }])
-        });
-    if !live {
-        return block.into_any_element();
-    }
-    block
-        .with_animation(
-            "bench-caret",
-            gpui::Animation::new(Duration::from_millis(1100)).repeat(),
-            |el, t| el.opacity(caret_alpha(t)),
-        )
-        .into_any_element()
-}
-
-/// On for most of the cycle, off for a beat. A 50/50 blink reads as flashing;
-/// what a terminal actually does is sit lit and wink.
-fn caret_alpha(t: f32) -> f32 {
-    if t < 0.62 {
-        1.0
-    } else {
-        0.15
-    }
 }
 
 /// The agent, talking. The main area's ordinary state.

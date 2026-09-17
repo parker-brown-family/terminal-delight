@@ -263,6 +263,21 @@ pub struct Line {
     /// In CHARACTERS, not bytes. A byte index would put the caret inside a
     /// multi-byte glyph the first time somebody pastes an em dash.
     caret: usize,
+    /// How many images have been pasted into this line.
+    ///
+    /// A COUNT, not the text of them, and that distinction is the whole
+    /// design. On an agent pane the paste chord goes straight to the agent,
+    /// which reads the clipboard itself and writes `[Image #7]` into its own
+    /// prompt — a number this side cannot know and must not invent. Writing
+    /// `[Image]` into the mirror instead would put it three characters out of
+    /// step with the line it mirrors, and every caret and click after that
+    /// would land in the wrong place.
+    ///
+    /// So the mirror stays exactly what was typed, and the fact that an image
+    /// went with it is carried beside the text rather than inside it. Parker,
+    /// on a paste that reached the agent and left the box looking empty: *"The
+    /// image is showing up in the terminal mirror, but not in the text area."*
+    pasted: usize,
 }
 
 impl Line {
@@ -275,7 +290,22 @@ impl Line {
     pub fn holding(text: impl Into<String>) -> Line {
         let text = text.into();
         let caret = text.chars().count();
-        Line { text, caret }
+        Line {
+            text,
+            caret,
+            pasted: 0,
+        }
+    }
+
+    /// Record that an image went to the agent with this line.
+    pub fn note_paste(&mut self) {
+        self.pasted += 1;
+    }
+
+    /// How many, so the composer can say so without claiming to know what the
+    /// agent called them.
+    pub fn pasted(&self) -> usize {
+        self.pasted
     }
 
     pub fn text(&self) -> &str {
@@ -350,6 +380,7 @@ impl Line {
     pub fn clear(&mut self) {
         self.text.clear();
         self.caret = 0;
+        self.pasted = 0;
     }
 
     fn byte_at(&self, chars: usize) -> usize {
@@ -361,21 +392,14 @@ impl Line {
     }
 }
 
-/// Which character a click at `x` means, in a monospace line.
-///
-/// `x` is measured from the left edge of the TEXT, not of the box. Rounding
-/// rather than truncating, because clicking the right half of a character
-/// means "after this one" to everybody who has ever used a text field — a
-/// truncating version puts the caret one place left of where the person
-/// pointed and feels broken without being wrong.
-pub fn caret_for_click(x: f32, advance: f32, chars: usize) -> usize {
-    if advance <= 0.0 || x <= 0.0 {
-        return 0;
-    }
-    ((x / advance).round() as usize).min(chars)
-}
-
 /// The bytes that move an agent's own line editor from one column to another.
+///
+/// The column itself is no longer computed here. It used to be — `x` over a
+/// measured advance — and that function was deleted rather than fixed, because
+/// every version of it was a guess about how the text system would lay a
+/// string out, and a wrapped line has no single column at all. The composer
+/// asks `gpui::TextLayout::index_for_position` instead, which is the text
+/// system answering about the text it actually drew.
 ///
 /// Arrow keys, one per column, because that is the only movement every line
 /// editor on the far end agrees on. `home`/`end` would be fewer bytes and are
@@ -466,7 +490,7 @@ pub fn ext_of_image_mime(mime: &str) -> Option<&'static str> {
 /// of sizes can hold them still.
 ///
 /// The render's job is now to draw this, not to decide it.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Debug)]
 pub struct Shows {
     pub rail: RailFit,
     pub how: Embodiment,
@@ -477,6 +501,13 @@ pub struct Shows {
     pub tight: bool,
     /// One line naming what the keys do, under an unarmed composer.
     pub hint: bool,
+    /// How tall the composer may grow before it starts scrolling instead.
+    ///
+    /// A share of the pane rather than a constant: the composer has to hold a
+    /// long message without clipping it, AND it must not grow until it has
+    /// eaten the conversation it is a reply to. A third is where those two
+    /// stop arguing.
+    pub composer_max: f32,
 }
 
 /// Resolve what a pane of this size shows.
@@ -498,8 +529,16 @@ pub fn shows(pane_w: f32, pane_h: f32, is_agent: bool, rail_wanted: bool, armed:
         composer: is_agent,
         tight,
         hint: is_agent && !tight && !armed,
+        composer_max: (pane_h * COMPOSER_SHARE).max(COMPOSER_MIN_MAX),
     }
 }
+
+/// The most of a pane the composer may take before it scrolls.
+pub const COMPOSER_SHARE: f32 = 0.33;
+
+/// …and never less than this, so a short pane still shows a few lines rather
+/// than a third of nothing.
+pub const COMPOSER_MIN_MAX: f32 = 96.0;
 
 /// How much of a pane the rail may take. Roughly a third is the most a shelf
 /// can have before the thing it is a shelf FOR stops being the main event.
@@ -1612,6 +1651,24 @@ mod tests {
     }
 
     #[test]
+    fn a_pasted_image_is_counted_beside_the_line_not_written_into_it() {
+        let mut l = Line::new();
+        l.insert("look at this");
+        l.note_paste();
+        assert_eq!(l.pasted(), 1);
+        assert_eq!(
+            l.text(),
+            "look at this",
+            "the mirror must stay exactly what was typed — the agent numbers \
+             its own images, and a guess here puts every later caret out"
+        );
+        assert_eq!(l.caret(), 12, "and the caret with it");
+        // Sending resets both: the next line has no images in it yet.
+        l.clear();
+        assert_eq!(l.pasted(), 0);
+    }
+
+    #[test]
     fn a_caret_in_characters_survives_text_that_is_not_ascii() {
         // The bug a byte index would have: the caret lands INSIDE a glyph and
         // the next insert splits it into mojibake. Every one of these is
@@ -1630,21 +1687,6 @@ mod tests {
         l.end();
         l.insert("z");
         assert!(l.text().ends_with("bz"), "{}", l.text());
-    }
-
-    #[test]
-    fn a_click_lands_on_the_character_it_points_at() {
-        // 9px cells, 5 characters. Left of everything is the start; past the
-        // end is the end, never beyond it.
-        assert_eq!(caret_for_click(-40.0, 9.0, 5), 0);
-        assert_eq!(caret_for_click(0.0, 9.0, 5), 0);
-        // The right half of a character means after it, the left half before.
-        assert_eq!(caret_for_click(3.0, 9.0, 5), 0);
-        assert_eq!(caret_for_click(6.0, 9.0, 5), 1);
-        assert_eq!(caret_for_click(9.0, 9.0, 5), 1);
-        assert_eq!(caret_for_click(400.0, 9.0, 5), 5, "clamped to the line");
-        // A font that has not been measured yet must not divide by zero.
-        assert_eq!(caret_for_click(40.0, 0.0, 5), 0);
     }
 
     #[test]
@@ -1694,6 +1736,27 @@ mod tests {
         assert!(cramped.composer, "still there");
         assert!(cramped.tight, "at its small size");
         assert!(!cramped.hint, "without the hint it has no room for");
+    }
+
+    #[test]
+    fn the_composer_grows_but_never_eats_the_conversation() {
+        // Both halves of the rule, which pull against each other: a long
+        // message must not be clipped, and the box must not take the pane.
+        for h in [1400., 900., 600., 300., 160.] {
+            let sh = shows(1200., h, true, true, true);
+            assert!(
+                sh.composer_max >= COMPOSER_MIN_MAX,
+                "{h}: {} is too short to hold a sentence",
+                sh.composer_max
+            );
+            if h >= 400. {
+                assert!(
+                    sh.composer_max <= h * 0.4,
+                    "{h}: the composer could take {} of it",
+                    sh.composer_max
+                );
+            }
+        }
     }
 
     #[test]

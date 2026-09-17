@@ -2143,13 +2143,14 @@ pub struct TerminalView {
     /// same as empty: a composer that is open and holding nothing is a person
     /// who has started answering, and closing it under them loses that.
     wb_compose: Option<crate::workbench::Line>,
-    /// One character's width in the COMPOSER's font at the composer's size,
-    /// measured rather than computed. See [`Self::sync_size`].
-    wb_advance: f32,
-    /// Where the composer's text begins on screen, so a click can be turned
-    /// into a column. Captured by the element itself at paint time because
-    /// only the element knows where the layout put it.
-    wb_text_origin: std::sync::Arc<std::sync::Mutex<Option<gpui::Bounds<gpui::Pixels>>>>,
+    /// The composer's own text layout, so a click can be turned into a
+    /// character index BY THE TEXT SYSTEM — wrapping, kerning and all.
+    ///
+    /// Two approximations died here: a scaled cell width and a measured
+    /// advance for `M`. Both answered a question about a font when the
+    /// question was about this string in this box on this line, and a wrapped
+    /// line has no single answer to it at all.
+    wb_text_layout: std::rc::Rc<std::cell::RefCell<Option<gpui::TextLayout>>>,
     /// The live question currently on this pane's bench, if one is up.
     ///
     /// Held so it can be RETIRED the moment the pane stops waiting — the
@@ -3214,8 +3215,7 @@ impl TerminalView {
             tok_was_working: false,
             bench: crate::workbench::Bench::new(),
             wb_compose: None,
-            wb_advance: 0.0,
-            wb_text_origin: std::sync::Arc::new(std::sync::Mutex::new(None)),
+            wb_text_layout: std::rc::Rc::new(std::cell::RefCell::new(None)),
             wb_live_q: None,
         }
     }
@@ -3512,23 +3512,6 @@ impl TerminalView {
         ) {
             if f32::from(w.width) > 1.0 {
                 self.cell_w = f32::from(w.width);
-            }
-        }
-        // And the same question asked again for the COMPOSER, which draws at
-        // its own size. Scaling the grid's cell by the ratio of the two sizes
-        // was close and therefore worse than wrong: the caret drifted about a
-        // character every eight, so it looked aligned at the start of a line
-        // and sat inside a word by the end of one. Parker, on a line of forty
-        // characters: *"cursor not aligned"*. A font's advance is not linear
-        // in its point size — hinting and rounding see to that — so the only
-        // honest source is the text system, asked at the size actually used.
-        if let Ok(w) = window.text_system().advance(
-            window.text_system().resolve_font(&font),
-            px(crate::benchdraw::COMPOSER_PT),
-            'M',
-        ) {
-            if f32::from(w.width) > 1.0 {
-                self.wb_advance = f32::from(w.width);
             }
         }
         // Fit the grid to the tube minus its (curvature-aware) frame, so the
@@ -6948,35 +6931,31 @@ impl TerminalView {
     /// that decides where the next character lands. Moving only the drawing
     /// would put the block where the person clicked and the text somewhere
     /// else, which is worse than not offering the gesture at all.
-    fn bench_click(&mut self, x: f32, advance: f32, cx: &mut Context<Self>) {
+    fn bench_click(&mut self, at: gpui::Point<gpui::Pixels>, cx: &mut Context<Self>) {
         if self.wb_compose.is_none() {
             self.wb_compose = Some(crate::workbench::Line::new());
             return;
         }
-        let Some(bounds) = self.wb_text_origin.lock().ok().and_then(|b| *b) else {
-            // Never painted, so there is no column to compute. Arming the line
-            // is still the right half of the gesture.
+        let Some(layout) = self.wb_text_layout.borrow().clone() else {
             return;
         };
-        let left = f32::from(bounds.origin.x);
-        let drawn = f32::from(bounds.size.width);
         let Some(line) = self.wb_compose.as_mut() else {
             return;
         };
-        // One character's width, taken from the line the renderer ACTUALLY
-        // drew: its measured width over its character count. Every attempt to
-        // compute this ahead of time was wrong — the grid's cell scaled by the
-        // point-size ratio, then the text system's advance for `M` — because
-        // both answer a question about a font rather than about this string in
-        // this box. Dividing the drawn width is self-correcting: it is right
-        // for a proportional font too, on average, which is the best any
-        // single number can do.
-        let advance = match line.chars() {
-            0 => advance,
-            n if drawn > 1.0 => drawn / n as f32,
-            _ => advance,
+        // `index_for_position` answers in BYTES and answers `Err` with the
+        // nearest index when the point is outside the text — past the last
+        // character, or below the last row. Both are ordinary: a person
+        // clicking the empty space after a short line means the end of it.
+        let byte = match layout.index_for_position(at) {
+            Ok(i) => i,
+            Err(i) => i,
         };
-        let to = crate::workbench::caret_for_click(x - left, advance, line.chars());
+        let to = line
+            .text()
+            .char_indices()
+            .position(|(i, _)| i >= byte)
+            .unwrap_or(line.chars())
+            .min(line.chars());
         let bytes = crate::workbench::caret_move(line.caret(), to);
         line.seek(to);
         if !bytes.is_empty() {
@@ -7018,6 +6997,14 @@ impl TerminalView {
             // image is, and there a path is the only thing that can be typed.
             if self.mode.is_agent() {
                 self.send(vec![0x16], cx);
+                // The composer cannot show the agent's `[Image #7]` — it does
+                // not know the number and inventing one would desynchronise
+                // the mirror. It shows that an image went, which is the part
+                // it does know. See [`crate::workbench::Line::note_paste`].
+                if let Some(line) = self.wb_compose.as_mut() {
+                    line.note_paste();
+                }
+                cx.notify();
                 return;
             }
             if let Some(path) = self.clipboard_image_path() {
@@ -7484,21 +7471,11 @@ impl TerminalView {
 
         // ── the composer ────────────────────────────────────────────────────
         let composer = shows.composer.then(|| {
-            // Measured for this font at this size in `sync_size`. Until
-            // the first measurement lands it falls back to the scaled
-            // cell, which is close enough to draw one frame with and is
-            // never what the caret settles on.
-            let advance = if self.wb_advance > 1.0 {
-                self.wb_advance
-            } else {
-                self.cell_w * crate::benchdraw::COMPOSER_PT / th.font_size
-            };
             crate::benchdraw::composer(
                 self.wb_compose.as_ref(),
                 focused,
-                advance,
                 &shows,
-                self.wb_text_origin.clone(),
+                self.wb_text_layout.clone(),
                 sk,
                 th,
             )
@@ -7506,7 +7483,7 @@ impl TerminalView {
                 MouseButton::Left,
                 cx.listener(move |view, ev: &MouseDownEvent, window, cx| {
                     cx.stop_propagation();
-                    view.bench_click(ev.position.x.into(), advance, cx);
+                    view.bench_click(ev.position, cx);
                     window.focus(&view.focus_handle, cx);
                     cx.notify();
                 }),
