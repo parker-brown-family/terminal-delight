@@ -58,6 +58,7 @@ mod palette;
 mod pane;
 mod plugins;
 mod recover;
+mod screenread;
 mod session;
 mod skin;
 mod slot;
@@ -29236,16 +29237,16 @@ mod tests {
             "│ ❯ 1. Yes                     │".into(),
             "╰──────────────────────────────╯".into(),
         ];
-        assert!(pane::wants_human(&screen));
+        assert!(screenread::wants_human(&screen));
         assert_eq!(
-            pane::wants_human_row(&screen).and_then(pane::clip_evidence),
+            screenread::wants_human_row(&screen).and_then(screenread::clip_evidence),
             Some("Do you want to proceed?".to_string()),
             "the frame is furniture; the question is the evidence"
         );
         // And the absence is real: a screen with no prompt quotes nothing.
         let quiet: Vec<String> = vec!["all done".into()];
-        assert!(!pane::wants_human(&quiet));
-        assert_eq!(pane::wants_human_row(&quiet), None);
+        assert!(!screenread::wants_human(&quiet));
+        assert_eq!(screenread::wants_human_row(&quiet), None);
     }
 
     /// The LAST match wins, because an agent TUI prints downward and a stale
@@ -29258,7 +29259,7 @@ mod tests {
             "Do you want to proceed?".into(),
         ];
         assert_eq!(
-            pane::wants_human_row(&screen),
+            screenread::wants_human_row(&screen),
             Some("Do you want to proceed?")
         );
     }
@@ -29268,14 +29269,14 @@ mod tests {
     #[test]
     fn a_clean_finish_has_no_quote_and_that_is_the_honest_answer() {
         let wall: Vec<String> = vec!["  API Error: 429 rate_limit_error".into()];
-        assert!(pane::looks_blocked(&wall));
+        assert!(screenread::looks_blocked(&wall));
         assert_eq!(
-            pane::blocked_row(&wall).and_then(pane::clip_evidence),
+            screenread::blocked_row(&wall).and_then(screenread::clip_evidence),
             Some("API Error: 429 rate_limit_error".to_string())
         );
         let clean: Vec<String> = vec!["  Done. 3 files changed.".into()];
-        assert!(!pane::looks_blocked(&clean));
-        assert_eq!(pane::blocked_row(&clean), None);
+        assert!(!screenread::looks_blocked(&clean));
+        assert_eq!(screenread::blocked_row(&clean), None);
     }
 
     /// A quote is clipped at capture, and a clipped quote is visibly clipped.
@@ -29286,12 +29287,12 @@ mod tests {
     #[test]
     fn a_long_quote_is_clipped_and_says_that_it_was() {
         let long = "x".repeat(400);
-        let out = pane::clip_evidence(&long).expect("a long row is quotable");
+        let out = screenread::clip_evidence(&long).expect("a long row is quotable");
         assert!(out.chars().count() <= 96, "clipped to the row's width");
         assert!(out.ends_with('\u{2026}'), "and marked as clipped");
         // A short one is returned whole, with no ellipsis to misread.
         assert_eq!(
-            pane::clip_evidence("  two   spaces  ").as_deref(),
+            screenread::clip_evidence("  two   spaces  ").as_deref(),
             Some("two spaces")
         );
     }
@@ -29313,7 +29314,7 @@ mod tests {
             "",
         ] {
             assert_eq!(
-                pane::clip_evidence(furniture),
+                screenread::clip_evidence(furniture),
                 None,
                 "{furniture:?} has nothing to quote"
             );
@@ -29333,10 +29334,10 @@ mod tests {
             vec!["Do you trust the files in this folder?".into()],
         ];
         for screen in prompts {
-            assert!(pane::wants_human(&screen), "{screen:?} should match");
+            assert!(screenread::wants_human(&screen), "{screen:?} should match");
             assert!(
-                pane::wants_human_row(&screen)
-                    .and_then(pane::clip_evidence)
+                screenread::wants_human_row(&screen)
+                    .and_then(screenread::clip_evidence)
                     .is_some(),
                 "a matched prompt must leave something quotable: {screen:?}"
             );
@@ -29346,10 +29347,13 @@ mod tests {
             vec!["  Your credit balance is too low".into()],
         ];
         for screen in walls {
-            assert!(pane::looks_blocked(&screen), "{screen:?} should match");
             assert!(
-                pane::blocked_row(&screen)
-                    .and_then(pane::clip_evidence)
+                screenread::looks_blocked(&screen),
+                "{screen:?} should match"
+            );
+            assert!(
+                screenread::blocked_row(&screen)
+                    .and_then(screenread::clip_evidence)
                     .is_some(),
                 "a matched wall must leave something quotable: {screen:?}"
             );
@@ -29373,6 +29377,7 @@ mod tests {
         let src = concat!(
             include_str!("attention.rs"),
             include_str!("pane.rs"),
+            include_str!("screenread.rs"),
             include_str!("mcp.rs"),
         );
         let here = include_str!("main.rs");

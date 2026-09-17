@@ -7,6 +7,10 @@ use std::time::{Duration, Instant};
 
 use crate::crt;
 use crate::doc::{wrap_join, DocLine, Document, DocumentSource, RowBudget, WrapJoin};
+use crate::screenread::{
+    blocked_row, clip_evidence, human_input_rows, is_human_input_line, looks_blocked,
+    rows_fingerprint, wants_human_row, wants_human_unless_answered, PROMPT_TAIL_ROWS,
+};
 use crate::term;
 use crate::theme::{self, PaneTheme, Theme};
 use alacritty_terminal::{
@@ -101,260 +105,6 @@ impl PaneMode {
     pub fn is_agent(&self) -> bool {
         matches!(self, PaneMode::Claude | PaneMode::Codex)
     }
-}
-
-/// Does this rendered grid row look like one of *the user's own* input lines in
-/// an agent (claude/codex) TUI? Heuristic: agent TUIs echo the human's submitted
-/// turn behind a prompt caret — `❯ `/`> ` (Claude Code) or `▌ ` (some Codex
-/// builds). We match the first non-blank glyph so indentation/box-drawing around
-/// the prompt doesn't fool it. Pure + cheap so it's unit-testable and runs per
-/// row per paint only while a pane is in agent mode.
-pub fn is_human_input_line(text: &str) -> bool {
-    let mut chars = text.trim_start().chars();
-    match chars.next() {
-        // The prompt caret glyphs agent CLIs use for the human's turn.
-        Some('❯') | Some('▌') | Some('»') => {
-            // Require a space (or end) after the caret so we don't catch e.g. a
-            // `❯`-decorated banner with no following text.
-            matches!(chars.next(), Some(' ') | None)
-        }
-        // Plain ASCII '>' is also a quote/redirect marker, so require "> " AND
-        // that what follows isn't another '>' (avoids `>>` heredocs / git diffs).
-        Some('>') => matches!(chars.next(), Some(' ')) && chars.next() != Some('>'),
-        _ => false,
-    }
-}
-
-/// Strip a row down to its sentence: the surrounding whitespace plus the box
-/// drawing the agent CLI frames a dialog in, so `│ Do you want to proceed?   │`
-/// reads as the question it is. `>`/`❯` are deliberately NOT stripped — they
-/// mark the human's own echoed input, and a line the HUMAN typed must never
-/// read as the CLI asking something.
-fn prompt_sentence(text: &str) -> &str {
-    // U+2500..U+257F is the whole Box Drawing block — │ ─ ╭ ╰ and the rest.
-    text.trim_matches(|c: char| c.is_whitespace() || ('\u{2500}'..='\u{257f}').contains(&c))
-}
-
-/// Does this rendered row read as part of an INTERACTION PROMPT — the agent
-/// stopped to ask the human something (an option picker, a permission gate, a
-/// trust dialog), as opposed to being done? Matches the stable footer/header
-/// phrases Claude Code and Codex print with their pickers. Deliberately
-/// STRICT, like the copy gate: a false "come interact" cries wolf, a miss just
-/// means the plain done-bell semantics. "esc to interrupt" (the WORKING
-/// footer) must never match — only "esc to cancel" (a prompt's footer).
-///
-/// The question forms are ANCHORED: the phrase has to OPEN the row and the row
-/// has to be the question (ends in `?`). A dialog header is its own line inside
-/// a box; the identical words in the agent's own prose arrive mid-sentence —
-/// "What do you want to work on?" is the agent talking, and matching it pinned
-/// the blinker on forever, because a finished reply just sits there on screen.
-pub fn row_wants_human(text: &str) -> bool {
-    let t = prompt_sentence(text).to_ascii_lowercase();
-    if t.is_empty() {
-        return false;
-    }
-    // Footer furniture: the CLI prints these only under a LIVE picker, so they
-    // stand alone wherever on the row they land.
-    if t.contains("enter to select") || t.contains("esc to cancel") {
-        return true;
-    }
-    // The review step at the end of a multi-select or a round, which draws no
-    // footer at all — so the picker was live, the person was being waited on,
-    // and the bench said Idle. Pressing the bench's Submit reached exactly
-    // this screen and then appeared to do nothing, because the surface that
-    // would have shown the second half of the commit was never raised.
-    //
-    // Matched as the CLI's own literal rather than by loosening the rule to
-    // "any line ending in a question mark": the agent's prose ends in question
-    // marks constantly, and a detector that fires on those would report a
-    // working agent as blocked. Verified against the strings in the binary —
-    // `Ready to submit your answers?` beside `Review your answers` and the
-    // `Submit answers` / `Cancel` pair.
-    if t == "ready to submit your answers?" || t == "review your answers" {
-        return true;
-    }
-    t.ends_with('?')
-        && (t.starts_with("do you want to")
-            || t.starts_with("do you trust")
-            || t.starts_with("would you like to proceed"))
-}
-
-/// Is an interaction prompt on screen RIGHT NOW? Scans the last few live rows
-/// (prompts sit at the bottom of an agent TUI). Pure over the rows for tests.
-pub fn wants_human(recent_rows: &[String]) -> bool {
-    wants_human_row(recent_rows).is_some()
-}
-
-/// The row that made [`wants_human`] say yes — the evidence behind a decision
-/// row in the rail.
-///
-/// **The predicate is defined in terms of this, and not the other way round.**
-/// A second scan that re-derived "which line was it" would be free to disagree
-/// with the one that set the flag, and the disagreement would appear only on the
-/// screens where two rows both match — precisely the ambiguous screens where a
-/// person most needs the quote to be the real one. One walk, one answer, and
-/// `wants_human` is now a question about whether that answer exists.
-///
-/// The LAST match wins, because an agent TUI prints downward: with a stale
-/// question still on screen above a live picker, the live one is lower.
-pub fn wants_human_row(recent_rows: &[String]) -> Option<&str> {
-    recent_rows
-        .iter()
-        .rev()
-        .find(|r| row_wants_human(r))
-        .map(|r| r.trim())
-}
-
-/// The row that made [`looks_blocked`] say yes — the evidence behind a failure
-/// row. Same one-walk contract as [`wants_human_row`].
-pub fn blocked_row(recent_rows: &[String]) -> Option<&str> {
-    recent_rows
-        .iter()
-        .rev()
-        .find(|r| row_blocked(r))
-        .map(|r| r.trim())
-}
-
-/// The longest quote a rail row will carry.
-///
-/// A queue row is 300 pixels wide and the line it quotes is a terminal row that
-/// may be two hundred columns of box-drawing. Clipped at capture rather than at
-/// paint: the stored string is what a later reader gets, and storing a kilobyte
-/// per pane to draw sixty characters of it is a cost paid every scan.
-const EVIDENCE_CHARS: usize = 96;
-
-/// Tidy one screen row into something quotable on a 300-pixel row, or `None`
-/// when nothing quotable is left.
-///
-/// Box-drawing furniture goes (the CLI draws its prompts inside a frame, and
-/// `│ Do you want to proceed? │` quotes the frame as much as the question), runs
-/// of spaces collapse, and the result is clipped with an ellipsis so a clipped
-/// quote can never be mistaken for a short one.
-///
-/// **`None` rather than an empty string**, because a row of pure furniture —
-/// `╭──────────╮`, or a framed blank line — tidies down to nothing at all, and
-/// the renderer would draw that as an empty grey quote box: a row appearing to
-/// quote its screen and quoting nothing. Today's predicates cannot hand one in
-/// (both demand real text before they match), so this is the boundary being
-/// closed one predicate change ahead of needing it, not a bug being fixed.
-pub fn clip_evidence(row: &str) -> Option<String> {
-    let cleaned: String = row
-        .chars()
-        .map(|c| {
-            if ('\u{2500}'..='\u{257f}').contains(&c) {
-                ' '
-            } else {
-                c
-            }
-        })
-        .collect();
-    let mut out = String::with_capacity(cleaned.len());
-    let mut space = false;
-    for c in cleaned.trim().chars() {
-        if c.is_whitespace() {
-            space = true;
-            continue;
-        }
-        if space && !out.is_empty() {
-            out.push(' ');
-        }
-        space = false;
-        out.push(c);
-    }
-    if out.chars().count() > EVIDENCE_CHARS {
-        out = out.chars().take(EVIDENCE_CHARS - 1).collect::<String>() + "\u{2026}";
-    }
-    (!out.is_empty()).then_some(out)
-}
-
-/// How many rows of the visible tail the prompt predicates read.
-///
-/// One constant because the scan and the clearing edge must agree: a
-/// fingerprint taken over a different window than the predicate ran on would
-/// suppress the wrong screen, and the bug would only show on a pane whose
-/// fifteenth-from-last row happened to change.
-pub const PROMPT_TAIL_ROWS: usize = 14;
-
-/// A cheap identity for the rows a predicate was just evaluated over.
-///
-/// Not a checksum and not a diff — only enough to answer "is this the same
-/// screen I was already told about". Fourteen trimmed rows, so it costs nothing
-/// on the 120ms scan that already has them in hand.
-pub fn rows_fingerprint(recent_rows: &[String]) -> u64 {
-    use std::hash::{Hash, Hasher};
-    let mut h = std::collections::hash_map::DefaultHasher::new();
-    for r in recent_rows {
-        r.trim_end().hash(&mut h);
-    }
-    h.finish()
-}
-
-/// [`wants_human`], minus a screen the person has already answered to.
-///
-/// The predicate reads the visible tail, and on a quiet pane an answered prompt
-/// does not scroll away — which is how the needs-you blinker once pinned on
-/// permanently. Narrowing [`row_wants_human`] fixed the loud half of that;
-/// this is the clearing edge for the rest. A keystroke in the pane records the
-/// screen it was typed at, and the flag cannot re-arm while that is still what
-/// is showing.
-///
-/// **Keyed on the SCREEN, deliberately, and not on a clock.** A stale prompt and
-/// a fresh one are indistinguishable to a timer, so a timeout would either keep
-/// hiding a real question or start showing an answered one again. Somebody who
-/// types and is then genuinely asked something new has a different screen, and
-/// gets told.
-pub fn wants_human_unless_answered(recent_rows: &[String], answered_on: Option<u64>) -> bool {
-    wants_human(recent_rows) && answered_on != Some(rows_fingerprint(recent_rows))
-}
-
-/// Did the agent stop because it hit a WALL rather than the end of its turn?
-/// Matches the error banners the agent CLI itself prints — API failures,
-/// exhausted limits, expired auth — NOT the word "error", which appears
-/// constantly in the agent's own tool output (a failing build is the agent
-/// WORKING, not the agent blocked). Classifies the finish badge: ✅ clean, ❌
-/// blocked. Strict for the same reason as [`row_wants_human`].
-pub fn looks_blocked(recent_rows: &[String]) -> bool {
-    blocked_row(recent_rows).is_some()
-}
-
-/// Does this one row read as a wall? The row-level half of [`looks_blocked`],
-/// split out so the predicate and the evidence come from one walk — see
-/// [`wants_human_row`] for why that matters.
-pub fn row_blocked(text: &str) -> bool {
-    let t = text.trim().to_ascii_lowercase();
-    !t.is_empty()
-        && (t.contains("api error")
-            || t.contains("usage limit")
-            || t.contains("credit balance")
-            || t.contains("oauth token")
-            || t.contains("rate_limit_error")
-            || t.contains("overloaded_error")
-            || t.contains("request timed out"))
-}
-
-/// Mark which rows belong to *the user's own turn*, spanning a wrapped multi-line
-/// message — not just the caret row. An agent TUI prints the human's turn behind
-/// a prompt caret (see `is_human_input_line`) and indents any wrapped
-/// continuation rows under that text. So once a caret row opens a turn we keep
-/// marking the rows that follow as long as they read as indented continuation
-/// (lead with whitespace and carry real text); a blank row, a left-margin row
-/// (the agent's reply / a status line), or a fresh caret row closes the turn.
-/// This is what colours the *entire* message in `th.human`, not just its first
-/// line. Pure + cheap so it's unit-testable and runs once per paint in agent mode.
-pub fn human_input_rows(rows: &[String]) -> Vec<bool> {
-    let mut marks = vec![false; rows.len()];
-    let mut in_turn = false;
-    for (i, text) in rows.iter().enumerate() {
-        if is_human_input_line(text) {
-            in_turn = true; // a caret row opens (or continues) the turn
-        } else if in_turn {
-            // Stay in the turn only for indented, non-blank continuation rows;
-            // a blank or column-0 row hands the screen back to the agent.
-            in_turn = !text.trim_end().is_empty() && text.starts_with(' ');
-        }
-        marks[i] = in_turn;
-    }
-    marks
 }
 
 /// Foreground process of the PTY, the honest kernel answer.
@@ -3283,7 +3033,7 @@ impl TerminalView {
             // The SAME rule the status line uses. These were two copies of
             // one heuristic, and when the CLI stopped printing `esc to
             // interrupt` only one of them would have been noticed.
-            if crate::hud::row_is_working(&s) {
+            if crate::screenread::row_is_working(&s) {
                 return true;
             }
         }
@@ -6834,7 +6584,7 @@ impl TerminalView {
     /// rather than the transcript because the transcript does not have it: an
     /// `AskUserQuestion` is buffered until its result arrives, so a pending
     /// question exists only as pixels until it stops being pending. See
-    /// [`crate::derive::question_on_screen`].
+    /// [`crate::screenread::question_on_screen`].
     pub fn live_questions(&mut self, now_ms: u64) -> Vec<crate::surface::Post> {
         use crate::surface::{Kind, Op, Post, Surface, Weight};
         use crate::workbench::LiveMove;
@@ -6850,9 +6600,9 @@ impl TerminalView {
         let mut out = Vec::new();
         let asking = self
             .needs_input
-            .then(|| crate::derive::question_on_screen(&self.live_rows()))
+            .then(|| crate::screenread::question_on_screen(&self.live_rows()))
             .flatten();
-        let now_id = asking.as_ref().map(crate::derive::screen_question_id);
+        let now_id = asking.as_ref().map(crate::screenread::screen_question_id);
         let was = self.wb_live_q.clone();
         // Counted here rather than in the rule, because the rule is a pure
         // decision and this is the pane remembering what it has seen.
@@ -9376,106 +9126,6 @@ impl Render for TerminalView {
 mod tests {
     use super::*;
 
-    fn rows(lines: &[&str]) -> Vec<String> {
-        lines.iter().map(|s| s.to_string()).collect()
-    }
-
-    /// The review step at the end of a round draws no footer, so the rule
-    /// that catches every other picker misses this one entirely.
-    #[test]
-    fn the_review_step_is_a_question_even_with_no_footer_under_it() {
-        // Transcribed from the screen after pressing the picker's Submit.
-        // There is no "Enter to select" line here — that is the whole
-        // problem, and it is why the bench read Idle while the agent was
-        // plainly waiting on somebody.
-        let review = rows(&[
-            "Review your answers",
-            "  \u{25cf} Round 3. Which of these belong on a desk?",
-            "     \u{2192} A second keyboard",
-            "Ready to submit your answers?",
-            "  ) 1. Submit answers",
-            "    2. Cancel",
-        ]);
-        assert!(
-            wants_human(&review),
-            "the second half of a commit is still a question"
-        );
-
-        // And the strictness it must not cost: an agent WRITING about
-        // submitting answers is an agent working, not an agent blocked.
-        let prose = rows(&[
-            "I will review your answers and then submit them.",
-            "Should I go ahead and submit your answers?",
-            "Running the suite now.",
-        ]);
-        assert!(
-            !wants_human(&prose),
-            "prose about submitting is not the picker asking"
-        );
-    }
-
-    /// The pin, and the edge that clears it.
-    ///
-    /// A permission prompt is the visible tail of a stopped pane and does not
-    /// scroll away, so the 120ms scan re-asserts it forever — that is the
-    /// blinker that once stayed on permanently. Answering suppresses exactly
-    /// that screen, and nothing else.
-    #[test]
-    fn an_answered_prompt_stops_re_arming_until_the_screen_changes() {
-        let asking = rows(&["Do you want to proceed?", "  1. Yes", "  esc to cancel"]);
-
-        // Positive control: without the edge this is a live question, and it
-        // stays one however many times the scan looks at it.
-        assert!(wants_human(&asking));
-        assert!(wants_human_unless_answered(&asking, None));
-
-        // The person types at it. That screen is now answered.
-        let answered = rows_fingerprint(&asking);
-        assert!(!wants_human_unless_answered(&asking, Some(answered)));
-
-        // The agent asks something NEW. A different screen is a different
-        // question, and suppressing it would be the failure this whole rail
-        // exists to prevent.
-        let asking_again = rows(&["Do you trust the files in this folder?", "  esc to cancel"]);
-        assert!(wants_human_unless_answered(&asking_again, Some(answered)));
-    }
-
-    /// The suppression is keyed on the screen, so a picker the person is
-    /// steering re-arms the moment the selection moves — one row differing is
-    /// enough. Without this the down-arrow through a permission picker would
-    /// silence a prompt that is still waiting.
-    #[test]
-    fn moving_a_pickers_selection_re_arms_the_prompt() {
-        let before = rows(&[
-            "Do you want to proceed?",
-            "> 1. Yes",
-            "  2. No",
-            "  esc to cancel",
-        ]);
-        let after = rows(&[
-            "Do you want to proceed?",
-            "  1. Yes",
-            "> 2. No",
-            "  esc to cancel",
-        ]);
-        let answered = rows_fingerprint(&before);
-        assert_ne!(rows_fingerprint(&before), rows_fingerprint(&after));
-        assert!(!wants_human_unless_answered(&before, Some(answered)));
-        assert!(wants_human_unless_answered(&after, Some(answered)));
-    }
-
-    /// A screen nobody has answered to suppresses nothing, and a fingerprint is
-    /// stable across the trailing whitespace a terminal pads rows with — the
-    /// cells to the right of the text change as the grid resizes, and a prompt
-    /// that "changed" because the pane got wider is not a new question.
-    #[test]
-    fn no_answer_suppresses_nothing_and_padding_is_not_a_change() {
-        let asking = rows(&["Do you want to proceed?", "  esc to cancel"]);
-        let padded = rows(&["Do you want to proceed?   ", "  esc to cancel      "]);
-        assert!(wants_human_unless_answered(&asking, None));
-        assert_eq!(rows_fingerprint(&asking), rows_fingerprint(&padded));
-    }
-
     /// A single styled run of `len` bytes (style irrelevant to wrap geometry).
     fn run(len: usize) -> TextRun {
         TextRun {
@@ -10099,70 +9749,6 @@ mod tests {
         }
     }
 
-    /// The COME-INTERACT detector matches the agent CLI's own prompt furniture
-    /// — picker footers, permission questions, the trust dialog — and nothing
-    /// else. "esc to interrupt" is the WORKING footer and must stay silent, and
-    /// ordinary prose (even about wanting things) must never summon Parker.
-    #[test]
-    fn interaction_prompts_are_detected_and_working_footers_are_not() {
-        let rows = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-        for prompt in [
-            "  Enter to select · ↑/↓ to navigate · Esc to cancel",
-            "  Do you want to proceed?",
-            "  Do you trust the files in this folder?",
-            "  Would you like to proceed with this plan?",
-            // the same headers as the CLI actually draws them: inside a box
-            "│ Do you want to make this edit to pane.rs?                    │",
-        ] {
-            assert!(wants_human(&rows(&[prompt])), "should summon: {prompt:?}");
-        }
-        for quiet in [
-            "✶ Crunching… (esc to interrupt)",
-            "I want to refactor the reader next.",
-            "error[E0425]: cannot find function `ensure_seeded`",
-            "",
-            // THE regression: an agent that finished its turn by asking a
-            // conversational question left the blinker lit forever, because a
-            // finished reply just sits in the live rows. The phrase is only a
-            // prompt when it OPENS the row and the row IS the question.
-            "  Hi Parker. Nothing is blocked. What do you want to work on?",
-            "  and test/run. What do you want to work on?",
-            "  Say the word and I'll commit — do you want the .gitignore in?",
-            // the human's own echoed input must never read as the CLI asking
-            "> do you want to proceed?",
-        ] {
-            assert!(!wants_human(&rows(&[quiet])), "must stay quiet: {quiet:?}");
-        }
-    }
-
-    /// The ✅/❌ split: the CLI's own failure banners classify a stop as
-    /// blocked; the agent's tool output failing (a red cargo error) is the
-    /// agent WORKING and must classify as a clean finish when it stops.
-    #[test]
-    fn blocked_finishes_are_the_clis_banners_not_tool_errors() {
-        let rows = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-        for wall in [
-            "  ⎿  API Error: 529 overloaded_error",
-            "  You've reached your usage limit — resets 3pm",
-            "  Credit balance too low",
-            "  OAuth token has expired",
-            "  Request timed out after 60s",
-        ] {
-            assert!(
-                looks_blocked(&rows(&[wall])),
-                "should read blocked: {wall:?}"
-            );
-        }
-        for fine in [
-            "error[E0308]: mismatched types",
-            "test result: FAILED. 3 passed; 1 failed",
-            "Done — merged #227 and deployed.",
-            "",
-        ] {
-            assert!(!looks_blocked(&rows(&[fine])), "must read clean: {fine:?}");
-        }
-    }
-
     /// A line-INITIAL URL earns a chip — link tables and agent replies wrap
     /// them, and half a URL is as dead as half a command. Mid-prose URLs stay
     /// silent (the strictness rule), and the elision guarantee still wins even
@@ -10688,27 +10274,6 @@ mod tests {
         assert!(!PaneMode::Other("vim".into()).is_agent());
     }
 
-    #[test]
-    fn human_input_line_detects_the_prompt_caret_only() {
-        // the agent CLIs' human-turn carets, with leading indentation tolerated
-        assert!(is_human_input_line("❯ hi there"));
-        assert!(is_human_input_line("  ❯ tell me the weather"));
-        assert!(is_human_input_line("> what is 2+2"));
-        assert!(is_human_input_line("▌ codex-style prompt"));
-        assert!(is_human_input_line("» fish-ish caret"));
-        // a bare caret with nothing after still counts (the live empty input box)
-        assert!(is_human_input_line("❯"));
-        // NOT human input: the agent's replies, plain output, shell redirects
-        assert!(!is_human_input_line(
-            "● Hi Parker! What are you working on?"
-        ));
-        assert!(!is_human_input_line("Compiling aurora v0.3.0"));
-        assert!(!is_human_input_line(">> heredoc body")); // doubled '>' is not a prompt
-        assert!(!is_human_input_line("cat file > out.txt")); // '>' mid-line
-        assert!(!is_human_input_line(""));
-        assert!(!is_human_input_line("    "));
-    }
-
     /// The prompt seek drives a full-screen agent by synthesising wheel notches,
     /// so the bytes must be exactly what a real wheel would have produced — and
     /// they must never be cursor keys, which agents read as history recall.
@@ -10735,33 +10300,6 @@ mod tests {
             assert_ne!(bytes, b"\x1b[A".to_vec());
             assert_ne!(bytes, b"\x1b[B".to_vec());
         }
-    }
-
-    #[test]
-    fn human_input_rows_span_the_whole_wrapped_message() {
-        // A multi-line user turn: caret row + indented wrapped continuation,
-        // then a blank row and the agent's column-0 reply.
-        let rows: Vec<String> = [
-            "> Great - all the work we had on deck",
-            "  is done? Let's get a clean main",
-            "  and stand up a CLA across the repos",
-            "",
-            "● Two things: clean up the git state,",
-            "  and stand up a CLA across the OSS repos.",
-        ]
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
-        let marks = human_input_rows(&rows);
-        // caret row + both indented continuation rows are the human's turn
-        assert_eq!(marks[0..3], [true, true, true]);
-        // the blank row closes the turn; the agent's reply is NOT human —
-        // including its own indented continuation row after the bullet.
-        assert_eq!(marks[3..6], [false, false, false]);
-
-        // A bare/empty caret (live input box) colours just that row.
-        let live: Vec<String> = ["❯", ""].iter().map(|s| s.to_string()).collect();
-        assert_eq!(human_input_rows(&live), [true, false]);
     }
 
     #[test]
