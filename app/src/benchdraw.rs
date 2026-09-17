@@ -1200,88 +1200,67 @@ pub fn title_card(
 ) -> Div {
     let tint = ink(state.tint(), th);
     let urgent = state.urgent();
-    // FULL strength, whatever the state.
+    // 65% OF THE SPINE'S BLOOM, and that is arithmetic rather than an eye.
     //
-    // This rode a dial — 0.4 when calm, 1.0 when waiting — on the reasoning
-    // that a frame which shouts at Idle is a frame nobody reads at Waiting.
-    // That reasoning holds for a queue of rows competing with each other and
-    // not for this, which is one card answering one question and has nothing
-    // to compete with. Parker, looking at the calm state: *"the agent state
-    // though --- like MORE phosphor... by 2.5x"* — and 0.4 × 2.5 is 1.0, so
-    // the dial simply goes away.
-    //
-    // A calm state stays calm because its TINT is grey: `Tint::Unknown`
-    // resolves to `Faint`, and grey does not bloom however much of it there
-    // is. The restraint lives in the colour table where it belongs, rather
-    // than in a second number turning the same table back down.
-    let strength = 1.0;
+    // The spine glows with `float_shadows(accent)` at full alpha, and
+    // `spine_frame` multiplies exactly that by its strength — so "as strong as
+    // the right spine glow, times 0.65" is the number, not an approximation of
+    // one. Parker gave two ways to say it: *"65% as strong as the right spine
+    // glow! or perhaps 80% as strong as the working focus pane glow!"*. The
+    // spine is the one that can be computed; the focus tube's glow is a shader
+    // term with no alpha to take a percentage of, so it would have been an eye
+    // pretending to be a number.
+    const SPINE_SHARE: f32 = 0.65;
     spine_frame(
-        div().flex().flex_col().gap(px(8.)).px(px(14.)).py(px(12.)),
+        div()
+            .flex()
+            // ONE LINE. It was a column — a header row above a lamp-and-state
+            // row — which is two lines of chrome to say one short thing, and
+            // on a wide pane it left a band of empty the height of a
+            // paragraph. Everything it carries fits across.
+            .flex_row()
+            .items_center()
+            .gap(px(10.))
+            .px(px(12.))
+            .py(px(8.)),
         tint,
-        strength,
+        SPINE_SHARE,
         sk,
         th,
     )
-    // The spine's header: what this is on the left, what it can tell you on
-    // the right, both in the chrome's small dim voice.
+    .child(micro("AGENT", 9.5, th.faint, th))
     .child(
+        // A LAMP, not a bullet. Ringed rather than merely bigger: a filled
+        // circle reads as punctuation at any size, and a ring around it reads
+        // as an indicator — the difference between a full stop and something
+        // that is on.
         div()
+            .w(px(14.))
+            .h(px(14.))
+            .flex_none()
+            .rounded(sk.rad_raw(7.))
+            .border_2()
+            .border_color(tint.alpha(0.9))
             .flex()
-            .flex_row()
-            .justify_between()
             .items_center()
-            .child(micro("AGENT", 9.5, th.faint, th))
-            .when_some(tool.map(str::to_string), |d, t| {
-                d.child(micro(t, 9.5, th.faint, th))
-            }),
+            .justify_center()
+            .child(div().w(px(6.)).h(px(6.)).rounded(sk.rad_raw(3.)).bg(tint)),
     )
     .child(
+        // The state, still the largest thing on the bar. The SIZE is constant
+        // and the COLOUR says which state it is: a calm state that shrinks is
+        // a calm state nobody can find, and finding it is the whole job.
         div()
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap(px(12.))
-            .child(
-                // A LAMP, not a bullet. Ringed rather than merely bigger: a
-                // filled circle reads as punctuation at any size, and a ring
-                // around it reads as an indicator — the difference between a
-                // full stop and something that is on.
-                div()
-                    .w(px(16.))
-                    .h(px(16.))
-                    .flex_none()
-                    .rounded(sk.rad_raw(8.))
-                    .border_2()
-                    .border_color(tint.alpha(0.5 + 0.5 * strength))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .child(
-                        div()
-                            .w(px(7.))
-                            .h(px(7.))
-                            .rounded(sk.rad_raw(4.))
-                            .bg(tint.alpha(0.55 + 0.45 * strength)),
-                    ),
-            )
-            .child(
-                // THE STATE, at the size of the thing it is reporting on.
-                //
-                // It was thirteen points beside an eight-pixel dot on a
-                // surface whose headings run to eighteen, so the one line
-                // answering *what is this agent doing* was the quietest thing
-                // on the bench. Size alone was not the answer either — the
-                // frame around it is doing the rest of that work.
-                //
-                // The SIZE is constant and the COLOUR says which state it is:
-                // a calm state that shrinks is a calm state nobody can find,
-                // and finding it is the whole job.
-                div()
-                    .text_size(px(22.))
-                    .text_color(if urgent { tint } else { th.text.alpha(0.85) })
-                    .child(state.word()),
-            ),
+            .flex_none()
+            .whitespace_nowrap()
+            .text_size(px(17.))
+            .text_color(if urgent { tint } else { th.text.alpha(0.9) })
+            .child(state.word()),
     )
+    .child(div().flex_1())
+    .when_some(tool.map(str::to_string), |d, t| {
+        d.child(micro(t, 9.5, th.faint, th))
+    })
 }
 
 /// Dress an answer as a button: always a button, coloured by what it is.
