@@ -1655,16 +1655,21 @@ pub fn waiting_block(q: &crate::surface::Question, sk: &Skin, th: &Theme) -> Div
 /// control that lives inside what it hides is a control you cannot find again.
 pub fn rail_handle(open: bool, th: &Theme) -> Div {
     div()
-        .w(px(14.))
+        .w(px(20.))
         .flex_none()
         .flex()
         .items_center()
         .justify_center()
         .cursor_pointer()
         .child(
+            // BIGGER and BOLD. It was a thirteen-point chevron in the faint
+            // ink — the dimmest mark on the surface, holding the only gesture
+            // that gives the bench its width back, on a target fourteen pixels
+            // wide. A control nobody can see is a control nobody uses.
             div()
-                .text_size(px(13.))
-                .text_color(th.faint)
+                .text_size(px(20.))
+                .font_weight(gpui::FontWeight::BOLD)
+                .text_color(th.text.alpha(0.75))
                 .child(if open { "\u{203a}" } else { "\u{2039}" }),
         )
 }

@@ -396,6 +396,86 @@ impl Line {
         self.caret = self.chars();
     }
 
+    /// Apply an [`Edit`]. The one place a key becomes a change to this line,
+    /// so the mirror and the agent's own editor cannot drift by having two
+    /// slightly different ideas of what `ctrl+w` does.
+    pub fn apply(&mut self, edit: Edit) {
+        match edit {
+            Edit::Left => self.left(),
+            Edit::Right => self.right(),
+            Edit::WordLeft => self.caret = self.word_start(),
+            Edit::WordRight => self.caret = self.word_end(),
+            Edit::Home => self.home(),
+            Edit::End => self.end(),
+            Edit::Backspace => {
+                self.backspace();
+            }
+            Edit::Delete => {
+                self.delete();
+            }
+            Edit::KillWordLeft => {
+                let to = self.word_start();
+                self.cut(to, self.caret);
+                self.caret = to;
+            }
+            Edit::KillWordRight => {
+                let to = self.word_end();
+                self.cut(self.caret, to);
+            }
+            Edit::KillToStart => {
+                self.cut(0, self.caret);
+                self.caret = 0;
+            }
+            Edit::KillToEnd => {
+                let end = self.chars();
+                self.cut(self.caret, end);
+            }
+            Edit::Submit => self.clear(),
+        }
+    }
+
+    /// The start of the word behind the caret.
+    ///
+    /// Skip the whitespace immediately behind, then the run of word characters
+    /// before that — readline's rule, and the one every editor on this desk
+    /// agrees on. A caret already at the start answers zero rather than
+    /// wrapping.
+    fn word_start(&self) -> usize {
+        let ch: Vec<char> = self.text.chars().collect();
+        let mut i = self.caret.min(ch.len());
+        while i > 0 && !ch[i - 1].is_alphanumeric() {
+            i -= 1;
+        }
+        while i > 0 && ch[i - 1].is_alphanumeric() {
+            i -= 1;
+        }
+        i
+    }
+
+    /// The end of the word in front of the caret, by the mirror rule.
+    fn word_end(&self) -> usize {
+        let ch: Vec<char> = self.text.chars().collect();
+        let mut i = self.caret.min(ch.len());
+        while i < ch.len() && !ch[i].is_alphanumeric() {
+            i += 1;
+        }
+        while i < ch.len() && ch[i].is_alphanumeric() {
+            i += 1;
+        }
+        i
+    }
+
+    /// Remove a character range. Nothing happens on an empty or inverted one,
+    /// which is what a kill at either end of the line asks for.
+    fn cut(&mut self, from: usize, to: usize) {
+        if from >= to {
+            return;
+        }
+        let a = self.byte_at(from);
+        let b = self.byte_at(to);
+        self.text.replace_range(a..b, "");
+    }
+
     pub fn clear(&mut self) {
         self.text.clear();
         self.caret = 0;
@@ -663,6 +743,71 @@ pub fn nav_index(option: usize, submit_at: Option<usize>) -> usize {
         Some(at) if option >= at => option + 1,
         _ => option,
     }
+}
+
+/// One edit a key can ask of a line.
+///
+/// A table rather than a match arm per key in the handler, because the handler
+/// is not a place an assertion can reach and these are CONVENTIONS — the point
+/// of them is that a person already knows them, so getting one wrong is worse
+/// than not having it. Parker: *"ctrl left arrow ctrl A --- we have a bunch of
+/// text editor rules that are CONVENTIONS THAT WE MUST SUPPORT in our text
+/// entry"*.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Edit {
+    Left,
+    Right,
+    WordLeft,
+    WordRight,
+    Home,
+    End,
+    Backspace,
+    Delete,
+    /// ctrl+w and ctrl+backspace: take the word behind the caret.
+    KillWordLeft,
+    /// alt+d and ctrl+delete: take the word in front of it.
+    KillWordRight,
+    /// ctrl+u: everything from the caret back to the start.
+    KillToStart,
+    /// ctrl+k: everything from the caret to the end.
+    KillToEnd,
+    /// Sent, and the line starts again.
+    Submit,
+}
+
+/// Which edit a keystroke asks for, if any.
+///
+/// Readline's bindings, because that is what is on the far end: the agent's own
+/// line editor is readline-shaped, so `ctrl+a` is the start of the line and not
+/// select-all, and a person who types `ctrl+w` expects a word to go. The
+/// alt-prefixed pair is here too, since a terminal that sends meta rather than
+/// control is the ordinary case on this desk.
+///
+/// [`None`] means this is not an edit — a printable character, or a chord that
+/// belongs to somebody else — and the caller passes it through untouched.
+pub fn line_edit(key: &str, ctrl: bool, alt: bool) -> Option<Edit> {
+    Some(match key {
+        "left" if ctrl || alt => Edit::WordLeft,
+        "right" if ctrl || alt => Edit::WordRight,
+        "left" => Edit::Left,
+        "right" => Edit::Right,
+        "home" => Edit::Home,
+        "end" => Edit::End,
+        "backspace" if ctrl || alt => Edit::KillWordLeft,
+        "backspace" => Edit::Backspace,
+        "delete" if ctrl || alt => Edit::KillWordRight,
+        "delete" => Edit::Delete,
+        "enter" => Edit::Submit,
+        "a" if ctrl => Edit::Home,
+        "e" if ctrl => Edit::End,
+        "b" if ctrl => Edit::Left,
+        "f" if ctrl => Edit::Right,
+        "w" if ctrl => Edit::KillWordLeft,
+        "d" if alt => Edit::KillWordRight,
+        "u" if ctrl => Edit::KillToStart,
+        "k" if ctrl => Edit::KillToEnd,
+        _ => return None,
+    })
 }
 
 /// The bytes that move an agent's own line editor from one column to another.
@@ -2089,6 +2234,112 @@ mod tests {
         assert!(!l.delete(), "nothing in front of the end");
         l.right();
         assert_eq!(l.caret(), 4);
+    }
+
+    #[test]
+    fn the_editing_conventions_a_person_already_knows_all_work() {
+        // Word motion, both directions and both modifiers. The point of a
+        // convention is that somebody already knows it, so one of these being
+        // wrong is worse than the whole set being absent.
+        for (key, ctrl, alt, want) in [
+            ("left", true, false, Edit::WordLeft),
+            ("left", false, true, Edit::WordLeft),
+            ("right", true, false, Edit::WordRight),
+            ("right", false, true, Edit::WordRight),
+            ("left", false, false, Edit::Left),
+            ("right", false, false, Edit::Right),
+            // Readline's own chords, because the far end is readline-shaped:
+            // ctrl+a is the START of the line here, never select-all.
+            ("a", true, false, Edit::Home),
+            ("e", true, false, Edit::End),
+            ("b", true, false, Edit::Left),
+            ("f", true, false, Edit::Right),
+            ("w", true, false, Edit::KillWordLeft),
+            ("u", true, false, Edit::KillToStart),
+            ("k", true, false, Edit::KillToEnd),
+            ("d", false, true, Edit::KillWordRight),
+            ("backspace", true, false, Edit::KillWordLeft),
+            ("delete", true, false, Edit::KillWordRight),
+            ("home", false, false, Edit::Home),
+            ("end", false, false, Edit::End),
+            ("enter", false, false, Edit::Submit),
+        ] {
+            assert_eq!(
+                line_edit(key, ctrl, alt),
+                Some(want),
+                "{key} ctrl={ctrl} alt={alt}"
+            );
+        }
+        // A plain letter is a letter. `a` unmodified must reach the line as
+        // text, or typing the word "and" would send the caret home twice.
+        for key in ["a", "e", "w", "k", "u", "d", "b", "f", "z"] {
+            assert_eq!(line_edit(key, false, false), None, "{key} alone is text");
+        }
+        assert_eq!(line_edit("f5", false, false), None);
+    }
+
+    #[test]
+    fn word_motion_and_the_kills_agree_with_every_editor_on_this_desk() {
+        let mut l = Line::holding("the quick brown fox");
+        // Back one word from the end.
+        l.apply(Edit::WordLeft);
+        assert_eq!(l.caret(), 16, "start of `fox`");
+        l.apply(Edit::WordLeft);
+        assert_eq!(l.caret(), 10, "start of `brown`");
+        // Forward again.
+        l.apply(Edit::WordRight);
+        assert_eq!(l.caret(), 15, "end of `brown`");
+
+        // ctrl+w takes the word behind and nothing else.
+        let mut l = Line::holding("the quick brown fox");
+        l.apply(Edit::KillWordLeft);
+        assert_eq!(l.text(), "the quick brown ");
+        assert_eq!(l.caret(), 16);
+        // Twice more, and the trailing space goes with the word.
+        l.apply(Edit::KillWordLeft);
+        assert_eq!(l.text(), "the quick ");
+
+        // ctrl+u and ctrl+k, from the middle.
+        let mut l = Line::holding("the quick brown fox");
+        l.seek(10);
+        l.apply(Edit::KillToStart);
+        assert_eq!((l.text(), l.caret()), ("brown fox", 0));
+        l.seek(5);
+        l.apply(Edit::KillToEnd);
+        assert_eq!((l.text(), l.caret()), ("brown", 5));
+
+        // Every one of them holds at the ends rather than panicking.
+        let mut l = Line::new();
+        for edit in [
+            Edit::WordLeft,
+            Edit::WordRight,
+            Edit::KillWordLeft,
+            Edit::KillWordRight,
+            Edit::KillToStart,
+            Edit::KillToEnd,
+            Edit::Backspace,
+            Edit::Delete,
+        ] {
+            l.apply(edit);
+            assert_eq!((l.text(), l.caret()), ("", 0), "{edit:?} on an empty line");
+        }
+    }
+
+    #[test]
+    fn word_motion_does_not_split_a_multi_byte_character() {
+        // The caret is in characters, and a kill takes a byte range — so a
+        // line of em dashes and accents is where an off-by-one would panic
+        // rather than merely misbehave.
+        let mut l = Line::holding("caf\u{e9} \u{2014} r\u{e9}sum\u{e9} na\u{ef}ve");
+        l.apply(Edit::KillWordLeft);
+        assert!(
+            l.text().starts_with("caf\u{e9} \u{2014} r\u{e9}sum\u{e9} "),
+            "{}",
+            l.text()
+        );
+        l.apply(Edit::WordLeft);
+        l.apply(Edit::KillToEnd);
+        assert_eq!(l.text(), "caf\u{e9} \u{2014} ");
     }
 
     #[test]

@@ -4113,7 +4113,29 @@ impl TerminalView {
     fn note_layout(&self) -> Option<crate::sticky::Layout> {
         let note = self.note.as_ref()?;
         let bounds = (*self.content_bounds.lock().ok()?)?;
-        crate::sticky::layout(bounds, note.tilt())
+        crate::sticky::layout(bounds, note.tilt(), self.note_corner(bounds))
+    }
+
+    /// Where this pane's note belongs, and how much it has to keep clear.
+    ///
+    /// The clearance is the TALLEST the composer can grow to, not its height
+    /// this frame: a note that is clear of a one-line box and buried under a
+    /// four-line one would move under the person's hands as they typed, which
+    /// is worse than sitting a little higher than it needs to.
+    fn note_corner(&self, bounds: gpui::Bounds<gpui::Pixels>) -> crate::sticky::Corner {
+        if self.bench.face() != crate::workbench::Face::Workbench || !self.mode.is_agent() {
+            return crate::sticky::Corner::TopRight;
+        }
+        let shows = crate::workbench::shows(
+            f32::from(bounds.size.width),
+            f32::from(bounds.size.height),
+            true,
+            self.bench.rail_wanted(),
+            self.wb_compose.is_some(),
+        );
+        crate::sticky::Corner::BottomRight {
+            clear: shows.composer_max + 40.0,
+        }
     }
 
     /// `alt+s`, or a click on the paper: stick a note on, or pick the pen back up
@@ -4528,25 +4550,18 @@ impl TerminalView {
                     // agent's caret now is. See [`crate::workbench::Line`] for
                     // why a mirror and not a model.
                     if let Some(line) = self.wb_compose.as_mut() {
-                        match ks.key.as_str() {
-                            "backspace" => {
-                                line.backspace();
-                            }
-                            "delete" => {
-                                line.delete();
-                            }
-                            "left" => line.left(),
-                            "right" => line.right(),
-                            "home" => line.home(),
-                            "end" => line.end(),
-                            // ctrl+a / ctrl+e are the same two keys on every
-                            // line editor the far end might be running, and a
-                            // person who reaches for them expects the caret to
-                            // move here too.
-                            "a" if ks.modifiers.control => line.home(),
-                            "e" if ks.modifiers.control => line.end(),
-                            "enter" => line.clear(),
-                            _ => {
+                        // One table, in `workbench`, so the conventions can be
+                        // asserted: word motion, the kills, and the readline
+                        // chords the agent's own editor answers to. A key that
+                        // is not an edit is a character, and characters go in
+                        // at the caret.
+                        match crate::workbench::line_edit(
+                            &ks.key,
+                            ks.modifiers.control,
+                            ks.modifiers.alt,
+                        ) {
+                            Some(edit) => line.apply(edit),
+                            None => {
                                 if let Some(c) = ks.key_char.as_deref() {
                                     if !c.is_empty() && !c.chars().any(char::is_control) {
                                         line.insert(c);
@@ -9136,6 +9151,17 @@ impl Render for TerminalView {
         // warp tube is registered from, because the note is drawn through the
         // INVERSE of that tube's distortion and the two must be measuring the
         // same rectangle or the cancellation is against the wrong curve.
+        // Which corner, computed BEFORE the closure. It depends only on the
+        // face, the mode and the pane's size, all of which are known here, and
+        // reaching back through `self` from inside a closure that already owns
+        // a clone of the note is a borrow the compiler is right to refuse.
+        let note_corner = self
+            .content_bounds
+            .lock()
+            .ok()
+            .and_then(|b| *b)
+            .map(|b| self.note_corner(b))
+            .unwrap_or(crate::sticky::Corner::TopRight);
         let note_el = self.note.clone().map(|note| {
             let store = self.content_bounds.clone();
             let pal = crate::sticky::paper(th.text, th.accent);
@@ -9155,7 +9181,9 @@ impl Render for TerminalView {
                         let Some(content) = store.lock().ok().and_then(|b| *b) else {
                             return;
                         };
-                        if let Some(mut lay) = crate::sticky::layout(content, note.tilt()) {
+                        if let Some(mut lay) =
+                            crate::sticky::layout(content, note.tilt(), note_corner)
+                        {
                             lay.pre_warp(content, k1, k2);
                             crate::sticky::paint(&note, &lay, &pal, peeling, window, cx);
                         }

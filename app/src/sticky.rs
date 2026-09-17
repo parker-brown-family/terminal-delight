@@ -404,7 +404,28 @@ impl Layout {
 }
 
 /// Fit a note into `content` — a pane's terminal area, window coordinates.
-pub fn layout(content: Bounds<Pixels>, tilt: f32) -> Option<Layout> {
+/// Which corner a note sits in, and how far it must stay clear of the edge it
+/// is anchored to.
+///
+/// The terminal face has nothing at its bottom, so a note belongs where it has
+/// always been: top right, out of the way of output arriving from below. The
+/// WORKBENCH has a text box down there, and a note over the words somebody is
+/// typing is not a note, it is an obstruction. Parker: *"on the WORKBENCH view
+/// ... the sticky should be on the BOTTOM right ... it is okay to cover up the
+/// LIVE -> agent, but NOT okay to cover up user entry"*.
+///
+/// `clear` is how much room to leave at the bottom, and the pane passes the
+/// tallest the composer can ever grow to rather than how tall it is right now.
+/// The permission to cover the badge is soft and the prohibition on covering
+/// the entry is hard, so the note clears a fully-grown composer and gives up
+/// the badge it was allowed to have.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum Corner {
+    TopRight,
+    BottomRight { clear: f32 },
+}
+
+pub fn layout(content: Bounds<Pixels>, tilt: f32, corner: Corner) -> Option<Layout> {
     let (w, h) = (
         f32::from(content.size.width),
         f32::from(content.size.height),
@@ -432,7 +453,15 @@ pub fn layout(content: Bounds<Pixels>, tilt: f32) -> Option<Layout> {
         // sit at the same place by eye instead of the same distance by number.
         center: point(
             content.origin.x + px(w - note_w * 0.5 - 24.0 - note_h * 0.10),
-            content.origin.y + px(note_h * 0.5 + 22.0 + note_h * 0.10),
+            match corner {
+                Corner::TopRight => content.origin.y + px(note_h * 0.5 + 22.0 + note_h * 0.10),
+                // Measured up from the bottom by the same numbers, so the two
+                // corners sit at the same inset by eye rather than by
+                // coincidence.
+                Corner::BottomRight { clear } => {
+                    content.origin.y + px(h - clear - note_h * 0.5 - 22.0 - note_h * 0.10)
+                }
+            },
         ),
         size: size(px(note_w), px(note_h)),
         tilt,
@@ -1347,13 +1376,17 @@ mod tests {
             origin: point(px(0.), px(0.)),
             size: size(px(200.), px(150.)),
         };
-        assert!(layout(tiny, 4.0).is_none(), "a 200x150 pane is all note");
+        assert!(
+            layout(tiny, 4.0, Corner::TopRight).is_none(),
+            "a 200x150 pane is all note"
+        );
 
         let narrow = Bounds {
             origin: point(px(0.), px(0.)),
             size: size(px(390.), px(844.)),
         };
-        let l = layout(narrow, 4.0).expect("a 390px tiled pane still gets a note");
+        let l =
+            layout(narrow, 4.0, Corner::TopRight).expect("a 390px tiled pane still gets a note");
         assert!(
             f32::from(l.size.width) <= 390.0 * 0.34,
             "the note must stay a corner of the pane, got {:?} of 390",
