@@ -6542,6 +6542,36 @@ impl Workspace {
         eprintln!("terminal-delight: no pane is showing a bench with a selection");
     }
 
+    /// Say a line to an agent through its bench — the scripted composer.
+    ///
+    /// Goes to the pane showing its bench, and reaches the pseudoterminal by
+    /// the same method the composer does, so this tests the composer rather
+    /// than working around it.
+    pub(crate) fn bench_say(&mut self, line: &str, cx: &mut Context<Self>) {
+        let mut leaves = Vec::new();
+        if let Some(tab) = self.tabs.get(self.active) {
+            tab.root.leaves(&mut leaves);
+        }
+        for tab in self.tabs.iter() {
+            tab.root.leaves(&mut leaves);
+        }
+        let leaves: Vec<Entity<TerminalView>> = leaves.into_iter().cloned().collect();
+        for leaf in leaves {
+            let took = leaf.update(cx, |view, cx| {
+                if view.bench.face() != workbench::Face::Workbench || !view.mode.is_agent() {
+                    return false;
+                }
+                view.bench_say(line, cx);
+                true
+            });
+            if took {
+                cx.notify();
+                return;
+            }
+        }
+        eprintln!("terminal-delight: no agent pane is showing its bench");
+    }
+
     /// Ask every agent pane whether it is waiting on a question, and put the
     /// answer on its own bench.
     ///

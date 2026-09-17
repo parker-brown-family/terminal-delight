@@ -4373,38 +4373,92 @@ impl TerminalView {
             cx.stop_propagation();
             return;
         }
-        // The WORKBENCH face owns the keyboard while it is showing, and must:
-        // every key that reached the PTY from here would be typed into an
-        // agent that is mid-turn, and `esc` in particular kills a running one.
-        // The keys are the queue's, deliberately — a person who has learned
-        // the attention queue already knows how to walk this.
+        // ── the WORKBENCH face owns the keyboard, in one of two modes ───────
+        //
+        // READING: arrows walk the rail, digits answer a question, enter takes
+        // the surface's first action. Nothing reaches the agent.
+        //
+        // TALKING: every keystroke goes STRAIGHT to the pseudoterminal, encoded
+        // by [`keystroke_bytes`] — the same function the terminal face uses, so
+        // there is one encoder and the bench cannot drift from it. Slash
+        // commands complete, history works, ctrl+c interrupts, because the
+        // agent's own line editor is doing all of it. This is the difference
+        // between a text box that imitates a terminal and a person typing at
+        // one.
+        //
+        // Typing any ordinary character in reading mode starts talking, with
+        // that character — so there is no "click here first", which is what
+        // made the first version feel like a form rather than a terminal.
+        //
+        // `esc` is the one key talking mode keeps: it returns to reading
+        // rather than travelling, because esc into a working agent kills its
+        // turn and a person leaving a text box does not mean that.
         if self.bench.face() == crate::workbench::Face::Workbench {
-            match ks.key.as_str() {
-                "escape" => {
-                    // Esc peels one layer at a time: an open composer first,
-                    // then the face. Closing both at once loses a half-typed
-                    // prompt to a keystroke that meant "never mind the box".
-                    if self.wb_compose.take().is_some() {
-                        cx.notify();
-                    } else {
-                        self.set_face(crate::workbench::Face::Terminal, cx);
-                    }
-                    cx.stop_propagation();
-                    return;
+            let talking = self.wb_compose.is_some();
+            if ks.key.as_str() == "escape" {
+                if talking {
+                    self.wb_compose = None;
+                    cx.notify();
+                } else {
+                    self.set_face(crate::workbench::Face::Terminal, cx);
                 }
-                "down" | "j" => {
+                cx.stop_propagation();
+                return;
+            }
+            if talking {
+                // Straight through, byte for byte. The echo comes back from
+                // the agent itself and shows in the live strip above, which is
+                // why this needs no local editing model at all.
+                if let Some(bytes) = keystroke_bytes(ks) {
+                    // Keep a local shadow of the line purely so the box can
+                    // show something while the agent's echo catches up. It is
+                    // a display artefact, not the source of truth — the bytes
+                    // have already gone.
+                    if let Some(buf) = self.wb_compose.as_mut() {
+                        match ks.key.as_str() {
+                            "backspace" => {
+                                buf.pop();
+                            }
+                            "enter" => buf.clear(),
+                            _ => {
+                                if let Some(c) = ks.key_char.as_deref() {
+                                    if !c.is_empty() && !c.chars().any(char::is_control) {
+                                        buf.push_str(c);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    self.send(bytes, cx);
+                }
+                cx.stop_propagation();
+                return;
+            }
+            // The rules themselves are a table in `workbench`, so they can be
+            // asserted without a render.
+            let answerable = match self.bench.selected().map(|s| &s.kind) {
+                Some(crate::surface::Kind::Question(q))
+                    if q.answer == crate::surface::Answered::Waiting =>
+                {
+                    Some(q.options.len())
+                }
+                _ => None,
+            };
+            let printable = ks
+                .key_char
+                .as_deref()
+                .filter(|c| !c.is_empty() && !c.chars().any(char::is_control))
+                .is_some();
+            match crate::workbench::reading_key(ks.key.as_str(), printable, answerable) {
+                crate::workbench::Reading::Down => {
                     self.bench.step(1);
                     cx.notify();
-                    cx.stop_propagation();
-                    return;
                 }
-                "up" | "k" => {
+                crate::workbench::Reading::Up => {
                     self.bench.step(-1);
                     cx.notify();
-                    cx.stop_propagation();
-                    return;
                 }
-                "tab" => {
+                crate::workbench::Reading::NextShelf => {
                     let shelves = crate::surface::Shelf::ALL;
                     let at = shelves
                         .iter()
@@ -4412,58 +4466,36 @@ impl TerminalView {
                         .unwrap_or(0);
                     self.bench.set_shelf(shelves[(at + 1) % shelves.len()]);
                     cx.notify();
-                    cx.stop_propagation();
-                    return;
                 }
-                "o" | "enter" => {
-                    // A composer that is open is what enter is for: the person
-                    // is mid-sentence, and the first action would throw the
-                    // sentence away. It goes to the agent as typing, not as a
-                    // [workbench] line — a prompt is a prompt.
-                    if self.wb_compose.is_some() {
-                        self.bench_send(cx);
-                        cx.stop_propagation();
-                        return;
-                    }
-                    // Otherwise the first action the surface offers, which each
-                    // kind orders so the first one is the obvious one: open a
-                    // document, accept a part, approve a decision.
+                crate::workbench::Reading::Act => {
                     let first = self
                         .bench
                         .selected()
                         .and_then(|s| s.actions.first().cloned());
                     if let Some(action) = first {
-                        // A verb that wants words asks for them rather than
-                        // sending an empty comment nobody typed.
-                        if action.wants_comment() && self.wb_compose.is_none() {
+                        if action.wants_comment() {
                             self.wb_compose = Some(String::new());
                             cx.notify();
                         } else {
                             self.bench_act(action, None, cx);
                         }
                     }
-                    cx.stop_propagation();
-                    return;
                 }
-                _ => {}
-            }
-            // Anything else types into the composer when one is open, and is
-            // swallowed when one is not — see above: this face must not leak
-            // keystrokes into a running agent.
-            if let Some(buf) = self.wb_compose.as_mut() {
-                match ks.key.as_str() {
-                    "backspace" => {
-                        buf.pop();
-                    }
-                    _ => {
-                        if let Some(c) = ks.key_char.as_deref() {
-                            if !c.is_empty() && !c.chars().any(char::is_control) {
-                                buf.push_str(c);
-                            }
+                crate::workbench::Reading::Choose(i) => self.bench_choose(i, cx),
+                crate::workbench::Reading::Talk => {
+                    // Start talking, carrying the character that started it —
+                    // so there is no "click here first".
+                    self.wb_compose = Some(String::new());
+                    if let Some(bytes) = keystroke_bytes(ks) {
+                        if let (Some(buf), Some(c)) =
+                            (self.wb_compose.as_mut(), ks.key_char.as_deref())
+                        {
+                            buf.push_str(c);
                         }
+                        self.send(bytes, cx);
                     }
                 }
-                cx.notify();
+                crate::workbench::Reading::Ignore => {}
             }
             cx.stop_propagation();
             return;
@@ -6700,6 +6732,16 @@ impl TerminalView {
     /// the button rather than a second implementation of it.
     pub fn bench_choose(&mut self, index: usize, cx: &mut Context<Self>) {
         self.bench_act(crate::surface::Action::Choose, Some(index.to_string()), cx);
+    }
+
+    /// Say a whole line to the agent through the bench.
+    ///
+    /// The scripted composer: same destination, same encoding, one call. Used
+    /// by `ctl bench say`, which is how a caller with no pointer tests the
+    /// thing a pointer would do.
+    pub fn bench_say(&mut self, line: &str, cx: &mut Context<Self>) {
+        self.wb_compose = Some(line.to_string());
+        self.bench_send(cx);
     }
 
     /// Send whatever is in the composer to the agent, as if typed.

@@ -261,6 +261,55 @@ pub enum Dispatch {
     Refused(String),
 }
 
+/// What a keystroke means on the bench while it is READING.
+///
+/// Extracted from the pane's key handler so the mode rules are a table rather
+/// than a branch inside a gpui closure. The rules are small and easy to get
+/// subtly wrong — a digit means "answer" only when there is a question to
+/// answer, and any ordinary character has to start talking rather than being
+/// swallowed — and neither of those can be tested through a render.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Reading {
+    Down,
+    Up,
+    NextShelf,
+    /// Take the selected surface's first action.
+    Act,
+    /// Answer the selected question with this zero-based option.
+    Choose(usize),
+    /// Start talking to the agent, carrying this keystroke through.
+    Talk,
+    /// Not ours; swallowed so it cannot reach a working agent.
+    Ignore,
+}
+
+/// Decide what a key does on a reading bench.
+///
+/// `answerable` is how many options the selected question is waiting on —
+/// `None` when the selection is not a waiting question, which is what makes a
+/// digit ambiguous everywhere else and therefore just a character.
+pub fn reading_key(key: &str, printable: bool, answerable: Option<usize>) -> Reading {
+    match key {
+        "down" => return Reading::Down,
+        "up" => return Reading::Up,
+        "tab" => return Reading::NextShelf,
+        "enter" => return Reading::Act,
+        _ => {}
+    }
+    if let Some(n) = key.parse::<usize>().ok().filter(|_| key.len() == 1) {
+        if let Some(options) = answerable {
+            if n >= 1 && n <= options {
+                return Reading::Choose(n - 1);
+            }
+        }
+    }
+    if printable {
+        Reading::Talk
+    } else {
+        Reading::Ignore
+    }
+}
+
 /// The keystrokes that move a terminal menu from `cursor` to `target` and
 /// press return.
 ///
@@ -1053,6 +1102,49 @@ mod tests {
             Dispatch::Refused(why) => assert!(why.contains("needs an option"), "{why}"),
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn an_ordinary_character_starts_talking_rather_than_being_swallowed() {
+        // The whole difference between a form and a terminal. Before this,
+        // typing on the bench did nothing until you had found and clicked a
+        // box, which is the thing that made it feel like a viewer.
+        assert_eq!(reading_key("a", true, None), Reading::Talk);
+        assert_eq!(reading_key("/", true, None), Reading::Talk);
+        assert_eq!(reading_key("space", true, None), Reading::Talk);
+    }
+
+    #[test]
+    fn a_digit_answers_only_when_there_is_a_question_to_answer() {
+        // Otherwise it is just a character, and it goes to the agent like any
+        // other — a `2` typed into a prompt must not silently pick option two
+        // of something that is not on screen.
+        assert_eq!(reading_key("2", true, Some(3)), Reading::Choose(1));
+        assert_eq!(reading_key("2", true, None), Reading::Talk);
+        assert_eq!(
+            reading_key("4", true, Some(3)),
+            Reading::Talk,
+            "a number past the end of the menu is not an answer"
+        );
+        assert_eq!(reading_key("0", true, Some(3)), Reading::Talk, "one-based");
+    }
+
+    #[test]
+    fn navigation_keys_are_the_ones_that_are_not_characters() {
+        assert_eq!(reading_key("down", false, None), Reading::Down);
+        assert_eq!(reading_key("up", false, None), Reading::Up);
+        assert_eq!(reading_key("tab", false, None), Reading::NextShelf);
+        assert_eq!(reading_key("enter", false, None), Reading::Act);
+        // `j` and `k` used to walk the rail, and could not: they are letters,
+        // and a bench you can type at cannot spend letters on navigation.
+        assert_eq!(reading_key("j", true, None), Reading::Talk);
+        assert_eq!(reading_key("k", true, None), Reading::Talk);
+    }
+
+    #[test]
+    fn a_non_printable_key_is_swallowed_so_it_cannot_reach_a_working_agent() {
+        assert_eq!(reading_key("f5", false, None), Reading::Ignore);
+        assert_eq!(reading_key("home", false, None), Reading::Ignore);
     }
 
     #[test]

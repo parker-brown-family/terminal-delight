@@ -804,14 +804,20 @@ pub fn live_strip(state: &str, tool: Option<&str>, tail: &[String], sk: &Skin, t
         })
 }
 
-/// The prompt box: the bench's own way of saying something to the agent.
+/// The line into the agent's own terminal.
 ///
-/// A terminal is a far better text editor than this will ever be — it has the
-/// agent's own completion, its slash commands, its history and its paste
-/// handling — and that is an argument for this box being small and honest
-/// rather than for it not existing. What it buys is that a person answering a
-/// question, or sending one more instruction, does not have to leave the
-/// surface they are reading to do it.
+/// Not a text box. While it is armed, every keystroke is encoded by the same
+/// function the terminal face uses and written straight to the
+/// pseudoterminal, so the agent's own line editor does the work: slash
+/// commands complete, history recalls, ctrl+c interrupts, and a paste is a
+/// paste. What shows here is a shadow of what has already been sent, kept
+/// only so there is something to look at before the agent's echo arrives in
+/// the strip above.
+///
+/// The alternative — buffering a string and sending it on return — was the
+/// first version, and it was a form pretending to be a terminal: no
+/// completion, no history, no interrupt, and a second editing model to keep
+/// working forever.
 pub fn composer(text: Option<&str>, focused: bool, sk: &Skin, th: &Theme) -> Div {
     let open = text.is_some();
     sk.panel()
@@ -820,7 +826,9 @@ pub fn composer(text: Option<&str>, focused: bool, sk: &Skin, th: &Theme) -> Div
         .items_center()
         .gap(px(8.))
         .cursor_pointer()
-        .when(open && focused, |d| d.border_color(th.accent.alpha(0.8)))
+        .when(open, |d| {
+            d.border_color(th.accent.alpha(if focused { 0.85 } else { 0.5 }))
+        })
         .child(micro("›".to_string(), 12., th.accent, th))
         .child(
             div()
@@ -829,14 +837,21 @@ pub fn composer(text: Option<&str>, focused: bool, sk: &Skin, th: &Theme) -> Div
                 .font_family(th.font_family.clone())
                 .text_color(if open { th.text } else { th.faint })
                 .child(match text {
-                    Some("") => "type a prompt, ↵ to send".to_string(),
+                    Some("") => "typing to the agent…".to_string(),
                     Some(t) => format!("{t}▋"),
-                    None => "click to write to this agent".to_string(),
+                    None => "just start typing — it goes to the agent".to_string(),
                 }),
         )
-        .when(open, |d| {
-            d.child(micro("↵ send · esc cancel".to_string(), 9.5, th.faint, th))
-        })
+        .child(micro(
+            if open {
+                "keys go straight through · esc stops".to_string()
+            } else {
+                "↑↓ walk · 1-9 answer · ↵ act".to_string()
+            },
+            9.5,
+            th.faint,
+            th,
+        ))
 }
 
 /// An empty bench says what would fill it.

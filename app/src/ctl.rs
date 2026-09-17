@@ -67,6 +67,8 @@ pub(crate) enum Req {
     Bench(BenchFace),
     /// Press an answer on the focused pane's bench. See [`Cmd::BenchChoose`].
     BenchChoose(usize),
+    /// Say a line to the agent through the bench. See [`Cmd::BenchSay`].
+    BenchSay(String),
 }
 
 /// One field of the MCP control-surface policy — the robot panel's toggles,
@@ -284,6 +286,9 @@ enum Cmd {
     /// Answer the selected question on the focused pane's bench, by option
     /// number as the surface shows it.
     BenchChoose(usize),
+    /// Type a line into the agent through the bench, exactly as the composer
+    /// does. The scripted half of talking to a pane.
+    BenchSay(String),
 }
 
 /// Which face `ctl bench` asks for.
@@ -351,7 +356,7 @@ pub fn socket_path(pid: u32) -> PathBuf {
 /// Everything the grammar accepts, in one place — the usage string and the
 /// unknown-command error both quote it, so they can't drift from the match.
 const USAGE: &str = "ping | paint on|off|toggle|status | \
-     skin <name>|theme|status | bench on|off|toggle|choose <n> | \
+     skin <name>|theme|status | bench on|off|toggle|choose <n>|say <text> | \
      mcp status|on|off | mcp writes on|off | mcp expose agents|all | \
      mcp rpc <json> | adopt {\"cwd\":\"/…\",\"run\":\"…\"} | \
      tabs [{\"op\":\"name\",\"pane\":1234,\"name\":\"DEV\"}, …] | \
@@ -362,6 +367,15 @@ fn parse_line(s: &str) -> Result<Cmd, String> {
     // else stays word-shaped.
     if let Some(rest) = s.strip_prefix("adopt ") {
         return parse_adopt(rest.trim()).map(Cmd::Adopt);
+    }
+    // `bench say` carries a whole sentence: take the remainder VERBATIM
+    // rather than splitting it into words, or every prompt loses its spacing.
+    if let Some(rest) = s.strip_prefix("bench say ") {
+        let line = rest.trim();
+        if line.is_empty() {
+            return Err("bench say: nothing to say".into());
+        }
+        return Ok(Cmd::BenchSay(line.to_string()));
     }
     // `tabs` carries a JSON op list — tab names hold spaces, so the remainder
     // is taken verbatim and parsed as JSON rather than split into words.
@@ -569,6 +583,13 @@ fn handle_conn(
                 "err ui gone".into()
             }
         }
+        Ok(Cmd::BenchSay(line)) => {
+            if tx.send(Req::BenchSay(line)).is_ok() {
+                "ok".into()
+            } else {
+                "err ui gone".into()
+            }
+        }
         Ok(Cmd::BenchChoose(n)) => {
             if tx.send(Req::BenchChoose(n)).is_ok() {
                 "ok".into()
@@ -674,6 +695,7 @@ pub fn start(cx: &mut Context<Workspace>) {
                     // whole window to face its work is what a demo wants.
                     Req::Bench(face) => ws.set_all_faces(face, cx),
                     Req::BenchChoose(n) => ws.bench_choose(n, cx),
+                    Req::BenchSay(line) => ws.bench_say(&line, cx),
                     // The same escalation the robot panel performs, and the same
                     // persistence: a grant made from the CLI shows in the panel
                     // and survives a restart.
