@@ -1033,11 +1033,6 @@ pub fn verb_button<E: Styled>(el: E, primary: bool, th: &Theme) -> E {
     }
 }
 
-/// The composer's type size. Named because two places have to agree on it:
-/// the text that draws at this size, and the pane that scales the measured
-/// cell width to it in order to know where column N is.
-pub const COMPOSER_PT: f32 = 17.0;
-
 /// The line into the agent's own terminal.
 ///
 /// Not a text box. While it is armed, every keystroke is encoded by the same
@@ -1078,8 +1073,18 @@ pub fn composer(
     // booleans, because they are one decision — what a pane this size shows —
     // and they are made and asserted in `workbench::shows`.
     let (tight, hint) = (shows.tight, shows.hint);
-    let pt = if tight { 13.5 } else { COMPOSER_PT };
     let tall = if tight { 46. } else { 84. };
+    // The type shrinks with the draft, two steps and then a floor. See
+    // [`crate::workbench::composer_pt`] for why it stops rather than going on
+    // shrinking: the research is unanimous that composers scroll, and 12.5pt
+    // is where "small but readable" ends.
+    let chars = line.map_or(0, |l| l.chars());
+    let pt = if tight {
+        13.5
+    } else {
+        crate::workbench::composer_pt(chars, shows.composer_w, shows.composer_max)
+    };
+    let hidden = crate::workbench::composer_hidden(chars, shows.composer_w, shows.composer_max);
 
     // The caret rides IN the text, as a highlight on the character it is on.
     //
@@ -1173,6 +1178,17 @@ pub fn composer(
                     .min_w(px(0.))
                     .max_h(px(shows.composer_max))
                     .overflow_hidden()
+                    .flex()
+                    .flex_col()
+                    // The END stays visible, not the beginning.
+                    //
+                    // A box that clips the bottom hides the one part of a
+                    // draft a person is actually looking at: the words they
+                    // are typing right now. Overflowing upward is what a
+                    // terminal does with scrollback and what every chat
+                    // composer does with a long message, and it is the reason
+                    // the caret is never off screen.
+                    .justify_end()
                     .text_size(px(pt))
                     .font_family(th.font_family.clone())
                     .text_color(th.text)
@@ -1216,6 +1232,19 @@ pub fn composer(
                 )
             }),
     )
+    // A draft past what the box can show says so, rather than leaving a person
+    // to wonder whether the top of their paragraph survived. The agent's own
+    // prompt does the same thing with a big paste (`[Pasted text #1 +N
+    // lines]`), which is the strongest available evidence for what a person
+    // working here already expects.
+    .when_some(hidden.filter(|_| !tight), |d, n| {
+        d.child(micro(
+            format!("\u{2191} {n} more characters above"),
+            9.5,
+            th.faint,
+            th,
+        ))
+    })
     .when(hint, |d| {
         d.child(micro(
             "TYPE ANYWHERE \u{b7} ENTER SENDS \u{b7} PASTE TEXT, FILES OR AN IMAGE",

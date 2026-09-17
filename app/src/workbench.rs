@@ -520,6 +520,8 @@ pub struct Shows {
     pub tight: bool,
     /// One line naming what the keys do, under an unarmed composer.
     pub hint: bool,
+    /// How wide the composer's text area is, for choosing a type size.
+    pub composer_w: f32,
     /// How tall the composer may grow before it starts scrolling instead.
     ///
     /// A share of the pane rather than a constant: the composer has to hold a
@@ -549,7 +551,59 @@ pub fn shows(pane_w: f32, pane_h: f32, is_agent: bool, rail_wanted: bool, armed:
         tight,
         hint: is_agent && !tight && !armed,
         composer_max: (pane_h * COMPOSER_SHARE).max(COMPOSER_MIN_MAX),
+        // The pane, less the rail beside it and the composer's own padding
+        // and chrome. An estimate, and only ever used to pick a SIZE.
+        composer_w: (pane_w - rail_px - 90.0).max(80.0),
     }
+}
+
+/// Pick a type size that fits this much text in this much room.
+///
+/// **Two steps, and a floor.** The research says font shrinking is not how
+/// chat composers handle long drafts — auto-grow to a cap and then scroll is
+/// the dominant pattern everywhere — and the accessibility guidance puts the
+/// bottom of comfortable reading at 16px, with 12px the last defensible size
+/// for dense UI. So shrinking is worth exactly the range between those, which
+/// buys about 40% more text on screen, and then it must stop: 6-point type
+/// showing a whole prompt is not showing anybody anything.
+///
+/// The estimate is deliberate and its error is harmless. Characters-per-line
+/// is computed from a 0.6 advance ratio, which is roughly true of a monospaced
+/// face and only roughly; being a step out picks a slightly wrong SIZE and
+/// never a wrong position, because the caret and the wrapping are laid out by
+/// the text system rather than by this arithmetic.
+pub fn composer_pt(chars: usize, box_w: f32, box_h: f32) -> f32 {
+    const STEPS: [f32; 3] = [17.0, 14.5, 12.5];
+    if box_w <= 0.0 || box_h <= 0.0 {
+        return STEPS[0];
+    }
+    for pt in STEPS {
+        let per_line = (box_w / (pt * 0.6)).max(1.0);
+        let lines = (chars as f32 / per_line).ceil();
+        let room = (box_h / (pt * 1.35)).floor();
+        if lines <= room {
+            return pt;
+        }
+    }
+    // Past the floor it scrolls instead, which is what every chat composer
+    // does and what the eye can actually follow.
+    STEPS[2]
+}
+
+/// How much of a draft is past what the box can show, in characters.
+///
+/// `None` when it all fits. A value here is not a failure — it is the ordinary
+/// state of a long prompt, and the composer says so rather than silently
+/// hiding the top of somebody's paragraph.
+pub fn composer_hidden(chars: usize, box_w: f32, box_h: f32) -> Option<usize> {
+    let pt = composer_pt(chars, box_w, box_h);
+    if box_w <= 0.0 || box_h <= 0.0 {
+        return None;
+    }
+    let per_line = (box_w / (pt * 0.6)).max(1.0);
+    let room = (box_h / (pt * 1.35)).floor().max(1.0);
+    let shown = (per_line * room) as usize;
+    (chars > shown).then(|| chars - shown)
 }
 
 /// The most of a pane the composer may take before it scrolls.
@@ -1834,6 +1888,35 @@ mod tests {
         assert!(cramped.composer, "still there");
         assert!(cramped.tight, "at its small size");
         assert!(!cramped.hint, "without the hint it has no room for");
+    }
+
+    #[test]
+    fn the_type_shrinks_two_steps_and_then_refuses_to_shrink_further() {
+        // A roomy box at a short prompt: full size, nothing clever.
+        assert_eq!(composer_pt(40, 900., 300.), 17.0);
+        // Enough to need the next step down.
+        let mid = composer_pt(1200, 900., 300.);
+        assert!((12.5..17.0).contains(&mid), "{mid}");
+        // A 1,500-word prompt — roughly 9,000 characters — must NOT be
+        // squeezed into unreadability. It bottoms out and scrolls instead.
+        assert_eq!(composer_pt(9000, 900., 300.), 12.5, "the floor holds");
+        assert_eq!(composer_pt(500_000, 900., 300.), 12.5);
+        // And a box with no room yet does not divide by zero on the first
+        // frame.
+        assert_eq!(composer_pt(100, 0., 0.), 17.0);
+    }
+
+    #[test]
+    fn a_draft_too_long_to_show_says_how_much_is_hidden() {
+        // Absence of a number means it all fits; a number means it does not,
+        // and the composer can say so rather than quietly clipping.
+        assert_eq!(composer_hidden(40, 900., 300.), None);
+        let over = composer_hidden(9000, 900., 300.).expect("9k chars cannot fit");
+        assert!(over > 0 && over < 9000, "{over}");
+        // Monotonic: a longer draft never hides less.
+        let more = composer_hidden(20_000, 900., 300.).expect("20k cannot fit");
+        assert!(more > over, "{more} vs {over}");
+        assert_eq!(composer_hidden(100, 0., 0.), None, "no box, no claim");
     }
 
     #[test]
