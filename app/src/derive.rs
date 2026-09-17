@@ -217,14 +217,8 @@ pub fn question_on_screen(rows: &[String]) -> Option<Question> {
     let question = rows[..first_line]
         .iter()
         .rev()
-        .map(|r| r.trim())
-        .find(|r| {
-            r.len() > 8
-                && !r.starts_with('╭')
-                && !r.starts_with('│')
-                && !r.starts_with('─')
-                && !r.ends_with("to cancel")
-        })?
+        .map(|r| without_side_panel(r.trim()))
+        .find(|r| r.len() > 8 && !r.starts_with(is_box_drawing) && !r.ends_with("to cancel"))?
         .to_string();
     Some(Question {
         question,
@@ -264,6 +258,11 @@ fn collect_options(rows: &[String]) -> Option<(usize, Vec<Choice_>, usize, Optio
                     submit_at.get_or_insert(options.len());
                     continue;
                 }
+                // A row that is nothing BUT the side panel is not a
+                // description of the option above it. Cut it first, and if
+                // what is left is empty then this row belonged to the panel
+                // and never to the option.
+                let t = without_side_panel(t);
                 if !t.is_empty()
                     && row.starts_with("    ")
                     && last.what_happens.is_none()
@@ -294,7 +293,7 @@ fn collect_options(rows: &[String]) -> Option<(usize, Vec<Choice_>, usize, Optio
         if marked {
             cursor = options.len();
         }
-        let (label, checked) = split_checkbox(&label);
+        let (label, checked) = split_checkbox(without_side_panel(&label));
         options.push(Choice_ {
             label,
             what_happens: None,
@@ -307,6 +306,39 @@ fn collect_options(rows: &[String]) -> Option<(usize, Vec<Choice_>, usize, Optio
 
 /// `  1. Cast it into the fire` → `(1, "Cast it into the fire", false)`.
 /// A non-space glyph before the number means the cursor is on that row.
+/// Cut a row where a side panel starts.
+///
+/// A picker may draw a PREVIEW beside its options rather than under them:
+///
+/// ```text
+/// ) 1. Stacked rows        \u{250c}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2510}
+///   2. Two columns         \u{2502} LINES HELD  \u{2502}
+/// ```
+///
+/// This reader works a row at a time, so the panel was arriving inside the
+/// labels — an option came out as `Stacked rows \u{250c}\u{2500}\u{2500}` and a
+/// description as `\u{2502} \u{2502} 4 \u{2502}`. It looked right in the terminal,
+/// where the columns line up, and completely wrong on the bench, where each row
+/// is a separate element and the second column has nowhere to be.
+///
+/// Box-drawing is the signal because it is unambiguous: an option's label is
+/// prose an agent wrote, and prose does not contain `\u{2502}`. Cutting at the
+/// first one loses at worst a decorative character; not cutting imports a
+/// whole panel into a button. The gutter marks and checkboxes this reader
+/// depends on all sit outside the range — `\u{276f}`, `\u{203a}`, `\u{22a0}`,
+/// `\u{22a1}`, `\u{2713}`, `\u{2714}` — so none of them is caught by it.
+fn without_side_panel(text: &str) -> &str {
+    match text.find(is_box_drawing) {
+        Some(at) => text[..at].trim_end(),
+        None => text,
+    }
+}
+
+/// Box Drawing (U+2500..U+257F) and Block Elements (U+2580..U+259F).
+fn is_box_drawing(c: char) -> bool {
+    matches!(c, '\u{2500}'..='\u{259f}')
+}
+
 /// Split a multi-select checkbox off the front of an option label.
 ///
 /// The picker writes `[ ] A plant, thriving` for an unticked box and `[✓] …`
@@ -751,6 +783,71 @@ fn short_hash(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_picker_that_draws_a_preview_beside_its_options_keeps_it_out_of_them() {
+        // Transcribed from a photograph of the running picker. The agent drew
+        // a preview panel in a second column, which lines up perfectly in a
+        // terminal and falls apart on a bench, where every row becomes its own
+        // element and the second column has nowhere to be.
+        let rows: Vec<String> = [
+            "Round 4. Which layout reads better in a narrow pane?",
+            ") 1. Stacked rows        ┌────────┐",
+            "  2. Two columns         │ ┌────┐ │",
+            "  3. Inline run          │ │ LINES HELD │ │",
+            "                         │ │ 4          │ │",
+            "                         └────────┘",
+            "  4. Chat about this",
+            "Enter to select \u{b7} \u{2191}/\u{2193} to navigate \u{b7} Esc to cancel",
+        ]
+        .iter()
+        .map(|r| r.to_string())
+        .collect();
+
+        let q = question_on_screen(&rows).expect("a question");
+        assert_eq!(
+            q.question, "Round 4. Which layout reads better in a narrow pane?",
+            "the question keeps its own words"
+        );
+        assert_eq!(q.options.len(), 4);
+        assert_eq!(q.options[0].label, "Stacked rows", "no panel in the button");
+        assert_eq!(q.options[1].label, "Two columns");
+        assert_eq!(q.options[2].label, "Inline run");
+        assert_eq!(q.options[3].label, "Chat about this");
+        // And the panel's own rows are not descriptions of anything. A row
+        // that is nothing but box-drawing belonged to the panel, never to the
+        // option above it.
+        for (i, o) in q.options.iter().enumerate() {
+            assert_eq!(
+                o.what_happens, None,
+                "option {i} picked up a slice of the preview: {:?}",
+                o.what_happens
+            );
+        }
+    }
+
+    #[test]
+    fn cutting_at_a_side_panel_leaves_ordinary_labels_alone() {
+        // The strictness it must not cost. None of these contains
+        // box-drawing, and every one of them has to survive untouched —
+        // including the marks this reader depends on.
+        for plain in [
+            "Stacked rows",
+            "A plant, thriving",
+            "Artifact only (Recommended)",
+            "\u{2713} already ticked",
+            "\u{276f} a gutter mark",
+            "100% \u{b7} nothing to cut here",
+        ] {
+            assert_eq!(without_side_panel(plain), plain, "{plain}");
+        }
+        // And the cut itself, on the one shape it exists for.
+        assert_eq!(
+            without_side_panel("Stacked rows   \u{250c}\u{2500}\u{2510}"),
+            "Stacked rows"
+        );
+        assert_eq!(without_side_panel("\u{2502} \u{2502} 4 \u{2502}"), "");
+    }
 
     #[test]
     fn a_multi_select_parses_its_boxes_as_state_and_its_submit_as_a_position() {
