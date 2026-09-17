@@ -7,6 +7,63 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ## [Unreleased]
 
+### Added — the week of 15 September
+
+- **The Workbench.** Every pane has a second face. The TERMINAL is the agent's
+  typing; the WORKBENCH is its work — decisions to take, changes to review,
+  documents to open, tables of things compared, and the question it stopped on —
+  presented as JSON documents through one protocol (TDSP 0.2) over three
+  transports: a `.json` file dropped in the pane's own directory, `terminal-delight
+  surface` on the CLI, and the `present_surface` MCP verb. A person answers from
+  the bench and the answer is typed back into the agent's terminal as one line,
+  signed with the session's tag (`[workbench:<tag>]`), with the exact bytes every
+  verb will type shown under it before it is pressed. Every card says who put it
+  there. `ctl bench on|off|toggle|choose|say|type` drive it from a script and
+  answer with the outcome, and `surface_catalogue` says what a build can render.
+  (#493, #498)
+- **The attention spine.** A rail per pane and a queue over the panes that say
+  which agent wants a person, why, and how urgently — promoted, neutral or demoted
+  by a thumb on the scale — with a review tray, levels in the left bar's tree, and
+  docking. The rail reads live pane state rather than a synthetic rotation, and
+  the pill counts each lane in its own colour. (#414, #419, #424, #435, #443, #445,
+  #446, #448, #449, #454, #460, #463)
+- **The left bar's tree answers to the keyboard**: `Ctrl+Alt+↑/↓` walk it on a
+  ring, `→` opens a branch, `←` climbs out, `1…9` jump to a top-level branch; a
+  group can be deleted and given back; every way of ending something goes through
+  the bay. (#417, #423, #428, #450, #459)
+- **Instance identity.** Several Terminal Delights on one box, and every MCP
+  answer names the window it came from; an agent finds its own terminal by walking
+  its parents. (#469)
+- **A bell in the chrome footer**, with a notifications panel and two switches
+  behind it. (#468)
+- **The paint overlay paints the cabinet** from a card hung off the top of the
+  window, and the OUTER tray passes its theme down to every pane — including panes
+  not born yet. (#464, #472)
+
+### Changed
+
+- A window asks the session host what its panes are running rather than being told
+  once, so an agent that started after the window opened is no longer invisible to
+  the rail. (#465)
+- Trays stop at the terminal render, one hairline past it, and scroll the rest.
+  (#470)
+- A tab you closed stays closed: the session records what its trash is holding.
+  (#482)
+- The filming pipeline left the open-source repository. (#455)
+
+### Fixed
+
+- A working agent in a narrow pane is visible again: detection stopped depending on
+  a footer line the CLI truncates at tiled widths. (#477)
+- An agent whose screen cannot be read stops reporting as idle, and the Unknown
+  state no longer switches off the finish bell. (#425, #426)
+- A restored duplicate no longer paints nothing: a terminal answers to one pane
+  again, and a layout can no longer say that two leaves are one terminal. (#433,
+  #437)
+- A tab that loses a pane keeps its name, its colours and the branch it hangs
+  from; the divider above the loose tasks names them. (#413, #473)
+- Four defects in the attach encoder, found by a generated sweep. (#386)
+
 ### Changed
 
 - **TD wears the desktop's font.** A theme that names no font now takes whatever
