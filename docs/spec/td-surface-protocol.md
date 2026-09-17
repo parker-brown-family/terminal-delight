@@ -546,9 +546,23 @@ drawn with the recommended option lit. Press `approve`, and the agent reads:
 |---|---|
 | Types, parsing, validation, catalogue | `app/src/surface.rs` |
 | Per-pane state: faces, shelves, selection, actions | `app/src/workbench.rs` |
-| Renderers for the seven kinds, and the bench's chrome | `app/src/benchdraw.rs` |
-| The derived half: questions off the screen, deliverables out of a transcript | `app/src/derive.rs` |
-| The agent's own state, read off its status line | `app/src/hud.rs` |
+| Renderers for the seven kinds, and the bench's chrome — and no decisions, which a test in that file enforces | `app/src/benchdraw.rs` |
+| Everything read off the agent's SCREEN — the live question, its options and cursor, working and blocked, the human-input prompt — under one law: every public reader has a test transcribed from a real screen | `app/src/screenread.rs` |
+| Deliverables out of a transcript, and the human title a file gets | `app/src/derive.rs` |
+| The agent's own state, off its status line (the working detector it uses lives in `screenread.rs`) | `app/src/hud.rs` |
+| The bench as the terminal view reaches it: keys, clicks, the wheel, the clipboard, the pseudoterminal | `app/src/pane/bench.rs` |
 | Transports: the sweep, the fence, the journal, the CLI | `app/src/surfacefeed.rs` |
 | The MCP verbs | `app/src/mcp.rs` |
 | The launcher that briefs an agent it starts | `app/src/launcher.rs` |
+
+### Flags for the person debugging the bench
+
+None of these change what an agent sees; they exist because a shell with no
+pointer cannot press the surface it builds, so the surface has to say what it
+did.
+
+| Flag | What it does |
+|---|---|
+| `TD_HITDEBUG=1` | Every bench click prints its whole chain to the window's stderr — pointer, curvature, the un-bent point, how many zones were live, and what it landed on. The grid's own `viewport_cell` prints under the same flag. |
+| `TD_BENCHDEBUG=1` | The numbers behind the layout: pane size, rail fit, embodiment, whether the composer is armed and how long its line is. |
+| `TD_BENCHMIRROR=1` | Puts the agent's own scrollback back on the bench, beneath the cards. Hidden by default on Parker's call — *"the machine might need this to exist, but the user should not see it"* — and kept as a flag rather than deleted, so anybody debugging what the screen reader sees can look at the same rows. |
