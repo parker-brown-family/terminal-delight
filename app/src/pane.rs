@@ -7101,14 +7101,23 @@ impl TerminalView {
         };
         let how = crate::workbench::embodiment(pane_w - rail_px, pane_h);
         let full = how == crate::workbench::Embodiment::Full;
-        // TD_BENCHDEBUG=1 prints the three numbers that decide this whole
-        // layout. It found the rail-width bug in one run after two rounds of
-        // guessing from screenshots: the bench looked broken because the rail
-        // was taking 208 of a 540-pixel pane, which no photograph says.
+        // TD_BENCHDEBUG=1 prints the numbers that decide this whole layout. It
+        // found the rail-width bug in one run after two rounds of guessing from
+        // screenshots — the bench looked broken because the rail was taking 208
+        // of a 540-pixel pane, which no photograph says — and then found that a
+        // composer photographed as ARMED was armed because the screenshot
+        // harness had focused its own window and caught somebody's typing.
+        //
+        // The line says whether the composer is armed and HOW LONG the line is,
+        // never the line itself. A debug switch that prints what a person is in
+        // the middle of typing puts it in a log file, and the count answers the
+        // same question.
         if std::env::var_os("TD_BENCHDEBUG").is_some() {
             eprintln!(
-                "[bench] w={pane_w} h={pane_h} rail={rail_px} how={how:?} agent={}",
-                self.mode.is_agent()
+                "[bench] w={pane_w} h={pane_h} rail={rail_px} how={how:?} agent={} armed={} chars={} focus={focused}",
+                self.mode.is_agent(),
+                self.wb_compose.is_some(),
+                self.wb_compose.as_ref().map_or(0, |c| c.chars().count())
             );
         }
 
@@ -7130,6 +7139,13 @@ impl TerminalView {
         // area only when it has been OPENED from the rail — a card over the
         // conversation, dismissed with esc or its own ✕, never something the
         // rail silently swapped in underneath the reader.
+        // A card reads from the top and a conversation from the bottom, so the
+        // one flex box they share cannot have a fixed alignment. Photographing
+        // the build caught this: an opened table sat pinned to the floor of a
+        // 900px pane under an acre of empty, because `justify_end` — correct
+        // for a transcript — had been applied to the slot rather than to the
+        // thing in it.
+        let card_open = self.bench.selected().is_some();
         let body = match self.bench.selected() {
             Some(surface) => {
                 let sid = surface.id.clone();
@@ -7417,7 +7433,7 @@ impl TerminalView {
                             .overflow_hidden()
                             .flex()
                             .flex_col()
-                            .justify_end()
+                            .when(!card_open, |d| d.justify_end())
                             .cursor_text()
                             .when(self.mode.is_agent(), |d| {
                                 d.on_mouse_down(
