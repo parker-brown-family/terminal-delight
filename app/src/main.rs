@@ -29,6 +29,7 @@
 mod art;
 mod attention;
 mod bell;
+mod benchdraw;
 mod crt;
 mod csd;
 mod ctl;
@@ -45,6 +46,7 @@ mod hostproto;
 mod hud;
 mod instance;
 mod lang;
+mod launcher;
 mod mcp;
 mod mcp_tail;
 mod mcp_transport;
@@ -60,6 +62,8 @@ mod skin;
 mod slot;
 mod socketpty;
 mod sticky;
+mod surface;
+mod surfacefeed;
 mod term;
 #[cfg(test)]
 mod testsync;
@@ -69,6 +73,7 @@ mod tree;
 mod usage;
 mod vitals;
 mod warp;
+mod workbench;
 
 use std::fs;
 use std::path::PathBuf;
@@ -2700,6 +2705,46 @@ struct LogoPicker {
     scanning: bool,
 }
 
+/// The LAUNCH AGENT panel: pick a project, a harness, a model and an effort,
+/// and the session host starts a terminal already holding the agent.
+///
+/// Owns the keyboard while up, like every other picker: esc cancels, ↵ starts,
+/// ↑/↓ walk the projects, tab cycles the harness, ←/→ the effort, and typing
+/// filters. Registered in `close_popups` and the `warp::set_suppressed` list,
+/// or it would be a flat panel bent by whatever pane tube it happens to cover.
+struct AgentLauncher {
+    /// Fuzzy-filters the project list. Empty shows everything, newest first.
+    query: EditBuffer,
+    projects: Vec<launcher::Project>,
+    /// Cached ranked indices into `projects`, recomputed only when the query
+    /// edits — the logo picker's lesson about per-render ranking.
+    order: Vec<usize>,
+    selected: usize,
+    harness: launcher::Harness,
+    /// Index into `harness.models()`; clamped whenever the harness changes,
+    /// because the two lists are different lengths.
+    model_ix: usize,
+    effort: launcher::Effort,
+}
+
+impl AgentLauncher {
+    fn recompute(&mut self) {
+        self.order = launcher::filter(&self.projects, &self.query.text());
+        self.selected = self.selected.min(self.order.len().saturating_sub(1));
+    }
+
+    fn model(&self) -> &'static launcher::Model {
+        let models = self.harness.models();
+        &models[self.model_ix.min(models.len() - 1)]
+    }
+
+    fn project(&self) -> Option<&launcher::Project> {
+        self.order
+            .get(self.selected)
+            .and_then(|&i| self.projects.get(i))
+    }
+}
+
 /// Which logo-picker input field the keyboard is editing. Tab toggles.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum LogoField {
@@ -3174,6 +3219,8 @@ struct Workspace {
     /// The per-pane header-logo image picker (header `＋ logo` / logo click), if
     /// open. Owns the keyboard while up, like `lang_picker`.
     logo_picker: Option<LogoPicker>,
+    /// The LAUNCH AGENT panel, if it is up.
+    agent_launcher: Option<AgentLauncher>,
     /// Bumped on every picker open. The async tier-3 sweep captures the value
     /// and drops its result unless it still matches — otherwise a slow sweep
     /// belonging to a CLOSED (or re-opened, different-pane) picker lands in
@@ -3277,6 +3324,12 @@ struct Workspace {
     agent_vitals: std::collections::HashMap<u32, vitals::Vitals>,
     /// A vitals pass is parsing transcripts on a pool thread.
     vitals_refreshing: bool,
+    /// Which surface files this window has already delivered to a bench.
+    ///
+    /// Taken out and handed to the pool for the duration of a sweep, then put
+    /// back with the results — so the record of what has been read lives in
+    /// one place and cannot be updated by two passes at once.
+    surface_feed: Option<surfacefeed::Feed>,
     /// 🎨 toggle in the MCP panel: tint each pane row with that pane's own
     /// resolved screen background + text colour. Defaults off (session-scoped).
     mcp_theme_preview: bool,
@@ -3673,6 +3726,17 @@ fn wire_pane(pane: &Entity<TerminalView>, window: &mut Window, cx: &mut Context<
         window,
         |ws, pane, _ev: &OpenLogoPicker, window, cx| {
             ws.open_logo_picker(pane.entity_id(), window, cx);
+        },
+    )
+    .detach();
+    // ⌁ LAUNCH AGENT on an empty workbench → the launcher, seeded with the
+    // directory that pane is already sitting in.
+    cx.subscribe_in(
+        pane,
+        window,
+        |ws, pane, _ev: &pane::OpenAgentLauncher, window, cx| {
+            let cwd = pane.read(cx).current_cwd();
+            ws.open_agent_launcher(cwd, window, cx);
         },
     )
     .detach();
@@ -4572,6 +4636,7 @@ impl Workspace {
             find: None,
             lang_picker: None,
             logo_picker: None,
+            agent_launcher: None,
             logo_scan_epoch: 0,
             dir_logos: dirlogo::load(),
             tool_probe: std::collections::HashMap::new(),
@@ -4613,6 +4678,7 @@ impl Workspace {
             usage_refreshing: false,
             agent_vitals: std::collections::HashMap::new(),
             vitals_refreshing: false,
+            surface_feed: Some(surfacefeed::Feed::new()),
             // Headless-capture hook: TD_WALL_THEME=1 arms the "theme · on" wall
             // skin (per-card logo warp) from boot so the curved-glass cards can be
             // screenshotted without a mouse. Leak-safe — only flips the visual
@@ -4931,6 +4997,80 @@ impl Workspace {
                 .await;
             if this
                 .update(cx, |ws: &mut Workspace, cx| ws.apply_vitals(found, cx))
+                .is_err()
+            {
+                break;
+            }
+        })
+        .detach();
+        // WORKBENCH: the surface feed.
+        //
+        // One second, because this is a person waiting to see the thing they
+        // just asked for and anything slower reads as the feature not working.
+        // It costs a readdir per live pane and a read only of files whose size
+        // or mtime moved — the sweep itself is in [`surfacefeed::Feed::sweep`],
+        // on the pool, with the same gather-here / work-there / apply-back
+        // shape as the vitals pass above.
+        //
+        // The feed is MOVED to the pool and moved back rather than shared:
+        // what has already been delivered is exactly the state two overlapping
+        // passes would corrupt, and an `Option` that is `None` while a pass is
+        // out is a guard that cannot be forgotten.
+        let mut demo_seeded = std::env::var_os("TD_WORKBENCH_DEMO").is_none();
+        cx.spawn(async move |this, cx| loop {
+            cx.background_executor()
+                .timer(Duration::from_millis(1000))
+                .await;
+            // TD_WORKBENCH_DEMO: put one of every kind on the first pane's
+            // bench, by writing ordinary files into the ordinary directory.
+            // Nothing about the demo is special-cased downstream — a
+            // screenshot of it is a screenshot of the real path, which is the
+            // only kind worth taking.
+            if !demo_seeded {
+                let first = this
+                    .update(cx, |ws: &mut Workspace, cx| ws.first_pane_id(cx))
+                    .unwrap_or(None);
+                if let (Some(pane), Some(key)) = (first, surfacefeed::session()) {
+                    match surfacefeed::seed_demo(&surfacefeed::pane_dir(key, pane)) {
+                        Ok(n) => {
+                            eprintln!("terminal-delight: seeded {n} demo surfaces on pane {pane}")
+                        }
+                        Err(err) => eprintln!("terminal-delight: demo seed failed: {err}"),
+                    }
+                    // And turn that pane to face the bench, so a screenshot of
+                    // the demo shows the workbench rather than a terminal with
+                    // a badge on it. Through the same `set_face` the header
+                    // chip calls, so the demo cannot drift from the gesture.
+                    let _ = this.update(cx, |ws: &mut Workspace, cx| {
+                        if let Some(leaf) = ws.leaf_with_pane_id(pane, cx) {
+                            leaf.update(cx, |view, cx| {
+                                view.set_face(workbench::Face::Workbench, cx)
+                            });
+                        }
+                    });
+                    demo_seeded = true;
+                }
+            }
+            let Ok(taken) = this.update(cx, |ws: &mut Workspace, _cx| {
+                surfacefeed::session_dir().and_then(|dir| ws.surface_feed.take().map(|f| (f, dir)))
+            }) else {
+                break; // window gone
+            };
+            let Some((mut feed, dir)) = taken else {
+                continue; // no session key yet, or a pass is still out
+            };
+            let (feed, arrivals) = cx
+                .background_executor()
+                .spawn(async move {
+                    let found = feed.sweep(&dir, surfacefeed::now_ms());
+                    (feed, found)
+                })
+                .await;
+            if this
+                .update(cx, |ws: &mut Workspace, cx| {
+                    ws.surface_feed = Some(feed);
+                    ws.deliver_surfaces(arrivals, cx);
+                })
                 .is_err()
             {
                 break;
@@ -5996,6 +6136,12 @@ impl Workspace {
                                                 ));
                                             }
                                         }
+                                        // And a work object for the bench, on
+                                        // the same pipeline again. A surface
+                                        // is a pane mutation like any other.
+                                        if let Some(post) = patch.surface.clone() {
+                                            view.present(post, cx);
+                                        }
                                         cx.notify();
                                         Self::grade_report(&g)
                                     });
@@ -6289,6 +6435,65 @@ impl Workspace {
     /// bars rather than keeping a stale set — a FATIGUE reading is a shutdown
     /// decision, and one taken on a conversation that has moved on is worse than
     /// none.
+    /// The host pane id of the first leaf of the active tab, if it has one.
+    ///
+    /// Only hosted panes have one, which is also the only kind an agent can
+    /// address: a window-owned terminal is not reachable by session key and
+    /// pane id, so it has no drop directory either.
+    fn first_pane_id(&self, cx: &App) -> Option<u64> {
+        let tab = self.tabs.get(self.active)?;
+        let mut leaves = vec![];
+        tab.root.leaves(&mut leaves);
+        leaves.iter().find_map(|leaf| leaf.read(cx).pane_id())
+    }
+
+    /// The leaf showing a given host pane, anywhere in this window.
+    ///
+    /// By host pane id rather than by pid, for the same reason
+    /// [`Self::deliver_surfaces`] is: a surface belongs to the terminal, and
+    /// the terminal outlives the process that happens to be running in it.
+    fn leaf_with_pane_id(&self, pane: u64, cx: &App) -> Option<Entity<TerminalView>> {
+        for tab in &self.tabs {
+            let mut leaves = vec![];
+            tab.root.leaves(&mut leaves);
+            if let Some(leaf) = leaves
+                .iter()
+                .find(|leaf| leaf.read(cx).pane_id() == Some(pane))
+            {
+                return Some((*leaf).clone());
+            }
+        }
+        None
+    }
+
+    /// Hand each pane the work objects its own agent presented.
+    ///
+    /// Addressed by HOST pane id rather than by pid: a surface belongs to the
+    /// terminal, and the terminal outlives the window that is showing it. A
+    /// pid would name the process, which is the thing that changes when a
+    /// conversation is resumed.
+    ///
+    /// Arrivals for a pane this window is not showing are dropped rather than
+    /// queued. They are still on disk, and the window that IS showing that
+    /// pane will read them on its own sweep — holding them here would put one
+    /// window's benches on another window's panes the moment a pane moved.
+    fn deliver_surfaces(&mut self, arrivals: Vec<surfacefeed::Arrivals>, cx: &mut Context<Self>) {
+        if arrivals.is_empty() {
+            return;
+        }
+        for arrival in arrivals {
+            let Some(leaf) = self.leaf_with_pane_id(arrival.pane, cx) else {
+                continue;
+            };
+            leaf.update(cx, |view, cx| {
+                for post in arrival.posts {
+                    view.present(post, cx);
+                }
+            });
+        }
+        cx.notify();
+    }
+
     fn apply_vitals(&mut self, found: Vec<(u32, vitals::Update)>, cx: &mut Context<Self>) {
         let mut changed = false;
         // Forget panes that are gone. The map is keyed by shell pid, and a pid
@@ -10182,6 +10387,101 @@ impl Workspace {
         self.refresh_dir_logos(cx);
     }
 
+    /// Open the LAUNCH AGENT panel.
+    ///
+    /// The project list is a depth-one scan of a few known roots — single-digit
+    /// milliseconds, so the panel opens holding its candidates rather than a
+    /// spinner. `seed` is the directory the person is already in, which is
+    /// pre-selected when it turns up in the scan: the common case is launching
+    /// an agent into the project you are looking at.
+    fn open_agent_launcher(
+        &mut self,
+        seed: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let home = session::home_dir();
+        let projects = launcher::scan(&launcher::default_roots(&home), 60);
+        let mut lp = AgentLauncher {
+            query: EditBuffer::seeded(""),
+            projects,
+            order: Vec::new(),
+            selected: 0,
+            harness: launcher::Harness::Claude,
+            model_ix: 0,
+            effort: launcher::Effort::Standard,
+        };
+        lp.recompute();
+        // Pre-select where the person already is, by path rather than by name:
+        // two roots can hold directories of the same name and picking the
+        // wrong one would start an agent in someone else's repository.
+        if let Some(seed) = seed {
+            let want = std::path::Path::new(&seed);
+            if let Some(at) = lp.order.iter().position(|&i| lp.projects[i].path == want) {
+                lp.selected = at;
+            }
+        }
+        self.agent_launcher = Some(lp);
+        // Take the keyboard off the focused pane (whose `on_key` writes to the
+        // PTY) so typing filters the panel instead of leaking into the shell —
+        // exactly like `open_find` and the logo picker.
+        window.focus(&self.focus_handle, cx);
+        cx.notify();
+    }
+
+    /// Start the agent the panel describes.
+    ///
+    /// Everything this does is already built: a recipe string, a briefing
+    /// file, and [`Self::adopt_pane`] — the same funnel `ctl adopt` uses, so a
+    /// launched pane gets a host pane id, survives this window, and is
+    /// deduplicated against a conversation already running.
+    fn launch_agent(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(lp) = self.agent_launcher.take() else {
+            return;
+        };
+        let Some(project) = lp.project().cloned() else {
+            // Nothing matched the filter. Keep the panel up rather than
+            // silently doing nothing — the person is mid-typo.
+            self.agent_launcher = Some(lp);
+            return;
+        };
+        let recipe = launcher::Recipe {
+            harness: lp.harness,
+            model: lp.model().id,
+            effort: lp.effort,
+            cwd: project.path.clone(),
+            opener: None,
+        };
+        // The briefing is per SESSION, not per pane: it tells the agent to
+        // compute its own drop directory from `$TD_PANE_ID`, which the host
+        // puts in every pane's environment. Written before the spawn, because
+        // the pane id does not exist yet — and not needed, for the same reason.
+        let briefing_path = match (recipe.takes_briefing(), surfacefeed::session_dir()) {
+            (true, Some(dir)) => {
+                let text = recipe.briefing(&format!("{}/$TD_PANE_ID", dir.display()));
+                match launcher::write_briefing(&dir, &text) {
+                    Ok(p) => Some(p),
+                    Err(err) => {
+                        eprintln!(
+                            "terminal-delight: could not write the agent briefing ({err}); \
+                             launching without it"
+                        );
+                        None
+                    }
+                }
+            }
+            _ => None,
+        };
+        let line = recipe.command_line(briefing_path.as_deref());
+        eprintln!("terminal-delight: launching — {line}");
+        self.adopt_pane(
+            Some(project.path.to_string_lossy().to_string()),
+            Some(line),
+            window,
+            cx,
+        );
+    }
+
     /// Open the header-logo image picker scoped to `target`.
     ///
     /// THREE TIERS, and only the cheap two run on this thread. Tiers 1+2 (the
@@ -11233,6 +11533,294 @@ impl Workspace {
         )
     }
 
+    /// The LAUNCH AGENT panel.
+    ///
+    /// Four decisions on one card, in the order a person makes them: where,
+    /// what, which, how hard. Every one of them is a row of chips rather than
+    /// a dropdown, because the whole point is that the choices are VISIBLE —
+    /// a person who does not already know that `--model opus` exists is
+    /// exactly who this is for.
+    ///
+    /// The command line it will run is printed at the bottom, whole and never
+    /// elided. Somebody who knows the terminal should be able to see that this
+    /// panel is not doing anything mysterious, and somebody who does not is
+    /// being shown, gently, what the button is made of.
+    fn render_agent_launcher(
+        &self,
+        th: &theme::Theme,
+        cx: &mut Context<Self>,
+    ) -> Option<gpui::Div> {
+        let lp = self.agent_launcher.as_ref()?;
+        let sk = skin::for_theme(cx, th, 1.0);
+        let (ww, wh) = self
+            .last_win
+            .map(|(_, _, w, h)| (w, h))
+            .unwrap_or((1200., 800.));
+        const MAX_ROWS: usize = 40;
+        const ROW_H: f32 = 30.;
+        let panel_w = 520.;
+        let shown = lp.order.len().min(MAX_ROWS);
+        let panel_h = (250. + shown as f32 * ROW_H).min(wh - 32.);
+        let left = (ww * 0.5 - panel_w * 0.5).clamp(8., (ww - panel_w - 8.).max(8.));
+        let top = (wh * 0.16).clamp(8., (wh - panel_h - 8.).max(8.));
+        let sel = lp.selected.min(lp.order.len().saturating_sub(1));
+
+        let head = |text: &'static str| {
+            div()
+                .text_size(px(9.5))
+                .text_color(th.text.alpha(0.45))
+                .child(text)
+        };
+
+        // ── projects ────────────────────────────────────────────────────────
+        let rows = lp.order.iter().take(MAX_ROWS).enumerate().map(|(i, &ix)| {
+            let project = &lp.projects[ix];
+            let lit = i == sel;
+            let home = session::home_dir();
+            let shown_path = project
+                .path
+                .strip_prefix(&home)
+                .map(|p| format!("~/{}", p.display()))
+                .unwrap_or_else(|_| project.path.display().to_string());
+            div()
+                .h(px(ROW_H))
+                .px_2()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap_2()
+                .cursor_pointer()
+                .rounded(sk.radius())
+                .when(lit, |d| d.bg(th.accent.alpha(0.18)))
+                .child(
+                    div()
+                        .w(px(12.))
+                        .text_size(px(10.))
+                        .text_color(if project.repo {
+                            th.accent
+                        } else {
+                            th.text.alpha(0.3)
+                        })
+                        // A repository and a bare directory are different
+                        // things and the row says which without a legend.
+                        .child(if project.repo { "◆" } else { "·" }),
+                )
+                .child(
+                    div()
+                        .text_size(px(13.))
+                        .text_color(th.text)
+                        .child(project.name.clone()),
+                )
+                .child(
+                    div()
+                        .text_size(px(10.))
+                        .text_color(th.text.alpha(0.4))
+                        .child(shown_path),
+                )
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
+                        cx.stop_propagation();
+                        if let Some(lp) = ws.agent_launcher.as_mut() {
+                            lp.selected = i;
+                        }
+                        ws.launch_agent(window, cx);
+                        ws.focus_active(window, cx);
+                        cx.notify();
+                    }),
+                )
+        });
+
+        // ── the three chip rows ─────────────────────────────────────────────
+        let harness_row =
+            div()
+                .flex()
+                .flex_row()
+                .gap_1()
+                .children(launcher::Harness::ALL.into_iter().map(|h| {
+                    sk.chip(h == lp.harness)
+                        .cursor_pointer()
+                        .text_size(px(11.))
+                        .child(h.label())
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                                cx.stop_propagation();
+                                if let Some(lp) = ws.agent_launcher.as_mut() {
+                                    lp.harness = h;
+                                    lp.model_ix = lp.model_ix.min(h.models().len() - 1);
+                                }
+                                cx.notify();
+                            }),
+                        )
+                }));
+        let model_row = div().flex().flex_row().gap_1().children(
+            lp.harness
+                .models()
+                .iter()
+                .enumerate()
+                .map(|(i, model)| {
+                    sk.chip(i == lp.model_ix.min(lp.harness.models().len() - 1))
+                        .cursor_pointer()
+                        .text_size(px(11.))
+                        .child(model.label)
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                                cx.stop_propagation();
+                                if let Some(lp) = ws.agent_launcher.as_mut() {
+                                    lp.model_ix = i;
+                                }
+                                cx.notify();
+                            }),
+                        )
+                })
+                .collect::<Vec<_>>(),
+        );
+        let effort_row =
+            div()
+                .flex()
+                .flex_row()
+                .gap_1()
+                .children(launcher::Effort::ALL.into_iter().map(|e| {
+                    sk.chip(e == lp.effort)
+                        .cursor_pointer()
+                        .text_size(px(11.))
+                        .child(e.label())
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                                cx.stop_propagation();
+                                if let Some(lp) = ws.agent_launcher.as_mut() {
+                                    lp.effort = e;
+                                }
+                                cx.notify();
+                            }),
+                        )
+                }));
+
+        // What it will actually run. Whole, on its own line, never elided.
+        let preview = {
+            let recipe = launcher::Recipe {
+                harness: lp.harness,
+                model: lp.model().id,
+                effort: lp.effort,
+                cwd: lp
+                    .project()
+                    .map(|p| p.path.clone())
+                    .unwrap_or_else(|| std::path::PathBuf::from("~")),
+                opener: None,
+            };
+            let briefing = recipe
+                .takes_briefing()
+                .then(|| surfacefeed::session_dir().map(|d| d.join("briefing.txt")))
+                .flatten();
+            recipe.command_line(briefing.as_deref())
+        };
+
+        let panel = div()
+            .absolute()
+            .left(px(left))
+            .top(px(top))
+            .w(px(panel_w))
+            .max_h(px(panel_h))
+            .occlude()
+            .bg(th.surface)
+            .border_1()
+            .border_color(th.accent.alpha(0.55))
+            .rounded(sk.radius_lg())
+            .shadow_lg()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .p_3()
+            .font_family(th.font_family.clone())
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_baseline()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_size(px(13.))
+                            .text_color(th.accent)
+                            .child("⌁ LAUNCH AGENT"),
+                    )
+                    .child(head("a terminal the host owns, already holding an agent")),
+            )
+            .child(
+                // The filter, with its caret, so it reads as a field rather
+                // than as a label that happens to change.
+                div()
+                    .px_2()
+                    .py_1()
+                    .rounded(sk.radius())
+                    .border_1()
+                    .border_color(th.accent.alpha(0.35))
+                    .text_size(px(13.))
+                    .text_color(th.text)
+                    .child(format!("{}▋", lp.query.text())),
+            )
+            .child(head("PROJECT"))
+            .child(div().flex().flex_col().overflow_hidden().children(rows))
+            .when(lp.order.is_empty(), |d| {
+                d.child(
+                    div()
+                        .px_2()
+                        .text_size(px(12.))
+                        .text_color(th.complement)
+                        .child("nothing matches — ⌫ to widen"),
+                )
+            })
+            .child(head("HARNESS"))
+            .child(harness_row)
+            .child(head("MODEL"))
+            .child(model_row)
+            .child(head("EFFORT"))
+            .child(effort_row)
+            .child(
+                div()
+                    .mt_1()
+                    .px_2()
+                    .py_1()
+                    .rounded(sk.radius())
+                    .bg(th.bg.alpha(0.6))
+                    .text_size(px(10.))
+                    .text_color(th.text.alpha(0.55))
+                    .child(preview),
+            )
+            .child(
+                div()
+                    .text_size(px(9.))
+                    .text_color(th.text.alpha(0.45))
+                    .child(
+                        "↑↓ project · tab model · ⇧tab harness · ←→ effort · ↵ launch · esc close",
+                    ),
+            )
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|_, _: &MouseDownEvent, _w, cx| cx.stop_propagation()),
+            );
+
+        Some(
+            div()
+                .absolute()
+                .inset_0()
+                .occlude()
+                .bg(hsla(0., 0., 0., 0.28))
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|ws, _: &MouseDownEvent, window, cx| {
+                        ws.agent_launcher = None;
+                        ws.focus_active(window, cx);
+                        cx.notify();
+                    }),
+                )
+                .child(panel),
+        )
+    }
+
     /// The header-logo image picker (md-open style): a centred modal with a query
     /// input and a fuzzy-ranked list of `basename + ~/dir` rows. ↑/↓ move, ↵ sets
     /// the highlighted file as the target pane's logo, click a row to set it, esc
@@ -12241,6 +12829,7 @@ impl Workspace {
         self.find.is_some()
             || self.lang_picker.is_some()
             || self.logo_picker.is_some()
+            || self.agent_launcher.is_some()
             || self.renaming.is_some()
             || self.bar_rename.is_some()
             || self.group_rename.is_some()
@@ -12416,6 +13005,7 @@ impl Workspace {
             || self.find.take().is_some()
             || self.lang_picker.take().is_some()
             || self.logo_picker.take().is_some()
+            || self.agent_launcher.take().is_some()
             || self.theme_menu.take().is_some()
             || self.osd_menu.take().is_some()
             || self.tab_menu.take().is_some()
@@ -12600,6 +13190,83 @@ impl Workspace {
                         lp.selected = 0;
                     }
                     self.lang_picker = Some(lp);
+                    cx.notify();
+                    return;
+                }
+            }
+        }
+        // The LAUNCH AGENT panel owns the keyboard while open. Same contract as
+        // every other picker, so the muscle memory transfers: esc cancels, ↵
+        // starts the agent, ↑/↓ walk the projects, tab cycles the model,
+        // shift-tab the harness, ←/→ the effort, anything else filters.
+        if let Some(mut lp) = self.agent_launcher.take() {
+            match ks.key.as_str() {
+                "escape" => {
+                    self.focus_active(window, cx);
+                    cx.notify();
+                    return;
+                }
+                "enter" => {
+                    self.agent_launcher = Some(lp);
+                    self.launch_agent(window, cx);
+                    self.focus_active(window, cx);
+                    cx.notify();
+                    return;
+                }
+                "down" => {
+                    if !lp.order.is_empty() {
+                        lp.selected = (lp.selected + 1).min(lp.order.len() - 1);
+                    }
+                    self.agent_launcher = Some(lp);
+                    cx.notify();
+                    return;
+                }
+                "up" => {
+                    lp.selected = lp.selected.saturating_sub(1);
+                    self.agent_launcher = Some(lp);
+                    cx.notify();
+                    return;
+                }
+                "tab" if m.shift => {
+                    let at = launcher::Harness::ALL
+                        .iter()
+                        .position(|h| *h == lp.harness)
+                        .unwrap_or(0);
+                    lp.harness = launcher::Harness::ALL[(at + 1) % launcher::Harness::ALL.len()];
+                    // The model lists are different lengths, so an index that
+                    // was valid for one harness can be past the end of the next.
+                    lp.model_ix = lp.model_ix.min(lp.harness.models().len() - 1);
+                    self.agent_launcher = Some(lp);
+                    cx.notify();
+                    return;
+                }
+                "tab" => {
+                    lp.model_ix = (lp.model_ix + 1) % lp.harness.models().len();
+                    self.agent_launcher = Some(lp);
+                    cx.notify();
+                    return;
+                }
+                "left" | "right" => {
+                    let at = launcher::Effort::ALL
+                        .iter()
+                        .position(|e| *e == lp.effort)
+                        .unwrap_or(1) as i32;
+                    let n = launcher::Effort::ALL.len() as i32;
+                    let step = if ks.key == "right" { 1 } else { n - 1 };
+                    lp.effort = launcher::Effort::ALL[((at + step) % n) as usize];
+                    self.agent_launcher = Some(lp);
+                    cx.notify();
+                    return;
+                }
+                _ => {
+                    let before = lp.query.text();
+                    lp.query
+                        .apply(ks.key.as_str(), m, ks.key_char.as_deref(), 64);
+                    if lp.query.text() != before {
+                        lp.recompute();
+                        lp.selected = 0;
+                    }
+                    self.agent_launcher = Some(lp);
                     cx.notify();
                     return;
                 }
@@ -19375,6 +20042,7 @@ impl Render for Workspace {
                 || self.find.is_some()
                 || self.lang_picker.is_some()
                 || self.logo_picker.is_some()
+                || self.agent_launcher.is_some()
                 || self.focus_read.as_ref().and_then(|w| w.upgrade()).is_some(),
         );
         // drop-hit-test rects are rebuilt every frame by the canvases below, so
@@ -21102,6 +21770,7 @@ impl Render for Workspace {
         let find_overlay = self.render_find(&th, cx);
         let lang_picker_overlay = self.render_lang_picker(&th, cx);
         let logo_picker_overlay = self.render_logo_picker(&th, cx);
+        let agent_launcher_overlay = self.render_agent_launcher(&th, cx);
         let plugins_overlay = self.render_plugins_overlay(&th, cx);
         let notif_overlay = self.render_notif_overlay(&th, cx);
         // The marquee, while it lives. It ages out on its own — nothing
@@ -25471,6 +26140,7 @@ impl Render for Workspace {
                     .children(lang_picker_overlay)
                     // the per-pane logo picker rides on top too (its scrim locks input)
                     .children(logo_picker_overlay)
+                    .children(agent_launcher_overlay)
                     // the cabinet's own paint card, hung from the top edge —
                     // over every pane's card, because the surface it paints is
                     // the one all of them sit in
@@ -31187,6 +31857,10 @@ Usage:
   terminal-delight agent-usage   refresh this machine's AI subscription usage records
   terminal-delight agent-vitals  the three attention bars for one transcript, as JSON
   terminal-delight skin          resolve a chrome skin against a palette, as JSON
+  terminal-delight surface [f]   put a work object on this pane's workbench
+                                 (a TDSP document, or prose with a ```td block;
+                                 reads stdin when no file is given; --catalogue
+                                 prints the kinds this build renders)
   terminal-delight serve --session <key>
                                  run the session host that owns this session's terminals
 
@@ -31268,6 +31942,14 @@ enum Verb {
     /// the recipes outside this binary is a second implementation waiting to
     /// disagree with the first.
     Skin,
+    /// Put a work object on the calling pane's WORKBENCH — the transport for
+    /// an agent that is not ours, in a language that is not Rust, with no MCP
+    /// connection. It reads a TDSP document (or prose containing a fenced
+    /// `td` block) and drops it where the window is watching, using the
+    /// `TD_SESSION` and `TD_PANE_ID` the host already put in this terminal's
+    /// environment. Three writers, one format, and this is the one that needs
+    /// nothing from the agent but the ability to run a command.
+    Surface,
 }
 
 impl Verb {
@@ -31281,6 +31963,7 @@ impl Verb {
             "probe" => Self::Probe,
             "serve" => Self::Serve,
             "skin" => Self::Skin,
+            "surface" => Self::Surface,
             _ => return None,
         })
     }
@@ -31351,6 +32034,7 @@ fn main() {
                 Verb::Probe => probe_cli(&argv[2..]),
                 Verb::Serve => host::run_cli(&argv[2..]),
                 Verb::Skin => skin::run_cli(&argv[2..]),
+                Verb::Surface => surfacefeed::run_cli(&argv[2..]),
             };
             std::process::exit(code);
         }
@@ -31476,6 +32160,11 @@ fn main() {
         )
     };
     let owns_session = claim.owned;
+    // Which session's surfaces this window watches. Bound here, from the key
+    // this window actually resolved to, rather than read out of `$TD_SESSION`
+    // later — that variable names the session of whatever pane LAUNCHED this
+    // window, which is usually a different one.
+    surfacefeed::adopt_session(&key);
     // Bind the key either way: a scratch window still reads the workspace's
     // theme so it looks like the rest of the session — it just never writes.
     instance::bind(key.clone(), claim.lock);

@@ -2131,6 +2131,18 @@ pub struct TerminalView {
     tokens_banked: u64,
     turn_peak_tokens: u64,
     tok_was_working: bool,
+    /// This pane's WORKBENCH — its second face, and everything the agent in it
+    /// has presented as a work object rather than as typing.
+    ///
+    /// Per pane and never shared: a surface belongs to the conversation that
+    /// made it, and one store across the wall would put one agent's diagram on
+    /// another agent's bench. See [`crate::workbench`] for why it lives inside
+    /// the pane rather than in the window's chrome.
+    pub bench: crate::workbench::Bench,
+    /// A comment being typed against the selected surface. `None` is not the
+    /// same as empty: a composer that is open and holding nothing is a person
+    /// who has started answering, and closing it under them loses that.
+    wb_compose: Option<String>,
 }
 
 /// Click on the header's theme icon — the workspace opens the breakout menu.
@@ -2177,6 +2189,16 @@ impl gpui::EventEmitter<PaneRenamed> for TerminalView {}
 /// state file once, when you press Enter.
 pub struct StickyChanged;
 impl gpui::EventEmitter<StickyChanged> for TerminalView {}
+
+/// The ⌁ LAUNCH AGENT button on an empty workbench — the workspace opens the
+/// launcher, scoped to this pane's own directory.
+///
+/// A pane with no agent in it is the one place the offer belongs: it is where
+/// a person is already looking when they discover the bench has nothing on it,
+/// and it answers the question that state raises instead of leaving them to
+/// find a keybinding.
+pub struct OpenAgentLauncher;
+impl gpui::EventEmitter<OpenAgentLauncher> for TerminalView {}
 
 /// Click on this pane's header logo (or the `＋ logo` placeholder when none is
 /// set) — ask the workspace to open the image-file picker scoped to this pane.
@@ -3177,6 +3199,8 @@ impl TerminalView {
             tokens_banked: 0,
             turn_peak_tokens: 0,
             tok_was_working: false,
+            bench: crate::workbench::Bench::new(),
+            wb_compose: None,
         }
     }
 
@@ -4333,6 +4357,101 @@ impl TerminalView {
         // as dead everywhere except the outer bar's `?` button.
         if ks.key.as_str() == "f1" {
             cx.emit(OpenHelp);
+            cx.stop_propagation();
+            return;
+        }
+        // alt+w flips this pane between its two faces, from either side.
+        if ks.key.as_str() == "w" && ks.modifiers.alt && !ks.modifiers.control {
+            self.toggle_face(cx);
+            cx.stop_propagation();
+            return;
+        }
+        // The WORKBENCH face owns the keyboard while it is showing, and must:
+        // every key that reached the PTY from here would be typed into an
+        // agent that is mid-turn, and `esc` in particular kills a running one.
+        // The keys are the queue's, deliberately — a person who has learned
+        // the attention queue already knows how to walk this.
+        if self.bench.face() == crate::workbench::Face::Workbench {
+            match ks.key.as_str() {
+                "escape" => {
+                    // Back to the conversation. Esc never leaves a person on a
+                    // face they cannot type into.
+                    self.set_face(crate::workbench::Face::Terminal, cx);
+                    cx.stop_propagation();
+                    return;
+                }
+                "down" | "j" => {
+                    self.bench.step(1);
+                    cx.notify();
+                    cx.stop_propagation();
+                    return;
+                }
+                "up" | "k" => {
+                    self.bench.step(-1);
+                    cx.notify();
+                    cx.stop_propagation();
+                    return;
+                }
+                "tab" => {
+                    let shelves = crate::surface::Shelf::ALL;
+                    let at = shelves
+                        .iter()
+                        .position(|s| *s == self.bench.shelf())
+                        .unwrap_or(0);
+                    self.bench.set_shelf(shelves[(at + 1) % shelves.len()]);
+                    cx.notify();
+                    cx.stop_propagation();
+                    return;
+                }
+                "o" | "enter" => {
+                    // A composer that is open is what enter is for: the person
+                    // is mid-sentence, and the first action would throw the
+                    // sentence away.
+                    if self.wb_compose.is_some() {
+                        self.bench_act(crate::surface::Action::Comment, None, cx);
+                        cx.stop_propagation();
+                        return;
+                    }
+                    // Otherwise the first action the surface offers, which each
+                    // kind orders so the first one is the obvious one: open a
+                    // document, accept a part, approve a decision.
+                    let first = self
+                        .bench
+                        .selected()
+                        .and_then(|s| s.actions.first().cloned());
+                    if let Some(action) = first {
+                        // A verb that wants words asks for them rather than
+                        // sending an empty comment nobody typed.
+                        if action.wants_comment() && self.wb_compose.is_none() {
+                            self.wb_compose = Some(String::new());
+                            cx.notify();
+                        } else {
+                            self.bench_act(action, None, cx);
+                        }
+                    }
+                    cx.stop_propagation();
+                    return;
+                }
+                _ => {}
+            }
+            // Anything else types into the composer when one is open, and is
+            // swallowed when one is not — see above: this face must not leak
+            // keystrokes into a running agent.
+            if let Some(buf) = self.wb_compose.as_mut() {
+                match ks.key.as_str() {
+                    "backspace" => {
+                        buf.pop();
+                    }
+                    _ => {
+                        if let Some(c) = ks.key_char.as_deref() {
+                            if !c.is_empty() && !c.chars().any(char::is_control) {
+                                buf.push_str(c);
+                            }
+                        }
+                    }
+                }
+                cx.notify();
+            }
             cx.stop_propagation();
             return;
         }
@@ -6458,6 +6577,401 @@ impl Focusable for TerminalView {
     }
 }
 
+// ───────────────────────────── the workbench face ──────────────────────────
+//
+// The pane's half of [`crate::workbench`]: what a click does, how an answer
+// reaches the agent, and the element tree for the bench itself. The rules live
+// in that module and are tested there; this is the wiring.
+impl TerminalView {
+    /// Show a face. Idempotent, so a click on the chip already lit is free.
+    pub fn set_face(&mut self, face: crate::workbench::Face, cx: &mut Context<Self>) {
+        if self.bench.face() != face {
+            self.bench.set_face(face);
+            // A pane whose face changed has changed what its keystrokes mean,
+            // so the header's own count and the tab badge both want redrawing.
+            cx.notify();
+        }
+    }
+
+    pub fn toggle_face(&mut self, cx: &mut Context<Self>) {
+        self.bench.toggle_face();
+        cx.notify();
+    }
+
+    /// Put a work object on this pane's bench.
+    ///
+    /// The one entry point, whichever transport carried it: the MCP verb, a
+    /// dropped file and a fenced block in the transcript all arrive here, so
+    /// there is one place where a surface becomes visible and one place to put
+    /// a breakpoint when it does not.
+    pub fn present(&mut self, post: crate::surface::Post, cx: &mut Context<Self>) {
+        if self.bench.apply(post).is_some() {
+            cx.notify();
+        }
+    }
+
+    /// How many surfaces this pane is holding that nobody has looked at.
+    pub fn bench_unseen(&self) -> usize {
+        self.bench.unseen_total()
+    }
+
+    /// Where this pane's agent should drop its surfaces.
+    ///
+    /// Empty when the pane has no host id, which is the honest answer: a
+    /// window-owned terminal is not addressable by a session key, so there is
+    /// no directory to name and the empty bench says so instead of printing a
+    /// path that would never be watched.
+    fn bench_dir(&self) -> Option<std::path::PathBuf> {
+        let pane = self.pane_id?;
+        let key = crate::surfacefeed::session()?;
+        Some(crate::surfacefeed::pane_dir(key, pane))
+    }
+
+    /// Carry out a press.
+    ///
+    /// Local verbs (open a document, open its source) are done by this window
+    /// because the desktop already knows how. Everything else is the agent's
+    /// business and is typed into the agent's own terminal — the channel that
+    /// was already there, and the reason this feature needs no new pipe to
+    /// send an answer down.
+    fn bench_act(
+        &mut self,
+        action: crate::surface::Action,
+        target: Option<String>,
+        cx: &mut Context<Self>,
+    ) {
+        let comment = self.wb_compose.take().filter(|c| !c.trim().is_empty());
+        match self.bench.act(&action, target, comment) {
+            crate::workbench::Dispatch::Open(href) => open_with_system(&href),
+            crate::workbench::Dispatch::Tell(report) => {
+                // The journal first: a line typed into a terminal can be eaten
+                // by whatever the program is doing at that instant, and the
+                // file is what makes the answer recoverable when it is.
+                if let (Some(key), Some(pane)) = (crate::surfacefeed::session(), self.pane_id) {
+                    let _ = crate::surfacefeed::journal(
+                        &crate::surfacefeed::actions_path(key, pane),
+                        &report,
+                    );
+                }
+                let mut line = report.to_prompt();
+                line.push('\n');
+                self.session.notifier.notify(line.into_bytes());
+                // Answering is looking: the person has dealt with this surface,
+                // so the pane turns back to the conversation it just fed,
+                // where the reply to what they said will appear.
+                //
+                // Only when there IS one. A shell pane has nothing to turn
+                // back to, and facing it at a prompt that has just printed
+                // "command not found" reads as the bench falling over rather
+                // than as an answer being delivered.
+                if self.mode.is_agent() {
+                    self.bench.set_face(crate::workbench::Face::Terminal);
+                }
+            }
+            crate::workbench::Dispatch::Refused(_why) => {
+                // Refusals are shown by the button being absent rather than by
+                // a toast. Nothing to do but repaint.
+            }
+        }
+        cx.notify();
+    }
+
+    /// The bench, at whatever size this pane can give it.
+    fn bench_el(
+        &mut self,
+        th: &Theme,
+        sk: &crate::skin::Skin,
+        pane_w: f32,
+        pane_h: f32,
+        focused: bool,
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement {
+        use crate::workbench::RailFit;
+        let fit = crate::workbench::rail_fit(pane_w, self.bench.rail_wanted());
+        let rail_px = match fit {
+            RailFit::Open(w) => w as f32,
+            RailFit::Ticks => crate::workbench::RAIL_TICK_W,
+            RailFit::Hidden => 0.0,
+        };
+        let how = crate::workbench::embodiment(pane_w - rail_px, pane_h, focused);
+
+        // ── the body ────────────────────────────────────────────────────────
+        let body = match self.bench.selected() {
+            Some(surface) => {
+                let actions = surface.actions.clone();
+                let sid = surface.id.clone();
+                let hunks: Vec<(String, String)> = match &surface.kind {
+                    crate::surface::Kind::Changeset(c) => c
+                        .hunks
+                        .iter()
+                        .map(|h| (h.id.clone(), h.file.clone()))
+                        .collect(),
+                    _ => Vec::new(),
+                };
+                let drawn = crate::benchdraw::body(surface, how, sk, th);
+                let composing = self.wb_compose.clone();
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(10.))
+                    .child(drawn)
+                    // The verbs. A part-verb with more than one part to act on
+                    // asks which one first, by offering a chip per part —
+                    // rather than a bare "accept" that silently means the first.
+                    .when(how != crate::workbench::Embodiment::Summary, |d| {
+                        d.child(sk.rule_h()).child(
+                            div()
+                                .flex()
+                                .flex_row()
+                                .flex_wrap()
+                                .gap(px(6.))
+                                .items_center()
+                                .children(actions.into_iter().flat_map(|action| {
+                                    let needs_part = matches!(
+                                        action,
+                                        crate::surface::Action::AcceptPart
+                                            | crate::surface::Action::RejectPart
+                                    );
+                                    let targets: Vec<Option<String>> = if needs_part {
+                                        hunks.iter().map(|(id, _)| Some(id.clone())).collect()
+                                    } else {
+                                        vec![None]
+                                    };
+                                    let label = action.label();
+                                    targets
+                                        .into_iter()
+                                        .map(|target| {
+                                            let text = match &target {
+                                                Some(t) => format!(
+                                                    "{label} {}",
+                                                    t.rsplit('/').next().unwrap_or(t)
+                                                ),
+                                                None => label.clone(),
+                                            };
+                                            let action = action.clone();
+                                            sk.chip(false)
+                                                .cursor_pointer()
+                                                .text_size(px(10.5))
+                                                .child(text)
+                                                .on_mouse_down(
+                                                    MouseButton::Left,
+                                                    cx.listener(
+                                                        move |view, _ev: &MouseDownEvent, _w, cx| {
+                                                            cx.stop_propagation();
+                                                            view.bench_act(
+                                                                action.clone(),
+                                                                target.clone(),
+                                                                cx,
+                                                            );
+                                                        },
+                                                    ),
+                                                )
+                                        })
+                                        .collect::<Vec<_>>()
+                                }))
+                                .child(
+                                    // The composer is a chip until it is opened,
+                                    // then it is a line of text the pane's own
+                                    // keystrokes go into.
+                                    match composing {
+                                        Some(text) => div()
+                                            .px(px(8.))
+                                            .py(px(3.))
+                                            .border_1()
+                                            .border_color(th.accent.alpha(0.7))
+                                            .rounded(sk.radius())
+                                            .text_size(px(11.))
+                                            .text_color(th.text)
+                                            .child(format!("› {text}▋")),
+                                        None => sk
+                                            .chip(false)
+                                            .cursor_pointer()
+                                            .text_size(px(10.5))
+                                            .child("say…")
+                                            .on_mouse_down(
+                                                MouseButton::Left,
+                                                cx.listener(
+                                                    |view, _ev: &MouseDownEvent, _w, cx| {
+                                                        cx.stop_propagation();
+                                                        view.wb_compose = Some(String::new());
+                                                        cx.notify();
+                                                    },
+                                                ),
+                                            ),
+                                    },
+                                ),
+                        )
+                    })
+                    .child(
+                        div()
+                            .text_size(px(9.5))
+                            .text_color(th.faint)
+                            .child(format!("surface {}", sid.as_str())),
+                    )
+            }
+            // Nothing selected AND nothing to select: the honest empty state.
+            // A bench that holds surfaces but has none chosen is a different
+            // thing and must not draw the "launch an agent" offer over them.
+            None if self.bench.is_empty() => crate::benchdraw::empty(
+                self.mode.is_agent(),
+                &self
+                    .bench_dir()
+                    .map(|d| d.to_string_lossy().to_string())
+                    .unwrap_or_else(|| "(this pane has no host session)".into()),
+                sk,
+                th,
+            )
+            // The offer, exactly where the question is asked.
+            .when(!self.mode.is_agent(), |d| {
+                d.child(
+                    sk.chip(true)
+                        .cursor_pointer()
+                        .text_size(px(12.))
+                        .child("⌁ LAUNCH AGENT")
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|_view, _ev: &MouseDownEvent, _w, cx| {
+                                cx.stop_propagation();
+                                cx.emit(OpenAgentLauncher);
+                            }),
+                        ),
+                )
+            }),
+            // Surfaces here, none of them chosen — which happens when the
+            // selected one was retired. Say what is on the bench rather than
+            // drawing the first-run offer over work that already exists.
+            None => sk
+                .panel()
+                .flex()
+                .flex_col()
+                .gap(px(4.))
+                .child(div().text_size(px(11.)).text_color(th.faint).child(format!(
+                    "{} on this bench · nothing chosen",
+                    self.bench.len()
+                )))
+                .child(
+                    div()
+                        .text_size(px(12.))
+                        .text_color(th.text.alpha(0.85))
+                        .child("Pick one from the rail, or press ↓."),
+                ),
+        };
+
+        // ── the rail ────────────────────────────────────────────────────────
+        let rail = match fit {
+            RailFit::Hidden => None,
+            RailFit::Ticks => {
+                let ticks: Vec<gpui::Div> = self
+                    .bench
+                    .all_newest_first()
+                    .take(24)
+                    .map(|s| {
+                        crate::benchdraw::rail_tick(
+                            crate::workbench::tint_of(&s.kind),
+                            false,
+                            sk,
+                            th,
+                        )
+                    })
+                    .collect();
+                Some(
+                    div()
+                        .w(px(crate::workbench::RAIL_TICK_W))
+                        .flex_none()
+                        .flex()
+                        .flex_col()
+                        .items_center()
+                        .gap(px(4.))
+                        .pt(px(6.))
+                        .cursor_pointer()
+                        .children(ticks)
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|view, _ev: &MouseDownEvent, _w, cx| {
+                                cx.stop_propagation();
+                                view.bench.toggle_rail();
+                                cx.notify();
+                            }),
+                        ),
+                )
+            }
+            RailFit::Open(w) => {
+                let shelf_now = self.bench.shelf();
+                let tabs = div().flex().flex_row().gap(px(3.)).children(
+                    crate::surface::Shelf::ALL.into_iter().map(|shelf| {
+                        let (count, unseen) = self.bench.counts(shelf);
+                        crate::benchdraw::shelf_tab(
+                            shelf,
+                            shelf == shelf_now,
+                            count,
+                            unseen,
+                            sk,
+                            th,
+                        )
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |view, _ev: &MouseDownEvent, _w, cx| {
+                                cx.stop_propagation();
+                                view.bench.set_shelf(shelf);
+                                cx.notify();
+                            }),
+                        )
+                    }),
+                );
+                let rows = self.bench.rows();
+                Some(
+                    sk.panel()
+                        .w(px(w as f32))
+                        .flex_none()
+                        .flex()
+                        .flex_col()
+                        .gap(px(6.))
+                        .overflow_hidden()
+                        .child(tabs)
+                        .child(sk.rule_h())
+                        .children(rows.into_iter().map(|row| {
+                            let id = row.id.clone();
+                            crate::benchdraw::rail_row(&row, sk, th).on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |view, _ev: &MouseDownEvent, _w, cx| {
+                                    cx.stop_propagation();
+                                    view.bench.select(&id);
+                                    cx.notify();
+                                }),
+                            )
+                        }))
+                        .child(
+                            div()
+                                .mt_auto()
+                                .text_size(px(9.))
+                                .text_color(th.faint)
+                                .cursor_pointer()
+                                .child("› fold")
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(|view, _ev: &MouseDownEvent, _w, cx| {
+                                        cx.stop_propagation();
+                                        view.bench.toggle_rail();
+                                        cx.notify();
+                                    }),
+                                ),
+                        ),
+                )
+            }
+        };
+
+        div()
+            .size_full()
+            .flex()
+            .flex_row()
+            .gap(px(8.))
+            .p(px(10.))
+            .child(div().flex_1().min_w(px(0.)).overflow_hidden().child(body))
+            .children(rail)
+            .into_any_element()
+    }
+}
+
 impl Render for TerminalView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let th = self.resolved_theme(cx);
@@ -7015,6 +7529,72 @@ impl Render for TerminalView {
         let hicon = CHROME_GLYPH * scale;
         let hpad = px(12. * scale); // header horizontal padding / control gap
 
+        // ── The face toggle ─────────────────────────────────────────────────
+        // TERMINAL ⇄ WORKBENCH, on every pane, at the top, always. It does NOT
+        // tuck into the ⋯ overflow at narrow widths and it is not behind a
+        // keybinding only: a second face nobody can find is a second face
+        // nobody has. The × is the only other control with that standing, and
+        // for the same reason — both answer "what is this pane even doing".
+        //
+        // Two chips rather than one switch, because a switch has to be read
+        // ("is it on? on meaning what?") while two labelled chips say which
+        // face is showing and what the other one is called, in one glance.
+        let face_now = self.bench.face();
+        let unseen = self.bench_unseen();
+        let face_toggle = {
+            let chip = |face: crate::workbench::Face, cx: &mut Context<Self>| {
+                let lit = face_now == face;
+                sk.chip(lit)
+                    .cursor_pointer()
+                    .text_size(px((hicon * 0.42).max(8.5)))
+                    .child(face.chip())
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |view, _ev: &MouseDownEvent, _w, cx| {
+                            cx.stop_propagation();
+                            view.set_face(face, cx);
+                        }),
+                    )
+            };
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(2.))
+                .child(chip(crate::workbench::Face::Terminal, cx))
+                .child(chip(crate::workbench::Face::Workbench, cx))
+                // The count of work objects nobody has looked at — the only
+                // number on the header, and it is absent rather than zero when
+                // there is nothing waiting.
+                .when(
+                    unseen > 0 && face_now == crate::workbench::Face::Terminal,
+                    |d| {
+                        d.child(
+                            div()
+                                .text_size(px((hicon * 0.40).max(8.)))
+                                .text_color(th.complement)
+                                .child(format!("{unseen}")),
+                        )
+                    },
+                )
+        };
+
+        // The bench is built here, before the element tree that will hold it,
+        // because building it needs `&mut self` and the tree below borrows the
+        // pane for the rest of the frame.
+        let on_bench = face_now == crate::workbench::Face::Workbench;
+        let pane_h = self
+            .content_bounds
+            .lock()
+            .unwrap()
+            .map(|b| f32::from(b.size.height))
+            .unwrap_or(0.0);
+        let bench_el = if on_bench {
+            self.bench_el(&th, &sk, pane_w, pane_h, focused_now, cx)
+        } else {
+            div().into_any_element()
+        };
+
         // solid, reflective header: gradient face + crisp top reflection line
         let mut lighter = th.surface;
         lighter.l = (lighter.l * 1.9).min(0.9);
@@ -7206,6 +7786,7 @@ impl Render for TerminalView {
                     // roomier spacing between the header glyphs — scales with the bar
                     .gap(hpad)
                     .child(grid_label)
+                    .child(face_toggle)
                     // Part 1: only in an agent (claude/codex) pane — jump between
                     // *your own* messages. Coloured like your input (`th.human`).
                     // FIRST control to tuck into the ⋯ overflow as the pane narrows.
@@ -7553,12 +8134,31 @@ impl Render for TerminalView {
                                     // own resolved curvature (grade.warp → th.warp),
                                     // so a bent pane and a flat pane coexist and
                                     // hit-testing matches each tube's own shader k.
-                                    let (k1, k2) = crate::theme::warp_coeffs(th.warp);
+                                    //
+                                    // EXCEPT while the WORKBENCH face is up, when
+                                    // this tube is registered flat. The barrel warp
+                                    // is a pixel post-pass and gpui hit-tests the
+                                    // element tree flat, so a button drawn inside a
+                                    // bent tube is clicked where it is NOT — the
+                                    // same trap the Alt-copy affordance documents a
+                                    // few hundred lines up, which is why that one
+                                    // carries no gpui handler at all. A terminal can
+                                    // live with it because its clicks resolve
+                                    // through `viewport_cell`, which inverts the
+                                    // warp; a tree of chips cannot. The precedent
+                                    // for choosing interaction over curvature is
+                                    // already here too: `warp::is_suppressed()`
+                                    // flattens every pane while a modal is up.
+                                    let (k1, k2) = if on_bench {
+                                        (0.0, 0.0)
+                                    } else {
+                                        crate::theme::warp_coeffs(th.warp)
+                                    };
                                     // Per-pane crawl: this tube recedes by THIS
                                     // pane's own crawl perspective (grade.crawl →
                                     // th.crawl/angle/depth). Identity when off, so
                                     // a crawling pane and a plain pane coexist.
-                                    let crawl = if th.crawl {
+                                    let crawl = if th.crawl && !on_bench {
                                         let (a, d) = crate::theme::crawl_coeffs(
                                             th.crawl_angle,
                                             th.crawl_depth,
@@ -7599,7 +8199,15 @@ impl Render for TerminalView {
                             .size_full(),
                         )
                     })
-                    .child(
+                    // Either the terminal's grid, or the bench. Not both, and
+                    // not one over the other: the workbench is opaque chrome,
+                    // and drawing a live grid underneath it would keep every
+                    // row shaped and measured every frame for pixels nobody can
+                    // see. The terminal itself keeps running — an agent whose
+                    // output stopped being watched is not an agent that stopped.
+                    .child(if on_bench {
+                        bench_el
+                    } else {
                         div()
                             .px(px(grid_pad_x))
                             .py(px(grid_pad_y))
@@ -7630,8 +8238,9 @@ impl Render for TerminalView {
                                 } else {
                                     line.child(StyledText::new(text).with_runs(runs))
                                 }
-                            })),
-                    )
+                            }))
+                            .into_any_element()
+                    })
                     .children(copy_el)
                     // The sticky note, INSIDE the screen and therefore inside the
                     // registered warp tube. It has to be: the note is drawn
