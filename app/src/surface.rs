@@ -559,7 +559,11 @@ impl ActionReport {
 /// C0/C1) becomes a space. Nothing else changes — the text is somebody's
 /// comment or somebody's hunk id, and it should still read as what they wrote.
 fn plain(s: &str) -> String {
-    s.chars()
+    // A pasted CRLF is the ordinary case and it is ONE line break, so it
+    // becomes one space rather than two — the same collapse `typed_line`
+    // makes for what a person pastes into the composer.
+    s.replace("\r\n", "\n")
+        .chars()
         .map(|c| if c.is_control() { ' ' } else { c })
         .collect()
 }
