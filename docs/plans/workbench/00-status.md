@@ -54,8 +54,40 @@ the brief's grill for him to overrule.
 5. **The Workbench is a face, not a pane type.** Every pane has both faces; the
    toggle is per-pane and persisted. A shell pane's Workbench is empty and says so.
 
+**Turned out to be: 8/10 was right, for the reason predicted.** The UI took an
+evening and could be unwound in one; the protocol took the thinking. The part
+that surprised me was the launcher, scored as a day's work and delivered in
+twenty lines because the host already types a recipe into a fresh pane.
+
+## Verified
+
+- `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, full suite:
+  **1,058 tests green**, 83 of them new across the five new modules.
+- **Photographed on the real build**, 2026-09-17: six demo surfaces written as
+  ordinary files by one process appeared on a pane's bench in another, the
+  header drew the unseen count, and the decision rendered with its recommended
+  option lit. The photograph found three defects 1,050 tests had not — a
+  duplicated reason line, a heading that clipped instead of wrapping, and a
+  rail that defaulted to ticks. All three fixed.
+
+## NOT verified
+
+**No mouse gesture in this branch has ever been pressed.** This shell has a
+virtual keyboard (`wtype`) and no virtual pointer, so the toggle, the rail
+rows, the action chips and the launcher are compiled, rendered and unclicked.
+Parker pressed the header toggle once on the first demo window and it worked;
+everything else is his to try.
+
+`alt+w` did not fire when injected through `wtype`, which is unexplained — it
+may be the injection rather than the chord, and it is the first thing to check
+by hand.
+
 ## Next
 
+- Five minutes of clicking, by a person. That is the whole outstanding test.
 - Slice 0 equivalent: count how many surfaces a real session produces before
   widening the catalogue past six.
+- A retention rule for `surfaces/` — it grows and nothing sweeps it.
 - Held panes and restored panes: a surface is currently per-pane and per-session.
+- The machine-global `AGENTS.md` paragraph (`docs/spec/agents-md-snippet.md`),
+  after the build is installed and used for a day.
