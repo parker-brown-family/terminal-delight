@@ -100,3 +100,40 @@ by hand.
 - Held panes and restored panes: a surface is currently per-pane and per-session.
 - The machine-global `AGENTS.md` paragraph (`docs/spec/agents-md-snippet.md`),
   after the build is installed and used for a day.
+
+## The architecture pass — 2026-09-17, afternoon
+
+Parker's reading after a day of live rounds: *the front end is functionally
+there; the backend is spaghetti and needs a refactor plan and pass.* The plan is
+`01-architecture-pass.md`; this is the state.
+
+- [x] `screenread.rs` — every function that reads the terminal grid as text, in
+      one module, under a law: each public reader has a test transcribed from a
+      real screen, enforced by a source scan. The law caught five untested
+      readers on its first run. (`cd8005c`)
+- [x] `pane/bench.rs` — the bench's 22 methods and key handler out of `pane.rs`
+      (11,368 → 9,487 lines) as a CHILD module, so no field changed visibility.
+      A scan in pane's tests fails if a `fn bench_` grows back; mutation-tested.
+      (`ae38d42`)
+- [x] TDSP 0.2, with a test that parses 0.1/0.2/0.9 and refuses 1.0. The bump
+      had been missed through four field additions. (`03a1358`)
+- [x] The composer diagnostic's four findings dispositioned in the plan; its
+      first finding root-caused to the mirror replacing where the PTY appended.
+      (`72950ad`)
+- [ ] `body()` — one kind-match per embodiment (slice 3)
+- [ ] Mechanical guard for "a renderer contains no decisions" (slice 4)
+- [ ] Two decisions for Parker: the warp on the bench, the bench in the vignette
+
+**Surprises.** A test written as `for i in 0..SETTLE_SWEEPS` passed with the
+constant set to zero — vacuous under the exact mutation it existed to catch.
+A gate written as `cargo clippy | grep error; echo OK` committed a clippy
+failure, because grep succeeds when it FINDS errors; every gate now reads the
+tool's own exit code. And `host_socket`'s PTY-timing test flaked four times
+under a parallel release build and passed every time alone — an issue when the
+branch lands, not a memory.
+
+**Difficulty in hindsight: 6/10 for the pass, as scored.** The two big cuts
+were mechanical and the compiler and 1,172 tests caught every mistake the mover
+made — including two of its own. What was NOT cheap was the day before it: nine
+of the day's defects were rules written where no assertion could reach them,
+which is the thing the pass exists to end.
