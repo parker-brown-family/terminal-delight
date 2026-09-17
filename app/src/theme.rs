@@ -1013,6 +1013,28 @@ impl Default for ThemeGroup {
     }
 }
 
+impl ThemeChoice {
+    /// This choice with its theme group replaced and its `grade` kept — the
+    /// inverse of [`ThemeGroup::of`], for the scopes that hold a whole choice
+    /// rather than a group beside a grade (the outer is the only one).
+    pub fn with_group(self, g: ThemeGroup) -> Self {
+        ThemeChoice {
+            id: g.id,
+            seed: g.seed,
+            color: g.color,
+            syntax: g.syntax,
+            syntax_scheme: g.syntax_scheme,
+            grade: self.grade,
+            dynamic: g.dynamic,
+            palette: g.palette,
+            text: g.text,
+            complement: g.complement,
+            human: g.human,
+            invert: g.invert,
+        }
+    }
+}
+
 impl ThemeGroup {
     /// Lift the theme-group fields out of a full choice (drops `grade`).
     pub fn of(c: &ThemeChoice) -> Self {
@@ -2250,6 +2272,11 @@ pub fn set_paint_mode(cx: &mut App, on: bool) {
     if paint_mode(cx) != on {
         if on {
             crate::fav::reload(cx);
+            // …and it opens aimed at the pane you are in. The aim is a gesture
+            // inside one raising of the overlay, never a preference: an overlay
+            // that came back up still pointing at the cabinet would paint the
+            // window on the first letter of a session that meant to paint a pane.
+            cx.set_global(PaintAim(Target::Pane));
         }
         cx.set_global(PaintMode(on));
         cx.refresh_windows();
@@ -2345,6 +2372,45 @@ pub fn cycle_paint_shelf(cx: &mut App, delta: i8) {
 pub fn set_paint_shelf(cx: &mut App, s: Shelf) {
     if shelves(cx).contains(&s) && s != paint_shelf(cx) {
         cx.set_global(PaintShelf(s));
+        cx.refresh_windows();
+    }
+}
+
+/// WHICH SCOPE the raised paint overlay is aimed at.
+///
+/// The overlay covers two surfaces at once: the WALL of panes, each drawing its
+/// own card, and the OUTER cabinet, whose card hangs from the top of the window.
+/// Only one of them can own the letters, so this is what says which — the
+/// spotlight in the overlay and the target here are one fact, exactly as the
+/// focused pane and the lit card already were.
+///
+/// App-global for the same reason [`PaintShelf`] is: one process owns one
+/// window, and "the cabinet is being painted" is a statement about the window
+/// rather than about any single pane in it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum Target {
+    /// The focused pane — where the overlay has always aimed.
+    #[default]
+    Pane,
+    /// The cabinet the panes sit in: mother bar, left bar, status bar, bezel.
+    Outer,
+}
+
+#[derive(Default)]
+pub struct PaintAim(pub Target);
+impl Global for PaintAim {}
+
+/// What the letters will paint.
+pub fn paint_target(cx: &App) -> Target {
+    cx.try_global::<PaintAim>().map(|t| t.0).unwrap_or_default()
+}
+
+/// Aim the overlay. Repaints every window on a real change: the wall's spotlight
+/// and the outer card's are the same decision drawn twice, so both have to be
+/// redrawn together or the overlay would show two lit targets.
+pub fn set_paint_target(cx: &mut App, t: Target) {
+    if paint_target(cx) != t {
+        cx.set_global(PaintAim(t));
         cx.refresh_windows();
     }
 }
