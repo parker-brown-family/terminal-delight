@@ -2158,17 +2158,14 @@ pub struct TerminalView {
     /// same as empty: a composer that is open and holding nothing is a person
     /// who has started answering, and closing it under them loses that.
     wb_compose: Option<crate::workbench::Line>,
-    /// The composer's own text layout, so a click can be turned into a
-    /// character index BY THE TEXT SYSTEM — wrapping, kerning and all.
+    /// Where layout actually put the composer, in the three forms different
+    /// readers need. See [`crate::benchdraw::Slots`].
     ///
-    /// Two approximations died here: a scaled cell width and a measured
-    /// advance for `M`. Both answered a question about a font when the
+    /// Two approximations died in the first of them: a scaled cell width and a
+    /// measured advance for `M`. Both answered a question about a FONT when the
     /// question was about this string in this box on this line, and a wrapped
     /// line has no single answer to it at all.
-    wb_text_layout: std::rc::Rc<std::cell::RefCell<Option<gpui::TextLayout>>>,
-    /// The composer's own scroll position, so a wheel over the draft moves
-    /// the draft and not the agent's transcript behind it.
-    wb_scroll: gpui::ScrollHandle,
+    wb_slots: crate::benchdraw::Slots,
     /// Which answered question the review flyout is showing, if it is open.
     ///
     /// [`None`] is closed, and it is the ordinary state. An index rather than
@@ -3246,8 +3243,7 @@ impl TerminalView {
             tok_was_working: false,
             bench: crate::workbench::Bench::new(),
             wb_compose: None,
-            wb_text_layout: std::rc::Rc::new(std::cell::RefCell::new(None)),
-            wb_scroll: gpui::ScrollHandle::new(),
+            wb_slots: crate::benchdraw::Slots::default(),
             wb_review: None,
             wb_quiet: 0,
             wb_live_q: None,
@@ -4111,33 +4107,25 @@ impl TerminalView {
     /// rather than cached, so a resize can never leave the paper and the thing
     /// you click in different places.
     fn note_layout(&self) -> Option<crate::sticky::Layout> {
+        // NO NOTE ON THE BENCH.
+        //
+        // Two rounds went into finding a corner for it and the answer was that
+        // there isn't one: the workbench is already an attention surface —
+        // framed, tinted, carrying a queue of things wanting a person — and a
+        // paper note on top of it is a second thing shouting the same kind of
+        // thing. Parker: *"it may be that the workbench does not get the sticky
+        // note. This attention surface is already basically sticky-note-ized...
+        // so workbench = no sticky note -- terminal = sticky notes"*.
+        //
+        // The note is not lost, it is one keystroke away on the face where it
+        // belongs, and the `Corner` machinery built to place it here went with
+        // this decision rather than staying as an option nobody takes.
+        if self.bench.face() == crate::workbench::Face::Workbench {
+            return None;
+        }
         let note = self.note.as_ref()?;
         let bounds = (*self.content_bounds.lock().ok()?)?;
-        crate::sticky::layout(bounds, note.tilt(), self.note_corner(bounds))
-    }
-
-    /// Where this pane's note belongs.
-    ///
-    /// The first version cleared a FULLY GROWN composer, on the reasoning that
-    /// a note which is clear of one line and buried under four would move
-    /// under somebody's hands while they typed. That reasoning was sound and
-    /// the result was a note hovering a third of the way up the pane, which is
-    /// not the corner anybody asked for — Parker, looking at it: *"I mean ---
-    /// lower?"*.
-    ///
-    /// So it sits in the corner, and the collision it was avoiding is the one
-    /// he had already permitted: the note is 128–200 wide at the right edge,
-    /// the composer's badge is what lives there, and covering the badge was
-    /// explicitly fine. A long wrapped line CAN reach under it, which is the
-    /// cost of the corner and is his call to make rather than mine to prevent.
-    fn note_corner(&self, _bounds: gpui::Bounds<gpui::Pixels>) -> crate::sticky::Corner {
-        if self.bench.face() != crate::workbench::Face::Workbench || !self.mode.is_agent() {
-            return crate::sticky::Corner::TopRight;
-        }
-        // Zero, because the layout already insets by 22 plus a tenth of the
-        // note's own height — the same inset the top corner uses, so the two
-        // sit at the same distance by eye rather than by number.
-        crate::sticky::Corner::BottomRight { clear: 0.0 }
+        crate::sticky::layout(bounds, note.tilt())
     }
 
     /// `alt+s`, or a click on the paper: stick a note on, or pick the pen back up
@@ -7214,7 +7202,7 @@ impl TerminalView {
             self.wb_compose = Some(crate::workbench::Line::new());
             return;
         }
-        let Some(layout) = self.wb_text_layout.borrow().clone() else {
+        let Some(layout) = self.wb_slots.layout.borrow().clone() else {
             return;
         };
         let Some(line) = self.wb_compose.as_mut() else {
@@ -7755,8 +7743,7 @@ impl TerminalView {
                 self.wb_compose.as_ref(),
                 focused,
                 &shows,
-                self.wb_text_layout.clone(),
-                self.wb_scroll.clone(),
+                &self.wb_slots,
                 sk,
                 th,
             )
@@ -9153,18 +9140,8 @@ impl Render for TerminalView {
         // warp tube is registered from, because the note is drawn through the
         // INVERSE of that tube's distortion and the two must be measuring the
         // same rectangle or the cancellation is against the wrong curve.
-        // Which corner, computed BEFORE the closure. It depends only on the
-        // face, the mode and the pane's size, all of which are known here, and
-        // reaching back through `self` from inside a closure that already owns
-        // a clone of the note is a borrow the compiler is right to refuse.
-        let note_corner = self
-            .content_bounds
-            .lock()
-            .ok()
-            .and_then(|b| *b)
-            .map(|b| self.note_corner(b))
-            .unwrap_or(crate::sticky::Corner::TopRight);
-        let note_el = self.note.clone().map(|note| {
+        // Nothing on the bench face — see [`Self::note_layout`].
+        let note_el = self.note.clone().filter(|_| !on_bench).map(|note| {
             let store = self.content_bounds.clone();
             let pal = crate::sticky::paper(th.text, th.accent);
             let peeling = self.note_hover == Some(crate::sticky::Hit::Peel);
@@ -9183,9 +9160,7 @@ impl Render for TerminalView {
                         let Some(content) = store.lock().ok().and_then(|b| *b) else {
                             return;
                         };
-                        if let Some(mut lay) =
-                            crate::sticky::layout(content, note.tilt(), note_corner)
-                        {
+                        if let Some(mut lay) = crate::sticky::layout(content, note.tilt()) {
                             lay.pre_warp(content, k1, k2);
                             crate::sticky::paint(&note, &lay, &pal, peeling, window, cx);
                         }

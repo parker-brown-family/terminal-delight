@@ -1331,6 +1331,24 @@ pub fn verb_button<E: Styled>(el: E, primary: bool, th: &Theme) -> E {
     }
 }
 
+/// The places the composer writes down where it ended up.
+///
+/// Two handles that are one idea — *what did layout actually do with this box*
+/// — and they travel together because both are read by something that has to
+/// agree with the other: a click resolves through the text layout, and the
+/// wheel through the scroll handle.
+///
+/// A third lived here briefly, holding the whole box so a sticky note could
+/// stop above it. The note left the bench and the slot went with it rather
+/// than staying as a measurement nobody reads.
+#[derive(Clone, Default)]
+pub struct Slots {
+    /// The text's own layout, for turning a click into a character.
+    pub layout: std::rc::Rc<std::cell::RefCell<Option<gpui::TextLayout>>>,
+    /// Where a long draft has been scrolled to.
+    pub scroll: gpui::ScrollHandle,
+}
+
 /// The line into the agent's own terminal.
 ///
 /// Not a text box. While it is armed, every keystroke is encoded by the same
@@ -1361,11 +1379,12 @@ pub fn composer(
     line: Option<&crate::workbench::Line>,
     focused: bool,
     shows: &crate::workbench::Shows,
-    layout: std::rc::Rc<std::cell::RefCell<Option<gpui::TextLayout>>>,
-    scroll: gpui::ScrollHandle,
+    slots: &Slots,
     sk: &Skin,
     th: &Theme,
 ) -> Div {
+    let Slots { layout, scroll } = slots;
+    let (layout, scroll) = (layout.clone(), scroll.clone());
     let open = line.is_some();
     let live = open && focused;
     // The two size decisions arrive as one value rather than as a pair of

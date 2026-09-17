@@ -151,7 +151,7 @@ A bench holds **64 surfaces per pane**; the oldest is dropped, never the newest.
 
 ## 5 · The catalogue
 
-Six kinds and an honest default. Small on purpose: each one gets a renderer
+Seven kinds and an honest default. Small on purpose: each one gets a renderer
 that is actually good, and the vocabulary fits in your head.
 
 ### `artifact` — a thing with a location
@@ -232,6 +232,67 @@ proposed edit, a rejected one and an unread one are three different things.
 
 **Exactly one option may be `recommended`.** A second claim is dropped by the
 parser, because two recommendations is no recommendation.
+
+### `question` — the agent has stopped, and needs a person
+
+The kind that matters most, and the one an agent almost never has to send: the
+window derives it from a picker on the screen (§14). You may declare one
+anyway, and a declared question and a derived one render identically.
+
+```json
+{ "kind": "question",
+  "question": "Where should this page live?",
+  "options": [
+    { "label": "Artifact only", "what_happens": "One link, nothing on disk" },
+    { "label": "Local file too", "what_happens": "Greppable tomorrow" }
+  ],
+  "recommend": 0,
+  "answer": null }
+```
+
+`answer` has **four** states and they are four different facts:
+
+| `answer` | Means |
+|---|---|
+| `null` | nobody has answered |
+| `{"chose": 1}` | option 1 was picked |
+| `{"typed": "…"}` | a person wrote prose instead of picking |
+| `"answered"` | answered, and the record does not say how |
+
+The last one is not a stub. A transcript can show a question ending without
+naming an option, and rendering that as "option 0 was chosen" would invent a
+decision nobody made.
+
+**Derived questions carry three more fields**, all of which describe a live TUI
+rather than a document, and none of which you should send:
+
+- `cursor` — which row the picker's own highlight is on. The window answers by
+  driving that menu, so it has to know where the caret starts.
+- `submit` — where the picker's Submit button sits in its **navigation** order.
+  It is not an index into `options`: a picker draws Submit between the last
+  option and its trailing `Chat about this`, so every option after it is one
+  arrow further down than its own position suggests.
+- `round` — the multi-question shape, below.
+
+Each option may also carry `checked`, which is `true`, `false` or **absent** —
+ticked, unticked, and *not a checkbox at all*. A boolean here would make every
+single-choice option claim to be an unticked box.
+
+### `round` — several questions, one decision
+
+A picker asking more than one thing draws a strip of its own steps, and the
+window reads it:
+
+```json
+{ "steps": [ { "label": "Tomorrow", "done": true },
+             { "label": "Mug", "done": false } ],
+  "submitting": false }
+```
+
+The bench draws it as ONE decision node with a progress bar rather than as a
+pile of questions, because that is what it is. A round of **one** reports
+nothing: a single question with a Submit button is a question, not a workflow,
+and a one-segment bar would invent a sequence that does not exist.
 
 ### `unclassified` — everything else
 
@@ -341,8 +402,65 @@ much room it has and whether anyone is looking:
 | **Summary** | not focused, and under 640px | one line |
 
 Also the window's: the rail's width, which shelf a kind files under
-(`artifacts` / `decisions` / `other`), the colour of every marker, the corner
+(`overview` / `artifacts` / `decisions`), the colour of every marker, the corner
 radius, and whether the pane is bent.
+
+### Standing — where a row sits in its shelf's story
+
+A rail is a HISTORY with a head, and the head is the only row most readers are
+looking for. The window assigns one of four, and you cannot:
+
+| Standing | Means |
+|---|---|
+| `Waiting` | unanswered, and the one to deal with. **At most one per shelf.** |
+| `Queued` | also unanswered, behind something else |
+| `Current` | the newest settled row: what stands right now |
+| `Past` | how it got here |
+
+An unanswered row is pinned above every settled one whatever its arrival order,
+and `Current` exists only when nothing is waiting — while a question is open,
+what stands is *nothing yet*, and promoting a superseded answer underneath an
+open question would be a lie told in bold.
+
+### The attention budget
+
+Three signals, each spent on exactly one thing, and this is a rule rather than
+a style:
+
+- **The phosphor** marks one row per region — the head of a shelf, the thing
+  waiting in the body, the primary action on a card. A screen where six things
+  glow has told the reader nothing.
+- **A lit chip** means CHOSEN or TICKED. Pressable is what a cursor and a
+  border are for.
+- **A word** goes on every state. A green row with nothing written on it makes
+  a reader work the colour out, and if the question has to be asked then the
+  colour was carrying the whole message.
+
+### What a surface is NOT told
+
+The bench reads the agent's screen to derive questions, and reading a screen is
+lossy in ways worth naming, because each has already cost a defect:
+
+- **A blank frame is not an empty screen.** A repaint, a resize, a clear and a
+  scroll all produce one. A surface therefore arrives on the first sample and
+  leaves only on a settled one — three consecutive quiet sweeps.
+- **A failed parse is not an answered question.** A picker scrolls its own
+  question line off the top; the reader finds nothing and says so, and saying
+  nothing is not saying it is over.
+- **A colour does not survive a character grid.** The step a picker highlights
+  is marked with colour, so the window reports which steps are *done* — from
+  their glyphs — and never guesses which one is current.
+- **A second column is not part of the first.** A picker may draw a preview
+  beside its options; everything from the first box-drawing character on a row
+  belongs to the panel, not to the option.
+
+### The agent's own state
+
+Reported beside the surfaces, and derived from the screen the same way:
+`Asking`, `Blocked`, `Done`, `Exited`, `Working`, `Idle`. Matched on the SHAPE
+of the working line — a bracket carrying both an elapsed time and a token count
+— rather than on any particular verb, because the CLI varies the gerund
+deliberately and keeps the structure.
 
 ---
 
@@ -415,7 +533,9 @@ drawn with the recommended option lit. Press `approve`, and the agent reads:
 |---|---|
 | Types, parsing, validation, catalogue | `app/src/surface.rs` |
 | Per-pane state: faces, shelves, selection, actions | `app/src/workbench.rs` |
-| Renderers for the six kinds | `app/src/benchdraw.rs` |
+| Renderers for the seven kinds, and the bench's chrome | `app/src/benchdraw.rs` |
+| The derived half: questions off the screen, deliverables out of a transcript | `app/src/derive.rs` |
+| The agent's own state, read off its status line | `app/src/hud.rs` |
 | Transports: the sweep, the fence, the journal, the CLI | `app/src/surfacefeed.rs` |
 | The MCP verbs | `app/src/mcp.rs` |
 | The launcher that briefs an agent it starts | `app/src/launcher.rs` |
