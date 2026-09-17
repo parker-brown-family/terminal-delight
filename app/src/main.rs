@@ -1979,6 +1979,45 @@ impl SavingsView {
     }
 }
 
+/// One pane the session is holding after a close, and when the hold ends.
+///
+/// The deadline is wall-clock seconds since the epoch rather than the `Instant`
+/// the trash keeps, because it has to mean something to a DIFFERENT process
+/// than the one that wrote it: an `Instant` is only comparable inside the
+/// program that took it, and the reader here is the next window, which is
+/// exactly the one the old window's monotonic clock means nothing to.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
+struct ClosedPane {
+    pane: u64,
+    /// Unix seconds. Past = the hold has run out and the pane is ordinary
+    /// again; a clock that has gone backwards therefore reads as expired, which
+    /// is the safe direction — it adopts rather than kills.
+    until: u64,
+}
+
+/// Which held panes are still inside their hold at `now` (unix seconds).
+///
+/// Pure and separate from the attach so it can be tested without a host, a
+/// window or a terminal — the same reason `plan_attach` is pure. It is also the
+/// whole of the decision: an unclaimed terminal is either one this session
+/// closed and is still holding, or one it has never heard of, and those two get
+/// opposite treatment.
+fn still_closed(closed: &[ClosedPane], now: u64) -> Vec<u64> {
+    closed
+        .iter()
+        .filter(|c| c.until > now)
+        .map(|c| c.pane)
+        .collect()
+}
+
+/// Wall-clock seconds since the epoch, or 0 if the clock is before it.
+fn unix_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
 #[derive(Serialize, Deserialize)]
 struct StateFile {
     active: usize,
@@ -2006,6 +2045,22 @@ struct StateFile {
     #[serde(default)]
     panes: usize,
     tabs: Vec<SavedTab>,
+    /// The panes this session has CLOSED but is still holding, with the instant
+    /// each one's hold runs out.
+    ///
+    /// Written because the trash is in the window's memory and the terminal it
+    /// is holding is in the host's. Close a tab and the two disagree: the saved
+    /// layout no longer claims that pane, and the pane is still running. The
+    /// next attach reads that disagreement as "a terminal nobody has a tab for"
+    /// and adopts it — see `plan_attach`'s orphans and `still_closed`. So a
+    /// close survived exactly as long as the window did, and a bounce inside
+    /// the hold hour turned it into a nameless tab at the end of the list.
+    ///
+    /// Absent on files written before this existed, which reads as "this
+    /// session was holding nothing" — the same answer those files would have
+    /// given, rather than a claim that every orphan was once closed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    closed: Vec<ClosedPane>,
     /// Tab groups (browser-style colour bands). Absent on pre-feature files.
     #[serde(default)]
     groups: Vec<SavedGroup>,
@@ -2104,6 +2159,7 @@ impl Default for StateFile {
             warp: theme::WARP_DEFAULT, // fresh install: the classic dial
             track: None,
             tabs: Vec::new(),
+            closed: Vec::new(),
             groups: Vec::new(),
             projects: Vec::new(),
             left_bar: None,
@@ -5052,7 +5108,31 @@ impl Workspace {
         // Adoption. A terminal running with nothing showing it is the failure
         // this whole feature exists to end, and a stale layout is just another
         // way of arriving at it.
+        //
+        // With one exception, and it is the whole of `closed`: a terminal this
+        // session CLOSED and is still holding for undo is also running with
+        // nothing showing it, and looks from here exactly like a stale layout.
+        // Adopting it undoes the close — and worse than undoing it, since the
+        // adopted tab arrives with no name, no group and no note (the
+        // `..Default::default()` below is why), so a tab somebody deliberately
+        // threw away comes back as a bare number at the end of the list. That
+        // is the shape of #479.
+        let interred = still_closed(&saved.closed, unix_now());
         for orphan in &plan.orphans {
+            if interred.contains(&orphan.pane.0) {
+                // Hang it up rather than leaving it running and unshown. The
+                // window that could have offered the undo is gone — its trash
+                // never reached the disk — so the hold has no UI left to be
+                // recovered through, and a held pane nobody can reach is a
+                // process that outlives every window forever.
+                if let Err(err) = ctx.link.close_pane(orphan.pane) {
+                    eprintln!(
+                        "terminal-delight: the session host would not close held pane {}: {err}",
+                        orphan.pane.0
+                    );
+                }
+                continue;
+            }
             let restore = session::PaneRestore {
                 cwd: orphan.cwd.clone(),
                 ..Default::default()
@@ -5528,6 +5608,45 @@ impl Workspace {
     /// split tree, per-pane appearance, groups, theme, and MCP policy. Shared by
     /// [`Self::save`] (writes the real state) and [`Self::share_demo`] (clones the
     /// layout into a throwaway demo state), so the two can never drift.
+    /// Every pane the trash is holding, with its hold's deadline in wall-clock
+    /// seconds.
+    ///
+    /// Walks the holdings the same way [`Self::end_held`] does, because these
+    /// are the same panes: the ones a close left running so it could be taken
+    /// back. `end_held` reaches them to hang them up; this reaches them to write
+    /// down that they are not orphans, which is the fact the NEXT window needs
+    /// and the only one it cannot work out for itself.
+    ///
+    /// Expired holdings are skipped rather than recorded as already-past
+    /// deadlines. A holding that has run out is one the sweep is about to drop,
+    /// and writing it would put a row in the file whose only effect is to be
+    /// ignored.
+    fn held_panes(&self, cx: &App) -> Vec<ClosedPane> {
+        let now = Instant::now();
+        let deadline_base = unix_now();
+        let mut out = vec![];
+        for h in self.trash.live_items(now) {
+            let Some(left) = h.left(now) else { continue };
+            let until = deadline_base.saturating_add(left.as_secs());
+            let mut leaves: Vec<&Entity<TerminalView>> = vec![];
+            match &h.payload {
+                Retired::Branch(d) => {
+                    for (_, tab) in &d.tabs {
+                        tab.root.leaves(&mut leaves);
+                    }
+                }
+                Retired::Pane(p) => leaves.push(&p.leaf),
+            }
+            out.extend(
+                leaves
+                    .into_iter()
+                    .filter_map(|leaf| leaf.read(cx).pane_id())
+                    .map(|pane| ClosedPane { pane, until }),
+            );
+        }
+        out
+    }
+
     fn build_state(&self, cx: &App) -> StateFile {
         StateFile {
             active: self.active,
@@ -5541,6 +5660,7 @@ impl Workspace {
             // writing the legacy top-level fields so older readers still work.
             warp: theme::outer_choice(cx).grade.warp,
             track: theme::outer_choice(cx).grade.tracking,
+            closed: self.held_panes(cx),
             tabs: self
                 .tabs
                 .iter()
@@ -27362,6 +27482,155 @@ mod tests {
             plan.tabs[0][0]
         );
         assert!(plan.orphans.is_empty(), "nor adopted into a tab of its own");
+    }
+
+    /// A pane this session closed is not an orphan, and the difference is the
+    /// whole of #479.
+    ///
+    /// Closing a tab does not end its terminal — `hold::Trash` keeps it running
+    /// for an hour so the close can be taken back. The trash is in the window's
+    /// memory and never reaches disk, so to the NEXT window that terminal is
+    /// simply running with no leaf claiming it: an orphan, adopted as a tab
+    /// with no name, no group and no note. A tab somebody deliberately threw
+    /// away came back as a bare number at the end of the list, and the only way
+    /// to tell it apart from a genuinely stale layout is to have written down
+    /// that it was closed.
+    ///
+    /// Observed on session `1`, 2026-09-17: panes 10, 36 and 49 — two of them
+    /// carrying sticky notes (`TIED OFF`, `SPITBALL`) at 09:15 — were sitting
+    /// at the end of the tree at 12:18 as labels 23, 24 and 25 with all three
+    /// fields gone and their `resume` lines re-derived from the kernel, which
+    /// is the exact signature of the `..Default::default()` in the adoption.
+    #[test]
+    fn a_pane_this_session_closed_is_not_adopted_back() {
+        let now = 1_000_000u64;
+        let held = [
+            ClosedPane {
+                pane: 7,
+                until: now + 600,
+            },
+            // Ran out four minutes ago. An expired hold is an ordinary
+            // terminal again, and adopting it is the right answer.
+            ClosedPane {
+                pane: 8,
+                until: now - 240,
+            },
+        ];
+
+        let live = still_closed(&held, now);
+        assert_eq!(live, vec![7], "only the unexpired hold is still a close");
+
+        // The decision the attach makes, spelled out against a plan: pane 7 was
+        // closed and is hung up, pane 9 was never heard of and is adopted.
+        let plan = plan_attach(
+            &[],
+            &[running(7, false), running(8, false), running(9, false)],
+        );
+        let orphans: Vec<u64> = plan.orphans.iter().map(|p| p.pane.0).collect();
+        assert_eq!(
+            orphans,
+            vec![7, 8, 9],
+            "the plan still sees all three; it is pure and knows nothing about holds"
+        );
+        let adopted: Vec<u64> = orphans
+            .iter()
+            .copied()
+            .filter(|p| !live.contains(p))
+            .collect();
+        assert_eq!(
+            adopted,
+            vec![8, 9],
+            "a pane inside its hold must not come back as a tab, and one whose \
+             hold has run out must"
+        );
+    }
+
+    /// The deadline has to survive being read by a different process.
+    ///
+    /// The trash keeps an `Instant`, which is monotonic and meaningless outside
+    /// the program that took it — and the reader here is the NEXT window, which
+    /// is precisely the process the old one's clock means nothing to. So the
+    /// file carries wall-clock seconds, and a clock that has gone backwards
+    /// reads as expired rather than as a hold with centuries left: that errs
+    /// towards adopting a pane, which loses nothing, instead of hanging up a
+    /// terminal somebody is still using.
+    #[test]
+    fn a_hold_deadline_that_reads_as_stale_adopts_rather_than_kills() {
+        let c = [ClosedPane {
+            pane: 3,
+            until: 500,
+        }];
+        assert_eq!(still_closed(&c, 499), vec![3], "inside the hold");
+        assert!(
+            still_closed(&c, 500).is_empty(),
+            "the boundary is not a hold — an exactly-expired deadline adopts"
+        );
+        assert!(
+            still_closed(&c, u64::MAX).is_empty(),
+            "a clock that jumped forward adopts rather than killing"
+        );
+        assert!(
+            still_closed(&[], 0).is_empty(),
+            "a file written before this field existed holds nothing, which is \
+             not the same as claiming every orphan was closed"
+        );
+    }
+
+    /// The two ends of `closed` — the writer and the reader — are wired up.
+    ///
+    /// Both live where a test cannot reach them: writing needs a live `App` to
+    /// read a leaf's pane id, and the adoption needs a gpui `Window`. So a
+    /// version of this fix that computes `still_closed` perfectly and then never
+    /// consults it compiles, passes the two tests above, and resurrects exactly
+    /// as many tabs as before. That is not hypothetical — it is the shape the
+    /// bug already had: `plan_attach` is correct and heavily tested, and the
+    /// loss happened in the untested twelve lines that consume it.
+    ///
+    /// Scanned by REGION rather than by naming a call site, because a guard that
+    /// names call sites guards those call sites and not the next one somebody
+    /// adds. The region is the adoption loop itself.
+    #[test]
+    fn a_closed_pane_is_both_written_down_and_read_back() {
+        let src = include_str!("main.rs");
+
+        // WRITER: the state a save builds must carry the trash's panes.
+        let at = src
+            .find("fn build_state(&self, cx: &App) -> StateFile {")
+            .expect("build_state");
+        let end = src[at..].find("\n    }\n").expect("end of build_state");
+        assert!(
+            src[at..at + end].contains("closed: self.held_panes(cx)"),
+            "build_state no longer records what the trash is holding, so every \
+             close becomes an orphan again on the next attach"
+        );
+
+        // READER: the adoption loop must consult it before making a tab.
+        let at = src
+            .find("for orphan in &plan.orphans {")
+            .expect("the adoption loop");
+        let end = src[at..].find("\n        }\n").expect("end of the loop");
+        let loop_body = &src[at..at + end];
+        assert!(
+            loop_body.contains("interred.contains(&orphan.pane.0)"),
+            "the adoption loop no longer asks whether this pane was closed; every \
+             held terminal comes back as a nameless tab (#479)"
+        );
+        assert!(
+            loop_body.contains("close_pane(orphan.pane)"),
+            "a held orphan must be hung up rather than skipped: the window that \
+             could have offered the undo is gone, so a pane left running and \
+             unadopted outlives every window with nothing able to reach it"
+        );
+        // And the guard has to come BEFORE the tab is made, not after.
+        let guard = loop_body.find("interred.contains").expect("guard present");
+        let makes_tab = loop_body
+            .find("self.tabs.push")
+            .expect("the loop still makes tabs");
+        assert!(
+            guard < makes_tab,
+            "the closed-pane check runs after the tab is pushed, which adopts it \
+             and then argues about it"
+        );
     }
 
     #[test]
