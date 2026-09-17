@@ -1272,6 +1272,66 @@ fn ancestry() -> Vec<u32> {
     chain
 }
 
+/// The inode of the process LISTENING on a unix socket path.
+///
+/// `/proc/net/unix` lists one row per endpoint, so a busy socket appears many
+/// times under the same path — measured on this box, fourteen rows for one
+/// session socket, thirteen of them connected peers. The listener is the row
+/// whose state is `01` (`SS_UNCONNECTED` with `SO_ACCEPTCON` set); taking the
+/// first row that matched the path would pick a peer and find nothing.
+///
+/// Columns: `Num RefCount Protocol Flags Type St Inode Path`.
+fn listening_inode(path: &Path) -> Option<u64> {
+    let table = std::fs::read_to_string("/proc/net/unix").ok()?;
+    let want = path.to_str()?;
+    table.lines().skip(1).find_map(|line| {
+        let mut f = line.split_whitespace();
+        let (_num, _ref, _proto, _flags, _ty, st, inode, sock) = (
+            f.next()?,
+            f.next()?,
+            f.next()?,
+            f.next()?,
+            f.next()?,
+            f.next()?,
+            f.next()?,
+            f.next()?,
+        );
+        (st == "01" && sock == want).then(|| inode.parse().ok())?
+    })
+}
+
+/// Whether `pid` holds an open file descriptor on this socket inode.
+fn owns_inode(pid: u32, inode: u64) -> bool {
+    let needle = format!("socket:[{inode}]");
+    let Ok(fds) = std::fs::read_dir(format!("/proc/{pid}/fd")) else {
+        return false;
+    };
+    fds.flatten()
+        .any(|e| std::fs::read_link(e.path()).is_ok_and(|t| t.to_string_lossy() == needle))
+}
+
+/// The session whose host is on `chain`, asked of the kernel rather than of the
+/// host.
+///
+/// This is the load-bearing step, and it deliberately involves no IPC and no
+/// cooperation from the host at all: the session's NAME is already in the socket
+/// filename, and which process is listening on that socket is a fact
+/// `/proc/net/unix` and `/proc/<pid>/fd` answer between them.
+///
+/// It started as a field on the host's hello — and that was the wrong place for
+/// it, for a reason worth keeping written down. The host is the one process here
+/// that cannot be replaced without ending every terminal it holds, so a required
+/// field on the host is a feature that does not work until somebody is willing to
+/// kill a day's work. Asked this way it works against a host from any build,
+/// including ones that predate the whole idea. The hello field stays as a cheap
+/// cross-check, not as the mechanism.
+fn session_hosted_on(chain: &[u32]) -> Option<String> {
+    crate::hostctl::sockets_present().into_iter().find(|key| {
+        let path = crate::hostproto::host_socket_path(key);
+        listening_inode(&path).is_some_and(|ino| chain.iter().any(|&pid| owns_inode(pid, ino)))
+    })
+}
+
 /// Which window a live control socket belongs to: `(session, window pid)`.
 ///
 /// Asked of the socket rather than read from a file, so the answer is a running
@@ -1324,16 +1384,7 @@ pub(crate) struct Located {
 /// process that cannot be wrong about itself.
 pub(crate) fn locate() -> Option<Located> {
     let chain = ancestry();
-    let (session, host) = crate::hostctl::sockets_present().into_iter().find_map(|s| {
-        match crate::hostctl::probe_host(&s) {
-            crate::hostctl::HostProbe::Live { host, session, .. }
-                if host != 0 && chain.contains(&host) =>
-            {
-                Some((session, host))
-            }
-            _ => None,
-        }
-    })?;
+    let session = session_hosted_on(&chain)?;
     // The pane is a second question, and a failure to answer it is not a
     // failure to locate: knowing the session is already enough to reach the
     // right window and to be refused by the wrong one.
@@ -1341,16 +1392,36 @@ pub(crate) fn locate() -> Option<Located> {
         .into_iter()
         .find(|p| chain.contains(&p.shell_pid))
         .map(|p| p.pane.0);
-    let _ = host;
+    // Ask the windows first — a running process's own account of itself, and
+    // the only answer that cannot be stale. Then fall back to the record the
+    // host and window both write, keyed by the session we DERIVED rather than
+    // by one an environment variable claimed.
+    //
+    // That fallback is not a nicety. Until every window on the box speaks
+    // `whoami` there is nothing to ask, and a locate that threw its own answer
+    // away at the last step left the relay reading `$TD_SESSION` again — which
+    // is the failure this whole path exists to remove. It was doing exactly
+    // that until it was run against the live session rather than reasoned about.
     let window = live_windows()
         .into_iter()
         .find(|(s, _)| *s == session)
-        .map(|(_, pid)| pid);
+        .map(|(_, pid)| pid)
+        .or_else(|| recorded_window(&session));
     Some(Located {
         session,
         pane,
         window,
     })
+}
+
+/// The window a session's `session-<key>.window` record names, if a control
+/// socket for it is still there. Written by both the host and the window; a
+/// stale value is caught by the socket check, and anything it misses now ends
+/// in a refusal naming both sessions rather than in a wrong answer.
+fn recorded_window(session: &str) -> Option<u32> {
+    let text = std::fs::read_to_string(crate::hostproto::window_pid_path(session)).ok()?;
+    let pid: u32 = text.trim().parse().ok()?;
+    socket_path(pid).exists().then_some(pid)
 }
 
 /// Resolve which terminal the relay talks to: an explicit `--pid`, else the
@@ -2027,6 +2098,52 @@ mod tests {
         ] {
             assert!(parse_line(line).is_err(), "accepted a broken caller: {line}");
         }
+    }
+
+    /// The kernel really does answer "which process is serving this session",
+    /// and the answer is the LISTENER rather than one of its peers.
+    ///
+    /// Run against a socket this test binds and connects to itself, so it
+    /// exercises the exact shape that broke the first draft: a busy socket has
+    /// many rows in `/proc/net/unix` under one path, and only one of them is
+    /// the listener. Measured on this box before the fix, a live session socket
+    /// had fourteen rows and thirteen were connected peers — matching the first
+    /// row by path would have found an inode nobody's `/proc/<pid>/fd` holds.
+    #[test]
+    fn the_listening_socket_is_found_and_its_peers_are_not() {
+        let dir = tmp("inode");
+        let sock = dir.join("session-under-test.sock");
+        let listener = UnixListener::bind(&sock).unwrap();
+        // Peers on the same path, left open, so the table has several rows.
+        let _a = UnixStream::connect(&sock).unwrap();
+        let _b = UnixStream::connect(&sock).unwrap();
+        let _accepted: Vec<_> = (0..2).filter_map(|_| listener.accept().ok()).collect();
+
+        let ino = listening_inode(&sock).expect("the listener must be findable");
+        let me = std::process::id();
+        assert!(
+            owns_inode(me, ino),
+            "this process is the listener and the fd scan did not see it"
+        );
+
+        // Every row under this path, listener and peers alike, for contrast:
+        // more than one exists, which is the whole reason state is checked.
+        let rows = std::fs::read_to_string("/proc/net/unix")
+            .unwrap()
+            .lines()
+            .filter(|l| l.ends_with(sock.to_str().unwrap()))
+            .count();
+        assert!(
+            rows > 1,
+            "the fixture did not produce peers, so this proves nothing"
+        );
+
+        // And a socket nobody is listening on yields nothing rather than a guess.
+        drop(listener);
+        assert!(
+            !owns_inode(me, u64::MAX),
+            "an inode nobody holds must not match"
+        );
     }
 
     /// An older window's refusal of `mcp from` is recognised, and nothing else
