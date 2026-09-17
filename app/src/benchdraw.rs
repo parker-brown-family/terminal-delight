@@ -26,7 +26,10 @@
 //! [`crate::skin`] exists because that has happened before.
 
 use gpui::prelude::FluentBuilder;
-use gpui::{div, point, px, BoxShadow, Div, Hsla, IntoElement, ParentElement, Styled};
+use gpui::{
+    div, point, px, BoxShadow, Div, Hsla, InteractiveElement, IntoElement, ParentElement,
+    StatefulInteractiveElement, Styled,
+};
 
 use crate::skin::{Role, Skin};
 use crate::surface::{Confidence, Depth, Kind, Shelf, Surface, Verdict, Weight};
@@ -486,6 +489,57 @@ fn full(surface: &Surface, sk: &Skin, th: &Theme) -> Div {
 /// Numbered because the numbers are real: they are the option's position in
 /// the agent's own menu, and the bench answers by walking that menu. A reader
 /// who prefers the terminal can flip to TERM and press the same number.
+/// One decision node's progress through its own questions.
+///
+/// A segment per question, filled for the ones already answered, with the
+/// count said in words beside it. Drawn UNDER the options because that is
+/// where it was asked for and where it belongs: the question is the thing to
+/// read, and the progress is the context you check afterwards.
+///
+/// It exists at all because a round of questions was arriving as a pile of
+/// separate waiting rows, which is true of the data and wrong about the work —
+/// Parker: *"it should feel more like progress along a workflow, but be a
+/// SINGLE DECISION NODE even if we are making multiple decisions"*.
+pub fn round_progress(round: &crate::surface::Round, sk: &Skin, th: &Theme) -> Div {
+    let done = round.answered();
+    let total = round.total();
+    let tint = if round.submitting {
+        ink(crate::workbench::Tint::Settled, th)
+    } else {
+        ink(crate::workbench::Tint::Waiting, th)
+    };
+    div()
+        .flex()
+        .flex_col()
+        .gap(px(5.))
+        .child(
+            div()
+                .flex()
+                .flex_row()
+                .gap(px(3.))
+                .children(round.steps.iter().map(|step| {
+                    div()
+                        .h(px(5.))
+                        .flex_1()
+                        .rounded(sk.rad_raw(2.))
+                        // An unanswered segment is DRAWN, dim, rather than
+                        // left out: an empty slot is how a person sees there
+                        // is more to come.
+                        .bg(if step.done { tint } else { tint.alpha(0.22) })
+                })),
+        )
+        .child(micro(
+            if round.submitting {
+                format!("{done} of {total} answered \u{b7} ready to submit")
+            } else {
+                format!("{done} of {total} answered")
+            },
+            9.5,
+            th.faint,
+            th,
+        ))
+}
+
 /// A question, opened from the rail.
 ///
 /// Deliberately the same object as [`waiting_block`] — the same tint, the same
@@ -598,6 +652,11 @@ fn question(q: &crate::surface::Question, sk: &Skin, th: &Theme) -> Div {
             th.faint,
             th,
         ),
+    })
+    // UNDER the options, because the question is what you read and the
+    // progress is what you check afterwards.
+    .when_some(q.round.as_ref(), |d, round| {
+        d.child(round_progress(round, sk, th))
     })
 }
 
@@ -1064,6 +1123,7 @@ pub fn composer(
     focused: bool,
     shows: &crate::workbench::Shows,
     layout: std::rc::Rc<std::cell::RefCell<Option<gpui::TextLayout>>>,
+    scroll: gpui::ScrollHandle,
     sk: &Skin,
     th: &Theme,
 ) -> Div {
@@ -1174,10 +1234,30 @@ pub fn composer(
                 // composer that can eat the conversation above it has traded
                 // one clipping problem for another.
                 div()
+                    .id("bench-composer-text")
                     .flex_1()
                     .min_w(px(0.))
                     .max_h(px(shows.composer_max))
-                    .overflow_hidden()
+                    // A SCROLL CONTAINER, so the wheel over this box moves
+                    // this box.
+                    //
+                    // The pane's own wheel handler sits on its root element
+                    // and scrolls the terminal, so a scroll anywhere inside a
+                    // pane scrolled the agent's transcript — including a
+                    // scroll aimed squarely at a 1,500-word draft. Parker:
+                    // *"a scroll action OVER the text entry area should scroll
+                    // up and down there... we must still be adhering to good
+                    // programming principles!!!!"*
+                    //
+                    // Which is exactly why this is a container and not a
+                    // pointer-position test. Working out which region the
+                    // mouse is over means duplicating layout in a hit-test
+                    // that has no way to stay in step with it; gpui already
+                    // hit-tests every element it laid out, so declaring this
+                    // one scrollable puts the routing in the one place that
+                    // cannot disagree with where the box actually is.
+                    .overflow_y_scroll()
+                    .track_scroll(&scroll)
                     .flex()
                     .flex_col()
                     // The END stays visible, not the beginning.
@@ -1307,18 +1387,25 @@ pub fn waiting_block(q: &crate::surface::Question, sk: &Skin, th: &Theme) -> Div
             .text_color(th.text)
             .child(q.question.clone()),
     )
-    .child(div().flex().flex_col().gap(px(5.)).children(
-        q.options.iter().enumerate().filter_map(|(i, o)| {
-            o.what_happens.as_ref().map(|what| {
-                micro(
-                    format!("{} \u{b7} {}", i + 1, what),
-                    10.5,
-                    th.text.alpha(0.55),
-                    th,
-                )
-            })
-        }),
-    ))
+    .child(
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(5.))
+            .children(q.options.iter().enumerate().filter_map(|(i, o)| {
+                o.what_happens.as_ref().map(|what| {
+                    micro(
+                        format!("{} \u{b7} {}", i + 1, what),
+                        10.5,
+                        th.text.alpha(0.55),
+                        th,
+                    )
+                })
+            })),
+    )
+    .when_some(q.round.as_ref(), |d, round| {
+        d.child(round_progress(round, sk, th))
+    })
 }
 
 /// The collapse handle on the rail's inner edge.

@@ -40,7 +40,8 @@ use std::path::Path;
 use serde_json::Value;
 
 use crate::surface::{
-    Answered, Artifact, Choice_, Kind, Op, Post, Question, Source, Surface, SurfaceId, Weight,
+    Answered, Artifact, Choice_, Kind, Op, Post, Question, Round, Source, Step, Surface, SurfaceId,
+    Weight,
 };
 
 /// Everything derivable from one transcript, oldest first.
@@ -133,6 +134,81 @@ pub fn from_jsonl(body: &str, now_ms: u64) -> Vec<Post> {
 ///
 /// Pure over rows, so the whole of it is testable against text captured from
 /// a real pane.
+/// Read the picker's own tab bar, if it is running a round of questions.
+///
+/// The strip looks like this, with the arrows only present when there is
+/// somewhere to scroll to:
+///
+/// ```text
+/// ←  ⊠ Tomorrow   ⊡ Mug   ✔ Submit  →
+/// ```
+///
+/// `⊠` is a question already answered and `⊡` one still open; the tick is the
+/// Submit step, which ends the round rather than being a question in it. The
+/// glyphs are the measurement — the highlight that marks the CURRENT step is a
+/// colour, and a colour does not survive being read off a character grid, so
+/// this reports what was answered rather than guessing where the cursor is.
+///
+/// [`None`] when there is no strip, which is the ordinary single-question
+/// case and not a failure.
+pub fn round_on_screen(rows: &[String]) -> Option<Round> {
+    let bar = rows.iter().find(|r| {
+        let t = r.trim();
+        t.contains('\u{2714}') && (t.contains('\u{22a0}') || t.contains('\u{22a1}'))
+    })?;
+    let mut steps = Vec::new();
+    let mut submitting = false;
+    // Split on the marks themselves: the labels between them are whatever the
+    // agent called each question, and they may contain spaces.
+    let rest0 = bar.trim();
+    // Drop the scroll arrows; they say only that the strip is wider than the
+    // pane.
+    let rest = rest0
+        .trim_start_matches('\u{2190}')
+        .trim_end_matches('\u{2192}')
+        .trim();
+    let mut cur: Option<bool> = None;
+    let mut label = String::new();
+    let push = |cur: &mut Option<bool>, label: &mut String, steps: &mut Vec<Step>| {
+        if let Some(done) = cur.take() {
+            let text = label.trim().to_string();
+            if !text.is_empty() {
+                steps.push(Step { label: text, done });
+            }
+        }
+        label.clear();
+    };
+    for ch in rest.chars() {
+        match ch {
+            '\u{22a0}' => {
+                push(&mut cur, &mut label, &mut steps);
+                cur = Some(true);
+            }
+            '\u{22a1}' => {
+                push(&mut cur, &mut label, &mut steps);
+                cur = Some(false);
+            }
+            '\u{2714}' => {
+                push(&mut cur, &mut label, &mut steps);
+                submitting = true;
+                cur = None;
+            }
+            _ => {
+                if cur.is_some() {
+                    label.push(ch);
+                }
+            }
+        }
+    }
+    push(&mut cur, &mut label, &mut steps);
+    if steps.is_empty() {
+        return None;
+    }
+    // A round of one is a question with a Submit button, not a workflow, and
+    // the bench should draw it as the former.
+    (steps.len() > 1).then_some(Round { steps, submitting })
+}
+
 pub fn question_on_screen(rows: &[String]) -> Option<Question> {
     let numbered = collect_options(rows)?;
     let (first_line, options, cursor) = numbered;
@@ -156,6 +232,7 @@ pub fn question_on_screen(rows: &[String]) -> Option<Question> {
         recommend: None,
         answer: Answered::Waiting,
         cursor: Some(cursor),
+        round: round_on_screen(rows),
     })
 }
 
@@ -271,6 +348,7 @@ impl Asked {
             // that menu — so a question we merely observed carries the cursor
             // and a question somebody declared does not.
             cursor: waiting.then_some(0),
+            round: None,
         });
         let mut actions = kind.default_actions();
         actions.push(crate::surface::Action::AskAgent);
@@ -614,6 +692,55 @@ fn short_hash(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_pickers_own_tab_bar_says_how_far_through_the_round_we_are() {
+        // Transcribed from a photograph of the running picker, glyphs and
+        // spacing intact. The strip is the ONLY place the shape of a round is
+        // stated, so this is the measurement the progress bar rests on.
+        let rows = vec![
+            u_row("←  ⊠ Tomorrow   ⊡ Mug   ✔ Submit  →"),
+            u_row("Round 2, second of two. Where does the coffee sit?"),
+        ];
+        let r = round_on_screen(&rows).expect("a two-question round");
+        assert_eq!(
+            r.total(),
+            2,
+            "Submit is the end of a round, not a step in it"
+        );
+        assert_eq!(r.answered(), 1);
+        assert_eq!(r.steps[0].label, "Tomorrow");
+        assert!(r.steps[0].done);
+        assert_eq!(r.steps[1].label, "Mug");
+        assert!(!r.steps[1].done);
+        assert!(r.submitting, "the strip carries a Submit step");
+    }
+
+    #[test]
+    fn a_round_at_its_submit_step_reports_everything_answered() {
+        let rows = vec![u_row("← ⊠ Tomorrow ⊠ Mug ✔ Submit →")];
+        let r = round_on_screen(&rows).expect("a round");
+        assert_eq!((r.answered(), r.total()), (2, 2));
+    }
+
+    #[test]
+    fn a_lone_question_is_not_a_round_and_says_so() {
+        // A single question with a Submit button is a question, not a
+        // workflow, and a one-segment progress bar under it would invent a
+        // sequence that does not exist. `None` is the honest answer.
+        let one = vec![u_row("← ⊡ Desk items ✔ Submit →")];
+        assert!(round_on_screen(&one).is_none());
+        // And a screen with no strip at all.
+        let plain = vec![
+            u_row("Where should this page live?"),
+            u_row("  1. Artifact only"),
+        ];
+        assert!(round_on_screen(&plain).is_none());
+    }
+
+    fn u_row(s: &str) -> String {
+        s.to_string()
+    }
 
     #[test]
     fn a_title_a_person_would_give_it() {

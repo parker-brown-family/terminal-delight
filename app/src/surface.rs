@@ -682,6 +682,50 @@ pub struct Question {
     /// it has to know where the cursor starts. `None` means the question was
     /// declared rather than observed, and there is no menu to drive.
     pub cursor: Option<usize>,
+    /// The ROUND this question belongs to, when the agent asked several at
+    /// once.
+    ///
+    /// [`None`] for a lone question, and that is a real answer rather than an
+    /// empty round: a single question has no progress to report and drawing a
+    /// one-segment bar under it would invent a workflow that does not exist.
+    pub round: Option<Round>,
+}
+
+/// A multi-question picker, as its own tab bar describes it.
+///
+/// The agent's picker draws its steps across the top — an answered one, an
+/// open one, and a Submit at the end — and that strip is the only place the
+/// shape of the round is stated. Reading it is what lets the bench show ONE
+/// decision that progresses instead of a pile of questions that accumulate.
+/// Parker: *"it should feel more like progress along a workflow, but be a
+/// SINGLE DECISION NODE even if we are making multiple decisions .. so a
+/// PROGRESS BAR BELOW the questions based on how many are on deck"*.
+#[derive(Clone, PartialEq, Eq, Debug, Default)]
+pub struct Round {
+    /// One per question, in the order the picker lists them. The Submit step
+    /// is NOT here — it is the end of the round, not a question in it.
+    pub steps: Vec<Step>,
+    /// Whether the picker has reached its Submit step.
+    pub submitting: bool,
+}
+
+impl Round {
+    pub fn answered(&self) -> usize {
+        self.steps.iter().filter(|s| s.done).count()
+    }
+
+    pub fn total(&self) -> usize {
+        self.steps.len()
+    }
+}
+
+/// One question in a round, as its tab reports it.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct Step {
+    /// The picker's own short name for it — a word or two, its label.
+    pub label: String,
+    /// Answered already.
+    pub done: bool,
 }
 
 /// Three states, because "answered" and "answered with option 2" are not the
@@ -1288,6 +1332,7 @@ fn parse_kind(name: &str, model: Option<&Value>) -> Result<Kind, KindError> {
                     None => Answered::Waiting,
                 },
                 cursor: within("cursor"),
+                round: None,
                 options,
             })
         }

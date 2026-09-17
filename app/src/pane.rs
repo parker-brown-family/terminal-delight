@@ -2151,6 +2151,9 @@ pub struct TerminalView {
     /// question was about this string in this box on this line, and a wrapped
     /// line has no single answer to it at all.
     wb_text_layout: std::rc::Rc<std::cell::RefCell<Option<gpui::TextLayout>>>,
+    /// The composer's own scroll position, so a wheel over the draft moves
+    /// the draft and not the agent's transcript behind it.
+    wb_scroll: gpui::ScrollHandle,
     /// The live question currently on this pane's bench, if one is up.
     ///
     /// Held so it can be RETIRED the moment the pane stops waiting — the
@@ -3216,6 +3219,7 @@ impl TerminalView {
             bench: crate::workbench::Bench::new(),
             wb_compose: None,
             wb_text_layout: std::rc::Rc::new(std::cell::RefCell::new(None)),
+            wb_scroll: gpui::ScrollHandle::new(),
             wb_live_q: None,
         }
     }
@@ -7504,6 +7508,7 @@ impl TerminalView {
                 focused,
                 &shows,
                 self.wb_text_layout.clone(),
+                self.wb_scroll.clone(),
                 sk,
                 th,
             )
