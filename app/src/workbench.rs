@@ -524,6 +524,41 @@ pub enum LiveMove {
 /// is that a genuinely answered question lingers about two seconds longer than
 /// it used to, and that is the right side to be wrong on: a stale card is read
 /// and dismissed, a vanished one is a person wondering what they did.
+///
+/// # The rule this is an instance of
+///
+/// **Arrive on the first sample, leave only on a settled one.** A screen read
+/// is evidence that something IS there; it is never evidence that something is
+/// NOT, because the same blank frame is produced by a repaint, a resize, a
+/// clear and a scroll. So appearing is immediate and disappearing is
+/// debounced, and the asymmetry is the whole design rather than a tuning
+/// choice — see [`live_move`], where `Replace` fires at once and `Retire`
+/// waits.
+///
+/// # What the audit of the rest of this window found
+///
+/// Every other consumer of a screen read was checked after this bug, because
+/// one instance of a pattern is usually not one instance. The results, so the
+/// next person does not have to repeat the walk:
+///
+/// - **Destructive, and the only one:** the live question. A wrong reading
+///   REMOVED a surface, and nothing brought it back until the agent repainted
+///   — which is why this was the instance anybody noticed.
+/// - **Self-healing, left alone:** `rail_state` and `needs_input` are both
+///   recomputed from the screen every scan, so a repaint makes the tab badge
+///   and the rail lane flicker and the next scan puts them right. Visible, not
+///   lossy. Debouncing them at the source would delay a question ARRIVING,
+///   which is the half that must stay instant.
+/// - **Edge-triggered, not polled:** the bell latches on a terminal event and
+///   clears on a human one — focus, a keypress, a notification click. No
+///   screen reading in either direction.
+/// - **Read-only:** `recent_lines` into the dashboard card, `screen_signature`
+///   as a repaint comparator, `top_is_human` as a scroll helper. A wrong
+///   answer costs one frame or one scroll step and nothing persists.
+/// - **Not screen-driven at all:** everything that touches DISK. Surfaces are
+///   written by the file transport and the derived half reads the transcript,
+///   so a misread screen has never been able to delete a file — the bench is
+///   in memory, and that is why this bug erased a card rather than a record.
 pub const SETTLE_SWEEPS: u8 = 3;
 
 /// Decide it. `waiting` is whether the agent is still stopped on a person,
