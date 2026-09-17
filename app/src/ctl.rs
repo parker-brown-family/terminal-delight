@@ -1342,7 +1342,7 @@ fn session_hosted_on(chain: &[u32]) -> Option<String> {
 /// unresolved relay report twenty-eight running windows.
 fn window_identity(path: &Path) -> Option<(String, u32)> {
     let reply = send_within(path, "whoami", Duration::from_millis(300)).ok()?;
-    let mut w = reply.trim().split_whitespace();
+    let mut w = reply.split_whitespace();
     (w.next()? == "ok").then_some(())?;
     let session = w.next()?.to_string();
     let pid = w.next()?.parse().ok()?;
