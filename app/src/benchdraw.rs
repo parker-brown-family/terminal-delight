@@ -197,31 +197,39 @@ fn micro(text: impl Into<String>, size: f32, colour: Hsla, th: &Theme) -> Div {
 /// column of short rows with almost nothing else on it — and the skin files
 /// record why that matters: at 2px against no other lines a marker reads as a
 /// scratch. The number is not carried over from a denser surface.
-pub fn rail_row(row: &Row, sk: &Skin, th: &Theme) -> Div {
+pub fn rail_row(row: &Row, now_ms: u64, sk: &Skin, th: &Theme) -> Div {
     use crate::workbench::Standing;
     let tint = ink(row.tint, th);
-    // A weight per state, so the head of the shelf is legible from across the
-    // room and everything under it recedes in the right order. See
-    // [`crate::workbench::Standing`] for why there are four.
+    // The spine's own row, read out of `Workspace::rail_panel` rather than
+    // approximated from a screenshot. Parker, twice: *"SERIOUSLY LOOK AND
+    // STUDY EXACTLY WHAT OUR RIGHT ATTENTION SPINE IS DOING"*.
     //
-    // The GLOW is the top of this ladder and it is spent on one row, because
-    // it is a claim about where to look and three of them is no claim at all.
+    // Its anatomy, and every part of it earns its place there:
+    //
+    // - a seven-pixel slot holding a filled dot in the lane's colour when the
+    //   row is unseen and NOTHING when it is not, rather than a hollow one —
+    //   two glyphs would make a reader learn a vocabulary to read four things
+    // - the LANE word, uppercased, small, in the lane's colour
+    // - what it belongs to, dimmer and larger, beside it
+    // - a spacer, then the AGE at the right edge
+    // - the headline underneath at full strength
+    // - a provenance line under that: where the fact came from and when
+    // - a fill and a left edge that both get heavier on the cursor's row, in
+    //   the lane's own colour and never a second accent hue
+    //
+    // The bench's lane is its STANDING and its origin is its format, so the
+    // same skeleton carries different bones.
+    // Heavier for the row the eye should land on: the one the keyboard is on,
+    // OR the head of the queue. The spine's cursor edge marks where the
+    // keyboard is; on this rail the head of a shelf earns the same weight,
+    // because a person arriving has not moved a cursor yet and still needs to
+    // be told where to start.
+    //
     // `Standing::lit` is the single place that decides, and a test walks seven
-    // shelf shapes demanding at most one lit row in each.
-    let (edge, strength) = match row.standing {
-        Standing::Waiting | Standing::Current => (5., 1.0),
-        // Still unanswered, and deliberately quieter: the edge thins and
-        // dims, and the phosphor goes out entirely.
-        Standing::Queued => (3., 0.72),
-        Standing::Past => (2., 0.55),
-    };
-    let raise = row.standing.lit();
-    // Every row says what it IS, including the settled ones. A green row with
-    // no label made a reader work the colour out — Parker, looking at one: *"A
-    // green question ... that is one that is answered?"*. If the question has
-    // to be asked, the colour was carrying the whole message and colour alone
-    // is not a message.
-    let head = match row.standing {
+    // shelf shapes demanding at most one row claims it — so this can never be
+    // the emphasis on two rows at once.
+    let on_cursor = row.selected || row.standing.lit();
+    let lane = match row.standing {
         Standing::Waiting => Some("WAITING ON YOU"),
         Standing::Queued => Some("ALSO WAITING"),
         Standing::Current => Some("STANDS NOW"),
@@ -231,93 +239,86 @@ pub fn rail_row(row: &Row, sk: &Skin, th: &Theme) -> Div {
             _ => None,
         },
     };
-    // An INSET CARD, the way the spine draws its queue rows: a lighter face
-    // sitting on the panel's darkened fill, with the meaning colour down its
-    // left edge. The rows were bare text on the panel, which is what made a
-    // column of eight of them read as one block of prose.
-    let body = sk
-        .row()
+    let age = crate::attention::age_label(
+        now_ms
+            .checked_sub(row.arrived_ms)
+            .map(std::time::Duration::from_millis),
+    );
+    let head = div()
+        .flex()
+        .flex_row()
+        .gap(px(6.))
+        .items_center()
+        .child(
+            div()
+                .w(px(7.))
+                .flex_none()
+                .text_size(px(9.))
+                .text_color(tint)
+                .child(if row.unseen { "\u{25cf}" } else { "" }),
+        )
+        .children(lane.map(|l| {
+            div()
+                .flex_none()
+                .text_size(px(8.5))
+                .text_color(tint)
+                .child(l)
+        }))
+        .children(row.badge.clone().map(|b| {
+            div()
+                .flex_none()
+                .text_size(px(9.5))
+                .text_color(th.faint)
+                .child(b)
+        }))
+        .child(div().flex_1())
+        .child(
+            div()
+                .flex_none()
+                .text_size(px(9.5))
+                .text_color(th.faint)
+                .child(age),
+        );
+    sk.row()
         .flex()
         .flex_col()
-        .gap(px(if row.terse { 0. } else { 2. }))
+        .gap(px(1.))
+        .pl(px(7.))
+        .pr(px(6.))
+        .py(px(5.))
         .cursor_pointer()
-        .px(px(8.))
-        .py(px(if row.terse { 5. } else { 7. }))
-        .rounded(sk.rad_raw(5.))
-        .border_l(px(edge))
-        .border_color(tint.alpha(strength))
-        .bg(th.surface.alpha(if raise { 0.55 } else { 0.28 }))
-        .when(row.selected, |d| d.bg(th.accent.alpha(0.16)))
+        .border_l(px(if on_cursor { 4. } else { 2. }))
+        .border_color(tint)
+        .rounded(sk.radius())
+        .bg(if on_cursor {
+            th.text.alpha(0.16)
+        } else {
+            th.text.alpha(0.05)
+        })
+        .hover(move |st| st.bg(th.text.alpha(0.12)))
+        .child(head)
         .child(
             div()
-                .flex()
-                .flex_row()
-                .items_center()
-                .gap(px(6.))
-                // The kind word only where it is still telling somebody
-                // something. `question ANSWERED` says one thing twice, and
-                // `artifact` on the artifacts shelf says nothing at all.
-                .children(
-                    row.badge
-                        .clone()
-                        .map(|b| micro(b, 9.5, tint.alpha(strength), th)),
-                )
-                .when(row.unseen, |d| {
-                    d.child(
-                        div()
-                            .w(px(5.))
-                            .h(px(5.))
-                            .rounded(sk.rad_raw(3.))
-                            .bg(th.complement),
-                    )
-                })
-                // The word, not just a weight. A reader who has never seen
-                // this rail before cannot infer "this is the one in force"
-                // from a thicker edge, and the whole complaint was that the
-                // distinction has to be OBVIOUS.
-                .when_some(head, |d, h| {
-                    d.child(
-                        div()
-                            .px(px(5.))
-                            .py(px(1.))
-                            .rounded(sk.rad_raw(3.))
-                            .bg(tint.alpha(0.18 * strength))
-                            .child(micro(h, 8.5, tint.alpha(strength), th)),
-                    )
-                }),
-        )
-        .child(
-            div()
-                .text_size(px(if raise { 13. } else { 12. }))
-                .text_color(th.text.alpha(strength))
-                // ONE line on the overview, wrapping on a shelf.
-                //
-                // The overview is a census of what this bench holds, and a
-                // census is read by scanning down it — which three-line rows
-                // defeat, as six of them filled a rail and said very little.
-                // A shelf is where you go to read, so there the title wraps
-                // and keeps its description.
+                .text_size(px(11.))
+                .text_color(th.text)
                 .child(if row.terse {
-                    clip(&row.title, 30)
+                    clip(&row.title, 34)
                 } else {
                     row.title.clone()
                 }),
         )
-        .when(!row.terse, |d| {
-            d.child(micro(
-                clip(&row.subtitle, 38),
-                9.5,
-                th.faint.alpha(strength),
-                th,
-            ))
-        });
-    if raise {
-        // The head of the rail: one row in a shelf, guaranteed by
-        // `Standing::lit`.
-        aglow(body, tint, th)
-    } else {
-        body
-    }
+        // Where this fact came from, and when. A surface that shows a state
+        // without its provenance is asking to be trusted on nothing — the
+        // spine's words, and the reason its rows read as evidence rather than
+        // as assertions.
+        .when(!row.subtitle.trim().is_empty(), |d| {
+            d.child(
+                div()
+                    .text_size(px(8.5))
+                    .text_color(th.faint)
+                    .child(clip(&row.subtitle, 44)),
+            )
+        })
 }
 
 /// The rail collapsed: one tick per surface, newest at the top.

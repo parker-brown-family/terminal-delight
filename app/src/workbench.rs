@@ -1008,6 +1008,9 @@ pub struct Row {
     /// The short word this row wears, or [`None`] where the state chip
     /// already says everything. See [`crate::surface::Shelf::badge`].
     pub badge: Option<String>,
+    /// When this arrived, so the row can say how old it is — the spine puts
+    /// an age on every row and it is the fact that turns a list into a queue.
+    pub arrived_ms: u64,
     /// One line instead of three. The overview is a census — what is on this
     /// bench — and a census is read by scanning, which three-line rows defeat.
     pub terse: bool,
@@ -1272,6 +1275,7 @@ impl Bench {
                 subtitle: s.subtitle(),
                 kind: s.kind.id(),
                 badge: shelf.badge(&s.kind, false),
+                arrived_ms: s.arrived_ms,
                 terse: shelf == Shelf::Overview,
                 tint: tint_of(&s.kind),
                 // Filled in below: standing is a property of a row's place in
@@ -2584,6 +2588,7 @@ mod tests {
             subtitle: String::new(),
             kind: "question",
             badge: None,
+            arrived_ms: 0,
             terse: false,
             tint,
             standing: Standing::Past,

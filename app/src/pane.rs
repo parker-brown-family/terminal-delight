@@ -7891,13 +7891,14 @@ impl TerminalView {
                     })
                     .children(rows.into_iter().map(|row| {
                         let id = row.id.clone();
-                        crate::benchdraw::rail_row(&row, sk, th).on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(move |view, _ev: &MouseDownEvent, _w, cx| {
-                                cx.stop_propagation();
-                                view.bench_open(&id, cx);
-                            }),
-                        )
+                        crate::benchdraw::rail_row(&row, crate::surfacefeed::now_ms(), sk, th)
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |view, _ev: &MouseDownEvent, _w, cx| {
+                                    cx.stop_propagation();
+                                    view.bench_open(&id, cx);
+                                }),
+                            )
                     })),
                 )
             }
