@@ -2143,6 +2143,9 @@ pub struct TerminalView {
     /// same as empty: a composer that is open and holding nothing is a person
     /// who has started answering, and closing it under them loses that.
     wb_compose: Option<crate::workbench::Line>,
+    /// One character's width in the COMPOSER's font at the composer's size,
+    /// measured rather than computed. See [`Self::sync_size`].
+    wb_advance: f32,
     /// Where the composer's text begins on screen, so a click can be turned
     /// into a column. Captured by the element itself at paint time because
     /// only the element knows where the layout put it.
@@ -3211,6 +3214,7 @@ impl TerminalView {
             tok_was_working: false,
             bench: crate::workbench::Bench::new(),
             wb_compose: None,
+            wb_advance: 0.0,
             wb_text_origin: std::sync::Arc::new(std::sync::Mutex::new(None)),
             wb_live_q: None,
         }
@@ -3508,6 +3512,23 @@ impl TerminalView {
         ) {
             if f32::from(w.width) > 1.0 {
                 self.cell_w = f32::from(w.width);
+            }
+        }
+        // And the same question asked again for the COMPOSER, which draws at
+        // its own size. Scaling the grid's cell by the ratio of the two sizes
+        // was close and therefore worse than wrong: the caret drifted about a
+        // character every eight, so it looked aligned at the start of a line
+        // and sat inside a word by the end of one. Parker, on a line of forty
+        // characters: *"cursor not aligned"*. A font's advance is not linear
+        // in its point size — hinting and rounding see to that — so the only
+        // honest source is the text system, asked at the size actually used.
+        if let Ok(w) = window.text_system().advance(
+            window.text_system().resolve_font(&font),
+            px(crate::benchdraw::COMPOSER_PT),
+            'M',
+        ) {
+            if f32::from(w.width) > 1.0 {
+                self.wb_advance = f32::from(w.width);
             }
         }
         // Fit the grid to the tube minus its (curvature-aware) frame, so the
@@ -7412,25 +7433,32 @@ impl TerminalView {
         // ── the composer ────────────────────────────────────────────────────
         let composer =
             (self.mode.is_agent() && how != crate::workbench::Embodiment::Summary).then(|| {
-                // The composer is monospace at 17px and the grid's own cell
-                // was measured for `th.font_size`, so one is the other scaled.
-                // Deriving it beats measuring again: the two can then never
-                // disagree about what a column is, which is the whole basis of
-                // placing a caret by arithmetic.
-                let advance = self.cell_w * crate::benchdraw::COMPOSER_PT / th.font_size;
-                crate::benchdraw::composer(self.wb_compose.as_ref(), focused, advance, sk, th)
-                    .child(crate::benchdraw::text_origin_probe(
-                        self.wb_text_origin.clone(),
-                    ))
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(move |view, ev: &MouseDownEvent, window, cx| {
-                            cx.stop_propagation();
-                            view.bench_click(ev.position.x.into(), advance, cx);
-                            window.focus(&view.focus_handle, cx);
-                            cx.notify();
-                        }),
-                    )
+                // Measured for this font at this size in `sync_size`. Until
+                // the first measurement lands it falls back to the scaled
+                // cell, which is close enough to draw one frame with and is
+                // never what the caret settles on.
+                let advance = if self.wb_advance > 1.0 {
+                    self.wb_advance
+                } else {
+                    self.cell_w * crate::benchdraw::COMPOSER_PT / th.font_size
+                };
+                crate::benchdraw::composer(
+                    self.wb_compose.as_ref(),
+                    focused,
+                    advance,
+                    self.wb_text_origin.clone(),
+                    sk,
+                    th,
+                )
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |view, ev: &MouseDownEvent, window, cx| {
+                        cx.stop_propagation();
+                        view.bench_click(ev.position.x.into(), advance, cx);
+                        window.focus(&view.focus_handle, cx);
+                        cx.notify();
+                    }),
+                )
             });
 
         // ── the rail, and the handle that closes it ─────────────────────────

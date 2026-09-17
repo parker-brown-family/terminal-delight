@@ -1011,6 +1011,7 @@ pub fn composer(
     line: Option<&crate::workbench::Line>,
     focused: bool,
     advance: f32,
+    origin: std::sync::Arc<std::sync::Mutex<Option<gpui::Bounds<gpui::Pixels>>>>,
     sk: &Skin,
     th: &Theme,
 ) -> Div {
@@ -1062,6 +1063,12 @@ pub fn composer(
                     .flex_1()
                     .min_w(px(0.))
                     .h(px(26.))
+                    // Inside the text box, not on the panel: the probe has to
+                    // report where the TEXT starts, and the panel's left edge
+                    // is a padding and a border away from that. Measuring the
+                    // wrong box put every click about two characters right of
+                    // where it was pointed.
+                    .child(text_origin_probe(origin))
                     .when_some(line, |d, l| {
                         d.child(
                             div()
