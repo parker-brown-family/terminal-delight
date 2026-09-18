@@ -1910,26 +1910,37 @@ impl TerminalView {
                     // somewhere"*. The honest answer to "where do I click" is
                     // *anywhere*, so the whole body is the target, and the
                     // caret it lights is the thing to look at.
-                    .child(
+                    .child({
+                        use crate::workbench::Anchor;
+                        let anchor = crate::workbench::body_anchor(card_open, offering);
                         div()
                             .flex_1()
                             .min_h(px(0.))
                             .overflow_hidden()
                             .flex()
                             .flex_col()
-                            .when(
-                                crate::workbench::body_anchor(card_open, offering)
-                                    == crate::workbench::Anchor::Bottom,
-                                |d| d.justify_end(),
-                            )
+                            .when(anchor == Anchor::Bottom, |d| d.justify_end())
                             .when(self.mode.is_agent(), |d| {
                                 d.relative().child(crate::benchdraw::zone(
                                     self.wb_zones.clone(),
                                     crate::workbench::Hit::Arm,
                                 ))
                             })
-                            .child(body),
-                    )
+                            // `Eye` is a box of four fifths the height with the
+                            // content centred in it, rather than a justify on
+                            // this container: the fraction has to resolve
+                            // against the HEIGHT, and a padding fraction in
+                            // taffy resolves against the width.
+                            .child(match anchor {
+                                Anchor::Eye => div()
+                                    .flex()
+                                    .flex_col()
+                                    .justify_center()
+                                    .h(gpui::relative(0.8))
+                                    .child(body),
+                                _ => div().flex().flex_col().child(body),
+                            })
+                    })
                     .children(composer),
             )
             .children(handle)

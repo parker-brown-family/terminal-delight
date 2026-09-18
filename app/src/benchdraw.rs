@@ -2285,31 +2285,44 @@ pub fn rail_handle(open: bool, sk: &Skin, th: &Theme) -> Div {
 /// appended to the end of a paragraph is a footnote, and the thing a person is
 /// meant to press cannot be a footnote.
 pub fn empty(is_agent: bool, dir: &str, sk: &Skin, th: &Theme) -> Div {
+    // **The complement, at full strength, one rung up the ramp.**
+    //
+    // An empty surface is the one place the bench can afford to be legible
+    // rather than quiet: there is nothing for the text to compete with, and a
+    // faint 10-point label in a field of nothing reads as a disabled control
+    // rather than as an answer. Parker: *"use the bright other text colour and
+    // bigger font by 30%"*.
+    //
+    // The 30% is spent on the RAMP rather than on a multiplier — `Note` is 10
+    // and `Lead` is 13, which is exactly the ask, and `Body` 12 to `Head` 15 is
+    // the nearest rung to it. A literal `* 1.3` here would be the sixteenth
+    // font size the ramp exists to have abolished.
     sk.panel()
         .flex()
         .flex_col()
         .gap(px(6.))
-        .child(micro("NOTHING ON THE BENCH", Step::Note, th.faint, sk, th))
-        .child(if is_agent {
-            micro(
-                "This agent has presented no work objects yet.",
-                Step::Body,
-                th.text.alpha(0.85),
-                sk,
-                th,
-            )
-        } else {
-            micro(
-                "A shell has no agent to present anything. Start one and its work \
-                 appears here.",
-                Step::Body,
-                th.text.alpha(0.85),
-                sk,
-                th,
-            )
-        })
+        .child(micro(
+            "NOTHING ON THE WORKBENCH",
+            Step::Lead,
+            th.complement,
+            sk,
+            th,
+        ))
+        // A SHELL gets the heading and nothing else.
+        //
+        // The sentence under it — *"A shell has no agent to present anything.
+        // Start one and its work appears here."* — explained the button sitting
+        // directly above it, which the button's own words already explain.
+        // Parker: *"the little flavour text about the shell can go away"*.
         .when(is_agent, |d| {
             d.child(micro(
+                "This agent has presented no work objects yet.",
+                Step::Head,
+                th.complement.alpha(0.85),
+                sk,
+                th,
+            ))
+            .child(micro(
                 format!("drop a .json here: {dir}"),
                 Step::Note,
                 th.faint,
@@ -2332,8 +2345,10 @@ pub fn empty(is_agent: bool, dir: &str, sk: &Skin, th: &Theme) -> Div {
 /// So it is three separate claims, and each is drawn rather than argued:
 ///
 /// 1. **Standalone.** Its own element, above the explanation rather than
-///    inside it, with the panel's full width — a button, not a word in a
-///    paragraph.
+///    inside it — a button, not a word in a paragraph. It takes its own width
+///    rather than the column's: a control stretched edge to edge across a pane
+///    stops reading as a thing to press and starts reading as a banner, and it
+///    was the only one on the surface doing it. Parker: *"not full width"*.
 /// 2. **At eye level.** [`crate::workbench::body_anchor`] stops the body
 ///    reading from the floor while an offer is the thing on it.
 /// 3. **The loudest thing on an empty surface**, which it can afford to be
@@ -2346,6 +2361,12 @@ pub fn launch_button(sk: &Skin, th: &Theme) -> Div {
             .flex_row()
             .items_center()
             .justify_center()
+            // Its own width, centred in the column — a flex child stretches on
+            // the cross axis unless it says otherwise, which is where the full
+            // width came from.
+            .self_center()
+            .flex_none()
+            .px(px(sk.tpx(22.)))
             .gap(px(sk.tpx(8.)))
             .py(px(sk.tpx(9.)))
             .cursor_pointer()

@@ -1253,10 +1253,23 @@ pub fn shows(pane_w: f32, pane_h: f32, is_agent: bool, rail_wanted: bool, armed:
 /// Which end of the bench's body its content is anchored to.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Anchor {
-    /// Reads downward from the top. A card, and an offer.
+    /// Reads downward from the top. A card.
     Top,
     /// Reads upward from the floor. A conversation.
     Bottom,
+    /// Centred in the upper four fifths of the box. An offer.
+    ///
+    /// Not a third alignment for its own sake. `Top` means *against the
+    /// ceiling*, and an offer pinned there sits in the pane's top inch with the
+    /// whole surface empty beneath it — the mirror image of the floor problem
+    /// [`body_anchor`] was written to fix, and the same complaint in the other
+    /// direction. Parker: *"move down to top 80% of vertical space (not smashed
+    /// into the top)"*.
+    ///
+    /// Four fifths rather than the full height, so it lands ABOVE centre: an
+    /// offer is still read downward from, and dead-centring would leave as much
+    /// nothing above it as below.
+    Eye,
 }
 
 /// Where the body's content sits in a box taller than it is.
@@ -1277,9 +1290,19 @@ pub enum Anchor {
 /// the ACTIon for this is WAAAAAAY at the bottome of the screen"*. A call to
 /// action is not history, and nothing about it belongs at the bottom of a tall
 /// pane.
+///
+/// But it does not belong against the ceiling either, which is where "not the
+/// floor" first put it. An offer gets [`Anchor::Eye`] — centred in the upper
+/// four fifths — and the card keeps [`Anchor::Top`], because a card that may be
+/// taller than the box has to start at the top or its own head goes off-screen.
+/// An offer never can: it is three short lines by construction.
+///
+/// A card OVER an offer is a card, and anchors like one.
 pub fn body_anchor(card_open: bool, offering: bool) -> Anchor {
-    if card_open || offering {
+    if card_open {
         Anchor::Top
+    } else if offering {
+        Anchor::Eye
     } else {
         Anchor::Bottom
     }
@@ -4021,17 +4044,38 @@ mod tests {
     }
 
     #[test]
-    fn an_offer_reads_from_the_top_and_a_transcript_from_the_floor() {
-        // The whole table. Two booleans, and the one row that was wrong is the
-        // one where the bench has nothing on it but a button.
-        assert_eq!(body_anchor(false, true), Anchor::Top, "an offer");
+    fn an_offer_sits_at_eye_level_and_a_transcript_on_the_floor() {
+        // The whole table. Two booleans, and three different answers — an offer
+        // is neither of the other two, which is the point of the third variant.
+        assert_eq!(
+            body_anchor(false, true),
+            Anchor::Eye,
+            "an offer is not against the ceiling"
+        );
         assert_eq!(body_anchor(true, false), Anchor::Top, "an opened card");
-        assert_eq!(body_anchor(true, true), Anchor::Top, "a card over an offer");
+        assert_eq!(
+            body_anchor(true, true),
+            Anchor::Top,
+            "a card over an offer is a card: it may be taller than the box"
+        );
         assert_eq!(
             body_anchor(false, false),
             Anchor::Bottom,
             "a conversation still sits on its composer"
         );
+    }
+
+    #[test]
+    fn the_three_anchors_are_three_different_answers() {
+        // A third variant that collapsed onto one of the other two would be a
+        // rename, not a placement — and the whole complaint was that "not the
+        // floor" had silently meant "the ceiling".
+        let all = [Anchor::Top, Anchor::Bottom, Anchor::Eye];
+        for (i, a) in all.iter().enumerate() {
+            for b in &all[i + 1..] {
+                assert_ne!(a, b, "{a:?} and {b:?} must be distinguishable");
+            }
+        }
     }
 
     #[test]
