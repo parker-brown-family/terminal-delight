@@ -795,6 +795,10 @@ pub(crate) fn warp_screen_to_content(sx: f32, sy: f32, k1: f32, k2: f32) -> (f32
 }
 
 /// Apply the mode's screen colour over the structural theme.
+///
+/// Agents are two of the three: `Remote` rides the same rule, because "you are
+/// not local" is program identity in exactly the same sense. Gated by
+/// [`maybe_mode_theme`] — nothing here decides *whether* the tint applies.
 fn mode_theme(base: &Theme, mode: &PaneMode) -> Theme {
     let mut th = base.clone();
     let (accent, text, faint, cursor) = match mode {
@@ -825,6 +829,28 @@ fn mode_theme(base: &Theme, mode: &PaneMode) -> Theme {
     // default fg/ANSI-7-ish stays app-controlled; swap the green slots' default fg
     th.ansi[7] = th.text;
     th
+}
+
+/// Whether a pane wears the phosphor of the PROGRAM inside it, or the theme it
+/// inherited — the whole of the AGENT THEME decision, as a pure function.
+///
+/// Two conditions, and they answer different questions. `inherit` is the pane's:
+/// a pane carrying its own theme chose that look deliberately and the tint must
+/// never stomp it. `tint` is the window's: [`agent_tint`], the persisted
+/// preference this function exists to honour.
+///
+/// It existed as the `inherit` half alone, and the consequence was that
+/// following outer did not mean "wear what the window wears" — it meant "wear
+/// what the program is". Starting `claude` in a green shell pane turned the
+/// whole tube amber, and the only escape was to pin a per-pane override, which
+/// is the opposite of following. The preference defaults OFF, so an inherited
+/// theme is now inherited; turn it on to get the amber/cyan/violet tubes back.
+fn maybe_mode_theme(base: &Theme, mode: &PaneMode, inherit: bool, tint: bool) -> Theme {
+    if inherit && tint {
+        mode_theme(base, mode)
+    } else {
+        base.clone()
+    }
 }
 
 const HEADER_H: f32 = 40.0;
@@ -1651,8 +1677,14 @@ impl GradeCoeffs {
 }
 
 /// Cached `resolved_theme` result + the inputs it was computed from
-/// (effective choice, mode, inherit_theme, theme generation).
-type ThemeMemo = Option<(theme::ThemeChoice, PaneMode, bool, u64, Theme)>;
+/// (effective choice, mode, inherit_theme, the AGENT THEME preference, theme
+/// generation).
+///
+/// The preference is a memo input and not a generation bump because it is a
+/// process-global atomic ([`agent_tint`]) that no `ThemeChoice` carries — a
+/// window that flips it while a pane is quiet would otherwise keep serving the
+/// look from before the flip.
+type ThemeMemo = Option<(theme::ThemeChoice, PaneMode, bool, bool, u64, Theme)>;
 
 /// Cache key for [`TerminalView::mirror_document`]. Matching keys guarantee a
 /// byte-identical document: `generation` moves on every terminal event, the
@@ -1667,6 +1699,7 @@ struct MirrorDocKey {
     eff: theme::ThemeChoice,
     mode: PaneMode,
     inherit: bool,
+    tint: bool,
     theme_gen: u64,
 }
 
@@ -2327,33 +2360,36 @@ pub struct MirrorSnapshot {
 impl TerminalView {
     /// The theme this pane actually renders with: each appearance group
     /// (theme, grade) resolved to the pane's own override or the live outer
-    /// scope, then — when the theme group follows outer — tinted by what's
-    /// running (mode).
+    /// scope, then — when the window's AGENT THEME preference is on and the
+    /// theme group follows outer — tinted by what's running (mode).
     pub fn resolved_theme(&self, cx: &App) -> Theme {
         let outer = theme::outer_choice(cx);
         let eff = self.appearance.effective(&outer);
         let inherit = self.appearance.inherit_theme;
+        let tint = agent_tint();
         let gen = theme::theme_gen(cx);
         // Per-frame memo: resolve() deep-clones + recolours + grade-transforms the
         // palette and render() calls this every frame, so reuse the last result
         // while every input is unchanged. The generation counter covers the two
         // global inputs a ThemeChoice doesn't carry (custom hot-reload, tracking
         // override), so this can't serve a stale look.
-        if let Some((k_eff, k_mode, k_inherit, k_gen, th)) = &*self.theme_cache.borrow() {
-            if *k_gen == gen && *k_inherit == inherit && *k_mode == self.mode && *k_eff == eff {
+        if let Some((k_eff, k_mode, k_inherit, k_tint, k_gen, th)) = &*self.theme_cache.borrow() {
+            if *k_gen == gen
+                && *k_inherit == inherit
+                && *k_tint == tint
+                && *k_mode == self.mode
+                && *k_eff == eff
+            {
                 return th.clone();
             }
         }
         let base = (*theme::resolve(cx, &eff)).clone();
-        // The mode tint (what's running in the pane) applies only while the
-        // theme group follows outer — an explicit per-pane theme is a deliberate
-        // look the tint shouldn't stomp. The grade rides along untouched either
-        // way (mode_theme leaves `grade`/`color_mode` alone).
-        let mut out = if inherit {
-            mode_theme(&base, &self.mode)
-        } else {
-            base
-        };
+        // The mode tint (what's running in the pane) is off unless the window
+        // asked for it, and applies only while the theme group follows outer —
+        // an explicit per-pane theme is a deliberate look the tint shouldn't
+        // stomp. The grade rides along untouched either way (mode_theme leaves
+        // `grade`/`color_mode` alone).
+        let mut out = maybe_mode_theme(&base, &self.mode, inherit, tint);
         // Terminal text-size: scale the GRID font + cell height by the pane's
         // effective text-size grade so the terminal reflows (sync_size measures
         // cell_w from font_size and cell_h from this). Chrome is untouched —
@@ -2363,7 +2399,8 @@ impl TerminalView {
             out.font_size *= ts;
             out.cell_h *= ts;
         }
-        *self.theme_cache.borrow_mut() = Some((eff, self.mode.clone(), inherit, gen, out.clone()));
+        *self.theme_cache.borrow_mut() =
+            Some((eff, self.mode.clone(), inherit, tint, gen, out.clone()));
         out
     }
 
@@ -2388,6 +2425,7 @@ impl TerminalView {
             eff: self.appearance.effective(&theme::outer_choice(cx)),
             mode: self.mode.clone(),
             inherit: self.appearance.inherit_theme,
+            tint: agent_tint(),
             theme_gen: theme::theme_gen(cx),
         };
         let next_rev = {
@@ -5693,6 +5731,28 @@ pub fn set_anchor_top(top: bool) {
 /// bottom pad); `false` (default) ⇒ content hugs the BOTTOM.
 pub fn anchor_top() -> bool {
     ANCHOR_TOP.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Global AGENT THEME toggle: whether a pane that FOLLOWS OUTER wears the
+/// phosphor of the program running in it (claude amber · codex cyan · remote
+/// violet) instead of the theme it inherited. Default `false` — inherit.
+///
+/// Published per frame out of `Workspace::render`, exactly like [`ANCHOR_TOP`]
+/// and for the same reason: [`TerminalView::resolved_theme`] cannot reach
+/// `&Workspace`. Both memos that depend on it key on it (see [`ThemeMemo`]),
+/// so flipping it repaints quiet panes rather than waiting for their next byte.
+static AGENT_TINT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Publish the live global AGENT THEME preference (called from `Workspace::render`
+/// each frame, beside [`set_anchor_top`]).
+pub fn set_agent_tint(on: bool) {
+    AGENT_TINT.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Read the global AGENT THEME preference. `true` ⇒ an inheriting pane is tinted
+/// by what is running in it; `false` (default) ⇒ an inherited theme is inherited.
+pub fn agent_tint() -> bool {
+    AGENT_TINT.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 /// Whether the inverted anchor-to-top read should apply. The read reverses row
@@ -9529,6 +9589,50 @@ mod tests {
             assert_eq!(th.ansi[7], th.text, "default-fg slot follows the mode text");
             assert!(th.bg.l < 0.1, "{:?} tube depths stay dark", mode);
         }
+    }
+
+    /// The AGENT THEME gate: three of the four (inherit × tint) corners leave an
+    /// inherited theme alone, and only the corner a person asked for retints.
+    ///
+    /// The bug this closes is the `(inherit = true, tint = false)` cell: it was
+    /// the tinted one, so following outer meant wearing the program rather than
+    /// the window, and starting `claude` in a green pane turned the tube amber.
+    #[test]
+    fn the_mode_tint_needs_both_the_pane_following_and_the_window_asking() {
+        let base = crate::theme::parse(crate::theme::DEFAULT_THEME_TOML).unwrap();
+        let amber = mode_theme(&base, &PaneMode::Claude).accent;
+        assert_ne!(
+            amber, base.accent,
+            "the fixture must be able to show a tint"
+        );
+
+        for (inherit, tint) in [(true, false), (false, true), (false, false)] {
+            assert_eq!(
+                maybe_mode_theme(&base, &PaneMode::Claude, inherit, tint).accent,
+                base.accent,
+                "inherit={inherit} tint={tint} must keep the inherited accent"
+            );
+        }
+        assert_eq!(
+            maybe_mode_theme(&base, &PaneMode::Claude, true, true).accent,
+            amber,
+            "following + asked-for is the one corner that wears the program"
+        );
+    }
+
+    /// The published preference is what [`maybe_mode_theme`] is handed, and it
+    /// defaults to OFF. Asserted on the accessor pair rather than on a constant,
+    /// so a future default flipped in `AGENT_TINT` is caught here.
+    #[test]
+    fn the_agent_tint_preference_is_off_until_published_on() {
+        assert!(
+            !agent_tint(),
+            "an unpublished preference is inherit-the-theme"
+        );
+        set_agent_tint(true);
+        assert!(agent_tint());
+        set_agent_tint(false);
+        assert!(!agent_tint());
     }
 
     /// Role at the first char of the first occurrence of `needle`.

@@ -1336,6 +1336,16 @@ pub fn builtin_toml(id: &str) -> Option<&'static str> {
         .map(|(_, src)| *src)
 }
 
+/// How many buttons the DESIGN picker draws: every builtin, plus the one
+/// hot-reloaded "custom" slot [`all_themes`] always appends.
+///
+/// Exposed so the design tray's fit can be asserted against the real inventory
+/// rather than against a count typed beside the layout — adding a builtin theme
+/// has to move this number, and the tray's geometry test has to notice.
+pub fn picker_count() -> usize {
+    BUILTIN_THEMES.len() + 1
+}
+
 pub fn all_themes(cx: &App) -> Vec<(String, String, String)> {
     let reg = cx.global::<ThemeRegistry>();
     let mut out: Vec<_> = reg

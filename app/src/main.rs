@@ -1173,6 +1173,135 @@ fn tray_cap(band: (f32, f32), top: f32) -> f32 {
     (limit - top).min(band_h + overhang).max(TRAY_MIN_H)
 }
 
+// ---- the design tray's geometry, hoisted so the fit can be ASSERTED ---------
+//
+// The tray outgrew the screen once already, and it did it quietly: `tray_cap`
+// caps the panel at the terminal band and the panel scrolls, so an overflowing
+// tray does not spill over the bezel — it hides its last rows below a fold
+// nobody scrolls to. ANCHOR and the pass-down button lived down there.
+//
+// Nothing here can measure a real gpui layout. What it can do is hold the same
+// numbers the render uses, derive the tallest column from the REAL inventory
+// (`theme::BUILTIN_THEMES`, `skin::BUILTIN_SKINS`, `ColorMode::ALL`,
+// `SyntaxScheme::ALL`), and fail a test when adding the next colour set or
+// syntax grammar pushes a column past the height the tray declares. That is the
+// gate the last overflow did not have: not "does it look right", which needs an
+// eye, but "has the inventory outgrown the box", which does not.
+
+const TRAY_BTN_W: f32 = 46.; // theme_icon_btn
+const TRAY_BTN_H: f32 = 40.;
+const TRAY_MODE_BTN_W: f32 = 58.; // color_mode_btn (wider caption)
+const TRAY_MODE_BTN_H: f32 = 38.;
+const TRAY_GAP: f32 = 8.; // gap_2, between buttons and stacked rows
+const TRAY_COL_GAP: f32 = 12.; // gap_3, between the tray's columns
+const TRAY_PAD: f32 = 12.; // p_3
+const TRAY_LABEL_H: f32 = 12.; // a 9px section heading
+const TRAY_SEP: f32 = 1.; // a hairline, h or v
+
+/// The PICKERS column — exactly three DESIGN buttons plus their gaps, which is
+/// the whole reason the tray fits: at this width DESIGN wraps 3+3+1 instead of
+/// the 2+2+2+1 it wrapped at in the old single strip.
+const TRAY_PICKER_W: f32 = 3. * TRAY_BTN_W + 2. * TRAY_GAP;
+/// The WHEEL column — the 132px wheel with room for its lightness bar.
+const TRAY_WHEEL_COL_W: f32 = 150.;
+/// The glyph column — the INVERT bar sets it (a heading plus a mode button),
+/// which is wider than the two 40px colour-set columns beneath it.
+const TRAY_GLYPH_COL_W: f32 = 110.;
+/// Three columns, two hairlines, four gaps, two paddings.
+const TRAY_PANEL_W: f32 = 2. * TRAY_PAD
+    + TRAY_GLYPH_COL_W
+    + TRAY_PICKER_W
+    + TRAY_WHEEL_COL_W
+    + 2. * TRAY_SEP
+    + 4. * TRAY_COL_GAP;
+const TRAY_WHEEL_H: f32 = 132.; // color_wheel's D
+const TRAY_LBAR_H: f32 = 14.; // lightness_bar
+const TRAY_PIPS_H: f32 = 24.; // the four wheel-target pips
+const TRAY_RESET_H: f32 = 14.; // the ↺ reset row under them
+const TRAY_PILL_H: f32 = 22.; // a bezel button: 2px py, 11px text, a border
+
+/// The shortest render band the tray promises to open inside WITHOUT scrolling
+/// — a 768-tall screen with the window's own chrome taken off it.
+///
+/// This is the number that makes the fit test mean something. `TRAY_PANEL_H_EST`
+/// describes the tray, so raising it when a column overflows changes nothing;
+/// this describes the screen, and a tray that outgrows it has to lose a section
+/// or gain a column.
+///
+/// It lives in the test build because it is a promise checked at build time, not
+/// a number the renderer reads — the renderer takes the real band from the real
+/// window, and its job is to scroll when the screen is genuinely smaller.
+#[cfg(test)]
+const TRAY_FIT_BAND: f32 = 700.;
+
+/// How many rows `n` buttons of `btn_w` take in a column `col_w` wide.
+fn tray_wrap_rows(n: usize, btn_w: f32, col_w: f32) -> usize {
+    let per = (((col_w + TRAY_GAP) / (btn_w + TRAY_GAP)).floor() as usize).max(1);
+    n.div_ceil(per).max(1)
+}
+
+/// Estimated height of one `heading + wrapping button row` section.
+fn tray_section_h(n: usize, btn_w: f32, btn_h: f32, col_w: f32) -> f32 {
+    let rows = tray_wrap_rows(n, btn_w, col_w) as f32;
+    TRAY_LABEL_H + TRAY_GAP + rows * btn_h + (rows - 1.) * TRAY_GAP
+}
+
+/// Estimated height of the PICKERS column for a given inventory. `skins` is 0
+/// on the per-pane tray, which has no SKIN section.
+fn tray_pickers_h(themes: usize, skins: usize, modes: usize, schemes: usize) -> f32 {
+    // scope hint, then each section behind a hairline.
+    let mut h = TRAY_LABEL_H;
+    let mut section = |n: usize, w: f32, bh: f32| {
+        h += TRAY_GAP + TRAY_SEP + TRAY_GAP + tray_section_h(n, w, bh, TRAY_PICKER_W);
+    };
+    section(themes, TRAY_BTN_W, TRAY_BTN_H);
+    if skins > 0 {
+        section(skins, TRAY_BTN_W, TRAY_BTN_H);
+    }
+    section(modes, TRAY_MODE_BTN_W, TRAY_MODE_BTN_H);
+    section(schemes, TRAY_MODE_BTN_W, TRAY_MODE_BTN_H);
+    h + 2. * TRAY_PAD
+}
+
+/// Estimated height of the WHEEL column: the fixed wheel stack, then one block
+/// per window RULE (a hairline, a heading and a pill — AGENT THEME, ANCHOR) plus
+/// any bare pills under them (pass-down on the outer tray, follow-outer on a
+/// pane's). This is the column AGENT THEME grew, so it is the one that has to be
+/// counted rather than assumed short.
+fn tray_wheel_col_h(rules: usize, bare_pills: usize) -> f32 {
+    let mut h = TRAY_LABEL_H
+        + TRAY_GAP
+        + 8.  // py_1 above and below the wheel
+        + TRAY_WHEEL_H
+        + TRAY_GAP
+        + TRAY_LBAR_H
+        + TRAY_GAP
+        + 4. // pt_1 over the pips
+        + TRAY_PIPS_H
+        + TRAY_GAP
+        + TRAY_RESET_H;
+    for _ in 0..rules {
+        h += TRAY_GAP + TRAY_SEP + TRAY_GAP + TRAY_LABEL_H + TRAY_GAP + TRAY_PILL_H;
+    }
+    h += bare_pills as f32 * (TRAY_GAP + TRAY_PILL_H);
+    h + 2. * TRAY_PAD
+}
+
+/// The tallest COLUMN on the OUTER tray — which is what the split bought, and
+/// what decides where the tray may open so it lands fully on screen.
+fn tray_panel_h_est() -> f32 {
+    let pickers = tray_pickers_h(
+        theme::picker_count(),
+        skin::picker_max_count(),
+        theme::ColorMode::ALL.len(),
+        // SYNTAX draws one button per grammar PLUS the "off" button.
+        theme::SyntaxScheme::ALL.len() + 1,
+    );
+    // The outer tray's rules: AGENT THEME and ANCHOR, then the pass-down button.
+    let wheel = tray_wheel_col_h(2, 1);
+    pickers.max(wheel)
+}
+
 /// Seconds since the process started, for animations that want a phase rather
 /// than a duration.
 ///
@@ -2147,6 +2276,18 @@ struct StateFile {
     /// the bottom pad so the prompt/typing area sits near the TOP of the pane.
     #[serde(default)]
     anchor_top: bool,
+    /// Global AGENT THEME preference: whether a pane that FOLLOWS OUTER is
+    /// retinted by the program running in it (claude amber · codex cyan ·
+    /// remote violet) instead of wearing the theme it inherited.
+    ///
+    /// Absent on old files → `false`, which is a deliberate behaviour CHANGE
+    /// rather than a preserved default: the tint used to be unconditional, so
+    /// "follow outer" did not mean "wear what the window wears", and starting an
+    /// agent in a pane turned the whole tube amber with no way back but pinning
+    /// a per-pane override. Anyone who wants the coloured tubes turns them on in
+    /// the OUTER design tray and the choice is saved from then on.
+    #[serde(default)]
+    agent_tint: bool,
     /// Chrome language for the UI (the language pack). Absent on old files →
     /// English; keycaps and symbols are never translated.
     #[serde(default)]
@@ -2210,6 +2351,7 @@ impl Default for StateFile {
             mcp: None,
             focus_inherit: false,
             anchor_top: false,
+            agent_tint: false,
             lang: lang::Lang::default(),
             last_workspace: None,
             undo_hinted: false,
@@ -3761,6 +3903,13 @@ struct Workspace {
     /// panes (which can't reach `&Workspace`) read the live value. One toggle in
     /// the OUTER design panel.
     anchor_top: bool,
+    /// Global, persisted: when on, a pane that follows the outer theme is
+    /// retinted by the PROGRAM inside it — the claude-amber / codex-cyan /
+    /// remote-violet tubes. Off (the default) an inherited theme is inherited,
+    /// and an agent pane looks like the window it is in. Published into
+    /// [`pane::set_agent_tint`] each render frame, beside `anchor_top` and for
+    /// the same reason. One toggle in the OUTER design panel.
+    agent_tint: bool,
     /// A scratch window (opened on a workspace that already has one, or a
     /// torn-off pane): one fresh terminal, never restores or persists session
     /// state — so it can't clobber the layout of the window that owns the
@@ -4965,6 +5114,7 @@ impl Workspace {
             focus_sel_drag: false,
             focus_inherit_theme: saved.focus_inherit,
             anchor_top: saved.anchor_top,
+            agent_tint: saved.agent_tint,
             lang: saved.lang,
             // a demo window restores a layout (so `scratch` is false to take the
             // restore branch below) yet must never overwrite the real state
@@ -6133,6 +6283,7 @@ impl Workspace {
             mcp: Some(self.mcp.clone()),
             focus_inherit: self.focus_inherit_theme,
             anchor_top: self.anchor_top,
+            agent_tint: self.agent_tint,
             lang: self.lang,
             // Where this session is right now, recorded every save so a cold
             // launch can prefer the session that was last open *here*. A hint
@@ -13431,6 +13582,40 @@ impl Workspace {
         )
     }
 
+    /// Flip the GLOBAL AGENT THEME preference, persist it, and repaint. Off
+    /// (default) ⇒ a pane that follows outer wears what the window wears; on ⇒
+    /// it wears the phosphor of the program inside it. The live value is
+    /// published to [`pane::set_agent_tint`] every render frame.
+    fn toggle_agent_tint(&mut self, cx: &mut Context<Self>) {
+        self.agent_tint = !self.agent_tint;
+        self.save(cx);
+        cx.notify();
+    }
+
+    /// The OUTER design-panel AGENT THEME control, sibling to the anchor row.
+    ///
+    /// It states the RULE rather than the switch position, because a bare
+    /// on/off cannot say which of two things wins: ✳ OVERRIDES OUTER means an
+    /// agent pane paints itself amber, ✳ FOLLOWS OUTER means it paints like
+    /// every other pane in the window. Only panes that follow outer are
+    /// affected either way — a pane wearing a theme it was given keeps it.
+    fn agent_tint_toggle(&self, sk: &skin::Skin, cx: &mut Context<Self>) -> gpui::Div {
+        let on = self.agent_tint;
+        let label = if on {
+            "\u{2733} OVERRIDES OUTER"
+        } else {
+            "\u{2733} FOLLOWS OUTER"
+        };
+        Self::bezel_btn(sk, label, on).on_mouse_down(
+            MouseButton::Left,
+            cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                // keep the panel/scrim from seeing this (no close)
+                cx.stop_propagation();
+                ws.toggle_agent_tint(cx);
+            }),
+        )
+    }
+
     fn activate_tab(&mut self, i: usize, window: &mut Window, cx: &mut Context<Self>) {
         if i < self.tabs.len() {
             self.active = i;
@@ -20146,8 +20331,8 @@ fn theme_icon_btn(th: &theme::Theme, icon: &str, label: &str, active: bool) -> g
                 .child(label.to_string()),
         );
     let b = div()
-        .w(px(46.))
-        .h(px(40.))
+        .w(px(TRAY_BTN_W))
+        .h(px(TRAY_BTN_H))
         .flex()
         .items_center()
         .justify_center()
@@ -20181,8 +20366,8 @@ fn color_mode_btn(th: &theme::Theme, icon: &str, caption: &str, active: bool) ->
         .child(div().text_size(px(15.)).child(icon.to_string()))
         .child(div().text_size(px(8.)).child(caption.to_string()));
     let b = div()
-        .w(px(58.))
-        .h(px(38.))
+        .w(px(TRAY_MODE_BTN_W))
+        .h(px(TRAY_MODE_BTN_H))
         .flex()
         .items_center()
         .justify_center()
@@ -20872,6 +21057,9 @@ impl Render for Workspace {
         // headless/test hook so the inverted read can be captured without a click
         // (read once, cached; checked here so it covers every Workspace path).
         pane::set_anchor_top(self.anchor_top || td_anchor_top_forced());
+        // Same publish, same reason: whether an inheriting pane wears the
+        // program's phosphor is a window-level decision a pane can't reach.
+        pane::set_agent_tint(self.agent_tint);
         let s = self.lang.strings();
         // A pane's OWN menus (⋯ overflow, right-click, BELL+ tray) are pane-local
         // state no workspace flag can see, so ask this tab's visible leaves —
@@ -22327,16 +22515,31 @@ impl Render for Workspace {
                 }
                 dyn_cols = dyn_cols.child(col);
             }
-            // The right-hand controls: seed wheel + text axes + the follow-outer
-            // toggle, stacked. A tiny scope hint replaces the old text title.
-            let mut controls = div()
+            // THE TRAY IS THREE COLUMNS, and the split is what makes it fit.
+            //
+            // It used to be two — the glyph column, then everything else stacked
+            // in one ~125px strip — and that strip outgrew the screen. The cap in
+            // `tray_max_h` is the terminal band, so the overflow did not spill: it
+            // scrolled, and ANCHOR plus the pass-down button sat below the fold
+            // where nobody scrolled to find them. A control you cannot see is a
+            // control you do not have, and adding AGENT THEME made it two.
+            //
+            // So the middle column takes the four PICKERS (what you press to
+            // choose a look) and the right column takes the WHEEL and the window
+            // RULES (what you drag, and what the window does with the result).
+            // Widening is what buys the height back: the same rows in a column
+            // half as tall, because each row now fits three buttons instead of
+            // two. Measured against the 46px DESIGN button: TRAY_PICKER_W is
+            // exactly three of them plus their gaps, so DESIGN wraps 3+3+1
+            // rather than 2+2+2+1, and SYNTAX wraps 3+2 rather than 2+2+1. The
+            // widths live at module scope so `tray_pickers_h` can assert the fit
+            // against the real inventory instead of against a number typed here.
+            let pickers = div()
                 .flex()
                 .flex_col()
                 .gap_2()
-                .flex_1()
-                // min-width 0 lets captions wrap inside the column instead of
-                // forcing the panel wider than its frame (the overflow bug).
-                .min_w(px(0.))
+                .flex_none()
+                .w(px(TRAY_PICKER_W))
                 .child(
                     div()
                         .text_size(px(8.5))
@@ -22358,17 +22561,27 @@ impl Render for Workspace {
                     d.child(hsep()).child(label("SKIN")).child(skin_row)
                 })
                 .child(hsep())
-                .child(label(t.t_wheel))
-                .child(div().flex().justify_center().py_1().child(wheel))
-                .child(div().flex().justify_center().child(lbar))
-                .child(div().flex().justify_center().pt_1().child(pick_row))
-                .child(seed_row)
-                .child(hsep())
                 .child(label(t.t_program))
                 .child(color_row)
                 .child(hsep())
                 .child(label(t.t_syntax))
                 .child(syntax_row);
+            // The right-hand column: the seed wheel and its text axes, then the
+            // rules the window applies to what you chose (appended below).
+            let mut controls = div()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .flex_none()
+                .w(px(TRAY_WHEEL_COL_W))
+                // min-width 0 lets captions wrap inside the column instead of
+                // forcing the panel wider than its frame (the overflow bug).
+                .min_w(px(0.))
+                .child(label(t.t_wheel))
+                .child(div().flex().justify_center().py_1().child(wheel))
+                .child(div().flex().justify_center().child(lbar))
+                .child(div().flex().justify_center().pt_1().child(pick_row))
+                .child(seed_row);
             // The anchor toggle is GLOBAL (not per-pane), so it shows only in the
             // OUTER design panel. A short ANCHOR label + the ⚓ TOP/BOTTOM ▲▼ pill.
             if !is_pane {
@@ -22383,6 +22596,16 @@ impl Render for Workspace {
                     format!("⤓ {} ({})", t.pass_down, stray)
                 };
                 controls = controls
+                    // AGENT THEME sits immediately above the pass-down button
+                    // because they are the two ends of one question: pass-down
+                    // decides which panes follow the window, and this decides
+                    // whether following the window actually means wearing it.
+                    // Heading is a literal for the same reason ANCHOR/SKIN are
+                    // (#406).
+                    .child(hsep())
+                    .child(label("AGENT THEME"))
+                    .child(div().flex().child(self.agent_tint_toggle(&sk, cx)))
+                    .child(hsep())
                     .child(label("ANCHOR"))
                     .child(div().flex().child(self.anchor_top_toggle(&sk, cx)))
                     .child(Self::bezel_btn(&sk, &lbl, stray > 0).on_mouse_down(
@@ -22415,15 +22638,20 @@ impl Render for Workspace {
             // the cursor, opening down-left like the global menu); clamp it fully
             // on-screen. The global/outer menu (menu_at == None) keeps its fixed
             // top-right anchor under the titlebar control.
-            const PANEL_W: f32 = 300.; // match the DISPLAY (⛭) tray width
-            const PANEL_H_EST: f32 = 458.; // generous, incl. colour wheel + pick row + follow-outer
+            // Width and open-height are computed at module scope from the column
+            // widths the render above uses, so a test can hold them against the
+            // real inventory. The tray no longer matches the DISPLAY (⛭) tray's
+            // 300 — that pairing was worth having while both were one stacked
+            // strip, and it is not worth a tray whose bottom rows you scroll to.
+            const PANEL_W: f32 = TRAY_PANEL_W;
+            let panel_h_est = tray_panel_h_est();
             let mut panel = div().id("theme-panel").absolute().w(px(PANEL_W));
             // Where the tray's top edge lands decides how tall it may be, so
             // the anchor is computed first and kept.
             let tray_top = match self.menu_at {
                 Some(at) => {
                     let vh = f32::from(window.viewport_size().height);
-                    (f32::from(at.y) + 6.).clamp(8., (vh - PANEL_H_EST - 8.).max(8.))
+                    (f32::from(at.y) + 6.).clamp(8., (vh - panel_h_est - 8.).max(8.))
                 }
                 None => 36.,
             };
@@ -22460,16 +22688,21 @@ impl Render for Workspace {
                     cx.listener(|_, _: &MouseDownEvent, _w, cx| cx.stop_propagation()),
                 )
                 // Left: the INVERT mode bar stacked ABOVE the vertical dynamics
-                // glyph column(s). A thin rule, then the right column: seed wheel +
-                // text axes + follow-outer (built above as `controls`).
+                // glyph column(s). Then the PICKERS (design · skin · program ·
+                // syntax), then the WHEEL and the window rules — each behind its
+                // own hairline. `flex_none` on all three: a column that shrinks
+                // re-wraps its buttons, and re-wrapping is how the tray got tall.
                 .child(
                     div()
                         .flex()
                         .flex_col()
+                        .flex_none()
                         .gap_2()
                         .child(invert_bar)
                         .child(dyn_cols),
                 )
+                .child(vsep())
+                .child(pickers)
                 .child(vsep())
                 .child(controls);
             // full-screen scrim: click anywhere outside closes
@@ -32525,6 +32758,88 @@ node = "Leaf"
         let old: StateFile =
             toml::from_str("active = 0\n[[tabs]]\nnode = \"Leaf\"\n").expect("loads old file");
         assert!(!old.anchor_top, "missing key defaults to the bottom anchor");
+    }
+
+    #[test]
+    fn agent_theme_preference_round_trips_and_defaults_to_following_outer() {
+        // Turning the coloured tubes back on survives a save/load …
+        let state = StateFile {
+            agent_tint: true,
+            ..Default::default()
+        };
+        let body = toml::to_string(&state).expect("serializes");
+        let back: StateFile = toml::from_str(&body).expect("round-trips");
+        assert!(back.agent_tint, "the AGENT THEME toggle persists");
+        // … and every session file written before this existed — which is all of
+        // them — loads as FOLLOWS OUTER. That is the behaviour change: the tint
+        // used to be unconditional, so absence has to mean off, not "as before".
+        let old: StateFile =
+            toml::from_str("active = 0\n[[tabs]]\nnode = \"Leaf\"\n").expect("loads old file");
+        assert!(
+            !old.agent_tint,
+            "a pre-feature session inherits its theme rather than wearing the program"
+        );
+    }
+
+    /// The design tray has to FIT — every control reachable without scrolling.
+    ///
+    /// Driven by the real inventory, which is the only thing that makes it a
+    /// gate rather than arithmetic agreeing with itself: adding a builtin theme,
+    /// a skin, a colour mode or a syntax grammar moves the estimate, and the
+    /// estimate has to stay inside the height the tray declares it may open at.
+    /// When this fails, the answer is another column or a wider one — not a
+    /// bigger `TRAY_PANEL_H_EST`, which only moves the fold.
+    #[test]
+    fn the_design_tray_fits_the_shortest_screen_it_promises() {
+        let cap = tray_cap((0., TRAY_FIT_BAND), 36.);
+        let tall = tray_panel_h_est();
+        assert!(
+            tall <= cap,
+            "the design tray's tallest column is {tall:.0}px against a {cap:.0}px band on the \
+             shortest screen it promises to fit — split a column or drop a section; raising \
+             TRAY_PANEL_H_EST only moves the fold back below the edge"
+        );
+        // The split is load-bearing: as ONE stacked strip the same inventory is
+        // past the band, which is the state this replaced.
+        let stacked = tray_pickers_h(
+            theme::picker_count(),
+            skin::picker_max_count(),
+            theme::ColorMode::ALL.len(),
+            theme::SyntaxScheme::ALL.len() + 1,
+        ) + tray_wheel_col_h(2, 1);
+        assert!(
+            stacked > cap,
+            "if one column fits again the split is dead weight — delete it deliberately, \
+             do not let it rot"
+        );
+    }
+
+    /// Each column is wide enough for what it has to hold.
+    ///
+    /// Deliberately NOT `TRAY_PANEL_W == the sum of its parts` — the panel width
+    /// is *defined* as that sum, so asserting it would be a tautology wearing a
+    /// test's clothes. These are the constraints the widths actually have to
+    /// satisfy, and the panel follows from them. The tray clips horizontally
+    /// (`overflow_x_hidden`), so a column too narrow for its content loses the
+    /// content silently, the same way the height loss hid ANCHOR.
+    #[test]
+    fn every_design_tray_column_holds_what_is_put_in_it() {
+        assert!(
+            tray_wrap_rows(theme::picker_count(), TRAY_BTN_W, TRAY_PICKER_W) <= 3,
+            "PICKERS must take three DESIGN buttons per row — two is the old tall tray"
+        );
+        assert!(
+            TRAY_WHEEL_COL_W >= TRAY_WHEEL_H,
+            "the WHEEL column has to hold the {TRAY_WHEEL_H}px wheel"
+        );
+        assert!(
+            TRAY_GLYPH_COL_W >= 2. * 40. + TRAY_GAP * 2. + TRAY_SEP,
+            "the glyph column holds two 40px colour-set columns and their rule"
+        );
+        assert!(
+            TRAY_GLYPH_COL_W >= TRAY_MODE_BTN_W + TRAY_GAP + 40.,
+            "…and the INVERT bar above them: a heading plus a mode button"
+        );
     }
 
     #[test]
