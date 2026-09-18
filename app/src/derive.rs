@@ -17,8 +17,24 @@
 //!            │
 //!            ├── AskUserQuestion with no result yet   →  question  (waiting)
 //!            ├── AskUserQuestion with a result        →  question  (answered)
+//!            ├── a ```td fenced block in its prose    →  whatever it declares
 //!            └── a "Deliverable:" line in its prose   →  artifact
 //! ```
+//!
+//! # The fence had to be read here, and was not
+//!
+//! The protocol has always advertised three transports — the MCP verb, a file
+//! drop, and a `td` fenced block — and the launch briefing offers all three to
+//! every agent it starts. Only two of them worked. `surfacefeed::fenced_blocks`
+//! had exactly one caller, the `terminal-delight surface` CLI, which reads
+//! *piped* prose; nothing watched an agent that simply printed a fence into its
+//! own terminal, which is the obvious reading of "print it in your reply".
+//!
+//! Found the first time a briefed agent was asked anything, on 2026-09-18: it
+//! wrote two flawless TDSP 0.3 responses, printed both as fenced blocks, and the
+//! bench beside it said `No responses yet`. The agent did everything right and
+//! the window dropped it on the floor. A transport named in the catalogue that
+//! silently does nothing is worse than one that was never offered.
 //!
 //! # Read the transcript, never the screen
 //!
@@ -59,6 +75,7 @@ pub fn from_transcript(path: &Path, now_ms: u64) -> Vec<Post> {
 pub fn from_jsonl(body: &str, now_ms: u64) -> Vec<Post> {
     let mut asked: Vec<Asked> = Vec::new();
     let mut deliverables: Vec<(String, String)> = Vec::new();
+    let mut fenced: Vec<Post> = Vec::new();
 
     for line in body.lines() {
         let Ok(v) = serde_json::from_str::<Value>(line.trim()) else {
@@ -90,6 +107,22 @@ pub fn from_jsonl(body: &str, now_ms: u64) -> Vec<Post> {
                 Some("text") if v.get("type").and_then(Value::as_str) == Some("assistant") => {
                     if let Some(text) = block.get("text").and_then(Value::as_str) {
                         deliverables.extend(deliverable_lines(text));
+                        // Lenient, exactly as the file transport is: nobody is
+                        // there to be told, and a payload that cannot be typed
+                        // becomes an `unclassified` carrying the reason rather
+                        // than vanishing. An agent that misspells a kind should
+                        // SEE that it misspelled a kind.
+                        for doc in crate::surfacefeed::fenced_blocks(text) {
+                            let mut post = crate::surface::parse_lenient(&doc, now_ms, "fenced");
+                            if let Some(s) = post.surface.as_mut() {
+                                s.origin = crate::surface::Origin::Derived;
+                            }
+                            // Later wins: a document re-presented under the same
+                            // id later in the session is an update, and taking
+                            // the first would pin the bench to a stale version.
+                            fenced.retain(|p: &Post| p.id != post.id);
+                            fenced.push(post);
+                        }
                     }
                 }
                 _ => {}
@@ -101,6 +134,12 @@ pub fn from_jsonl(body: &str, now_ms: u64) -> Vec<Post> {
     for a in asked {
         out.push(a.into_post(now_ms));
     }
+    // Every fence, not just the newest. This shelf is a FEED — the whole point
+    // of the overview is that a person can read back what the agent said — and
+    // the bench's own cap drops the oldest when there are too many. That is the
+    // opposite of the deliverable rule below, where six declarations of the
+    // same report are five superseded rows.
+    out.extend(fenced);
     // Only the most recent deliverable. An agent that has declared six over a
     // long session has superseded five of them, and a bench full of the same
     // report at six ages is a worse answer than one row that is current.
@@ -799,5 +838,105 @@ mod tests {
             kinds.contains(&"question") && kinds.contains(&"artifact"),
             "{kinds:?}"
         );
+    }
+
+    /// **The regression, taken off a live pane rather than imagined.**
+    ///
+    /// 2026-09-18, the first briefed agent ever asked anything: it answered in
+    /// prose and printed a TDSP response as a fenced block, exactly as the
+    /// briefing offers, and the bench beside it said `No responses yet`. The
+    /// text below is that shape. A transport the catalogue advertises must
+    /// actually carry something.
+    #[test]
+    fn a_td_fence_in_assistant_prose_becomes_a_surface() {
+        let text = "Received. If you're testing the workbench feed, this turn should land \
+                    as a response card.\n\n```td\n{\"td\":\"0.3\",\"kind\":\"response\",\
+                    \"title\":\"Test acknowledged\",\"model\":{\"tldr\":\"Got it.\",\
+                    \"asks\":[\"which test did you mean?\"]}}\n```\n";
+        let posts = from_jsonl(&assistant(json!([{ "type": "text", "text": text }])), NOW);
+        assert_eq!(posts.len(), 1, "one fence, one surface");
+        let s = posts[0].surface.as_ref().unwrap();
+        assert_eq!(s.kind.id(), "response");
+        assert_eq!(s.title, "Test acknowledged");
+        assert_eq!(
+            s.origin,
+            crate::surface::Origin::Derived,
+            "read from the agent's own record, not claimed by it"
+        );
+    }
+
+    /// Several responses in one session are a FEED, so all of them land — and a
+    /// document re-presented under the same id later is an update, so the later
+    /// one wins rather than the first.
+    #[test]
+    fn every_fence_lands_and_a_repeated_id_takes_its_latest_version() {
+        let fence = |id: &str, tldr: &str| {
+            format!(
+                "```td\n{{\"td\":\"0.3\",\"kind\":\"response\",\"id\":\"{id}\",\
+                 \"model\":{{\"tldr\":\"{tldr}\"}}}}\n```"
+            )
+        };
+        let body = format!(
+            "{}\n{}\n{}",
+            assistant(json!([{ "type": "text", "text": fence("a", "first") }])),
+            assistant(json!([{ "type": "text", "text": fence("b", "second") }])),
+            assistant(json!([{ "type": "text", "text": fence("a", "first, revised") }]))
+        );
+        let posts = from_jsonl(&body, NOW);
+        assert_eq!(posts.len(), 2, "two ids, whatever the repeat count");
+        let a = posts
+            .iter()
+            .find(|p| p.id.as_str() == "a")
+            .expect("id a")
+            .surface
+            .as_ref()
+            .unwrap();
+        assert_eq!(a.subtitle(), "first, revised", "the later version stands");
+    }
+
+    /// A fence the parser cannot type still lands, carrying the reason — the
+    /// same promise the file transport makes. An agent that misspells a kind
+    /// must be able to SEE that it misspelled a kind.
+    #[test]
+    fn a_fence_that_cannot_be_typed_lands_as_unclassified_rather_than_vanishing() {
+        let text = "```td\n{\"td\":\"0.3\",\"kind\":\"hologram\",\"title\":\"?\"}\n```";
+        let posts = from_jsonl(&assistant(json!([{ "type": "text", "text": text }])), NOW);
+        assert_eq!(posts.len(), 1);
+        let s = posts[0].surface.as_ref().unwrap();
+        assert_eq!(s.kind.id(), "unclassified");
+        assert!(s.subtitle().contains("hologram"), "{}", s.subtitle());
+    }
+
+    /// Prose that merely TALKS about the protocol is not a surface. The words
+    /// appear in every transcript on this machine, because the convention is in
+    /// the system prompt — that is exactly why `deliverable_lines` is anchored,
+    /// and the fence reader needs the same discipline.
+    #[test]
+    fn prose_about_fences_is_not_a_fence() {
+        for text in [
+            "Write it inside a fenced td block and it will land on the bench.",
+            "```json\n{\"td\":\"0.3\",\"kind\":\"response\"}\n```",
+            "```tdx\n{\"td\":\"0.3\",\"kind\":\"response\"}\n```",
+            "```td\n{\"td\":\"0.3\",\"kind\":\"response\",\"model\":{\"tldr\":\"unclosed\"}}",
+        ] {
+            assert!(
+                from_jsonl(&assistant(json!([{ "type": "text", "text": text }])), NOW).is_empty(),
+                "matched prose: {text}"
+            );
+        }
+    }
+
+    /// A fence in a USER turn is content, not the agent speaking. Parker pastes
+    /// protocol examples into agents constantly; every one of them would
+    /// otherwise become a card on the bench of whoever he pasted it to.
+    #[test]
+    fn a_fence_the_user_typed_is_not_the_agent_presenting() {
+        let text = "```td\n{\"td\":\"0.3\",\"kind\":\"response\",\"model\":{\"tldr\":\"x\"}}\n```";
+        let line = serde_json::to_string(&json!({
+            "type": "user",
+            "message": { "content": [{ "type": "text", "text": text }] }
+        }))
+        .unwrap();
+        assert!(from_jsonl(&line, NOW).is_empty());
     }
 }
