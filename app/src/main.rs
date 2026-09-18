@@ -10281,19 +10281,15 @@ impl Workspace {
     /// would have unfolded it on the way past: the opposite of maintaining
     /// visual state.
     ///
-    /// A walk with no live cursor STARTS on the active task — the press lands
-    /// the highlight there and moves nothing else. `activate_tab` drops the
-    /// cursor for exactly this reason, so the first press after switching tabs
-    /// always re-enters the tree where the person actually is instead of at the
-    /// top of a list they would then have to walk back down.
+    /// A walk with no live cursor steps OFF the active task, so every press
+    /// moves — including the first. `activate_tab` drops the cursor for exactly
+    /// this reason: the press after switching tabs re-enters the tree beside
+    /// where the person actually is, rather than at the top of a list they
+    /// would then have to walk back down, and rather than on the row they are
+    /// already sitting on. See [`tree::walk`].
     fn bar_walk(&mut self, down: bool, cx: &mut Context<Self>) {
         let rows = self.bar_rows(cx);
-        let to = match self.bar_live_cursor(&rows) {
-            Some(at) => tree::step(&rows, Some(at), down),
-            None => self
-                .bar_seed(&rows)
-                .or_else(|| tree::step(&rows, None, down)),
-        };
+        let to = tree::walk(&rows, self.bar_live_cursor(&rows), self.active, down);
         if let Some(to) = to {
             self.bar_cursor = Some(to);
             self.bar_reveal(&rows);
@@ -10308,8 +10304,8 @@ impl Workspace {
         self.bar_cursor.filter(|at| tree::stops(rows).contains(at))
     }
 
-    /// Where a fresh walk enters the tree: the active task's row (see
-    /// [`tree::seed`]).
+    /// Where a fresh gesture enters the tree: the active task's row. ↑/↓ step
+    /// off it, →/← land on it (see [`tree::seed`]).
     fn bar_seed(&self, rows: &[tree::Row]) -> Option<tree::RowId> {
         tree::seed(rows, self.active)
     }
@@ -13755,9 +13751,10 @@ impl Workspace {
             // ...and the tree must be open down to it, for the same reason.
             self.reveal_active_branch();
             // The keyboard cursor goes back to meaning "wherever you are": the
-            // next Ctrl+Alt+↑/↓ re-enters the tree on THIS task (`bar_seed`)
-            // rather than resuming from a highlight left behind somewhere else
-            // in the session, which is where a walk kept starting from.
+            // next Ctrl+Alt+↑/↓ re-enters the tree one row off THIS task
+            // (`bar_seed`, stepped by `tree::walk`) rather than resuming from a
+            // highlight left behind somewhere else in the session, which is
+            // where a walk kept starting from.
             self.bar_cursor = None;
             // Visiting the tab IS reading its finish badges: clear every
             // latched ✅/❌ in it. The focus-in edge alone can miss — a bell
