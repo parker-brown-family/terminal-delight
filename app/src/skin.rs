@@ -1717,11 +1717,16 @@ fn source_of(arg: &str, builtin: impl Fn(&str) -> Option<&'static str>) -> Resul
     fs::read_to_string(arg).map_err(|e| format!("{arg}: {e}"))
 }
 
-const SKIN_USAGE: &str =
-    "usage: terminal-delight skin [--list] [--skin <id|path>] [--theme <id|path>] [--scale <n>]\n\
+const SKIN_USAGE: &str = "usage: terminal-delight skin [--list] [--skin <id|path>] \
+     [--theme <id|path>] [--scale <n>] [--text-size <n>]\n\
 \n\
-  --list     the skins this build carries, and every way one gets chosen\n\
-  (default)  resolve a skin against a palette and print every token, as JSON\n\
+  --list        the skins this build carries, and every way one gets chosen\n\
+  (default)     resolve a skin against a palette and print every token, as JSON\n\
+\n\
+  --scale       the MENU-BAR dial (0.7..1.6, neutral 1.0) — sizes chrome\n\
+  --text-size   the TEXT-SIZE dial (0.6..2.0, neutral 1.0) — sizes the type ramp\n\
+                the workbench reads. This is the dial's own factor, NOT the\n\
+                percent the tray draws: a tray reading 65% is --text-size 1.51.\n\
 \n\
 To restyle a RUNNING window — no restart, no file editing:\n\
   terminal-delight ctl skin <name>     switch it now\n\
@@ -1799,6 +1804,10 @@ pub fn run_cli(args: &[String]) -> i32 {
     let mut skin_arg = "default".to_string();
     let mut theme_arg = "hacker".to_string();
     let mut scale = 1.0f32;
+    // Neutral, not zero: an unspecified gauge means "the ramp as authored",
+    // and a bench resolved at 0pt would print a table of zeroes that looks
+    // exactly like a real answer.
+    let mut text_size = 1.0f32;
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
@@ -1813,6 +1822,14 @@ pub fn run_cli(args: &[String]) -> i32 {
             "--scale" => match it.next().and_then(|v| v.parse().ok()) {
                 Some(v) => scale = v,
                 None => return usage_err("--scale wants a number"),
+            },
+            // The dial's own units, NOT the tray's percent. `--text-size 1.51`
+            // is what a tray reading 65% hands over; passing 0.65 here asks a
+            // different and much smaller question, which is the mistake this
+            // whole readout exists to make visible.
+            "--text-size" => match it.next().and_then(|v| v.parse().ok()) {
+                Some(v) => text_size = v,
+                None => return usage_err("--text-size wants a number"),
             },
             "--list" | "-l" => return list_skins(),
             "-h" | "--help" => {
@@ -1843,7 +1860,7 @@ pub fn run_cli(args: &[String]) -> i32 {
         eprintln!("terminal-delight skin: unknown {u}");
     }
 
-    let sk = spec.bake(&th, scale);
+    let sk = spec.bake(&th, scale).with_type(text_size);
     println!("{}", sk.to_json(&theme_arg));
     0
 }
@@ -1881,10 +1898,28 @@ impl Skin {
             })
             .collect::<Vec<_>>()
             .join(",\n");
+        // The TYPE ramp, resolved. Every rung at this skin's gauge, beside the
+        // base it came from — because the whole question a reader brings to
+        // this is "why is that label that size", and one number cannot answer
+        // it. Two can: the rung the renderer asked for, and what the dial did
+        // to it.
+        let ty = crate::workbench::Step::ALL
+            .iter()
+            .map(|s| {
+                format!(
+                    "    \"{}\": {{ \"base\": {:.2}, \"pt\": {:.2} }}",
+                    format!("{s:?}").to_lowercase(),
+                    s.base(),
+                    self.pt(*s)
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(",\n");
         format!(
-            "{{\n  \"skin\": \"{}\",\n  \"theme\": \"{theme_id}\",\n  \"scale\": {},\n  \"shape\": {{\n    \"corner\": \"{:?}\",\n    \"boundary\": \"{:?}\",\n    \"emphasis\": \"{:?}\",\n    \"divider\": \"{:?}\",\n    \"caps\": \"{:?}\",\n    \"shine\": \"{:?}\"\n  }},\n  \"ink\": {{\n{inks}\n  }},\n  \"metric\": {{\n{metrics}\n  }}\n}}",
+            "{{\n  \"skin\": \"{}\",\n  \"theme\": \"{theme_id}\",\n  \"scale\": {},\n  \"text_size\": {},\n  \"shape\": {{\n    \"corner\": \"{:?}\",\n    \"boundary\": \"{:?}\",\n    \"emphasis\": \"{:?}\",\n    \"divider\": \"{:?}\",\n    \"caps\": \"{:?}\",\n    \"shine\": \"{:?}\"\n  }},\n  \"ink\": {{\n{inks}\n  }},\n  \"metric\": {{\n{metrics}\n  }},\n  \"type\": {{\n{ty}\n  }}\n}}",
             self.name,
             self.scale,
+            self.ty.k(),
             self.shape.corner,
             self.shape.boundary,
             self.shape.emphasis,

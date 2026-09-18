@@ -252,7 +252,25 @@ impl TerminalView {
         if self.bench.face() != crate::workbench::Face::Workbench {
             return false;
         }
-        // The GALLERY first, and it takes every key.
+        // THE WINDOW'S CHORDS LEAVE FIRST, ahead of everything below — the
+        // gallery included.
+        //
+        // Every path out of this function ends in `cx.stop_propagation()`, so
+        // anything not declined here can never reach the workspace. That is
+        // what stranded `alt+w`, `alt+r`, the split chords and the directional
+        // focus keys on the workbench face: not a collision in any table, just
+        // this handler running first and keeping what it could not use (#524).
+        //
+        // Above the gallery rather than below it, because "the gallery takes
+        // every key" was a rule about NAVIGATION — an arrow falling through to
+        // a composer hidden behind the overlay — and the window's chords were
+        // never the gallery's to take. A plain arrow still reaches it:
+        // [`crate::workbench::window_chord`] answers only for the modified
+        // forms.
+        if crate::workbench::window_chord(ks.key.as_str(), ks.modifiers.alt, ks.modifiers.control) {
+            return false;
+        }
+        // The GALLERY next, and it takes every key.
         //
         // It is drawn over everything and it was opened by a deliberate
         // press, so attention is there — the arrows belong to it until it
@@ -373,11 +391,14 @@ impl TerminalView {
             }
             _ => None,
         };
-        let printable = ks
-            .key_char
-            .as_deref()
-            .filter(|c| !c.is_empty() && !c.chars().any(char::is_control))
-            .is_some();
+        // A modified keystroke is not a character, however gpui fills its
+        // `key_char` — see [`crate::workbench::types_a_character`].
+        let printable = crate::workbench::types_a_character(
+            ks.key_char.as_deref(),
+            ks.modifiers.alt,
+            ks.modifiers.control,
+            ks.modifiers.platform,
+        );
         match crate::workbench::reading_key(ks.key.as_str(), printable, answerable) {
             crate::workbench::Reading::Down => {
                 self.bench.step(1);
