@@ -32814,21 +32814,31 @@ node = "Leaf"
         );
     }
 
-    /// The panel is as wide as the three columns it holds. Derived rather than
-    /// typed, so widening a column cannot silently clip the one beside it.
+    /// Each column is wide enough for what it has to hold.
+    ///
+    /// Deliberately NOT `TRAY_PANEL_W == the sum of its parts` — the panel width
+    /// is *defined* as that sum, so asserting it would be a tautology wearing a
+    /// test's clothes. These are the constraints the widths actually have to
+    /// satisfy, and the panel follows from them. The tray clips horizontally
+    /// (`overflow_x_hidden`), so a column too narrow for its content loses the
+    /// content silently, the same way the height loss hid ANCHOR.
     #[test]
-    fn the_design_tray_is_as_wide_as_its_three_columns() {
-        let columns = TRAY_GLYPH_COL_W + TRAY_PICKER_W + TRAY_WHEEL_COL_W;
-        let chrome = 2. * TRAY_PAD + 2. * TRAY_SEP + 4. * TRAY_COL_GAP;
-        assert_eq!(TRAY_PANEL_W, columns + chrome);
+    fn every_design_tray_column_holds_what_is_put_in_it() {
         assert!(
-            TRAY_PICKER_W >= 3. * TRAY_BTN_W + 2. * TRAY_GAP,
+            tray_wrap_rows(theme::picker_count(), TRAY_BTN_W, TRAY_PICKER_W) <= 3,
             "PICKERS must take three DESIGN buttons per row — two is the old tall tray"
         );
-        assert_eq!(
-            tray_wrap_rows(theme::picker_count(), TRAY_BTN_W, TRAY_PICKER_W),
-            3,
-            "seven themes wrap 3+3+1"
+        assert!(
+            TRAY_WHEEL_COL_W >= TRAY_WHEEL_H,
+            "the WHEEL column has to hold the {TRAY_WHEEL_H}px wheel"
+        );
+        assert!(
+            TRAY_GLYPH_COL_W >= 2. * 40. + TRAY_GAP * 2. + TRAY_SEP,
+            "the glyph column holds two 40px colour-set columns and their rule"
+        );
+        assert!(
+            TRAY_GLYPH_COL_W >= TRAY_MODE_BTN_W + TRAY_GAP + 40.,
+            "…and the INVERT bar above them: a heading plus a mode button"
         );
     }
 
