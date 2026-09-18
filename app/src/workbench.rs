@@ -617,6 +617,20 @@ pub struct Reviewed {
 /// stops there, and the way out of a pane that is waiting on you is the TERM
 /// chip — a deliberate move rather than the same key you have been dismissing
 /// things with.
+///
+/// **THE BENCH ITSELF IS THE SAME KIND OF FLOOR, for every card and none.** The
+/// ladder used to have one more rung under all of this: with nothing left to
+/// dismiss, escape flipped the pane to the terminal. That made the workbench a
+/// thing you were *inside* rather than a surface you were *on*, and it is the
+/// one behaviour no other base surface on this desk has — escape does not take
+/// a text editor out of its buffer or a browser out of its page. Parker: *"the
+/// workbench is considered a base work surface, so Escape should not escape me
+/// out of it."*
+///
+/// [`Peel::Face`] is therefore deleted rather than made unreachable. An enum
+/// variant nothing returns is a trap for the next reader, who has to run the
+/// function to find out it is dead; deleting it makes the compiler say so.
+/// The ways out of the bench are alt+k and the TERM chip, both deliberate.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Peel {
     /// The review gallery, drawn over everything.
@@ -625,9 +639,8 @@ pub enum Peel {
     Typing,
     /// The opened card — but only when it is not holding a live question.
     Card,
-    /// Back to the terminal face.
-    Face,
-    /// Nothing, because what is left is a question waiting on a person.
+    /// Nothing: either a question is waiting on a person, or the bench itself
+    /// is all that is left and the bench is not something escape leaves.
     Nothing,
 }
 
@@ -646,7 +659,9 @@ pub fn peel(gallery: bool, typing: bool, card_open: bool, card_waits: bool) -> P
             Peel::Card
         };
     }
-    Peel::Face
+    // The other floor, and the reason this function no longer has a fourth
+    // rung: a bench with nothing on it is still the surface you are working on.
+    Peel::Nothing
 }
 
 /// A gesture the bench can take from a click.
@@ -3420,12 +3435,25 @@ mod tests {
         // An ANSWERED card is a record, and a record closes like anything
         // else.
         assert_eq!(peel(false, false, true, false), Peel::Card);
+    }
 
-        // Nothing open: back to the terminal, as before.
-        assert_eq!(peel(false, false, false, false), Peel::Face);
+    /// The bench is a base surface, and escape does not leave one.
+    ///
+    /// This test FAILED before the change that added it: both rows answered
+    /// `Peel::Face`, which flipped the pane to the terminal. Run it against the
+    /// parent commit to see that — a table test whose rows were written after
+    /// the table proves nothing, and these two are a single enum comparison,
+    /// which is exactly the shape that silently tests nothing.
+    #[test]
+    fn escape_with_nothing_left_stays_on_the_bench() {
+        assert_eq!(
+            peel(false, false, false, false),
+            Peel::Nothing,
+            "a quiet bench is still the surface you are on"
+        );
         assert_eq!(
             peel(false, false, false, true),
-            Peel::Face,
+            Peel::Nothing,
             "a waiting question with no card open is on the rail, not under escape"
         );
     }

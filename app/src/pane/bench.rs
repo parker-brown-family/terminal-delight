@@ -327,11 +327,11 @@ impl TerminalView {
                     self.bench.close_card();
                     cx.notify();
                 }
-                Peel::Face => self.set_face(crate::workbench::Face::Terminal, cx),
-                // Deliberately nothing. The TERM chip is the way out of a
-                // pane that is waiting on you, because leaving should be a
-                // move a person makes rather than the same key they have
-                // been dismissing overlays with.
+                // Deliberately nothing, for both floors: a question waiting on
+                // a person, and a bench with nothing left on it. alt+k and the
+                // TERM chip are the ways out, because leaving should be a move
+                // a person makes rather than the same key they have been
+                // dismissing overlays with.
                 Peel::Nothing => {}
             }
             cx.stop_propagation();

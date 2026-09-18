@@ -4448,6 +4448,40 @@ impl TerminalView {
             cx.stop_propagation();
             return;
         }
+        // PAINT mode owns the keyboard while it is up — it is the topmost
+        // surface across ALL panes at once, so nothing it handles may reach the
+        // PTY underneath (an ESC byte into a running agent kills it; a stray
+        // `w` lands in someone's shell).
+        //
+        // Only the FOCUSED pane runs this handler, which is what makes "the
+        // letter paints the selected terminal" true without any selection state
+        // to keep: the spotlight in the overlay and the focus this handler
+        // rides are the same fact.
+        //
+        // AHEAD OF THE BENCH, and that ordering is the whole of #531. This
+        // block used to sit BELOW `bench_key`, which consumes every escape on
+        // the workbench face and ends in `stop_propagation` — so with the paint
+        // cards up over a pane showing its bench, the first press flipped that
+        // pane to the terminal and left the overlay standing. The comment above
+        // already claimed paint owned the keyboard; only the line order
+        // disagreed. Parker: *"pressing escape a single time should always
+        // target that overlay"*. Same shape as #524, where `bench_key` kept the
+        // window's alt chords for the same reason: a handler that runs early
+        // and keeps a key it cannot use.
+        //
+        // Nothing moves on the terminal face, where `bench_key` declines
+        // immediately — guarded by
+        // `paint_mode_is_consulted_before_the_bench_can_swallow_a_key`.
+        if theme::paint_mode(cx) {
+            match self.paint_key(ks, cx) {
+                PaintKey::Took => {
+                    cx.stop_propagation();
+                    return;
+                }
+                PaintKey::Bubble => return,
+                PaintKey::Pass => {}
+            }
+        }
         // ── the WORKBENCH face owns the keyboard, in one of two modes ───────
         //
         // READING: arrows walk the rail, digits answer a question, enter takes
@@ -4470,25 +4504,6 @@ impl TerminalView {
         // turn and a person leaving a text box does not mean that.
         if self.bench_key(ks, cx) {
             return;
-        }
-        // PAINT mode owns the keyboard while it is up — it is the topmost
-        // surface across ALL panes at once, so nothing it handles may reach the
-        // PTY underneath (an ESC byte into a running agent kills it; a stray
-        // `w` lands in someone's shell).
-        //
-        // Only the FOCUSED pane runs this handler, which is what makes "the
-        // letter paints the selected terminal" true without any selection state
-        // to keep: the spotlight in the overlay and the focus this handler
-        // rides are the same fact.
-        if theme::paint_mode(cx) {
-            match self.paint_key(ks, cx) {
-                PaintKey::Took => {
-                    cx.stop_propagation();
-                    return;
-                }
-                PaintKey::Bubble => return,
-                PaintKey::Pass => {}
-            }
         }
         // Escape closes the right-click menu before anything else.
         if self.ctx_menu.is_some() && ks.key.as_str() == "escape" {
@@ -8232,6 +8247,51 @@ mod tests {
         );
     }
 
+    /// PAINT mode is asked BEFORE the bench can swallow a key.
+    ///
+    /// The sibling of the test above, and the same bug class caught a second
+    /// time. Paint is drawn over every pane in the window at once, so it
+    /// outranks anything one pane owns — but it was tested eleven lines BELOW
+    /// `bench_key`, which consumes every escape on the workbench face and then
+    /// stops propagation. One press flipped the pane's face; the overlay stayed
+    /// up; the second press folded it. Reordering two correct blocks compiles
+    /// and passes every behavioural test in this suite, so the only thing that
+    /// catches a regression here is reading the order back out of the source.
+    ///
+    /// Mutation-tested: swapping the two blocks back fails this test, and
+    /// deleting the paint block fails it on the `expect`.
+    #[test]
+    fn paint_mode_is_consulted_before_the_bench_can_swallow_a_key() {
+        let src = include_str!("pane.rs");
+        let (code, _tests) = src
+            .split_once("#[cfg(test)]")
+            .unwrap_or((src, "no test module yet"));
+        let at = code
+            .find("fn on_key(&mut self, ev: &KeyDownEvent")
+            .expect("TerminalView::on_key");
+        let end = code[at..].find("\n    }\n").expect("end of on_key") + at;
+        // Comments stripped, for the reason the test above gives at length:
+        // both blocks are documented in prose that names the other one.
+        let body: String = code[at..end]
+            .lines()
+            .map(|l| l.split("//").next().unwrap_or(""))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let paint = body
+            .find("theme::paint_mode(cx)")
+            .expect("on_key no longer consults paint mode at all");
+        let bench = body
+            .find("self.bench_key(ks, cx)")
+            .expect("on_key no longer calls bench_key, which would be a bigger change");
+        assert!(
+            paint < bench,
+            "the bench takes escape before paint mode is asked for it — with the paint \
+             cards up over a pane showing its bench, one press flips the face and leaves \
+             the overlay standing (#531)"
+        );
+    }
+
     use super::*;
 
     /// A single styled run of `len` bytes (style irrelevant to wrap geometry).
@@ -9866,13 +9926,29 @@ mod tests {
         // chord this handler declined would never reach the Workspace. So the
         // assertion is not "no stop_propagation" — that would reject the
         // correct F1 fix — but "every stop_propagation returns".
+        //
+        // COMMENTS ARE STRIPPED FIRST, as in every other source scan here. This
+        // test did not strip them and failed on prose the moment a comment in
+        // `on_key` explained what another handler does — a sentence naming the
+        // call, with no `return` in the sixty characters after it. Its sibling
+        // `the_bench_declines_a_window_chord_before_it_can_swallow_one` had
+        // already been bitten by exactly this and already carries the fix; the
+        // rule is the one written there, that a scan which cannot tell code
+        // from a description of code fails at whatever is best documented. The
+        // assertion itself is unchanged, and it still fails on a bare
+        // `cx.stop_propagation();` with no return — mutation-tested.
         let src = include_str!("pane.rs");
         let at = src
             .find("fn on_key(&mut self, ev: &KeyDownEvent")
             .expect("TerminalView::on_key");
         let body = &src[at..];
         let end = body.find("\n    }\n").expect("end of on_key");
-        let body = &body[..end];
+        let body: String = body[..end]
+            .lines()
+            .map(|l| l.split("//").next().unwrap_or(""))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let body = body.as_str();
         for (i, _) in body.match_indices("stop_propagation") {
             let tail = &body[i..(i + 120).min(body.len())];
             assert!(
