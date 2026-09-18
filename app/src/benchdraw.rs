@@ -1722,11 +1722,17 @@ fn verdict_word(v: Verdict) -> &'static str {
 /// happening here*: a dot in the state's colour, the state in sentence case,
 /// and whatever tool is running beside it. Urgent states earn the phosphor,
 /// the same way the head of the rail does and for the same reason.
+/// `trailing` is the strip's right-hand run — the dials and the verb — built by
+/// the caller because each of them carries a click zone, and a zone is a
+/// decision about what a press MEANS. This renderer takes them already made and
+/// puts them where they go; see the test that asserts this file contains no
+/// decisions.
 pub fn title_card(
     state: crate::workbench::AgentState,
     in_state_ms: u64,
     vitals: Option<&crate::workbench::TurnVitals>,
     tool: Option<&str>,
+    trailing: Vec<Div>,
     sk: &Skin,
     th: &Theme,
 ) -> Div {
@@ -1858,6 +1864,118 @@ pub fn title_card(
     .when_some(tool.map(str::to_string), |d, t| {
         d.child(micro(t, Step::Fine, th.faint, sk, th))
     })
+    // THE SLOT. It has been here since the bar became one line — a spacer
+    // above whose only job is pushing a trailing element to the right edge —
+    // and nothing had ever been put in it, on a bar that is empty across most
+    // of its width at any ordinary pane size.
+    .children(trailing)
+}
+
+/// One of the strip's dials: what the agent was told, and a way to change it.
+///
+/// `value` is [`None`] when nobody has told this pane anything, and it draws
+/// the dial's own `?` word rather than a plausible default — see
+/// [`crate::workbench::Dial::unknown`]. `live` is whether a press would be read
+/// now; a dial that cannot be pressed says so by going quiet rather than by
+/// disappearing, because a control that vanishes and returns is one nobody
+/// learns the position of.
+pub fn dial(
+    which: crate::workbench::Dial,
+    value: Option<&str>,
+    open: bool,
+    live: bool,
+    sk: &Skin,
+    th: &Theme,
+) -> Div {
+    let known = value.is_some();
+    let text = value.unwrap_or_else(|| which.unknown());
+    sk.chip(open)
+        .flex()
+        .flex_row()
+        .items_center()
+        .flex_none()
+        .gap(px(sk.tpx(5.)))
+        .when(live, |d| d.cursor_pointer())
+        .text_size(px(sk.pt(Step::Note)))
+        // Three inks for three states, and the middle one is the point: a
+        // value we were told reads as text, a value nobody has given reads as
+        // faint, and neither of them reads as the other.
+        .text_color(match (live, known) {
+            (false, _) => th.faint.alpha(0.45),
+            (true, true) => th.text.alpha(0.88),
+            (true, false) => th.faint,
+        })
+        .child(text.to_string())
+        .child(
+            div()
+                .text_size(px(sk.pt(Step::Tag)))
+                .text_color(th.faint.alpha(if live { 0.9 } else { 0.35 }))
+                .child("\u{25be}"),
+        )
+}
+
+/// The list a dial opens: the harness's own values, the current one lit.
+///
+/// Drawn as a column of rows rather than a native menu because the bench is
+/// under the tube and every press on it resolves through the un-bent hit test —
+/// a platform menu would be hit-tested flat and land on the wrong row under any
+/// real curvature.
+pub fn dial_menu(rows: Vec<Div>, sk: &Skin, th: &Theme) -> Div {
+    raised(
+        sk.panel()
+            .flex()
+            .flex_col()
+            .gap(px(2.))
+            .p(px(5.))
+            .bg(th.surface),
+        th.accent,
+        th,
+    )
+    .children(rows)
+}
+
+/// One value in an open dial's list. `lit` is the value the dial is showing.
+pub fn dial_row(label: &str, lit: bool, sk: &Skin, th: &Theme) -> Div {
+    sk.chip(lit)
+        .relative()
+        .flex()
+        .flex_row()
+        .items_center()
+        .cursor_pointer()
+        .whitespace_nowrap()
+        .text_size(px(sk.pt(Step::Note)))
+        .text_color(if lit { th.accent } else { th.text.alpha(0.85) })
+        .child(label.to_string())
+}
+
+/// The strip's trailing verb: end the agent that is here, or start the next.
+///
+/// `primary` is the launch — the one that offers something rather than taking
+/// something away, and the only one on an ended pane, so it can afford the
+/// glow. END is deliberately quiet: a destructive control that shouts is one
+/// people press by accident, and this one is beside a dial.
+pub fn strip_button(label: &str, glyph: &str, primary: bool, sk: &Skin, th: &Theme) -> Div {
+    let el = sk
+        .chip(primary)
+        .flex()
+        .flex_row()
+        .items_center()
+        .flex_none()
+        .gap(px(sk.tpx(5.)))
+        .cursor_pointer()
+        .text_size(px(sk.pt(Step::Note)))
+        .text_color(if primary {
+            th.human
+        } else {
+            th.faint.alpha(0.9)
+        })
+        .child(glyph.to_string())
+        .child(sk.caps(label));
+    if primary {
+        aglow(el, th.human, th)
+    } else {
+        el
+    }
 }
 
 /// Dress an answer as a button: always a button, coloured by what it is.

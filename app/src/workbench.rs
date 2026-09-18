@@ -692,6 +692,13 @@ pub enum Hit {
     CloseCard,
     /// The launcher, on a shell pane's empty bench.
     Launch,
+    /// End the agent running in this pane, from the strip.
+    EndAgent,
+    /// Open one of the strip's dials, or close it if it is the open one.
+    Dial(Dial),
+    /// Take the nth value from the open dial's list — indexed as the harness's
+    /// own list orders it, so the press and the flag cannot disagree.
+    DialPick(Dial, usize),
     /// The composer's text box: arm it, or move the caret.
     Composer,
     /// The body beneath the composer: arm the line.
@@ -728,6 +735,49 @@ impl Hit {
     }
 }
 
+/// Which of the AGENT strip's two dials.
+///
+/// The strip is the one place a running agent's model and effort can be
+/// changed without leaving the bench for the terminal. Two dials rather than
+/// one because they are independent: `claude --help` at 2.1.274 offers all five
+/// effort levels for every model, and the one refusal the bundle carries —
+/// *"is session-scoped and won't reach the remote process"* — is about cloud
+/// sessions, which this window does not launch.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Dial {
+    Model,
+    Effort,
+}
+
+impl Dial {
+    /// The word on the dial when it has no value to show.
+    ///
+    /// **Not a default, and that is the whole point.** Nothing can read the
+    /// model out of a running process: the strip knows what the launcher passed
+    /// and what it has itself set since, and an agent somebody started by hand
+    /// in a terminal is neither. Showing `opus` there would be inventing a fact
+    /// about what is being billed and how hard it is thinking.
+    pub fn unknown(self) -> &'static str {
+        match self {
+            Dial::Model => "model \u{003f}",
+            Dial::Effort => "effort \u{003f}",
+        }
+    }
+
+    /// The harness's own command for setting this dial, which a press types.
+    ///
+    /// Both exist in the installed Claude Code (2.1.274) and both take an
+    /// inline argument — the bundle carries `"/model, /effort"`,
+    /// `argumentHint:"[model]"`, and its own help line *"`/effort` controls how
+    /// long Claude thinks before answering"*.
+    pub fn command(self) -> &'static str {
+        match self {
+            Dial::Model => "/model",
+            Dial::Effort => "/effort",
+        }
+    }
+}
+
 /// What the pointer looks like over the bench.
 ///
 /// Decided from the UN-BENT position, like a click, so the hand appears over
@@ -747,6 +797,8 @@ pub enum Pointer {
 pub enum Wheel {
     /// The composer's draft, by the delta.
     Composer,
+    /// The card in the body, when one is on it.
+    Card,
     /// The agent's scrollback, when the mirror is showing.
     Mirror,
     /// Nothing — and the turn is consumed, so nothing under the bench moves
@@ -756,16 +808,31 @@ pub enum Wheel {
 
 /// Where a wheel turn goes, given what the UN-BENT pointer is over.
 ///
-/// The composer takes the wheel when the pointer is on it. Otherwise the
-/// mirror takes it if the mirror is showing — it is the agent's own
-/// scrollback, and scrolling it is what the wheel did on the bench before
-/// there was a composer. Otherwise nothing, and the turn is consumed rather
-/// than handed back to gpui, because gpui would hit-test it FLAT and scroll
-/// the composer while the eye is on the card above it — the same
-/// displacement clicks already un-bend. See [`unwarp`].
-pub fn wheel_target(over: Option<&Hit>, mirror: bool) -> Wheel {
+/// The composer takes the wheel when the pointer is on it. Otherwise the CARD
+/// takes it when there is one, because a card taller than the pane is the
+/// commonest thing on this surface and until this arm existed **nothing could
+/// reach what it clipped** — the body was `overflow_hidden` and every turn
+/// over it landed here as `Nothing`. Parker, on a response card cut off by the
+/// composer: *"the bottom of this element is cut off. It should be, if not
+/// scrollable, then broken into separate elements that are then collapsible."*
+/// It was already collapsible, and that is exactly why collapsing is not the
+/// answer: the folds were in the screenshot and one unfoldable section can be
+/// taller than the pane on its own.
+///
+/// Otherwise the mirror, if it is showing — the agent's own scrollback, which
+/// is what the wheel did on the bench before there was a composer. Otherwise
+/// nothing, and the turn is consumed rather than handed back to gpui, because
+/// gpui would hit-test it FLAT and scroll the composer while the eye is on the
+/// card above it — the same displacement clicks already un-bend. See
+/// [`unwarp`].
+///
+/// `card` and `mirror` cannot both be true today (the mirror is drawn in the
+/// arm that has no card), and the order here says which would win if that ever
+/// changed: the thing a person is reading beats the debug flag.
+pub fn wheel_target(over: Option<&Hit>, card: bool, mirror: bool) -> Wheel {
     match over {
         Some(Hit::Composer) => Wheel::Composer,
+        _ if card => Wheel::Card,
         _ if mirror => Wheel::Mirror,
         _ => Wheel::Nothing,
     }
@@ -1313,13 +1380,81 @@ pub enum Anchor {
 /// An offer never can: it is three short lines by construction.
 ///
 /// A card OVER an offer is a card, and anchors like one.
-pub fn body_anchor(card_open: bool, offering: bool) -> Anchor {
-    if card_open {
+///
+/// `card` is whether a card is IN the body — not whether a person opened one.
+/// Those were the same question until the overview learned to stand the newest
+/// reply in the room without anybody opening it, and then they were not: the
+/// stand-in is a card, reads from the top like a card, and was being bottom-
+/// anchored because nothing had selected it. Bottom-anchoring is for the
+/// conversation and for nothing else, and it matters twice over now that the
+/// body scrolls — a `justify_end` scroll container cannot be scrolled to its
+/// own top, which is the trap the composer already carries a paragraph about.
+///
+/// The two branches arrived at this function from opposite ends and the merge
+/// keeps both: `card` is the branch's widened question, and an offer still gets
+/// `Eye` rather than `Top`. Folding them the branch's way — `card || offering`
+/// — would have left the `else if offering` arm below unreachable, which is the
+/// same defect in the other direction: an arm nobody can reach says the offer
+/// was never given a home.
+pub fn body_anchor(card: bool, offering: bool) -> Anchor {
+    if card {
         Anchor::Top
     } else if offering {
         Anchor::Eye
     } else {
         Anchor::Bottom
+    }
+}
+
+/// Whether the strip's dials can be pressed in this state.
+///
+/// A dial press types a slash command, and a slash command typed mid-turn does
+/// not take effect mid-turn: it sits in the harness's own line editor and fires
+/// whenever the turn happens to end. So the change would land at a moment
+/// nobody chose, on a turn nobody meant it for — which is worse than a control
+/// that plainly cannot be pressed yet.
+///
+/// `Reading` is grey for a sharper reason than `Working`: the bench has just
+/// written into that terminal and the agent has not moved, so a second write is
+/// two strings interleaving in one line editor.
+///
+/// `Exited` is grey because there is nothing there to tell.
+pub fn dials_live(state: AgentState) -> bool {
+    match state {
+        AgentState::Idle | AgentState::Done | AgentState::Asking | AgentState::Blocked => true,
+        AgentState::Working | AgentState::Reading | AgentState::Exited => false,
+    }
+}
+
+/// What the strip's trailing verb offers.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum StripVerb {
+    /// End the agent that is in this pane.
+    End,
+    /// Start one, because the pane has an agent-shaped hole in it.
+    Launch,
+}
+
+/// The verb for a pane that has an agent, or had one.
+///
+/// One slot, two states, and the second is the one that did not exist: a pane
+/// whose agent has gone still reads as an agent pane — it has the surfaces, the
+/// history and the strip — and until now the only way to start another in it
+/// was to close the pane. Parker: *"if we do end an agent session from the
+/// workbench, then we want to be able to start a new session from the workbench
+/// as well."*
+///
+/// `agent_present` is whether a conversational agent is in the pane RIGHT NOW,
+/// which is a different question from what the bench's status ladder says.
+/// An agent that exits cleanly demotes the pane to a shell and the ladder goes
+/// on describing the last thing it saw; an agent whose whole pane died reads
+/// `Exited`. Both mean the same thing here — there is no agent to end, and the
+/// only useful verb is the one that starts another.
+pub fn strip_verb(state: AgentState, agent_present: bool) -> StripVerb {
+    if !agent_present || state == AgentState::Exited {
+        StripVerb::Launch
+    } else {
+        StripVerb::End
     }
 }
 
@@ -2037,6 +2172,17 @@ impl Bench {
         self.rail_wanted = !self.rail_wanted;
     }
 
+    /// Whether this bench holds no surfaces at all.
+    ///
+    /// **Nothing reads this, and that is on purpose.** Its one caller was the
+    /// condition deciding whether to offer `LAUNCH AGENT`, and asking a bench
+    /// whether it is empty is the wrong question for that: an agent's surfaces
+    /// outlive the agent, so the pane that had actually run one was the pane
+    /// that could never start another. It is kept because "is there anything on
+    /// this bench" is a reasonable thing to ask — but a caller reaching for it
+    /// to decide something about the agent's PRESENCE should stop and ask that
+    /// instead.
+    #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
         self.surfaces.is_empty()
     }
@@ -3636,17 +3782,50 @@ mod tests {
     #[test]
     fn a_wheel_over_the_composer_moves_the_composer_and_elsewhere_moves_only_the_mirror() {
         // The composer wins whether or not a mirror is showing.
-        assert_eq!(wheel_target(Some(&Hit::Composer), false), Wheel::Composer);
-        assert_eq!(wheel_target(Some(&Hit::Composer), true), Wheel::Composer);
+        assert_eq!(
+            wheel_target(Some(&Hit::Composer), false, false),
+            Wheel::Composer
+        );
+        assert_eq!(
+            wheel_target(Some(&Hit::Composer), false, true),
+            Wheel::Composer
+        );
         // Off the composer with the mirror showing: the mirror, whatever zone
         // the body records there.
-        assert_eq!(wheel_target(Some(&Hit::Arm), true), Wheel::Mirror);
-        assert_eq!(wheel_target(None, true), Wheel::Mirror);
-        // Off the composer with no mirror: nothing moves — and the turn is
-        // consumed, so the flat hit-test underneath never sees it.
-        assert_eq!(wheel_target(Some(&Hit::Arm), false), Wheel::Nothing);
-        assert_eq!(wheel_target(Some(&Hit::Choose(1)), false), Wheel::Nothing);
-        assert_eq!(wheel_target(None, false), Wheel::Nothing);
+        assert_eq!(wheel_target(Some(&Hit::Arm), false, true), Wheel::Mirror);
+        assert_eq!(wheel_target(None, false, true), Wheel::Mirror);
+        // Off the composer with no mirror and no card: nothing moves — and the
+        // turn is consumed, so the flat hit-test underneath never sees it.
+        assert_eq!(wheel_target(Some(&Hit::Arm), false, false), Wheel::Nothing);
+        assert_eq!(
+            wheel_target(Some(&Hit::Choose(1)), false, false),
+            Wheel::Nothing
+        );
+        assert_eq!(wheel_target(None, false, false), Wheel::Nothing);
+    }
+
+    /// The arm that did not exist, which is why a card taller than its pane
+    /// could be clipped with no gesture able to reach the rest of it.
+    #[test]
+    fn a_wheel_over_a_card_moves_the_card() {
+        // The body's own zone is `Arm` — the whole body arms the composer — so
+        // this is the zone a turn over a card actually lands on, and it used to
+        // resolve to `Nothing`.
+        assert_eq!(wheel_target(Some(&Hit::Arm), true, false), Wheel::Card);
+        assert_eq!(wheel_target(None, true, false), Wheel::Card);
+        // The composer still wins over the card it sits under: the pointer is
+        // the thing that decides, not which is more interesting.
+        assert_eq!(
+            wheel_target(Some(&Hit::Composer), true, false),
+            Wheel::Composer
+        );
+        // A card beats the mirror. The two cannot both be up today — the
+        // mirror is drawn in the arm that has no card — so this pins the order
+        // rather than describing a screen that exists.
+        assert_eq!(wheel_target(Some(&Hit::Arm), true, true), Wheel::Card);
+        // And with no card the old answer is unchanged, which is the half a
+        // regression would break silently.
+        assert_eq!(wheel_target(Some(&Hit::Arm), false, true), Wheel::Mirror);
     }
 
     #[test]
@@ -4139,6 +4318,68 @@ mod tests {
             Anchor::Bottom,
             "a conversation still sits on its composer"
         );
+    }
+
+    /// The dials are grey for exactly the states where a press would land on a
+    /// turn nobody meant it for.
+    #[test]
+    fn a_dial_is_pressable_only_when_a_keystroke_would_be_read_now() {
+        for live in [
+            AgentState::Idle,
+            AgentState::Done,
+            AgentState::Asking,
+            AgentState::Blocked,
+        ] {
+            assert!(dials_live(live), "{live:?} is a state a person can type in");
+        }
+        for grey in [AgentState::Working, AgentState::Reading, AgentState::Exited] {
+            assert!(!dials_live(grey), "{grey:?} must not take a press");
+        }
+    }
+
+    /// One slot, two verbs, and the second is the one that did not exist.
+    #[test]
+    fn the_strips_verb_ends_a_live_agent_and_starts_the_next_one() {
+        assert_eq!(
+            strip_verb(AgentState::Exited, true),
+            StripVerb::Launch,
+            "a dead pane has nothing to end"
+        );
+        // Every other state has something to end — including Blocked and
+        // Reading, which are exactly the states a person reaches for this in.
+        for live in [
+            AgentState::Idle,
+            AgentState::Done,
+            AgentState::Asking,
+            AgentState::Blocked,
+            AgentState::Working,
+            AgentState::Reading,
+        ] {
+            assert_eq!(strip_verb(live, true), StripVerb::End, "{live:?}");
+        }
+    }
+
+    /// The case the whole second half of the ask is about: the agent quit
+    /// cleanly, so the pane is a shell again and the ladder still reads Idle.
+    /// Nothing in the STATE says the agent is gone, which is why the verb
+    /// cannot be decided from the state alone.
+    #[test]
+    fn an_agent_that_quit_cleanly_leaves_the_launch_verb_behind_it() {
+        for state in [
+            AgentState::Idle,
+            AgentState::Done,
+            AgentState::Asking,
+            AgentState::Blocked,
+            AgentState::Working,
+            AgentState::Reading,
+            AgentState::Exited,
+        ] {
+            assert_eq!(
+                strip_verb(state, false),
+                StripVerb::Launch,
+                "no agent present, whatever {state:?} claims"
+            );
+        }
     }
 
     #[test]
