@@ -4603,7 +4603,8 @@ impl TerminalView {
         // to keep: the spotlight in the overlay and the focus this handler
         // rides are the same fact.
         //
-        // AHEAD OF THE BENCH, and that ordering is the whole of #531. This
+        // AHEAD OF THE BENCH, and that ordering is the whole of the escape
+        // complaint this branch answers (PR #532). This
         // block used to sit BELOW `bench_key`, which consumes every escape on
         // the workbench face and ends in `stop_propagation` — so with the paint
         // cards up over a pane showing its bench, the first press flipped that
@@ -8429,7 +8430,7 @@ mod tests {
             paint < bench,
             "the bench takes escape before paint mode is asked for it — with the paint \
              cards up over a pane showing its bench, one press flips the face and leaves \
-             the overlay standing (#531)"
+             the overlay standing (PR #532)"
         );
     }
 

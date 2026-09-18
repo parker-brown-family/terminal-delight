@@ -14,7 +14,8 @@
 //! suite stays green. It went wrong exactly that way. `bench_key` consumes every
 //! escape on the workbench face and ends in `stop_propagation`, and it sat above
 //! the paint block — so with the paint cards up over a pane showing its bench,
-//! one press flipped the face and left the overlay standing (#531). Reordering
+//! one press flipped the face and left the overlay standing (PR #532 — Escape
+//! stops at the bench). Reordering
 //! those two blocks fixed that one case and left three more of the same shape:
 //! the right-click tray, the header's ⋯ menu and the rename box are all drawn on
 //! the workbench face and all sat *below* `bench_key`, so escape could not reach
@@ -161,7 +162,7 @@ mod tests {
                 ..on_bench
             }),
             EscTarget::Paint,
-            "the paint cards are drawn over every pane in the window (#531)"
+            "the paint cards are drawn over every pane in the window (PR #532)"
         );
         assert_eq!(
             escape_target(Up {
