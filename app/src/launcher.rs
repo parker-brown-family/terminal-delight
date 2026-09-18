@@ -14,7 +14,7 @@
 //!                  ├─ project   terminal-delight        (existing, or new)
 //!                  ├─ harness   claude │ codex
 //!                  ├─ model     opus │ sonnet │ haiku
-//!                  └─ effort    quick │ standard │ hard │ ultra
+//!                  └─ effort    low │ medium │ high │ xhigh │ max
 //!                                        ↓
 //!                       the host spawns a terminal in that directory
 //!                       and types one line into it
@@ -44,6 +44,19 @@
 //! in every pane's environment — so neither harness needs a path handed to it,
 //! and an agent started from a plain shell is no worse off than one this
 //! window launched.
+//!
+//! # Effort is the harness's own dial, in the harness's own words
+//!
+//! The first version of this panel offered `quick / standard / hard / ultra`
+//! and turned them into a sentence appended to the system prompt, on the
+//! belief that Claude Code had no effort parameter. It does: `claude --effort
+//! <low|medium|high|xhigh|max>` (checked against `claude --help`, 2.1.270, on
+//! this machine on 2026-09-17), and Codex takes `model_reasoning_effort` with
+//! `low`, `medium`, `high` and `xhigh`. Parker, on the invented scale: *"effort
+//! does not correlate with ACTUAL claude efforts."* So the chips now say what
+//! the flag will say, the list is the harness's own list, and no prose about
+//! thinking is added on top — a dial and a plea for the same thing would be two
+//! instructions that can disagree.
 
 use std::path::{Path, PathBuf};
 
@@ -104,6 +117,51 @@ impl Harness {
             ],
         }
     }
+
+    /// The effort levels this harness actually accepts, lowest first.
+    ///
+    /// Claude Code's five and Codex's four, verbatim. A level a harness does
+    /// not take is not offered for it, because a chip that silently maps to a
+    /// different word is the exact confusion this row used to cause.
+    pub fn efforts(self) -> &'static [Effort] {
+        match self {
+            Harness::Claude => &[
+                Effort::Low,
+                Effort::Medium,
+                Effort::High,
+                Effort::XHigh,
+                Effort::Max,
+            ],
+            Harness::Codex => &[Effort::Low, Effort::Medium, Effort::High, Effort::XHigh],
+        }
+    }
+
+    /// The level lit when the panel opens: each harness's own middle-high
+    /// default, so a person who never touches the row gets what the harness
+    /// would have done untouched — except that the flag is now printed, so the
+    /// command line says so.
+    pub fn default_effort(self) -> Effort {
+        match self {
+            Harness::Claude => Effort::High,
+            Harness::Codex => Effort::Medium,
+        }
+    }
+
+    /// The nearest level this harness offers to one chosen under another.
+    ///
+    /// Switching harness with `max` lit must not leave `max` lit on a harness
+    /// that has no such level. Levels are ordered, so the nearest is the
+    /// highest one not above the chosen — `max` on Codex becomes `xhigh`, and
+    /// anything Codex offers is offered by Claude unchanged.
+    pub fn clamp_effort(self, chosen: Effort) -> Effort {
+        let offered = self.efforts();
+        offered
+            .iter()
+            .rev()
+            .find(|e| **e <= chosen)
+            .copied()
+            .unwrap_or(offered[0])
+    }
 }
 
 /// One entry in a harness's model menu.
@@ -115,60 +173,77 @@ pub struct Model {
     pub label: &'static str,
 }
 
-/// How hard to think.
+/// How hard to think — the union of the levels the harnesses take, ordered.
 ///
-/// Four steps rather than a number, for the same reason [`crate::surface`]
-/// weighs effort in buckets: a person choosing from a menu is picking a shape,
-/// and a scale of ten invites a precision nobody has.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+/// The words are the harnesses' own, and the chip says the word the flag will
+/// carry. Ordered so [`Harness::clamp_effort`] can find the nearest level when
+/// the harness changes under a chosen one.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, PartialOrd, Ord)]
 pub enum Effort {
-    Quick,
-    Standard,
-    Hard,
-    Ultra,
+    Low,
+    Medium,
+    High,
+    XHigh,
+    Max,
 }
 
 impl Effort {
-    pub const ALL: [Effort; 4] = [Effort::Quick, Effort::Standard, Effort::Hard, Effort::Ultra];
+    /// The word on the chip, in the launch journal, and after the flag. One
+    /// word for all three on purpose: a label that differs from the value is
+    /// how `standard` came to mean nothing.
+    pub fn id(self) -> &'static str {
+        match self {
+            Effort::Low => "low",
+            Effort::Medium => "medium",
+            Effort::High => "high",
+            Effort::XHigh => "xhigh",
+            Effort::Max => "max",
+        }
+    }
 
     pub fn label(self) -> &'static str {
-        match self {
-            Effort::Quick => "quick",
-            Effort::Standard => "standard",
-            Effort::Hard => "hard",
-            Effort::Ultra => "ultra",
-        }
-    }
-
-    /// What Codex's own reasoning-effort setting is set to.
-    fn codex_value(self) -> &'static str {
-        match self {
-            Effort::Quick => "low",
-            Effort::Standard => "medium",
-            Effort::Hard => "high",
-            Effort::Ultra => "high",
-        }
-    }
-
-    /// The sentence appended to Claude's system prompt.
-    ///
-    /// A sentence, not a flag, and the difference is worth being honest about:
-    /// Claude Code has no effort parameter. What it has is a convention its
-    /// own documentation describes — `think`, `think hard`, `ultrathink` —
-    /// which is a request in prose. So this is a request in prose, and
-    /// `quick` says nothing at all rather than pretending there is a dial for
-    /// "less".
-    fn claude_phrase(self) -> Option<&'static str> {
-        match self {
-            Effort::Quick => None,
-            Effort::Standard => Some("Think before acting on anything non-trivial."),
-            Effort::Hard => Some("Think hard before acting; this work is expected to be involved."),
-            Effort::Ultra => {
-                Some("Ultrathink. This work is foundational and expensive to get wrong.")
-            }
-        }
+        self.id()
     }
 }
+
+/// The LAUNCH AGENT panel's height for a given number of matched projects,
+/// capped to the window.
+///
+/// The panel used to be sized as `250 + 30 per row`, and the 250 was the
+/// chrome as it stood when the panel had one chip row. Four chip rows, a
+/// command preview and a key hint later it needed nearly four hundred, so a
+/// filter matching three projects produced a 340-pixel panel whose fixed
+/// children could not shrink — and the project list, the only child that
+/// could, was squeezed to nothing. Parker, typing `ter` into it: *"I don't see
+/// terminal delight"*. The rows were there; they had no height.
+///
+/// So the chrome is a named number that every fixed child is counted into,
+/// and the test below holds that the rows always get their own room on top of
+/// it. A filter that matches nothing still gets one row's worth, for the
+/// "nothing matches" line.
+pub fn panel_height(matched: usize, window_h: f32) -> f32 {
+    let rows = matched.clamp(1, MAX_ROWS) as f32;
+    (PANEL_CHROME_H + rows * ROW_H).min(window_h - PANEL_MARGIN * 2.)
+}
+
+/// Rows drawn at most; the filter is how a person reaches the rest.
+pub const MAX_ROWS: usize = 40;
+/// One project row.
+pub const ROW_H: f32 = 30.;
+/// Everything in the panel that is not a project row: the title line, the
+/// filter box, five section headers, four chip rows, the command preview and
+/// the key hint, with the panel's padding and gaps. Summed from the render,
+/// not measured off a screenshot — each part is a number the render names.
+pub const PANEL_CHROME_H: f32 = 12. * 2. // padding
+    + 8. * 12. // gaps between thirteen children
+    + 18. // title line
+    + 26. // filter box
+    + 5. * 13. // PROJECT · HARNESS · MODEL · EFFORT · REACH headers
+    + 4. * 24. // the chip rows
+    + 40. // the command line, which wraps to two
+    + 12.; // the key hint
+/// Clear space kept between the panel and the window's edge.
+pub const PANEL_MARGIN: f32 = 16.;
 
 /// A project a pane can be launched into.
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -359,6 +434,8 @@ impl Recipe {
             Harness::Claude => {
                 parts.push("--model".into());
                 parts.push(self.model.to_string());
+                parts.push("--effort".into());
+                parts.push(self.effort.id().into());
                 parts.extend(self.reach.flags(self.harness));
                 if let Some(path) = briefing {
                     parts.push("--append-system-prompt".into());
@@ -373,10 +450,7 @@ impl Recipe {
                 parts.push(self.model.to_string());
                 parts.extend(self.reach.flags(self.harness));
                 parts.push("-c".into());
-                parts.push(format!(
-                    "model_reasoning_effort={}",
-                    self.effort.codex_value()
-                ));
+                parts.push(format!("model_reasoning_effort={}", self.effort.id()));
             }
         }
         if let Some(opener) = self.opener.as_ref().filter(|o| !o.trim().is_empty()) {
@@ -387,16 +461,11 @@ impl Recipe {
 
     /// The system prompt this window appends, if the harness takes one.
     ///
-    /// The surface briefing plus the effort sentence — one text, so an agent
-    /// reads about the workbench and about how hard to think in the same
-    /// breath rather than as two unrelated instructions.
+    /// The surface briefing and nothing about effort: effort is a flag on the
+    /// same command line now, and a sentence asking for the same thing in
+    /// prose would be a second instruction that can drift from the first.
     pub fn briefing(&self, drop_dir: &str) -> String {
-        let mut text = crate::surface::launch_briefing(drop_dir);
-        if let Some(phrase) = self.effort.claude_phrase() {
-            text.push_str("\n\n");
-            text.push_str(phrase);
-        }
-        text
+        crate::surface::launch_briefing(drop_dir)
     }
 
     /// Does this harness take a briefing from us at all?
@@ -467,8 +536,8 @@ mod tests {
 
     #[test]
     fn anywhere_adds_nothing_and_the_other_reaches_add_the_harness_own_flags() {
-        let plain = recipe(Harness::Claude, Effort::Standard).command_line(None);
-        let mut r = recipe(Harness::Claude, Effort::Standard);
+        let plain = recipe(Harness::Claude, Effort::High).command_line(None);
+        let mut r = recipe(Harness::Claude, Effort::High);
         r.reach = Reach::Anywhere;
         assert_eq!(
             r.command_line(None),
@@ -484,7 +553,7 @@ mod tests {
         );
         r.reach = Reach::Machine;
         assert!(r.command_line(None).contains("--permission-mode auto"));
-        let mut c = recipe(Harness::Codex, Effort::Hard);
+        let mut c = recipe(Harness::Codex, Effort::High);
         c.reach = Reach::Repo;
         assert!(c.command_line(None).contains("--sandbox workspace-write"));
         c.reach = Reach::Machine;
@@ -504,10 +573,13 @@ mod tests {
     }
 
     #[test]
-    fn a_claude_line_names_the_model_and_reads_its_briefing_from_a_file() {
-        let line = recipe(Harness::Claude, Effort::Standard)
+    fn a_claude_line_names_the_model_the_effort_and_reads_its_briefing_from_a_file() {
+        let line = recipe(Harness::Claude, Effort::High)
             .command_line(Some(Path::new("/run/td/briefing.txt")));
-        assert!(line.starts_with("claude --model opus"), "{line}");
+        assert!(
+            line.starts_with("claude --model opus --effort high"),
+            "{line}"
+        );
         assert!(line.contains("--append-system-prompt"), "{line}");
         assert!(
             line.contains("\"$(cat '/run/td/briefing.txt')\""),
@@ -516,8 +588,25 @@ mod tests {
     }
 
     #[test]
+    fn the_chip_word_is_the_flag_word_for_every_level_on_every_harness() {
+        // The whole complaint was a chip saying `standard` and the harness
+        // hearing nothing. So the word on the chip is asserted to be the word
+        // after the flag, level by level, on each harness's own list.
+        for harness in Harness::ALL {
+            for effort in harness.efforts() {
+                let line = recipe(harness, *effort).command_line(None);
+                let expected = match harness {
+                    Harness::Claude => format!("--effort {}", effort.label()),
+                    Harness::Codex => format!("model_reasoning_effort={}", effort.label()),
+                };
+                assert!(line.contains(&expected), "{harness:?} {effort:?}: {line}");
+            }
+        }
+    }
+
+    #[test]
     fn a_codex_line_sets_its_own_reasoning_effort() {
-        let line = recipe(Harness::Codex, Effort::Hard).command_line(None);
+        let line = recipe(Harness::Codex, Effort::High).command_line(None);
         assert!(line.contains("-c model_reasoning_effort=high"), "{line}");
         assert!(
             !line.contains("append-system-prompt"),
@@ -526,28 +615,81 @@ mod tests {
     }
 
     #[test]
-    fn ultra_and_hard_are_the_same_to_codex_and_different_to_claude() {
-        // Honest about the platform: codex's scale stops at high, so ultra and
-        // hard collapse there — and they must NOT collapse for Claude, where
-        // the difference is a real convention in its own documentation.
-        assert_eq!(Effort::Hard.codex_value(), Effort::Ultra.codex_value());
-        assert_ne!(
-            Effort::Hard.claude_phrase(),
-            Effort::Ultra.claude_phrase(),
-            "ultrathink is a different request from think hard"
+    fn a_level_a_harness_lacks_is_clamped_to_its_nearest_when_the_harness_changes() {
+        assert_eq!(Harness::Codex.clamp_effort(Effort::Max), Effort::XHigh);
+        assert_eq!(Harness::Codex.clamp_effort(Effort::Low), Effort::Low);
+        for effort in Harness::Codex.efforts() {
+            assert_eq!(
+                Harness::Claude.clamp_effort(*effort),
+                *effort,
+                "everything codex offers, claude offers unchanged"
+            );
+        }
+        assert!(
+            !Harness::Codex.efforts().contains(&Effort::Max),
+            "codex has no max and must not be offered one"
+        );
+        for harness in Harness::ALL {
+            assert!(harness.efforts().contains(&harness.default_effort()));
+            assert!(
+                harness.efforts().windows(2).all(|w| w[0] < w[1]),
+                "ordered, lowest first"
+            );
+        }
+    }
+
+    #[test]
+    fn effort_is_a_flag_and_never_also_a_sentence() {
+        // The dial and a plea for the same thing would be two instructions
+        // that can disagree. Every level's briefing is the same text.
+        let texts: Vec<String> = Harness::Claude
+            .efforts()
+            .iter()
+            .map(|e| recipe(Harness::Claude, *e).briefing("/run/td/7"))
+            .collect();
+        assert!(
+            texts.windows(2).all(|w| w[0] == w[1]),
+            "the briefing varies by effort"
+        );
+        assert!(
+            !texts[0].contains("hink"),
+            "no think/Think/ultrathink: {}",
+            texts[0]
         );
     }
 
     #[test]
-    fn quick_asks_for_nothing_rather_than_asking_for_less() {
-        assert_eq!(Effort::Quick.claude_phrase(), None);
-        let text = recipe(Harness::Claude, Effort::Quick).briefing("/run/td/7");
-        assert!(!text.contains("Think"), "{text}");
+    fn the_panel_leaves_the_rows_their_own_room_above_the_chrome() {
+        // The regression: three matches in a tall window got a panel whose
+        // fixed children alone exceeded its height, and the list was squeezed
+        // to nothing. Every match count up to the cap must get its rows on top
+        // of the chrome, and the old formula's constant must not be enough for
+        // the chrome this panel actually has — or this test guards nothing.
+        for matched in 0..=MAX_ROWS {
+            let h = panel_height(matched, 4000.);
+            let rows = matched.clamp(1, MAX_ROWS) as f32;
+            assert!(
+                h - PANEL_CHROME_H >= rows * ROW_H - 0.01,
+                "{matched} matches: {h} leaves {} for {rows} rows",
+                h - PANEL_CHROME_H
+            );
+        }
+        assert!(PANEL_CHROME_H > 250., "the number that shipped the bug");
+        assert_eq!(
+            panel_height(MAX_ROWS + 50, 4000.),
+            panel_height(MAX_ROWS, 4000.),
+            "past the cap the panel stops growing"
+        );
+        assert_eq!(
+            panel_height(30, 600.),
+            600. - PANEL_MARGIN * 2.,
+            "capped to the window"
+        );
     }
 
     #[test]
     fn an_opener_is_quoted_and_an_empty_one_is_not_passed_at_all() {
-        let mut r = recipe(Harness::Claude, Effort::Quick);
+        let mut r = recipe(Harness::Claude, Effort::Low);
         r.opener = Some("fix the login bug".into());
         assert!(r.command_line(None).ends_with("'fix the login bug'"));
         r.opener = Some("   ".into());
@@ -586,17 +728,20 @@ mod tests {
     }
 
     #[test]
-    fn the_briefing_carries_the_drop_directory_and_the_effort_together() {
-        let text = recipe(Harness::Claude, Effort::Ultra).briefing("/run/td/surfaces/s/7");
+    fn the_briefing_carries_the_drop_directory_and_the_verb() {
+        let text = recipe(Harness::Claude, Effort::Max).briefing("/run/td/surfaces/s/7");
         assert!(text.contains("/run/td/surfaces/s/7"));
-        assert!(text.contains("Ultrathink"));
         assert!(text.contains("present_surface"), "and the verb");
+        assert!(
+            text.contains("\"response\""),
+            "and the reply shape it is asked for"
+        );
     }
 
     #[test]
     fn only_claude_is_offered_a_briefing_by_us() {
-        assert!(recipe(Harness::Claude, Effort::Quick).takes_briefing());
-        assert!(!recipe(Harness::Codex, Effort::Quick).takes_briefing());
+        assert!(recipe(Harness::Claude, Effort::Low).takes_briefing());
+        assert!(!recipe(Harness::Codex, Effort::Low).takes_briefing());
     }
 
     #[test]
