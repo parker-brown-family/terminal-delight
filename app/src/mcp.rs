@@ -933,12 +933,18 @@ fn tool_defs() -> Value {
                  — `eli5`, `layman`, `technical`, `evidence`, `asks`, `next` — and \
                  `doubts`, where you are not sure, each a `claim` with a `why` and \
                  a `confidence`. Any other key becomes a section labelled by its \
-                 key; a string is prose, an array a list, an object facts. The \
-                 other kinds are what you MADE and what you are ASKING: decision, \
-                 changeset, architecture, table, markdown, artifact, question. \
-                 Never describe layout — no widths, no colours, no components; the \
-                 window owns all of that. `surface` is one TDSP document: \
-                 {\"td\":\"0.3\", \"kind\":\"response\", \"title\":\"…\", \
+                 key; a string is prose, an array a list, an object facts. Every \
+                 register is a PEER and the reader lights the one they are in, so \
+                 do not try to emphasise one. The one thing that interrupts is \
+                 `escalation`: {\"level\":\"blocking|wanted|none\", \"why\":\"…\", \
+                 \"items\":[{\"ask\":\"…\",\"answered\":false}]}. Declare `none` \
+                 when you need nothing — leaving it out means you never said, \
+                 which is a different answer. The other kinds are what you MADE \
+                 and what you are ASKING: decision, changeset, architecture, \
+                 table, markdown, artifact, question. Never describe layout — no \
+                 widths, no colours, no components; the window owns all of that. \
+                 `surface` is one TDSP document: \
+                 {\"td\":\"0.4\", \"kind\":\"response\", \"title\":\"…\", \
                  \"model\":{\"tldr\":\"…\",\"technical\":\"…\",\"doubts\":[…]}}. \
                  Send the same `id` again to update it in place, or op \"retire\" \
                  to take it off the bench. An unknown kind is shown as \

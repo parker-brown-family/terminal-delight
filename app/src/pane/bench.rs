@@ -1558,6 +1558,7 @@ impl TerminalView {
                 let folds = crate::benchdraw::Folds {
                     id: &surface.id,
                     open: &open,
+                    lit: bench.lit_section(&surface.id),
                     zones: self.wb_zones.clone(),
                 };
                 let drawn = crate::benchdraw::body(surface, how, Some(&folds), sk, th);
@@ -1630,19 +1631,28 @@ impl TerminalView {
                     .flex()
                     .flex_col()
                     .gap(px(10.))
-                    // The offer: the button FIRST, then the reason for it as a
-                    // separate element underneath. Two children of one column
-                    // rather than one panel with a chip tacked on the end —
-                    // which is what made the only pressable thing on the
-                    // surface read as the last line of a paragraph.
+                    // The offer is ONE element: a dialogue card with the action
+                    // inside it.
+                    //
+                    // It was a panel with the button as a sibling above it, and
+                    // before that a panel with the button as a chip tacked on
+                    // its end. Both failed the same way — the only pressable
+                    // thing on the surface and the sentence naming it were not
+                    // in the same box, so they aligned independently and read as
+                    // two unrelated blocks. A dialogue holds its own action.
                     .when(offering, |d| {
-                        d.child(crate::benchdraw::launch_button(sk, th).child(
-                            crate::benchdraw::zone(
-                                self.wb_zones.clone(),
-                                crate::workbench::Hit::Launch,
-                            ),
+                        d.child(crate::benchdraw::empty(
+                            false,
+                            "",
+                            Some(crate::benchdraw::launch_button(sk, th).child(
+                                crate::benchdraw::zone(
+                                    self.wb_zones.clone(),
+                                    crate::workbench::Hit::Launch,
+                                ),
+                            )),
+                            sk,
+                            th,
                         ))
-                        .child(crate::benchdraw::empty(false, "", sk, th))
                     })
                     .when(shows.mirror, |d| {
                         d.child(crate::benchdraw::conversation(&tail, sk, th))
@@ -1910,26 +1920,37 @@ impl TerminalView {
                     // somewhere"*. The honest answer to "where do I click" is
                     // *anywhere*, so the whole body is the target, and the
                     // caret it lights is the thing to look at.
-                    .child(
+                    .child({
+                        use crate::workbench::Anchor;
+                        let anchor = crate::workbench::body_anchor(card_open, offering);
                         div()
                             .flex_1()
                             .min_h(px(0.))
                             .overflow_hidden()
                             .flex()
                             .flex_col()
-                            .when(
-                                crate::workbench::body_anchor(card_open, offering)
-                                    == crate::workbench::Anchor::Bottom,
-                                |d| d.justify_end(),
-                            )
+                            .when(anchor == Anchor::Bottom, |d| d.justify_end())
                             .when(self.mode.is_agent(), |d| {
                                 d.relative().child(crate::benchdraw::zone(
                                     self.wb_zones.clone(),
                                     crate::workbench::Hit::Arm,
                                 ))
                             })
-                            .child(body),
-                    )
+                            // `Eye` is a box of four fifths the height with the
+                            // content centred in it, rather than a justify on
+                            // this container: the fraction has to resolve
+                            // against the HEIGHT, and a padding fraction in
+                            // taffy resolves against the width.
+                            .child(match anchor {
+                                Anchor::Eye => div()
+                                    .flex()
+                                    .flex_col()
+                                    .justify_center()
+                                    .h(gpui::relative(0.8))
+                                    .child(body),
+                                _ => div().flex().flex_col().child(body),
+                            })
+                    })
                     .children(composer),
             )
             .children(handle)

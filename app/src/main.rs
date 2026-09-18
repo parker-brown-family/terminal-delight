@@ -38,6 +38,7 @@ mod demo;
 mod derive;
 mod dirlogo;
 mod doc;
+mod emphasis;
 mod fav;
 mod gamba;
 mod gridwire;

@@ -7,6 +7,8 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-09-18
+
 ### Added — the week of 15 September
 
 - **The Overview is the feed of what the agent said.** TDSP 0.3 adds the
@@ -550,6 +552,7 @@ First public, source-only release. A GPU-native Linux terminal (Rust + gpui +
 
 - Linux only (X11 & Wayland via gpui's wgpu renderer). Not macOS/Windows.
 
-[Unreleased]: https://github.com/parker-brown-family/terminal-delight/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/parker-brown-family/terminal-delight/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/parker-brown-family/terminal-delight/compare/v0.2.1...v0.3.0
 [0.2.0]: https://github.com/parker-brown-family/terminal-delight/releases/tag/v0.2.0
 [0.1.0]: https://github.com/parker-brown-family/terminal-delight/releases/tag/v0.1.0
