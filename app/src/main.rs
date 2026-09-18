@@ -1561,6 +1561,22 @@ impl TabIdentity {
     }
 }
 
+/// Where a new tab is seated in the strip, and what it belongs to.
+///
+/// The two are one decision rather than two, which is why this is an enum and
+/// not a `place: Option<Place>`: a tab that lands at the end of the window with
+/// no group is not a tab that "has no place yet", it is a tab that is
+/// deliberately nobody's. Writing that as an absent value is how the launcher
+/// came to file every agent it started under UNFILED without anyone choosing
+/// that (#508).
+#[derive(Clone, Copy)]
+enum Seat {
+    /// In this branch, at its end, inheriting the group and its project.
+    Branch(tree::Place),
+    /// Loose at the end of the window, in no branch at all.
+    Loose,
+}
+
 /// `true` if `c` counts as part of a "word" for ctrl-arrow navigation.
 fn is_word_char(c: char) -> bool {
     c.is_alphanumeric() || c == '_'
@@ -2965,6 +2981,13 @@ struct AgentLauncher {
     /// How far the launched agent may reach without asking. Defaults to the
     /// machine posture; see [`launcher::Reach`].
     reach: launcher::Reach,
+    /// The pane whose bench the button was pressed on.
+    ///
+    /// Kept because the panel takes the keyboard the moment it opens, so by the
+    /// time ↵ is pressed nothing is focused and the window can no longer be
+    /// asked where the person was standing. It is what decides whether the
+    /// agent starts in that pane or in a new tab — see [`launcher::landing`].
+    from: Option<gpui::EntityId>,
 }
 
 impl AgentLauncher {
@@ -3999,7 +4022,7 @@ fn wire_pane(pane: &Entity<TerminalView>, window: &mut Window, cx: &mut Context<
         window,
         |ws, pane, _ev: &pane::OpenAgentLauncher, window, cx| {
             let cwd = pane.read(cx).current_cwd();
-            ws.open_agent_launcher(cwd, window, cx);
+            ws.open_agent_launcher(cwd, Some(pane.entity_id()), window, cx);
         },
     )
     .detach();
@@ -6772,11 +6795,39 @@ impl Workspace {
     /// the window and taking the thing you were working on — a move nobody
     /// asked for, and one that leaves the branch you came from a tab lighter.
     ///
-    /// This is the only place a new tab is built, so the hosted-mode invariant
-    /// has one site to hold rather than two. See
-    /// `a_hosted_window_makes_no_pane_of_its_own`.
+    /// This delegates to [`Self::open_tab`], which is the only place a new tab
+    /// is built, so the hosted-mode invariant has one site to hold rather than
+    /// three. See `a_hosted_window_makes_no_pane_of_its_own`.
     fn new_tab_in(&mut self, place: tree::Place, window: &mut Window, cx: &mut Context<Self>) {
-        let pane = self.make_pane_in_mode(session::PaneRestore::default(), window, cx);
+        self.open_tab(
+            session::PaneRestore::default(),
+            Seat::Branch(place),
+            window,
+            cx,
+        );
+    }
+
+    /// Build one new tab, holding one terminal, and seat it.
+    ///
+    /// Every gesture that opens a tab comes through here — the `+`, the left
+    /// bar's new project, an adoption from the desktop, and the LAUNCH AGENT
+    /// panel — because the two things a new tab must get right are easy to
+    /// forget one at a time. It must not fork a pseudoterminal of its own in a
+    /// hosted window (#377, #382), and it must land somewhere the window is
+    /// already pointing.
+    ///
+    /// The second one is why this grew a `seat`. The launcher used to push its
+    /// tab onto the end of the strip with no group at all, so an agent started
+    /// from inside a named branch appeared at the bottom of the left bar under
+    /// UNFILED, a screen away from the work it was started for (#508).
+    fn open_tab(
+        &mut self,
+        restore: session::PaneRestore,
+        seat: Seat,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let pane = self.make_pane_in_mode(restore, window, cx);
         // Built through `TabIdentity` rather than `Tab::new` plus two
         // assignments. This is a genuinely new tab rather than a reshaped one,
         // so it is not the case `TabIdentity` was written for — but it is the
@@ -6784,19 +6835,25 @@ impl Workspace {
         // neither line here and would silently take the constructor's default.
         // Going through the carrier makes that a compile error, which is the
         // whole reason the carrier is a struct and not two arguments.
-        let tab = TabIdentity {
-            group: place.initiative,
-            // a grouped tab inherits its project from the group and leaves its
-            // own unset, so the two can never disagree — see `place_of`
-            project: place
-                .initiative
-                .is_none()
-                .then_some(place.project)
-                .flatten(),
-            ..Default::default()
-        }
-        .onto(Node::Leaf(pane));
-        let at = self.branch_end(place);
+        let identity = match seat {
+            Seat::Branch(place) => TabIdentity {
+                group: place.initiative,
+                // a grouped tab inherits its project from the group and leaves
+                // its own unset, so the two can never disagree — see `place_of`
+                project: place
+                    .initiative
+                    .is_none()
+                    .then_some(place.project)
+                    .flatten(),
+                ..Default::default()
+            },
+            Seat::Loose => TabIdentity::default(),
+        };
+        let tab = identity.onto(Node::Leaf(pane));
+        let at = match seat {
+            Seat::Branch(place) => self.branch_end(place),
+            Seat::Loose => self.tabs.len(),
+        };
         self.tabs.insert(at, tab);
         self.active = at;
         // A new tab is filed into `place`, which may be a branch that is shut —
@@ -6828,6 +6885,9 @@ impl Workspace {
     /// Bring a dead agent back: open a fresh tab whose shell resumes its saved
     /// conversation (`claude --resume` / `codex resume`) in its original cwd —
     /// the same restore path a reboot uses. Never writes to a live PTY.
+    ///
+    /// Seated in the branch you are standing in, because the tab whose agent
+    /// died is the one you are looking at when you press this.
     fn resurrect_agent(
         &mut self,
         cwd: Option<String>,
@@ -6836,7 +6896,8 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         self.dead_menu = false;
-        self.adopt_pane(cwd, Some(resume), window, cx);
+        let seat = Seat::Branch(self.place_of(self.active));
+        self.adopt_pane(cwd, Some(resume), seat, window, cx);
     }
 
     /// The landing half of `ctl adopt` — and the body resurrection shares:
@@ -6847,6 +6908,7 @@ impl Workspace {
         &mut self,
         cwd: Option<String>,
         run: Option<String>,
+        seat: Seat,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -6861,13 +6923,7 @@ impl Workspace {
         // shows that pane instead (`Started::Already`), so `ctl adopt` can no
         // longer double-run an agent; and the pane gets a host pane id, which
         // is what `hangup`, `attached_panes` and the serializer all key off.
-        let pane = self.make_pane_in_mode(restore, window, cx);
-        self.tabs.push(Tab::new(Node::Leaf(pane), None));
-        self.active = self.tabs.len() - 1;
-        self.reveal_active_branch();
-        self.save(cx);
-        cx.notify();
-        cx.defer_in(window, |ws, window, cx| ws.focus_active(window, cx));
+        self.open_tab(restore, seat, window, cx);
     }
 
     /// Park a desktop adoption until a frame gives us a Window (the ctl ticker
@@ -6879,7 +6935,13 @@ impl Workspace {
 
     fn drain_pending_adopts(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         for a in std::mem::take(&mut self.pending_adopts) {
-            self.adopt_pane(a.cwd, a.run, window, cx);
+            // Loose, and deliberately. A terminal handed over by `ctl adopt` —
+            // from the desktop, a script, or another session's agent — belongs
+            // to whoever sent it, and filing it into whatever branch this
+            // window happens to be looking at would put a stranger's terminal
+            // inside somebody's project. The launcher is the opposite case and
+            // seats its tab in the branch the person is standing in.
+            self.adopt_pane(a.cwd, a.run, Seat::Loose, window, cx);
         }
     }
 
@@ -11266,6 +11328,7 @@ impl Workspace {
     fn open_agent_launcher(
         &mut self,
         seed: Option<String>,
+        from: Option<gpui::EntityId>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -11286,6 +11349,7 @@ impl Workspace {
             model_ix: 0,
             effort: harness.default_effort(),
             reach: launcher::Reach::Anywhere,
+            from,
         };
         lp.recompute();
         // Pre-select where the person already is, by path rather than by name:
@@ -11350,6 +11414,11 @@ impl Workspace {
             _ => None,
         };
         let line = recipe.command_line(briefing_path.as_deref());
+        // Where it goes, decided before it is written down, so the journal
+        // records the landing that actually happened rather than the one the
+        // button is named after.
+        let from = lp.from.and_then(|id| self.pane_by_id(id));
+        let landing = launcher::landing(from.as_ref().and_then(|p| p.read(cx).mode.at_a_prompt()));
         eprintln!("terminal-delight: launching — {line}");
         // What the button was made of, on the record: the command, the reach,
         // and a fingerprint of the briefing the agent was actually handed —
@@ -11373,16 +11442,49 @@ impl Workspace {
                     "reach": recipe.reach.id(),
                     "cwd": project.path.to_string_lossy(),
                     "command": line,
+                    "landing": match landing {
+                        launcher::Landing::Here => "here",
+                        launcher::Landing::NewTab => "new-tab",
+                    },
                     "briefing_fnv1a64": briefing_fnv,
                 }),
             );
         }
-        self.adopt_pane(
-            Some(project.path.to_string_lossy().to_string()),
-            Some(line),
-            window,
-            cx,
-        );
+        match (landing, from) {
+            // Into the pane the button was pressed on, by typing at its prompt.
+            // The face turns back to the terminal in the same gesture: what was
+            // just started is a program with an interface, and the bench it was
+            // started from has nothing on it until that program presents
+            // something.
+            (launcher::Landing::Here, Some(pane)) => {
+                let typed = launcher::here_line(
+                    &line,
+                    pane.read(cx)
+                        .current_cwd()
+                        .as_deref()
+                        .map(std::path::Path::new),
+                    &project.path,
+                );
+                pane.update(cx, |view, cx| {
+                    view.set_face(workbench::Face::Terminal, cx);
+                    view.run_line(typed, cx);
+                });
+                cx.defer_in(window, |ws, window, cx| ws.focus_active(window, cx));
+                cx.notify();
+            }
+            // A new tab, seated in the branch the person is standing in rather
+            // than loose at the end of the window.
+            _ => {
+                let seat = Seat::Branch(self.place_of(self.active));
+                self.adopt_pane(
+                    Some(project.path.to_string_lossy().to_string()),
+                    Some(line),
+                    seat,
+                    window,
+                    cx,
+                )
+            }
+        }
     }
 
     /// Open the header-logo image picker scoped to `target`.
@@ -12659,6 +12761,13 @@ impl Workspace {
             recipe.command_line(briefing.as_deref())
         };
 
+        // Where ↵ will put it, read the same way the launch reads it.
+        let landing = launcher::landing(
+            lp.from
+                .and_then(|id| self.pane_by_id(id))
+                .and_then(|p| p.read(cx).mode.at_a_prompt()),
+        );
+
         let panel = div()
             .absolute()
             .left(px(left))
@@ -12748,9 +12857,17 @@ impl Workspace {
                 div()
                     .text_size(px(9.))
                     .text_color(th.text.alpha(0.45))
-                    .child(
-                        "↑↓ project · tab model · ⇧tab harness · ←→ effort · ↵ launch · esc close",
-                    ),
+                    // ↵ says WHERE, because that is the half of this gesture a
+                    // person cannot see coming and the half they complained
+                    // about (#508). Read from the same function the launch
+                    // reads, so the label and the landing cannot disagree.
+                    .child(format!(
+                        "↑↓ project · tab model · ⇧tab harness · ←→ effort · ↵ {} · esc close",
+                        match landing {
+                            launcher::Landing::Here => "starts in this pane",
+                            launcher::Landing::NewTab => "opens a new tab",
+                        }
+                    )),
             )
             .on_mouse_down(
                 MouseButton::Left,
@@ -27863,17 +27980,23 @@ mod tests {
         // its pane tree was reshaped (#413); a NEW tab is not that case, but it
         // is the same shape — a field added to `Tab` later would be set by
         // neither assignment and take the constructor's default in silence.
-        let at = src.find("fn new_tab_in(&mut self").expect("new_tab_in");
+        //
+        // Scanned at `open_tab`, which is where every new tab is now built —
+        // `new_tab_in` delegates to it, and so does the adoption the launcher
+        // reaches. That move is the other half of #508: the launcher had its
+        // own builder, which is exactly how it came to file every agent it
+        // started under UNFILED.
+        let at = src.find("fn open_tab(").expect("open_tab");
         let end = src[at..].find("\n    }\n").expect("end of fn") + at;
         let builder = &src[at..end];
         assert!(
             !builder.contains("Tab::new("),
-            "new_tab_in builds its tab with Tab::new again — route it through \
+            "open_tab builds its tab with Tab::new again — route it through \
              TabIdentity::onto so a new Tab field is a compile error here"
         );
         assert!(
             builder.contains("TabIdentity {") && builder.contains(".onto("),
-            "new_tab_in no longer builds through the identity carrier"
+            "open_tab no longer builds through the identity carrier"
         );
     }
 
@@ -28047,11 +28170,7 @@ mod tests {
         // Full signatures, not name prefixes: `fn split` alone matches
         // `split_leaf` three thousand lines earlier, and a source scan that
         // silently reads the wrong function is worse than no scan.
-        for gesture in [
-            "fn new_tab_in(&mut self",
-            "fn adopt_pane(",
-            "fn split(&mut self, dir: SplitDir",
-        ] {
+        for gesture in ["fn open_tab(", "fn split(&mut self, dir: SplitDir"] {
             let b = body(gesture);
             assert!(
                 b.contains("make_pane_in_mode"),
@@ -28064,20 +28183,26 @@ mod tests {
             );
         }
 
-        // `new_tab` delegates rather than building, so the list above names the
-        // one site that does. If a pane build ever grows back into `new_tab`
-        // itself there are two again, and the swap above would have quietly
-        // stopped covering the gesture people actually press.
-        let delegating = body("fn new_tab(&mut self");
-        assert!(
-            !delegating.contains("make_pane"),
-            "new_tab builds a pane again instead of delegating to new_tab_in; the scan above \
-             is now checking the wrong function"
-        );
-        assert!(
-            delegating.contains("self.new_tab_in("),
-            "new_tab no longer reaches new_tab_in"
-        );
+        // The tab-opening gestures delegate rather than building, so the list
+        // above names the one site that does. If a pane build ever grows back
+        // into one of them there are two again, and the swap above would have
+        // quietly stopped covering the gesture people actually press.
+        for (sig, reaches) in [
+            ("fn new_tab(&mut self", "self.new_tab_in("),
+            ("fn new_tab_in(&mut self", "self.open_tab("),
+            ("fn adopt_pane(", "self.open_tab("),
+        ] {
+            let delegating = body(sig);
+            assert!(
+                !delegating.contains("make_pane"),
+                "{sig} builds a pane again instead of delegating; the scan above is now \
+                 checking the wrong function"
+            );
+            assert!(
+                delegating.contains(reaches),
+                "{sig} no longer reaches {reaches}"
+            );
+        }
 
         // And the chokepoint has to actually branch on the mode rather than
         // being a rename of one of the two paths.
@@ -28088,6 +28213,59 @@ mod tests {
                 && choke.contains("make_pane_window_owned"),
             "make_pane_in_mode must choose between the host and this window by asking which \
              mode the workspace is in"
+        );
+    }
+
+    /// A launch lands where the person is standing, not at the end of the
+    /// window.
+    ///
+    /// The regression this holds shut was invisible from inside the code and
+    /// obvious on the screen: `adopt_pane` pushed its tab with `Tab::new(…,
+    /// None)`, so an agent started from inside a named branch appeared at the
+    /// bottom of the left bar under UNFILED. Nobody chose that — `None` was the
+    /// constructor's default for a field the launcher never thought about
+    /// (#508).
+    ///
+    /// Source-scanned, like its neighbour and for the same reason: a
+    /// `Workspace` needs a live gpui `Window`, so the wrong version compiles
+    /// and passes everything else.
+    #[test]
+    fn a_launch_is_seated_and_an_adoption_is_deliberately_loose() {
+        let src = include_str!("main.rs");
+        let body = |sig: &str| -> &str {
+            let at = src.find(sig).unwrap_or_else(|| panic!("{sig} not found"));
+            let end = src[at..].find("\n    }\n").expect("end of fn");
+            &src[at..at + end]
+        };
+
+        let launch = body("fn launch_agent(");
+        assert!(
+            launch.contains("Seat::Branch(self.place_of(self.active))"),
+            "a launched agent is filed loose again; it belongs in the branch the person \
+             pressed the button in"
+        );
+        // And the other landing: into the pane the button was pressed on.
+        assert!(
+            launch.contains("launcher::landing(") && launch.contains("run_line("),
+            "the launcher no longer starts the agent in the pane it was opened from — \
+             which is what its own empty-bench sentence promises: \"A shell has no agent \
+             to present anything. Launch one into this pane.\""
+        );
+
+        let adopt = body("fn drain_pending_adopts(");
+        assert!(
+            adopt.contains("Seat::Loose"),
+            "an adoption from another session now files itself into whatever branch this \
+             window happens to be looking at, which puts a stranger's terminal inside \
+             somebody's project"
+        );
+
+        // The panel's key hint and the launch must read the same function, or
+        // the label says one landing and the button does the other.
+        let panel = body("fn render_agent_launcher(");
+        assert!(
+            panel.contains("launcher::landing("),
+            "the ↵ hint is deciding for itself where the launch will go"
         );
     }
 

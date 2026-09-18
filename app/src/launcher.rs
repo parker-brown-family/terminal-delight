@@ -405,6 +405,67 @@ impl Reach {
     }
 }
 
+/// Where a launch puts the agent.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Landing {
+    /// Into the pane the panel was opened from, by typing the recipe at its
+    /// prompt — the way a person standing in that shell would start it.
+    Here,
+    /// A new tab, seated in the branch the person is standing in.
+    NewTab,
+}
+
+/// Which of the two a launch gets.
+///
+/// **The button already promised this.** `LAUNCH AGENT` is drawn on one
+/// surface only — the empty bench of a pane with no agent — under the sentence
+/// *"A shell has no agent to present anything. Launch one into this pane."*
+/// It then opened a tab somewhere else entirely, which is how a person ends up
+/// with the tab they were working in still empty and a new one at the bottom of
+/// the window (#508). This is the button keeping its own label.
+///
+/// `at_a_prompt` is a READING of the pane the panel was opened from, and it is
+/// an `Option` because the three answers are three: yes, the foreground process
+/// group is the shell itself; no, something is running in there; and nobody has
+/// looked — a host-owned pane is born `Unknown` and stays that way until the
+/// first classification arrives. Only the first of those is a prompt. An
+/// unread pane is not an empty one, and typing a command line into a terminal
+/// on the strength of a default would be exactly the invisible write this
+/// window exists to refuse.
+pub fn landing(at_a_prompt: Option<bool>) -> Landing {
+    match at_a_prompt {
+        Some(true) => Landing::Here,
+        _ => Landing::NewTab,
+    }
+}
+
+/// The line typed into a pane that is already open, for [`Landing::Here`].
+///
+/// Three parts, and each one earns its place:
+///
+/// `^U` first. The gate says the shell is at its prompt; it does not say the
+/// prompt is empty, and a half-typed line with a command line appended to it
+/// runs as one command — `rm -rf build` plus our recipe is a sentence nobody
+/// wrote. Readline discards the line on `^U`, so the worst case is a person
+/// seeing their unfinished typing vanish, which beats the worst case of the
+/// alternative by a distance.
+///
+/// Then `cd`, but only when the pane is not already there: a `cd` to where you
+/// are is noise in the scrollback, and the scrollback is the record of what
+/// this window did to somebody's terminal.
+///
+/// Then the recipe, and a newline, because a command line nobody pressed enter
+/// on is a trap rather than a launch.
+pub fn here_line(recipe_line: &str, from: Option<&Path>, to: &Path) -> String {
+    let already_there = from.is_some_and(|f| f == to);
+    let cd = if already_there {
+        String::new()
+    } else {
+        format!("cd {} && ", shell_quote(&to.to_string_lossy()))
+    };
+    format!("\u{15}{cd}{recipe_line}\n")
+}
+
 /// Everything a launch needs.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Recipe {
@@ -725,6 +786,71 @@ mod tests {
                 "the shell did not give back {raw:?}"
             );
         }
+    }
+
+    #[test]
+    fn only_a_pane_somebody_has_read_and_found_idle_gets_the_agent() {
+        assert_eq!(landing(Some(true)), Landing::Here, "a shell at its prompt");
+        assert_eq!(
+            landing(Some(false)),
+            Landing::NewTab,
+            "something is running in there — typing would go into its stdin"
+        );
+        assert_eq!(
+            landing(None),
+            Landing::NewTab,
+            "nobody has read this pane, which is not the same as reading it and \
+             finding a prompt; an unknown must never fall through to the write"
+        );
+    }
+
+    #[test]
+    fn the_typed_line_clears_the_prompt_first_and_only_travels_when_it_has_to() {
+        let there = PathBuf::from("/home/p/work/td");
+        let elsewhere = PathBuf::from("/home/p/work/apes");
+
+        let same = here_line("claude --model opus", Some(&there), &there);
+        assert!(same.starts_with('\u{15}'), "the prompt is cleared first");
+        assert!(
+            !same.contains("cd "),
+            "a cd to where the pane already is only adds a line to the record"
+        );
+        assert!(same.ends_with('\n'), "and it is actually run");
+
+        let moved = here_line("claude --model opus", Some(&elsewhere), &there);
+        assert!(
+            moved.contains("cd '/home/p/work/td' && claude --model opus"),
+            "got {moved:?}"
+        );
+
+        // A pane whose directory nobody could read still gets the cd: the
+        // launch names a project, and arriving in the wrong one is the failure
+        // this is here to prevent.
+        let unread = here_line("claude", None, &there);
+        assert!(unread.contains("cd '/home/p/work/td' &&"), "got {unread:?}");
+    }
+
+    #[test]
+    fn a_directory_with_an_apostrophe_reaches_the_shell_whole() {
+        let to = std::env::temp_dir().join("td-launch it's here");
+        let line = here_line("claude", Some(&PathBuf::from("/")), &to);
+        // The cd half of the line, run for real: the property is that the
+        // shell lands in that directory, not that the quoting matches my idea
+        // of quoting.
+        let cd = line
+            .trim_start_matches('\u{15}')
+            .split(" && ")
+            .next()
+            .expect("a cd")
+            .to_string();
+        std::fs::create_dir_all(&to).expect("a directory to land in");
+        let out = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(format!("{cd} && printf %s \"$PWD\""))
+            .output()
+            .expect("sh");
+        std::fs::remove_dir(&to).ok();
+        assert_eq!(String::from_utf8_lossy(&out.stdout), to.to_string_lossy());
     }
 
     #[test]

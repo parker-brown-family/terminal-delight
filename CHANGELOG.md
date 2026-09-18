@@ -25,6 +25,29 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ### Fixed
 
+- **LAUNCH AGENT starts the agent in the pane you pressed it on.** The button is
+  drawn on one surface only — the empty bench of a pane with no agent, under the
+  sentence *"A shell has no agent to present anything. Launch one into this
+  pane."* — and it then opened a tab at the far end of the window, in no group at
+  all, leaving the pane you were standing in exactly as empty as before. It now
+  types the recipe at that pane's prompt, clearing the line first and `cd`-ing
+  only when the project is somewhere else; when the pane is busy, or when nobody
+  has read it yet, it opens a tab seated in the branch you are working in
+  instead of loose under UNFILED. The panel's `↵` hint names which of the two it
+  is about to do. An adoption from another session (`ctl adopt`) stays loose on
+  purpose. (#508)
+
+- **The bench no longer types into a pane with no agent.** The composer mirrors
+  the agent's own line editor rather than holding a buffer of its own, so every
+  keystroke went straight down the pseudoterminal — and on a pane whose agent had
+  exited, the shell underneath collected them into a command line and the return
+  key ran it. A bug report sent from the bench became `claude <the whole
+  message>`: a brand new session with itself as the argument, no history, while
+  the bench went on drawing the conversation it thought it was talking to. Writes
+  now pass one gate that asks both questions — is the pane on screen, and is
+  there an agent in it — and anything held says so in the header rather than
+  counting silently. (#509)
+
 - **The launcher's project list was squeezed to nothing** whenever the filter
   matched only a few projects: the panel's height was computed for one chip row
   and it has four, so the list — the only child that could shrink — gave up its
