@@ -1201,7 +1201,7 @@ const TRAY_SEP: f32 = 1.; // a hairline, h or v
 /// The PICKERS column — exactly three DESIGN buttons plus their gaps, which is
 /// the whole reason the tray fits: at this width DESIGN wraps 3+3+1 instead of
 /// the 2+2+2+1 it wrapped at in the old single strip.
-const TRAY_PICKER_W: f32 = 3. * TRAY_BTN_W + 2. * TRAY_GAP;
+const TRAY_PICKER_W: f32 = 3. * TRAY_BTN_W + 2. * TRAY_GAP + TRAY_FIT_SLACK;
 /// The WHEEL column — the 132px wheel with room for its lightness bar.
 const TRAY_WHEEL_COL_W: f32 = 150.;
 /// The glyph column — the INVERT bar sets it (a heading plus a mode button),
@@ -1235,8 +1235,19 @@ const TRAY_PILL_H: f32 = 22.; // a bezel button: 2px py, 11px text, a border
 const TRAY_FIT_BAND: f32 = 700.;
 
 /// How many rows `n` buttons of `btn_w` take in a column `col_w` wide.
+///
+/// Deliberately PESSIMISTIC about an exact fit. A flex row whose children sum to
+/// precisely the column width is at the mercy of a rounding decision this code
+/// cannot see, and the expensive direction to be wrong in is the optimistic one:
+/// a model that says three fit while the renderer wraps at two under-counts a
+/// row per section, and the error compounds down the column. So a row has to
+/// clear its content by [`TRAY_FIT_SLACK`] before it is counted as fitting, and
+/// the column widths are chosen with that slack in them.
+const TRAY_FIT_SLACK: f32 = 4.;
+
 fn tray_wrap_rows(n: usize, btn_w: f32, col_w: f32) -> usize {
-    let per = (((col_w + TRAY_GAP) / (btn_w + TRAY_GAP)).floor() as usize).max(1);
+    let usable = col_w - TRAY_FIT_SLACK + TRAY_GAP;
+    let per = ((usable / (btn_w + TRAY_GAP)).floor() as usize).max(1);
     n.div_ceil(per).max(1)
 }
 
