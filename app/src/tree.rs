@@ -692,10 +692,13 @@ pub fn stops(rows: &[Row]) -> Vec<RowId> {
 /// Where a walk with no live cursor BEGINS: the row of the active task.
 ///
 /// The bar is a map of the session, and the one place a person is certain to
-/// already be is the tab they are working in — so a fresh Ctrl+Alt+↑/↓ lands
-/// the highlight there rather than at whichever end of the list the press came
-/// from. Starting at the top meant every walk began by travelling back to where
-/// you already were, past rows you had no business highlighting.
+/// already be is the tab they are working in. Entering the tree anywhere else
+/// meant every walk began by travelling back to where you already were, past
+/// rows you had no business highlighting.
+///
+/// This is an ORIGIN, and for the arrows it is not a destination — [`walk`]
+/// steps off it, so the first press moves. →/← do land on it, because there
+/// the seed is the thing being acted on rather than a place to leave.
 ///
 /// `None` when that task is not DRAWN — its branch is folded over it — and the
 /// caller falls back to entering at the near end. The cursor never lands on a
@@ -703,6 +706,21 @@ pub fn stops(rows: &[Row]) -> Vec<RowId> {
 pub fn seed(rows: &[Row], active: usize) -> Option<RowId> {
     let at = RowId::Task(active);
     stops(rows).contains(&at).then_some(at)
+}
+
+/// Where Ctrl+Alt+↑/↓ LANDS: one row on from wherever the person already is.
+///
+/// A first press that merely lit up the active task spent itself announcing
+/// something its reader was already looking at, so ↑ cost two presses to reach
+/// the row above and the first of them was indistinguishable from a dead key.
+/// The seed is what the walk starts FROM, never what it arrives at.
+///
+/// `cursor` is the LIVE cursor — a stale one is not a place to step off. With
+/// no cursor and an active task that is not drawn there is nothing to step off
+/// at all, and [`step`] enters at the end the press came from, which is still a
+/// move.
+pub fn walk(rows: &[Row], cursor: Option<RowId>, active: usize, down: bool) -> Option<RowId> {
+    step(rows, cursor.or_else(|| seed(rows, active)), down)
 }
 
 /// One step of the cursor. The list is a RING: ↓ from the last row lands on the
@@ -1901,6 +1919,36 @@ mod tests {
         assert_eq!(seed(&rows, 1), Some(RowId::Task(1)));
     }
 
+    /// ...and STEPS OFF it. The seed is where the walk begins, not where it
+    /// ends: a first press that landed on the active task told its reader the
+    /// one thing they could already see, and cost a press to do it.
+    ///
+    /// Both directions, because a rule that only holds going up is a typo that
+    /// passes. Task(1) sits between Task(0) above it and Project(2) below.
+    #[test]
+    fn the_first_press_moves_off_the_active_task_rather_than_onto_it() {
+        let (p, i, t) = bar();
+        let rows = rows(&p, &i, &t);
+        assert_eq!(walk(&rows, None, 1, false), Some(RowId::Task(0)));
+        assert_eq!(walk(&rows, None, 1, true), Some(RowId::Project(2)));
+        // The point of the whole change, said plainly.
+        assert_ne!(walk(&rows, None, 1, false), Some(RowId::Task(1)));
+        assert_ne!(walk(&rows, None, 1, true), Some(RowId::Task(1)));
+    }
+
+    /// A live cursor outranks the active task, or the walk would snap back to
+    /// the tab you are in on every press instead of carrying on from where the
+    /// highlight got to.
+    #[test]
+    fn a_walk_already_under_way_carries_on_from_the_cursor() {
+        let (p, i, t) = bar();
+        let rows = rows(&p, &i, &t);
+        assert_eq!(
+            walk(&rows, Some(RowId::Project(1)), 1, true),
+            Some(RowId::Initiative(10))
+        );
+    }
+
     /// ...unless that task is folded away under its own branch, where landing
     /// on it would put the highlight on a row nobody can see. The caller falls
     /// back to the end of the list, which is the old behaviour.
@@ -1911,6 +1959,10 @@ mod tests {
         let rows = rows(&p, &i, &t);
         assert!(!stops(&rows).contains(&RowId::Task(0)));
         assert_eq!(seed(&rows, 0), None);
+        // Nothing to step off, so the press enters at the end it came from —
+        // still a move, and still not a row that is folded away.
+        assert_eq!(walk(&rows, None, 0, true), Some(RowId::Project(1)));
+        assert_eq!(walk(&rows, None, 0, false), Some(RowId::Task(2)));
     }
 
     #[test]
