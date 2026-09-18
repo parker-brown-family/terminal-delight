@@ -357,7 +357,7 @@ impl TerminalView {
                     }
                 }
                 self.composer_follows();
-                self.send(bytes, cx);
+                self.bench_keystroke(bytes, cx);
             }
             cx.stop_propagation();
             return true;
@@ -411,6 +411,19 @@ impl TerminalView {
             }
             crate::workbench::Reading::Choose(i) => self.bench_choose(i, cx),
             crate::workbench::Reading::Talk => {
+                // Nobody to talk to. The bench keeps the key rather than
+                // starting a sentence into a shell.
+                //
+                // The composer is a MIRROR of the agent's own line editor and
+                // not a buffer of our own, so a pane with no agent has nothing
+                // for it to mirror: `shows()` draws no composer there, and
+                // typing anyway opened an invisible one and put every character
+                // down the pseudoterminal, where the shell gathered them into a
+                // command line and the return key ran it (#509).
+                if !self.mode.is_agent() {
+                    cx.stop_propagation();
+                    return true;
+                }
                 // Start talking, carrying the character that started it —
                 // so there is no "click here first".
                 self.wb_compose = Some(crate::workbench::Line::new());
@@ -421,7 +434,7 @@ impl TerminalView {
                         line.insert(c);
                     }
                     self.composer_follows();
-                    self.send(bytes, cx);
+                    self.bench_keystroke(bytes, cx);
                 }
             }
             crate::workbench::Reading::Ignore => {}
@@ -943,7 +956,7 @@ impl TerminalView {
         let bytes = crate::workbench::caret_move(line.caret(), to);
         line.seek(to);
         if !bytes.is_empty() {
-            self.send(bytes, cx);
+            self.bench_keystroke(bytes, cx);
         }
     }
 
@@ -990,7 +1003,7 @@ impl TerminalView {
             // is nobody on the far end to do it — a shell has no idea what an
             // image is, and there a path is the only thing that can be typed.
             if self.mode.is_agent() {
-                self.send(vec![0x16], cx);
+                self.bench_keystroke(vec![0x16], cx);
                 // The composer cannot show the agent's `[Image #7]` — it does
                 // not know the number and inventing one would desynchronise
                 // the mirror. It shows that an image went, which is the part
@@ -1045,7 +1058,7 @@ impl TerminalView {
             line.insert(&text);
         }
         self.composer_follows();
-        self.send(text.into_bytes(), cx);
+        self.bench_keystroke(text.into_bytes(), cx);
     }
 
     /// Does the clipboard hold an image at all?
@@ -1184,13 +1197,9 @@ impl TerminalView {
             None => self.wb_compose = Some(crate::workbench::Line::holding(text.clone())),
         }
         self.composer_follows();
-        // The same on-screen rule as a submitted line: keystrokes into a pane
-        // nobody is looking at wait until somebody is.
-        if self.wb_on_screen {
-            self.send(text.into_bytes(), cx);
-        } else {
-            self.wb_queued.push(text.into_bytes());
-        }
+        // The same rules as a submitted line: keystrokes into a pane nobody is
+        // looking at, or into one with no agent to read them, wait.
+        self.bench_keystroke(text.into_bytes(), cx);
         cx.notify();
     }
 
@@ -1215,7 +1224,7 @@ impl TerminalView {
     /// dropping anything. Every delivery stamps the reading window and the
     /// flash, so a write is something a person sees happen.
     pub(super) fn bench_deliver(&mut self, bytes: Vec<u8>, cx: &mut Context<Self>) {
-        if self.wb_on_screen {
+        if self.bench_may_write() {
             let now = crate::surfacefeed::now_ms();
             self.session.notifier.notify(bytes);
             self.wb_delivered_ms = Some(now);
@@ -1226,21 +1235,70 @@ impl TerminalView {
         cx.notify();
     }
 
+    /// Both conditions on a bench write, in one place.
+    ///
+    /// The pane has to be on screen — the rule this surface was built around —
+    /// and there has to be an agent in there to receive it. The second was
+    /// missing, and what fills the gap is not nothing: a terminal with no agent
+    /// is a SHELL, and a shell reads a line and runs it. A person's message
+    /// typed at a bash prompt is a command line, and `claude <the whole
+    /// message>` is a valid one — which is how a bug report sent from the bench
+    /// started a brand new session with itself as the argument and no history,
+    /// while the bench went on drawing the conversation it thought it was
+    /// talking to (#509).
+    ///
+    /// `Unknown` is not an agent either. A host-owned pane is born unread, and
+    /// "we have not looked" must not be the state that lets a write through.
+    fn bench_may_write(&self) -> bool {
+        self.wb_on_screen && self.mode.is_agent()
+    }
+
+    /// One keystroke from the composer, under the same two rules as a line.
+    ///
+    /// Held rather than dropped, and in the same queue the lines use, so a
+    /// stream that is interrupted mid-sentence arrives in the order it was
+    /// typed. The enter key is a keystroke like any other on this path —
+    /// `keystroke_bytes` turns it into `\r` — which is exactly why the gate
+    /// has to be here and not only on the submit: `\r` is what makes a shell
+    /// RUN what is sitting on its line.
+    fn bench_keystroke(&mut self, bytes: Vec<u8>, cx: &mut Context<Self>) {
+        if self.bench_may_write() {
+            self.send(bytes, cx);
+        } else {
+            self.wb_queued.push(bytes);
+        }
+    }
+
     /// The workspace telling this pane whether it is in the active tab. Going
     /// on screen drains the queue, in order, as if each line had just been
     /// pressed — because for the person now looking, it just was.
     pub fn set_on_screen(&mut self, on: bool, cx: &mut Context<Self>) {
         let was = self.wb_on_screen;
         self.wb_on_screen = on;
-        if on && !was && !self.wb_queued.is_empty() {
-            let queued = std::mem::take(&mut self.wb_queued);
-            for bytes in queued {
-                self.bench_deliver(bytes, cx);
-            }
+        if on && !was {
+            self.bench_drain(cx);
         }
     }
 
-    /// Writes held for this pane because nobody was looking at it.
+    /// Let go of whatever the bench is holding, if both rules now allow it.
+    ///
+    /// Called from the two places a held write can become deliverable — the
+    /// pane coming on screen, and an agent appearing in it — and it re-checks
+    /// both rather than assuming the caller's half is the only one outstanding.
+    /// A queue drained on one condition while the other still fails is how a
+    /// held line ends up in a shell.
+    pub(super) fn bench_drain(&mut self, cx: &mut Context<Self>) {
+        if self.wb_queued.is_empty() || !self.bench_may_write() {
+            return;
+        }
+        let queued = std::mem::take(&mut self.wb_queued);
+        for bytes in queued {
+            self.bench_deliver(bytes, cx);
+        }
+    }
+
+    /// Writes the bench is holding — because nobody is looking at this pane,
+    /// or because there is no agent in it to read them.
     pub fn bench_queued(&self) -> usize {
         self.wb_queued.len()
     }
