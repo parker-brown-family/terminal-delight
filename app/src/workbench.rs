@@ -249,6 +249,44 @@ pub fn section_open(default_open: bool, toggled: bool) -> bool {
     default_open != toggled
 }
 
+/// What the title card says about the turn in flight: the agent's own clock,
+/// its own token count, and the tool call it is in the middle of.
+///
+/// Each is an [`Option`] and stays one all the way to the card: a clock the
+/// screen did not carry is drawn as unread, never as zero. Parker, looking at
+/// a title bar that said only `Working 10s` across an acre of room: *"we have
+/// a lot of space here... show tokens, time elapsed on turn, + the current
+/// tool or w/e being used."*
+#[derive(Clone, PartialEq, Eq, Debug, Default)]
+pub struct TurnVitals {
+    /// The turn's elapsed time as the agent printed it — `3m 27s`.
+    pub elapsed: Option<String>,
+    /// The turn's tokens so far, as a count.
+    pub tokens: Option<u64>,
+    /// The in-flight tool line — `Calling lean-ctx, terminal-delight 3 times`.
+    pub doing: Option<String>,
+}
+
+impl TurnVitals {
+    /// Did the screen carry any of the three?
+    pub fn is_unread(&self) -> bool {
+        self.elapsed.is_none() && self.tokens.is_none() && self.doing.is_none()
+    }
+}
+
+/// The vitals for the card, or `None` when there is no turn to have them.
+///
+/// Only a WORKING agent has a turn in flight. Numbers off the screen of an
+/// idle agent belong to the last turn, which the card is not about, and the
+/// session total already lives on the header's token badge.
+pub fn turn_vitals(status: &crate::hud::AgentStatus) -> Option<TurnVitals> {
+    status.working().then(|| TurnVitals {
+        elapsed: status.elapsed.clone(),
+        tokens: status.turn_tokens,
+        doing: status.doing.clone(),
+    })
+}
+
 // ---------------------------------------------------------------------------
 // how much of a thing fits
 // ---------------------------------------------------------------------------
@@ -2089,6 +2127,42 @@ mod tests {
                 "doubts": ["maybe"]
             }
         }))
+    }
+
+    #[test]
+    fn turn_vitals_exist_only_while_working_and_an_unread_screen_says_so() {
+        use crate::hud::{AgentState as HudState, AgentStatus};
+        let idle = AgentStatus {
+            state: HudState::Idle,
+            elapsed: Some("3m".into()),
+            turn_tokens: Some(8_000),
+            ..AgentStatus::default()
+        };
+        assert_eq!(
+            turn_vitals(&idle),
+            None,
+            "the last turn's numbers are not this turn's"
+        );
+        let working = AgentStatus {
+            state: HudState::Working,
+            elapsed: Some("3m 27s".into()),
+            turn_tokens: Some(8_000),
+            doing: Some("Calling lean-ctx 3 times".into()),
+            ..AgentStatus::default()
+        };
+        let v = turn_vitals(&working).expect("a turn in flight");
+        assert_eq!(v.elapsed.as_deref(), Some("3m 27s"));
+        assert_eq!(v.tokens, Some(8_000));
+        assert!(!v.is_unread());
+        let narrow = AgentStatus {
+            state: HudState::Working,
+            ..AgentStatus::default()
+        };
+        let v = turn_vitals(&narrow).expect("still a turn");
+        assert!(
+            v.is_unread(),
+            "working, and the screen carried no numbers: unread, not zero"
+        );
     }
 
     #[test]
