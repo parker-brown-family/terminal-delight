@@ -2551,6 +2551,21 @@ impl TerminalView {
         (doc, next_rev)
     }
 
+    /// What the FOCUS reader shows for this pane.
+    ///
+    /// **The GRID, on both faces — deliberately.** A pane has two of them now,
+    /// and until `alt+r` started reaching the bench again (#524) nobody had to
+    /// decide which one FOCUS mirrors. The answer is the terminal, and the
+    /// reason is that it is the one a person cannot otherwise read: the bench
+    /// hides the agent's scrollback by default (`shows.mirror` is off unless
+    /// `TD_BENCHMIRROR=1`), and the bench itself is already drawn at whatever
+    /// size its owner set. Mirroring the bench would enlarge the thing that is
+    /// legible and keep hiding the thing that is not.
+    ///
+    /// So on the workbench face, `alt+r` is how you see what the bench is
+    /// holding back. That is a feature and it is written down here because it
+    /// was an accident first — pinned by
+    /// `the_focus_reader_mirrors_the_grid_on_both_faces`.
     pub fn mirror_snapshot(&self, cx: &App) -> MirrorSnapshot {
         let th = self.resolved_theme(cx);
         // Mirror the live pane's anchor-to-top inverted read: bottom-anchor the
@@ -6571,19 +6586,20 @@ fn keystroke_bytes(ks: &Keystroke) -> Option<Vec<u8>> {
         // glyph it replaces is gone); alt+v / alt+h and the ctrl+alt chords
         // split; alt+w closes the focused pane — all owned by the Workspace.
         // alt+k flips the pane's face and is the PANE's own, handled in `on_key`
-        // before this is ever reached; it is listed anyway, because this table is
-        // what says which alt chords are not the shell's, and a chord that is
-        // absent from it is one deleted `return` away from arriving as ESC k.
-        // Taking alt+r costs readline's revert-line, alt+v its page-scroll,
-        // alt+h its mark-paragraph, alt+w its copy-region-as-kill and alt+k its
-        // (unbound-by-default) slot (the DESTRUCTIVE ^W werase is ctrl+w,
-        // intercepted a layer up in `on_key` as close-tab, and is untouched
-        // here) — fair trades for one-hand pane chords.
-        if matches!(
-            ks.key.as_str(),
-            "left" | "right" | "up" | "down" | "r" | "v" | "h" | "w" | "k"
-        ) || m.control
-        {
+        // before this is ever reached; it is listed anyway, because a chord
+        // absent from the table is one deleted `return` away from arriving as
+        // ESC k. Taking alt+r costs readline's revert-line, alt+v its
+        // page-scroll, alt+h its mark-paragraph, alt+w its copy-region-as-kill
+        // and alt+k its (unbound-by-default) slot (the DESTRUCTIVE ^W werase is
+        // ctrl+w, intercepted a layer up in `on_key` as close-tab, and is
+        // untouched here) — fair trades for one-hand pane chords.
+        //
+        // THE LIST ITSELF LIVES IN `workbench`, because the bench needs exactly
+        // the same one: a terminal and a bench are both content inside a pane,
+        // and the window's gestures have to survive whichever is on top. It was
+        // written out here and nowhere else, so the bench competed for all of
+        // them and won — see [`crate::workbench::window_chord`] (#524).
+        if crate::workbench::window_chord(ks.key.as_str(), m.alt, m.control) {
             return None;
         }
         // other alt+<char>: ESC prefix for readline (alt+b, alt+f, alt+.)
@@ -8118,6 +8134,101 @@ mod tests {
         assert!(
             gate.contains("wb_on_screen") && gate.contains("is_agent()"),
             "the bench gate stopped asking one of its two questions: {gate}"
+        );
+    }
+
+    /// FOCUS mirrors the grid whichever face the pane is showing.
+    ///
+    /// An undeclared case until `alt+r` could reach a bench pane at all
+    /// (#524), and the kind that gets decided by accident: `mirror_snapshot`
+    /// reads `styled_lines` because that is what it has always read, not
+    /// because anyone weighed it against the alternative. Weighed now — the
+    /// bench hides the scrollback and is already sized to be read, so the grid
+    /// is the thing worth enlarging — and pinned here, so flipping it becomes
+    /// a decision somebody makes rather than a line somebody changes.
+    #[test]
+    fn the_focus_reader_mirrors_the_grid_on_both_faces() {
+        let src = include_str!("pane.rs");
+        let at = src
+            .find("pub fn mirror_snapshot(")
+            .expect("mirror_snapshot");
+        let end = src[at..].find("\n    }\n").expect("end of fn") + at;
+        let body: String = src[at..end]
+            .lines()
+            .map(|l| l.split("//").next().unwrap_or(""))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            body.contains("styled_lines("),
+            "FOCUS stopped mirroring the terminal grid"
+        );
+        assert!(
+            !body.contains("bench_el(") && !body.contains("benchdraw::"),
+            "FOCUS is now mirroring the BENCH. That may be right, but it is a design \
+             change and not a refactor: the bench is already drawn at the size its owner \
+             chose, while the scrollback it hides is the thing a person opens FOCUS to \
+             read. Change this test in the same commit, with the reasoning."
+        );
+    }
+
+    /// `bench_key` declines the window's chords BEFORE it can swallow one.
+    ///
+    /// Structural, because the thing that goes wrong is structural. Every path
+    /// out of `bench_key` ends in `cx.stop_propagation()`, so a chord it does
+    /// not explicitly hand back can never reach the workspace — and a new
+    /// branch added at the top of that function inherits the same property
+    /// without anybody noticing. That is how `alt+w`, `alt+r`, the splits and
+    /// the directional focus keys all came to do nothing on the workbench face
+    /// (#524): no table collided, the handler simply ran first.
+    ///
+    /// So the assertion is about ORDER, not about a list: the `window_chord`
+    /// check has to sit above the first `stop_propagation` in the function.
+    /// A list would guard only the chords on it, and the next binding will be
+    /// added by somebody who has not read this.
+    ///
+    /// Mutation-tested: moving the check below the gallery block, and deleting
+    /// it outright, each failed this test.
+    #[test]
+    fn the_bench_declines_a_window_chord_before_it_can_swallow_one() {
+        let bench = include_str!("pane/bench.rs");
+        let (code, _tests) = bench
+            .split_once("#[cfg(test)]")
+            .unwrap_or((bench, "no test module yet"));
+        let at = code.find("fn bench_key(").expect("bench_key");
+        // To the end of the function: the first line that is a closing brace at
+        // method indentation.
+        let end = code[at..].find("\n    }\n").expect("end of bench_key") + at;
+        // COMMENTS STRIPPED FIRST, like every other scan in this codebase. The
+        // first draft of this test did not, and failed on its own prose: the
+        // doc comment at the top of `bench_key` explains that every path out of
+        // it ends in `cx.stop_propagation()`, and the scan read that sentence
+        // as the call it was describing. A source scan that cannot tell code
+        // from a description of code fails at whatever is best documented.
+        let body: String = code[at..end]
+            .lines()
+            .map(|l| l.split("//").next().unwrap_or(""))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let body = body.as_str();
+
+        let declines = body
+            .find("window_chord(")
+            .expect("bench_key no longer consults workbench::window_chord at all");
+        let swallows = body
+            .find("stop_propagation()")
+            .expect("bench_key stopped swallowing anything, which would be a bigger change");
+        assert!(
+            declines < swallows,
+            "bench_key can swallow a key before it has asked whether the chord is the \
+             window's — every exit below that point stops propagation, so the workspace \
+             never sees it"
+        );
+        // …and it hands the chord BACK rather than eating it silently.
+        let after = &body[declines..];
+        let ret = after.find("return false").unwrap_or(usize::MAX);
+        assert!(
+            ret < after.find("stop_propagation()").unwrap_or(usize::MAX),
+            "the window_chord branch must `return false` so the event keeps bubbling"
         );
     }
 

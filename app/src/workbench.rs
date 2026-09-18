@@ -1723,6 +1723,74 @@ pub enum Dispatch {
 /// subtly wrong — a digit means "answer" only when there is a question to
 /// answer, and any ordinary character has to start talking rather than being
 /// swallowed — and neither of those can be tested through a render.
+/// Chords the WINDOW owns — never a pane's content, on either of its faces.
+///
+/// # Why this is one table and not two
+///
+/// A pane can be showing a terminal or a bench, and both of those are *content
+/// inside a window*. The window's own gestures — close this pane, split it,
+/// open the FOCUS reader, move the highlight — have to survive whichever one is
+/// on top, and the way they survive is that the thing on top declines to take
+/// them.
+///
+/// The terminal face has always done this, in `pane::keystroke_bytes`: a short
+/// list of alt chords it refuses to encode, so they bubble up to the workspace
+/// instead of arriving at somebody's shell as `ESC w`. **The bench never got
+/// one**, and it ends both of its key paths by stopping propagation — so on the
+/// workbench face every chord in that list was dead. `alt+w` did nothing at
+/// all, which is worse than the state it replaced, because the face toggle that
+/// used to sit on `alt+w` was at least handled upstream (#524).
+///
+/// Extracting the list rather than copying it is the point. Two lists drift,
+/// and the drift is invisible: nothing fails to compile, nothing fails a test,
+/// a chord just quietly stops working on one face.
+///
+/// # What is deliberately NOT here
+///
+/// Only chords carrying `alt` (or `control`+`alt`) qualify, and that boundary
+/// is doing real work in both directions:
+///
+/// - `ctrl+c` must reach a running agent. A bench that refused it would take
+///   away the only way to interrupt a turn.
+/// - `alt+b` / `alt+f` are readline's word motion, which the composer mirrors
+///   through [`line_edit`] — so a blanket "the window takes every alt chord"
+///   would break typing.
+/// - A PLAIN arrow walks the bench's rail and a PLAIN escape peels its
+///   overlays. Only the modified forms leave.
+pub fn window_chord(key: &str, alt: bool, control: bool) -> bool {
+    // ctrl+alt+<anything> walks the left bar's tree. Matched on the modifiers
+    // alone, because that pair is not an editing chord anywhere.
+    if control && alt {
+        return true;
+    }
+    if !alt {
+        return false;
+    }
+    matches!(
+        key,
+        "left" | "right" | "up" | "down" | "r" | "v" | "h" | "w" | "k"
+    )
+}
+
+/// Does this keystroke put a CHARACTER in front of a person?
+///
+/// The bench starts talking on any printable key, so that there is no "click
+/// here first" — and the test for printable was `key_char` alone, with no look
+/// at the modifiers. gpui fills `key_char` for `alt+r` with `"r"`, so the chord
+/// read as the letter r: the bench opened a composer where the FOCUS reader
+/// should have been, and then typed nothing into it, because the encoder
+/// correctly refused the chord one layer down. An empty box where a reader was
+/// asked for.
+///
+/// `shift` is deliberately absent from the refusal — `shift+a` is the
+/// character `A`.
+pub fn types_a_character(key_char: Option<&str>, alt: bool, control: bool, platform: bool) -> bool {
+    if alt || control || platform {
+        return false;
+    }
+    key_char.is_some_and(|c| !c.is_empty() && !c.chars().any(char::is_control))
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Reading {
     Down,
@@ -3012,6 +3080,70 @@ mod tests {
         assert_eq!(reading_key("a", true, None), Reading::Talk);
         assert_eq!(reading_key("/", true, None), Reading::Talk);
         assert_eq!(reading_key("space", true, None), Reading::Talk);
+    }
+
+    /// The window's gestures survive whichever face a pane is showing.
+    ///
+    /// Every entry is a chord the workspace binds. Before this table existed
+    /// the list was written out inside `keystroke_bytes` and nowhere else, so
+    /// the bench — which ends every key path by stopping propagation — took all
+    /// of them and `alt+w` did nothing at all on the workbench face (#524).
+    #[test]
+    fn the_windows_chords_are_never_a_panes_to_take() {
+        // The workspace's own bindings, each read off the handler that binds
+        // it: close (main.rs `if ks.key.as_str() == "w"`), the FOCUS reader
+        // ("r"), the two splits, and directional pane focus.
+        for key in ["w", "r", "v", "h", "left", "right", "up", "down"] {
+            assert!(
+                window_chord(key, true, false),
+                "alt+{key} is the window's and must leave the pane"
+            );
+        }
+        // ctrl+alt+<anything> walks the left bar's tree, on the modifiers alone.
+        assert!(window_chord("up", true, true));
+        assert!(window_chord("q", true, true), "the pair, not the letter");
+
+        // …and the boundary, which is the half that keeps typing working. Each
+        // of these reaching the workspace would break something a person does
+        // constantly.
+        assert!(
+            !window_chord("c", false, true),
+            "ctrl+c interrupts an agent"
+        );
+        assert!(
+            !window_chord("b", true, false),
+            "alt+b is readline's word-back"
+        );
+        assert!(!window_chord("f", true, false), "alt+f is word-forward");
+        assert!(
+            !window_chord("up", false, false),
+            "a plain arrow walks the rail"
+        );
+        assert!(
+            !window_chord("escape", false, false),
+            "plain esc peels overlays"
+        );
+        assert!(!window_chord("a", false, false));
+        assert!(!window_chord("enter", false, false));
+    }
+
+    /// A modified keystroke is not a character, whatever `key_char` says.
+    #[test]
+    fn a_chord_is_not_typing_even_when_gpui_hands_over_a_letter() {
+        // The exact shape of the bug: gpui fills `key_char` for alt+r with
+        // "r", so the bench read a chord as the letter and opened a composer
+        // where the FOCUS reader should have been.
+        assert!(!types_a_character(Some("r"), true, false, false), "alt+r");
+        assert!(!types_a_character(Some("c"), false, true, false), "ctrl+c");
+        assert!(!types_a_character(Some("k"), false, false, true), "super+k");
+        // Ordinary typing is untouched, shift included — shift+a IS a character.
+        assert!(types_a_character(Some("a"), false, false, false));
+        assert!(types_a_character(Some("A"), false, false, false));
+        assert!(types_a_character(Some("/"), false, false, false));
+        // And the two non-answers stay non-answers.
+        assert!(!types_a_character(None, false, false, false));
+        assert!(!types_a_character(Some(""), false, false, false));
+        assert!(!types_a_character(Some("\u{1b}"), false, false, false));
     }
 
     #[test]
