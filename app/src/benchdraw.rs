@@ -467,7 +467,7 @@ pub fn body(
         Embodiment::Summary => frame.child(summary_line(surface, sk, th)),
         Embodiment::Compact => frame
             .child(heading(surface, sk, th))
-            .child(compact(surface, sk, th)),
+            .child(compact(surface, folds, sk, th)),
         Embodiment::Full if asking => frame
             .child(heading(surface, sk, th))
             .child(full(surface, folds, sk, th)),
@@ -557,7 +557,7 @@ fn heading(surface: &Surface, sk: &Skin, th: &Theme) -> Div {
 }
 
 /// The shape of the thing, for a pane too small to hold the thing.
-fn compact(surface: &Surface, sk: &Skin, th: &Theme) -> Div {
+fn compact(surface: &Surface, folds: Option<&Folds>, sk: &Skin, th: &Theme) -> Div {
     // A panel rather than bare rows: at this size the body and the rail sit
     // close enough together that an unframed list reads as part of the rail.
     let list = sk.panel().flex().flex_col().gap(px(3.));
@@ -604,21 +604,20 @@ fn compact(surface: &Surface, sk: &Skin, th: &Theme) -> Div {
         // either size, and no second list of kinds to keep in step.
         Kind::Question(q) => question(q, sk, th),
         Kind::Artifact(a) => list.child(micro(a.href.clone(), Step::Small, th.faint, sk, th)),
-        // The gist, then what is folded behind it, as one line per register.
-        Kind::Response(r) => list
-            .child(gist(&r.tldr, sk, th))
-            .children(r.sections.iter().map(|s| {
-                micro(
-                    format!("\u{25b8} {} \u{b7} {}", s.label, s.body.measure()),
-                    Step::Small,
-                    th.faint,
-                    sk,
-                    th,
-                )
-            }))
-            .when(!r.doubts.is_empty(), |d| {
-                d.child(micro(doubts_measure(r), Step::Small, th.complement, sk, th))
-            }),
+        // DELEGATES, for the same reason the question does and then some.
+        //
+        // The compact form was a list of one-line section summaries: the right
+        // information and no way to act on it, because a summary carries no
+        // press target. That made the fold — the whole interaction this kind
+        // exists for — silently unavailable at a width a tiled pane reaches
+        // constantly. Measured on a half-monitor pane with the left bar
+        // showing: about 394 points of content against a 460 threshold, so the
+        // common case was the one with no affordance.
+        //
+        // A compact card may legitimately show LESS. It may not show a control
+        // that is missing, which is what the reader reads as a broken feature
+        // rather than as a small screen.
+        Kind::Response(r) => response(r, folds, sk, th),
         Kind::Unclassified(u) => list.child(micro(u.reason.clone(), Step::Small, th.faint, sk, th)),
     }
 }
@@ -2475,6 +2474,55 @@ mod tests {
             .parse::<f64>()
             .map(|v| v == 0.0 || v == 0.001)
             .unwrap_or(true)
+    }
+
+    /// Both sizes of a kind that carries an INTERACTION must route to one
+    /// renderer, or the small one grows a copy that quietly drops the control.
+    ///
+    /// This has now happened twice in this file. The question's compact arm
+    /// listed its options as text above the same options as chips, and was
+    /// fixed by delegating. The response's compact arm listed its sections as
+    /// one-line summaries with no press target, so the fold was unavailable at
+    /// a width a tiled pane reaches constantly — the same defect wearing the
+    /// other failure mode: not a duplicated control, a missing one.
+    ///
+    /// Comments are stripped before matching, because a scan that can be
+    /// satisfied by the prose explaining the line it guards is not a gate. The
+    /// two kinds named here are the ones whose compact form would otherwise
+    /// lose a thing a person presses; a table or a diagram may legitimately
+    /// show less, and neither is listed.
+    #[test]
+    fn an_interactive_kind_has_one_renderer_for_both_sizes() {
+        let src = include_str!("benchdraw.rs");
+        let (code, _tests) = src.split_once("\n#[cfg(test)]").expect("a test module");
+        let stripped: String = code
+            .lines()
+            .map(|l| l.split("//").next().unwrap_or(""))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let (compact_body, rest) = stripped
+            .split_once("fn compact(")
+            .expect("a compact renderer")
+            .1
+            .split_once("fn full(")
+            .expect("a full renderer");
+        let full_body = rest;
+        for (kind, renderer) in [
+            ("Kind::Question(q)", "question("),
+            ("Kind::Response(r)", "response("),
+        ] {
+            for (which, body) in [("compact", compact_body), ("full", full_body)] {
+                let arm = body
+                    .split_once(kind)
+                    .unwrap_or_else(|| panic!("{which} has no arm for {kind}"))
+                    .1;
+                let arm = arm.split_once('\n').map(|(a, _)| a).unwrap_or(arm);
+                assert!(
+                    arm.contains(renderer),
+                    "{which}'s {kind} arm does not delegate to {renderer}: {arm}"
+                );
+            }
+        }
     }
 
     #[test]
