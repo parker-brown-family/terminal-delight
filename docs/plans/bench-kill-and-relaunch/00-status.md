@@ -7,8 +7,21 @@ conditions; that half is a 2. The other half puts a destructive verb on a
 person's live agent, and the obvious way to build it (`SIGKILL`) silently
 defeats the first half. That is what buys the page.
 
-**Status:** awaiting approval. Branch `bench/kill-and-relaunch`, off
-`ae8e1eb`.
+**Status:** BUILT through rung one, in `6e91c33`. Slices 1–5 shipped alongside
+[the agent-strip design](../agent-strip/00-status.md), because both features
+land in the same bar and building them apart would have meant designing that bar
+twice.
+
+Rung two — `Request::KillForeground`, for an agent too wedged to read its own
+input — is **not built**. It is the only piece here that needs the host
+upgraded, and a wedged agent is the rarer case; rung one covers ending an agent
+that is merely running.
+
+Slice 2 ended up stricter than this page proposed. The offer is keyed on
+`!agent_now && !wb_had_agent`, which means a pane that has had an agent does
+**not** get the body's standalone button at all — its strip carries `LAUNCH
+AGENT` instead. One slot, two states, rather than two buttons in two places
+offering the same thing.
 
 ---
 

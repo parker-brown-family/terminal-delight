@@ -4,7 +4,18 @@
 made rather than offered. Parker: *"You have the power to make a good design
 choice here."*
 
-**Status:** decided, building. Branch `bench/kill-and-relaunch`.
+**Status:** BUILT, in `6e91c33` on `bench/kill-and-relaunch`. Gates green as CI
+runs them — `cargo fmt --check`, `cargo clippy --all-features -D warnings` and
+`cargo test` all exit 0, 1285 tests passing. The three new decisions in
+`workbench.rs` were each mutation-checked: remove `wheel_target`'s card arm,
+make `dials_live` say yes while Working, or drop `strip_verb`'s
+`!agent_present`, and the matching test fails. One mutation at a time, because
+the crudest one otherwise masks the rest.
+
+`cargo clippy --all-targets` reports six findings — all in pre-existing test
+code in `launcher.rs`, `surface.rs` and `main.rs`, confirmed by running it
+against the stashed base, which reports the same six. CI does not pass
+`--all-targets`, which is `#430`.
 
 ---
 
