@@ -134,6 +134,28 @@ impl PaneMode {
     pub fn is_agent(&self) -> bool {
         matches!(self, PaneMode::Claude | PaneMode::Codex)
     }
+
+    /// Is this terminal sitting at its own shell prompt, waiting to be typed
+    /// into?
+    ///
+    /// `Shell` is exactly that claim and nothing weaker: the reading behind it
+    /// is that the foreground process group IS the shell, so anything the
+    /// shell had started has finished. An agent, a remote session or a `vim`
+    /// is a `no` — a keystroke would go into that program's stdin. And
+    /// `Unknown` is neither: nobody has classified this pane yet, and a
+    /// default of "probably a prompt" is how a command line ends up typed into
+    /// a terminal that was busy. Three answers, three values; see
+    /// [`launcher::landing`](crate::launcher::landing), which is the only
+    /// caller that may act on the first.
+    pub fn at_a_prompt(&self) -> Option<bool> {
+        match self {
+            PaneMode::Shell => Some(true),
+            PaneMode::Claude | PaneMode::Codex | PaneMode::Remote | PaneMode::Other(_) => {
+                Some(false)
+            }
+            PaneMode::Unknown => None,
+        }
+    }
 }
 
 /// Foreground process of the PTY, the honest kernel answer.
@@ -141,7 +163,11 @@ fn foreground_mode(master: &std::fs::File, shell_pid: u32) -> PaneMode {
     use std::os::fd::AsRawFd;
     let pgid = unsafe { libc::tcgetpgrp(master.as_raw_fd()) };
     if pgid <= 0 {
-        return PaneMode::Shell;
+        // The kernel declined to say. That is `Unknown` and not `Shell`: this
+        // used to answer "a shell" to a question it had just failed to ask,
+        // and [`PaneMode::at_a_prompt`] now turns that answer into a decision
+        // to type a command line into somebody's terminal.
+        return PaneMode::Unknown;
     }
     let comm = std::fs::read_to_string(format!("/proc/{pgid}/comm")).unwrap_or_default();
     let cmdline = std::fs::read_to_string(format!("/proc/{pgid}/cmdline"))
@@ -795,6 +821,10 @@ pub(crate) fn warp_screen_to_content(sx: f32, sy: f32, k1: f32, k2: f32) -> (f32
 }
 
 /// Apply the mode's screen colour over the structural theme.
+///
+/// Agents are two of the three: `Remote` rides the same rule, because "you are
+/// not local" is program identity in exactly the same sense. Gated by
+/// [`maybe_mode_theme`] — nothing here decides *whether* the tint applies.
 fn mode_theme(base: &Theme, mode: &PaneMode) -> Theme {
     let mut th = base.clone();
     let (accent, text, faint, cursor) = match mode {
@@ -825,6 +855,28 @@ fn mode_theme(base: &Theme, mode: &PaneMode) -> Theme {
     // default fg/ANSI-7-ish stays app-controlled; swap the green slots' default fg
     th.ansi[7] = th.text;
     th
+}
+
+/// Whether a pane wears the phosphor of the PROGRAM inside it, or the theme it
+/// inherited — the whole of the AGENT THEME decision, as a pure function.
+///
+/// Two conditions, and they answer different questions. `inherit` is the pane's:
+/// a pane carrying its own theme chose that look deliberately and the tint must
+/// never stomp it. `tint` is the window's: [`agent_tint`], the persisted
+/// preference this function exists to honour.
+///
+/// It existed as the `inherit` half alone, and the consequence was that
+/// following outer did not mean "wear what the window wears" — it meant "wear
+/// what the program is". Starting `claude` in a green shell pane turned the
+/// whole tube amber, and the only escape was to pin a per-pane override, which
+/// is the opposite of following. The preference defaults OFF, so an inherited
+/// theme is now inherited; turn it on to get the amber/cyan/violet tubes back.
+fn maybe_mode_theme(base: &Theme, mode: &PaneMode, inherit: bool, tint: bool) -> Theme {
+    if inherit && tint {
+        mode_theme(base, mode)
+    } else {
+        base.clone()
+    }
 }
 
 const HEADER_H: f32 = 40.0;
@@ -1651,8 +1703,14 @@ impl GradeCoeffs {
 }
 
 /// Cached `resolved_theme` result + the inputs it was computed from
-/// (effective choice, mode, inherit_theme, theme generation).
-type ThemeMemo = Option<(theme::ThemeChoice, PaneMode, bool, u64, Theme)>;
+/// (effective choice, mode, inherit_theme, the AGENT THEME preference, theme
+/// generation).
+///
+/// The preference is a memo input and not a generation bump because it is a
+/// process-global atomic ([`agent_tint`]) that no `ThemeChoice` carries — a
+/// window that flips it while a pane is quiet would otherwise keep serving the
+/// look from before the flip.
+type ThemeMemo = Option<(theme::ThemeChoice, PaneMode, bool, bool, u64, Theme)>;
 
 /// Cache key for [`TerminalView::mirror_document`]. Matching keys guarantee a
 /// byte-identical document: `generation` moves on every terminal event, the
@@ -1667,6 +1725,7 @@ struct MirrorDocKey {
     eff: theme::ThemeChoice,
     mode: PaneMode,
     inherit: bool,
+    tint: bool,
     theme_gen: u64,
 }
 
@@ -2327,33 +2386,36 @@ pub struct MirrorSnapshot {
 impl TerminalView {
     /// The theme this pane actually renders with: each appearance group
     /// (theme, grade) resolved to the pane's own override or the live outer
-    /// scope, then — when the theme group follows outer — tinted by what's
-    /// running (mode).
+    /// scope, then — when the window's AGENT THEME preference is on and the
+    /// theme group follows outer — tinted by what's running (mode).
     pub fn resolved_theme(&self, cx: &App) -> Theme {
         let outer = theme::outer_choice(cx);
         let eff = self.appearance.effective(&outer);
         let inherit = self.appearance.inherit_theme;
+        let tint = agent_tint();
         let gen = theme::theme_gen(cx);
         // Per-frame memo: resolve() deep-clones + recolours + grade-transforms the
         // palette and render() calls this every frame, so reuse the last result
         // while every input is unchanged. The generation counter covers the two
         // global inputs a ThemeChoice doesn't carry (custom hot-reload, tracking
         // override), so this can't serve a stale look.
-        if let Some((k_eff, k_mode, k_inherit, k_gen, th)) = &*self.theme_cache.borrow() {
-            if *k_gen == gen && *k_inherit == inherit && *k_mode == self.mode && *k_eff == eff {
+        if let Some((k_eff, k_mode, k_inherit, k_tint, k_gen, th)) = &*self.theme_cache.borrow() {
+            if *k_gen == gen
+                && *k_inherit == inherit
+                && *k_tint == tint
+                && *k_mode == self.mode
+                && *k_eff == eff
+            {
                 return th.clone();
             }
         }
         let base = (*theme::resolve(cx, &eff)).clone();
-        // The mode tint (what's running in the pane) applies only while the
-        // theme group follows outer — an explicit per-pane theme is a deliberate
-        // look the tint shouldn't stomp. The grade rides along untouched either
-        // way (mode_theme leaves `grade`/`color_mode` alone).
-        let mut out = if inherit {
-            mode_theme(&base, &self.mode)
-        } else {
-            base
-        };
+        // The mode tint (what's running in the pane) is off unless the window
+        // asked for it, and applies only while the theme group follows outer —
+        // an explicit per-pane theme is a deliberate look the tint shouldn't
+        // stomp. The grade rides along untouched either way (mode_theme leaves
+        // `grade`/`color_mode` alone).
+        let mut out = maybe_mode_theme(&base, &self.mode, inherit, tint);
         // Terminal text-size: scale the GRID font + cell height by the pane's
         // effective text-size grade so the terminal reflows (sync_size measures
         // cell_w from font_size and cell_h from this). Chrome is untouched —
@@ -2363,7 +2425,8 @@ impl TerminalView {
             out.font_size *= ts;
             out.cell_h *= ts;
         }
-        *self.theme_cache.borrow_mut() = Some((eff, self.mode.clone(), inherit, gen, out.clone()));
+        *self.theme_cache.borrow_mut() =
+            Some((eff, self.mode.clone(), inherit, tint, gen, out.clone()));
         out
     }
 
@@ -2388,6 +2451,7 @@ impl TerminalView {
             eff: self.appearance.effective(&theme::outer_choice(cx)),
             mode: self.mode.clone(),
             inherit: self.appearance.inherit_theme,
+            tint: agent_tint(),
             theme_gen: theme::theme_gen(cx),
         };
         let next_rev = {
@@ -2611,10 +2675,28 @@ impl TerminalView {
     /// a way to say so; it is the receiving half of that sentence.
     #[allow(dead_code)]
     pub fn set_host_mode(&mut self, mode: PaneMode, cx: &mut Context<Self>) {
-        if self.mode != mode {
-            self.mode = mode;
-            cx.notify();
+        self.set_mode(mode, cx);
+    }
+
+    /// What is running in this pane, from whichever of the two readings got
+    /// here — the host's classification, or the kernel through our own
+    /// descriptor.
+    ///
+    /// One funnel, because something now depends on the TRANSITION and not
+    /// just the value: the bench holds its writes for a pane with no agent, and
+    /// an agent appearing is when they are allowed to land. A second site
+    /// assigning `self.mode` would leave that queue sitting there until the
+    /// person switched tabs.
+    pub(crate) fn set_mode(&mut self, mode: PaneMode, cx: &mut Context<Self>) {
+        if self.mode == mode {
+            return;
         }
+        let arrived = !self.mode.is_agent() && mode.is_agent();
+        self.mode = mode;
+        if arrived {
+            self.bench_drain(cx);
+        }
+        cx.notify();
     }
 
     /// How many bytes of the host's stream this pane has taken. `None` on a
@@ -2774,10 +2856,7 @@ impl TerminalView {
                         } else {
                             detected
                         };
-                        if mode != view.mode {
-                            view.mode = mode;
-                            cx.notify();
-                        }
+                        view.set_mode(mode, cx);
                     }
                     !view.exited
                 })
@@ -3765,6 +3844,24 @@ impl TerminalView {
         self.pending_input = Some(Instant::now());
         self.session.notifier.notify(bytes);
         cx.notify();
+    }
+
+    /// Run one command line in this pane, as if a person had typed it.
+    ///
+    /// The LAUNCH AGENT panel's other landing: instead of opening a tab
+    /// somewhere else, the recipe goes into the prompt the button was pressed
+    /// in front of. Deliberately narrow — it takes a whole line rather than
+    /// keystrokes, it is reached only from `Workspace::launch_agent`, and what
+    /// makes the line safe to run (the terminal is at a prompt; the prompt is
+    /// cleared first) is decided in [`crate::launcher`] where it can be
+    /// asserted without a window.
+    ///
+    /// The scrollback is the record: the line appears in the terminal exactly
+    /// as it would have if typed, which is the point. A window that starts
+    /// programs in a person's shell without leaving the command where they can
+    /// read it is doing something they cannot check.
+    pub fn run_line(&mut self, line: String, cx: &mut Context<Self>) {
+        self.send(line.into_bytes(), cx);
     }
 
     /// Apply a paint-overlay pick to THIS pane.
@@ -5695,6 +5792,28 @@ pub fn anchor_top() -> bool {
     ANCHOR_TOP.load(std::sync::atomic::Ordering::Relaxed)
 }
 
+/// Global AGENT THEME toggle: whether a pane that FOLLOWS OUTER wears the
+/// phosphor of the program running in it (claude amber · codex cyan · remote
+/// violet) instead of the theme it inherited. Default `false` — inherit.
+///
+/// Published per frame out of `Workspace::render`, exactly like [`ANCHOR_TOP`]
+/// and for the same reason: [`TerminalView::resolved_theme`] cannot reach
+/// `&Workspace`. Both memos that depend on it key on it (see [`ThemeMemo`]),
+/// so flipping it repaints quiet panes rather than waiting for their next byte.
+static AGENT_TINT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Publish the live global AGENT THEME preference (called from `Workspace::render`
+/// each frame, beside [`set_anchor_top`]).
+pub fn set_agent_tint(on: bool) {
+    AGENT_TINT.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Read the global AGENT THEME preference. `true` ⇒ an inheriting pane is tinted
+/// by what is running in it; `false` (default) ⇒ an inherited theme is inherited.
+pub fn agent_tint() -> bool {
+    AGENT_TINT.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// Whether the inverted anchor-to-top read should apply. The read reverses row
 /// order so the prompt lands on TOP. That is correct for scrolling shells and
 /// conversational agents, including Codex's alternate-screen TUI, but corrupts
@@ -7057,19 +7176,27 @@ impl Render for TerminalView {
                 .gap(px(2.))
                 .child(chip(crate::workbench::Face::Terminal, cx))
                 .child(chip(crate::workbench::Face::Workbench, cx))
-                // Answers the bench is holding because nobody was looking at
-                // this pane. They land the moment it is on screen, so the
-                // badge is only ever seen from another tab — which is the
-                // one place it is needed.
+                // What the bench is holding, and WHY it is holding it. Nobody
+                // looking at this pane is the old reason and lands the moment
+                // it is on screen; no agent to receive it is the other, and
+                // that one can sit there — so it says so rather than counting
+                // silently. A person typing into the composer of a pane whose
+                // agent has gone otherwise watches their words appear in the
+                // mirror and has no way to know they went nowhere.
                 .when(queued > 0, |d| {
+                    let why = if self.mode.is_agent() {
+                        format!(
+                            "{queued} answer{} waiting",
+                            if queued == 1 { "" } else { "s" }
+                        )
+                    } else {
+                        format!("{queued} held · no agent in this pane")
+                    };
                     d.child(
                         div()
                             .text_size(px((hicon * 0.40).max(8.)))
                             .text_color(th.accent)
-                            .child(format!(
-                                "{queued} answer{} waiting",
-                                if queued == 1 { "" } else { "s" }
-                            )),
+                            .child(why),
                     )
                 })
                 // The count of work objects nobody has looked at — the only
@@ -7829,6 +7956,56 @@ mod tests {
         assert!(
             strays.is_empty(),
             "bench methods defined in pane.rs instead of pane/bench.rs: {strays:?}"
+        );
+    }
+
+    /// Nothing on the bench reaches the pseudoterminal except through the gate.
+    ///
+    /// The gate is two rules — the pane is on screen, and there is an agent in
+    /// it to read what is sent — and the second one arrived after a person's
+    /// message was typed into a pane whose terminal was a plain shell. Bash
+    /// read the line and ran it, `claude <the whole message>` being a valid
+    /// command line, so the report became a brand new session with itself as
+    /// the argument while the bench went on drawing the conversation it thought
+    /// it was talking to (#509).
+    ///
+    /// Scanned rather than listed: the write sites were five and the rule was
+    /// on one of them. A list guards only the names on it, and the next write
+    /// site will be added by somebody who has not read this.
+    #[test]
+    fn every_bench_write_goes_through_the_gate() {
+        let bench = include_str!("pane/bench.rs");
+        let (code, _tests) = bench
+            .split_once("#[cfg(test)]")
+            .unwrap_or((bench, "no test module yet"));
+        // Which function each write sits in, by the nearest `fn` above it.
+        let mut owner = "<file>";
+        let mut strays: Vec<(&str, &str)> = Vec::new();
+        for line in code.lines() {
+            let t = line.trim_start();
+            if let Some(rest) = t.split_once("fn ").map(|(_, r)| r) {
+                if t.starts_with("fn ") || t.starts_with("pub fn ") || t.starts_with("pub(") {
+                    owner = rest.split('(').next().unwrap_or(rest);
+                }
+            }
+            let writes = t.contains("self.send(") || t.contains("notifier.notify(");
+            let allowed = matches!(owner, "bench_keystroke" | "bench_deliver");
+            if writes && !allowed {
+                strays.push((owner, t));
+            }
+        }
+        assert!(
+            strays.is_empty(),
+            "bench writes to the pseudoterminal outside the gate — route these through \
+             bench_keystroke (a keystroke) or bench_deliver (a line): {strays:?}"
+        );
+        // And the gate itself still asks both questions.
+        let at = code.find("fn bench_may_write").expect("the gate");
+        let end = code[at..].find("\n    }\n").expect("end of fn") + at;
+        let gate = &code[at..end];
+        assert!(
+            gate.contains("wb_on_screen") && gate.contains("is_agent()"),
+            "the bench gate stopped asking one of its two questions: {gate}"
         );
     }
 
@@ -9529,6 +9706,50 @@ mod tests {
             assert_eq!(th.ansi[7], th.text, "default-fg slot follows the mode text");
             assert!(th.bg.l < 0.1, "{:?} tube depths stay dark", mode);
         }
+    }
+
+    /// The AGENT THEME gate: three of the four (inherit × tint) corners leave an
+    /// inherited theme alone, and only the corner a person asked for retints.
+    ///
+    /// The bug this closes is the `(inherit = true, tint = false)` cell: it was
+    /// the tinted one, so following outer meant wearing the program rather than
+    /// the window, and starting `claude` in a green pane turned the tube amber.
+    #[test]
+    fn the_mode_tint_needs_both_the_pane_following_and_the_window_asking() {
+        let base = crate::theme::parse(crate::theme::DEFAULT_THEME_TOML).unwrap();
+        let amber = mode_theme(&base, &PaneMode::Claude).accent;
+        assert_ne!(
+            amber, base.accent,
+            "the fixture must be able to show a tint"
+        );
+
+        for (inherit, tint) in [(true, false), (false, true), (false, false)] {
+            assert_eq!(
+                maybe_mode_theme(&base, &PaneMode::Claude, inherit, tint).accent,
+                base.accent,
+                "inherit={inherit} tint={tint} must keep the inherited accent"
+            );
+        }
+        assert_eq!(
+            maybe_mode_theme(&base, &PaneMode::Claude, true, true).accent,
+            amber,
+            "following + asked-for is the one corner that wears the program"
+        );
+    }
+
+    /// The published preference is what [`maybe_mode_theme`] is handed, and it
+    /// defaults to OFF. Asserted on the accessor pair rather than on a constant,
+    /// so a future default flipped in `AGENT_TINT` is caught here.
+    #[test]
+    fn the_agent_tint_preference_is_off_until_published_on() {
+        assert!(
+            !agent_tint(),
+            "an unpublished preference is inherit-the-theme"
+        );
+        set_agent_tint(true);
+        assert!(agent_tint());
+        set_agent_tint(false);
+        assert!(!agent_tint());
     }
 
     /// Role at the first char of the first occurrence of `needle`.

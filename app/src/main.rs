@@ -1173,6 +1173,146 @@ fn tray_cap(band: (f32, f32), top: f32) -> f32 {
     (limit - top).min(band_h + overhang).max(TRAY_MIN_H)
 }
 
+// ---- the design tray's geometry, hoisted so the fit can be ASSERTED ---------
+//
+// The tray outgrew the screen once already, and it did it quietly: `tray_cap`
+// caps the panel at the terminal band and the panel scrolls, so an overflowing
+// tray does not spill over the bezel — it hides its last rows below a fold
+// nobody scrolls to. ANCHOR and the pass-down button lived down there.
+//
+// Nothing here can measure a real gpui layout. What it can do is hold the same
+// numbers the render uses, derive the tallest column from the REAL inventory
+// (`theme::BUILTIN_THEMES`, `skin::BUILTIN_SKINS`, `ColorMode::ALL`,
+// `SyntaxScheme::ALL`), and fail a test when adding the next colour set or
+// syntax grammar pushes a column past the height the tray declares. That is the
+// gate the last overflow did not have: not "does it look right", which needs an
+// eye, but "has the inventory outgrown the box", which does not.
+
+const TRAY_BTN_W: f32 = 46.; // theme_icon_btn
+const TRAY_BTN_H: f32 = 40.;
+const TRAY_MODE_BTN_W: f32 = 58.; // color_mode_btn (wider caption)
+const TRAY_MODE_BTN_H: f32 = 38.;
+const TRAY_GAP: f32 = 8.; // gap_2, between buttons and stacked rows
+const TRAY_COL_GAP: f32 = 12.; // gap_3, between the tray's columns
+const TRAY_PAD: f32 = 12.; // p_3
+const TRAY_LABEL_H: f32 = 12.; // a 9px section heading
+const TRAY_SEP: f32 = 1.; // a hairline, h or v
+
+/// The PICKERS column — exactly three DESIGN buttons plus their gaps, which is
+/// the whole reason the tray fits: at this width DESIGN wraps 3+3+1 instead of
+/// the 2+2+2+1 it wrapped at in the old single strip.
+const TRAY_PICKER_W: f32 = 3. * TRAY_BTN_W + 2. * TRAY_GAP + TRAY_FIT_SLACK;
+/// The WHEEL column — the 132px wheel with room for its lightness bar.
+const TRAY_WHEEL_COL_W: f32 = 150.;
+/// The glyph column — the INVERT bar sets it (a heading plus a mode button),
+/// which is wider than the two 40px colour-set columns beneath it.
+const TRAY_GLYPH_COL_W: f32 = 110.;
+/// Three columns, two hairlines, four gaps, two paddings.
+const TRAY_PANEL_W: f32 = 2. * TRAY_PAD
+    + TRAY_GLYPH_COL_W
+    + TRAY_PICKER_W
+    + TRAY_WHEEL_COL_W
+    + 2. * TRAY_SEP
+    + 4. * TRAY_COL_GAP;
+const TRAY_WHEEL_H: f32 = 132.; // color_wheel's D
+const TRAY_LBAR_H: f32 = 14.; // lightness_bar
+const TRAY_PIPS_H: f32 = 24.; // the four wheel-target pips
+const TRAY_RESET_H: f32 = 14.; // the ↺ reset row under them
+const TRAY_PILL_H: f32 = 22.; // a bezel button: 2px py, 11px text, a border
+
+/// The shortest render band the tray promises to open inside WITHOUT scrolling
+/// — a 768-tall screen with the window's own chrome taken off it.
+///
+/// This is the number that makes the fit test mean something. `TRAY_PANEL_H_EST`
+/// describes the tray, so raising it when a column overflows changes nothing;
+/// this describes the screen, and a tray that outgrows it has to lose a section
+/// or gain a column.
+///
+/// It lives in the test build because it is a promise checked at build time, not
+/// a number the renderer reads — the renderer takes the real band from the real
+/// window, and its job is to scroll when the screen is genuinely smaller.
+#[cfg(test)]
+const TRAY_FIT_BAND: f32 = 700.;
+
+/// How many rows `n` buttons of `btn_w` take in a column `col_w` wide.
+///
+/// Deliberately PESSIMISTIC about an exact fit. A flex row whose children sum to
+/// precisely the column width is at the mercy of a rounding decision this code
+/// cannot see, and the expensive direction to be wrong in is the optimistic one:
+/// a model that says three fit while the renderer wraps at two under-counts a
+/// row per section, and the error compounds down the column. So a row has to
+/// clear its content by [`TRAY_FIT_SLACK`] before it is counted as fitting, and
+/// the column widths are chosen with that slack in them.
+const TRAY_FIT_SLACK: f32 = 4.;
+
+fn tray_wrap_rows(n: usize, btn_w: f32, col_w: f32) -> usize {
+    let usable = col_w - TRAY_FIT_SLACK + TRAY_GAP;
+    let per = ((usable / (btn_w + TRAY_GAP)).floor() as usize).max(1);
+    n.div_ceil(per).max(1)
+}
+
+/// Estimated height of one `heading + wrapping button row` section.
+fn tray_section_h(n: usize, btn_w: f32, btn_h: f32, col_w: f32) -> f32 {
+    let rows = tray_wrap_rows(n, btn_w, col_w) as f32;
+    TRAY_LABEL_H + TRAY_GAP + rows * btn_h + (rows - 1.) * TRAY_GAP
+}
+
+/// Estimated height of the PICKERS column for a given inventory. `skins` is 0
+/// on the per-pane tray, which has no SKIN section.
+fn tray_pickers_h(themes: usize, skins: usize, modes: usize, schemes: usize) -> f32 {
+    // scope hint, then each section behind a hairline.
+    let mut h = TRAY_LABEL_H;
+    let mut section = |n: usize, w: f32, bh: f32| {
+        h += TRAY_GAP + TRAY_SEP + TRAY_GAP + tray_section_h(n, w, bh, TRAY_PICKER_W);
+    };
+    section(themes, TRAY_BTN_W, TRAY_BTN_H);
+    if skins > 0 {
+        section(skins, TRAY_BTN_W, TRAY_BTN_H);
+    }
+    section(modes, TRAY_MODE_BTN_W, TRAY_MODE_BTN_H);
+    section(schemes, TRAY_MODE_BTN_W, TRAY_MODE_BTN_H);
+    h + 2. * TRAY_PAD
+}
+
+/// Estimated height of the WHEEL column: the fixed wheel stack, then one block
+/// per window RULE (a hairline, a heading and a pill — AGENT THEME, ANCHOR) plus
+/// any bare pills under them (pass-down on the outer tray, follow-outer on a
+/// pane's). This is the column AGENT THEME grew, so it is the one that has to be
+/// counted rather than assumed short.
+fn tray_wheel_col_h(rules: usize, bare_pills: usize) -> f32 {
+    let mut h = TRAY_LABEL_H
+        + TRAY_GAP
+        + 8.  // py_1 above and below the wheel
+        + TRAY_WHEEL_H
+        + TRAY_GAP
+        + TRAY_LBAR_H
+        + TRAY_GAP
+        + 4. // pt_1 over the pips
+        + TRAY_PIPS_H
+        + TRAY_GAP
+        + TRAY_RESET_H;
+    for _ in 0..rules {
+        h += TRAY_GAP + TRAY_SEP + TRAY_GAP + TRAY_LABEL_H + TRAY_GAP + TRAY_PILL_H;
+    }
+    h += bare_pills as f32 * (TRAY_GAP + TRAY_PILL_H);
+    h + 2. * TRAY_PAD
+}
+
+/// The tallest COLUMN on the OUTER tray — which is what the split bought, and
+/// what decides where the tray may open so it lands fully on screen.
+fn tray_panel_h_est() -> f32 {
+    let pickers = tray_pickers_h(
+        theme::picker_count(),
+        skin::picker_max_count(),
+        theme::ColorMode::ALL.len(),
+        // SYNTAX draws one button per grammar PLUS the "off" button.
+        theme::SyntaxScheme::ALL.len() + 1,
+    );
+    // The outer tray's rules: AGENT THEME and ANCHOR, then the pass-down button.
+    let wheel = tray_wheel_col_h(2, 1);
+    pickers.max(wheel)
+}
+
 /// Seconds since the process started, for animations that want a phase rather
 /// than a duration.
 ///
@@ -1430,6 +1570,22 @@ impl TabIdentity {
             project: self.project,
         }
     }
+}
+
+/// Where a new tab is seated in the strip, and what it belongs to.
+///
+/// The two are one decision rather than two, which is why this is an enum and
+/// not a `place: Option<Place>`: a tab that lands at the end of the window with
+/// no group is not a tab that "has no place yet", it is a tab that is
+/// deliberately nobody's. Writing that as an absent value is how the launcher
+/// came to file every agent it started under UNFILED without anyone choosing
+/// that (#508).
+#[derive(Clone, Copy)]
+enum Seat {
+    /// In this branch, at its end, inheriting the group and its project.
+    Branch(tree::Place),
+    /// Loose at the end of the window, in no branch at all.
+    Loose,
 }
 
 /// `true` if `c` counts as part of a "word" for ctrl-arrow navigation.
@@ -2147,6 +2303,18 @@ struct StateFile {
     /// the bottom pad so the prompt/typing area sits near the TOP of the pane.
     #[serde(default)]
     anchor_top: bool,
+    /// Global AGENT THEME preference: whether a pane that FOLLOWS OUTER is
+    /// retinted by the program running in it (claude amber · codex cyan ·
+    /// remote violet) instead of wearing the theme it inherited.
+    ///
+    /// Absent on old files → `false`, which is a deliberate behaviour CHANGE
+    /// rather than a preserved default: the tint used to be unconditional, so
+    /// "follow outer" did not mean "wear what the window wears", and starting an
+    /// agent in a pane turned the whole tube amber with no way back but pinning
+    /// a per-pane override. Anyone who wants the coloured tubes turns them on in
+    /// the OUTER design tray and the choice is saved from then on.
+    #[serde(default)]
+    agent_tint: bool,
     /// Chrome language for the UI (the language pack). Absent on old files →
     /// English; keycaps and symbols are never translated.
     #[serde(default)]
@@ -2210,6 +2378,7 @@ impl Default for StateFile {
             mcp: None,
             focus_inherit: false,
             anchor_top: false,
+            agent_tint: false,
             lang: lang::Lang::default(),
             last_workspace: None,
             undo_hinted: false,
@@ -2823,6 +2992,13 @@ struct AgentLauncher {
     /// How far the launched agent may reach without asking. Defaults to the
     /// machine posture; see [`launcher::Reach`].
     reach: launcher::Reach,
+    /// The pane whose bench the button was pressed on.
+    ///
+    /// Kept because the panel takes the keyboard the moment it opens, so by the
+    /// time ↵ is pressed nothing is focused and the window can no longer be
+    /// asked where the person was standing. It is what decides whether the
+    /// agent starts in that pane or in a new tab — see [`launcher::landing`].
+    from: Option<gpui::EntityId>,
 }
 
 impl AgentLauncher {
@@ -3761,6 +3937,13 @@ struct Workspace {
     /// panes (which can't reach `&Workspace`) read the live value. One toggle in
     /// the OUTER design panel.
     anchor_top: bool,
+    /// Global, persisted: when on, a pane that follows the outer theme is
+    /// retinted by the PROGRAM inside it — the claude-amber / codex-cyan /
+    /// remote-violet tubes. Off (the default) an inherited theme is inherited,
+    /// and an agent pane looks like the window it is in. Published into
+    /// [`pane::set_agent_tint`] each render frame, beside `anchor_top` and for
+    /// the same reason. One toggle in the OUTER design panel.
+    agent_tint: bool,
     /// A scratch window (opened on a workspace that already has one, or a
     /// torn-off pane): one fresh terminal, never restores or persists session
     /// state — so it can't clobber the layout of the window that owns the
@@ -3850,7 +4033,7 @@ fn wire_pane(pane: &Entity<TerminalView>, window: &mut Window, cx: &mut Context<
         window,
         |ws, pane, _ev: &pane::OpenAgentLauncher, window, cx| {
             let cwd = pane.read(cx).current_cwd();
-            ws.open_agent_launcher(cwd, window, cx);
+            ws.open_agent_launcher(cwd, Some(pane.entity_id()), window, cx);
         },
     )
     .detach();
@@ -4965,6 +5148,7 @@ impl Workspace {
             focus_sel_drag: false,
             focus_inherit_theme: saved.focus_inherit,
             anchor_top: saved.anchor_top,
+            agent_tint: saved.agent_tint,
             lang: saved.lang,
             // a demo window restores a layout (so `scratch` is false to take the
             // restore branch below) yet must never overwrite the real state
@@ -6133,6 +6317,7 @@ impl Workspace {
             mcp: Some(self.mcp.clone()),
             focus_inherit: self.focus_inherit_theme,
             anchor_top: self.anchor_top,
+            agent_tint: self.agent_tint,
             lang: self.lang,
             // Where this session is right now, recorded every save so a cold
             // launch can prefer the session that was last open *here*. A hint
@@ -6621,11 +6806,39 @@ impl Workspace {
     /// the window and taking the thing you were working on — a move nobody
     /// asked for, and one that leaves the branch you came from a tab lighter.
     ///
-    /// This is the only place a new tab is built, so the hosted-mode invariant
-    /// has one site to hold rather than two. See
-    /// `a_hosted_window_makes_no_pane_of_its_own`.
+    /// This delegates to [`Self::open_tab`], which is the only place a new tab
+    /// is built, so the hosted-mode invariant has one site to hold rather than
+    /// three. See `a_hosted_window_makes_no_pane_of_its_own`.
     fn new_tab_in(&mut self, place: tree::Place, window: &mut Window, cx: &mut Context<Self>) {
-        let pane = self.make_pane_in_mode(session::PaneRestore::default(), window, cx);
+        self.open_tab(
+            session::PaneRestore::default(),
+            Seat::Branch(place),
+            window,
+            cx,
+        );
+    }
+
+    /// Build one new tab, holding one terminal, and seat it.
+    ///
+    /// Every gesture that opens a tab comes through here — the `+`, the left
+    /// bar's new project, an adoption from the desktop, and the LAUNCH AGENT
+    /// panel — because the two things a new tab must get right are easy to
+    /// forget one at a time. It must not fork a pseudoterminal of its own in a
+    /// hosted window (#377, #382), and it must land somewhere the window is
+    /// already pointing.
+    ///
+    /// The second one is why this grew a `seat`. The launcher used to push its
+    /// tab onto the end of the strip with no group at all, so an agent started
+    /// from inside a named branch appeared at the bottom of the left bar under
+    /// UNFILED, a screen away from the work it was started for (#508).
+    fn open_tab(
+        &mut self,
+        restore: session::PaneRestore,
+        seat: Seat,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let pane = self.make_pane_in_mode(restore, window, cx);
         // Built through `TabIdentity` rather than `Tab::new` plus two
         // assignments. This is a genuinely new tab rather than a reshaped one,
         // so it is not the case `TabIdentity` was written for — but it is the
@@ -6633,19 +6846,25 @@ impl Workspace {
         // neither line here and would silently take the constructor's default.
         // Going through the carrier makes that a compile error, which is the
         // whole reason the carrier is a struct and not two arguments.
-        let tab = TabIdentity {
-            group: place.initiative,
-            // a grouped tab inherits its project from the group and leaves its
-            // own unset, so the two can never disagree — see `place_of`
-            project: place
-                .initiative
-                .is_none()
-                .then_some(place.project)
-                .flatten(),
-            ..Default::default()
-        }
-        .onto(Node::Leaf(pane));
-        let at = self.branch_end(place);
+        let identity = match seat {
+            Seat::Branch(place) => TabIdentity {
+                group: place.initiative,
+                // a grouped tab inherits its project from the group and leaves
+                // its own unset, so the two can never disagree — see `place_of`
+                project: place
+                    .initiative
+                    .is_none()
+                    .then_some(place.project)
+                    .flatten(),
+                ..Default::default()
+            },
+            Seat::Loose => TabIdentity::default(),
+        };
+        let tab = identity.onto(Node::Leaf(pane));
+        let at = match seat {
+            Seat::Branch(place) => self.branch_end(place),
+            Seat::Loose => self.tabs.len(),
+        };
         self.tabs.insert(at, tab);
         self.active = at;
         // A new tab is filed into `place`, which may be a branch that is shut —
@@ -6677,6 +6896,9 @@ impl Workspace {
     /// Bring a dead agent back: open a fresh tab whose shell resumes its saved
     /// conversation (`claude --resume` / `codex resume`) in its original cwd —
     /// the same restore path a reboot uses. Never writes to a live PTY.
+    ///
+    /// Seated in the branch you are standing in, because the tab whose agent
+    /// died is the one you are looking at when you press this.
     fn resurrect_agent(
         &mut self,
         cwd: Option<String>,
@@ -6685,7 +6907,8 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         self.dead_menu = false;
-        self.adopt_pane(cwd, Some(resume), window, cx);
+        let seat = Seat::Branch(self.place_of(self.active));
+        self.adopt_pane(cwd, Some(resume), seat, window, cx);
     }
 
     /// The landing half of `ctl adopt` — and the body resurrection shares:
@@ -6696,6 +6919,7 @@ impl Workspace {
         &mut self,
         cwd: Option<String>,
         run: Option<String>,
+        seat: Seat,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -6710,13 +6934,7 @@ impl Workspace {
         // shows that pane instead (`Started::Already`), so `ctl adopt` can no
         // longer double-run an agent; and the pane gets a host pane id, which
         // is what `hangup`, `attached_panes` and the serializer all key off.
-        let pane = self.make_pane_in_mode(restore, window, cx);
-        self.tabs.push(Tab::new(Node::Leaf(pane), None));
-        self.active = self.tabs.len() - 1;
-        self.reveal_active_branch();
-        self.save(cx);
-        cx.notify();
-        cx.defer_in(window, |ws, window, cx| ws.focus_active(window, cx));
+        self.open_tab(restore, seat, window, cx);
     }
 
     /// Park a desktop adoption until a frame gives us a Window (the ctl ticker
@@ -6728,7 +6946,13 @@ impl Workspace {
 
     fn drain_pending_adopts(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         for a in std::mem::take(&mut self.pending_adopts) {
-            self.adopt_pane(a.cwd, a.run, window, cx);
+            // Loose, and deliberately. A terminal handed over by `ctl adopt` —
+            // from the desktop, a script, or another session's agent — belongs
+            // to whoever sent it, and filing it into whatever branch this
+            // window happens to be looking at would put a stranger's terminal
+            // inside somebody's project. The launcher is the opposite case and
+            // seats its tab in the branch the person is standing in.
+            self.adopt_pane(a.cwd, a.run, Seat::Loose, window, cx);
         }
     }
 
@@ -11115,6 +11339,7 @@ impl Workspace {
     fn open_agent_launcher(
         &mut self,
         seed: Option<String>,
+        from: Option<gpui::EntityId>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -11135,6 +11360,7 @@ impl Workspace {
             model_ix: 0,
             effort: harness.default_effort(),
             reach: launcher::Reach::Anywhere,
+            from,
         };
         lp.recompute();
         // Pre-select where the person already is, by path rather than by name:
@@ -11199,6 +11425,11 @@ impl Workspace {
             _ => None,
         };
         let line = recipe.command_line(briefing_path.as_deref());
+        // Where it goes, decided before it is written down, so the journal
+        // records the landing that actually happened rather than the one the
+        // button is named after.
+        let from = lp.from.and_then(|id| self.pane_by_id(id));
+        let landing = launcher::landing(from.as_ref().and_then(|p| p.read(cx).mode.at_a_prompt()));
         eprintln!("terminal-delight: launching — {line}");
         // What the button was made of, on the record: the command, the reach,
         // and a fingerprint of the briefing the agent was actually handed —
@@ -11222,16 +11453,49 @@ impl Workspace {
                     "reach": recipe.reach.id(),
                     "cwd": project.path.to_string_lossy(),
                     "command": line,
+                    "landing": match landing {
+                        launcher::Landing::Here => "here",
+                        launcher::Landing::NewTab => "new-tab",
+                    },
                     "briefing_fnv1a64": briefing_fnv,
                 }),
             );
         }
-        self.adopt_pane(
-            Some(project.path.to_string_lossy().to_string()),
-            Some(line),
-            window,
-            cx,
-        );
+        match (landing, from) {
+            // Into the pane the button was pressed on, by typing at its prompt.
+            // The face turns back to the terminal in the same gesture: what was
+            // just started is a program with an interface, and the bench it was
+            // started from has nothing on it until that program presents
+            // something.
+            (launcher::Landing::Here, Some(pane)) => {
+                let typed = launcher::here_line(
+                    &line,
+                    pane.read(cx)
+                        .current_cwd()
+                        .as_deref()
+                        .map(std::path::Path::new),
+                    &project.path,
+                );
+                pane.update(cx, |view, cx| {
+                    view.set_face(workbench::Face::Terminal, cx);
+                    view.run_line(typed, cx);
+                });
+                cx.defer_in(window, |ws, window, cx| ws.focus_active(window, cx));
+                cx.notify();
+            }
+            // A new tab, seated in the branch the person is standing in rather
+            // than loose at the end of the window.
+            _ => {
+                let seat = Seat::Branch(self.place_of(self.active));
+                self.adopt_pane(
+                    Some(project.path.to_string_lossy().to_string()),
+                    Some(line),
+                    seat,
+                    window,
+                    cx,
+                )
+            }
+        }
     }
 
     /// Open the header-logo image picker scoped to `target`.
@@ -12508,6 +12772,13 @@ impl Workspace {
             recipe.command_line(briefing.as_deref())
         };
 
+        // Where ↵ will put it, read the same way the launch reads it.
+        let landing = launcher::landing(
+            lp.from
+                .and_then(|id| self.pane_by_id(id))
+                .and_then(|p| p.read(cx).mode.at_a_prompt()),
+        );
+
         let panel = div()
             .absolute()
             .left(px(left))
@@ -12597,9 +12868,17 @@ impl Workspace {
                 div()
                     .text_size(px(9.))
                     .text_color(th.text.alpha(0.45))
-                    .child(
-                        "↑↓ project · tab model · ⇧tab harness · ←→ effort · ↵ launch · esc close",
-                    ),
+                    // ↵ says WHERE, because that is the half of this gesture a
+                    // person cannot see coming and the half they complained
+                    // about (#508). Read from the same function the launch
+                    // reads, so the label and the landing cannot disagree.
+                    .child(format!(
+                        "↑↓ project · tab model · ⇧tab harness · ←→ effort · ↵ {} · esc close",
+                        match landing {
+                            launcher::Landing::Here => "starts in this pane",
+                            launcher::Landing::NewTab => "opens a new tab",
+                        }
+                    )),
             )
             .on_mouse_down(
                 MouseButton::Left,
@@ -13427,6 +13706,40 @@ impl Workspace {
                 // keep the panel/scrim from seeing this (no close)
                 cx.stop_propagation();
                 ws.toggle_anchor_top(cx);
+            }),
+        )
+    }
+
+    /// Flip the GLOBAL AGENT THEME preference, persist it, and repaint. Off
+    /// (default) ⇒ a pane that follows outer wears what the window wears; on ⇒
+    /// it wears the phosphor of the program inside it. The live value is
+    /// published to [`pane::set_agent_tint`] every render frame.
+    fn toggle_agent_tint(&mut self, cx: &mut Context<Self>) {
+        self.agent_tint = !self.agent_tint;
+        self.save(cx);
+        cx.notify();
+    }
+
+    /// The OUTER design-panel AGENT THEME control, sibling to the anchor row.
+    ///
+    /// It states the RULE rather than the switch position, because a bare
+    /// on/off cannot say which of two things wins: ✳ OVERRIDES OUTER means an
+    /// agent pane paints itself amber, ✳ FOLLOWS OUTER means it paints like
+    /// every other pane in the window. Only panes that follow outer are
+    /// affected either way — a pane wearing a theme it was given keeps it.
+    fn agent_tint_toggle(&self, sk: &skin::Skin, cx: &mut Context<Self>) -> gpui::Div {
+        let on = self.agent_tint;
+        let label = if on {
+            "\u{2733} OVERRIDES OUTER"
+        } else {
+            "\u{2733} FOLLOWS OUTER"
+        };
+        Self::bezel_btn(sk, label, on).on_mouse_down(
+            MouseButton::Left,
+            cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                // keep the panel/scrim from seeing this (no close)
+                cx.stop_propagation();
+                ws.toggle_agent_tint(cx);
             }),
         )
     }
@@ -20146,8 +20459,8 @@ fn theme_icon_btn(th: &theme::Theme, icon: &str, label: &str, active: bool) -> g
                 .child(label.to_string()),
         );
     let b = div()
-        .w(px(46.))
-        .h(px(40.))
+        .w(px(TRAY_BTN_W))
+        .h(px(TRAY_BTN_H))
         .flex()
         .items_center()
         .justify_center()
@@ -20181,8 +20494,8 @@ fn color_mode_btn(th: &theme::Theme, icon: &str, caption: &str, active: bool) ->
         .child(div().text_size(px(15.)).child(icon.to_string()))
         .child(div().text_size(px(8.)).child(caption.to_string()));
     let b = div()
-        .w(px(58.))
-        .h(px(38.))
+        .w(px(TRAY_MODE_BTN_W))
+        .h(px(TRAY_MODE_BTN_H))
         .flex()
         .items_center()
         .justify_center()
@@ -20872,6 +21185,9 @@ impl Render for Workspace {
         // headless/test hook so the inverted read can be captured without a click
         // (read once, cached; checked here so it covers every Workspace path).
         pane::set_anchor_top(self.anchor_top || td_anchor_top_forced());
+        // Same publish, same reason: whether an inheriting pane wears the
+        // program's phosphor is a window-level decision a pane can't reach.
+        pane::set_agent_tint(self.agent_tint);
         let s = self.lang.strings();
         // A pane's OWN menus (⋯ overflow, right-click, BELL+ tray) are pane-local
         // state no workspace flag can see, so ask this tab's visible leaves —
@@ -22327,16 +22643,31 @@ impl Render for Workspace {
                 }
                 dyn_cols = dyn_cols.child(col);
             }
-            // The right-hand controls: seed wheel + text axes + the follow-outer
-            // toggle, stacked. A tiny scope hint replaces the old text title.
-            let mut controls = div()
+            // THE TRAY IS THREE COLUMNS, and the split is what makes it fit.
+            //
+            // It used to be two — the glyph column, then everything else stacked
+            // in one ~125px strip — and that strip outgrew the screen. The cap in
+            // `tray_max_h` is the terminal band, so the overflow did not spill: it
+            // scrolled, and ANCHOR plus the pass-down button sat below the fold
+            // where nobody scrolled to find them. A control you cannot see is a
+            // control you do not have, and adding AGENT THEME made it two.
+            //
+            // So the middle column takes the four PICKERS (what you press to
+            // choose a look) and the right column takes the WHEEL and the window
+            // RULES (what you drag, and what the window does with the result).
+            // Widening is what buys the height back: the same rows in a column
+            // half as tall, because each row now fits three buttons instead of
+            // two. Measured against the 46px DESIGN button: TRAY_PICKER_W is
+            // exactly three of them plus their gaps, so DESIGN wraps 3+3+1
+            // rather than 2+2+2+1, and SYNTAX wraps 3+2 rather than 2+2+1. The
+            // widths live at module scope so `tray_pickers_h` can assert the fit
+            // against the real inventory instead of against a number typed here.
+            let pickers = div()
                 .flex()
                 .flex_col()
                 .gap_2()
-                .flex_1()
-                // min-width 0 lets captions wrap inside the column instead of
-                // forcing the panel wider than its frame (the overflow bug).
-                .min_w(px(0.))
+                .flex_none()
+                .w(px(TRAY_PICKER_W))
                 .child(
                     div()
                         .text_size(px(8.5))
@@ -22358,17 +22689,27 @@ impl Render for Workspace {
                     d.child(hsep()).child(label("SKIN")).child(skin_row)
                 })
                 .child(hsep())
-                .child(label(t.t_wheel))
-                .child(div().flex().justify_center().py_1().child(wheel))
-                .child(div().flex().justify_center().child(lbar))
-                .child(div().flex().justify_center().pt_1().child(pick_row))
-                .child(seed_row)
-                .child(hsep())
                 .child(label(t.t_program))
                 .child(color_row)
                 .child(hsep())
                 .child(label(t.t_syntax))
                 .child(syntax_row);
+            // The right-hand column: the seed wheel and its text axes, then the
+            // rules the window applies to what you chose (appended below).
+            let mut controls = div()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .flex_none()
+                .w(px(TRAY_WHEEL_COL_W))
+                // min-width 0 lets captions wrap inside the column instead of
+                // forcing the panel wider than its frame (the overflow bug).
+                .min_w(px(0.))
+                .child(label(t.t_wheel))
+                .child(div().flex().justify_center().py_1().child(wheel))
+                .child(div().flex().justify_center().child(lbar))
+                .child(div().flex().justify_center().pt_1().child(pick_row))
+                .child(seed_row);
             // The anchor toggle is GLOBAL (not per-pane), so it shows only in the
             // OUTER design panel. A short ANCHOR label + the ⚓ TOP/BOTTOM ▲▼ pill.
             if !is_pane {
@@ -22383,6 +22724,16 @@ impl Render for Workspace {
                     format!("⤓ {} ({})", t.pass_down, stray)
                 };
                 controls = controls
+                    // AGENT THEME sits immediately above the pass-down button
+                    // because they are the two ends of one question: pass-down
+                    // decides which panes follow the window, and this decides
+                    // whether following the window actually means wearing it.
+                    // Heading is a literal for the same reason ANCHOR/SKIN are
+                    // (#406).
+                    .child(hsep())
+                    .child(label("AGENT THEME"))
+                    .child(div().flex().child(self.agent_tint_toggle(&sk, cx)))
+                    .child(hsep())
                     .child(label("ANCHOR"))
                     .child(div().flex().child(self.anchor_top_toggle(&sk, cx)))
                     .child(Self::bezel_btn(&sk, &lbl, stray > 0).on_mouse_down(
@@ -22415,15 +22766,20 @@ impl Render for Workspace {
             // the cursor, opening down-left like the global menu); clamp it fully
             // on-screen. The global/outer menu (menu_at == None) keeps its fixed
             // top-right anchor under the titlebar control.
-            const PANEL_W: f32 = 300.; // match the DISPLAY (⛭) tray width
-            const PANEL_H_EST: f32 = 458.; // generous, incl. colour wheel + pick row + follow-outer
+            // Width and open-height are computed at module scope from the column
+            // widths the render above uses, so a test can hold them against the
+            // real inventory. The tray no longer matches the DISPLAY (⛭) tray's
+            // 300 — that pairing was worth having while both were one stacked
+            // strip, and it is not worth a tray whose bottom rows you scroll to.
+            const PANEL_W: f32 = TRAY_PANEL_W;
+            let panel_h_est = tray_panel_h_est();
             let mut panel = div().id("theme-panel").absolute().w(px(PANEL_W));
             // Where the tray's top edge lands decides how tall it may be, so
             // the anchor is computed first and kept.
             let tray_top = match self.menu_at {
                 Some(at) => {
                     let vh = f32::from(window.viewport_size().height);
-                    (f32::from(at.y) + 6.).clamp(8., (vh - PANEL_H_EST - 8.).max(8.))
+                    (f32::from(at.y) + 6.).clamp(8., (vh - panel_h_est - 8.).max(8.))
                 }
                 None => 36.,
             };
@@ -22460,16 +22816,21 @@ impl Render for Workspace {
                     cx.listener(|_, _: &MouseDownEvent, _w, cx| cx.stop_propagation()),
                 )
                 // Left: the INVERT mode bar stacked ABOVE the vertical dynamics
-                // glyph column(s). A thin rule, then the right column: seed wheel +
-                // text axes + follow-outer (built above as `controls`).
+                // glyph column(s). Then the PICKERS (design · skin · program ·
+                // syntax), then the WHEEL and the window rules — each behind its
+                // own hairline. `flex_none` on all three: a column that shrinks
+                // re-wraps its buttons, and re-wrapping is how the tray got tall.
                 .child(
                     div()
                         .flex()
                         .flex_col()
+                        .flex_none()
                         .gap_2()
                         .child(invert_bar)
                         .child(dyn_cols),
                 )
+                .child(vsep())
+                .child(pickers)
                 .child(vsep())
                 .child(controls);
             // full-screen scrim: click anywhere outside closes
@@ -27630,17 +27991,23 @@ mod tests {
         // its pane tree was reshaped (#413); a NEW tab is not that case, but it
         // is the same shape — a field added to `Tab` later would be set by
         // neither assignment and take the constructor's default in silence.
-        let at = src.find("fn new_tab_in(&mut self").expect("new_tab_in");
+        //
+        // Scanned at `open_tab`, which is where every new tab is now built —
+        // `new_tab_in` delegates to it, and so does the adoption the launcher
+        // reaches. That move is the other half of #508: the launcher had its
+        // own builder, which is exactly how it came to file every agent it
+        // started under UNFILED.
+        let at = src.find("fn open_tab(").expect("open_tab");
         let end = src[at..].find("\n    }\n").expect("end of fn") + at;
         let builder = &src[at..end];
         assert!(
             !builder.contains("Tab::new("),
-            "new_tab_in builds its tab with Tab::new again — route it through \
+            "open_tab builds its tab with Tab::new again — route it through \
              TabIdentity::onto so a new Tab field is a compile error here"
         );
         assert!(
             builder.contains("TabIdentity {") && builder.contains(".onto("),
-            "new_tab_in no longer builds through the identity carrier"
+            "open_tab no longer builds through the identity carrier"
         );
     }
 
@@ -27814,11 +28181,7 @@ mod tests {
         // Full signatures, not name prefixes: `fn split` alone matches
         // `split_leaf` three thousand lines earlier, and a source scan that
         // silently reads the wrong function is worse than no scan.
-        for gesture in [
-            "fn new_tab_in(&mut self",
-            "fn adopt_pane(",
-            "fn split(&mut self, dir: SplitDir",
-        ] {
+        for gesture in ["fn open_tab(", "fn split(&mut self, dir: SplitDir"] {
             let b = body(gesture);
             assert!(
                 b.contains("make_pane_in_mode"),
@@ -27831,20 +28194,26 @@ mod tests {
             );
         }
 
-        // `new_tab` delegates rather than building, so the list above names the
-        // one site that does. If a pane build ever grows back into `new_tab`
-        // itself there are two again, and the swap above would have quietly
-        // stopped covering the gesture people actually press.
-        let delegating = body("fn new_tab(&mut self");
-        assert!(
-            !delegating.contains("make_pane"),
-            "new_tab builds a pane again instead of delegating to new_tab_in; the scan above \
-             is now checking the wrong function"
-        );
-        assert!(
-            delegating.contains("self.new_tab_in("),
-            "new_tab no longer reaches new_tab_in"
-        );
+        // The tab-opening gestures delegate rather than building, so the list
+        // above names the one site that does. If a pane build ever grows back
+        // into one of them there are two again, and the swap above would have
+        // quietly stopped covering the gesture people actually press.
+        for (sig, reaches) in [
+            ("fn new_tab(&mut self", "self.new_tab_in("),
+            ("fn new_tab_in(&mut self", "self.open_tab("),
+            ("fn adopt_pane(", "self.open_tab("),
+        ] {
+            let delegating = body(sig);
+            assert!(
+                !delegating.contains("make_pane"),
+                "{sig} builds a pane again instead of delegating; the scan above is now \
+                 checking the wrong function"
+            );
+            assert!(
+                delegating.contains(reaches),
+                "{sig} no longer reaches {reaches}"
+            );
+        }
 
         // And the chokepoint has to actually branch on the mode rather than
         // being a rename of one of the two paths.
@@ -27855,6 +28224,59 @@ mod tests {
                 && choke.contains("make_pane_window_owned"),
             "make_pane_in_mode must choose between the host and this window by asking which \
              mode the workspace is in"
+        );
+    }
+
+    /// A launch lands where the person is standing, not at the end of the
+    /// window.
+    ///
+    /// The regression this holds shut was invisible from inside the code and
+    /// obvious on the screen: `adopt_pane` pushed its tab with `Tab::new(…,
+    /// None)`, so an agent started from inside a named branch appeared at the
+    /// bottom of the left bar under UNFILED. Nobody chose that — `None` was the
+    /// constructor's default for a field the launcher never thought about
+    /// (#508).
+    ///
+    /// Source-scanned, like its neighbour and for the same reason: a
+    /// `Workspace` needs a live gpui `Window`, so the wrong version compiles
+    /// and passes everything else.
+    #[test]
+    fn a_launch_is_seated_and_an_adoption_is_deliberately_loose() {
+        let src = include_str!("main.rs");
+        let body = |sig: &str| -> &str {
+            let at = src.find(sig).unwrap_or_else(|| panic!("{sig} not found"));
+            let end = src[at..].find("\n    }\n").expect("end of fn");
+            &src[at..at + end]
+        };
+
+        let launch = body("fn launch_agent(");
+        assert!(
+            launch.contains("Seat::Branch(self.place_of(self.active))"),
+            "a launched agent is filed loose again; it belongs in the branch the person \
+             pressed the button in"
+        );
+        // And the other landing: into the pane the button was pressed on.
+        assert!(
+            launch.contains("launcher::landing(") && launch.contains("run_line("),
+            "the launcher no longer starts the agent in the pane it was opened from — \
+             which is what its own empty-bench sentence promises: \"A shell has no agent \
+             to present anything. Launch one into this pane.\""
+        );
+
+        let adopt = body("fn drain_pending_adopts(");
+        assert!(
+            adopt.contains("Seat::Loose"),
+            "an adoption from another session now files itself into whatever branch this \
+             window happens to be looking at, which puts a stranger's terminal inside \
+             somebody's project"
+        );
+
+        // The panel's key hint and the launch must read the same function, or
+        // the label says one landing and the button does the other.
+        let panel = body("fn render_agent_launcher(");
+        assert!(
+            panel.contains("launcher::landing("),
+            "the ↵ hint is deciding for itself where the launch will go"
         );
     }
 
@@ -32525,6 +32947,88 @@ node = "Leaf"
         let old: StateFile =
             toml::from_str("active = 0\n[[tabs]]\nnode = \"Leaf\"\n").expect("loads old file");
         assert!(!old.anchor_top, "missing key defaults to the bottom anchor");
+    }
+
+    #[test]
+    fn agent_theme_preference_round_trips_and_defaults_to_following_outer() {
+        // Turning the coloured tubes back on survives a save/load …
+        let state = StateFile {
+            agent_tint: true,
+            ..Default::default()
+        };
+        let body = toml::to_string(&state).expect("serializes");
+        let back: StateFile = toml::from_str(&body).expect("round-trips");
+        assert!(back.agent_tint, "the AGENT THEME toggle persists");
+        // … and every session file written before this existed — which is all of
+        // them — loads as FOLLOWS OUTER. That is the behaviour change: the tint
+        // used to be unconditional, so absence has to mean off, not "as before".
+        let old: StateFile =
+            toml::from_str("active = 0\n[[tabs]]\nnode = \"Leaf\"\n").expect("loads old file");
+        assert!(
+            !old.agent_tint,
+            "a pre-feature session inherits its theme rather than wearing the program"
+        );
+    }
+
+    /// The design tray has to FIT — every control reachable without scrolling.
+    ///
+    /// Driven by the real inventory, which is the only thing that makes it a
+    /// gate rather than arithmetic agreeing with itself: adding a builtin theme,
+    /// a skin, a colour mode or a syntax grammar moves the estimate, and the
+    /// estimate has to stay inside the height the tray declares it may open at.
+    /// When this fails, the answer is another column or a wider one — not a
+    /// bigger `TRAY_PANEL_H_EST`, which only moves the fold.
+    #[test]
+    fn the_design_tray_fits_the_shortest_screen_it_promises() {
+        let cap = tray_cap((0., TRAY_FIT_BAND), 36.);
+        let tall = tray_panel_h_est();
+        assert!(
+            tall <= cap,
+            "the design tray's tallest column is {tall:.0}px against a {cap:.0}px band on the \
+             shortest screen it promises to fit — split a column or drop a section; raising \
+             TRAY_PANEL_H_EST only moves the fold back below the edge"
+        );
+        // The split is load-bearing: as ONE stacked strip the same inventory is
+        // past the band, which is the state this replaced.
+        let stacked = tray_pickers_h(
+            theme::picker_count(),
+            skin::picker_max_count(),
+            theme::ColorMode::ALL.len(),
+            theme::SyntaxScheme::ALL.len() + 1,
+        ) + tray_wheel_col_h(2, 1);
+        assert!(
+            stacked > cap,
+            "if one column fits again the split is dead weight — delete it deliberately, \
+             do not let it rot"
+        );
+    }
+
+    /// Each column is wide enough for what it has to hold.
+    ///
+    /// Deliberately NOT `TRAY_PANEL_W == the sum of its parts` — the panel width
+    /// is *defined* as that sum, so asserting it would be a tautology wearing a
+    /// test's clothes. These are the constraints the widths actually have to
+    /// satisfy, and the panel follows from them. The tray clips horizontally
+    /// (`overflow_x_hidden`), so a column too narrow for its content loses the
+    /// content silently, the same way the height loss hid ANCHOR.
+    #[test]
+    fn every_design_tray_column_holds_what_is_put_in_it() {
+        assert!(
+            tray_wrap_rows(theme::picker_count(), TRAY_BTN_W, TRAY_PICKER_W) <= 3,
+            "PICKERS must take three DESIGN buttons per row — two is the old tall tray"
+        );
+        assert!(
+            TRAY_WHEEL_COL_W >= TRAY_WHEEL_H,
+            "the WHEEL column has to hold the {TRAY_WHEEL_H}px wheel"
+        );
+        assert!(
+            TRAY_GLYPH_COL_W >= 2. * 40. + TRAY_GAP * 2. + TRAY_SEP,
+            "the glyph column holds two 40px colour-set columns and their rule"
+        );
+        assert!(
+            TRAY_GLYPH_COL_W >= TRAY_MODE_BTN_W + TRAY_GAP + 40.,
+            "…and the INVERT bar above them: a heading plus a mode button"
+        );
     }
 
     #[test]

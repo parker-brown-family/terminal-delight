@@ -1476,6 +1476,16 @@ pub fn spec(cx: &App) -> Arc<SkinSpec> {
         .unwrap_or_else(|| Arc::new(SkinSpec::default()))
 }
 
+/// The most buttons the SKIN picker can draw: every builtin, plus the `custom`
+/// slot that appears once the user has a skin file.
+///
+/// The WORST case on purpose — the tray has to fit when that file exists, and a
+/// geometry test that assumed it did not would pass on this machine and fail on
+/// the one where somebody wrote a skin.
+pub fn picker_max_count() -> usize {
+    BUILTIN_SKINS.len() + 1
+}
+
 /// Every skin that can be selected, as `(id, icon, whether it is active now)`.
 /// `custom` appears only when the user actually has a file.
 pub fn all_skins(cx: &App) -> Vec<(String, String, bool)> {
