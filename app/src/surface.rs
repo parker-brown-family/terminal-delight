@@ -925,36 +925,19 @@ pub enum Body {
     Facts(Vec<(String, String)>),
 }
 
-impl Body {
-    /// The count the header shows beside the label, so a folded section says
-    /// how much is behind it: `140 words`, `3 items`, `4 facts`.
-    pub fn measure(&self) -> String {
-        match self {
-            Body::Prose(p) => {
-                let n = p.split_whitespace().count();
-                if n == 1 {
-                    "1 word".into()
-                } else {
-                    format!("{n} words")
-                }
-            }
-            Body::Items(items) => {
-                if items.len() == 1 {
-                    "1 item".into()
-                } else {
-                    format!("{} items", items.len())
-                }
-            }
-            Body::Facts(facts) => {
-                if facts.len() == 1 {
-                    "1 fact".into()
-                } else {
-                    format!("{} facts", facts.len())
-                }
-            }
-        }
-    }
-}
+// `Body::measure()` lived here and is deliberately gone, along with the
+// `140 words` / `3 items` / `4 facts` count it put beside every register label.
+//
+// Its justification was that a folded section should be "a promise the reader
+// can weigh before spending it". Nobody reads that way. No one has ever declined
+// to open a technical brief because it was thirty-two words rather than forty,
+// and the count answers none of the question a reader actually has, which is
+// whether the thing is worth opening. Parker: *"the number of words or facts —
+// all those counters are AI trash anti-patterns and die in a fire"*.
+//
+// Deleted rather than left unused, so it cannot quietly come back: the next
+// renderer that wants a number beside a label has to write the number AND the
+// argument for it.
 
 /// One thing the agent is not sure of.
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -2978,17 +2961,6 @@ mod tests {
         assert!(
             matches!(landed.kind, Kind::Unclassified(_)),
             "never dropped"
-        );
-    }
-
-    #[test]
-    fn a_measure_says_how_much_is_behind_a_folded_header() {
-        assert_eq!(Body::Prose("one two three".into()).measure(), "3 words");
-        assert_eq!(Body::Prose("one".into()).measure(), "1 word");
-        assert_eq!(Body::Items(vec!["a".into()]).measure(), "1 item");
-        assert_eq!(
-            Body::Facts(vec![("a".into(), "b".into()); 2]).measure(),
-            "2 facts"
         );
     }
 

@@ -1558,6 +1558,7 @@ impl TerminalView {
                 let folds = crate::benchdraw::Folds {
                     id: &surface.id,
                     open: &open,
+                    lit: bench.lit_section(&surface.id),
                     zones: self.wb_zones.clone(),
                 };
                 let drawn = crate::benchdraw::body(surface, how, Some(&folds), sk, th);

@@ -1720,6 +1720,14 @@ pub struct Bench {
     /// Toggles rather than states, so a section's default can change under a
     /// build without every remembered fold inverting.
     toggled: HashSet<(SurfaceId, String)>,
+    /// The register the person last OPENED, per surface — what the card lights.
+    ///
+    /// Separate from `toggled` because it answers a different question. Which
+    /// sections are open is a set; where the reader last went is a position, and
+    /// a set cannot carry a position. Deriving it from `toggled` was the obvious
+    /// shortcut and it is wrong twice over: a `HashSet` has no order, and the
+    /// default-open registers are open without ever having been touched.
+    touched: std::collections::HashMap<SurfaceId, String>,
 }
 
 /// What a press turns into.
@@ -1952,6 +1960,7 @@ impl Default for Bench {
             rail_wanted: true,
             unseen: HashSet::new(),
             toggled: HashSet::new(),
+            touched: std::collections::HashMap::new(),
         }
     }
 }
@@ -2112,11 +2121,50 @@ impl Bench {
     }
 
     /// Flip one response section between folded and unfolded.
+    ///
+    /// Also records where the reader just went, which is what the card lights.
+    /// Opening a register marks it; closing the lit one puts the light out
+    /// rather than moving it somewhere the reader did not choose.
     pub fn toggle_section(&mut self, id: &SurfaceId, key: &str) {
         let k = (id.clone(), key.to_string());
         if !self.toggled.remove(&k) {
-            self.toggled.insert(k);
+            self.toggled.insert(k.clone());
         }
+        // Read the RESULT rather than assume the flip opened it: these are
+        // toggles against a per-register default, so the same press opens one
+        // section and closes another.
+        let now_open = section_open(
+            self.section_default_open_for(id, key),
+            self.toggled.contains(&k),
+        );
+        if now_open {
+            self.touched.insert(id.clone(), key.to_string());
+        } else if self.touched.get(id).is_some_and(|t| t == key) {
+            self.touched.remove(id);
+        }
+    }
+
+    /// The default-open answer for one key on one surface, by looking its
+    /// register up rather than guessing from the key's spelling.
+    fn section_default_open_for(&self, id: &SurfaceId, key: &str) -> bool {
+        if crate::surface::Register::is_tldr(key) {
+            return section_default_open(crate::surface::Register::Tldr);
+        }
+        self.get(id)
+            .and_then(|s| match &s.kind {
+                Kind::Response(r) => r.sections.iter().find(|x| x.key == key),
+                _ => None,
+            })
+            .map(|s| section_default_open(s.register))
+            .unwrap_or(false)
+    }
+
+    /// Which register this surface's card should light, if any.
+    ///
+    /// `None` until the reader opens something — the light marks where they went
+    /// and says nothing before they have gone anywhere.
+    pub fn lit_section(&self, id: &SurfaceId) -> Option<&str> {
+        self.touched.get(id).map(String::as_str)
     }
 
     /// Whether a response section is unfolded right now: its register's

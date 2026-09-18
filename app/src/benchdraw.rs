@@ -46,6 +46,9 @@ use crate::workbench::{Embodiment, Row, Step, Tint};
 pub struct Folds<'a> {
     pub id: &'a SurfaceId,
     pub open: &'a dyn Fn(&crate::surface::Section) -> bool,
+    /// The register the reader last opened — the one row the card lights.
+    /// `None` before they have opened anything, which draws nothing lit.
+    pub lit: Option<&'a str>,
     pub zones: std::rc::Rc<std::cell::RefCell<Vec<crate::workbench::Zone>>>,
 }
 
@@ -181,13 +184,29 @@ pub fn spine_frame<E: Styled>(el: E, tint: Hsla, strength: f32, sk: &Skin, th: &
 /// you in the body, the primary action on a card — and everything else takes
 /// depth, which separates surfaces without making a claim about attention.
 pub fn aglow<E: Styled>(el: E, tint: Hsla, th: &Theme) -> E {
+    aglow_at(el, tint, 1.0, th)
+}
+
+/// [`aglow`], at a fraction of its strength.
+///
+/// The budget is still one bloom per region; this is how loud that one bloom is.
+/// A register the reader last opened is *lit* — it marks where they are — and an
+/// escalation is *shouting*, and drawing both at the same intensity made the
+/// bookmark look like a summons. Parker: *"this light should be on the most
+/// recent clicked and be about 1/2 the intensity"*.
+///
+/// `strength` scales the bloom's alpha and its spread together, so a half-lit
+/// thing is smaller as well as dimmer — halving only the alpha leaves a
+/// same-sized halo that still draws the eye from across a pane.
+pub fn aglow_at<E: Styled>(el: E, tint: Hsla, strength: f32, th: &Theme) -> E {
     let mut shadows = depth();
-    if th.glow > 0.001 {
+    let strength = strength.clamp(0., 1.);
+    if th.glow > 0.001 && strength > 0.001 {
         shadows.push(BoxShadow {
-            color: tint.alpha((th.glow * 0.45).min(0.5)),
+            color: tint.alpha((th.glow * 0.45 * strength).min(0.5)),
             offset: point(px(0.), px(0.)),
-            blur_radius: px(22.),
-            spread_radius: px(1.),
+            blur_radius: px(22. * strength.max(0.5)),
+            spread_radius: px(strength),
             inset: false,
         });
     }
@@ -561,18 +580,31 @@ fn heading(surface: &Surface, sk: &Skin, th: &Theme) -> Div {
         // large directly underneath.
         .when(
             !matches!(surface.kind, Kind::Question(_) | Kind::Response(_)),
-            |d| d.child(micro(surface.subtitle(), Step::Note, th.faint, sk, th)),
+            |d| {
+                d.child(micro(
+                    surface.subtitle(),
+                    Step::Note,
+                    crate::emphasis::meta(th),
+                    sk,
+                    th,
+                ))
+            },
         )
         // WHO PUT IT HERE, on every card, and at full strength when nobody
         // can say: a surface that arrived from nowhere is the one to look at
         // twice, so the unknown is the loud one and the attributed is quiet.
+        //
+        // Both strengths are READABLE now. They were `th.faint` and
+        // `th.faint.alpha(0.7)` — grey on grey, and then a fainter grey on the
+        // same grey, so both cases were illegible and the distinction between
+        // them carried nothing to anyone who could not read either.
         .child(micro(
             surface.origin.label(),
             Step::Fine,
             if surface.origin.is_unattributed() {
-                th.faint
+                crate::emphasis::meta(th)
             } else {
-                th.faint.alpha(0.7)
+                crate::emphasis::meta(th).alpha(0.42)
             },
             sk,
             th,
@@ -845,7 +877,15 @@ fn response(r: &Response, folds: Option<&Folds>, sk: &Skin, th: &Theme) -> Div {
         .collect();
     // The tiers, allocated for the whole shelf at once so exactly one row can be
     // lit. A renderer cannot overspend the budget because it never holds it.
-    let tiers = crate::emphasis::shelf(&open, None);
+    //
+    // The lit row is the one the reader last OPENED, not the first one that
+    // happens to be open — so a card nobody has touched arrives with nothing
+    // lit, and the light moves as they read rather than sitting on the tl;dr
+    // forever.
+    let lit = folds
+        .and_then(|f| f.lit)
+        .and_then(|key| rows.iter().position(|s| s.key == key));
+    let tiers = crate::emphasis::shelf(&open, lit);
 
     let frame = div().flex().flex_col().gap(px(8.));
     let frame = frame.children(rows.iter().zip(tiers).zip(&open).map(|((s, tier), &open)| {
@@ -868,8 +908,15 @@ fn response(r: &Response, folds: Option<&Folds>, sk: &Skin, th: &Theme) -> Div {
                     .text_size(px(sk.pt(Step::Body)))
                     .text_color(facet.ink)
                     .child(s.label.clone()),
-            )
-            .child(micro(s.body.measure(), Step::Note, th.faint, sk, th));
+            );
+        // NO COUNT. `32 words`, `2 items`, `4 facts` used to sit beside every
+        // label, and the justification written here was that a folded section
+        // is "a promise the reader can weigh before spending it". That is not
+        // how anyone reads. Nobody has ever declined to open a technical brief
+        // because it was thirty-two words rather than forty, and the number is
+        // wrong for the only question a reader actually has, which is whether
+        // the thing is worth reading. Parker: *"the number of words or facts —
+        // all those counters are AI trash anti-patterns and die in a fire"*.
         // The header is the target, and only the header: a click in a long
         // open body should place nothing and fold nothing.
         let header = match folds {

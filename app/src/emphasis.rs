@@ -112,18 +112,20 @@ impl Emphasis {
 ///
 /// 1. **A closed row is never Active.** Lighting a fold nobody can read is a
 ///    glow that points at nothing.
-/// 2. **With no focus, the first OPEN row is Active.** A person arriving has not
-///    moved a cursor yet and still needs to be told where to start — the same
-///    reasoning `benchdraw::rail_row` already applies to the head of a shelf,
-///    and the reason the tl;dr still reads as the landing place after it stops
-///    being a banner.
+/// 2. **With no focus, NOTHING is Active.** The light marks where the reader
+///    last went, so before they have gone anywhere there is nowhere to mark.
+///
+/// Rule 2 used to promote the first open row, which meant the tl;dr arrived lit
+/// on every card the reader had never touched — a permanent highlight on the one
+/// register that never moves, which is a decoration rather than a signal.
+/// Parker: *"kill the bright light on tl;dr as a persistent default... this light
+/// should be on the most recent clicked"*. A default that is always the same row
+/// carries no information, and it spent the card's one bloom to say so.
 ///
 /// Returns one tier per row, in the order given. This is the ONLY way a row gets
 /// [`Emphasis::Active`], so the one-lit-thing budget holds by construction.
 pub fn shelf(open: &[bool], focused: Option<usize>) -> Vec<Emphasis> {
-    let lit = focused
-        .filter(|&i| open.get(i).copied().unwrap_or(false))
-        .or_else(|| open.iter().position(|&o| o));
+    let lit = focused.filter(|&i| open.get(i).copied().unwrap_or(false));
     open.iter()
         .enumerate()
         .map(|(i, _)| {
@@ -193,6 +195,26 @@ impl Call {
     }
 }
 
+/// Ink for secondary text that must still be READ.
+///
+/// `th.faint` is the palette's dimmest ink and it is drawn on `th.surface`,
+/// which in a dark theme is a few points of lightness away from it — so a line
+/// in it is grey on grey and is not read so much as detected. Parker, on a card
+/// whose origin line, verbs and mirrored transcript were all drawn that way:
+/// *"the grey text on grey background is aweful!"*
+///
+/// The repair is not "brighten faint", which would move every hairline, rule
+/// and tick that legitimately wants to disappear. It is a second ink, derived
+/// from the FOREGROUND rather than from the palette's dimmest slot, so it
+/// tracks the text colour on every theme and cannot collapse into the surface.
+/// Faint keeps its job: marks, not words.
+///
+/// Anything with WORDS in it that a person may need to read takes this. A rule,
+/// a tick, a chevron's inactive state takes `th.faint`.
+pub fn meta(th: &Theme) -> Hsla {
+    th.text.alpha(0.62)
+}
+
 /// The resolved appearance of one tier, against one theme.
 ///
 /// The single place a tier becomes colour, so a palette change moves every
@@ -209,8 +231,14 @@ pub struct Facet {
     pub edge_px: f32,
     /// Fill behind the panel.
     pub fill: Hsla,
-    /// Whether this tier spends the card's one bloom.
-    pub glow: bool,
+    /// How much of the card's one bloom this tier spends. `0.0` is none.
+    ///
+    /// A fraction rather than a flag because *lit* and *shouting* are different
+    /// amounts: the active register marks where the reader is, which wants half
+    /// the bloom an escalation gets — one is a bookmark, the other is a summons.
+    /// Parker: *"this light should be on the most recent clicked and be about
+    /// 1/2 the intensity"*.
+    pub glow: f32,
 }
 
 /// Resolve a tier against a theme.
@@ -238,7 +266,7 @@ pub fn facet(e: Emphasis, th: &Theme) -> Facet {
                 edge: tint,
                 edge_px: 2.,
                 fill: crate::darken(th.surface, 0.45),
-                glow: true,
+                glow: 1.0,
             }
         }
         Emphasis::Active => Facet {
@@ -247,7 +275,8 @@ pub fn facet(e: Emphasis, th: &Theme) -> Facet {
             edge: th.accent,
             edge_px: 2.,
             fill: th.accent.alpha(0.05),
-            glow: true,
+            // Half. A bookmark, not a summons.
+            glow: 0.5,
         },
         Emphasis::Reading => Facet {
             tint: th.faint,
@@ -255,7 +284,7 @@ pub fn facet(e: Emphasis, th: &Theme) -> Facet {
             edge: th.faint.alpha(0.3),
             edge_px: 2.,
             fill: th.surface.alpha(0.35),
-            glow: false,
+            glow: 0.0,
         },
         Emphasis::Quiet => Facet {
             tint: th.faint,
@@ -263,7 +292,7 @@ pub fn facet(e: Emphasis, th: &Theme) -> Facet {
             edge: th.faint.alpha(0.3),
             edge_px: 2.,
             fill: th.surface.alpha(0.25),
-            glow: false,
+            glow: 0.0,
         },
     }
 }
@@ -286,8 +315,8 @@ impl Facet {
             .bg(self.fill)
             .border_l(px(sk.tpx(self.edge_px)))
             .border_color(self.edge);
-        if self.glow {
-            crate::benchdraw::aglow(el, self.tint, th)
+        if self.glow > 0.001 {
+            crate::benchdraw::aglow_at(el, self.tint, self.glow, th)
         } else {
             el
         }
@@ -297,6 +326,12 @@ impl Facet {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The shipped default palette — the one every ink in this module resolves
+    /// against, so a test asserts against real colours rather than invented ones.
+    fn palette() -> Theme {
+        crate::theme::parse(crate::theme::DEFAULT_THEME_TOML).expect("the embedded theme parses")
+    }
 
     #[test]
     fn the_ramp_is_strictly_increasing() {
@@ -323,23 +358,49 @@ mod tests {
 
     #[test]
     fn a_closed_row_is_never_lit() {
-        // Focus parked on a folded row: the light must not go there, and must
-        // not vanish either.
+        // A light pointing at a fold nobody can read points at nothing. It goes
+        // OUT rather than moving somewhere the reader did not choose.
         let tiers = shelf(&[true, false, true], Some(1));
-        assert_eq!(tiers[1], Emphasis::Reading);
-        assert_eq!(
-            tiers[0],
-            Emphasis::Active,
-            "falls back to the first open row"
+        assert!(
+            tiers.iter().all(|t| *t == Emphasis::Reading),
+            "the light goes out, it does not wander: {tiers:?}"
         );
     }
 
     #[test]
-    fn with_no_focus_the_first_open_row_is_lit() {
-        let tiers = shelf(&[false, true, true], None);
-        assert_eq!(tiers[0], Emphasis::Reading);
-        assert_eq!(tiers[1], Emphasis::Active);
-        assert_eq!(tiers[2], Emphasis::Reading);
+    fn an_untouched_card_lights_nothing() {
+        // The regression this replaces: with no focus the shelf used to promote
+        // the first open row, so the tl;dr arrived lit on every card nobody had
+        // opened — a permanent highlight on the one register that never moves,
+        // spending the card's whole bloom to say nothing.
+        let tiers = shelf(&[true, true, true], None);
+        assert!(
+            tiers.iter().all(|t| *t == Emphasis::Reading),
+            "nothing is lit until the reader opens something: {tiers:?}"
+        );
+    }
+
+    #[test]
+    fn the_light_sits_where_the_reader_last_went() {
+        let tiers = shelf(&[true, true, true], Some(2));
+        assert_eq!(tiers[2], Emphasis::Active);
+        assert_eq!(tiers[0], Emphasis::Reading, "not the first open row");
+    }
+
+    #[test]
+    fn a_bookmark_is_dimmer_than_a_summons() {
+        let th = palette();
+        let th_active = facet(Emphasis::Active, &th);
+        let th_esc = facet(Emphasis::Escalated, &th);
+        assert!(
+            th_active.glow > 0.0 && th_active.glow <= th_esc.glow / 2.0 + f32::EPSILON,
+            "active {} must be about half of escalated {}",
+            th_active.glow,
+            th_esc.glow
+        );
+        for quiet in [Emphasis::Reading, Emphasis::Quiet] {
+            assert_eq!(facet(quiet, &th).glow, 0.0, "{quiet:?} never blooms");
+        }
     }
 
     #[test]
