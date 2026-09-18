@@ -32,9 +32,22 @@ use gpui::{
 };
 
 use crate::skin::{Role, Skin};
-use crate::surface::{Confidence, Depth, Kind, Shelf, Surface, Verdict, Weight};
+use crate::surface::{
+    Body, Confidence, Depth, Kind, Register, Response, Shelf, Surface, SurfaceId, Verdict, Weight,
+};
 use crate::theme::Theme;
 use crate::workbench::{Embodiment, Row, Tint};
+
+/// What a response renderer needs to draw folds it cannot decide for itself:
+/// whose sections these are, which of them are open, and where to register
+/// the headers as click targets. Absent, every section is drawn folded with
+/// no target — the summary and compact bodies, and any caller that has no
+/// zone list to offer.
+pub struct Folds<'a> {
+    pub id: &'a SurfaceId,
+    pub open: &'a dyn Fn(&crate::surface::Section) -> bool,
+    pub zones: std::rc::Rc<std::cell::RefCell<Vec<crate::workbench::Zone>>>,
+}
 
 /// Which palette role each meaning borrows.
 ///
@@ -294,11 +307,7 @@ pub fn rail_row(row: &Row, sk: &Skin, th: &Theme) -> Div {
             div()
                 .text_size(px(11.))
                 .text_color(th.text)
-                .child(if row.terse {
-                    clip(&row.title, 34)
-                } else {
-                    row.title.clone()
-                }),
+                .child(row.title.clone()),
         )
         // Where this fact came from, and when. A surface that shows a state
         // without its provenance is asking to be trusted on nothing — the
@@ -437,7 +446,13 @@ pub fn weights(w: &Weight, sk: &Skin, th: &Theme) -> Div {
 }
 
 /// The body of whatever is selected, at the size this pane can honestly show.
-pub fn body(surface: &Surface, how: Embodiment, sk: &Skin, th: &Theme) -> Div {
+pub fn body(
+    surface: &Surface,
+    how: Embodiment,
+    folds: Option<&Folds>,
+    sk: &Skin,
+    th: &Theme,
+) -> Div {
     let frame = div().flex().flex_col().gap(px(10.)).w_full();
     // A QUESTION gets neither the subtitle nor the weights strip.
     //
@@ -455,11 +470,11 @@ pub fn body(surface: &Surface, how: Embodiment, sk: &Skin, th: &Theme) -> Div {
             .child(compact(surface, sk, th)),
         Embodiment::Full if asking => frame
             .child(heading(surface, sk, th))
-            .child(full(surface, sk, th)),
+            .child(full(surface, folds, sk, th)),
         Embodiment::Full => frame
             .child(heading(surface, sk, th))
             .child(weights(&surface.weight, sk, th))
-            .child(full(surface, sk, th)),
+            .child(full(surface, folds, sk, th)),
     }
 }
 
@@ -513,10 +528,12 @@ fn heading(surface: &Surface, sk: &Skin, th: &Theme) -> Div {
         // cannot already see. A question's is a count of its own visible
         // options beside a state its own colour already carries, so it is
         // omitted rather than dimmed: a line nobody needs is noise at any
-        // opacity.
-        .when(!matches!(surface.kind, Kind::Question(_)), |d| {
-            d.child(micro(surface.subtitle(), 10.5, th.faint, th))
-        })
+        // opacity. A response's subtitle is its gist, which the body draws
+        // large directly underneath.
+        .when(
+            !matches!(surface.kind, Kind::Question(_) | Kind::Response(_)),
+            |d| d.child(micro(surface.subtitle(), 10.5, th.faint, th)),
+        )
         // WHO PUT IT HERE, on every card, and at full strength when nobody
         // can say: a surface that arrived from nowhere is the one to look at
         // twice, so the unknown is the loud one and the attributed is quiet.
@@ -578,12 +595,26 @@ fn compact(surface: &Surface, sk: &Skin, th: &Theme) -> Div {
         // either size, and no second list of kinds to keep in step.
         Kind::Question(q) => question(q, sk, th),
         Kind::Artifact(a) => list.child(micro(a.href.clone(), 11., th.faint, th)),
+        // The gist, then what is folded behind it, as one line per register.
+        Kind::Response(r) => list
+            .child(gist(&r.tldr, th))
+            .children(r.sections.iter().map(|s| {
+                micro(
+                    format!("\u{25b8} {} \u{b7} {}", s.label, s.body.measure()),
+                    11.,
+                    th.faint,
+                    th,
+                )
+            }))
+            .when(!r.doubts.is_empty(), |d| {
+                d.child(micro(doubts_measure(r), 11., th.complement, th))
+            }),
         Kind::Unclassified(u) => list.child(micro(u.reason.clone(), 11., th.faint, th)),
     }
 }
 
 /// The whole thing.
-fn full(surface: &Surface, sk: &Skin, th: &Theme) -> Div {
+fn full(surface: &Surface, folds: Option<&Folds>, sk: &Skin, th: &Theme) -> Div {
     match &surface.kind {
         Kind::Artifact(a) => artifact(a, sk, th),
         Kind::Markdown(m) => paragraph(m.body.clone(), th),
@@ -592,7 +623,265 @@ fn full(surface: &Surface, sk: &Skin, th: &Theme) -> Div {
         Kind::Changeset(c) => changeset(c, sk, th),
         Kind::Decision(d) => decision(d, sk, th),
         Kind::Question(q) => question(q, sk, th),
+        Kind::Response(r) => response(r, folds, sk, th),
         Kind::Unclassified(u) => unclassified(u, sk, th),
+    }
+}
+
+/// The gist of a reply: the one block that is never folded.
+///
+/// Larger than body text and on its own raised floor with the accent down
+/// its edge, because it is the sentence the whole card exists to deliver —
+/// a reader who stops here has read the reply.
+fn gist(tldr: &str, th: &Theme) -> Div {
+    div()
+        .flex()
+        .flex_col()
+        .gap(px(3.))
+        .px(px(12.))
+        .py(px(10.))
+        .bg(th.accent.alpha(0.08))
+        .border_l(px(3.))
+        .border_color(th.accent)
+        .child(micro("TL;DR", 9., th.accent, th))
+        .children(tldr.lines().map(|line| {
+            div()
+                .text_size(px(15.))
+                .text_color(th.text)
+                .child(line.to_string())
+        }))
+}
+
+/// `3 doubts · 1 hunch`: how much the agent is unsure of, and how unsure.
+fn doubts_measure(r: &Response) -> String {
+    let n = r.doubts.len();
+    let mut s = if n == 1 {
+        "1 doubt".to_string()
+    } else {
+        format!("{n} doubts")
+    };
+    let hunches = r
+        .doubts
+        .iter()
+        .filter(|d| {
+            matches!(
+                d.confidence,
+                Some(Confidence::Hunch) | Some(Confidence::Unknown)
+            )
+        })
+        .count();
+    if hunches == 1 {
+        s.push_str(" \u{b7} 1 hunch");
+    } else if hunches != 0 {
+        s.push_str(&format!(" \u{b7} {hunches} hunches"));
+    }
+    s
+}
+
+/// A reply, as registers a person unfolds.
+///
+/// The gist first and always open. Then one panel per section: a header that
+/// is the click target, carrying a chevron for the fold state, the label,
+/// and how much is behind it, so a folded `Technical brief · 340 words` is a
+/// promise the reader can weigh before spending it. The body draws under the
+/// header when the section is open. The doubts come last, in the complement
+/// colour and never folded — they are the part of a reply prose buries and
+/// the part a person most needs, and hiding them behind a click would be
+/// burying them again with a nicer typeface.
+///
+/// Which sections are open is not decided here: `folds.open` answers it, from
+/// the bench's toggles and `workbench::section_default_open`. Without folds
+/// everything is drawn closed and nothing is pressable, which is what a
+/// summary is.
+fn response(r: &Response, folds: Option<&Folds>, sk: &Skin, th: &Theme) -> Div {
+    let frame = div().flex().flex_col().gap(px(8.)).child(gist(&r.tldr, th));
+    let frame = frame.children(r.sections.iter().map(|s| {
+        let open = folds.is_some_and(|f| (f.open)(s));
+        let header = div()
+            .flex()
+            .flex_row()
+            .gap(px(8.))
+            .items_baseline()
+            .child(
+                div()
+                    .w(px(12.))
+                    .flex_none()
+                    .text_size(px(10.))
+                    .text_color(if open { th.accent } else { th.faint })
+                    .child(if open { "\u{25be}" } else { "\u{25b8}" }),
+            )
+            .child(
+                div()
+                    .text_size(px(12.5))
+                    .text_color(if open { th.text } else { th.text.alpha(0.85) })
+                    .child(s.label.clone()),
+            )
+            .child(micro(s.body.measure(), 10., th.faint, th))
+            .when(s.register == Register::Asks, |d| {
+                d.child(micro("needs you", 9., th.complement, th))
+            });
+        // The header is the target, and only the header: a click in a long
+        // open body should place nothing and fold nothing.
+        let header = match folds {
+            Some(f) => header.relative().child(zone(
+                f.zones.clone(),
+                crate::workbench::Hit::ToggleSection {
+                    id: f.id.clone(),
+                    key: s.key.clone(),
+                },
+            )),
+            None => header,
+        };
+        let panel = sk
+            .panel()
+            .flex()
+            .flex_col()
+            .gap(px(6.))
+            .px(px(11.))
+            .py(px(8.))
+            .bg(th.surface.alpha(if open { 0.6 } else { 0.35 }))
+            .border_l(px(2.))
+            .border_color(if s.register == Register::Asks {
+                th.complement.alpha(0.6)
+            } else if open {
+                th.accent.alpha(0.45)
+            } else {
+                th.faint.alpha(0.3)
+            })
+            .child(header);
+        if open {
+            panel.child(section_body(&s.body, s.register, th))
+        } else {
+            panel
+        }
+    }));
+    frame.when(!r.doubts.is_empty(), |d| {
+        d.child(
+            sk.panel()
+                .flex()
+                .flex_col()
+                .gap(px(6.))
+                .px(px(11.))
+                .py(px(8.))
+                .bg(th.complement.alpha(0.06))
+                .border_l(px(2.))
+                .border_color(th.complement)
+                .child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .gap(px(8.))
+                        .items_baseline()
+                        .child(micro("ARTICLES OF DOUBT", 9., th.complement, th))
+                        .child(micro(doubts_measure(r), 10., th.faint, th)),
+                )
+                .children(r.doubts.iter().map(|doubt| {
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap(px(1.))
+                        .child(
+                            div()
+                                .flex()
+                                .flex_row()
+                                .gap(px(7.))
+                                .items_baseline()
+                                .child(
+                                    div()
+                                        .text_size(px(12.))
+                                        .text_color(th.text)
+                                        .child(format!("\u{b7} {}", doubt.claim)),
+                                )
+                                .child(micro(
+                                    // Undeclared and unknown are different
+                                    // facts, and the card says which.
+                                    doubt
+                                        .confidence
+                                        .map(|c| c.label().to_string())
+                                        .unwrap_or_else(|| "confidence undeclared".into()),
+                                    9.,
+                                    match doubt.confidence {
+                                        Some(Confidence::Measured) => th.text,
+                                        Some(_) => th.complement,
+                                        None => th.faint,
+                                    },
+                                    th,
+                                )),
+                        )
+                        .when_some(doubt.why.clone(), |x, why| {
+                            x.child(div().pl(px(12.)).child(micro(
+                                why,
+                                11.,
+                                th.text.alpha(0.75),
+                                th,
+                            )))
+                        })
+                })),
+        )
+    })
+}
+
+/// A section's contents by its shape: prose as lines, a list as bullets —
+/// numbered where the register is a sequence — and facts as a name beside a
+/// value on a row of its own.
+fn section_body(body: &Body, register: Register, th: &Theme) -> Div {
+    match body {
+        Body::Prose(text) => paragraph(text.clone(), th),
+        Body::Items(items) => {
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(3.))
+                .children(items.iter().enumerate().map(|(i, item)| {
+                    let mark = if register == Register::Next {
+                        format!("{}.", i + 1)
+                    } else {
+                        "\u{b7}".to_string()
+                    };
+                    div()
+                        .flex()
+                        .flex_row()
+                        .gap(px(7.))
+                        .items_baseline()
+                        .child(
+                            div()
+                                .w(px(18.))
+                                .flex_none()
+                                .child(micro(mark, 11., th.faint, th)),
+                        )
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w(px(0.))
+                                .text_size(px(12.5))
+                                .text_color(th.text.alpha(0.9))
+                                .child(item.clone()),
+                        )
+                }))
+        }
+        Body::Facts(facts) => div()
+            .flex()
+            .flex_col()
+            .gap(px(3.))
+            .children(facts.iter().map(|(name, value)| {
+                div()
+                    .flex()
+                    .flex_row()
+                    .gap(px(10.))
+                    .items_baseline()
+                    .child(div().w(px(110.)).flex_none().child(micro(
+                        name.clone(),
+                        10.,
+                        th.faint,
+                        th,
+                    )))
+                    .child(div().flex_1().min_w(px(0.)).child(micro(
+                        value.clone(),
+                        12.,
+                        th.text,
+                        th,
+                    )))
+            })),
     }
 }
 

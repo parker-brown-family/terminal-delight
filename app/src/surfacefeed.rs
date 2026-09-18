@@ -475,6 +475,34 @@ pub fn demo_surfaces() -> Vec<(&'static str, Value)> {
                 "model": { "spin": 3 }
             }),
         ),
+        (
+            "07-response",
+            serde_json::json!({
+                "td": TDSP_DEMO_VERSION, "kind": "response", "id": "demo-response",
+                "title": "The launcher's two bugs, and what the overview is now",
+                "weight": { "effort": "medium", "complexity": "moderate", "confidence": "measured",
+                            "foundation": { "system": "workbench", "depth": "component" } },
+                "model": {
+                    "tldr": "The effort chips now say what the flag says, the project list is no longer squeezed out of the panel, and this shelf is a feed of replies like this one.",
+                    "eli5": "The buttons said one thing and the program heard nothing. Now the button word is the program word. And the list of projects was being squashed flat by the buttons under it, so it looked empty.",
+                    "layman": "Two bugs in the launch panel. One: the effort row offered invented words that were turned into a polite sentence instead of a real setting — now it offers the harness's own levels and passes them as a flag. Two: the panel's height was computed for one row of buttons and it has four, so a short list of matches got no room at all.",
+                    "technical": "launcher::Effort is now the union of the harnesses' own levels, ordered; Harness::efforts lists what each takes and clamp_effort finds the nearest when the harness changes. Recipe::command_line emits --effort <id> for Claude and -c model_reasoning_effort=<id> for Codex, and the briefing carries no effort prose. launcher::panel_height sums the chrome the render actually draws (PANEL_CHROME_H) and adds a row per match; a test holds every count up to the cap gets its rows on top of the chrome.",
+                    "evidence": {
+                        "tests": "cargo test --locked, all green",
+                        "claude --help": "--effort <low|medium|high|xhigh|max>, 2.1.270",
+                        "on a screen": null
+                    },
+                    "next": [
+                        "install the build and open the launcher on a filter matching three projects",
+                        "let one agent finish a turn and read its reply here"
+                    ],
+                    "doubts": [
+                        { "claim": "Codex accepts xhigh", "why": "read off the binary's strings, not its documentation", "confidence": "inferred" },
+                        { "claim": "the chrome height holds on a 720-pixel window", "confidence": "hunch" }
+                    ]
+                }
+            }),
+        ),
     ]
 }
 
@@ -1121,7 +1149,7 @@ mod tests {
                 }
             }
         }
-        assert_eq!(typed, 5);
+        assert_eq!(typed, 6);
         assert_eq!(unclassified, 1);
     }
 
@@ -1173,7 +1201,15 @@ mod tests {
             bench.selected().is_none(),
             "an arrival opens nothing; the conversation is the default"
         );
-        assert_eq!(bench.rows_for(crate::surface::Shelf::Decisions).len(), 1);
+        // The decision and the changeset: both are things a person answers.
+        assert_eq!(bench.rows_for(crate::surface::Shelf::Decisions).len(), 2);
+        // On the overview the newest reply stands in for a card without
+        // having been opened — the feed's own default, not an arrival's.
+        assert_eq!(
+            bench.showing().map(|s| s.kind.id()),
+            Some("response"),
+            "the overview shows the reply"
+        );
     }
     #[test]
     fn seeding_the_demo_lands_as_readable_files() {

@@ -68,7 +68,7 @@ use serde_json::{json, Map, Value};
 /// A payload naming a **newer major** is refused: the envelope may have been
 /// re-cut under it. A newer minor is accepted, because a minor bump may only
 /// add optional fields — that is the promise the number makes.
-pub const TDSP_VERSION: &str = "0.2";
+pub const TDSP_VERSION: &str = "0.3";
 
 /// Longest title a rail row can carry before it stops being readable at the
 /// rail's width. Measured against [`crate::workbench::RAIL_W`], not guessed.
@@ -702,6 +702,176 @@ pub struct Choice_ {
     pub checked: Option<bool>,
 }
 
+/// The agent's reply to the person, as registers rather than as one prose
+/// block — the thing the OVERVIEW shelf is a feed of.
+///
+/// A transcript is one register at one length, and it is the wrong one for
+/// most readers most of the time: the person who wants the gist has to read
+/// the technical brief, and the person who wants the technical brief has to
+/// skim the gist. Parker: *"ELI5, tl;dr, technical brief, layman brief,
+/// other ideas ... articles of doubt where the agent is maybe unconfident."*
+/// So a response is a `tldr` that is always shown, a set of sections a person
+/// unfolds by name, and the doubts kept apart from the claims because they
+/// are the part a reader most needs and prose most often buries.
+///
+/// **Well defined and very flexible, both.** The registers this build knows
+/// get a fixed label and a fixed order; any other key the agent sends becomes
+/// a section too, labelled by its key, because a reply shape that dropped
+/// what it did not expect would be the transcript problem again with extra
+/// steps. Parker: *"THIS WILL BE EXTREMELY SUBJECTIVE AND REQUIRE LIVE AND
+/// EVOLVING CUSTOMIZATION IN REAL TIME ... let's keep it simple for now, but
+/// the JSON will allow it to be flexible."*
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct Response {
+    /// The one or two sentences that stand for the whole reply. Required,
+    /// and drawn open: a response whose gist is folded is a response nobody
+    /// reads.
+    pub tldr: String,
+    /// The registers, known ones first in their canonical order and then
+    /// whatever else the agent sent, by key.
+    pub sections: Vec<Section>,
+    /// Where the agent is not sure. Kept out of the sections so they can be
+    /// counted on the row and drawn in their own colour.
+    pub doubts: Vec<Doubt>,
+}
+
+/// One unfoldable part of a response.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct Section {
+    /// The key as the agent sent it (after alias folding), which is what a
+    /// fold state is keyed on.
+    pub key: String,
+    /// What the header says.
+    pub label: String,
+    pub register: Register,
+    pub body: Body,
+}
+
+/// The registers this build knows by name, and the honest default.
+///
+/// Ordered as they are drawn: easiest reading first, then what the agent
+/// checked, then what it wants from you, then what comes next. `Other` sorts
+/// last and keeps the agent's own key as its label.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, PartialOrd, Ord)]
+pub enum Register {
+    Eli5,
+    Layman,
+    Technical,
+    Evidence,
+    Asks,
+    Next,
+    Other,
+}
+
+impl Register {
+    /// The key a register is folded to, and the label it wears.
+    pub fn known(key: &str) -> Option<(Register, &'static str, &'static str)> {
+        let k = key.trim().to_ascii_lowercase().replace(['-', ' '], "_");
+        Some(match k.as_str() {
+            "eli5" | "explain_like_im_five" | "simple" => (Register::Eli5, "eli5", "ELI5"),
+            "layman" | "layman_brief" | "laymans" | "plain" | "plain_brief" | "plain_english"
+            | "brief" => (Register::Layman, "layman", "Plain brief"),
+            "technical" | "technical_brief" | "tech" | "engineering" | "detail" | "details" => {
+                (Register::Technical, "technical", "Technical brief")
+            }
+            "evidence" | "verified" | "verification" | "proof" | "checks" | "tested" => {
+                (Register::Evidence, "evidence", "What was verified")
+            }
+            "asks" | "ask" | "needs" | "needs_from_you" | "questions" | "questions_for_you"
+            | "blocked_on" => (Register::Asks, "asks", "Needs from you"),
+            "next" | "next_steps" | "whats_next" | "what_s_next" | "follow_ups" | "followups"
+            | "todo" => (Register::Next, "next", "What's next"),
+            _ => return None,
+        })
+    }
+
+    /// The keys that are the `tldr`, however the agent spelled it.
+    pub fn is_tldr(key: &str) -> bool {
+        matches!(
+            key.trim()
+                .to_ascii_lowercase()
+                .replace(['-', ' ', ';'], "_")
+                .as_str(),
+            "tldr" | "tl_dr" | "summary" | "gist" | "headline"
+        )
+    }
+
+    /// The keys that are the doubts, however the agent spelled them.
+    pub fn is_doubts(key: &str) -> bool {
+        matches!(
+            key.trim()
+                .to_ascii_lowercase()
+                .replace(['-', ' '], "_")
+                .as_str(),
+            "doubts"
+                | "doubt"
+                | "articles_of_doubt"
+                | "unsure"
+                | "uncertain"
+                | "uncertainties"
+                | "caveats"
+                | "confidence_gaps"
+                | "risks"
+        )
+    }
+}
+
+/// What a section holds, decided by the JSON's own shape.
+///
+/// A string is prose, an array of strings is a list, an object of strings is
+/// facts. Anything else is kept as its JSON, pretty-printed, because a shape
+/// this build did not anticipate is still something the agent meant.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum Body {
+    Prose(String),
+    Items(Vec<String>),
+    Facts(Vec<(String, String)>),
+}
+
+impl Body {
+    /// The count the header shows beside the label, so a folded section says
+    /// how much is behind it: `140 words`, `3 items`, `4 facts`.
+    pub fn measure(&self) -> String {
+        match self {
+            Body::Prose(p) => {
+                let n = p.split_whitespace().count();
+                if n == 1 {
+                    "1 word".into()
+                } else {
+                    format!("{n} words")
+                }
+            }
+            Body::Items(items) => {
+                if items.len() == 1 {
+                    "1 item".into()
+                } else {
+                    format!("{} items", items.len())
+                }
+            }
+            Body::Facts(facts) => {
+                if facts.len() == 1 {
+                    "1 fact".into()
+                } else {
+                    format!("{} facts", facts.len())
+                }
+            }
+        }
+    }
+}
+
+/// One thing the agent is not sure of.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct Doubt {
+    /// The claim in question.
+    pub claim: String,
+    /// Why it is in doubt. Optional: an agent can know it is unsure without
+    /// being able to say why, and that is worth reporting too.
+    pub why: Option<String>,
+    /// How far the agent stands behind it, if it said. Absent is undeclared;
+    /// `unknown` is the agent saying it looked and cannot tell.
+    pub confidence: Option<Confidence>,
+}
+
 impl Artifact {
     /// HTML, MD, IMG — what this thing IS, in the three or four letters a
     /// person reads without stopping.
@@ -873,7 +1043,7 @@ pub struct Unclassified {
     pub raw: String,
 }
 
-/// The catalogue: six kinds and the honest default.
+/// The catalogue: eight kinds and the honest default.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Kind {
     Artifact(Artifact),
@@ -883,6 +1053,7 @@ pub enum Kind {
     Changeset(Changeset),
     Decision(Decision),
     Question(Question),
+    Response(Response),
     Unclassified(Unclassified),
 }
 
@@ -897,25 +1068,31 @@ impl Kind {
             Kind::Changeset(_) => "changeset",
             Kind::Decision(_) => "decision",
             Kind::Question(_) => "question",
+            Kind::Response(_) => "response",
             Kind::Unclassified(_) => "unclassified",
         }
     }
 
     /// Which tab of the pane's rail this kind files under.
     ///
-    /// Three tabs, not seven. A rail that needs a tab per kind has stopped
+    /// Three tabs, not eight. A rail that needs a tab per kind has stopped
     /// being a shortlist and become a second file manager.
     pub fn shelf(&self) -> Shelf {
         match self {
             // A live question is the loudest thing a bench can hold, so it
-            // files beside decisions rather than under "other": both are the
-            // agent waiting on a person, which is the only sorting rule this
-            // shelf has.
-            Kind::Decision(_) | Kind::Question(_) => Shelf::Decisions,
-            Kind::Artifact(_) | Kind::Markdown(_) | Kind::Table(_) | Kind::Architecture(_) => {
-                Shelf::Artifacts
-            }
-            Kind::Changeset(_) | Kind::Unclassified(_) => Shelf::Overview,
+            // files beside decisions: both are the agent waiting on a person,
+            // which is the only sorting rule this shelf has. A changeset is
+            // the same thing with hunks — a change a person has to answer.
+            Kind::Decision(_) | Kind::Question(_) | Kind::Changeset(_) => Shelf::Decisions,
+            // Things made. The unclassifiable is a thing that arrived, and it
+            // is drawn with its raw bytes, so it files with the documents.
+            Kind::Artifact(_)
+            | Kind::Markdown(_)
+            | Kind::Table(_)
+            | Kind::Architecture(_)
+            | Kind::Unclassified(_) => Shelf::Artifacts,
+            // The overview is the feed of what the agent SAID, and only that.
+            Kind::Response(_) => Shelf::Overview,
         }
     }
 
@@ -924,6 +1101,7 @@ impl Kind {
     pub fn default_actions(&self) -> Vec<Action> {
         match self {
             Kind::Artifact(_) => vec![Action::Open, Action::Comment],
+            Kind::Response(_) => vec![Action::Comment, Action::AskAgent],
             Kind::Markdown(_) | Kind::Table(_) => vec![Action::Comment],
             Kind::Architecture(_) => vec![Action::Comment, Action::AskAgent],
             Kind::Changeset(_) => vec![
@@ -945,16 +1123,18 @@ impl Kind {
 /// The three shelves of a pane's own rail.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash, Default)]
 pub enum Shelf {
-    /// Everything, newest first — the shelf you land on.
+    /// The agent's replies, newest first — the shelf you land on.
     ///
     /// It was called `other` and sat on the right holding the leftovers, which
     /// made the bench's first impression a shelf of things it could not
     /// classify. Parker: *"The OTHER tab should then move ALL the way left and
-    /// be called OVERVIEW"*, and the word he chose is the design: an overview
-    /// is a view OVER everything, not a bin for the remainder. So it shows
-    /// every surface, `artifacts` and `decisions` become filtered views of it,
-    /// and the unclassifiable still land here — by being surfaces, rather than
-    /// by being unwanted.
+    /// be called OVERVIEW"*. For a day it was a view over everything — every
+    /// surface, with the other two tabs as filters — and that made it a
+    /// census: a list of things, not an account of what happened. The second
+    /// decision made it the feed: *"the OVERVIEW tab of the workbench will no
+    /// longer show artifacts or decisions, it will only show the responses."*
+    /// So this shelf holds [`Kind::Response`] and nothing else, and the other
+    /// two hold what was made and what is being asked.
     #[default]
     Overview,
     Artifacts,
@@ -974,12 +1154,13 @@ impl Shelf {
 
     /// Does a surface filed on `home` show on this shelf?
     ///
-    /// Everything shows on the overview; the other two are filters. One
-    /// function rather than a condition written at each of the three call
-    /// sites (the rows, the counts, the unseen tally), because a filter that
-    /// disagrees with its own count is the kind of defect nobody photographs.
+    /// Each shelf shows exactly what files under it. One function rather than
+    /// a condition written at each of the three call sites (the rows, the
+    /// counts, the unseen tally), because a filter that disagrees with its
+    /// own count is the kind of defect nobody photographs — and because the
+    /// overview used to be the exception here, and the exception is gone.
     pub fn holds(self, home: Shelf) -> bool {
-        self == Shelf::Overview || self == home
+        self == home
     }
 
     /// The short word a row wears on THIS shelf, where its kind used to be.
@@ -997,6 +1178,14 @@ impl Shelf {
         match (self, kind) {
             // The state chip says everything a decision row needs.
             (_, Kind::Decision(_)) | (_, Kind::Question(_)) => None,
+            // On a shelf of nothing but replies, the word `response` is the
+            // shelf's name again. What the row wears instead is its doubt
+            // count, which is the one thing about a reply worth a glance.
+            (_, Kind::Response(r)) => match r.doubts.len() {
+                0 => None,
+                1 => Some("1 doubt".into()),
+                n => Some(format!("{n} doubts")),
+            },
             (Shelf::Artifacts, Kind::Artifact(a)) => Some(a.format_word()),
             (Shelf::Overview, Kind::Artifact(a)) if lettered => Some(a.format_word()),
             _ => Some(kind.id().to_string()),
@@ -1014,7 +1203,7 @@ impl Shelf {
         match self {
             Shelf::Artifacts => "artifacts yet",
             Shelf::Decisions => "decisions yet",
-            Shelf::Overview => "work yet",
+            Shelf::Overview => "responses yet",
         }
     }
 }
@@ -1138,6 +1327,8 @@ impl Surface {
                 Answered::ChoseUnknown => "answered · how is unavailable".into(),
                 Answered::Waiting => format!("{} options · waiting on you", q.options.len()),
             },
+            // The gist IS the subtitle: a reply's row is read, not counted.
+            Kind::Response(r) => r.tldr.clone(),
             Kind::Unclassified(u) => u.reason.clone(),
         }
     }
@@ -1345,8 +1536,30 @@ fn default_title(kind: &Kind) -> String {
         Kind::Changeset(c) => format!("{} hunks", c.hunks.len()),
         Kind::Decision(d) => d.question.chars().take(TITLE_MAX_CHARS).collect(),
         Kind::Question(q) => q.question.chars().take(TITLE_MAX_CHARS).collect(),
+        // The first sentence of the gist, which is what a person would have
+        // typed as the title had they been asked.
+        Kind::Response(r) => first_sentence(&r.tldr)
+            .chars()
+            .take(TITLE_MAX_CHARS)
+            .collect(),
         Kind::Unclassified(_) => "unclassified".into(),
     }
+}
+
+/// Up to the first full stop, question mark or exclamation that ends a word.
+fn first_sentence(text: &str) -> &str {
+    let text = text.trim();
+    let mut end = text.len();
+    for (i, c) in text.char_indices() {
+        if matches!(c, '.' | '?' | '!') {
+            let rest = &text[i + c.len_utf8()..];
+            if rest.is_empty() || rest.starts_with(char::is_whitespace) {
+                end = i + c.len_utf8();
+                break;
+            }
+        }
+    }
+    &text[..end]
 }
 
 /// A parse failure that knows how to be both strict and lenient.
@@ -1532,6 +1745,7 @@ fn parse_kind(name: &str, model: Option<&Value>) -> Result<Kind, KindError> {
                 options,
             })
         }
+        "response" => Kind::Response(parse_response(m).map_err(err)?),
         other => {
             return Err(err(format!(
                 "unknown kind {other:?} — this build renders {}",
@@ -1539,6 +1753,164 @@ fn parse_kind(name: &str, model: Option<&Value>) -> Result<Kind, KindError> {
             )))
         }
     })
+}
+
+/// A response's model: a `tldr` plus registers, known and otherwise.
+///
+/// The registers may sit directly in the model or one level down under a
+/// `response` key — Parker drew it nested (*"`{xyz: <value>, abc: <value>,
+/// response: {response_component_a: <value>, …}}`"*) and an agent copying a
+/// flat example will send it flat, and neither of them is wrong.
+fn parse_response(m: &Map<String, Value>) -> Result<Response, String> {
+    let inner = m.get("response").and_then(Value::as_object).unwrap_or(m);
+    let mut tldr: Option<String> = None;
+    let mut doubts: Vec<Doubt> = Vec::new();
+    let mut sections: Vec<Section> = Vec::new();
+    for (key, value) in inner {
+        if key == "response" && std::ptr::eq(inner, m) {
+            continue;
+        }
+        if Register::is_tldr(key) {
+            if tldr.is_none() {
+                tldr = value
+                    .as_str()
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty());
+            }
+            continue;
+        }
+        if Register::is_doubts(key) {
+            doubts.extend(parse_doubts(value));
+            continue;
+        }
+        let Some(body) = parse_body(value) else {
+            continue; // an empty section is a section the agent wrote nothing in
+        };
+        let (register, folded, label) = match Register::known(key) {
+            Some((r, k, l)) => (r, k.to_string(), l.to_string()),
+            None => (Register::Other, key.clone(), humanise(key)),
+        };
+        // The same register under two spellings is one section; the first
+        // spelling wins and the second is kept as its own key rather than
+        // silently merged, because merging two prose blocks invents a
+        // paragraph break nobody wrote.
+        let folded = if sections.iter().any(|s| s.key == folded) {
+            key.clone()
+        } else {
+            folded
+        };
+        sections.push(Section {
+            key: folded,
+            label,
+            register,
+            body,
+        });
+    }
+    let tldr = tldr.ok_or_else(|| {
+        "a response needs a `tldr` — the one or two sentences that stand for the whole reply"
+            .to_string()
+    })?;
+    // Known registers in their canonical order, then the rest by key. Stable,
+    // so two `Other`s keep the order they arrived in.
+    sections.sort_by(|a, b| {
+        a.register
+            .cmp(&b.register)
+            .then_with(|| match (a.register, b.register) {
+                (Register::Other, Register::Other) => a.key.cmp(&b.key),
+                _ => std::cmp::Ordering::Equal,
+            })
+    });
+    Ok(Response {
+        tldr,
+        sections,
+        doubts,
+    })
+}
+
+/// A section body from the JSON's own shape. `None` for nothing at all.
+fn parse_body(v: &Value) -> Option<Body> {
+    match v {
+        Value::Null => None,
+        Value::String(s) => {
+            let s = s.trim();
+            (!s.is_empty()).then(|| Body::Prose(s.to_string()))
+        }
+        Value::Array(items) => {
+            let items: Vec<String> = items
+                .iter()
+                .map(|i| match i {
+                    Value::String(s) => s.trim().to_string(),
+                    other => other.to_string(),
+                })
+                .filter(|s| !s.is_empty())
+                .collect();
+            (!items.is_empty()).then_some(Body::Items(items))
+        }
+        Value::Object(map) => {
+            let facts: Vec<(String, String)> = map
+                .iter()
+                .map(|(k, v)| {
+                    (
+                        humanise(k),
+                        match v {
+                            Value::String(s) => s.clone(),
+                            Value::Null => "unavailable".into(),
+                            other => other.to_string(),
+                        },
+                    )
+                })
+                .collect();
+            (!facts.is_empty()).then_some(Body::Facts(facts))
+        }
+        other => Some(Body::Prose(other.to_string())),
+    }
+}
+
+/// Doubts as a list, or as one, or as a string; each doubt a string or an
+/// object naming its claim.
+fn parse_doubts(v: &Value) -> Vec<Doubt> {
+    let one = |d: &Value| -> Option<Doubt> {
+        match d {
+            Value::String(s) if !s.trim().is_empty() => Some(Doubt {
+                claim: s.trim().to_string(),
+                why: None,
+                confidence: None,
+            }),
+            Value::Object(o) => {
+                let text = |keys: &[&str]| {
+                    keys.iter()
+                        .find_map(|k| o.get(*k).and_then(Value::as_str))
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty())
+                };
+                Some(Doubt {
+                    claim: text(&["claim", "what", "text", "about", "doubt"])?,
+                    why: text(&["why", "because", "reason", "detail"]),
+                    confidence: o
+                        .get("confidence")
+                        .and_then(Value::as_str)
+                        .and_then(Confidence::parse),
+                })
+            }
+            _ => None,
+        }
+    };
+    match v {
+        Value::Array(items) => items.iter().filter_map(one).collect(),
+        other => one(other).into_iter().collect(),
+    }
+}
+
+/// `next_steps` → `Next steps`; `whatIChecked` is left alone but for its
+/// first letter. A key is a label an agent typed in a hurry, and this is the
+/// least that makes it read as words.
+fn humanise(key: &str) -> String {
+    let spaced = key.trim().replace(['_', '-'], " ");
+    let mut chars = spaced.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+        None => String::new(),
+    }
 }
 
 /// A cell that is genuinely absent stays absent. `null` means the agent looked
@@ -1693,6 +2065,7 @@ fn truncate_raw(value: &Value) -> String {
 
 pub fn catalogue_names() -> Vec<&'static str> {
     vec![
+        "response",
         "artifact",
         "markdown",
         "table",
@@ -1744,7 +2117,21 @@ pub fn launch_briefing(dir: &str) -> String {
         "You are running inside Terminal Delight, which can render your work as a native \
          surface beside this terminal — a WORKBENCH face on this pane, toggled from its header.\n\
          \n\
-         Alongside your normal reply, present each finished work object as one JSON document. \
+         END EVERY TURN by presenting your reply as a `response` surface — the bench's OVERVIEW \
+         is a feed of these and shows nothing else. A response is a `tldr` (one or two \
+         sentences, required) plus registers a person unfolds by name: `eli5`, `layman` (a \
+         plain brief), `technical` (the technical brief), `evidence` (what you verified), \
+         `asks` (what you need from them), `next` (what comes next), and `doubts` — where you \
+         are not sure, each with a `claim`, a `why` and a `confidence`. Any other key you send \
+         becomes a section labelled by its key. A string is prose, an array is a list, an \
+         object is facts. Write the tldr for the person, not for yourself.\n\
+         \n\
+         {{\"td\":\"{TDSP_VERSION}\",\"kind\":\"response\",\"title\":\"<what this turn did>\",\
+         \"model\":{{\"tldr\":\"<the gist>\",\"eli5\":\"<…>\",\"layman\":\"<…>\",\
+         \"technical\":\"<…>\",\"evidence\":[\"<…>\"],\"next\":[\"<…>\"],\
+         \"doubts\":[{{\"claim\":\"<…>\",\"why\":\"<…>\",\"confidence\":\"hunch\"}}]}}}}\n\
+         \n\
+         Alongside that, present each finished work object as one JSON document. \
          Write it to a new file in {dir} (any filename ending .json), or call the \
          `present_surface` MCP verb, or print it in your reply inside a fenced ```td block.\n\
          \n\
@@ -2094,6 +2481,11 @@ mod tests {
                 options: vec![],
                 consequences: vec![],
             }),
+            Kind::Response(Response {
+                tldr: "x".into(),
+                sections: vec![],
+                doubts: vec![],
+            }),
             Kind::Unclassified(Unclassified {
                 reason: String::new(),
                 raw: String::new(),
@@ -2107,7 +2499,134 @@ mod tests {
                 "{} offers nothing",
                 kind.id()
             );
+            // Each shelf shows what files under it and nothing else — the
+            // overview stopped being a view over everything on 2026-09-17.
+            for other in Shelf::ALL {
+                assert_eq!(
+                    other.holds(shelf),
+                    other == shelf,
+                    "{} on {other:?}",
+                    kind.id()
+                );
+            }
         }
+        assert!(
+            kinds
+                .iter()
+                .all(|k| (k.shelf() == Shelf::Overview) == matches!(k, Kind::Response(_))),
+            "the overview holds responses, and only responses"
+        );
+    }
+
+    fn a_response() -> Value {
+        json!({
+            "td": "0.3", "kind": "response", "id": "r1", "title": "The launcher",
+            "model": {
+                "tl;dr": "Two bugs fixed and a new kind. The chips now say what the flag says.",
+                "technical_brief": "The panel height counted one chip row.\nIt now counts four.",
+                "eli5": "The list was squashed flat.",
+                "next_steps": ["install the build", "watch the overview"],
+                "doubts": [
+                    { "claim": "codex takes xhigh", "why": "read off the binary's strings", "confidence": "inferred" },
+                    "the panel margin is right on a 720p window"
+                ],
+                "evidence": { "tests": "121 passed", "clippy": null },
+                "zebra_notes": "kept as its own section",
+                "empty": ""
+            }
+        })
+    }
+
+    #[test]
+    fn a_response_folds_its_aliases_orders_its_registers_and_keeps_the_rest() {
+        let s = surface(a_response());
+        let Kind::Response(r) = &s.kind else {
+            panic!("not a response: {:?}", s.kind)
+        };
+        assert!(r.tldr.starts_with("Two bugs fixed"));
+        let keys: Vec<&str> = r.sections.iter().map(|s| s.key.as_str()).collect();
+        assert_eq!(
+            keys,
+            ["eli5", "technical", "evidence", "next", "zebra_notes"],
+            "known registers in canonical order, then the agent's own keys"
+        );
+        assert_eq!(r.sections[1].label, "Technical brief");
+        assert_eq!(r.sections[4].label, "Zebra notes", "a key becomes words");
+        assert_eq!(r.sections[4].register, Register::Other);
+        assert!(matches!(&r.sections[3].body, Body::Items(i) if i.len() == 2));
+        assert!(
+            matches!(&r.sections[2].body, Body::Facts(f) if f[1] == ("Clippy".into(), "unavailable".into()))
+        );
+        assert_eq!(r.doubts.len(), 2);
+        assert_eq!(r.doubts[0].confidence, Some(Confidence::Inferred));
+        assert_eq!(
+            r.doubts[1].why, None,
+            "a bare string is a claim with no why"
+        );
+        assert!(
+            !keys.contains(&"empty"),
+            "an empty section is a section the agent wrote nothing in"
+        );
+        assert_eq!(s.subtitle(), r.tldr, "the gist is the row");
+        assert_eq!(s.kind.shelf(), Shelf::Overview);
+        assert_eq!(
+            Shelf::Overview.badge(&s.kind, false).as_deref(),
+            Some("2 doubts")
+        );
+    }
+
+    #[test]
+    fn a_response_may_nest_its_registers_under_a_response_key() {
+        // Parker drew it nested; an agent copying the flat example sends it
+        // flat. Both land as the same surface.
+        let nested = surface(json!({
+            "td": "0.3", "kind": "response", "id": "r2",
+            "model": { "response": { "tldr": "Nested.", "eli5": "still found" } }
+        }));
+        let Kind::Response(r) = &nested.kind else {
+            panic!()
+        };
+        assert_eq!(r.tldr, "Nested.");
+        assert_eq!(r.sections[0].key, "eli5");
+        assert_eq!(
+            nested.title, "Nested.",
+            "the first sentence of the gist titles it"
+        );
+    }
+
+    #[test]
+    fn a_response_without_a_gist_is_refused_by_the_verb_and_kept_by_the_file() {
+        let bare = json!({ "td": "0.3", "kind": "response", "model": { "eli5": "only this" } });
+        let err = parse(&bare, NOW).err().expect("refused");
+        assert!(err.contains("tldr"), "{err}");
+        let landed = parse_lenient(&bare, NOW, "x.json").surface.unwrap();
+        assert!(
+            matches!(landed.kind, Kind::Unclassified(_)),
+            "never dropped"
+        );
+    }
+
+    #[test]
+    fn a_measure_says_how_much_is_behind_a_folded_header() {
+        assert_eq!(Body::Prose("one two three".into()).measure(), "3 words");
+        assert_eq!(Body::Prose("one".into()).measure(), "1 word");
+        assert_eq!(Body::Items(vec!["a".into()]).measure(), "1 item");
+        assert_eq!(
+            Body::Facts(vec![("a".into(), "b".into()); 2]).measure(),
+            "2 facts"
+        );
+    }
+
+    #[test]
+    fn the_first_sentence_stops_at_a_stop_that_ends_a_word() {
+        assert_eq!(first_sentence("Fixed it. Twice."), "Fixed it.");
+        assert_eq!(first_sentence("v2.1 is out. Next."), "v2.1 is out.");
+        assert_eq!(first_sentence("No stop at all"), "No stop at all");
+        assert_eq!(
+            first_sentence("Really?! Yes."),
+            "Really?!",
+            "a doubled stop is one stop"
+        );
     }
 
     #[test]
