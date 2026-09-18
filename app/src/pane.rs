@@ -2133,6 +2133,45 @@ pub struct TerminalView {
     /// transcript's own copy of the same question then arrives carrying the
     /// answer, and without this the bench would show both.
     wb_live_q: Option<crate::surface::SurfaceId>,
+    /// Where the card in the body has been scrolled to.
+    ///
+    /// The body was `overflow_hidden` with no handle at all, so a card taller
+    /// than its pane was clipped and no gesture on the surface could reach the
+    /// rest of it — `wheel_target` resolved a turn over the body to `Nothing`.
+    wb_card_scroll: gpui::ScrollHandle,
+    /// Which surface the scroll offset above belongs to.
+    ///
+    /// A card is a different document from the one before it, so the offset
+    /// does not carry across: opening a short reply after scrolling a long one
+    /// would otherwise land in the middle of it, or past its end. Compared at
+    /// render and reset when it differs.
+    wb_card_at: Option<crate::surface::SurfaceId>,
+    /// Which of the strip's dials has its list open, if either.
+    wb_dial: Option<crate::workbench::Dial>,
+    /// The model this pane's agent was TOLD to use — by the launcher, or by a
+    /// press on the strip's dial since.
+    ///
+    /// **`None` is a reading, not a default.** Nothing can ask a running
+    /// process what model it is on, so a pane whose agent somebody started by
+    /// hand in the terminal genuinely has no answer here, and storing a
+    /// plausible one would invent a fact about what is being billed.
+    wb_model: Option<String>,
+    /// The effort level this pane's agent was told to use. `None` for the same
+    /// reason as [`Self::wb_model`], and never the harness's default: a level
+    /// nobody chose and a level someone chose are different facts.
+    wb_effort: Option<crate::launcher::Effort>,
+    /// Has an agent ever run in this pane?
+    ///
+    /// The third state a pane has always had and the code has never stored.
+    /// *An agent was here and is gone* is not *nobody ever ran one here*, and
+    /// both were `Shell`: the strip, the composer and every affordance on the
+    /// bench vanished the instant an agent quit, leaving the surfaces it made
+    /// with no chrome around them and no way to start another without closing
+    /// the pane.
+    ///
+    /// Set on the agent→pane arrival edge and never cleared, because it is a
+    /// fact about the pane's history rather than about its present.
+    wb_had_agent: bool,
 }
 
 /// Click on the header's theme icon — the workspace opens the breakout menu.
@@ -2785,9 +2824,20 @@ impl TerminalView {
             return;
         }
         let arrived = !self.mode.is_agent() && mode.is_agent();
+        let departed = self.mode.is_agent() && !mode.is_agent();
         self.mode = mode;
         if arrived {
+            self.wb_had_agent = true;
             self.bench_drain(cx);
+        }
+        if departed {
+            // The dials describe an agent that has gone. Keeping the words
+            // would make the strip assert that the NEXT agent — which does not
+            // exist yet — is on opus at high, and the whole rule for these two
+            // is that they never say anything nobody said to them.
+            self.wb_model = None;
+            self.wb_effort = None;
+            self.wb_dial = None;
         }
         cx.notify();
     }
@@ -3247,6 +3297,12 @@ impl TerminalView {
             wb_pointer: crate::workbench::Pointer::Arrow,
             wb_mirror: false,
             wb_live_q: None,
+            wb_card_scroll: gpui::ScrollHandle::new(),
+            wb_card_at: None,
+            wb_dial: None,
+            wb_model: None,
+            wb_effort: None,
+            wb_had_agent: false,
         }
     }
 
