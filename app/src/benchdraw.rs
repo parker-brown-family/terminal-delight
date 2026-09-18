@@ -438,7 +438,9 @@ pub fn weights(w: &Weight, sk: &Skin, th: &Theme) -> Div {
     .when_some(w.confidence, |d, c| {
         let colour = match c {
             Confidence::Measured => th.text,
-            Confidence::Inferred | Confidence::Hunch => th.complement,
+            // Amber — yours to argue with. The same ink the doubts use, because
+            // it is the same fact said about a different thing.
+            Confidence::Inferred | Confidence::Hunch => ink(crate::workbench::Tint::Pending, th),
             Confidence::Unknown => th.faint,
         };
         d.child(pill(c.label().to_string(), colour))
@@ -463,6 +465,27 @@ pub fn body(
     // question. Parker: *"2 options (we can see it is 2 options, no need to
     // show this... if the machine needs it fine, but don't show user)"*.
     let asking = matches!(surface.kind, Kind::Question(_));
+    // ABOVE THE TITLE, and above everything.
+    //
+    // The position is the point, not the colour: an escalation sorted among six
+    // identical register panels can be scrolled past, and one pinned over the
+    // card's own name cannot. If the agent is blocked, the reply is the
+    // secondary thing on the card.
+    //
+    // A summary is one line by definition and never carries it. Answered, or
+    // declared `none`, this is `None` and the card opens on its title as before
+    // — the loudest thing on the surface has to be able to go away.
+    let call = match &surface.kind {
+        Kind::Response(r) => escalation_call(r).map(|call| (r, call)),
+        _ => None,
+    };
+    let frame = match (how, call) {
+        (Embodiment::Summary, _) | (_, None) => frame,
+        (_, Some((r, call))) => match &r.escalation {
+            Some(e) => frame.child(escalation(e, call, sk, th)),
+            None => frame,
+        },
+    };
     match how {
         Embodiment::Summary => frame.child(summary_line(surface, sk, th)),
         Embodiment::Compact => frame
@@ -637,27 +660,127 @@ fn full(surface: &Surface, folds: Option<&Folds>, sk: &Skin, th: &Theme) -> Div 
     }
 }
 
-/// The gist of a reply: the one block that is never folded.
+/// The gist, as the first row of the reading shelf.
 ///
-/// Larger than body text and on its own raised floor with the accent down
-/// its edge, because it is the sentence the whole card exists to deliver —
-/// a reader who stops here has read the reply.
-fn gist(tldr: &str, sk: &Skin, th: &Theme) -> Div {
-    div()
-        .flex()
-        .flex_col()
-        .gap(px(3.))
-        .px(px(12.))
-        .py(px(10.))
-        .bg(th.accent.alpha(0.08))
-        .border_l(px(3.))
-        .border_color(th.accent)
-        .child(micro("TL;DR", Step::Tag, th.accent, sk, th))
-        .children(tldr.lines().map(|line| {
+/// It used to be a banner — 15-point type on its own raised floor with the
+/// accent down its edge. That made it outrank a technical brief the reader had
+/// deliberately opened, and it spent the accent, which now means one thing only.
+/// It is a [`crate::surface::Register`] like the others, and it earns its place
+/// by being first and open rather than by being loud.
+fn gist_section(tldr: &str) -> crate::surface::Section {
+    crate::surface::Section {
+        key: "tldr".to_string(),
+        label: "tl;dr".to_string(),
+        register: Register::Tldr,
+        body: crate::surface::Body::Prose(tldr.to_string()),
+    }
+}
+
+/// What this response's escalation earns, or `None` for one that draws nothing.
+///
+/// One function, so the shelf and the card cannot disagree about whether the
+/// asks were promoted — the duplicate-content bug this file has shipped before
+/// is exactly a disagreement between two places that each decided for
+/// themselves.
+fn escalation_call(r: &Response) -> Option<crate::emphasis::Call> {
+    let e = r.escalation.as_ref()?;
+    crate::emphasis::call_of(e.level, e.unanswered())
+}
+
+/// The one thing on a card allowed to interrupt you.
+///
+/// It takes the attention spine's own frame rather than a second recipe: the
+/// right-hand spine is the surface on this machine that already knows how to say
+/// *look at this*, and [`spine_frame`] is that frame. Parker: *"ATTENTION is
+/// more than mere size... use the right attention spine as the gold standard!"*
+///
+/// It is not a fold. Unanswered asks are always drawn open, because a summons
+/// behind a click is a summons nobody sees.
+fn escalation(
+    e: &crate::surface::Escalation,
+    call: crate::emphasis::Call,
+    sk: &Skin,
+    th: &Theme,
+) -> Div {
+    use crate::surface::EscalationLevel as L;
+    let facet = crate::emphasis::facet(call.tier, th);
+    let open = e.unanswered();
+    let legend = format!(
+        "\u{25c6} {} \u{b7} {} unanswered{}",
+        match e.level {
+            L::Blocking => "NEEDS YOU",
+            L::Wanted => "WANTED",
+            // Unreachable while `call_of` returns None for it; written out
+            // rather than unwrapped so a future level cannot panic a card.
+            L::None => "CLEAR",
+        },
+        open,
+        match e.level {
+            L::Blocking => " \u{b7} BLOCKING",
+            _ => " \u{b7} WORK CONTINUES",
+        }
+    );
+    let frame = spine_frame(
+        div().flex().flex_col().gap(px(5.)).px(px(11.)).py(px(9.)),
+        facet.tint,
+        call.strength,
+        sk,
+        th,
+    );
+    frame
+        .child(
             div()
-                .text_size(px(sk.pt(Step::Head)))
-                .text_color(th.text)
-                .child(line.to_string())
+                .flex()
+                .flex_row()
+                .gap(px(8.))
+                .items_baseline()
+                .child(micro(
+                    legend,
+                    Step::Tag,
+                    facet.tint.alpha(0.85 * call.strength.max(0.6)),
+                    sk,
+                    th,
+                ))
+                // An inferred summons says so on its face. The bench
+                // reconstructed this from an `asks` register; the agent never
+                // declared a level, and a red frame it did not ask for is a
+                // claim the bench is making on its own behalf.
+                .when(e.inferred, |d| {
+                    d.child(micro("inferred", Step::Tag, th.faint, sk, th))
+                }),
+        )
+        .when_some(e.why.clone(), |d, why| {
+            d.child(
+                div()
+                    .text_size(px(sk.pt(Step::Small)))
+                    .text_color(th.text.alpha(0.8))
+                    .child(why),
+            )
+        })
+        .children(e.items.iter().filter(|a| !a.answered).map(|a| {
+            div()
+                .flex()
+                .flex_row()
+                .gap(px(8.))
+                .items_start()
+                .child(
+                    div()
+                        .flex_none()
+                        .mt(px(sk.tpx(3.)))
+                        .w(px(sk.tpx(9.)))
+                        .h(px(sk.tpx(9.)))
+                        .rounded(sk.rad_raw(2.))
+                        .border_1()
+                        .border_color(facet.tint.alpha(0.8)),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w(px(0.))
+                        .text_size(px(sk.pt(Step::Body)))
+                        .text_color(th.text)
+                        .child(a.ask.clone()),
+                )
         }))
 }
 
@@ -703,13 +826,30 @@ fn doubts_measure(r: &Response) -> String {
 /// everything is drawn closed and nothing is pressable, which is what a
 /// summary is.
 fn response(r: &Response, folds: Option<&Folds>, sk: &Skin, th: &Theme) -> Div {
-    let frame = div()
-        .flex()
-        .flex_col()
-        .gap(px(8.))
-        .child(gist(&r.tldr, sk, th));
-    let frame = frame.children(r.sections.iter().map(|s| {
-        let open = folds.is_some_and(|f| (f.open)(s));
+    let promoted = escalation_call(r).is_some();
+    // The gist first, then every register — except an `asks` the escalation has
+    // already promoted. Drawing both would print the same questions twice, which
+    // this file has shipped twice before and been told off for twice: *"Again —
+    // repeating ourselves ... just ummm... just the buttons"*.
+    let tldr = gist_section(&r.tldr);
+    let rows: Vec<&crate::surface::Section> = std::iter::once(&tldr)
+        .chain(
+            r.sections
+                .iter()
+                .filter(|s| !(promoted && s.register == Register::Asks)),
+        )
+        .collect();
+    let open: Vec<bool> = rows
+        .iter()
+        .map(|s| folds.is_some_and(|f| (f.open)(s)))
+        .collect();
+    // The tiers, allocated for the whole shelf at once so exactly one row can be
+    // lit. A renderer cannot overspend the budget because it never holds it.
+    let tiers = crate::emphasis::shelf(&open, None);
+
+    let frame = div().flex().flex_col().gap(px(8.));
+    let frame = frame.children(rows.iter().zip(tiers).zip(&open).map(|((s, tier), &open)| {
+        let facet = crate::emphasis::facet(tier, th);
         let header = div()
             .flex()
             .flex_row()
@@ -720,19 +860,16 @@ fn response(r: &Response, folds: Option<&Folds>, sk: &Skin, th: &Theme) -> Div {
                     .w(px(sk.tpx(12.)))
                     .flex_none()
                     .text_size(px(sk.pt(Step::Note)))
-                    .text_color(if open { th.accent } else { th.faint })
+                    .text_color(if open { facet.tint } else { th.faint })
                     .child(if open { "\u{25be}" } else { "\u{25b8}" }),
             )
             .child(
                 div()
                     .text_size(px(sk.pt(Step::Body)))
-                    .text_color(if open { th.text } else { th.text.alpha(0.85) })
+                    .text_color(facet.ink)
                     .child(s.label.clone()),
             )
-            .child(micro(s.body.measure(), Step::Note, th.faint, sk, th))
-            .when(s.register == Register::Asks, |d| {
-                d.child(micro("needs you", Step::Tag, th.complement, sk, th))
-            });
+            .child(micro(s.body.measure(), Step::Note, th.faint, sk, th));
         // The header is the target, and only the header: a click in a long
         // open body should place nothing and fold nothing.
         let header = match folds {
@@ -745,23 +882,19 @@ fn response(r: &Response, folds: Option<&Folds>, sk: &Skin, th: &Theme) -> Div {
             )),
             None => header,
         };
-        let panel = sk
-            .panel()
-            .flex()
-            .flex_col()
-            .gap(px(6.))
-            .px(px(11.))
-            .py(px(8.))
-            .bg(th.surface.alpha(if open { 0.6 } else { 0.35 }))
-            .border_l(px(2.))
-            .border_color(if s.register == Register::Asks {
-                th.complement.alpha(0.6)
-            } else if open {
-                th.accent.alpha(0.45)
-            } else {
-                th.faint.alpha(0.3)
-            })
-            .child(header);
+        // Shape from the Skin, then the tier, then nothing else. Every register
+        // is the same panel; what separates them is which tier they were handed.
+        let panel = facet.clothe(
+            sk.panel()
+                .flex()
+                .flex_col()
+                .gap(px(6.))
+                .px(px(11.))
+                .py(px(8.)),
+            sk,
+            th,
+        );
+        let panel = panel.child(header);
         if open {
             panel.child(section_body(&s.body, s.register, sk, th))
         } else {
@@ -769,23 +902,29 @@ fn response(r: &Response, folds: Option<&Folds>, sk: &Skin, th: &Theme) -> Div {
         }
     }));
     frame.when(!r.doubts.is_empty(), |d| {
+        // The doubts are neither reading nor a summons: they are present, and
+        // they make no claim on the reader's attention. The only colour in the
+        // block is each claim's own confidence, which is the information in it.
+        let quiet = crate::emphasis::facet(crate::emphasis::Emphasis::Quiet, th);
         d.child(
-            sk.panel()
-                .flex()
-                .flex_col()
-                .gap(px(6.))
-                .px(px(11.))
-                .py(px(8.))
-                .bg(th.complement.alpha(0.06))
-                .border_l(px(2.))
-                .border_color(th.complement)
+            quiet
+                .clothe(
+                    sk.panel()
+                        .flex()
+                        .flex_col()
+                        .gap(px(6.))
+                        .px(px(11.))
+                        .py(px(8.)),
+                    sk,
+                    th,
+                )
                 .child(
                     div()
                         .flex()
                         .flex_row()
                         .gap(px(8.))
                         .items_baseline()
-                        .child(micro("ARTICLES OF DOUBT", Step::Tag, th.complement, sk, th))
+                        .child(micro("ARTICLES OF DOUBT", Step::Tag, th.faint, sk, th))
                         .child(micro(doubts_measure(r), Step::Note, th.faint, sk, th)),
                 )
                 .children(r.doubts.iter().map(|doubt| {
@@ -813,10 +952,16 @@ fn response(r: &Response, folds: Option<&Folds>, sk: &Skin, th: &Theme) -> Div {
                                         .map(|c| c.label().to_string())
                                         .unwrap_or_else(|| "confidence undeclared".into()),
                                     Step::Tag,
+                                    // Amber is the house colour for a thing you
+                                    // are meant to argue with, and that is
+                                    // exactly what an inference or a hunch is.
+                                    // Unknown stays grey and never takes a hue:
+                                    // an unknown that arrives in a colour looks
+                                    // like a claim, and no claim has been made.
                                     match doubt.confidence {
                                         Some(Confidence::Measured) => th.text,
-                                        Some(_) => th.complement,
-                                        None => th.faint,
+                                        Some(Confidence::Unknown) | None => th.faint,
+                                        Some(_) => ink(crate::workbench::Tint::Pending, th),
                                     },
                                     sk,
                                     th,

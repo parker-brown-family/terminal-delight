@@ -233,14 +233,19 @@ pub fn tint_of(kind: &Kind) -> Tint {
 
 /// Whether a response's register starts unfolded.
 ///
-/// The gist is always open (it is not a section at all). Of the sections,
-/// the ones open by default are the ones where the agent needs the person —
-/// what it is unsure of and what it is asking for — because those are the
-/// parts a reader must not have to go looking for. The three registers of
-/// the same content stay folded until a register is chosen: unfolding all
-/// three is the transcript again.
+/// The gist, because a reply whose first line is folded is a reply nobody
+/// reads — it is a register now rather than a banner, but it is still the one
+/// the reader lands on. And the asks, for the case where they were NOT
+/// promoted into the card's own escalation (every question already answered,
+/// or a declared level of `none`) and are therefore just another register.
+///
+/// The three registers of the same content stay folded until a register is
+/// chosen: unfolding all three is the transcript again.
 pub fn section_default_open(register: crate::surface::Register) -> bool {
-    matches!(register, crate::surface::Register::Asks)
+    matches!(
+        register,
+        crate::surface::Register::Tldr | crate::surface::Register::Asks
+    )
 }
 
 /// A section's state after the person's toggles: open by default and not
