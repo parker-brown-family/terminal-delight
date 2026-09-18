@@ -168,13 +168,41 @@ fn a_transcript_that_does_not_exist_fails_instead_of_pretending() {
 // on this surface belongs to a hand, and CI has none.
 // ---------------------------------------------------------------------------
 
-/// Run `ctl` with no window listening. The point is the PARSE: a verb this
-/// build does not carry must be refused before anything is sent, and one it
+/// A pid no control socket can belong to, so these tests resolve to a window
+/// that cannot exist.
+///
+/// `u32::MAX` is not a pid Linux hands out — `/proc/sys/kernel/pid_max` tops out
+/// far below it — so the socket for it is guaranteed absent and the send fails
+/// for the one reason these tests are about.
+const NO_SUCH_WINDOW: &str = "4294967295";
+
+/// Run `ctl` against a window that cannot exist. The point is the PARSE: a verb
+/// this build does not carry must be refused before anything is sent, and one it
 /// does carry must get as far as looking for a window.
+///
+/// **The `--pid` pin is load-bearing, and removing it types into somebody's
+/// terminal.** This helper used to say it ran "with no window listening" and
+/// enforced nothing: it cleared `DISPLAY`, `WAYLAND_DISPLAY` and `TD_SESSION`,
+/// none of which `ctl` consults when choosing a target. Without a pin the scope
+/// is resolved against the LIVE DESKTOP — `owning_td_pid()` walks the process
+/// tree for the terminal-delight window the test is running inside, and the
+/// workspace fallback looks for open windows — so a person or an agent running
+/// `cargo test` from inside a pane has `bench type "half a sentence"` delivered
+/// into their own composer. Parker, watching it arrive while working: *"half a
+/// sentence keeps getting autofilled into our text area"*.
+///
+/// **CI could never have caught it.** CI has no window, so resolution falls
+/// through to "none running" there and the test is green on exactly the machine
+/// where the bug cannot happen. It is also why it was intermittent rather than
+/// constant: whether it landed depended on which workspace was in front.
 fn ctl(args: &[&str]) -> (String, bool) {
     let out = Command::new(env!("CARGO_BIN_EXE_terminal-delight"))
         .arg("ctl")
         .args(args)
+        // After the verb, per the usage line. Every call in this file routes
+        // through here, so no test can opt out of the pin by accident.
+        .arg("--pid")
+        .arg(NO_SUCH_WINDOW)
         .env_remove("DISPLAY")
         .env_remove("WAYLAND_DISPLAY")
         .env_remove("TD_SESSION")
@@ -227,5 +255,21 @@ fn a_bench_verb_that_parses_gets_as_far_as_looking_for_a_window() {
     assert!(
         !lower.contains("usage"),
         "a documented verb was refused as unknown: {text}"
+    );
+}
+
+#[test]
+fn a_scripted_verb_never_reaches_a_window_a_person_is_using() {
+    // The guard on the whole file, and the reason it exists: `bench type` PUTS
+    // TEXT IN A COMPOSER, and unpinned it resolves its target against the live
+    // desktop. Every test here must fail to find a window, and must fail because
+    // the pid it was given cannot exist rather than because none happened to be
+    // open — the second is a property of the machine, the first of the test.
+    let (text, ok) = ctl(&["bench", "type", "half a sentence"]);
+    assert!(!ok, "a send SUCCEEDED — it reached a live window: {text}");
+    assert!(
+        text.contains(NO_SUCH_WINDOW),
+        "the failure never names the impossible pid, so the pin is not in \
+         effect and this test is passing by luck: {text}"
     );
 }
