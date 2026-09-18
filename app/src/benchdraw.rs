@@ -1871,41 +1871,67 @@ pub fn title_card(
     .children(trailing)
 }
 
-/// One of the strip's dials: what the agent was told, and a way to change it.
+/// Every control on the strip wears this: a bordered, padded, pressable box.
 ///
-/// `value` is [`None`] when nobody has told this pane anything, and it draws
-/// the dial's own `?` word rather than a plausible default — see
-/// [`crate::workbench::Dial::unknown`]. `live` is whether a press would be read
-/// now; a dial that cannot be pressed says so by going quiet rather than by
-/// disappearing, because a control that vanishes and returns is one nobody
-/// learns the position of.
-pub fn dial(
-    which: crate::workbench::Dial,
-    value: Option<&str>,
-    open: bool,
-    live: bool,
-    sk: &Skin,
-    th: &Theme,
-) -> Div {
-    let known = value.is_some();
-    let text = value.unwrap_or_else(|| which.unknown());
-    sk.chip(open)
+/// One face for the dials and the verb, because they sit in a row and a row of
+/// controls that do not match reads as a row of loose words. Parker, on the
+/// strip as it was — three different shapes, one of them an emoji: *"EACH of
+/// these should look like a nice button"*.
+///
+/// The three tones are the three things a control on this strip can be. `open`
+/// is a dial with its list down and takes the accent, because something is
+/// happening. `primary` is the launch, the only control here that offers
+/// rather than takes. Everything else is the quiet bordered default — which is
+/// what END is on purpose: a destructive control that shouts is one people
+/// press by accident.
+fn strip_face(open: bool, primary: bool, sk: &Skin, th: &Theme) -> Div {
+    let (edge, fill) = match (open, primary) {
+        (true, _) => (th.accent.alpha(0.85), th.accent.alpha(0.14)),
+        (_, true) => (th.human.alpha(0.70), th.human.alpha(0.12)),
+        _ => (th.text.alpha(0.30), th.text.alpha(0.06)),
+    };
+    div()
         .flex()
         .flex_row()
         .items_center()
         .flex_none()
         .gap(px(sk.tpx(5.)))
+        .px(px(sk.tpx(9.)))
+        .py(px(sk.tpx(4.)))
+        .rounded(sk.rad(4.))
+        .border_1()
+        .border_color(edge)
+        .bg(fill)
+}
+
+/// One of the strip's dials: what the agent was told, and a way to change it.
+///
+/// `value` is what to draw — the model or the effort, already resolved by the
+/// caller from the dial, the launch command, or the harness itself. `known`
+/// is whether anybody actually SAID it: an inferred value is drawn faint, so
+/// the button reads as a value without ever claiming somebody chose it. The
+/// old behaviour drew the dial's own `model ?` / `effort ?` word instead, which
+/// was honest and useless — Parker: *"instead of model should say CLAUDE,
+/// instead of effort should say xhigh"*.
+///
+/// `live` is whether a press would be read now; a dial that cannot be pressed
+/// says so by going quiet rather than by disappearing, because a control that
+/// vanishes and returns is one nobody learns the position of.
+pub fn dial(value: &str, known: bool, open: bool, live: bool, sk: &Skin, th: &Theme) -> Div {
+    strip_face(open, false, sk, th)
         .when(live, |d| d.cursor_pointer())
         .text_size(px(sk.pt(Step::Note)))
         // Three inks for three states, and the middle one is the point: a
-        // value we were told reads as text, a value nobody has given reads as
-        // faint, and neither of them reads as the other.
+        // value somebody chose reads as text, a value read off the launch
+        // command or taken from the harness reads faint, and neither of them
+        // reads as the other. The word is the same either way; the ink is the
+        // whole of the claim.
         .text_color(match (live, known) {
             (false, _) => th.faint.alpha(0.45),
-            (true, true) => th.text.alpha(0.88),
-            (true, false) => th.faint,
+            (true, true) => th.text.alpha(0.92),
+            (true, false) => th.text.alpha(0.55),
         })
-        .child(text.to_string())
+        .child(sk.caps(&value.to_uppercase()))
         .child(
             div()
                 .text_size(px(sk.pt(Step::Tag)))
@@ -1954,23 +1980,23 @@ pub fn dial_row(label: &str, lit: bool, sk: &Skin, th: &Theme) -> Div {
 /// something away, and the only one on an ended pane, so it can afford the
 /// glow. END is deliberately quiet: a destructive control that shouts is one
 /// people press by accident, and this one is beside a dial.
+///
+/// `glyph` is optional and END no longer carries one. `\u{23f9}` rendered as a
+/// colour emoji on this desk — an orange box beside two grey words, which is
+/// the loudest thing on the strip attached to the one control nobody should
+/// press by accident. Parker: *"instead of end with whatever trash emoji —
+/// should say end session"*.
 pub fn strip_button(label: &str, glyph: &str, primary: bool, sk: &Skin, th: &Theme) -> Div {
-    let el = sk
-        .chip(primary)
-        .flex()
-        .flex_row()
-        .items_center()
-        .flex_none()
-        .gap(px(sk.tpx(5.)))
+    let el = strip_face(false, primary, sk, th)
         .cursor_pointer()
         .text_size(px(sk.pt(Step::Note)))
         .text_color(if primary {
             th.human
         } else {
-            th.faint.alpha(0.9)
+            th.text.alpha(0.78)
         })
-        .child(glyph.to_string())
-        .child(sk.caps(label));
+        .when(!glyph.is_empty(), |d| d.child(glyph.to_string()))
+        .child(sk.caps(&label.to_uppercase()));
     if primary {
         aglow(el, th.human, th)
     } else {
@@ -2172,7 +2198,22 @@ pub fn composer(
                 color: Some(if live { th.bg } else { th.text }),
                 ..Default::default()
             };
-            let styled = gpui::StyledText::new(text).with_highlights([(at..next, caret)]);
+            // SELECT-ALL, drawn by the same mechanism as the caret: one
+            // highlight over the whole run, which follows a wrap because the
+            // text system puts the background behind the characters wherever
+            // they land. The caret is dropped while it is up — a block cursor
+            // inside a selection reads as two carets, and there is only one
+            // place the next keystroke can go.
+            let selection = gpui::HighlightStyle {
+                background_color: Some(th.human.alpha(if live { 0.34 } else { 0.18 })),
+                ..Default::default()
+            };
+            let spans = if l.marked() {
+                vec![(0..l.text().len(), selection)]
+            } else {
+                vec![(at..next, caret)]
+            };
+            let styled = gpui::StyledText::new(text).with_highlights(spans);
             // The layout handle is filled in during prepaint and shared by
             // reference, so taking it here is taking the real thing. It is how
             // a click becomes a column — see `TerminalView::bench_click` — and

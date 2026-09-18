@@ -378,30 +378,54 @@ impl TerminalView {
             // Everything else straight through, byte for byte. The echo
             // comes back from the agent itself, which is why this needs
             // no local editing model at all.
-            if let Some(bytes) = keystroke_bytes(ks) {
+            if let Some(mut bytes) = keystroke_bytes(ks) {
                 // The bytes have already gone; this applies the SAME edit
                 // to the local mirror so the box can draw where the
                 // agent's caret now is. See [`crate::workbench::Line`] for
                 // why a mirror and not a model.
                 if let Some(line) = self.wb_compose.as_mut() {
+                    let selected = line.marked();
                     // One table, in `workbench`, so the conventions can be
                     // asserted: word motion, the kills, and the readline
                     // chords the agent's own editor answers to. A key that
                     // is not an edit is a character, and characters go in
                     // at the caret.
-                    match crate::workbench::line_edit(
+                    let replaced = match crate::workbench::line_edit(
                         &ks.key,
                         ks.modifiers.control,
                         ks.modifiers.alt,
                     ) {
-                        Some(edit) => line.apply(edit),
+                        Some(edit) => {
+                            line.apply(edit);
+                            selected
+                                && matches!(
+                                    edit,
+                                    crate::workbench::Edit::Backspace
+                                        | crate::workbench::Edit::Delete
+                                )
+                        }
                         None => {
+                            let mut typed = false;
                             if let Some(c) = ks.key_char.as_deref() {
                                 if !c.is_empty() && !c.chars().any(char::is_control) {
                                     line.insert(c);
+                                    typed = true;
                                 }
                             }
+                            selected && typed
                         }
+                    };
+                    // A selected draft is REPLACED, and the far end has to be
+                    // told so in bytes it already understands: its caret is at
+                    // column zero (the ctrl+a that made the selection put it
+                    // there), so one kill-to-end empties the line ahead of
+                    // whatever this keystroke is. Without it the mirror would
+                    // show the replacement and the agent would receive the
+                    // replacement APPENDED to what was there.
+                    if replaced {
+                        let mut pre = crate::workbench::replace_bytes();
+                        pre.append(&mut bytes);
+                        bytes = pre;
                     }
                 }
                 self.composer_follows();
@@ -584,14 +608,53 @@ impl TerminalView {
         let mut out: Vec<gpui::Div> = Vec::new();
         let pressable = agent_now && crate::workbench::dials_live(state);
         if agent_now {
+            let harness = match self.mode {
+                crate::pane::PaneMode::Codex => crate::launcher::Harness::Codex,
+                _ => crate::launcher::Harness::Claude,
+            };
+            // What this pane's agent was STARTED with, which is a reading and
+            // not a guess: the resume command is built from `/proc`, and a
+            // `--model` on it is a fact about the process that is running.
+            let launched = self.runtime().resume;
             for which in [Dial::Model, Dial::Effort] {
-                let value = match which {
-                    Dial::Model => self.wb_model.clone(),
-                    Dial::Effort => self.wb_effort.map(|e| e.id().to_string()),
+                let (value, known) = match which {
+                    Dial::Model => self
+                        .wb_model
+                        .clone()
+                        .map(|m| (m, true))
+                        .or_else(|| {
+                            launched
+                                .as_deref()
+                                .and_then(|c| crate::workbench::flag_value(c, "--model"))
+                                .map(|m| (m, true))
+                        })
+                        // Nobody said, so the button says the one thing that is
+                        // true anyway — which harness is in there. A faint
+                        // CLAUDE is a better button than a crisp `model ?`, and
+                        // it still never claims a model was chosen.
+                        .unwrap_or_else(|| (harness.label().to_string(), false)),
+                    Dial::Effort => self
+                        .wb_effort
+                        .map(|e| (e.id().to_string(), true))
+                        .or_else(|| {
+                            launched
+                                .as_deref()
+                                .and_then(|c| {
+                                    crate::workbench::flag_value(c, "--effort").or_else(|| {
+                                        // Codex spells it as a config key.
+                                        crate::workbench::flag_value(c, "model_reasoning_effort")
+                                    })
+                                })
+                                .map(|e| (e, true))
+                        })
+                        // The level the harness runs at when nobody passes the
+                        // flag — TD's own claim, made in `default_effort`, and
+                        // drawn faint because nobody chose it here.
+                        .unwrap_or_else(|| (harness.default_effort().id().to_string(), false)),
                 };
                 let mut chip = crate::benchdraw::dial(
-                    which,
-                    value.as_deref(),
+                    &value,
+                    known,
                     self.wb_dial == Some(which),
                     pressable,
                     sk,
@@ -610,7 +673,10 @@ impl TerminalView {
             }
         }
         let (label, glyph, hit, primary) = match crate::workbench::strip_verb(state, agent_now) {
-            StripVerb::End => ("END", "\u{23f9}", Hit::EndAgent, false),
+            // No glyph: the stop square rendered as a colour emoji, which put
+            // the loudest thing on the strip beside the one control nobody
+            // should press by accident. The words say what it does.
+            StripVerb::End => ("END SESSION", "", Hit::EndAgent, false),
             StripVerb::Launch => ("LAUNCH AGENT", "\u{2301}", Hit::Launch, true),
         };
         out.push(

@@ -402,6 +402,14 @@ pub struct Line {
     /// on a paste that reached the agent and left the box looking empty: *"The
     /// image is showing up in the terminal mirror, but not in the text area."*
     pasted: usize,
+    /// The WHOLE line is selected — what `ctrl+a` leaves behind.
+    ///
+    /// A boolean rather than a range because select-all is the only selection
+    /// this box has: there is no mouse drag over the draft and no shift+arrow
+    /// here, so a range would be three states wide and only ever hold two of
+    /// them. The next printable character or delete replaces everything; any
+    /// motion drops it.
+    marked: bool,
 }
 
 impl Line {
@@ -418,7 +426,42 @@ impl Line {
             text,
             caret,
             pasted: 0,
+            marked: false,
         }
+    }
+
+    /// Select the whole draft — `ctrl+a`, the convention every text box on this
+    /// desk answers to.
+    ///
+    /// The caret goes to the START rather than staying where it was, because
+    /// the agent's own line editor is readline-shaped and the keystroke that
+    /// reached it moved ITS caret to column zero. The mirror has to agree, or
+    /// the replacement typed next lands in a different place on each side.
+    /// Parker, on the box not answering the chord: *"Ctrl+a does not highlight
+    /// all in the workbench text area"*.
+    pub fn mark_all(&mut self) {
+        self.marked = !self.text.is_empty();
+        self.caret = 0;
+    }
+
+    /// Is the whole draft selected?
+    pub fn marked(&self) -> bool {
+        self.marked
+    }
+
+    /// Drop the selection without touching the text — any motion does this.
+    pub fn clear_mark(&mut self) {
+        self.marked = false;
+    }
+
+    /// Take the selection: empty the line and report that it happened, so the
+    /// caller knows to tell the far end to do the same.
+    pub fn take_marked(&mut self) -> bool {
+        if !self.marked {
+            return false;
+        }
+        self.clear();
+        true
     }
 
     /// Record that an image went to the agent with this line.
@@ -448,8 +491,12 @@ impl Line {
         self.text.is_empty()
     }
 
-    /// Insert at the caret and step over it.
+    /// Insert at the caret and step over it. A selected line is REPLACED,
+    /// which is what a person who just pressed `ctrl+a` is expecting.
     pub fn insert(&mut self, s: &str) {
+        if self.marked {
+            self.clear();
+        }
         let at = self.byte_at(self.caret);
         self.text.insert_str(at, s);
         self.caret += s.chars().count();
@@ -505,7 +552,14 @@ impl Line {
     /// so the mirror and the agent's own editor cannot drift by having two
     /// slightly different ideas of what `ctrl+w` does.
     pub fn apply(&mut self, edit: Edit) {
+        // Every edit but the two that USE the selection drops it. Doing it here
+        // rather than in each arm is what stops a new arm silently inheriting a
+        // stale highlight.
+        if !matches!(edit, Edit::SelectAll | Edit::Backspace | Edit::Delete) {
+            self.clear_mark();
+        }
         match edit {
+            Edit::SelectAll => self.mark_all(),
             Edit::Left => self.left(),
             Edit::Right => self.right(),
             Edit::WordLeft => self.caret = self.word_start(),
@@ -513,10 +567,14 @@ impl Line {
             Edit::Home => self.home(),
             Edit::End => self.end(),
             Edit::Backspace => {
-                self.backspace();
+                if !self.take_marked() {
+                    self.backspace();
+                }
             }
             Edit::Delete => {
-                self.delete();
+                if !self.take_marked() {
+                    self.delete();
+                }
             }
             Edit::KillWordLeft => {
                 let to = self.word_start();
@@ -585,6 +643,7 @@ impl Line {
         self.text.clear();
         self.caret = 0;
         self.pasted = 0;
+        self.marked = false;
     }
 
     fn byte_at(&self, chars: usize) -> usize {
@@ -749,21 +808,15 @@ pub enum Dial {
     Effort,
 }
 
+// A dial used to carry an `unknown()` word — `model ?` and `effort ?` — drawn
+// whenever nobody had told this pane anything, on the rule that a default is
+// not a reading. The rule survives; the word did not. Nothing can ask a running
+// process what model it is on, but the command that STARTED it can be read, and
+// where even that says nothing the harness itself is still a fact about the
+// pane. So the button now carries a value and the INK carries the claim: chosen
+// reads as text, inferred reads faint. See `benchdraw::dial` and the resolution
+// in `TerminalView::strip_trailing`.
 impl Dial {
-    /// The word on the dial when it has no value to show.
-    ///
-    /// **Not a default, and that is the whole point.** Nothing can read the
-    /// model out of a running process: the strip knows what the launcher passed
-    /// and what it has itself set since, and an agent somebody started by hand
-    /// in a terminal is neither. Showing `opus` there would be inventing a fact
-    /// about what is being billed and how hard it is thinking.
-    pub fn unknown(self) -> &'static str {
-        match self {
-            Dial::Model => "model \u{003f}",
-            Dial::Effort => "effort \u{003f}",
-        }
-    }
-
     /// The harness's own command for setting this dial, which a press types.
     ///
     /// Both exist in the installed Claude Code (2.1.274) and both take an
@@ -1130,20 +1183,66 @@ pub enum Edit {
     KillToStart,
     /// ctrl+k: everything from the caret to the end.
     KillToEnd,
+    /// ctrl+a: the whole draft, selected. See [`Line::mark_all`].
+    SelectAll,
     /// Sent, and the line starts again.
     Submit,
 }
 
 /// Which edit a keystroke asks for, if any.
 ///
-/// Readline's bindings, because that is what is on the far end: the agent's own
-/// line editor is readline-shaped, so `ctrl+a` is the start of the line and not
-/// select-all, and a person who types `ctrl+w` expects a word to go. The
-/// alt-prefixed pair is here too, since a terminal that sends meta rather than
-/// control is the ordinary case on this desk.
+/// Readline's bindings, because that is what is on the far end: a person who
+/// types `ctrl+w` expects a word to go, and the alt-prefixed pair is here too,
+/// since a terminal that sends meta rather than control is the ordinary case on
+/// this desk.
+///
+/// **`ctrl+a` is the one place this box is NOT readline**, reversed on
+/// 2026-09-18. It was start-of-line, on the reasoning that the far end reads it
+/// that way; the box is a text area on a screen and every text area a person
+/// uses answers that chord with select-all. Parker: *"Ctrl+a does not highlight
+/// all in the workbench text area"*. Start-of-line is still on `home` and on
+/// `ctrl+b`-style motion, and the far end still receives the same `\x01` byte —
+/// which puts ITS caret at column zero, exactly where the replacement wants it.
+/// See [`replace_bytes`] for the other half of the trick.
 ///
 /// [`None`] means this is not an edit — a printable character, or a chord that
 /// belongs to somebody else — and the caller passes it through untouched.
+/// What the far end has to be told when a SELECTED draft is being replaced.
+///
+/// `ctrl+a` already travelled, so the agent's own editor is sitting at column
+/// zero with the whole line still in front of it. One `ctrl+k` takes the rest,
+/// and whatever the person typed follows it as an ordinary keystroke. Nothing
+/// here guesses at the far end's contents — it kills from a caret we know the
+/// position of, which is the only reason this is safe on a line the mirror may
+/// have drifted from.
+pub fn replace_bytes() -> Vec<u8> {
+    vec![0x0b]
+}
+
+/// The value of a flag in a launch or resume command, if it carries one.
+///
+/// Both spellings, because both are typed: `--model opus` and `--model=opus`.
+/// A flag with no value after it answers [`None`] rather than swallowing the
+/// next flag — `claude --resume --model` is a broken command line, and reading
+/// `--model` as the model would put the word "--model" on a button.
+pub fn flag_value(cmd: &str, flag: &str) -> Option<String> {
+    let eq = format!("{flag}=");
+    let mut words = cmd.split_whitespace().peekable();
+    while let Some(w) = words.next() {
+        if let Some(v) = w.strip_prefix(eq.as_str()) {
+            return (!v.is_empty()).then(|| v.to_string());
+        }
+        if w == flag {
+            return words
+                .peek()
+                .copied()
+                .filter(|v| !v.starts_with('-'))
+                .map(str::to_string);
+        }
+    }
+    None
+}
+
 pub fn line_edit(key: &str, ctrl: bool, alt: bool) -> Option<Edit> {
     Some(match key {
         "left" if ctrl || alt => Edit::WordLeft,
@@ -1157,7 +1256,7 @@ pub fn line_edit(key: &str, ctrl: bool, alt: bool) -> Option<Edit> {
         "delete" if ctrl || alt => Edit::KillWordRight,
         "delete" => Edit::Delete,
         "enter" => Edit::Submit,
-        "a" if ctrl => Edit::Home,
+        "a" if ctrl => Edit::SelectAll,
         "e" if ctrl => Edit::End,
         "b" if ctrl => Edit::Left,
         "f" if ctrl => Edit::Right,
@@ -3510,9 +3609,10 @@ mod tests {
             ("right", false, true, Edit::WordRight),
             ("left", false, false, Edit::Left),
             ("right", false, false, Edit::Right),
-            // Readline's own chords, because the far end is readline-shaped:
-            // ctrl+a is the START of the line here, never select-all.
-            ("a", true, false, Edit::Home),
+            // Readline's own chords, because the far end is readline-shaped —
+            // except ctrl+a, which is select-all here: this is a text area on a
+            // screen, and start-of-line is on `home`.
+            ("a", true, false, Edit::SelectAll),
             ("e", true, false, Edit::End),
             ("b", true, false, Edit::Left),
             ("f", true, false, Edit::Right),
@@ -3538,6 +3638,64 @@ mod tests {
             assert_eq!(line_edit(key, false, false), None, "{key} alone is text");
         }
         assert_eq!(line_edit("f5", false, false), None);
+    }
+
+    #[test]
+    fn ctrl_a_selects_the_whole_draft_and_the_next_key_replaces_it() {
+        let mut l = Line::holding("the whole thing");
+        l.apply(Edit::SelectAll);
+        assert!(l.marked(), "ctrl+a selects");
+        // The caret sits where the far end's does after the same byte, so the
+        // replacement lands in the same place on both sides.
+        assert_eq!(l.caret(), 0);
+        l.insert("x");
+        assert_eq!(l.text(), "x", "typing replaces the selection");
+        assert!(!l.marked(), "and the selection is spent");
+
+        // Delete and backspace take the selection whole rather than one char.
+        let mut l = Line::holding("gone");
+        l.apply(Edit::SelectAll);
+        l.apply(Edit::Backspace);
+        assert_eq!(l.text(), "");
+        let mut l = Line::holding("gone");
+        l.apply(Edit::SelectAll);
+        l.apply(Edit::Delete);
+        assert_eq!(l.text(), "");
+
+        // Any motion drops the selection and leaves the text alone.
+        let mut l = Line::holding("kept");
+        l.apply(Edit::SelectAll);
+        l.apply(Edit::Right);
+        assert!(!l.marked(), "a motion drops the selection");
+        assert_eq!(l.text(), "kept");
+
+        // An empty draft has nothing to select — a highlight over nothing is a
+        // control that looks armed and does nothing.
+        let mut l = Line::new();
+        l.apply(Edit::SelectAll);
+        assert!(!l.marked());
+
+        // The far end is told to kill from the caret ctrl+a just moved.
+        assert_eq!(replace_bytes(), vec![0x0b]);
+    }
+
+    #[test]
+    fn a_launch_command_names_the_model_and_the_effort_it_was_given() {
+        let cmd = "claude --resume abc --model opus --effort xhigh";
+        assert_eq!(flag_value(cmd, "--model").as_deref(), Some("opus"));
+        assert_eq!(flag_value(cmd, "--effort").as_deref(), Some("xhigh"));
+        // The other spelling, which the panel also prints.
+        assert_eq!(
+            flag_value("codex resume --model=gpt-5", "--model").as_deref(),
+            Some("gpt-5")
+        );
+        // A flag with nothing after it is not a value, and neither is the next
+        // flag along.
+        assert_eq!(flag_value("claude --resume --model", "--model"), None);
+        assert_eq!(flag_value("claude --model --effort high", "--model"), None);
+        // A command that never says is the case the dial has to keep saying it
+        // does not know about.
+        assert_eq!(flag_value("claude --resume abc", "--model"), None);
     }
 
     #[test]
