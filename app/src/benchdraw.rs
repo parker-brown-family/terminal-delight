@@ -1489,6 +1489,7 @@ fn verdict_word(v: Verdict) -> &'static str {
 pub fn title_card(
     state: crate::workbench::AgentState,
     in_state_ms: u64,
+    vitals: Option<&crate::workbench::TurnVitals>,
     tool: Option<&str>,
     sk: &Skin,
     th: &Theme,
@@ -1562,6 +1563,41 @@ pub fn title_card(
             th,
         ),
     )
+    // THE TURN'S OWN NUMBERS, while there is a turn: the agent's clock, its
+    // token count and the call it is in the middle of, each read off its own
+    // status line rather than counted here, and each drawn only when the
+    // screen carried it. A working agent whose screen carried none of them —
+    // a narrow pane truncates the line — says `turn · unread` rather than
+    // showing a zero it never measured. The bar had room for all of this
+    // and was spending it on nothing.
+    .when_some(vitals, |d, v| {
+        if v.is_unread() {
+            return d.child(micro("turn \u{b7} unread", 10., th.faint.alpha(0.7), th));
+        }
+        d.child(
+            div()
+                .flex()
+                .flex_row()
+                .items_baseline()
+                .gap(px(8.))
+                .min_w(px(0.))
+                .overflow_hidden()
+                .when_some(v.elapsed.clone(), |d, e| {
+                    d.child(micro(format!("turn {e}"), 10., th.text.alpha(0.75), th))
+                })
+                .when_some(v.tokens, |d, n| {
+                    d.child(micro(
+                        format!("\u{2193} {} tokens", crate::hud::fmt_tokens(n)),
+                        10.,
+                        th.text.alpha(0.75),
+                        th,
+                    ))
+                })
+                .when_some(v.doing.clone(), |d, doing| {
+                    d.child(micro(clip(&doing, 56), 10., th.accent.alpha(0.85), th))
+                }),
+        )
+    })
     .child(div().flex_1())
     .when_some(tool.map(str::to_string), |d, t| {
         d.child(micro(t, 9.5, th.faint, th))

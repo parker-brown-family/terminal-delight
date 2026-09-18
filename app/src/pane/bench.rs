@@ -1488,9 +1488,13 @@ impl TerminalView {
                     now
                 }
             };
+            // The turn's clock, tokens and in-flight call, off the same
+            // status line the header's badge reads — one parse, two readers.
+            let vitals = crate::workbench::turn_vitals(&self.agent_status());
             crate::benchdraw::title_card(
                 state,
                 now.saturating_sub(since),
+                vitals.as_ref(),
                 self.tool_face.as_ref().map(|f| f.verb.as_str()),
                 sk,
                 th,

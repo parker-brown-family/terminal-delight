@@ -123,6 +123,11 @@ pub struct AgentStatus {
     pub turn_tokens: Option<u64>,
     /// Effort level if the agent prints one ("low" / "medium" / "high").
     pub effort: Option<String>,
+    /// What the agent says it is doing this instant — the `● Calling lean-ctx,
+    /// terminal-delight 3 times…` line Claude Code prints above its spinner
+    /// while a tool call is in flight. The bullet and the ellipsis stripped;
+    /// absent when no such line is on screen.
+    pub doing: Option<String>,
 }
 
 impl AgentStatus {
@@ -275,6 +280,11 @@ pub fn parse_status_line(rows: &[String]) -> AgentStatus {
         }
     }
 
+    // The in-flight tool line, if one is up. The LAST such row wins, because
+    // the one nearest the spinner is the current call and the ones above it
+    // are history that has not scrolled off yet.
+    st.doing = rows.iter().rev().find_map(|r| doing_line(r));
+
     st.state = if working {
         AgentState::Working
     } else if lower.iter().any(|l| has_error(l)) {
@@ -295,6 +305,28 @@ pub fn parse_status_line(rows: &[String]) -> AgentStatus {
         AgentState::Unknown
     };
     st
+}
+
+/// The text of an in-flight tool line — `● Calling lean-ctx 2 times…` — with
+/// its bullet and ellipsis removed, or `None` for any other row.
+///
+/// Anchored and shaped like [`is_live_spinner`], for the same reason: a
+/// bullet followed by a capitalised verb and a trailing `…` is the shape
+/// Claude Code prints while a call runs, and a finished call's row (`⏺
+/// Bash(ls)`) has no ellipsis, so it does not match — which is what keeps the
+/// card from naming a tool the agent already put down.
+pub fn doing_line(row: &str) -> Option<String> {
+    let t = row.trim_start();
+    let rest = t
+        .strip_prefix('\u{25cf}')
+        .or_else(|| t.strip_prefix('\u{23fa}'))?
+        .trim();
+    let body = rest.strip_suffix('\u{2026}')?.trim_end();
+    let first = body.chars().next()?;
+    if !first.is_ascii_uppercase() || body.chars().count() > 96 {
+        return None;
+    }
+    Some(body.to_string())
 }
 
 /// Does a (lowercased) row look like the agent is waiting on a human decision?
@@ -494,6 +526,44 @@ mod tests {
         ]);
         assert_eq!(parse_status_line(&r).state, AgentState::Working);
         assert!(rows_say_working(&r));
+        assert_eq!(
+            parse_status_line(&r).doing.as_deref(),
+            Some("Calling lean-ctx 2 times"),
+            "the in-flight tool line, bullet and ellipsis stripped"
+        );
+    }
+
+    /// The tool line is the LAST bulleted, unfinished row on screen, and a
+    /// finished call — no ellipsis — is not one. Parker asked for the card to
+    /// say "the current tool or w/e being used", and the current one is the
+    /// one nearest the spinner.
+    #[test]
+    fn the_doing_line_is_the_current_call_and_never_a_finished_one() {
+        let r = rows(&[
+            "\u{25cf} Calling lean-ctx\u{2026}",
+            "\u{23fa} Bash(cargo test)",
+            "\u{25cf} Calling lean-ctx, terminal-delight 3 times\u{2026}",
+            "\u{273b} Sauteing\u{2026} (3m 27s \u{00b7} \u{2193} 8.0k tokens)",
+        ]);
+        let st = parse_status_line(&r);
+        assert_eq!(
+            st.doing.as_deref(),
+            Some("Calling lean-ctx, terminal-delight 3 times")
+        );
+        assert_eq!(st.elapsed.as_deref(), Some("3m 27s"));
+        assert_eq!(st.turn_tokens, Some(8_000));
+        assert_eq!(doing_line("\u{23fa} Bash(cargo test)"), None, "finished");
+        assert_eq!(doing_line("\u{25cf} lowercase\u{2026}"), None, "not a verb");
+        assert_eq!(
+            doing_line("  \u{2022} Update available\u{2026}"),
+            None,
+            "a prose bullet"
+        );
+        assert_eq!(
+            parse_status_line(&rows(&["\u{276f} "])).doing,
+            None,
+            "nothing in flight at the prompt"
+        );
     }
 
     /// The same screen at a width that keeps the footer whole. Both halves of

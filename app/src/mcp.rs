@@ -926,19 +926,26 @@ fn tool_defs() -> Value {
             "description":
                 "Put a WORK OBJECT on this pane's workbench — the pane's second \
                  face, toggled from its header beside the terminal. Describe what \
-                 the thing MEANS and Terminal Delight renders it natively: a \
-                 decision with its options, an architecture with its nodes and \
-                 edges, a changeset whose hunks a person can accept or reject, a \
-                 table, a document, an artifact to open. Never describe layout — \
-                 no widths, no colours, no components; the window owns all of \
-                 that. `surface` is one TDSP document: {\"td\":\"0.1\", \
-                 \"kind\":\"decision\", \"title\":\"…\", \"model\":{…}}. Send the \
-                 same `id` again to update it in place, or op \"retire\" to take \
-                 it off the bench. An unknown kind is shown as unclassified \
-                 rather than dropped, so it is always safe to send. When a person \
-                 acts on it you receive a line beginning [workbench] in this \
-                 terminal. Call surface_catalogue for the kinds and their models. \
-                 Requires the writes toggle (TD_MCP_WRITE).",
+                 the thing MEANS and Terminal Delight renders it natively. END \
+                 EVERY TURN with a `response`: the workbench's OVERVIEW is a feed \
+                 of these and shows nothing else. A response is a `tldr` (one or \
+                 two sentences, required) plus registers a person unfolds by name \
+                 — `eli5`, `layman`, `technical`, `evidence`, `asks`, `next` — and \
+                 `doubts`, where you are not sure, each a `claim` with a `why` and \
+                 a `confidence`. Any other key becomes a section labelled by its \
+                 key; a string is prose, an array a list, an object facts. The \
+                 other kinds are what you MADE and what you are ASKING: decision, \
+                 changeset, architecture, table, markdown, artifact, question. \
+                 Never describe layout — no widths, no colours, no components; the \
+                 window owns all of that. `surface` is one TDSP document: \
+                 {\"td\":\"0.3\", \"kind\":\"response\", \"title\":\"…\", \
+                 \"model\":{\"tldr\":\"…\",\"technical\":\"…\",\"doubts\":[…]}}. \
+                 Send the same `id` again to update it in place, or op \"retire\" \
+                 to take it off the bench. An unknown kind is shown as \
+                 unclassified rather than dropped, so it is always safe to send. \
+                 When a person acts on it you receive a line beginning [workbench] \
+                 in this terminal. Call surface_catalogue for the kinds and their \
+                 models. Requires the writes toggle (TD_MCP_WRITE).",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -2120,6 +2127,38 @@ mod tests {
         assert!(names.contains(&"get_pane_config"), "config GET advertised");
         assert!(names.contains(&"set_pane_config"), "config SET advertised");
         assert!(names.contains(&"grep"), "grep advertised");
+    }
+
+    /// The `present_surface` blurb is the ONLY text about this protocol that
+    /// reaches an agent without it asking for anything — `surface_catalogue`
+    /// is a verb somebody has to call, and the machine-global AGENTS.md is
+    /// read once at session start and so misses every agent already running.
+    /// It shipped naming `"td":"0.1"` and six kinds, none of them the one an
+    /// agent is supposed to send every turn, which is how a protocol version
+    /// and the sentence describing it drift apart.
+    #[test]
+    fn the_present_surface_blurb_names_the_current_version_and_the_response_kind() {
+        let s = snap(true, true, vec![]);
+        let v = resp(&handle_line(r#"{"id":2,"method":"tools/list"}"#, &s, no_tail).unwrap());
+        let blurb = v["result"]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["name"] == "present_surface")
+            .expect("present_surface advertised")["description"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        assert!(
+            blurb.contains(&format!("\"td\":\"{}\"", crate::surface::TDSP_VERSION)),
+            "the example names a version this build does not speak: {blurb}"
+        );
+        for word in ["response", "tldr", "doubts"] {
+            assert!(
+                blurb.contains(word),
+                "the blurb never says {word:?}: {blurb}"
+            );
+        }
     }
 
     // ---- config API: GET ----
