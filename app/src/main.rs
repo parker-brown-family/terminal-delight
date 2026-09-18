@@ -2147,6 +2147,18 @@ struct StateFile {
     /// the bottom pad so the prompt/typing area sits near the TOP of the pane.
     #[serde(default)]
     anchor_top: bool,
+    /// Global AGENT THEME preference: whether a pane that FOLLOWS OUTER is
+    /// retinted by the program running in it (claude amber · codex cyan ·
+    /// remote violet) instead of wearing the theme it inherited.
+    ///
+    /// Absent on old files → `false`, which is a deliberate behaviour CHANGE
+    /// rather than a preserved default: the tint used to be unconditional, so
+    /// "follow outer" did not mean "wear what the window wears", and starting an
+    /// agent in a pane turned the whole tube amber with no way back but pinning
+    /// a per-pane override. Anyone who wants the coloured tubes turns them on in
+    /// the OUTER design tray and the choice is saved from then on.
+    #[serde(default)]
+    agent_tint: bool,
     /// Chrome language for the UI (the language pack). Absent on old files →
     /// English; keycaps and symbols are never translated.
     #[serde(default)]
@@ -2210,6 +2222,7 @@ impl Default for StateFile {
             mcp: None,
             focus_inherit: false,
             anchor_top: false,
+            agent_tint: false,
             lang: lang::Lang::default(),
             last_workspace: None,
             undo_hinted: false,
@@ -3761,6 +3774,13 @@ struct Workspace {
     /// panes (which can't reach `&Workspace`) read the live value. One toggle in
     /// the OUTER design panel.
     anchor_top: bool,
+    /// Global, persisted: when on, a pane that follows the outer theme is
+    /// retinted by the PROGRAM inside it — the claude-amber / codex-cyan /
+    /// remote-violet tubes. Off (the default) an inherited theme is inherited,
+    /// and an agent pane looks like the window it is in. Published into
+    /// [`pane::set_agent_tint`] each render frame, beside `anchor_top` and for
+    /// the same reason. One toggle in the OUTER design panel.
+    agent_tint: bool,
     /// A scratch window (opened on a workspace that already has one, or a
     /// torn-off pane): one fresh terminal, never restores or persists session
     /// state — so it can't clobber the layout of the window that owns the
@@ -4965,6 +4985,7 @@ impl Workspace {
             focus_sel_drag: false,
             focus_inherit_theme: saved.focus_inherit,
             anchor_top: saved.anchor_top,
+            agent_tint: saved.agent_tint,
             lang: saved.lang,
             // a demo window restores a layout (so `scratch` is false to take the
             // restore branch below) yet must never overwrite the real state
@@ -6133,6 +6154,7 @@ impl Workspace {
             mcp: Some(self.mcp.clone()),
             focus_inherit: self.focus_inherit_theme,
             anchor_top: self.anchor_top,
+            agent_tint: self.agent_tint,
             lang: self.lang,
             // Where this session is right now, recorded every save so a cold
             // launch can prefer the session that was last open *here*. A hint
@@ -13427,6 +13449,40 @@ impl Workspace {
                 // keep the panel/scrim from seeing this (no close)
                 cx.stop_propagation();
                 ws.toggle_anchor_top(cx);
+            }),
+        )
+    }
+
+    /// Flip the GLOBAL AGENT THEME preference, persist it, and repaint. Off
+    /// (default) ⇒ a pane that follows outer wears what the window wears; on ⇒
+    /// it wears the phosphor of the program inside it. The live value is
+    /// published to [`pane::set_agent_tint`] every render frame.
+    fn toggle_agent_tint(&mut self, cx: &mut Context<Self>) {
+        self.agent_tint = !self.agent_tint;
+        self.save(cx);
+        cx.notify();
+    }
+
+    /// The OUTER design-panel AGENT THEME control, sibling to the anchor row.
+    ///
+    /// It states the RULE rather than the switch position, because a bare
+    /// on/off cannot say which of two things wins: ✳ OVERRIDES OUTER means an
+    /// agent pane paints itself amber, ✳ FOLLOWS OUTER means it paints like
+    /// every other pane in the window. Only panes that follow outer are
+    /// affected either way — a pane wearing a theme it was given keeps it.
+    fn agent_tint_toggle(&self, sk: &skin::Skin, cx: &mut Context<Self>) -> gpui::Div {
+        let on = self.agent_tint;
+        let label = if on {
+            "\u{2733} OVERRIDES OUTER"
+        } else {
+            "\u{2733} FOLLOWS OUTER"
+        };
+        Self::bezel_btn(sk, label, on).on_mouse_down(
+            MouseButton::Left,
+            cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                // keep the panel/scrim from seeing this (no close)
+                cx.stop_propagation();
+                ws.toggle_agent_tint(cx);
             }),
         )
     }
@@ -20872,6 +20928,9 @@ impl Render for Workspace {
         // headless/test hook so the inverted read can be captured without a click
         // (read once, cached; checked here so it covers every Workspace path).
         pane::set_anchor_top(self.anchor_top || td_anchor_top_forced());
+        // Same publish, same reason: whether an inheriting pane wears the
+        // program's phosphor is a window-level decision a pane can't reach.
+        pane::set_agent_tint(self.agent_tint);
         let s = self.lang.strings();
         // A pane's OWN menus (⋯ overflow, right-click, BELL+ tray) are pane-local
         // state no workspace flag can see, so ask this tab's visible leaves —
@@ -22383,6 +22442,16 @@ impl Render for Workspace {
                     format!("⤓ {} ({})", t.pass_down, stray)
                 };
                 controls = controls
+                    // AGENT THEME sits immediately above the pass-down button
+                    // because they are the two ends of one question: pass-down
+                    // decides which panes follow the window, and this decides
+                    // whether following the window actually means wearing it.
+                    // Heading is a literal for the same reason ANCHOR/SKIN are
+                    // (#406).
+                    .child(hsep())
+                    .child(label("AGENT THEME"))
+                    .child(div().flex().child(self.agent_tint_toggle(&sk, cx)))
+                    .child(hsep())
                     .child(label("ANCHOR"))
                     .child(div().flex().child(self.anchor_top_toggle(&sk, cx)))
                     .child(Self::bezel_btn(&sk, &lbl, stray > 0).on_mouse_down(
@@ -32525,6 +32594,27 @@ node = "Leaf"
         let old: StateFile =
             toml::from_str("active = 0\n[[tabs]]\nnode = \"Leaf\"\n").expect("loads old file");
         assert!(!old.anchor_top, "missing key defaults to the bottom anchor");
+    }
+
+    #[test]
+    fn agent_theme_preference_round_trips_and_defaults_to_following_outer() {
+        // Turning the coloured tubes back on survives a save/load …
+        let state = StateFile {
+            agent_tint: true,
+            ..Default::default()
+        };
+        let body = toml::to_string(&state).expect("serializes");
+        let back: StateFile = toml::from_str(&body).expect("round-trips");
+        assert!(back.agent_tint, "the AGENT THEME toggle persists");
+        // … and every session file written before this existed — which is all of
+        // them — loads as FOLLOWS OUTER. That is the behaviour change: the tint
+        // used to be unconditional, so absence has to mean off, not "as before".
+        let old: StateFile =
+            toml::from_str("active = 0\n[[tabs]]\nnode = \"Leaf\"\n").expect("loads old file");
+        assert!(
+            !old.agent_tint,
+            "a pre-feature session inherits its theme rather than wearing the program"
+        );
     }
 
     #[test]
