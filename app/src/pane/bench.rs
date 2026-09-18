@@ -1630,19 +1630,28 @@ impl TerminalView {
                     .flex()
                     .flex_col()
                     .gap(px(10.))
-                    // The offer: the button FIRST, then the reason for it as a
-                    // separate element underneath. Two children of one column
-                    // rather than one panel with a chip tacked on the end —
-                    // which is what made the only pressable thing on the
-                    // surface read as the last line of a paragraph.
+                    // The offer is ONE element: a dialogue card with the action
+                    // inside it.
+                    //
+                    // It was a panel with the button as a sibling above it, and
+                    // before that a panel with the button as a chip tacked on
+                    // its end. Both failed the same way — the only pressable
+                    // thing on the surface and the sentence naming it were not
+                    // in the same box, so they aligned independently and read as
+                    // two unrelated blocks. A dialogue holds its own action.
                     .when(offering, |d| {
-                        d.child(crate::benchdraw::launch_button(sk, th).child(
-                            crate::benchdraw::zone(
-                                self.wb_zones.clone(),
-                                crate::workbench::Hit::Launch,
-                            ),
+                        d.child(crate::benchdraw::empty(
+                            false,
+                            "",
+                            Some(crate::benchdraw::launch_button(sk, th).child(
+                                crate::benchdraw::zone(
+                                    self.wb_zones.clone(),
+                                    crate::workbench::Hit::Launch,
+                                ),
+                            )),
+                            sk,
+                            th,
                         ))
-                        .child(crate::benchdraw::empty(false, "", sk, th))
                     })
                     .when(shows.mirror, |d| {
                         d.child(crate::benchdraw::conversation(&tail, sk, th))

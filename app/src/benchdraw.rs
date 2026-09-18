@@ -2284,52 +2284,90 @@ pub fn rail_handle(open: bool, sk: &Skin, th: &Theme) -> Div {
 /// emptiness is a button of its own — see [`launch_button`] — because a chip
 /// appended to the end of a paragraph is a footnote, and the thing a person is
 /// meant to press cannot be a footnote.
-pub fn empty(is_agent: bool, dir: &str, sk: &Skin, th: &Theme) -> Div {
-    // **The complement, at full strength, one rung up the ramp.**
+pub fn empty(is_agent: bool, dir: &str, action: Option<Div>, sk: &Skin, th: &Theme) -> Div {
+    // **One container, not two orphans.**
     //
-    // An empty surface is the one place the bench can afford to be legible
-    // rather than quiet: there is nothing for the text to compete with, and a
-    // faint 10-point label in a field of nothing reads as a disabled control
-    // rather than as an answer. Parker: *"use the bright other text colour and
-    // bigger font by 30%"*.
+    // This was a full-width panel of text with the button as its SIBLING in the
+    // body's column. Two children of a tall flex column do not read as one
+    // thing, and they did not look like one: the button centred itself, the
+    // heading stayed hard against the left edge a third of a pane away, and the
+    // panel's own top border ran between them like a rule separating two
+    // unrelated blocks. Parker, shown it on a 1870-pixel pane: *"that just looks
+    // absolutely terrible... I am basically imagining a standard dialogue
+    // window... super simple stuff"*.
     //
-    // The 30% is spent on the RAMP rather than on a multiplier — `Note` is 10
-    // and `Lead` is 13, which is exactly the ask, and `Body` 12 to `Head` 15 is
-    // the nearest rung to it. A literal `* 1.3` here would be the sixteenth
-    // font size the ramp exists to have abolished.
-    sk.panel()
+    // So it is a dialogue: one bounded card, its own width rather than the
+    // pane's, centred, everything inside it centred with it, and the action
+    // INSIDE the card it belongs to. Nothing here is novel — it is the shape
+    // every desktop has used for an empty state for thirty years, which is the
+    // point. A surface with nothing on it is the wrong place to invent.
+    //
+    // **The complement, at full strength, one rung up the ramp.** An empty
+    // surface is the one place the bench can afford to be legible rather than
+    // quiet: there is nothing for the text to compete with, and a faint
+    // 10-point label in a field of nothing reads as a disabled control rather
+    // than as an answer. Parker: *"use the bright other text colour and bigger
+    // font by 30%"*. The 30% is spent on the RAMP rather than on a multiplier —
+    // `Note` 10 to `Lead` 13 is exactly it, and `Body` 12 to `Head` 15 is the
+    // nearest rung. A literal `* 1.3` would be the sixteenth font size the ramp
+    // exists to have abolished.
+    let card = sk
+        .panel()
         .flex()
         .flex_col()
-        .gap(px(6.))
-        .child(micro(
-            "NOTHING ON THE WORKBENCH",
-            Step::Lead,
-            th.complement,
-            sk,
-            th,
-        ))
-        // A SHELL gets the heading and nothing else.
+        .items_center()
+        .w_full()
+        // A dialogue is a fixed object, not a column that grows with the
+        // window: past about forty characters a centred line stops being a
+        // caption and starts being a paragraph nobody reads.
+        .max_w(px(sk.tpx(380.)))
+        .gap(px(sk.tpx(14.)))
+        .px(px(sk.tpx(26.)))
+        .py(px(sk.tpx(22.)))
+        .child(
+            micro(
+                "NOTHING ON THE WORKBENCH",
+                Step::Lead,
+                th.complement,
+                sk,
+                th,
+            )
+            .text_center(),
+        )
+        // A SHELL gets the heading and the button.
         //
-        // The sentence under it — *"A shell has no agent to present anything.
-        // Start one and its work appears here."* — explained the button sitting
-        // directly above it, which the button's own words already explain.
-        // Parker: *"the little flavour text about the shell can go away"*.
+        // The sentence that used to sit here — *"A shell has no agent to present
+        // anything. Start one and its work appears here."* — explained the
+        // button directly above it, which the button's own words already
+        // explain. Parker: *"the little flavour text about the shell can go
+        // away"*.
         .when(is_agent, |d| {
-            d.child(micro(
-                "This agent has presented no work objects yet.",
-                Step::Head,
-                th.complement.alpha(0.85),
-                sk,
-                th,
-            ))
-            .child(micro(
-                format!("drop a .json here: {dir}"),
-                Step::Note,
-                th.faint,
-                sk,
-                th,
-            ))
+            d.child(
+                micro(
+                    "This agent has presented no work objects yet.",
+                    Step::Head,
+                    th.complement.alpha(0.85),
+                    sk,
+                    th,
+                )
+                .text_center(),
+            )
+            .child(
+                micro(
+                    format!("drop a .json here: {dir}"),
+                    Step::Note,
+                    th.faint,
+                    sk,
+                    th,
+                )
+                .text_center(),
+            )
         })
+        .children(action);
+    // The card centres itself in whatever box it is handed, so no caller has to
+    // remember to do it — the last arrangement failed exactly because one of the
+    // two pieces centred and the other did not.
+    div().flex().flex_col().items_center().w_full().child(card)
 }
 
 /// The one verb an empty shell bench offers, as a button and nothing else.
