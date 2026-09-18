@@ -4448,6 +4448,129 @@ impl TerminalView {
             cx.stop_propagation();
             return;
         }
+        // ── ESCAPE IS RESOLVED ONCE, AGAINST A TABLE ────────────────────────
+        //
+        // Every surface a pane can stack wants this key, and which of them gets
+        // it used to be decided by the order of the branches below. That order
+        // has no runtime signal: swapping two correct blocks compiles and leaves
+        // the whole suite green, and it went wrong exactly that way four times
+        // over. `bench_key` consumes every escape on the workbench face and ends
+        // in `stop_propagation`, and it sat above the paint block, the
+        // right-click tray, the header's ⋯ menu and the rename box — all four of
+        // which are drawn on that face and none of which escape could reach.
+        //
+        // [`crate::keylayer::escape_target`] is now the only thing that decides,
+        // the way every gpui-kit control routes through one `resolve_style` so
+        // the layering cannot drift apart again. The precedence is the
+        // declaration order of [`crate::keylayer::EscTarget`], a new surface is
+        // a new variant the compiler makes this match handle, and the ladder is
+        // table-tested over all 128 combinations in a module that imports
+        // nothing and so tests in about a second.
+        //
+        // Only ESCAPE goes through here. Every other key keeps the path it had.
+        if ks.key.as_str() == "escape" {
+            use crate::keylayer::{escape_target, EscTarget, Up};
+            let up = Up {
+                paint: theme::paint_mode(cx),
+                ctx_menu: self.ctx_menu.is_some(),
+                header_menu: self.hdr_overflow.is_some(),
+                reader: self.being_read,
+                sticky: self.sticky_composing(),
+                rename: self.renaming.is_some(),
+                bench: self.bench.face() == crate::workbench::Face::Workbench,
+            };
+            match escape_target(up) {
+                EscTarget::Paint => {
+                    // `paint_key` folds the overlay and BUBBLES, so the
+                    // workspace sees the same press and can close anything of
+                    // its own underneath.
+                    match self.paint_key(ks, cx) {
+                        PaintKey::Took => {
+                            cx.stop_propagation();
+                            return;
+                        }
+                        PaintKey::Bubble => return,
+                        PaintKey::Pass => {}
+                    }
+                }
+                EscTarget::CtxMenu => {
+                    self.ctx_menu = None;
+                    cx.notify();
+                    return;
+                }
+                EscTarget::HeaderMenu => {
+                    self.hdr_overflow = None;
+                    cx.notify();
+                    return;
+                }
+                EscTarget::Reader => {
+                    // The workspace owns the modal; this is the pane asking it
+                    // to close. Left in place because the workspace's own
+                    // capture-phase handler does not run when no popup is open.
+                    cx.emit(CloseFocusRead);
+                    return;
+                }
+                EscTarget::Sticky => {
+                    // `sticky_key` reads escape as Press::Revert.
+                    if self.sticky_key(ks, cx) {
+                        cx.stop_propagation();
+                    }
+                    return;
+                }
+                EscTarget::Rename => {
+                    // Cancel: the half-typed name is dropped, as the inline box
+                    // has always done.
+                    self.renaming = None;
+                    cx.notify();
+                    return;
+                }
+                EscTarget::Bench => {
+                    // The bench's own ladder — [`crate::workbench::peel`] — which
+                    // decides what escape takes off WITHIN the bench and refuses
+                    // to take the bench itself.
+                    if self.bench_key(ks, cx) {
+                        return;
+                    }
+                }
+                // Nothing is up. Fall through: this escape is the shell's, and
+                // it reaches the PTY as 0x1b at the bottom of this function.
+                EscTarget::Terminal => {}
+            }
+        }
+        // PAINT mode owns the keyboard while it is up — it is the topmost
+        // surface across ALL panes at once, so nothing it handles may reach the
+        // PTY underneath (an ESC byte into a running agent kills it; a stray
+        // `w` lands in someone's shell).
+        //
+        // Only the FOCUSED pane runs this handler, which is what makes "the
+        // letter paints the selected terminal" true without any selection state
+        // to keep: the spotlight in the overlay and the focus this handler
+        // rides are the same fact.
+        //
+        // AHEAD OF THE BENCH, and that ordering is the whole of #531. This
+        // block used to sit BELOW `bench_key`, which consumes every escape on
+        // the workbench face and ends in `stop_propagation` — so with the paint
+        // cards up over a pane showing its bench, the first press flipped that
+        // pane to the terminal and left the overlay standing. The comment above
+        // already claimed paint owned the keyboard; only the line order
+        // disagreed. Parker: *"pressing escape a single time should always
+        // target that overlay"*. Same shape as #524, where `bench_key` kept the
+        // window's alt chords for the same reason: a handler that runs early
+        // and keeps a key it cannot use.
+        //
+        // Nothing moves on the terminal face, where `bench_key` declines
+        // immediately — guarded by
+        // `paint_mode_is_consulted_before_the_bench_can_swallow_a_key`.
+        if theme::paint_mode(cx) {
+            match self.paint_key(ks, cx) {
+                PaintKey::Took => {
+                    cx.stop_propagation();
+                    return;
+                }
+                PaintKey::Bubble => return,
+                PaintKey::Pass => {}
+            }
+        }
         // ── the WORKBENCH face owns the keyboard, in one of two modes ───────
         //
         // READING: arrows walk the rail, digits answer a question, enter takes
@@ -4471,45 +4594,16 @@ impl TerminalView {
         if self.bench_key(ks, cx) {
             return;
         }
-        // PAINT mode owns the keyboard while it is up — it is the topmost
-        // surface across ALL panes at once, so nothing it handles may reach the
-        // PTY underneath (an ESC byte into a running agent kills it; a stray
-        // `w` lands in someone's shell).
+        // The right-click tray, the ⋯ header menu and the FOCUS modal each used
+        // to test for escape here, in this order, and each is now a row in
+        // [`crate::keylayer::EscTarget`] answered at the top of this function.
+        // Their branches are gone rather than left unreachable: three `if`s that
+        // can never be true read exactly like three that can.
         //
-        // Only the FOCUSED pane runs this handler, which is what makes "the
-        // letter paints the selected terminal" true without any selection state
-        // to keep: the spotlight in the overlay and the focus this handler
-        // rides are the same fact.
-        if theme::paint_mode(cx) {
-            match self.paint_key(ks, cx) {
-                PaintKey::Took => {
-                    cx.stop_propagation();
-                    return;
-                }
-                PaintKey::Bubble => return,
-                PaintKey::Pass => {}
-            }
-        }
-        // Escape closes the right-click menu before anything else.
-        if self.ctx_menu.is_some() && ks.key.as_str() == "escape" {
-            self.ctx_menu = None;
-            cx.notify();
-            return;
-        }
-        // Escape closes the ⋯ header overflow menu before reaching the PTY.
-        if self.hdr_overflow.is_some() && ks.key.as_str() == "escape" {
-            self.hdr_overflow = None;
-            cx.notify();
-            return;
-        }
-        // While this pane is mirrored in the FOCUS modal, a plain Esc closes the
-        // modal (the workspace handles it) rather than reaching the PTY — every
-        // OTHER keystroke still flows straight to this terminal, so you keep
+        // While this pane is mirrored in the FOCUS modal, every keystroke OTHER
+        // than escape still flows straight to this terminal, so you keep
         // directing the agent while you read it big.
-        if self.being_read && ks.key.as_str() == "escape" {
-            cx.emit(CloseFocusRead);
-            return;
-        }
+        //
         // Same contract for the paging keys: while the modal is up they drive the
         // READER's view (page through the mirrored convo, jump to its ends), not
         // the pane's own scrollback — that's the surface you are actually reading.
@@ -4570,6 +4664,11 @@ impl TerminalView {
                     self.renaming = Some(buf);
                     self.commit_rename(cx);
                 }
+                // Escape is answered at the top of `on_key`, by the escape
+                // table. Kept as an explicit no-op rather than deleted, because
+                // the fall-through arm below would otherwise push the key's
+                // `key_char` into the name — a silent wrong behaviour if any
+                // future path ever reaches here with an escape in hand.
                 "escape" => {}
                 "backspace" => {
                     buf.pop();
@@ -8232,6 +8331,52 @@ mod tests {
         );
     }
 
+    /// PAINT mode is asked BEFORE the bench can swallow a key.
+    ///
+    /// **Narrower than it looks, and deliberately so.** Escape no longer depends
+    /// on this order at all — it is resolved against [`crate::keylayer`]'s table
+    /// before either block runs, and that table is where the precedence argument
+    /// now lives, tested over all 128 combinations without reading any source.
+    /// What is left here is the ordering for every OTHER key: paint's letters
+    /// and digits paint the selected terminal, and the bench's reading mode
+    /// would otherwise take the same letters to start a composer. That is still
+    /// a property of line order and still has no runtime signal, which is why a
+    /// source scan is still the only thing that observes it.
+    ///
+    /// Mutation-tested: swapping the two blocks back fails this test, and
+    /// deleting the paint block fails it on the `expect`.
+    #[test]
+    fn paint_mode_is_consulted_before_the_bench_can_swallow_a_key() {
+        let src = include_str!("pane.rs");
+        let (code, _tests) = src
+            .split_once("#[cfg(test)]")
+            .unwrap_or((src, "no test module yet"));
+        let at = code
+            .find("fn on_key(&mut self, ev: &KeyDownEvent")
+            .expect("TerminalView::on_key");
+        let end = code[at..].find("\n    }\n").expect("end of on_key") + at;
+        // Comments stripped, for the reason the test above gives at length:
+        // both blocks are documented in prose that names the other one.
+        let body: String = code[at..end]
+            .lines()
+            .map(|l| l.split("//").next().unwrap_or(""))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let paint = body
+            .find("theme::paint_mode(cx)")
+            .expect("on_key no longer consults paint mode at all");
+        let bench = body
+            .find("self.bench_key(ks, cx)")
+            .expect("on_key no longer calls bench_key, which would be a bigger change");
+        assert!(
+            paint < bench,
+            "the bench takes escape before paint mode is asked for it — with the paint \
+             cards up over a pane showing its bench, one press flips the face and leaves \
+             the overlay standing (#531)"
+        );
+    }
+
     use super::*;
 
     /// A single styled run of `len` bytes (style irrelevant to wrap geometry).
@@ -9866,13 +10011,29 @@ mod tests {
         // chord this handler declined would never reach the Workspace. So the
         // assertion is not "no stop_propagation" — that would reject the
         // correct F1 fix — but "every stop_propagation returns".
+        //
+        // COMMENTS ARE STRIPPED FIRST, as in every other source scan here. This
+        // test did not strip them and failed on prose the moment a comment in
+        // `on_key` explained what another handler does — a sentence naming the
+        // call, with no `return` in the sixty characters after it. Its sibling
+        // `the_bench_declines_a_window_chord_before_it_can_swallow_one` had
+        // already been bitten by exactly this and already carries the fix; the
+        // rule is the one written there, that a scan which cannot tell code
+        // from a description of code fails at whatever is best documented. The
+        // assertion itself is unchanged, and it still fails on a bare
+        // `cx.stop_propagation();` with no return — mutation-tested.
         let src = include_str!("pane.rs");
         let at = src
             .find("fn on_key(&mut self, ev: &KeyDownEvent")
             .expect("TerminalView::on_key");
         let body = &src[at..];
         let end = body.find("\n    }\n").expect("end of on_key");
-        let body = &body[..end];
+        let body: String = body[..end]
+            .lines()
+            .map(|l| l.split("//").next().unwrap_or(""))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let body = body.as_str();
         for (i, _) in body.match_indices("stop_propagation") {
             let tail = &body[i..(i + 120).min(body.len())];
             assert!(

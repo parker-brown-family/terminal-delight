@@ -48,6 +48,7 @@ mod hostctl;
 mod hostproto;
 mod hud;
 mod instance;
+mod keylayer;
 mod lang;
 mod launcher;
 mod mcp;
