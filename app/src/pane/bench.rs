@@ -104,6 +104,14 @@ impl TerminalView {
                 self.bench.close_card();
             }
             Hit::Launch => cx.emit(OpenAgentLauncher),
+            Hit::EndAgent => self.bench_end_agent(cx),
+            // A second press on the open dial closes it. A menu with no way
+            // back out except picking something is a menu that has taken a
+            // decision hostage.
+            Hit::Dial(which) => {
+                self.wb_dial = (self.wb_dial != Some(which)).then_some(which);
+            }
+            Hit::DialPick(which, at) => self.bench_dial_pick(which, at, cx),
             Hit::Composer => {
                 self.bench_click(flat, cx);
                 window.focus(&self.focus_handle, cx);
@@ -155,7 +163,11 @@ impl TerminalView {
         let Some((hit, _)) = self.bench_flat(ev.position) else {
             return;
         };
-        match crate::workbench::wheel_target(hit.as_ref(), self.wb_mirror) {
+        match crate::workbench::wheel_target(
+            hit.as_ref(),
+            self.wb_card_at.is_some(),
+            self.wb_mirror,
+        ) {
             crate::workbench::Wheel::Composer => {
                 let delta = ev.delta.pixel_delta(line_height);
                 let at = self.wb_slots.scroll.offset();
@@ -167,6 +179,23 @@ impl TerminalView {
                 );
                 self.wb_slots
                     .scroll
+                    .set_offset(gpui::point(at.x, gpui::px(y)));
+                cx.notify();
+            }
+            // The same three lines as the composer, against the card's own
+            // handle. gpui does the clipping and the clamping; what it cannot
+            // do is decide WHICH box the turn is over, because under the tube
+            // its hit test is flat and the picture is bent.
+            crate::workbench::Wheel::Card => {
+                let delta = ev.delta.pixel_delta(line_height);
+                let at = self.wb_card_scroll.offset();
+                let max = self.wb_card_scroll.max_offset();
+                let y = crate::workbench::wheel_offset(
+                    f32::from(at.y),
+                    f32::from(delta.y),
+                    f32::from(max.y),
+                );
+                self.wb_card_scroll
                     .set_offset(gpui::point(at.x, gpui::px(y)));
                 cx.notify();
             }
@@ -505,6 +534,166 @@ impl TerminalView {
             self.agent_is_thinking(),
             self.reading_answer(crate::surfacefeed::now_ms()),
         )
+    }
+
+    /// End the agent in this pane, by asking it to quit the way a person does.
+    ///
+    /// Two `0x03`s down the pseudoterminal, through the same path the composer
+    /// writes keystrokes on. Parker asked for a kill that ends the session
+    /// *"abruptly"*, and this is as abrupt as his own hands are — but it is
+    /// deliberately not a signal, for a reason that is the whole point of the
+    /// button:
+    ///
+    /// **A signalled process never lowers the alternate screen.** The host
+    /// holds a pane at `Claude` for as long as the alternate screen is up
+    /// (`host::next_mode`), which is right — an agent shelling out to `rg` must
+    /// not rename itself twice a second — so a `SIGKILL` would end the agent
+    /// and then leave the pane reading as an agent forever. The LAUNCH verb
+    /// this button exists to bring back would never appear. Asking the agent to
+    /// quit gets the alternate screen lowered, the demotion made honestly, and
+    /// the transcript flushed on the way out.
+    ///
+    /// A wedged agent is the case this cannot serve, and the escalation to a
+    /// signal is [`docs/plans/bench-kill-and-relaunch`]'s second rung — it
+    /// needs a host verb the running host does not have, so it is not here.
+    fn bench_end_agent(&mut self, cx: &mut Context<Self>) {
+        // Two, not one. A single interrupt cancels the turn; the second is
+        // what quits, and sending them as one write keeps them inside the
+        // harness's own double-press window rather than racing a paint.
+        self.bench_deliver(vec![0x03, 0x03], cx);
+        self.wb_dial = None;
+    }
+
+    /// The strip's right-hand run: the two dials, then the one verb.
+    ///
+    /// Built here rather than in [`crate::benchdraw`] because every element in
+    /// it carries a click zone, and a zone is a statement about what a press
+    /// MEANS — which is the one thing that file is asserted not to contain.
+    ///
+    /// The dials are drawn only while an agent is actually in the pane. A dial
+    /// on an ended pane would be a control for changing the mind of something
+    /// that is not there.
+    fn strip_trailing(
+        &mut self,
+        state: crate::workbench::AgentState,
+        agent_now: bool,
+        sk: &crate::skin::Skin,
+        th: &Theme,
+    ) -> Vec<gpui::Div> {
+        use crate::workbench::{Dial, Hit, StripVerb};
+        let mut out: Vec<gpui::Div> = Vec::new();
+        let pressable = agent_now && crate::workbench::dials_live(state);
+        if agent_now {
+            for which in [Dial::Model, Dial::Effort] {
+                let value = match which {
+                    Dial::Model => self.wb_model.clone(),
+                    Dial::Effort => self.wb_effort.map(|e| e.id().to_string()),
+                };
+                let mut chip = crate::benchdraw::dial(
+                    which,
+                    value.as_deref(),
+                    self.wb_dial == Some(which),
+                    pressable,
+                    sk,
+                    th,
+                );
+                // No zone when it cannot be pressed. A control that looks
+                // disabled and still fires is worse than one that does not
+                // exist, and the un-bent hit test would happily record one.
+                if pressable {
+                    chip = chip.relative().child(crate::benchdraw::zone(
+                        self.wb_zones.clone(),
+                        Hit::Dial(which),
+                    ));
+                }
+                out.push(chip);
+            }
+        }
+        let (label, glyph, hit, primary) = match crate::workbench::strip_verb(state, agent_now) {
+            StripVerb::End => ("END", "\u{23f9}", Hit::EndAgent, false),
+            StripVerb::Launch => ("LAUNCH AGENT", "\u{2301}", Hit::Launch, true),
+        };
+        out.push(
+            crate::benchdraw::strip_button(label, glyph, primary, sk, th)
+                .relative()
+                .child(crate::benchdraw::zone(self.wb_zones.clone(), hit)),
+        );
+        out
+    }
+
+    /// The list an open dial drops, and the values in it.
+    ///
+    /// The values are the harness's own — [`crate::launcher::Harness::models`]
+    /// and [`crate::launcher::Harness::efforts`], already checked against
+    /// `claude --help` and already clamped per harness. A second copy of that
+    /// list here is how a menu goes stale and silently starts the wrong model.
+    fn dial_values(&self, which: crate::workbench::Dial) -> (Vec<String>, Option<usize>) {
+        use crate::workbench::Dial;
+        let harness = match self.mode {
+            crate::pane::PaneMode::Codex => crate::launcher::Harness::Codex,
+            _ => crate::launcher::Harness::Claude,
+        };
+        match which {
+            Dial::Model => {
+                let vals: Vec<String> = harness
+                    .models()
+                    .iter()
+                    .map(|m| m.label.to_string())
+                    .collect();
+                let at = self
+                    .wb_model
+                    .as_ref()
+                    .and_then(|m| vals.iter().position(|v| v == m));
+                (vals, at)
+            }
+            Dial::Effort => {
+                let vals: Vec<String> = harness
+                    .efforts()
+                    .iter()
+                    .map(|e| e.id().to_string())
+                    .collect();
+                let at = self
+                    .wb_effort
+                    .and_then(|e| harness.efforts().iter().position(|o| *o == e));
+                (vals, at)
+            }
+        }
+    }
+
+    /// Take a value from an open dial: remember it, and tell the agent.
+    ///
+    /// One [`Self::bench_say`] and nothing else. `/model` and `/effort` are the
+    /// harness's own commands — both present in the installed Claude Code and
+    /// both taking an inline argument — so this needs no host verb, no wire
+    /// change, and nothing about the running session upgraded.
+    fn bench_dial_pick(
+        &mut self,
+        which: crate::workbench::Dial,
+        at: usize,
+        cx: &mut Context<Self>,
+    ) {
+        use crate::workbench::Dial;
+        let (vals, _) = self.dial_values(which);
+        let Some(value) = vals.get(at).cloned() else {
+            return;
+        };
+        // Recorded BEFORE the write, and recorded as what we asked for rather
+        // than as what happened: this is the only claim the dial ever makes —
+        // *this pane was told this* — and it stays true whether or not the
+        // harness liked the value. If it did not, it says so on its own screen
+        // in its own words, which is a better answer than a dial guessing.
+        match which {
+            Dial::Model => self.wb_model = Some(value.clone()),
+            Dial::Effort => {
+                let harness = match self.mode {
+                    crate::pane::PaneMode::Codex => crate::launcher::Harness::Codex,
+                    _ => crate::launcher::Harness::Claude,
+                };
+                self.wb_effort = harness.efforts().get(at).copied();
+            }
+        }
+        self.wb_dial = None;
+        self.bench_say(&format!("{} {value}", which.command()), cx);
     }
 
     /// Did the bench type into this pane recently enough that the agent is
@@ -1499,8 +1688,14 @@ impl TerminalView {
             );
         }
 
-        // ── what the agent is doing, in one line ────────────────────────────
-        let live = self.mode.is_agent().then(|| {
+        // ── what the agent is doing, and the dials that change it ───────────
+        //
+        // The strip draws for a pane that HAS an agent or HAD one. The second
+        // half is the state that never existed: an agent quitting demoted the
+        // pane to a shell and took the whole bar away with it, along with the
+        // only place a person could have started another one.
+        let agent_now = self.mode.is_agent();
+        let live = (agent_now || self.wb_had_agent).then(|| {
             // One counter for the whole agent: how long it has been in the
             // state the bar names. Reset the moment the state changes, so
             // "Waiting on you · 2m" means two minutes of THIS wait.
@@ -1516,11 +1711,14 @@ impl TerminalView {
             // The turn's clock, tokens and in-flight call, off the same
             // status line the header's badge reads — one parse, two readers.
             let vitals = crate::workbench::turn_vitals(&self.agent_status());
+            let tool = self.tool_face.as_ref().map(|f| f.verb.clone());
+            let trailing = self.strip_trailing(state, agent_now, sk, th);
             crate::benchdraw::title_card(
                 state,
                 now.saturating_sub(since),
                 vitals.as_ref(),
-                self.tool_face.as_ref().map(|f| f.verb.as_str()),
+                tool.as_deref(),
+                trailing,
                 sk,
                 th,
             )
@@ -1544,12 +1742,42 @@ impl TerminalView {
         // gets the close: the stand-in was not opened and cannot be closed,
         // and a ✕ that did nothing would be a control that lies.
         let card_open = self.bench.selected().is_some();
-        // A shell pane with an empty bench has exactly one thing to say, and it
-        // is a verb. Resolved here rather than inside the arm below because the
-        // BODY's own alignment turns on it — an offer reads from the top and a
-        // transcript from the floor, and the two used to share one rule.
-        let offering =
-            self.bench.showing().is_none() && !self.mode.is_agent() && self.bench.is_empty();
+        // Is there a card IN the body — not "did somebody open one". The
+        // overview stands the newest reply in the room without anybody opening
+        // it, and that stand-in is a card in every way this code cares about:
+        // it reads from the top, it can be taller than the pane, and the wheel
+        // has to be able to reach it.
+        let showing_id = self.bench.showing().map(|s| s.id.clone());
+        // A card is a different document from the one before it, so the scroll
+        // offset does not carry across — opening a short reply after scrolling
+        // a long one would land in the middle of it, or past its end.
+        //
+        // Compared here rather than reset at each site that can change the
+        // card (open a row, close one, change shelf, a new reply arriving,
+        // a surface retired under the reader): one comparison cannot miss a
+        // site, and five resets can.
+        if self.wb_card_at != showing_id {
+            self.wb_card_scroll
+                .set_offset(gpui::point(gpui::px(0.), gpui::px(0.)));
+            self.wb_card_at = showing_id.clone();
+        }
+        // The offer to start an agent, keyed on whether this pane HAS one —
+        // never on whether its bench happens to be clean.
+        //
+        // It read `… && self.bench.is_empty()`, and that made the one pane
+        // which had actually run an agent the one pane that could never start
+        // another: the surfaces an agent presents outlive it, nothing clears
+        // them on a mode change, so the condition was false from its first
+        // reply onward. A pane whose agent presented nothing could still
+        // offer. Parker: *"when I start a new agent in the workbench and then
+        // end that agent session, I do not have the ability to start another
+        // agent from the same workbench."*
+        //
+        // Emptiness is a fact about the RECORD. The offer is a question about
+        // the PROCESS. A pane that has had an agent is excluded because its
+        // strip carries the verb instead — one slot, two states, not two
+        // buttons offering the same thing in different places.
+        let offering = showing_id.is_none() && !agent_now && !self.wb_had_agent;
         let body = match self.bench.showing() {
             Some(surface) => {
                 let tint = crate::benchdraw::ink(crate::workbench::tint_of(&surface.kind), th);
@@ -1619,13 +1847,9 @@ impl TerminalView {
                 .children(answers)
                 .children(verbs)
             }
-            // No card: the conversation, and whatever the agent is waiting on.
+            // No card: the conversation.
             None => {
                 let tail = self.recent_lines(if full { 18 } else { 12 });
-                let waiting = self.bench.waiting_question().and_then(|s| match &s.kind {
-                    crate::surface::Kind::Question(q) => Some(q.clone()),
-                    _ => None,
-                });
                 div()
                     .flex()
                     .flex_col()
@@ -1647,12 +1871,37 @@ impl TerminalView {
                     .when(shows.mirror, |d| {
                         d.child(crate::benchdraw::conversation(&tail, sk, th))
                     })
-                    .when_some(waiting, |d, q| {
-                        let chips = self.answer_chips(&q, sk, th);
-                        d.child(crate::benchdraw::waiting_block(&q, sk, th).child(chips))
-                    })
             }
         };
+
+        // ── what the agent is blocked on, whatever else is on the bench ─────
+        //
+        // OUT of the match, and that is the fix rather than a tidy-up. It was
+        // the last child of the `None` arm, so a waiting question could only
+        // be drawn when there was no card — and the overview stands the newest
+        // reply in the room the moment an agent presents one, which every
+        // agent does at the end of every turn. So from an agent's first reply
+        // onward the picker it was blocked on had nowhere to be drawn, while
+        // `Bench::act` went on resolving `selected().or_else(waiting_question)`
+        // and answering it perfectly. A live control with no drawing. Parker:
+        // *"when we click chat about this in a multiple choice option, we do
+        // not see that coming up on the workbench work surface as an
+        // interactable frame."*
+        //
+        // It sits BELOW the body and outside its scroll, because being asked
+        // something is not part of the document you happen to be reading and
+        // must not be scrolled away from. See `terminal-delight#533`.
+        let waiting = self
+            .bench
+            .waiting_question()
+            .and_then(|s| match &s.kind {
+                crate::surface::Kind::Question(q) => Some(q.clone()),
+                _ => None,
+            })
+            .map(|q| {
+                let chips = self.answer_chips(&q, sk, th);
+                crate::benchdraw::waiting_block(&q, sk, th).child(chips)
+            });
 
         // ── the composer ────────────────────────────────────────────────────
         let composer = shows.composer.then(|| {
@@ -1880,6 +2129,32 @@ impl TerminalView {
             )
         });
 
+        // ── the open dial's list ────────────────────────────────────────────
+        //
+        // Drawn last and placed absolutely, under the strip on the right, so
+        // it lands over the card rather than pushing it. A menu that reflows
+        // the page it opens on is one that moves the thing you were reading.
+        let dial_list = self.wb_dial.filter(|_| agent_now).map(|which| {
+            let (vals, at) = self.dial_values(which);
+            let rows: Vec<gpui::Div> = vals
+                .iter()
+                .enumerate()
+                .map(|(i, v)| {
+                    crate::benchdraw::dial_row(v, at == Some(i), sk, th).child(
+                        crate::benchdraw::zone(
+                            self.wb_zones.clone(),
+                            crate::workbench::Hit::DialPick(which, i),
+                        ),
+                    )
+                })
+                .collect();
+            div()
+                .absolute()
+                .top(px(46.))
+                .right(px(rail_px + 18.))
+                .child(crate::benchdraw::dial_menu(rows, sk, th))
+        });
+
         div()
             .relative()
             .size_full()
@@ -1912,13 +2187,39 @@ impl TerminalView {
                     // caret it lights is the thing to look at.
                     .child(
                         div()
+                            // Stateful, because a scroll container IS state:
+                            // gpui keeps the offset against this id between
+                            // frames. Constant, which is safe because ids are
+                            // unique within one view's tree and this is one
+                            // box in one pane.
+                            .id("bench-body")
                             .flex_1()
                             .min_h(px(0.))
-                            .overflow_hidden()
                             .flex()
                             .flex_col()
+                            // A CARD SCROLLS; a conversation does not.
+                            //
+                            // The two cannot share one rule, and the reason is
+                            // the trap the composer already carries a
+                            // paragraph about: a `justify_end` box overflows
+                            // its TOP, and a gpui scroll container holds its
+                            // offset between zero and the content's overhang,
+                            // so an overhang at the top is on the wrong side of
+                            // zero and the wheel can never reach it. The
+                            // conversation wants `justify_end` and has its own
+                            // scrollback elsewhere; the card wants neither.
+                            //
+                            // Before this the box was plain `overflow_hidden`
+                            // for both, so a card taller than the pane was
+                            // simply cut — with the folds already built and
+                            // already unable to save it, because one unfolded
+                            // section can exceed the pane on its own.
+                            .when(showing_id.is_some(), |d| {
+                                d.overflow_y_scroll().track_scroll(&self.wb_card_scroll)
+                            })
+                            .when(showing_id.is_none(), |d| d.overflow_hidden())
                             .when(
-                                crate::workbench::body_anchor(card_open, offering)
+                                crate::workbench::body_anchor(showing_id.is_some(), offering)
                                     == crate::workbench::Anchor::Bottom,
                                 |d| d.justify_end(),
                             )
@@ -1930,10 +2231,19 @@ impl TerminalView {
                             })
                             .child(body),
                     )
+                    // Below the body and OUTSIDE its scroll. A question the
+                    // agent is blocked on is not part of whatever document is
+                    // open above it, and a person must not have to scroll back
+                    // to a thing that is holding the session up.
+                    .children(waiting)
                     .children(composer),
             )
             .children(handle)
             .children(rail)
+            // After the body, so the list's zones are recorded after the
+            // card's and win the lookup — last painted wins. Before the
+            // gallery, which is a modal and must win over both.
+            .children(dial_list)
             .children(gallery)
             // Last, so its hitbox and its cursor request are painted after
             // every control's — see the hook for why that order is the rule.
