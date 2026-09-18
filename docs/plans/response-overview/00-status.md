@@ -64,7 +64,10 @@ Three things in one message with two screenshots:
 - [x] Renderer: gist block, one panel per section with a clickable header carrying the
   fold chevron, label and measure; doubts strip; compact and summary bodies.
 - [x] Demo fixture carries a response, so a screenshot of the overview is never empty.
-- [ ] Looked at on a screen — pending the release build and the photographs.
+- [ ] Looked at on a screen — the build is installed, but both outputs were DPMS-off when
+  the demo window was staged and every grab hung. Tracked as the follow-up issue
+  "The response card and the fixed launcher panel have not been looked at on a screen"
+  (#505), with the recipe and the invalidation criterion.
 
 ## Difficulty, after the fact
 
