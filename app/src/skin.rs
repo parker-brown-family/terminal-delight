@@ -609,6 +609,16 @@ pub struct Skin {
     pub shape: Shapes,
     /// The window's UI scale, folded in here so no call site multiplies by `s`.
     pub scale: f32,
+    /// The TYPE gauge, folded in for exactly the same reason `scale` is.
+    ///
+    /// Two different dials, and the difference matters: `scale` is the menu-bar
+    /// slider, which sizes chrome — the outer bar, the tabs, a pane's header.
+    /// This is `grade.text_size`, the slider that sizes what a person READS,
+    /// and it is neutral on a freshly baked skin. Only a surface that is
+    /// content rather than chrome asks for it, by taking a copy through
+    /// [`Skin::with_type`]; the pane header, which is chrome, deliberately
+    /// does not.
+    pub ty: crate::workbench::Type,
 }
 
 impl SkinSpec {
@@ -620,7 +630,39 @@ impl SkinSpec {
             m: self.metric.bake(),
             shape: self.shape.bake(),
             scale,
+            ty: crate::workbench::Type::neutral(),
         }
+    }
+}
+
+impl Skin {
+    /// This skin, wearing a pane's text-size gauge.
+    ///
+    /// A copy rather than a mutation: one bake per pane per frame feeds both
+    /// the header and the bench, and they want different answers — see
+    /// [`Skin::ty`].
+    pub fn with_type(&self, gauge: f32) -> Skin {
+        Skin {
+            ty: crate::workbench::Type::at(gauge),
+            ..self.clone()
+        }
+    }
+
+    /// A rung of the type ramp, in points, with this skin's gauge applied.
+    ///
+    /// Spelled on the skin so a call site reads `sk.pt(Step::Body)` beside
+    /// `sk.rad(…)` and never multiplies by a factor itself — the same bargain
+    /// `scale` already struck with every corner in the chrome.
+    pub fn pt(&self, step: crate::workbench::Step) -> f32 {
+        self.ty.pt(step)
+    }
+
+    /// A box that holds text, scaled the same way the text in it is.
+    ///
+    /// Type that grows inside a column that does not is how an exact fit starts
+    /// wrapping down a row, and a screenshot is the only thing that catches it.
+    pub fn tpx(&self, base: f32) -> f32 {
+        self.ty.px(base)
     }
 }
 

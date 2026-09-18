@@ -1245,6 +1245,178 @@ pub fn shows(pane_w: f32, pane_h: f32, is_agent: bool, rail_wanted: bool, armed:
     }
 }
 
+/// Which end of the bench's body its content is anchored to.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Anchor {
+    /// Reads downward from the top. A card, and an offer.
+    Top,
+    /// Reads upward from the floor. A conversation.
+    Bottom,
+}
+
+/// Where the body's content sits in a box taller than it is.
+///
+/// Three things share that box and they do not read the same way.
+///
+/// A **conversation** reads from the BOTTOM — newest last, just above the
+/// composer you answer it in — and top-aligning it once left the transcript
+/// floating in a field of empty with the input stranded at the far edge.
+///
+/// A **card** reads from the TOP, and pinning one to the floor of a 900px pane
+/// put an opened table under an acre of nothing.
+///
+/// An **offer** reads from the top too, for a stronger reason than typography:
+/// it is the only thing on the surface and it is a thing to press. Bottom-
+/// anchored it inherited the transcript's alignment and went to the floor —
+/// Parker, on the build that did it: *"SPINNING up a new agent in workbench —
+/// the ACTIon for this is WAAAAAAY at the bottome of the screen"*. A call to
+/// action is not history, and nothing about it belongs at the bottom of a tall
+/// pane.
+pub fn body_anchor(card_open: bool, offering: bool) -> Anchor {
+    if card_open || offering {
+        Anchor::Top
+    } else {
+        Anchor::Bottom
+    }
+}
+
+// ---------------------------------------------------------------------------
+// the bench's type
+// ---------------------------------------------------------------------------
+
+/// One rung of the bench's type ramp.
+///
+/// Before this existed the surface carried **fifteen** distinct sizes —
+/// `8.5`, `9`, `9.5`, `10`, `10.5`, `11`, `11.5`, `12`, `12.5`, `13`, `13.5`,
+/// `15`, `17`, `18`, `20` — each written as a literal at the point of use.
+/// That is not a type system, it is accretion: half of those pairs differ by
+/// half a point, which no reader can see and every future edit has to choose
+/// between. Nine rungs, named for the job rather than the number, and the
+/// number lives in exactly one table.
+///
+/// The old value each rung absorbed is recorded beside it in [`Step::base`],
+/// so the collapse is auditable rather than asserted.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Step {
+    /// The faintest marks: shelf legends, a weight's channel names, `TL;DR`.
+    Tag,
+    /// A label with a word in it — `REVIEW`, a confidence, a register name.
+    Fine,
+    /// Secondary rows: a measure, a subtitle, an id.
+    Note,
+    /// The reading size for a list — a row of a table, a bullet, a consequence.
+    Small,
+    /// Body copy. The default, and what an unremarkable sentence gets.
+    Body,
+    /// A card's own line: a title in the rail, a question's text.
+    Lead,
+    /// A heading over a block.
+    Head,
+    /// The big line on a title card.
+    Title,
+    /// A single glyph standing alone.
+    Display,
+}
+
+impl Step {
+    /// Every rung, smallest first — the ramp's ordering, written down.
+    ///
+    /// Used by the tests rather than by the render, which asks for rungs by
+    /// name; kept in the shipped build anyway, because it is the list a table
+    /// test walks to assert the ramp is strictly increasing, and a ramp with a
+    /// repeat in it is two names for one size.
+    #[allow(dead_code)]
+    pub const ALL: [Step; 9] = [
+        Step::Tag,
+        Step::Fine,
+        Step::Note,
+        Step::Small,
+        Step::Body,
+        Step::Lead,
+        Step::Head,
+        Step::Title,
+        Step::Display,
+    ];
+
+    /// The rung's size in points **before the pane's gauge**, and the literals
+    /// it replaced.
+    pub fn base(self) -> f32 {
+        match self {
+            Step::Tag => 9.0,      // was 8.5 and 9.0
+            Step::Fine => 9.5,     // was 9.5
+            Step::Note => 10.0,    // was 10.0 and 10.5
+            Step::Small => 11.0,   // was 11.0 and 11.5
+            Step::Body => 12.0,    // was 12.0 and 12.5
+            Step::Lead => 13.0,    // was 13.0 and 13.5
+            Step::Head => 15.0,    // was 15.0
+            Step::Title => 17.0,   // was 17.0 and 18.0
+            Step::Display => 20.0, // was 20.0
+        }
+    }
+}
+
+/// The bench's type, resolved against one pane's text-size gauge.
+///
+/// **Why the bench has a gauge at all.** The workbench is the second face of a
+/// pane, and a pane is already a display with its own monitor controls — text
+/// size, brightness, contrast, colour, gamma, warp. Every one of those reached
+/// the terminal grid and stopped at the bench, so a person who had sized their
+/// terminal to their eyes flipped faces and got somebody else's idea of 11
+/// point. Parker: *"all of the pane gauges should ALSO affect the workbench"*.
+///
+/// **The gauge is a multiplier, not a percent.** `grade.text_size` runs
+/// `0.6..=2.0` with `1.0` neutral, so the slider reading `65%` on the tray is
+/// a factor of `1.51` — the dial makes type BIGGER for most of its travel, and
+/// reading its percent as a shrink gets the direction of the whole feature
+/// backwards.
+///
+/// **Boxes move with the type.** Anything sized to hold text — a label column,
+/// a marker — goes through [`Type::px`] rather than staying a literal, because
+/// type that grows inside a box that does not is how an exact fit starts
+/// wrapping down a row.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct Type {
+    k: f32,
+}
+
+impl Type {
+    /// Resolve against a pane's effective `grade.text_size`.
+    ///
+    /// A non-finite or non-positive gauge resolves to neutral rather than to
+    /// zero: a bench drawn at 0pt is a blank rectangle, which reads as the
+    /// feature being broken rather than as a dial being wrong.
+    pub fn at(gauge: f32) -> Self {
+        let k = if gauge.is_finite() && gauge > 0.0 {
+            gauge
+        } else {
+            1.0
+        };
+        Self { k }
+    }
+
+    /// Neutral — the ramp at its authored sizes. For tests and for any caller
+    /// that genuinely has no pane.
+    pub fn neutral() -> Self {
+        Self { k: 1.0 }
+    }
+
+    /// A rung, in points, with the gauge applied.
+    pub fn pt(self, step: Step) -> f32 {
+        step.base() * self.k
+    }
+
+    /// Any other bench measurement that must move with the type — a label
+    /// column's width, a status marker's height, a gutter that holds a glyph.
+    pub fn px(self, base: f32) -> f32 {
+        base * self.k
+    }
+
+    /// The factor itself, for the composer's own dynamic ramp.
+    pub fn k(self) -> f32 {
+        self.k
+    }
+}
+
 /// Pick a type size that fits this much text in this much room.
 ///
 /// **Two steps, and a floor.** The research says font shrinking is not how
@@ -1260,12 +1432,28 @@ pub fn shows(pane_w: f32, pane_h: f32, is_agent: bool, rail_wanted: bool, armed:
 /// face and only roughly; being a step out picks a slightly wrong SIZE and
 /// never a wrong position, because the caret and the wrapping are laid out by
 /// the text system rather than by this arithmetic.
-pub fn composer_pt(chars: usize, box_w: f32, box_h: f32) -> f32 {
-    const STEPS: [f32; 3] = [17.0, 14.5, 12.5];
+///
+/// **The base ramp is half what it was**, and the pane's gauge is applied on
+/// top. It ran `17 / 14.5 / 12.5` and the top step was the size of a heading:
+/// Parker, on the line he types to an agent — *"The text size in the agent
+/// prompt: SMALLER! maybe 1/2 the size as default... and should follow scaling
+/// of the pane config"*. Both halves of that are here: the steps are halved,
+/// and `k` is the pane's `grade.text_size`.
+///
+/// **The floor is in RENDERED points, not in base points.** That is the whole
+/// reason the accessibility note above survives a halving. `12px` was the last
+/// defensible size for dense UI when there was one fixed ramp; with a dial in
+/// front of it the same claim has to be made about what the eye receives, so
+/// the floor is applied last, after the gauge — a pane turned down to `0.6`
+/// gets [`COMPOSER_MIN_PT`], not a base step multiplied into illegibility.
+pub fn composer_pt(chars: usize, box_w: f32, box_h: f32, k: f32) -> f32 {
+    let k = if k.is_finite() && k > 0.0 { k } else { 1.0 };
+    let step = |i: usize| (COMPOSER_STEPS[i] * k).max(COMPOSER_MIN_PT);
     if box_w <= 0.0 || box_h <= 0.0 {
-        return STEPS[0];
+        return step(0);
     }
-    for pt in STEPS {
+    for i in 0..COMPOSER_STEPS.len() {
+        let pt = step(i);
         let per_line = (box_w / (pt * 0.6)).max(1.0);
         let lines = (chars as f32 / per_line).ceil();
         let room = (box_h / (pt * 1.35)).floor();
@@ -1275,16 +1463,26 @@ pub fn composer_pt(chars: usize, box_w: f32, box_h: f32) -> f32 {
     }
     // Past the floor it scrolls instead, which is what every chat composer
     // does and what the eye can actually follow.
-    STEPS[2]
+    step(COMPOSER_STEPS.len() - 1)
 }
+
+/// The composer's three sizes **before the pane's text-size gauge**, largest
+/// first. Halved from `17 / 14.5 / 12.5`; the shrink between them is what buys
+/// a long draft more room before it starts scrolling.
+pub const COMPOSER_STEPS: [f32; 3] = [8.5, 7.25, 6.25];
+
+/// …and what the eye actually receives never goes below this, whatever the
+/// gauge. Applied after the multiplier, so it is a claim about legibility
+/// rather than about arithmetic.
+pub const COMPOSER_MIN_PT: f32 = 9.5;
 
 /// How much of a draft is past what the box can show, in characters.
 ///
 /// `None` when it all fits. A value here is not a failure — it is the ordinary
 /// state of a long prompt, and the composer says so rather than silently
 /// hiding the top of somebody's paragraph.
-pub fn composer_hidden(chars: usize, box_w: f32, box_h: f32) -> Option<usize> {
-    let pt = composer_pt(chars, box_w, box_h);
+pub fn composer_hidden(chars: usize, box_w: f32, box_h: f32, k: f32) -> Option<usize> {
+    let pt = composer_pt(chars, box_w, box_h, k);
     if box_w <= 0.0 || box_h <= 0.0 {
         return None;
     }
@@ -3485,33 +3683,218 @@ mod tests {
         assert!(!cramped.hint, "without the hint it has no room for");
     }
 
+    /// The gauge a tray slider reading 65% actually hands over. Written out
+    /// rather than spelled `0.65`, because reading the percent as the factor is
+    /// the one mistake that inverts this whole feature: the channel runs
+    /// `0.6..=2.0`, so most of the slider's travel makes type BIGGER.
+    const AT_65_PERCENT: f32 = 1.51;
+
     #[test]
-    fn the_type_shrinks_two_steps_and_then_refuses_to_shrink_further() {
-        // A roomy box at a short prompt: full size, nothing clever.
-        assert_eq!(composer_pt(40, 900., 300.), 17.0);
-        // Enough to need the next step down.
-        let mid = composer_pt(1200, 900., 300.);
-        assert!((12.5..17.0).contains(&mid), "{mid}");
+    fn the_slider_percent_is_not_the_factor() {
+        // The trap, pinned. A pane photographed at "text size 65%" is running a
+        // 1.51x multiplier, and anyone who reads that as "shrink to 65%" builds
+        // the dial backwards.
+        let k = crate::theme::GradeKey::TextSize;
+        let at_65 = k.from_percent(65.0);
+        assert!(
+            (at_65 - AT_65_PERCENT).abs() < 0.01,
+            "65% on the tray is {at_65}x, not 0.65x"
+        );
+        assert!(at_65 > 1.0, "most of this slider's travel is ENLARGEMENT");
+        // Neutral is barely a third of the way along, which is why the dial
+        // looks like it is turned down when it is turned up.
+        let neutral_at = k.to_percent(1.0);
+        assert!(
+            (28.0..30.0).contains(&neutral_at),
+            "neutral sits at {neutral_at}%"
+        );
+    }
+
+    #[test]
+    fn the_type_ramp_is_ordered_and_every_rung_is_reachable() {
+        // Nine rungs, strictly increasing. A ramp with a repeat in it is two
+        // names for one size, and the second name never gets used.
+        let sizes: Vec<f32> = Step::ALL.iter().map(|s| s.base()).collect();
+        for pair in sizes.windows(2) {
+            assert!(
+                pair[1] > pair[0],
+                "the ramp is not strictly increasing: {pair:?}"
+            );
+        }
+        assert_eq!(Step::ALL.len(), 9);
+        // The span is the one the surface actually needed — the smallest label
+        // to the one standalone glyph. Pinned so a rung cannot be quietly
+        // widened into a size nothing was designed at.
+        assert_eq!(sizes.first().copied(), Some(9.0));
+        assert_eq!(sizes.last().copied(), Some(20.0));
+    }
+
+    #[test]
+    fn the_gauge_multiplies_every_rung_and_neutral_is_the_identity() {
+        let neutral = Type::neutral();
+        for step in Step::ALL {
+            assert_eq!(
+                neutral.pt(step),
+                step.base(),
+                "a neutral gauge must be the identity at {step:?}"
+            );
+        }
+        // …and at Parker's own setting every rung moves by exactly the factor,
+        // which is what makes this ONE dial rather than nine tuned constants.
+        let big = Type::at(AT_65_PERCENT);
+        for step in Step::ALL {
+            let want = step.base() * AT_65_PERCENT;
+            assert!(
+                (big.pt(step) - want).abs() < 1e-4,
+                "{step:?}: {} != {want}",
+                big.pt(step)
+            );
+        }
+        // A box that holds text scales with the text in it, off the same factor.
+        assert!((big.px(110.) - 110. * AT_65_PERCENT).abs() < 1e-3);
+        assert_eq!(neutral.px(110.), 110.);
+    }
+
+    /// Unknown is not zero, at the one place it would be invisible.
+    #[test]
+    fn a_gauge_that_is_not_a_number_reads_as_neutral_never_as_zero() {
+        // Each of these is a plausible way for a gauge to arrive broken — an
+        // unparsed field, a division that went wrong, a channel read before it
+        // was set. Every one of them, resolved naively, renders the whole bench
+        // at zero points: a blank rectangle, which reads as the FEATURE being
+        // broken rather than as one number being wrong.
+        for bad in [f32::NAN, 0.0, -1.0, -0.0, f32::INFINITY, f32::NEG_INFINITY] {
+            let t = Type::at(bad);
+            assert_eq!(
+                t.pt(Step::Body),
+                Step::Body.base(),
+                "a gauge of {bad} must fall back to neutral"
+            );
+            assert!(t.pt(Step::Tag) > 0.0, "nothing on the bench draws at 0pt");
+        }
+        // The composer takes the same guarantee through its own entry point.
+        for bad in [f32::NAN, 0.0, -1.0, f32::INFINITY] {
+            let pt = composer_pt(40, 900., 300., bad);
+            assert!(pt >= COMPOSER_MIN_PT, "a gauge of {bad} gave {pt}pt");
+        }
+    }
+
+    #[test]
+    fn the_composer_halved_its_ramp_and_moved_its_floor_to_what_the_eye_gets() {
+        // Half of the old 17 / 14.5 / 12.5, to the quarter point. The ask was
+        // exact — *"SMALLER! maybe 1/2 the size as default"* — so the arithmetic
+        // is asserted rather than eyeballed.
+        for (old, new) in [(17.0, 0), (14.5, 1), (12.5, 2)] {
+            let want = old / 2.0;
+            assert!(
+                (COMPOSER_STEPS[new] - want).abs() <= 0.15,
+                "step {new} is {} and half of {old} is {want}",
+                COMPOSER_STEPS[new]
+            );
+        }
+
+        // A roomy box at a short prompt: the top step, with the gauge on it.
+        assert_eq!(composer_pt(40, 900., 300., 1.0), COMPOSER_MIN_PT);
+        let big = composer_pt(40, 900., 300., AT_65_PERCENT);
+        assert!(
+            (big - COMPOSER_STEPS[0] * AT_65_PERCENT).abs() < 1e-4,
+            "{big}"
+        );
+        // The whole point of the change, stated as the comparison Parker will
+        // make: what he sees now is meaningfully smaller than the 17pt he was
+        // objecting to, at his own gauge.
+        assert!(big < 17.0 * 0.85, "{big} is not smaller than the old 17pt");
+
+        // Enough text to need a step down. It takes MORE text to get there than
+        // it used to, which is the halving working rather than a bug: 1,200
+        // characters forced a step at the old sizes and comfortably fits now.
+        assert_eq!(
+            composer_pt(1200, 900., 300., AT_65_PERCENT),
+            big,
+            "1,200 characters used to force a step down and should no longer"
+        );
+        let mid = composer_pt(2500, 900., 300., AT_65_PERCENT);
+        assert!(mid < big, "a long draft steps down: {mid} vs {big}");
         // A 1,500-word prompt — roughly 9,000 characters — must NOT be
         // squeezed into unreadability. It bottoms out and scrolls instead.
-        assert_eq!(composer_pt(9000, 900., 300.), 12.5, "the floor holds");
-        assert_eq!(composer_pt(500_000, 900., 300.), 12.5);
-        // And a box with no room yet does not divide by zero on the first
-        // frame.
-        assert_eq!(composer_pt(100, 0., 0.), 17.0);
+        let floor = composer_pt(9000, 900., 300., AT_65_PERCENT);
+        assert!(floor >= COMPOSER_MIN_PT, "the floor holds at {floor}");
+        assert_eq!(composer_pt(500_000, 900., 300., AT_65_PERCENT), floor);
+
+        // THE FLOOR IS IN RENDERED POINTS. Read the bottom of the dial off the
+        // dial itself rather than writing 0.6 here: what has to hold is a claim
+        // about the range a person can actually reach, and a literal would keep
+        // passing after somebody widened it.
+        let bottom = crate::theme::GradeKey::TextSize.from_percent(0.0);
+        let tiny = composer_pt(40, 900., 300., bottom);
+        assert_eq!(tiny, COMPOSER_MIN_PT, "a turned-down pane still reads");
+        assert!(
+            COMPOSER_STEPS[0] * bottom < COMPOSER_MIN_PT,
+            "…and it had to: the base ramp alone would put this at {}pt",
+            COMPOSER_STEPS[0] * bottom
+        );
+
+        // And a box with no room yet does not divide by zero on the first frame.
+        assert!(composer_pt(100, 0., 0., 1.0) >= COMPOSER_MIN_PT);
+
+        // The dial's top end is the ramp this replaced, exactly. Turned all the
+        // way up, a person gets 17 / 14.5 / 12.5 back — so nothing was taken
+        // away, it was moved from a constant to a place they can reach.
+        let top = crate::theme::GradeKey::TextSize.from_percent(100.0);
+        for (i, old) in [17.0, 14.5, 12.5].into_iter().enumerate() {
+            let now = (COMPOSER_STEPS[i] * top).max(COMPOSER_MIN_PT);
+            assert!((now - old).abs() < 0.3, "step {i}: {now} vs the old {old}");
+        }
     }
 
     #[test]
     fn a_draft_too_long_to_show_says_how_much_is_hidden() {
         // Absence of a number means it all fits; a number means it does not,
         // and the composer can say so rather than quietly clipping.
-        assert_eq!(composer_hidden(40, 900., 300.), None);
-        let over = composer_hidden(9000, 900., 300.).expect("9k chars cannot fit");
+        assert_eq!(composer_hidden(40, 900., 300., 1.0), None);
+        let over = composer_hidden(9000, 900., 300., 1.0).expect("9k chars cannot fit");
         assert!(over > 0 && over < 9000, "{over}");
         // Monotonic: a longer draft never hides less.
-        let more = composer_hidden(20_000, 900., 300.).expect("20k cannot fit");
+        let more = composer_hidden(20_000, 900., 300., 1.0).expect("20k cannot fit");
         assert!(more > over, "{more} vs {over}");
-        assert_eq!(composer_hidden(100, 0., 0.), None, "no box, no claim");
+        assert_eq!(composer_hidden(100, 0., 0., 1.0), None, "no box, no claim");
+        // The two agree under a gauge as well as at neutral — they must, since
+        // one calls the other, and this is the assertion that catches a future
+        // edit teaching only one of them about the dial. BIGGER type hides MORE
+        // of the same draft, which is the direction that surprises people.
+        //
+        // Measured at the TOP of the dial, and the reason is worth keeping: for
+        // most of the slider's travel the legibility floor is what the smallest
+        // step resolves to at every gauge, so two different gauges render the
+        // same size and hide the same amount. The dial only reaches this
+        // comparison once the halved bottom step clears the floor on its own —
+        // which is a fact about the floor doing its job, and it cost a wrong
+        // assertion here to notice.
+        let at_neutral = composer_hidden(9000, 900., 300., 1.0).expect("fits nothing");
+        let top = crate::theme::GradeKey::TextSize.from_percent(100.0);
+        assert!(
+            COMPOSER_STEPS[2] * top > COMPOSER_MIN_PT,
+            "below this the floor binds at both gauges and there is nothing to compare"
+        );
+        let enlarged = composer_hidden(9000, 900., 300., top).expect("fits less");
+        assert!(
+            enlarged > at_neutral,
+            "enlarging the type must hide more, not less: {enlarged} vs {at_neutral}"
+        );
+    }
+
+    #[test]
+    fn an_offer_reads_from_the_top_and_a_transcript_from_the_floor() {
+        // The whole table. Two booleans, and the one row that was wrong is the
+        // one where the bench has nothing on it but a button.
+        assert_eq!(body_anchor(false, true), Anchor::Top, "an offer");
+        assert_eq!(body_anchor(true, false), Anchor::Top, "an opened card");
+        assert_eq!(body_anchor(true, true), Anchor::Top, "a card over an offer");
+        assert_eq!(
+            body_anchor(false, false),
+            Anchor::Bottom,
+            "a conversation still sits on its composer"
+        );
     }
 
     #[test]

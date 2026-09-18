@@ -756,6 +756,31 @@ impl Grade {
             && (self.text_size - 1.0).abs() < EPS
     }
 
+    /// True when the six PAINT channels sit at neutral, whatever the rest of
+    /// the grade is doing.
+    ///
+    /// Not the same question as [`Self::is_neutral`], which also asks about
+    /// `scale` and `text_size` — sensible for the paint loop, which wants one
+    /// cheap "can I skip all of this", and wrong for anything reasoning about
+    /// COLOUR alone. A pane with a text-size gauge on it and no colour grade
+    /// answers `false` to `is_neutral` and `true` here, and the difference is
+    /// load-bearing: it is what lets `pane::graded_palette` mark its work as
+    /// spent and short-circuit a second pass exactly, rather than re-running an
+    /// identity that drifts by an ULP each time.
+    pub fn colour_is_neutral(&self) -> bool {
+        const EPS: f32 = 1e-3;
+        [
+            self.brightness,
+            self.contrast,
+            self.colour,
+            self.text,
+            self.background,
+            self.gamma,
+        ]
+        .iter()
+        .all(|v| (v - 0.5).abs() < EPS)
+    }
+
     /// True when this grade equals the shipped [`Grade::default`]. Used as the
     /// `skip_serializing_if` for a scope's grade: omit it only when it matches
     /// the compiled default (which reload reconstructs), so a user grade that

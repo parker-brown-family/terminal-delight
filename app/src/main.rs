@@ -5,6 +5,7 @@
 //! ctrl+pgup/pgdn: switch · right-click tab: rename · alt+arrows: pane focus
 //! by direction · ctrl+arrows: word-jump in the shell · alt+v / alt+h: split ↔ / ↕
 //! alt+w: close the focused PANE (ctrl+w closes the whole tab) ·
+//! alt+k: flip the focused pane between its TERMINAL and WORKBENCH faces ·
 //! ctrl+alt+arrows: walk the left bar's tree (→ opens a branch, then steps in;
 //! ← closes it, then climbs out) ·
 //! drag a tab to reorder · ctrl+click a tab: set its binder-divider colour
@@ -11463,10 +11464,19 @@ impl Workspace {
         }
         match (landing, from) {
             // Into the pane the button was pressed on, by typing at its prompt.
-            // The face turns back to the terminal in the same gesture: what was
-            // just started is a program with an interface, and the bench it was
-            // started from has nothing on it until that program presents
-            // something.
+            //
+            // **The face is left exactly as it was found.** This used to flip
+            // the pane back to the terminal in the same gesture, on the
+            // reasoning that a newly started program has an interface and the
+            // bench it was started from has nothing on it yet. Both halves were
+            // true and the conclusion was still wrong: a person who pressed a
+            // button ON the workbench was moved off it by the press, which
+            // reads as the button having failed and taken them somewhere. It is
+            // also not empty — the agent's own title card is on the bench the
+            // moment the pane learns what is running in it.
+            //
+            // A launch changes what the pane HOLDS. Where the person is
+            // standing is theirs, and nothing here may move it.
             (launcher::Landing::Here, Some(pane)) => {
                 let typed = launcher::here_line(
                     &line,
@@ -11477,7 +11487,6 @@ impl Workspace {
                     &project.path,
                 );
                 pane.update(cx, |view, cx| {
-                    view.set_face(workbench::Face::Terminal, cx);
                     view.run_line(typed, cx);
                 });
                 cx.defer_in(window, |ws, window, cx| ws.focus_active(window, cx));
@@ -25935,6 +25944,7 @@ impl Render for Workspace {
                         row("Ctrl+Shift+PgUp / PgDn", s.move_tab),
                         row("Alt+V / H · Ctrl+Alt+R / D", s.split),
                         row("Alt+W", s.close_pane),
+                        row("Alt+K", s.toggle_bench),
                         row("Ctrl+W", s.close_tab),
                         row("Ctrl+Alt+↑↓←→", s.walk_tree),
                         row("Ctrl+Alt+1…9", s.jump_branch),
@@ -28259,8 +28269,20 @@ mod tests {
         assert!(
             launch.contains("launcher::landing(") && launch.contains("run_line("),
             "the launcher no longer starts the agent in the pane it was opened from — \
-             which is what its own empty-bench sentence promises: \"A shell has no agent \
-             to present anything. Launch one into this pane.\""
+             which is what its own empty-bench button promises"
+        );
+        // A launch moves nothing the person is looking at. Pressing a button on
+        // the workbench used to flip the pane to the terminal in the same
+        // gesture — Parker, on the build that did it: *\"Launching an agent in
+        // workbench -> SWITCHES immediately back to terminal... this is
+        // incorrect... should STAY on workbench with NO jitters or changes at
+        // all\"*. Scanned rather than exercised because the alternative needs a
+        // live `Window`; the whole failure is one `set_face` call inside this
+        // function, so one line is exactly the right thing to scan for.
+        assert!(
+            !launch.contains("set_face("),
+            "launch_agent is moving the pane's face again; a launch changes what a pane \
+             HOLDS, never which of its two faces the person is standing on"
         );
 
         let adopt = body("fn drain_pending_adopts(");

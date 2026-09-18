@@ -36,7 +36,7 @@ use crate::surface::{
     Body, Confidence, Depth, Kind, Register, Response, Shelf, Surface, SurfaceId, Verdict, Weight,
 };
 use crate::theme::Theme;
-use crate::workbench::{Embodiment, Row, Tint};
+use crate::workbench::{Embodiment, Row, Step, Tint};
 
 /// What a response renderer needs to draw folds it cannot decide for itself:
 /// whose sections these are, which of them are open, and where to register
@@ -196,9 +196,9 @@ pub fn aglow<E: Styled>(el: E, tint: Hsla, th: &Theme) -> E {
 
 /// A small mono label — the chrome's own voice, used for every kind chip,
 /// field name and count on the bench.
-fn micro(text: impl Into<String>, size: f32, colour: Hsla, th: &Theme) -> Div {
+fn micro(text: impl Into<String>, step: Step, colour: Hsla, sk: &Skin, th: &Theme) -> Div {
     div()
-        .text_size(px(size))
+        .text_size(px(sk.pt(step)))
         .text_color(colour)
         .font_family(th.font_family.clone())
         .child(text.into())
@@ -261,21 +261,21 @@ pub fn rail_row(row: &Row, sk: &Skin, th: &Theme) -> Div {
             div()
                 .w(px(7.))
                 .flex_none()
-                .text_size(px(9.))
+                .text_size(px(sk.pt(Step::Tag)))
                 .text_color(tint)
                 .child(if row.unseen { "\u{25cf}" } else { "" }),
         )
         .children(lane.map(|l| {
             div()
                 .flex_none()
-                .text_size(px(8.5))
+                .text_size(px(sk.pt(Step::Tag)))
                 .text_color(tint)
                 .child(l)
         }))
         .children(row.badge.clone().map(|b| {
             div()
                 .flex_none()
-                .text_size(px(9.5))
+                .text_size(px(sk.pt(Step::Fine)))
                 .text_color(th.faint)
                 .child(b)
         }))
@@ -305,7 +305,7 @@ pub fn rail_row(row: &Row, sk: &Skin, th: &Theme) -> Div {
         .child(head)
         .child(
             div()
-                .text_size(px(11.))
+                .text_size(px(sk.pt(Step::Small)))
                 .text_color(th.text)
                 .child(row.title.clone()),
         )
@@ -316,7 +316,7 @@ pub fn rail_row(row: &Row, sk: &Skin, th: &Theme) -> Div {
         .when(!row.subtitle.trim().is_empty(), |d| {
             d.child(
                 div()
-                    .text_size(px(8.5))
+                    .text_size(px(sk.pt(Step::Tag)))
                     .text_color(th.faint)
                     .child(clip(&row.subtitle, 44)),
             )
@@ -357,7 +357,7 @@ pub fn shelf_tab(
     th: &Theme,
 ) -> Div {
     sk.chip(active)
-        .text_size(px(10.))
+        .text_size(px(sk.pt(Step::Note)))
         .font_family(th.font_family.clone())
         .when(unseen > 0 && !active, |d| {
             d.text_color(ink(crate::workbench::Tint::Waiting, th))
@@ -378,11 +378,11 @@ pub fn weights(w: &Weight, sk: &Skin, th: &Theme) -> Div {
         .gap(px(6.))
         .items_center();
     if w.is_silent() {
-        return row.child(micro("unweighed", 10., th.faint, th));
+        return row.child(micro("unweighed", Step::Note, th.faint, sk, th));
     }
     let pill = |text: String, colour: Hsla| {
         sk.chip(false)
-            .text_size(px(9.5))
+            .text_size(px(sk.pt(Step::Fine)))
             .font_family(th.font_family.clone())
             .text_color(colour)
             .child(text)
@@ -464,7 +464,7 @@ pub fn body(
     // show this... if the machine needs it fine, but don't show user)"*.
     let asking = matches!(surface.kind, Kind::Question(_));
     match how {
-        Embodiment::Summary => frame.child(summary_line(surface, th)),
+        Embodiment::Summary => frame.child(summary_line(surface, sk, th)),
         Embodiment::Compact => frame
             .child(heading(surface, sk, th))
             .child(compact(surface, sk, th)),
@@ -478,16 +478,22 @@ pub fn body(
     }
 }
 
-fn summary_line(surface: &Surface, th: &Theme) -> Div {
+fn summary_line(surface: &Surface, sk: &Skin, th: &Theme) -> Div {
     div()
         .flex()
         .flex_row()
         .gap(px(8.))
         .items_baseline()
-        .child(micro(surface.kind.id().to_string(), 10., th.faint, th))
+        .child(micro(
+            surface.kind.id().to_string(),
+            Step::Note,
+            th.faint,
+            sk,
+            th,
+        ))
         .child(
             div()
-                .text_size(px(13.))
+                .text_size(px(sk.pt(Step::Lead)))
                 .text_color(th.text)
                 .child(clip(&surface.title, 60)),
         )
@@ -506,7 +512,7 @@ fn heading(surface: &Surface, sk: &Skin, th: &Theme) -> Div {
                 .items_center()
                 .child(
                     sk.chip(false)
-                        .text_size(px(9.5))
+                        .text_size(px(sk.pt(Step::Fine)))
                         .font_family(th.font_family.clone())
                         .text_color(ink(crate::workbench::tint_of(&surface.kind), th))
                         .child(surface.kind.id().to_string()),
@@ -519,7 +525,7 @@ fn heading(surface: &Surface, sk: &Skin, th: &Theme) -> Div {
                     div()
                         .flex_1()
                         .min_w(px(0.))
-                        .text_size(px(18.))
+                        .text_size(px(sk.pt(Step::Title)))
                         .text_color(th.text)
                         .child(surface.title.clone()),
                 ),
@@ -532,19 +538,20 @@ fn heading(surface: &Surface, sk: &Skin, th: &Theme) -> Div {
         // large directly underneath.
         .when(
             !matches!(surface.kind, Kind::Question(_) | Kind::Response(_)),
-            |d| d.child(micro(surface.subtitle(), 10.5, th.faint, th)),
+            |d| d.child(micro(surface.subtitle(), Step::Note, th.faint, sk, th)),
         )
         // WHO PUT IT HERE, on every card, and at full strength when nobody
         // can say: a surface that arrived from nowhere is the one to look at
         // twice, so the unknown is the loud one and the attributed is quiet.
         .child(micro(
             surface.origin.label(),
-            9.5,
+            Step::Fine,
             if surface.origin.is_unattributed() {
                 th.faint
             } else {
                 th.faint.alpha(0.7)
             },
+            sk,
             th,
         ))
 }
@@ -555,32 +562,34 @@ fn compact(surface: &Surface, sk: &Skin, th: &Theme) -> Div {
     // close enough together that an unframed list reads as part of the rail.
     let list = sk.panel().flex().flex_col().gap(px(3.));
     match &surface.kind {
-        Kind::Markdown(m) => list.child(paragraph(first_lines(&m.body, 6), th)),
+        Kind::Markdown(m) => list.child(paragraph(first_lines(&m.body, 6), sk, th)),
         Kind::Table(t) => list.children(
             t.rows
                 .iter()
                 .take(5)
-                .map(|r| micro(join_cells(r, " · "), 11., th.text, th)),
+                .map(|r| micro(join_cells(r, " · "), Step::Small, th.text, sk, th)),
         ),
         Kind::Architecture(a) => list.children(
             a.nodes
                 .iter()
                 .take(8)
-                .map(|n| micro(format!("▪ {}", n.label), 11., th.text, th)),
+                .map(|n| micro(format!("▪ {}", n.label), Step::Small, th.text, sk, th)),
         ),
         Kind::Changeset(c) => list.children(c.hunks.iter().take(8).map(|h| {
             micro(
                 format!("{}  +{} −{}", clip(&h.file, 28), h.added, h.removed),
-                11.,
+                Step::Small,
                 verdict_ink(h.verdict, th),
+                sk,
                 th,
             )
         })),
         Kind::Decision(d) => list.children(d.options.iter().map(|o| {
             micro(
                 format!("{} {}", if o.recommended { "◉" } else { "○" }, o.name),
-                11.5,
+                Step::Small,
                 if o.recommended { th.text } else { th.faint },
+                sk,
                 th,
             )
         })),
@@ -594,22 +603,23 @@ fn compact(surface: &Surface, sk: &Skin, th: &Theme) -> Div {
         // missed, so it now DELEGATES: one renderer for a question at
         // either size, and no second list of kinds to keep in step.
         Kind::Question(q) => question(q, sk, th),
-        Kind::Artifact(a) => list.child(micro(a.href.clone(), 11., th.faint, th)),
+        Kind::Artifact(a) => list.child(micro(a.href.clone(), Step::Small, th.faint, sk, th)),
         // The gist, then what is folded behind it, as one line per register.
         Kind::Response(r) => list
-            .child(gist(&r.tldr, th))
+            .child(gist(&r.tldr, sk, th))
             .children(r.sections.iter().map(|s| {
                 micro(
                     format!("\u{25b8} {} \u{b7} {}", s.label, s.body.measure()),
-                    11.,
+                    Step::Small,
                     th.faint,
+                    sk,
                     th,
                 )
             }))
             .when(!r.doubts.is_empty(), |d| {
-                d.child(micro(doubts_measure(r), 11., th.complement, th))
+                d.child(micro(doubts_measure(r), Step::Small, th.complement, sk, th))
             }),
-        Kind::Unclassified(u) => list.child(micro(u.reason.clone(), 11., th.faint, th)),
+        Kind::Unclassified(u) => list.child(micro(u.reason.clone(), Step::Small, th.faint, sk, th)),
     }
 }
 
@@ -617,7 +627,7 @@ fn compact(surface: &Surface, sk: &Skin, th: &Theme) -> Div {
 fn full(surface: &Surface, folds: Option<&Folds>, sk: &Skin, th: &Theme) -> Div {
     match &surface.kind {
         Kind::Artifact(a) => artifact(a, sk, th),
-        Kind::Markdown(m) => paragraph(m.body.clone(), th),
+        Kind::Markdown(m) => paragraph(m.body.clone(), sk, th),
         Kind::Table(t) => table(t, sk, th),
         Kind::Architecture(a) => architecture(a, sk, th),
         Kind::Changeset(c) => changeset(c, sk, th),
@@ -633,7 +643,7 @@ fn full(surface: &Surface, folds: Option<&Folds>, sk: &Skin, th: &Theme) -> Div 
 /// Larger than body text and on its own raised floor with the accent down
 /// its edge, because it is the sentence the whole card exists to deliver —
 /// a reader who stops here has read the reply.
-fn gist(tldr: &str, th: &Theme) -> Div {
+fn gist(tldr: &str, sk: &Skin, th: &Theme) -> Div {
     div()
         .flex()
         .flex_col()
@@ -643,10 +653,10 @@ fn gist(tldr: &str, th: &Theme) -> Div {
         .bg(th.accent.alpha(0.08))
         .border_l(px(3.))
         .border_color(th.accent)
-        .child(micro("TL;DR", 9., th.accent, th))
+        .child(micro("TL;DR", Step::Tag, th.accent, sk, th))
         .children(tldr.lines().map(|line| {
             div()
-                .text_size(px(15.))
+                .text_size(px(sk.pt(Step::Head)))
                 .text_color(th.text)
                 .child(line.to_string())
         }))
@@ -694,7 +704,11 @@ fn doubts_measure(r: &Response) -> String {
 /// everything is drawn closed and nothing is pressable, which is what a
 /// summary is.
 fn response(r: &Response, folds: Option<&Folds>, sk: &Skin, th: &Theme) -> Div {
-    let frame = div().flex().flex_col().gap(px(8.)).child(gist(&r.tldr, th));
+    let frame = div()
+        .flex()
+        .flex_col()
+        .gap(px(8.))
+        .child(gist(&r.tldr, sk, th));
     let frame = frame.children(r.sections.iter().map(|s| {
         let open = folds.is_some_and(|f| (f.open)(s));
         let header = div()
@@ -704,21 +718,21 @@ fn response(r: &Response, folds: Option<&Folds>, sk: &Skin, th: &Theme) -> Div {
             .items_baseline()
             .child(
                 div()
-                    .w(px(12.))
+                    .w(px(sk.tpx(12.)))
                     .flex_none()
-                    .text_size(px(10.))
+                    .text_size(px(sk.pt(Step::Note)))
                     .text_color(if open { th.accent } else { th.faint })
                     .child(if open { "\u{25be}" } else { "\u{25b8}" }),
             )
             .child(
                 div()
-                    .text_size(px(12.5))
+                    .text_size(px(sk.pt(Step::Body)))
                     .text_color(if open { th.text } else { th.text.alpha(0.85) })
                     .child(s.label.clone()),
             )
-            .child(micro(s.body.measure(), 10., th.faint, th))
+            .child(micro(s.body.measure(), Step::Note, th.faint, sk, th))
             .when(s.register == Register::Asks, |d| {
-                d.child(micro("needs you", 9., th.complement, th))
+                d.child(micro("needs you", Step::Tag, th.complement, sk, th))
             });
         // The header is the target, and only the header: a click in a long
         // open body should place nothing and fold nothing.
@@ -750,7 +764,7 @@ fn response(r: &Response, folds: Option<&Folds>, sk: &Skin, th: &Theme) -> Div {
             })
             .child(header);
         if open {
-            panel.child(section_body(&s.body, s.register, th))
+            panel.child(section_body(&s.body, s.register, sk, th))
         } else {
             panel
         }
@@ -772,8 +786,8 @@ fn response(r: &Response, folds: Option<&Folds>, sk: &Skin, th: &Theme) -> Div {
                         .flex_row()
                         .gap(px(8.))
                         .items_baseline()
-                        .child(micro("ARTICLES OF DOUBT", 9., th.complement, th))
-                        .child(micro(doubts_measure(r), 10., th.faint, th)),
+                        .child(micro("ARTICLES OF DOUBT", Step::Tag, th.complement, sk, th))
+                        .child(micro(doubts_measure(r), Step::Note, th.faint, sk, th)),
                 )
                 .children(r.doubts.iter().map(|doubt| {
                     div()
@@ -788,7 +802,7 @@ fn response(r: &Response, folds: Option<&Folds>, sk: &Skin, th: &Theme) -> Div {
                                 .items_baseline()
                                 .child(
                                     div()
-                                        .text_size(px(12.))
+                                        .text_size(px(sk.pt(Step::Body)))
                                         .text_color(th.text)
                                         .child(format!("\u{b7} {}", doubt.claim)),
                                 )
@@ -799,20 +813,22 @@ fn response(r: &Response, folds: Option<&Folds>, sk: &Skin, th: &Theme) -> Div {
                                         .confidence
                                         .map(|c| c.label().to_string())
                                         .unwrap_or_else(|| "confidence undeclared".into()),
-                                    9.,
+                                    Step::Tag,
                                     match doubt.confidence {
                                         Some(Confidence::Measured) => th.text,
                                         Some(_) => th.complement,
                                         None => th.faint,
                                     },
+                                    sk,
                                     th,
                                 )),
                         )
                         .when_some(doubt.why.clone(), |x, why| {
                             x.child(div().pl(px(12.)).child(micro(
                                 why,
-                                11.,
+                                Step::Small,
                                 th.text.alpha(0.75),
+                                sk,
                                 th,
                             )))
                         })
@@ -824,9 +840,9 @@ fn response(r: &Response, folds: Option<&Folds>, sk: &Skin, th: &Theme) -> Div {
 /// A section's contents by its shape: prose as lines, a list as bullets —
 /// numbered where the register is a sequence — and facts as a name beside a
 /// value on a row of its own.
-fn section_body(body: &Body, register: Register, th: &Theme) -> Div {
+fn section_body(body: &Body, register: Register, sk: &Skin, th: &Theme) -> Div {
     match body {
-        Body::Prose(text) => paragraph(text.clone(), th),
+        Body::Prose(text) => paragraph(text.clone(), sk, th),
         Body::Items(items) => {
             div()
                 .flex()
@@ -843,17 +859,18 @@ fn section_body(body: &Body, register: Register, th: &Theme) -> Div {
                         .flex_row()
                         .gap(px(7.))
                         .items_baseline()
-                        .child(
-                            div()
-                                .w(px(18.))
-                                .flex_none()
-                                .child(micro(mark, 11., th.faint, th)),
-                        )
+                        .child(div().w(px(sk.tpx(18.))).flex_none().child(micro(
+                            mark,
+                            Step::Small,
+                            th.faint,
+                            sk,
+                            th,
+                        )))
                         .child(
                             div()
                                 .flex_1()
                                 .min_w(px(0.))
-                                .text_size(px(12.5))
+                                .text_size(px(sk.pt(Step::Body)))
                                 .text_color(th.text.alpha(0.9))
                                 .child(item.clone()),
                         )
@@ -869,16 +886,18 @@ fn section_body(body: &Body, register: Register, th: &Theme) -> Div {
                     .flex_row()
                     .gap(px(10.))
                     .items_baseline()
-                    .child(div().w(px(110.)).flex_none().child(micro(
+                    .child(div().w(px(sk.tpx(110.))).flex_none().child(micro(
                         name.clone(),
-                        10.,
+                        Step::Note,
                         th.faint,
+                        sk,
                         th,
                     )))
                     .child(div().flex_1().min_w(px(0.)).child(micro(
                         value.clone(),
-                        12.,
+                        Step::Body,
                         th.text,
+                        sk,
                         th,
                     )))
             })),
@@ -935,8 +954,9 @@ pub fn round_progress(round: &crate::surface::Round, sk: &Skin, th: &Theme) -> D
             } else {
                 format!("{done} of {total} answered")
             },
-            9.5,
+            Step::Fine,
             th.faint,
+            sk,
             th,
         ))
 }
@@ -999,27 +1019,28 @@ pub fn review_flyout(
             .flex_row()
             .items_center()
             .gap(px(8.))
-            .child(micro("REVIEW", 9.5, tint, th))
+            .child(micro("REVIEW", Step::Fine, tint, sk, th))
             .child(div().flex_1())
             // Where you are in the gallery, said plainly. This is a count a
             // person cannot see — unlike the option count, which was printed
             // over the top of the options themselves.
             .child(micro(
                 format!("{} of {}", at + 1, total.max(1)),
-                9.5,
+                Step::Fine,
                 th.faint,
+                sk,
                 th,
             )),
     )
     .child(
         div()
-            .text_size(px(15.))
+            .text_size(px(sk.pt(Step::Head)))
             .text_color(th.text)
             .child(title.to_string()),
     )
     .child(
         div()
-            .text_size(px(13.))
+            .text_size(px(sk.pt(Step::Lead)))
             .text_color(tint)
             .child(answer.to_string()),
     )
@@ -1076,14 +1097,16 @@ fn question(q: &crate::surface::Question, sk: &Skin, th: &Theme) -> Div {
                     .items_baseline()
                     .child(micro(
                         format!("{}", i + 1),
-                        10.,
+                        Step::Note,
                         th.faint.alpha(if dim { 0.5 } else { 1.0 }),
+                        sk,
                         th,
                     ))
                     .child(micro(
                         what,
-                        11.5,
+                        Step::Small,
                         th.text.alpha(if dim { 0.4 } else { 0.75 }),
+                        sk,
                         th,
                     )),
             )
@@ -1098,17 +1121,19 @@ fn question(q: &crate::surface::Question, sk: &Skin, th: &Theme) -> Div {
         // this card was drowning in.
         .children(match &q.answer {
             Answered::Waiting => None,
-            Answered::Chose(_) => Some(micro("answered".to_string(), 10., th.faint, th)),
+            Answered::Chose(_) => Some(micro("answered".to_string(), Step::Note, th.faint, sk, th)),
             Answered::Typed(said) => Some(micro(
                 format!("answered in the terminal \u{b7} \u{201c}{said}\u{201d}"),
-                10.5,
+                Step::Note,
                 th.text.alpha(0.8),
+                sk,
                 th,
             )),
             Answered::ChoseUnknown => Some(micro(
                 "answered in the terminal \u{b7} how is unavailable".to_string(),
-                10.,
+                Step::Note,
                 th.faint,
+                sk,
                 th,
             )),
         })
@@ -1137,7 +1162,7 @@ fn table(t: &crate::surface::Table, sk: &Skin, th: &Theme) -> Div {
         .children(t.columns.iter().map(|c| {
             div()
                 .flex_1()
-                .child(micro(c.to_uppercase(), 9.5, th.faint, th))
+                .child(micro(c.to_uppercase(), Step::Fine, th.faint, sk, th))
         }));
     let rows = t.rows.iter().map(|row| {
         div()
@@ -1147,10 +1172,10 @@ fn table(t: &crate::surface::Table, sk: &Skin, th: &Theme) -> Div {
             .py(px(2.))
             .children(row.iter().map(|cell| {
                 div().flex_1().child(match cell {
-                    Some(text) => micro(clip(text, 40), 11.5, th.text, th),
+                    Some(text) => micro(clip(text, 40), Step::Small, th.text, sk, th),
                     // A cell nobody filled says so, rather than being blank and
                     // reading as a value of nothing.
-                    None => micro("unavailable", 11.5, th.faint, th),
+                    None => micro("unavailable", Step::Small, th.faint, sk, th),
                 })
             }))
     });
@@ -1197,11 +1222,13 @@ fn architecture(a: &crate::surface::Architecture, sk: &Skin, th: &Theme) -> Div 
                         .gap(px(1.))
                         .child(
                             div()
-                                .text_size(px(11.5))
+                                .text_size(px(sk.pt(Step::Small)))
                                 .text_color(th.text)
                                 .child(n.label.clone()),
                         )
-                        .when_some(n.state.clone(), |d, s| d.child(micro(s, 9., th.accent, th)))
+                        .when_some(n.state.clone(), |d, s| {
+                            d.child(micro(s, Step::Tag, th.accent, sk, th))
+                        })
                 }));
         if name.is_empty() {
             inner
@@ -1210,7 +1237,7 @@ fn architecture(a: &crate::surface::Architecture, sk: &Skin, th: &Theme) -> Div 
                 .flex()
                 .flex_col()
                 .gap(px(5.))
-                .child(micro(name.to_uppercase(), 9., th.faint, th))
+                .child(micro(name.to_uppercase(), Step::Tag, th.faint, sk, th))
                 .child(inner)
         }
     });
@@ -1225,16 +1252,18 @@ fn architecture(a: &crate::surface::Architecture, sk: &Skin, th: &Theme) -> Div 
                     .map(|l| format!("  ({l})"))
                     .unwrap_or_default()
             ),
-            10.5,
+            Step::Note,
             th.text.alpha(0.8),
+            sk,
             th,
         )
     });
     let dangling = a.dangling.iter().map(|e| {
         micro(
             format!("{} → {} · no such node", e.from, e.to),
-            10.5,
+            Step::Note,
             th.complement,
+            sk,
             th,
         )
     });
@@ -1254,7 +1283,7 @@ fn changeset(c: &crate::surface::Changeset, sk: &Skin, th: &Theme) -> Div {
         .flex_col()
         .gap(px(7.))
         .when_some(c.repository.clone(), |d, r| {
-            d.child(micro(r, 10., th.faint, th))
+            d.child(micro(r, Step::Note, th.faint, sk, th))
         })
         .children(c.hunks.iter().map(|h| {
             sk.panel()
@@ -1269,27 +1298,29 @@ fn changeset(c: &crate::surface::Changeset, sk: &Skin, th: &Theme) -> Div {
                         .flex_row()
                         .gap(px(8.))
                         .items_baseline()
-                        .child(micro(h.file.clone(), 11.5, th.text, th))
+                        .child(micro(h.file.clone(), Step::Small, th.text, sk, th))
                         .child(micro(
                             format!("+{} −{}", h.added, h.removed),
-                            10.,
+                            Step::Note,
                             th.faint,
+                            sk,
                             th,
                         ))
                         .child(micro(
                             verdict_word(h.verdict).to_string(),
-                            9.5,
+                            Step::Fine,
                             verdict_ink(h.verdict, th),
+                            sk,
                             th,
                         )),
                 )
-                .child(patch(&h.patch, th))
+                .child(patch(&h.patch, sk, th))
         }))
 }
 
 /// A patch, coloured the way a diff is coloured everywhere else, and clipped
 /// so one enormous hunk cannot own the pane.
-fn patch(text: &str, th: &Theme) -> Div {
+fn patch(text: &str, sk: &Skin, th: &Theme) -> Div {
     let lines = text.lines().take(24);
     div().flex().flex_col().children(lines.map(|line| {
         let colour = if line.starts_with("+++") || line.starts_with("---") {
@@ -1302,7 +1333,7 @@ fn patch(text: &str, th: &Theme) -> Div {
             th.text.alpha(0.75)
         };
         div()
-            .text_size(px(11.))
+            .text_size(px(sk.pt(Step::Small)))
             .text_color(colour)
             .font_family(th.font_family.clone())
             .child(line.to_string())
@@ -1316,7 +1347,7 @@ fn decision(d: &crate::surface::Decision, sk: &Skin, th: &Theme) -> Div {
         .gap(px(8.))
         .child(
             div()
-                .text_size(px(13.5))
+                .text_size(px(sk.pt(Step::Lead)))
                 .text_color(th.text)
                 .child(d.question.clone()),
         )
@@ -1339,19 +1370,25 @@ fn decision(d: &crate::surface::Decision, sk: &Skin, th: &Theme) -> Div {
                         .items_baseline()
                         .child(
                             div()
-                                .text_size(px(12.5))
+                                .text_size(px(sk.pt(Step::Body)))
                                 .text_color(th.text)
                                 .child(o.name.clone()),
                         )
                         .when(o.recommended, |x| {
-                            x.child(micro("recommended", 9., th.accent, th))
+                            x.child(micro("recommended", Step::Tag, th.accent, sk, th))
                         }),
                 )
                 .when_some(o.case.clone(), |x, case| {
-                    x.child(micro(case, 11., th.text.alpha(0.8), th))
+                    x.child(micro(case, Step::Small, th.text.alpha(0.8), sk, th))
                 })
                 .when_some(o.cost.clone(), |x, cost| {
-                    x.child(micro(format!("cost · {cost}"), 11., th.faint, th))
+                    x.child(micro(
+                        format!("cost · {cost}"),
+                        Step::Small,
+                        th.faint,
+                        sk,
+                        th,
+                    ))
                 })
         }))
         .when(!d.consequences.is_empty(), |x| {
@@ -1360,12 +1397,10 @@ fn decision(d: &crate::surface::Decision, sk: &Skin, th: &Theme) -> Div {
                     .flex()
                     .flex_col()
                     .gap(px(2.))
-                    .child(micro("IF WE DO", 9., th.faint, th))
-                    .children(
-                        d.consequences
-                            .iter()
-                            .map(|c| micro(format!("· {c}"), 11., th.text.alpha(0.85), th)),
-                    ),
+                    .child(micro("IF WE DO", Step::Tag, th.faint, sk, th))
+                    .children(d.consequences.iter().map(|c| {
+                        micro(format!("· {c}"), Step::Small, th.text.alpha(0.85), sk, th)
+                    })),
             )
         })
 }
@@ -1386,8 +1421,14 @@ fn unclassified(u: &crate::surface::Unclassified, sk: &Skin, th: &Theme) -> Div 
         .flex()
         .flex_col()
         .gap(px(6.))
-        .child(micro("NOTHING IS CLAIMED ABOUT THIS", 9., th.faint, th))
-        .child(paragraph(first_lines(&u.raw, 20), th))
+        .child(micro(
+            "NOTHING IS CLAIMED ABOUT THIS",
+            Step::Tag,
+            th.faint,
+            sk,
+            th,
+        ))
+        .child(paragraph(first_lines(&u.raw, 20), sk, th))
 }
 
 /// One fact per row, and each row its OWN surface.
@@ -1422,37 +1463,41 @@ fn field_grid(fields: Vec<(&str, Option<String>)>, sk: &Skin, th: &Theme) -> Div
                 } else {
                     th.faint.alpha(0.35)
                 })
-                .child(div().w(px(76.)).flex_none().child(micro(
+                .child(div().w(px(sk.tpx(76.))).flex_none().child(micro(
                     name.to_uppercase(),
-                    9.5,
+                    Step::Fine,
                     th.faint,
+                    sk,
                     th,
                 )))
                 .child(match value {
-                    Some(v) => div()
-                        .flex_1()
-                        .min_w(px(0.))
-                        .child(micro(v, 12., th.text, th)),
-                    // Shown missing rather than omitted: an omitted row leaves a
-                    // hole a reader fills in themselves.
-                    None => {
+                    Some(v) => {
                         div()
                             .flex_1()
                             .min_w(px(0.))
-                            .child(micro("unavailable", 12., th.faint, th))
+                            .child(micro(v, Step::Body, th.text, sk, th))
                     }
+                    // Shown missing rather than omitted: an omitted row leaves a
+                    // hole a reader fills in themselves.
+                    None => div().flex_1().min_w(px(0.)).child(micro(
+                        "unavailable",
+                        Step::Body,
+                        th.faint,
+                        sk,
+                        th,
+                    )),
                 })
         }))
 }
 
-fn paragraph(text: String, th: &Theme) -> Div {
+fn paragraph(text: String, sk: &Skin, th: &Theme) -> Div {
     div()
         .flex()
         .flex_col()
         .gap(px(2.))
         .children(text.lines().map(|line| {
             div()
-                .text_size(px(12.5))
+                .text_size(px(sk.pt(Step::Body)))
                 .text_color(th.text.alpha(0.9))
                 .child(line.to_string())
         }))
@@ -1524,7 +1569,7 @@ pub fn title_card(
         sk,
         th,
     )
-    .child(micro("AGENT", 9.5, th.faint, th))
+    .child(micro("AGENT", Step::Fine, th.faint, sk, th))
     .child(
         // A LAMP, not a bullet. Ringed rather than merely bigger: a filled
         // circle reads as punctuation at any size, and a ring around it reads
@@ -1549,7 +1594,7 @@ pub fn title_card(
         div()
             .flex_none()
             .whitespace_nowrap()
-            .text_size(px(17.))
+            .text_size(px(sk.pt(Step::Title)))
             .text_color(if urgent { tint } else { th.text.alpha(0.9) })
             .child(state.word()),
     )
@@ -1558,8 +1603,9 @@ pub fn title_card(
         // an age on every rail row, which repeated one fact per row.
         micro(
             crate::attention::age_label(Some(std::time::Duration::from_millis(in_state_ms))),
-            10.,
+            Step::Note,
             th.faint,
+            sk,
             th,
         ),
     )
@@ -1572,7 +1618,13 @@ pub fn title_card(
     // and was spending it on nothing.
     .when_some(vitals, |d, v| {
         if v.is_unread() {
-            return d.child(micro("turn \u{b7} unread", 10., th.faint.alpha(0.7), th));
+            return d.child(micro(
+                "turn \u{b7} unread",
+                Step::Note,
+                th.faint.alpha(0.7),
+                sk,
+                th,
+            ));
         }
         d.child(
             div()
@@ -1583,24 +1635,37 @@ pub fn title_card(
                 .min_w(px(0.))
                 .overflow_hidden()
                 .when_some(v.elapsed.clone(), |d, e| {
-                    d.child(micro(format!("turn {e}"), 10., th.text.alpha(0.75), th))
+                    d.child(micro(
+                        format!("turn {e}"),
+                        Step::Note,
+                        th.text.alpha(0.75),
+                        sk,
+                        th,
+                    ))
                 })
                 .when_some(v.tokens, |d, n| {
                     d.child(micro(
                         format!("\u{2193} {} tokens", crate::hud::fmt_tokens(n)),
-                        10.,
+                        Step::Note,
                         th.text.alpha(0.75),
+                        sk,
                         th,
                     ))
                 })
                 .when_some(v.doing.clone(), |d, doing| {
-                    d.child(micro(clip(&doing, 56), 10., th.accent.alpha(0.85), th))
+                    d.child(micro(
+                        clip(&doing, 56),
+                        Step::Note,
+                        th.accent.alpha(0.85),
+                        sk,
+                        th,
+                    ))
                 }),
         )
     })
     .child(div().flex_1())
     .when_some(tool.map(str::to_string), |d, t| {
-        d.child(micro(t, 9.5, th.faint, th))
+        d.child(micro(t, Step::Fine, th.faint, sk, th))
     })
 }
 
@@ -1615,11 +1680,15 @@ pub fn title_card(
 ///
 /// The border and the padding never vary. An option that looks like a word
 /// instead of a button is one nobody presses, whatever colour it is.
-pub fn option_button<E: Styled>(el: E, primary: bool, chosen: bool, th: &Theme) -> E {
+pub fn option_button<E: Styled>(el: E, primary: bool, chosen: bool, sk: &Skin, th: &Theme) -> E {
     let el = el
         .px(px(if primary { 16. } else { 12. }))
         .py(px(if primary { 9. } else { 7. }))
-        .text_size(px(if primary { 13. } else { 12. }))
+        .text_size(px(if primary {
+            sk.pt(Step::Lead)
+        } else {
+            sk.pt(Step::Body)
+        }))
         .border_1();
     if primary {
         el.border_color(th.accent.alpha(0.9))
@@ -1638,11 +1707,15 @@ pub fn option_button<E: Styled>(el: E, primary: bool, chosen: bool, th: &Theme) 
 /// Kept here rather than at the call site so that every future verb row —
 /// changesets, decisions, whatever arrives next — gets the same shape by
 /// asking for it.
-pub fn verb_button<E: Styled>(el: E, primary: bool, th: &Theme) -> E {
+pub fn verb_button<E: Styled>(el: E, primary: bool, sk: &Skin, th: &Theme) -> E {
     let el = el
         .px(px(if primary { 18. } else { 12. }))
         .py(px(if primary { 10. } else { 6. }))
-        .text_size(px(if primary { 13.5 } else { 11. }));
+        .text_size(px(if primary {
+            sk.pt(Step::Lead)
+        } else {
+            sk.pt(Step::Small)
+        }));
     if primary {
         // The primary action on a card — one per card.
         aglow(el.border_color(th.accent.alpha(0.75)), th.accent, th)
@@ -1748,11 +1821,12 @@ pub fn composer(
     // is where "small but readable" ends.
     let chars = line.map_or(0, |l| l.chars());
     let pt = if tight {
-        13.5
+        sk.pt(Step::Lead)
     } else {
-        crate::workbench::composer_pt(chars, shows.composer_w, shows.composer_max)
+        crate::workbench::composer_pt(chars, shows.composer_w, shows.composer_max, sk.ty.k())
     };
-    let hidden = crate::workbench::composer_hidden(chars, shows.composer_w, shows.composer_max);
+    let hidden =
+        crate::workbench::composer_hidden(chars, shows.composer_w, shows.composer_max, sk.ty.k());
 
     // The caret rides IN the text, as a highlight on the character it is on.
     //
@@ -1903,8 +1977,9 @@ pub fn composer(
                             } else {
                                 format!("\u{1f5ce} {n} IMAGES")
                             },
-                            9.,
+                            Step::Tag,
                             th.accent,
+                            sk,
                             th,
                         )),
                 )
@@ -1920,7 +1995,7 @@ pub fn composer(
                         .py(px(2.))
                         .rounded(px(3.))
                         .bg(th.human.alpha(0.16))
-                        .child(micro("LIVE \u{2192} AGENT", 9., th.human, th)),
+                        .child(micro("LIVE \u{2192} AGENT", Step::Tag, th.human, sk, th)),
                 )
             }),
     )
@@ -1932,16 +2007,18 @@ pub fn composer(
     .when_some(hidden.filter(|_| !tight), |d, n| {
         d.child(micro(
             format!("\u{2191} {n} more characters above"),
-            9.5,
+            Step::Fine,
             th.faint,
+            sk,
             th,
         ))
     })
     .when(hint, |d| {
         d.child(micro(
             "TYPE ANYWHERE \u{b7} ENTER SENDS \u{b7} PASTE TEXT, FILES OR AN IMAGE",
-            9.5,
+            Step::Fine,
             th.human.alpha(0.72),
+            sk,
             th,
         ))
     })
@@ -1953,7 +2030,7 @@ pub fn composer(
 /// is the bench's answer to "what is it doing" and it is the default because
 /// that is the question a person arriving at a pane actually has — the rail
 /// is for what it MADE, which is a different and rarer question.
-pub fn conversation(tail: &[String], th: &Theme) -> Div {
+pub fn conversation(tail: &[String], sk: &Skin, th: &Theme) -> Div {
     div()
         .flex()
         .flex_col()
@@ -1966,7 +2043,7 @@ pub fn conversation(tail: &[String], th: &Theme) -> Div {
             let mine =
                 line.trim_start().starts_with('\u{203a}') || line.trim_start().starts_with('>');
             div()
-                .text_size(px(12.))
+                .text_size(px(sk.pt(Step::Body)))
                 .font_family(th.font_family.clone())
                 .text_color(if mine { th.human } else { th.text.alpha(0.62) })
                 .child(line.clone())
@@ -1992,10 +2069,16 @@ pub fn waiting_block(q: &crate::surface::Question, sk: &Skin, th: &Theme) -> Div
         ink(Tint::Waiting, th),
         th,
     )
-    .child(micro("WAITING ON YOU", 9.5, ink(Tint::Waiting, th), th))
+    .child(micro(
+        "WAITING ON YOU",
+        Step::Fine,
+        ink(Tint::Waiting, th),
+        sk,
+        th,
+    ))
     .child(
         div()
-            .text_size(px(15.))
+            .text_size(px(sk.pt(Step::Head)))
             .text_color(th.text)
             .child(q.question.clone()),
     )
@@ -2008,8 +2091,9 @@ pub fn waiting_block(q: &crate::surface::Question, sk: &Skin, th: &Theme) -> Div
                 o.what_happens.as_ref().map(|what| {
                     micro(
                         format!("{} \u{b7} {}", i + 1, what),
-                        10.5,
+                        Step::Note,
                         th.text.alpha(0.55),
+                        sk,
                         th,
                     )
                 })
@@ -2026,7 +2110,7 @@ pub fn waiting_block(q: &crate::surface::Question, sk: &Skin, th: &Theme) -> Div
 /// moves, pointing the way it will go. It is drawn at the edge rather than in
 /// the rail's header because the thing it closes is the whole column, and a
 /// control that lives inside what it hides is a control you cannot find again.
-pub fn rail_handle(open: bool, th: &Theme) -> Div {
+pub fn rail_handle(open: bool, sk: &Skin, th: &Theme) -> Div {
     div()
         .w(px(20.))
         .flex_none()
@@ -2039,7 +2123,7 @@ pub fn rail_handle(open: bool, th: &Theme) -> Div {
             // that gives the bench its width back, on a target fourteen pixels
             // wide. A control nobody can see is a control nobody uses.
             div()
-                .text_size(px(20.))
+                .text_size(px(sk.pt(Step::Display)))
                 .font_weight(gpui::FontWeight::BOLD)
                 .text_color(th.text.alpha(0.75))
                 .child(if open { "\u{203a}" } else { "\u{2039}" }),
@@ -2051,35 +2135,83 @@ pub fn rail_handle(open: bool, th: &Theme) -> Div {
 /// The most common state on day one, and the one a person will judge the
 /// feature by. A blank rectangle reads as broken; a sentence naming the verb
 /// reads as waiting.
+///
+/// This is the EXPLANATION half only. On a shell pane the verb that fixes the
+/// emptiness is a button of its own — see [`launch_button`] — because a chip
+/// appended to the end of a paragraph is a footnote, and the thing a person is
+/// meant to press cannot be a footnote.
 pub fn empty(is_agent: bool, dir: &str, sk: &Skin, th: &Theme) -> Div {
     sk.panel()
         .flex()
         .flex_col()
         .gap(px(6.))
-        .child(micro("NOTHING ON THE BENCH", 10., th.faint, th))
+        .child(micro("NOTHING ON THE BENCH", Step::Note, th.faint, sk, th))
         .child(if is_agent {
             micro(
                 "This agent has presented no work objects yet.",
-                12.,
+                Step::Body,
                 th.text.alpha(0.85),
+                sk,
                 th,
             )
         } else {
             micro(
-                "A shell has no agent to present anything. Launch one into this pane.",
-                12.,
+                "A shell has no agent to present anything. Start one and its work \
+                 appears here.",
+                Step::Body,
                 th.text.alpha(0.85),
+                sk,
                 th,
             )
         })
         .when(is_agent, |d| {
             d.child(micro(
                 format!("drop a .json here: {dir}"),
-                10.,
+                Step::Note,
                 th.faint,
+                sk,
                 th,
             ))
         })
+}
+
+/// The one verb an empty shell bench offers, as a button and nothing else.
+///
+/// It was a chip, appended as the last child of the sentence panel above, and
+/// it inherited that panel's place at the bottom of a body that reads upward
+/// like a transcript. On a tall pane the only thing to press on the whole
+/// surface sat on the floor, under an acre of nothing, at the size of a label
+/// — Parker: *"SPINNING up a new agent in workbench — the ACTIon for this is
+/// WAAAAAAY at the bottome of the screen... it should be a FULLY standalone
+/// button, then the explanation is in a bit of a separate element"*.
+///
+/// So it is three separate claims, and each is drawn rather than argued:
+///
+/// 1. **Standalone.** Its own element, above the explanation rather than
+///    inside it, with the panel's full width — a button, not a word in a
+///    paragraph.
+/// 2. **At eye level.** [`crate::workbench::body_anchor`] stops the body
+///    reading from the floor while an offer is the thing on it.
+/// 3. **The loudest thing on an empty surface**, which it can afford to be
+///    precisely because the surface is empty: the spine's `aglow`, the tint the
+///    bench already spends on "this is yours to act on", and [`Step::Head`].
+pub fn launch_button(sk: &Skin, th: &Theme) -> Div {
+    aglow(
+        sk.chip(true)
+            .flex()
+            .flex_row()
+            .items_center()
+            .justify_center()
+            .gap(px(sk.tpx(8.)))
+            .py(px(sk.tpx(9.)))
+            .cursor_pointer()
+            .text_size(px(sk.pt(Step::Head)))
+            .font_weight(gpui::FontWeight::BOLD)
+            .child("\u{2301}")
+            .child(sk.caps("LAUNCH AGENT")),
+        th.human,
+        th,
+    )
 }
 
 /// Cut to a character budget, with an ellipsis that says it was cut.
@@ -2110,6 +2242,114 @@ fn join_cells(row: &[Option<String>], sep: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every size on the bench goes through the pane's gauge.
+    ///
+    /// The companion to `a_renderer_contains_no_decisions`, and the same shape
+    /// of guard for the same reason. Before the ramp existed this file carried
+    /// fifteen distinct type sizes as literals, and not one of them could
+    /// answer to the slider the person had already set. The fix was mechanical
+    /// — seventy call sites — so the way it comes UNDONE is mechanical too: one
+    /// new element, written the way every neighbouring element used to be
+    /// written, drawing at a fixed size on a surface that scales around it.
+    /// Nobody would notice until a pane at 2.0x had one label still at eleven
+    /// points.
+    ///
+    /// **A box that holds text counts as a size.** The second half of the rule,
+    /// and the half that is easy to forget while doing the first: a `micro` at
+    /// a gauged rung inside a `w(px(110.))` column is type growing inside
+    /// something that does not, which is how an exact fit starts wrapping down
+    /// a row. Four such columns were missed on the first pass here and caught
+    /// by re-reading, so the scan now holds them: a fixed `w`/`h` on a `div`
+    /// whose own line also names `micro(` or `text_size(` has to go through
+    /// `sk.tpx`.
+    ///
+    /// Scanned in the CODE half only (the tests are split off first), with
+    /// comments stripped, so this test's own prose may name a size.
+    ///
+    /// **Mutation-tested when written**, one plant at a time and each reverted
+    /// before the next — seven, one per shape the regression takes: a
+    /// `text_size(px(20.))`; an inline `micro(…, 10., …)`; the `if primary`
+    /// ternary reverted to `13.` / `12.`; a rustfmt-split `micro` whose size
+    /// argument sits alone on its own line, at two different indents; and two
+    /// label columns reverted from `sk.tpx(n)` to a bare `n`. All seven failed
+    /// this test and were named by line number. A scan nobody has watched fail
+    /// is a scan that might match nothing.
+    ///
+    /// An eighth was planted to check it does NOT cry wolf: `.gap(px(8.))` left
+    /// as a literal, which is a renderer choosing its own spacing and is none
+    /// of this rule's business. It passed, as it must — a check that fires on
+    /// innocent lines gets switched off, and then nothing is enforced.
+    #[test]
+    fn every_size_on_the_bench_goes_through_the_gauge() {
+        let src = include_str!("benchdraw.rs");
+        let (code, _tests) = src.split_once("\n#[cfg(test)]").expect("a test module");
+        let mut found = Vec::new();
+        for (n, raw) in code.lines().enumerate() {
+            let line = raw.split("//").next().unwrap_or("");
+            // A type size written as a number rather than taken from the ramp.
+            if let Some(at) = line.find("text_size(px(") {
+                let rest = &line[at + "text_size(px(".len()..];
+                let head = rest.trim_start();
+                // `if x { sk.pt(..) } else { .. }` is fine; a digit is not.
+                let lit = head
+                    .strip_prefix("if ")
+                    .map_or(head, |t| t.split('{').nth(1).unwrap_or("").trim_start());
+                if lit.starts_with(|c: char| c.is_ascii_digit()) {
+                    found.push(format!("{}: a fixed type size: {}", n + 1, raw.trim()));
+                }
+            }
+            // `micro` takes a rung, never a number. Catching this as a separate
+            // rule matters: the helper's second parameter is the one place a
+            // size can be passed without the words `text_size` appearing at all.
+            if let Some(at) = line.find("micro(") {
+                let rest = line[at + "micro(".len()..].trim_start();
+                if rest.starts_with(|c: char| c.is_ascii_digit()) {
+                    found.push(format!("{}: micro() took a number: {}", n + 1, raw.trim()));
+                }
+            }
+            // The same size, passed to a `micro(` that rustfmt split across
+            // lines — the argument then sits alone on its own line, where
+            // neither rule above can see the call it belongs to. Every
+            // multi-line call in this file spells that slot `Step::…`, so a
+            // line holding nothing but a number and a comma is the regression
+            // and nothing else. (Checked against the file as it stands: no
+            // other argument is ever written alone as a bare float.)
+            let t = line.trim();
+            if let Some(num) = t.strip_suffix(',') {
+                if !num.is_empty()
+                    && num.starts_with(|c: char| c.is_ascii_digit())
+                    && num.chars().all(|c| c.is_ascii_digit() || c == '.')
+                {
+                    found.push(format!("{}: a bare size argument: {t}", n + 1));
+                }
+            }
+            // A BOX that holds text, sized without the gauge. Only lines that
+            // also carry the text on them are scanned, which is what keeps this
+            // from firing on the gaps, radii and paddings a renderer is entitled
+            // to choose — those are the skin's business and do not grow with a
+            // person's reading size.
+            if line.contains("micro(") || line.contains("text_size(") {
+                for dim in [".w(px(", ".h(px(", ".min_w(px(", ".min_h(px("] {
+                    if let Some(at) = line.find(dim) {
+                        let arg = line[at + dim.len()..].trim_start();
+                        if arg.starts_with(|c: char| c.is_ascii_digit()) && !arg.starts_with('0') {
+                            found.push(format!(
+                                "{}: a text box that does not scale with its text: {}",
+                                n + 1,
+                                raw.trim()
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+        assert!(
+            found.is_empty(),
+            "sizes that ignore the pane's text-size gauge:\n{}",
+            found.join("\n")
+        );
+    }
 
     /// A renderer contains no decisions — rule three of the architecture
     /// pass, made mechanical.
