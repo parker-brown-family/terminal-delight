@@ -9,6 +9,31 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ### Added — the week of 15 September
 
+- **The Overview is the feed of what the agent said.** TDSP 0.3 adds the
+  `response` kind: a `tldr` that is always open, registers a person unfolds by
+  name (ELI5, plain brief, technical brief, what was verified, needs from you,
+  what's next — and any key the agent invents, labelled by the key), and
+  articles of doubt drawn apart in their own colour with a confidence on each.
+  The OVERVIEW shelf holds responses and nothing else, and shows the newest one
+  by itself until a person opens another; changesets file with decisions and
+  the unclassifiable with artifacts. The launch briefing asks every agent to end
+  its turn with one.
+- **The launcher's effort row is the harness's own dial.** Claude Code's five
+  levels (`low`, `medium`, `high`, `xhigh`, `max`) and Codex's four, verbatim,
+  passed as `--effort` and `model_reasoning_effort` — the `quick / standard /
+  hard / ultra` scale that was turned into a sentence about thinking is gone.
+
+### Fixed
+
+- **The launcher's project list was squeezed to nothing** whenever the filter
+  matched only a few projects: the panel's height was computed for one chip row
+  and it has four, so the list — the only child that could shrink — gave up its
+  entire height. Typing `ter` showed no `terminal-delight`. The chrome is now a
+  named sum every fixed child is counted into, with a test that holds every
+  match count gets its rows on top. The scan behind it also kept only the 60
+  newest of 257 directories, so a project untouched for a week vanished from
+  the picker entirely; it keeps them all now and caps only what is drawn.
+
 - **The Workbench.** Every pane has a second face. The TERMINAL is the agent's
   typing; the WORKBENCH is its work — decisions to take, changes to review,
   documents to open, tables of things compared, and the question it stopped on —

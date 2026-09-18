@@ -45,11 +45,26 @@ document to `terminal-delight surface`.
              "consequences": ["Staleness becomes a separate knob."] } }
 ```
 
-**Kinds:** `decision`, `changeset`, `architecture`, `artifact`, `table`,
-`markdown`. **Describe meaning, never layout** — no widths, no colours, no
-components. Terminal Delight owns how each kind looks, in whatever theme and
-at whatever size the pane is. A kind it does not know is shown as
+**Kinds:** `response`, `decision`, `changeset`, `architecture`, `artifact`,
+`table`, `markdown`. **Describe meaning, never layout** — no widths, no
+colours, no components. Terminal Delight owns how each kind looks, in whatever
+theme and at whatever size the pane is. A kind it does not know is shown as
 `unclassified` rather than dropped, so it is always safe to send.
+
+**End every turn with a `response`.** The bench's OVERVIEW is a feed of these
+and shows nothing else. A response is a `tldr` (one or two sentences,
+required) plus registers a person unfolds by name — `eli5`, `layman`,
+`technical`, `evidence`, `asks`, `next` — and `doubts`, where you are not sure,
+each with a `claim`, a `why` and a `confidence`. Any other key becomes a
+section labelled by its key; a string is prose, an array is a list, an object
+is facts. Write the tldr for the person, not for yourself.
+
+```json
+{ "td": "0.3", "kind": "response", "title": "What this turn did",
+  "model": { "tldr": "The gist.", "eli5": "…", "technical": "…",
+             "evidence": ["…"], "next": ["…"],
+             "doubts": [ { "claim": "…", "why": "…", "confidence": "hunch" } ] } }
+```
 
 **Weigh it.** `effort`, `complexity`, `foundation` (which system, and how deep
 — leaf, component, subsystem, bedrock) and `confidence` (measured, inferred,
