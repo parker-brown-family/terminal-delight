@@ -171,6 +171,28 @@ pub struct Call {
     pub strength: f32,
 }
 
+impl Call {
+    /// The summons' meaning-colour, for the label and the checkboxes inside it.
+    pub fn tint(self, th: &Theme) -> Hsla {
+        facet(self.tier, th).tint
+    }
+
+    /// Clothe an element as this summons.
+    ///
+    /// The escalation wears the attention spine's frame rather than the panel
+    /// edge every other tier gets, because it is the one element on the surface
+    /// that has to say *look at this* — and [`crate::benchdraw::spine_frame`] is
+    /// already that frame, borders and bloom and shadows together.
+    ///
+    /// It lives HERE, beside [`Facet::clothe`], for the reason the module
+    /// exists: a renderer reaching for `spine_frame` itself would be a second
+    /// place deciding what an escalation looks like, and two places that agree
+    /// today are two places that disagree after the first edit.
+    pub fn clothe<E: Styled>(self, el: E, sk: &Skin, th: &Theme) -> E {
+        crate::benchdraw::spine_frame(el, self.tint(th), self.strength, sk, th)
+    }
+}
+
 /// The resolved appearance of one tier, against one theme.
 ///
 /// The single place a tier becomes colour, so a palette change moves every

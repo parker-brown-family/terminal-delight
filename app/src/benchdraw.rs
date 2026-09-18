@@ -703,7 +703,7 @@ fn escalation(
     th: &Theme,
 ) -> Div {
     use crate::surface::EscalationLevel as L;
-    let facet = crate::emphasis::facet(call.tier, th);
+    let tint = call.tint(th);
     let open = e.unanswered();
     let legend = format!(
         "\u{25c6} {} \u{b7} {} unanswered{}",
@@ -720,10 +720,10 @@ fn escalation(
             _ => " \u{b7} WORK CONTINUES",
         }
     );
-    let frame = spine_frame(
+    // The frame comes from the Call, not from a `spine_frame` call written out
+    // here: one place decides what a summons looks like.
+    let frame = call.clothe(
         div().flex().flex_col().gap(px(5.)).px(px(11.)).py(px(9.)),
-        facet.tint,
-        call.strength,
         sk,
         th,
     );
@@ -737,7 +737,7 @@ fn escalation(
                 .child(micro(
                     legend,
                     Step::Tag,
-                    facet.tint.alpha(0.85 * call.strength.max(0.6)),
+                    tint.alpha(0.85 * call.strength.max(0.6)),
                     sk,
                     th,
                 ))
@@ -771,7 +771,7 @@ fn escalation(
                         .h(px(sk.tpx(9.)))
                         .rounded(sk.rad_raw(2.))
                         .border_1()
-                        .border_color(facet.tint.alpha(0.8)),
+                        .border_color(tint.alpha(0.8)),
                 )
                 .child(
                     div()
