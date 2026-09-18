@@ -169,8 +169,14 @@ is the same reply cut for several readers, and the person picks the cut.
     "layman": "…",
     "technical": "…",
     "evidence": ["cargo test --locked, all green", "…"],
-    "asks": ["which of the two roots wins?"],
     "next": ["install the build", "watch the overview"],
+    "escalation": {
+      "level": "blocking",
+      "why": "The seat cannot be bound without a choice of width.",
+      "items": [
+        { "ask": "which of the two roots wins?", "answered": false }
+      ]
+    },
     "doubts": [
       { "claim": "codex accepts xhigh",
         "why": "read off the binary, not its docs",
@@ -183,15 +189,56 @@ is the same reply cut for several readers, and the person picks the cut.
 
 | Key | Required | Drawn as | Notes |
 |---|---|---|---|
-| `tldr` | **yes** | the gist, large, always open | Aliases: `tl;dr`, `summary`, `gist`, `headline`. The first sentence titles the row if `title` is absent. |
-| `eli5` | no | a folded section, **ELI5** | |
-| `layman` | no | a folded section, **Plain brief** | Aliases: `plain`, `layman_brief`, `brief`. |
-| `technical` | no | a folded section, **Technical brief** | Aliases: `technical_brief`, `tech`, `detail`. |
-| `evidence` | no | a folded section, **What was verified** | Aliases: `verified`, `proof`, `checks`. |
-| `asks` | no | an **open** section, **Needs from you**, marked `needs you` | Aliases: `needs`, `questions`, `blocked_on`. |
-| `next` | no | a folded, numbered section, **What's next** | Aliases: `next_steps`, `follow_ups`. |
-| `doubts` | no | its own strip, never folded, in the complement colour | Aliases: `unsure`, `caveats`, `risks`. |
-| anything else | no | a folded section labelled by the key | `next_steps` → `Next steps`. Never dropped. |
+| `tldr` | **yes** | the first register, open | Aliases: `tl;dr`, `summary`, `gist`, `headline`. The first sentence titles the row if `title` is absent. |
+| `eli5` | no | a folded register, **ELI5** | |
+| `layman` | no | a folded register, **Plain brief** | Aliases: `plain`, `layman_brief`, `brief`. |
+| `technical` | no | a folded register, **Technical brief** | Aliases: `technical_brief`, `tech`, `detail`. |
+| `evidence` | no | a folded register, **What was verified** | Aliases: `verified`, `proof`, `checks`. |
+| `asks` | no | an **open** register, **Needs from you** — or the escalation, if none was declared | Aliases: `needs`, `questions`, `blocked_on`. |
+| `next` | no | a folded, numbered register, **What's next** | Aliases: `next_steps`, `follow_ups`. |
+| `escalation` | no | the card's one interrupt, above the title | See below. `none` and *absent* are different answers. |
+| `doubts` | no | its own strip, never folded, quiet | Aliases: `unsure`, `caveats`, `risks`. |
+| anything else | no | a folded register labelled by the key | `next_steps` → `Next steps`. Never dropped. |
+
+**Every register is a peer.** The tl;dr does not outrank the technical brief: a
+reader who deliberately opened the technical brief is reading the technical
+brief. They share one panel, one type size and one ink, and exactly one of them
+is lit at a time — the one the reader is in. Nothing else on a card glows.
+
+**`escalation` — the only thing allowed to interrupt.**
+
+```json
+"escalation": {
+  "level": "blocking",
+  "why": "The seat cannot be bound without a choice of width.",
+  "items": [ { "ask": "Lower the width?", "answered": false } ]
+}
+```
+
+| `level` | Means | Drawn as |
+|---|---|---|
+| `blocking` | the agent has stopped and cannot continue | the spine frame in the theme's red, pinned above the title |
+| `wanted` | an answer is wanted; work carries on | the same frame at reduced strength — present, not urgent |
+| `none` | the agent looked and needs nothing | nothing, and the card is **known** to be clear |
+| *absent* | **undeclared — the agent never said** | falls back to the `asks` register, drawn at `wanted` and labelled `inferred`; nothing if there are no asks |
+
+`none` and *absent* are deliberately different values. An agent saying it needs
+nothing is a finding; an agent that never addressed it is a card you should not
+trust to be clear, and collapsing the two would make a missing field draw
+exactly like a checked-and-clear one.
+
+An escalation whose asks are all `answered` draws **nothing**. The loudest thing
+on the surface has to be able to go away, or a card you have already dealt with
+keeps shouting and the frame stops meaning anything. Answered asks stay in
+`items` — a settled question is part of the record — they just stop counting.
+
+`items` may be bare strings (`["which root wins?"]`), and `escalation` may be a
+bare level (`"escalation": "blocking"`) or a bare list of questions, which reads
+as `wanted`. A `level` this build does not know reads as `wanted`: an unfamiliar
+spelling should neither seize the card's one interrupt nor swallow a summons.
+
+When an escalation is drawn, the `asks` register is **not** drawn beneath it —
+the escalation is that content, promoted. Print the questions once.
 
 **Well defined and very flexible, both.** The known keys get a fixed label and
 a fixed order (ELI5, plain, technical, verified, needs, next, then yours by

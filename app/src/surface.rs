@@ -68,7 +68,7 @@ use serde_json::{json, Map, Value};
 /// A payload naming a **newer major** is refused: the envelope may have been
 /// re-cut under it. A newer minor is accepted, because a minor bump may only
 /// add optional fields — that is the promise the number makes.
-pub const TDSP_VERSION: &str = "0.3";
+pub const TDSP_VERSION: &str = "0.4";
 
 /// Longest title a rail row can carry before it stops being readable at the
 /// rail's width. Measured against [`crate::workbench::RAIL_W`], not guessed.
@@ -733,6 +733,91 @@ pub struct Response {
     /// Where the agent is not sure. Kept out of the sections so they can be
     /// counted on the row and drawn in their own colour.
     pub doubts: Vec<Doubt>,
+    /// Whether the agent is waiting on the person, AS DECLARED.
+    ///
+    /// `None` is a real answer and not a default: it means the agent never
+    /// addressed the question. That is a different fact from
+    /// [`EscalationLevel::None`], which is the agent saying it looked and needs
+    /// nothing, and the card draws them differently — an undeclared response
+    /// falls back to inferring from an `asks` register and says that it
+    /// inferred, while a declared `none` is a card you can trust to be clear.
+    ///
+    /// Collapsing the two would be the unknown-is-not-zero rule broken in the
+    /// one place it is easiest to break: a missing field would draw exactly like
+    /// a checked-and-clear one, and nothing downstream could get the difference
+    /// back.
+    pub escalation: Option<Escalation>,
+}
+
+/// A declared summons: the agent saying, in the protocol rather than in prose,
+/// whether it is waiting on the person.
+///
+/// Before this existed the bench INFERRED it, from a section whose key happened
+/// to fold to [`Register::Asks`] — `asks`, `needs`, `blocked_on`, `questions`.
+/// An inference over aliases cannot separate an agent that has stopped dead from
+/// one that would merely like an answer, and it leaves the card's loudest
+/// element one alias away from firing by accident.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct Escalation {
+    pub level: EscalationLevel,
+    /// Why the agent is stopped, in its own words. Optional: a level with no
+    /// reason is still a fact worth drawing.
+    pub why: Option<String>,
+    pub items: Vec<Ask>,
+    /// Whether this was DECLARED by the agent or reconstructed by the bench from
+    /// an `asks` register. An inferred summons says so on its face, because a
+    /// red frame the agent never asked for is a claim the bench is making on its
+    /// own behalf.
+    pub inferred: bool,
+}
+
+impl Escalation {
+    /// How many of the asks are still open — what decides whether the card
+    /// draws its interrupt at all.
+    pub fn unanswered(&self) -> usize {
+        self.items.iter().filter(|a| !a.answered).count()
+    }
+}
+
+/// One thing the agent wants from the person.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct Ask {
+    pub ask: String,
+    /// Answered asks stay in the list — a question already settled is part of
+    /// the record — but they stop counting toward the summons.
+    pub answered: bool,
+}
+
+/// How hard a declared escalation pushes.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum EscalationLevel {
+    /// The agent has stopped and cannot continue.
+    Blocking,
+    /// An answer is wanted; work carries on without it.
+    Wanted,
+    /// The agent looked and needs nothing. Draws nothing — and, unlike an
+    /// absent field, means the card is KNOWN to be clear.
+    None,
+}
+
+impl EscalationLevel {
+    /// Parse the wire value, forgivingly.
+    ///
+    /// An unrecognised level is `Wanted` rather than `Blocking` or `None`: a
+    /// spelling this build has not seen should neither seize the card's one
+    /// interrupt nor silently swallow a summons the agent meant to raise.
+    pub fn parse(s: &str) -> Self {
+        match s
+            .trim()
+            .to_ascii_lowercase()
+            .replace(['-', ' '], "_")
+            .as_str()
+        {
+            "blocking" | "blocked" | "stopped" | "halted" => EscalationLevel::Blocking,
+            "none" | "clear" | "nothing" | "ok" => EscalationLevel::None,
+            _ => EscalationLevel::Wanted,
+        }
+    }
 }
 
 /// One unfoldable part of a response.
@@ -754,6 +839,18 @@ pub struct Section {
 /// last and keeps the agent's own key as its label.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, PartialOrd, Ord)]
 pub enum Register {
+    /// The gist — a register like any other, and first.
+    ///
+    /// It used to be drawn as a banner: bigger type, its own raised floor, the
+    /// accent down its edge. That made it outrank a technical brief the reader
+    /// had deliberately opened, which is backwards. Parker: *"ALL THE READING
+    /// will ONLY be phosphor highlighted when ACTIVE — all the reading will be
+    /// attentionally equal, eli5 or tl;dr does not get escalated."*
+    ///
+    /// It never appears in [`Response::sections`] — the wire keeps `tldr` as its
+    /// own required member — but it is a first-class register everywhere the
+    /// bench reasons about folds and order.
+    Tldr,
     Eli5,
     Layman,
     Technical,
@@ -828,36 +925,19 @@ pub enum Body {
     Facts(Vec<(String, String)>),
 }
 
-impl Body {
-    /// The count the header shows beside the label, so a folded section says
-    /// how much is behind it: `140 words`, `3 items`, `4 facts`.
-    pub fn measure(&self) -> String {
-        match self {
-            Body::Prose(p) => {
-                let n = p.split_whitespace().count();
-                if n == 1 {
-                    "1 word".into()
-                } else {
-                    format!("{n} words")
-                }
-            }
-            Body::Items(items) => {
-                if items.len() == 1 {
-                    "1 item".into()
-                } else {
-                    format!("{} items", items.len())
-                }
-            }
-            Body::Facts(facts) => {
-                if facts.len() == 1 {
-                    "1 fact".into()
-                } else {
-                    format!("{} facts", facts.len())
-                }
-            }
-        }
-    }
-}
+// `Body::measure()` lived here and is deliberately gone, along with the
+// `140 words` / `3 items` / `4 facts` count it put beside every register label.
+//
+// Its justification was that a folded section should be "a promise the reader
+// can weigh before spending it". Nobody reads that way. No one has ever declined
+// to open a technical brief because it was thirty-two words rather than forty,
+// and the count answers none of the question a reader actually has, which is
+// whether the thing is worth opening. Parker: *"the number of words or facts —
+// all those counters are AI trash anti-patterns and die in a fire"*.
+//
+// Deleted rather than left unused, so it cannot quietly come back: the next
+// renderer that wants a number beside a label has to write the number AND the
+// argument for it.
 
 /// One thing the agent is not sure of.
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -1766,8 +1846,15 @@ fn parse_response(m: &Map<String, Value>) -> Result<Response, String> {
     let mut tldr: Option<String> = None;
     let mut doubts: Vec<Doubt> = Vec::new();
     let mut sections: Vec<Section> = Vec::new();
+    let mut escalation: Option<Escalation> = None;
     for (key, value) in inner {
         if key == "response" && std::ptr::eq(inner, m) {
+            continue;
+        }
+        if is_escalation_key(key) {
+            if escalation.is_none() {
+                escalation = parse_escalation(value);
+            }
             continue;
         }
         if Register::is_tldr(key) {
@@ -1820,10 +1907,171 @@ fn parse_response(m: &Map<String, Value>) -> Result<Response, String> {
                 _ => std::cmp::Ordering::Equal,
             })
     });
+    // Nothing declared → fall back to the `asks` register, and SAY that it was
+    // inferred. The fallback exists so today's agents keep working; the flag
+    // exists so the card never presents the bench's own guess as the agent's
+    // word. An agent that declared nothing and wrote no asks stays `None`,
+    // which is undeclared and NOT the same as a declared `none`.
+    let escalation = escalation.or_else(|| infer_escalation(&sections));
     Ok(Response {
         tldr,
         sections,
         doubts,
+        escalation,
+    })
+}
+
+/// The keys that carry a declared escalation.
+///
+/// Deliberately narrow, and deliberately not overlapping [`Register::known`]'s
+/// ask aliases: `asks` and `needs` stay REGISTERS, because an agent writing a
+/// list of questions in prose has not declared a level, and promoting it here
+/// would make the card's one interrupt fire on a spelling.
+fn is_escalation_key(key: &str) -> bool {
+    matches!(
+        key.trim()
+            .to_ascii_lowercase()
+            .replace(['-', ' '], "_")
+            .as_str(),
+        "escalation" | "escalate" | "waiting_on_you" | "summons"
+    )
+}
+
+/// A declared escalation from the wire.
+///
+/// Forgiving about shape for the same reason the rest of this parser is: an
+/// agent that sends a bare string or a bare list has said something real, and
+/// dropping it because it was not an object would lose a summons.
+fn parse_escalation(v: &Value) -> Option<Escalation> {
+    let items_of = |v: &Value| -> Vec<Ask> {
+        match v {
+            Value::Array(a) => a
+                .iter()
+                .filter_map(|item| match item {
+                    Value::String(s) => Some(Ask {
+                        ask: s.trim().to_string(),
+                        answered: false,
+                    }),
+                    Value::Object(o) => {
+                        let ask = o
+                            .get("ask")
+                            .or_else(|| o.get("question"))
+                            .or_else(|| o.get("text"))
+                            .and_then(Value::as_str)?
+                            .trim()
+                            .to_string();
+                        Some(Ask {
+                            ask,
+                            answered: o.get("answered").and_then(Value::as_bool).unwrap_or(false),
+                        })
+                    }
+                    _ => None,
+                })
+                .filter(|a| !a.ask.is_empty())
+                .collect(),
+            Value::String(s) if !s.trim().is_empty() => vec![Ask {
+                ask: s.trim().to_string(),
+                answered: false,
+            }],
+            _ => Vec::new(),
+        }
+    };
+    match v {
+        Value::Null => None,
+        // A bare level: `"escalation": "blocking"`.
+        Value::String(s) if !s.trim().is_empty() => Some(Escalation {
+            level: EscalationLevel::parse(s),
+            why: None,
+            items: Vec::new(),
+            inferred: false,
+        }),
+        // A bare list of questions, with no level stated. `Wanted` is the
+        // honest reading: the agent listed things it wants and did not claim to
+        // be stopped.
+        Value::Array(_) => {
+            let items = items_of(v);
+            if items.is_empty() {
+                None
+            } else {
+                Some(Escalation {
+                    level: EscalationLevel::Wanted,
+                    why: None,
+                    items,
+                    inferred: false,
+                })
+            }
+        }
+        Value::Object(o) => {
+            let items = o
+                .get("items")
+                .or_else(|| o.get("asks"))
+                .or_else(|| o.get("questions"))
+                .map(&items_of)
+                .unwrap_or_default();
+            // A level with neither items nor a reason is still a declaration —
+            // `"level": "none"` is the whole point of the field.
+            let level = o
+                .get("level")
+                .and_then(Value::as_str)
+                .map(EscalationLevel::parse)
+                .unwrap_or(EscalationLevel::Wanted);
+            let why = o
+                .get("why")
+                .or_else(|| o.get("reason"))
+                .and_then(Value::as_str)
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty());
+            if items.is_empty() && why.is_none() && o.get("level").is_none() {
+                return None;
+            }
+            Some(Escalation {
+                level,
+                why,
+                items,
+                inferred: false,
+            })
+        }
+        _ => None,
+    }
+}
+
+/// Reconstruct an escalation from an `asks` register, for agents that have not
+/// been taught the field yet.
+///
+/// Always [`EscalationLevel::Wanted`], never `Blocking`: the register says a
+/// person is wanted and says nothing about whether the agent stopped, and
+/// inventing the stronger of the two readings would hand the card's loudest
+/// element to an inference.
+fn infer_escalation(sections: &[Section]) -> Option<Escalation> {
+    let asks = sections.iter().find(|s| s.register == Register::Asks)?;
+    let items: Vec<Ask> = match &asks.body {
+        Body::Items(items) => items
+            .iter()
+            .map(|i| Ask {
+                ask: i.clone(),
+                answered: false,
+            })
+            .collect(),
+        Body::Prose(p) => vec![Ask {
+            ask: p.clone(),
+            answered: false,
+        }],
+        Body::Facts(f) => f
+            .iter()
+            .map(|(k, v)| Ask {
+                ask: format!("{k}: {v}"),
+                answered: false,
+            })
+            .collect(),
+    };
+    if items.is_empty() {
+        return None;
+    }
+    Some(Escalation {
+        level: EscalationLevel::Wanted,
+        why: None,
+        items,
+        inferred: true,
     })
 }
 
@@ -2492,6 +2740,7 @@ mod tests {
                 tldr: "x".into(),
                 sections: vec![],
                 doubts: vec![],
+                escalation: None,
             }),
             Kind::Unclassified(Unclassified {
                 reason: String::new(),
@@ -2582,6 +2831,108 @@ mod tests {
         );
     }
 
+    /// Pull the response out of a parsed surface, or fail loudly.
+    fn response_of(v: serde_json::Value) -> Response {
+        let s = surface(v);
+        match s.kind {
+            Kind::Response(r) => r,
+            other => panic!("not a response: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn an_undeclared_escalation_is_not_a_declared_none() {
+        // THE distinction the field exists for. An agent that never addressed
+        // the question and an agent that looked and needs nothing are different
+        // facts, and the type keeps them apart all the way to the card.
+        let silent = response_of(json!({
+            "td": "0.4", "kind": "response",
+            "model": { "tldr": "Nothing to report." }
+        }));
+        assert_eq!(
+            silent.escalation, None,
+            "no field and no asks is UNDECLARED — the agent never said"
+        );
+
+        let clear = response_of(json!({
+            "td": "0.4", "kind": "response",
+            "model": { "tldr": "All done.", "escalation": { "level": "none" } }
+        }));
+        let clear = clear
+            .escalation
+            .expect("a declared `none` is a declaration");
+        assert_eq!(clear.level, EscalationLevel::None);
+        assert!(!clear.inferred, "the agent said it itself");
+    }
+
+    #[test]
+    fn an_asks_register_infers_a_wanted_summons_and_says_so() {
+        let r = response_of(json!({
+            "td": "0.4", "kind": "response",
+            "model": { "tldr": "Two open questions.",
+                       "asks": ["Which root wins?", "Ship the affordance too?"] }
+        }));
+        let e = r.escalation.expect("an asks register still summons");
+        assert!(
+            e.inferred,
+            "the bench reconstructed this; the agent did not"
+        );
+        assert_eq!(
+            e.level,
+            EscalationLevel::Wanted,
+            "an inference never claims the agent is BLOCKED"
+        );
+        assert_eq!(e.unanswered(), 2);
+    }
+
+    #[test]
+    fn a_declared_escalation_beats_the_inference() {
+        let r = response_of(json!({
+            "td": "0.4", "kind": "response",
+            "model": {
+                "tldr": "Stopped.",
+                "asks": ["this one is only a register now"],
+                "escalation": {
+                    "level": "blocking",
+                    "why": "The seat cannot be bound without a width.",
+                    "items": [
+                        { "ask": "Lower the width?", "answered": false },
+                        { "ask": "Relaunch on an empty workspace?", "answered": true }
+                    ]
+                }
+            }
+        }));
+        let e = r.escalation.expect("declared");
+        assert!(!e.inferred);
+        assert_eq!(e.level, EscalationLevel::Blocking);
+        assert_eq!(
+            e.why.as_deref(),
+            Some("The seat cannot be bound without a width.")
+        );
+        assert_eq!(
+            e.unanswered(),
+            1,
+            "an answered ask stays in the record and stops counting"
+        );
+    }
+
+    #[test]
+    fn an_unknown_level_neither_seizes_the_card_nor_swallows_the_summons() {
+        assert_eq!(EscalationLevel::parse("URGENT!!"), EscalationLevel::Wanted);
+        assert_eq!(EscalationLevel::parse("blocked"), EscalationLevel::Blocking);
+        assert_eq!(EscalationLevel::parse("Clear"), EscalationLevel::None);
+    }
+
+    #[test]
+    fn an_escalation_key_is_not_an_ask_alias() {
+        // `asks` and `needs` stay REGISTERS. If they were escalation keys too,
+        // the card's one interrupt would fire on a spelling.
+        assert!(is_escalation_key("escalation"));
+        assert!(!is_escalation_key("asks"));
+        assert!(!is_escalation_key("needs"));
+        assert!(!is_escalation_key("blocked_on"));
+    }
+
     #[test]
     fn a_response_may_nest_its_registers_under_a_response_key() {
         // Parker drew it nested; an agent copying the flat example sends it
@@ -2610,17 +2961,6 @@ mod tests {
         assert!(
             matches!(landed.kind, Kind::Unclassified(_)),
             "never dropped"
-        );
-    }
-
-    #[test]
-    fn a_measure_says_how_much_is_behind_a_folded_header() {
-        assert_eq!(Body::Prose("one two three".into()).measure(), "3 words");
-        assert_eq!(Body::Prose("one".into()).measure(), "1 word");
-        assert_eq!(Body::Items(vec!["a".into()]).measure(), "1 item");
-        assert_eq!(
-            Body::Facts(vec![("a".into(), "b".into()); 2]).measure(),
-            "2 facts"
         );
     }
 
