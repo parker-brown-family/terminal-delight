@@ -2131,9 +2131,16 @@ pub fn launch_briefing(dir: &str) -> String {
          \"technical\":\"<…>\",\"evidence\":[\"<…>\"],\"next\":[\"<…>\"],\
          \"doubts\":[{{\"claim\":\"<…>\",\"why\":\"<…>\",\"confidence\":\"hunch\"}}]}}}}\n\
          \n\
-         Alongside that, present each finished work object as one JSON document. \
-         Write it to a new file in {dir} (any filename ending .json), or call the \
-         `present_surface` MCP verb, or print it in your reply inside a fenced ```td block.\n\
+         Alongside that, present each finished work object as one JSON document.\n\
+         \n\
+         HOW TO SEND ONE, best first. (1) Write it as a new .json file in {dir} — any \
+         filename ending .json. (2) Call the `present_surface` MCP verb, if you are \
+         connected. (3) LAST RESORT: print it in your reply inside a fenced ```td block. \
+         The first two are invisible to the person; the fence is not — it puts the raw \
+         JSON in the middle of the reply they are reading, which is the thing the \
+         workbench exists to take OUT of the conversation. Use the fence only when you \
+         cannot write a file and have no MCP connection, and never send the same document \
+         twice by two routes.\n\
          \n\
          {{\"td\":\"{TDSP_VERSION}\",\"kind\":\"<kind>\",\"title\":\"<short name>\",\
          \"model\":{{...}},\"weight\":{{\"effort\":\"medium\",\"complexity\":\"moderate\",\
@@ -2776,6 +2783,37 @@ mod tests {
             text.contains("[workbench]"),
             "it says how an answer will arrive"
         );
+    }
+
+    /// **The transports are RANKED, and the fence is last.**
+    ///
+    /// They were offered as three equals — "write a file, or call the verb, or
+    /// print a fence" — and the first briefed agent ever asked a question chose
+    /// the fence, which is the one route that dumps the raw JSON into the middle
+    /// of the reply a person is reading. The workbench exists to take that OUT
+    /// of the conversation, so the briefing that produced it was arguing against
+    /// the feature. A menu with no order is a menu whose default is whichever
+    /// item the reader saw last.
+    #[test]
+    fn the_briefing_ranks_the_transports_and_puts_the_fence_last() {
+        let text = launch_briefing("/run/td/7");
+        let dir = text.find("/run/td/7").expect("the drop directory");
+        let verb = text.find("present_surface").expect("the verb");
+        let fence = text.find("```td").expect("the fence");
+        assert!(
+            dir < verb && verb < fence,
+            "file {dir}, verb {verb}, fence {fence} — the silent routes come first"
+        );
+        assert!(
+            text.contains("LAST RESORT"),
+            "the fence is marked as the fallback it is"
+        );
+        for warning in ["invisible to the person", "cannot write a file"] {
+            assert!(
+                text.contains(warning),
+                "the briefing never says {warning:?}"
+            );
+        }
     }
 
     #[test]
