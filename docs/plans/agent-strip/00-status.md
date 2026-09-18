@@ -147,15 +147,17 @@ scroll container.
 
 ## Open, and deliberately not decided here
 
-- **Effort appears to be capped per model**, and the dial does not model that.
-  `claude --help` at 2.1.274 confirms all five levels — `--effort <level>
-  (low, medium, high, xhigh, max)` — so `Harness::efforts()` is right and `max`
-  is real. But the bundle also carries `"model-effort-cap"` beside
-  `"low, medium, high, or xhigh instead"`, which reads as a model refusing a
-  level the flag itself accepts. If that is what it is, the two dials are not
-  independent and picking `max` on a small model is a press that gets argued
-  with. The harness will say so in its own words and the dial will not pretend
-  otherwise — but the pair may want to be one control rather than two.
+- **`max` does not reach a REMOTE session**, and that is the only restriction on
+  it. `claude --help` at 2.1.274 confirms all five levels — `--effort <level>
+  (low, medium, high, xhigh, max)` — so `Harness::efforts()` is right. The
+  refusal string in the bundle turns out to be about cloud sessions rather than
+  about models: *"`${e}` is session-scoped and won't reach the remote process.
+  Use low, medium, high, or xhigh instead."* This window launches local agents,
+  so the two dials are independent and neither needs to clamp the other. Worth
+  recording because the bundle carries five different effort scales
+  (`["low","medium","high"]`, `…,"immediate"]`, `…,"max"]`, `…,"xhigh"]` and the
+  full five) and only the last is the one `--effort` takes — so a future reader
+  grepping for an effort list will find four wrong ones first.
 - Whether the dials belong on the strip at all on a narrow pane. The strip is
   one line by deliberate decision and it already drops the tool label first;
   the dials need a place in that order.
