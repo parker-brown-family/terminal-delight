@@ -114,6 +114,7 @@ impl TerminalView {
                 window.focus(&self.focus_handle, cx);
             }
             Hit::ToggleRail => self.bench.toggle_rail(),
+            Hit::ToggleSection { id, key } => self.bench.toggle_section(&id, &key),
             Hit::Shelf(shelf) => self.bench.set_shelf(shelf),
             Hit::OpenRow(id) => self.bench_open(&id, cx),
             Hit::GalleryBack => {
@@ -1451,11 +1452,22 @@ impl TerminalView {
         // 900px pane under an acre of empty, because `justify_end` — correct
         // for a transcript — had been applied to the slot rather than to the
         // thing in it.
+        // `showing` is the opened card, or on the overview the newest reply
+        // standing in for one — see `Bench::showing`. Only an opened card
+        // gets the close: the stand-in was not opened and cannot be closed,
+        // and a ✕ that did nothing would be a control that lies.
         let card_open = self.bench.selected().is_some();
-        let body = match self.bench.selected() {
+        let body = match self.bench.showing() {
             Some(surface) => {
                 let tint = crate::benchdraw::ink(crate::workbench::tint_of(&surface.kind), th);
-                let drawn = crate::benchdraw::body(surface, how, sk, th);
+                let bench = &self.bench;
+                let open = |s: &crate::surface::Section| bench.section_open(&surface.id, s);
+                let folds = crate::benchdraw::Folds {
+                    id: &surface.id,
+                    open: &open,
+                    zones: self.wb_zones.clone(),
+                };
+                let drawn = crate::benchdraw::body(surface, how, Some(&folds), sk, th);
                 // A question opened from the rail is still a question, so it
                 // gets the chips the inline block gets. Built before the verb
                 // row because both borrow `self`.
@@ -1494,20 +1506,22 @@ impl TerminalView {
                     tint,
                     th,
                 )
-                .child(
-                    div()
-                        .absolute()
-                        .right(px(10.))
-                        .top(px(8.))
-                        .text_size(px(13.))
-                        .text_color(th.faint)
-                        .child("\u{2715}")
-                        .relative()
-                        .child(crate::benchdraw::zone(
-                            self.wb_zones.clone(),
-                            crate::workbench::Hit::CloseCard,
-                        )),
-                )
+                .when(card_open, |card| {
+                    card.child(
+                        div()
+                            .absolute()
+                            .right(px(10.))
+                            .top(px(8.))
+                            .text_size(px(13.))
+                            .text_color(th.faint)
+                            .child("\u{2715}")
+                            .relative()
+                            .child(crate::benchdraw::zone(
+                                self.wb_zones.clone(),
+                                crate::workbench::Hit::CloseCard,
+                            )),
+                    )
+                })
                 .child(drawn)
                 .children(answers)
                 .children(verbs)

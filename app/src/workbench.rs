@@ -224,8 +224,29 @@ pub fn tint_of(kind: &Kind) -> Tint {
         Kind::Artifact(_) | Kind::Markdown(_) | Kind::Table(_) | Kind::Architecture(_) => {
             Tint::Ident
         }
+        // A reply is information, whatever it contains; its doubts get their
+        // own colour inside the card rather than tinting the whole row.
+        Kind::Response(_) => Tint::Ident,
         Kind::Unclassified(_) => Tint::Unknown,
     }
+}
+
+/// Whether a response's register starts unfolded.
+///
+/// The gist is always open (it is not a section at all). Of the sections,
+/// the ones open by default are the ones where the agent needs the person —
+/// what it is unsure of and what it is asking for — because those are the
+/// parts a reader must not have to go looking for. The three registers of
+/// the same content stay folded until a register is chosen: unfolding all
+/// three is the transcript again.
+pub fn section_default_open(register: crate::surface::Register) -> bool {
+    matches!(register, crate::surface::Register::Asks)
+}
+
+/// A section's state after the person's toggles: open by default and not
+/// toggled, or closed by default and toggled.
+pub fn section_open(default_open: bool, toggled: bool) -> bool {
+    default_open != toggled
 }
 
 // ---------------------------------------------------------------------------
@@ -619,6 +640,11 @@ pub enum Hit {
     Arm,
     /// The rail's collapse handle, and its collapsed ticks.
     ToggleRail,
+    /// A response section's header: fold it, or unfold it.
+    ToggleSection {
+        id: SurfaceId,
+        key: String,
+    },
     Shelf(crate::surface::Shelf),
     OpenRow(crate::surface::SurfaceId),
     GalleryBack,
@@ -1404,9 +1430,6 @@ pub struct Row {
     /// The short word this row wears, or [`None`] where the state chip
     /// already says everything. See [`crate::surface::Shelf::badge`].
     pub badge: Option<String>,
-    /// One line instead of three. The overview is a census — what is on this
-    /// bench — and a census is read by scanning, which three-line rows defeat.
-    pub terse: bool,
     pub tint: Tint,
     pub standing: Standing,
     pub selected: bool,
@@ -1429,6 +1452,10 @@ pub struct Bench {
     /// The person's own preference for the rail. Physics may still overrule it.
     rail_wanted: bool,
     unseen: HashSet<SurfaceId>,
+    /// Response sections the person has flipped away from their default.
+    /// Toggles rather than states, so a section's default can change under a
+    /// build without every remembered fold inverting.
+    toggled: HashSet<(SurfaceId, String)>,
 }
 
 /// What a press turns into.
@@ -1592,6 +1619,7 @@ impl Default for Bench {
             selected: None,
             rail_wanted: true,
             unseen: HashSet::new(),
+            toggled: HashSet::new(),
         }
     }
 }
@@ -1702,7 +1730,6 @@ impl Bench {
                 subtitle: s.subtitle(),
                 kind: s.kind.id(),
                 badge: shelf.badge(&s.kind, false),
-                terse: shelf == Shelf::Overview,
                 tint: tint_of(&s.kind),
                 // Filled in below: standing is a property of a row's place in
                 // the shelf, which no row can know about itself.
@@ -1727,6 +1754,46 @@ impl Bench {
     /// another card.
     pub fn selected(&self) -> Option<&Surface> {
         self.selected.as_ref().and_then(|id| self.get(id))
+    }
+
+    /// What the main area draws: the opened card, or — on the overview, with
+    /// nothing opened — the newest response.
+    ///
+    /// The overview is a feed of replies, and a feed that showed nothing until
+    /// a row was clicked would be a rail with an empty room beside it. So the
+    /// newest reply stands in the room by default, the way the last message
+    /// does in any conversation, and a person who opens an older one from the
+    /// rail keeps it until they close it. This is a property of the SHELF,
+    /// not of an arrival: an arrival still selects nothing, still moves no
+    /// shelf, and a card the person opened stays open under it.
+    pub fn showing(&self) -> Option<&Surface> {
+        self.selected().or_else(|| {
+            (self.shelf == Shelf::Overview)
+                .then(|| {
+                    self.surfaces
+                        .iter()
+                        .rev()
+                        .find(|s| matches!(s.kind, Kind::Response(_)))
+                })
+                .flatten()
+        })
+    }
+
+    /// Flip one response section between folded and unfolded.
+    pub fn toggle_section(&mut self, id: &SurfaceId, key: &str) {
+        let k = (id.clone(), key.to_string());
+        if !self.toggled.remove(&k) {
+            self.toggled.insert(k);
+        }
+    }
+
+    /// Whether a response section is unfolded right now: its register's
+    /// default, flipped if the person toggled it.
+    pub fn section_open(&self, id: &SurfaceId, section: &crate::surface::Section) -> bool {
+        section_open(
+            section_default_open(section.register),
+            self.toggled.contains(&(id.clone(), section.key.clone())),
+        )
     }
 
     /// Open one as a card. Marks it seen, because opening is looking.
@@ -1774,6 +1841,7 @@ impl Bench {
                 let before = self.surfaces.len();
                 self.surfaces.retain(|s| s.id != post.id);
                 self.unseen.remove(&post.id);
+                self.toggled.retain(|(id, _)| *id != post.id);
                 // Closes the card if it was the one open. It does NOT open a
                 // neighbour: a surface appearing under the reader because
                 // another one was retired is the rail choosing for them.
@@ -1808,6 +1876,7 @@ impl Bench {
                         if self.surfaces.len() > crate::surface::PANE_HISTORY_CAP {
                             let dropped = self.surfaces.remove(0);
                             self.unseen.remove(&dropped.id);
+                            self.toggled.retain(|(id, _)| *id != dropped.id);
                             if self.selected.as_ref() == Some(&dropped.id) {
                                 self.selected = None;
                             }
@@ -2009,6 +2078,132 @@ mod tests {
         }))
     }
 
+    fn response(id: &str, tldr: &str) -> Post {
+        post(json!({
+            "td": "0.3", "kind": "response", "id": id, "title": tldr,
+            "model": {
+                "tldr": tldr,
+                "eli5": "small words",
+                "technical": "big words",
+                "asks": ["pick one"],
+                "doubts": ["maybe"]
+            }
+        }))
+    }
+
+    #[test]
+    fn the_overview_is_the_feed_of_replies_and_holds_nothing_else() {
+        // For a day the overview was a view over everything, and the test
+        // here said so. Parker: *"the OVERVIEW tab of the workbench will no
+        // longer show artifacts or decisions, it will only show the
+        // responses."* A document, a decision and a changeset land on the
+        // other two shelves; a reply lands here; the counts agree with the
+        // rows, because both go through `Shelf::holds`.
+        let mut b = Bench::new();
+        b.apply(doc("a", "A"));
+        b.apply(decision("d"));
+        b.apply(changeset("c"));
+        assert_eq!(b.counts(Shelf::Overview), (0, 0));
+        assert!(b.rows_for(Shelf::Overview).is_empty());
+        assert_eq!(b.counts(Shelf::Artifacts), (1, 1));
+        assert_eq!(
+            b.counts(Shelf::Decisions),
+            (2, 2),
+            "a changeset is a thing to answer"
+        );
+        b.apply(response("r", "Done."));
+        assert_eq!(b.counts(Shelf::Overview), (1, 1));
+        assert_eq!(
+            b.rows_for(Shelf::Overview)[0].subtitle,
+            "Done.",
+            "the gist is the row"
+        );
+        assert_eq!(
+            b.rows_for(Shelf::Overview)[0].badge.as_deref(),
+            Some("1 doubt")
+        );
+        // Looking at the overview marks the replies seen, and only them.
+        b.set_shelf(Shelf::Overview);
+        b.set_face(Face::Workbench);
+        assert_eq!(b.unseen_total(), 3, "the other shelves were not looked at");
+    }
+
+    #[test]
+    fn the_overview_shows_the_newest_reply_until_a_person_opens_another() {
+        let mut b = Bench::new();
+        assert!(b.showing().is_none(), "nothing to show");
+        b.apply(response("r1", "First."));
+        b.apply(response("r2", "Second."));
+        assert_eq!(
+            b.showing().map(|s| s.id.as_str()),
+            Some("r2"),
+            "the newest stands"
+        );
+        assert!(
+            b.selected().is_none(),
+            "and nothing was selected to get it there"
+        );
+        b.select(&SurfaceId("r1".into()));
+        assert_eq!(
+            b.showing().map(|s| s.id.as_str()),
+            Some("r1"),
+            "an opened card stays"
+        );
+        b.apply(response("r3", "Third."));
+        assert_eq!(
+            b.showing().map(|s| s.id.as_str()),
+            Some("r1"),
+            "an arrival does not take the room from an opened card"
+        );
+        b.close_card();
+        assert_eq!(b.showing().map(|s| s.id.as_str()), Some("r3"));
+        b.set_shelf(Shelf::Artifacts);
+        assert!(
+            b.showing().is_none(),
+            "the newest reply stands in on the overview only; another shelf shows its own card or nothing"
+        );
+    }
+
+    #[test]
+    fn a_section_starts_at_its_default_and_a_toggle_flips_it_and_only_it() {
+        let mut b = Bench::new();
+        b.apply(response("r", "Gist."));
+        let id = SurfaceId("r".into());
+        let sections = match &b.get(&id).unwrap().kind {
+            Kind::Response(r) => r.sections.clone(),
+            _ => unreachable!(),
+        };
+        let by_key = |k: &str| sections.iter().find(|s| s.key == k).unwrap().clone();
+        assert!(
+            !b.section_open(&id, &by_key("eli5")),
+            "a register starts folded"
+        );
+        assert!(!b.section_open(&id, &by_key("technical")));
+        assert!(
+            b.section_open(&id, &by_key("asks")),
+            "what the agent needs starts open"
+        );
+        b.toggle_section(&id, "eli5");
+        assert!(b.section_open(&id, &by_key("eli5")));
+        assert!(
+            !b.section_open(&id, &by_key("technical")),
+            "only the one pressed"
+        );
+        b.toggle_section(&id, "asks");
+        assert!(
+            !b.section_open(&id, &by_key("asks")),
+            "an open-by-default one folds"
+        );
+        b.toggle_section(&id, "eli5");
+        assert!(!b.section_open(&id, &by_key("eli5")), "and back");
+        // Retiring the surface forgets its folds, so an id reused later
+        // starts fresh rather than inheriting a stranger's toggles.
+        b.toggle_section(&id, "technical");
+        b.apply(post(json!({ "td": "0.3", "op": "retire", "id": "r" })));
+        b.apply(response("r", "Gist again."));
+        assert!(!b.section_open(&id, &by_key("technical")));
+    }
+
     #[test]
     fn an_arrival_opens_nothing_and_moves_no_shelf() {
         // The rail is a shelf a person browses, not a remote control for the
@@ -2079,7 +2274,7 @@ mod tests {
         b.apply(doc("same", "First"));
         b.apply(doc("same", "Second"));
         assert_eq!(b.all_newest_first().count(), 1);
-        assert_eq!(b.rows()[0].title, "Second");
+        assert_eq!(b.rows_for(Shelf::Artifacts)[0].title, "Second");
     }
 
     /// The derived half re-presents whatever it read from the transcript on
@@ -2312,27 +2507,6 @@ mod tests {
     }
 
     #[test]
-    fn the_overview_is_a_view_over_everything_and_the_others_are_filters() {
-        // The shelf this replaced held the leftovers, so it was empty here and
-        // the test said so. An overview that can be empty while the bench holds
-        // three surfaces is the misnomer the rename was supposed to fix, and
-        // this is the assertion that keeps it fixed.
-        let mut b = Bench::new();
-        b.apply(doc("a", "A"));
-        b.apply(doc("b", "B"));
-        b.apply(decision("d"));
-        assert_eq!(b.counts(Shelf::Artifacts), (2, 2));
-        assert_eq!(b.counts(Shelf::Decisions), (1, 1));
-        assert_eq!(b.counts(Shelf::Overview), (3, 3), "everything, once each");
-        assert_eq!(b.rows_for(Shelf::Overview).len(), 3);
-        // And looking at the overview marks the whole bench seen, because the
-        // whole bench is what was on screen.
-        b.set_shelf(Shelf::Overview);
-        b.set_face(Face::Workbench);
-        assert_eq!(b.unseen_total(), 0);
-    }
-
-    #[test]
     fn stepping_stays_inside_the_shelf_and_does_not_wrap() {
         let mut b = Bench::new();
         b.apply(doc("a", "A"));
@@ -2357,23 +2531,30 @@ mod tests {
         let mut b = Bench::new();
         b.apply(doc("a", "A"));
         b.apply(doc("b", "B"));
-        assert_eq!(b.rows()[0].title, "B");
+        assert_eq!(b.rows_for(Shelf::Artifacts)[0].title, "B");
+        b.apply(response("r1", "One."));
+        b.apply(response("r2", "Two."));
+        assert_eq!(
+            b.rows()[0].title,
+            "Two.",
+            "the overview too, and it is the default shelf"
+        );
     }
 
     #[test]
     fn a_changeset_is_pending_until_every_part_has_a_verdict() {
         let mut b = Bench::new();
         b.apply(changeset("c"));
-        assert_eq!(b.rows_for(Shelf::Overview)[0].tint, Tint::Pending);
+        assert_eq!(b.rows_for(Shelf::Decisions)[0].tint, Tint::Pending);
         b.select(&SurfaceId("c".into()));
         b.act(&Action::AcceptPart, Some("h1".into()), None);
         assert_eq!(
-            b.rows_for(Shelf::Overview)[0].tint,
+            b.rows_for(Shelf::Decisions)[0].tint,
             Tint::Pending,
             "one answered part is not an answered changeset"
         );
         b.act(&Action::RejectPart, Some("h2".into()), None);
-        assert_eq!(b.rows_for(Shelf::Overview)[0].tint, Tint::Settled);
+        assert_eq!(b.rows_for(Shelf::Decisions)[0].tint, Tint::Settled);
     }
 
     #[test]
@@ -3505,7 +3686,6 @@ mod tests {
             subtitle: String::new(),
             kind: "question",
             badge: None,
-            terse: false,
             tint,
             standing: Standing::Past,
             selected: false,
@@ -3612,11 +3792,18 @@ mod tests {
             NOW,
             "u.json",
         ));
-        assert_eq!(b.rows_for(Shelf::Artifacts)[0].tint, Tint::Ident);
-        assert_eq!(b.rows_for(Shelf::Decisions)[0].tint, Tint::Waiting);
-        let other = b.rows_for(Shelf::Overview);
-        assert!(other.iter().any(|r| r.tint == Tint::Unknown));
-        assert!(other.iter().any(|r| r.tint == Tint::Pending));
+        let made = b.rows_for(Shelf::Artifacts);
+        assert!(made.iter().any(|r| r.tint == Tint::Ident));
+        assert!(
+            made.iter().any(|r| r.tint == Tint::Unknown),
+            "unclassified files with the made"
+        );
+        let asked = b.rows_for(Shelf::Decisions);
+        assert!(asked.iter().any(|r| r.tint == Tint::Waiting));
+        assert!(
+            asked.iter().any(|r| r.tint == Tint::Pending),
+            "a changeset is a thing to answer"
+        );
     }
 
     #[test]

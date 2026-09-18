@@ -11119,15 +11119,21 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         let home = session::home_dir();
-        let projects = launcher::scan(&launcher::default_roots(&home), 60);
+        // The scan keeps the newest N and this box has 257 project-shaped
+        // directories under the five roots. At 60 a repository nobody had
+        // added a top-level file to in a week fell off the list, so typing
+        // its exact name found nothing. The render caps what is DRAWN; the
+        // filter is how a person reaches the rest, and it needs the rest.
+        let projects = launcher::scan(&launcher::default_roots(&home), 1000);
+        let harness = launcher::Harness::Claude;
         let mut lp = AgentLauncher {
             query: EditBuffer::seeded(""),
             projects,
             order: Vec::new(),
             selected: 0,
-            harness: launcher::Harness::Claude,
+            harness,
             model_ix: 0,
-            effort: launcher::Effort::Standard,
+            effort: harness.default_effort(),
             reach: launcher::Reach::Anywhere,
         };
         lp.recompute();
@@ -11212,7 +11218,7 @@ impl Workspace {
                     "at_ms": surfacefeed::now_ms(),
                     "harness": recipe.harness.binary(),
                     "model": recipe.model,
-                    "effort": recipe.effort.label(),
+                    "effort": recipe.effort.id(),
                     "reach": recipe.reach.id(),
                     "cwd": project.path.to_string_lossy(),
                     "command": line,
@@ -12308,11 +12314,12 @@ impl Workspace {
             .last_win
             .map(|(_, _, w, h)| (w, h))
             .unwrap_or((1200., 800.));
-        const MAX_ROWS: usize = 40;
-        const ROW_H: f32 = 30.;
+        use launcher::{MAX_ROWS, ROW_H};
         let panel_w = 520.;
-        let shown = lp.order.len().min(MAX_ROWS);
-        let panel_h = (250. + shown as f32 * ROW_H).min(wh - 32.);
+        // Sized by `launcher::panel_height`, which counts every fixed child
+        // in — the formula that lived here counted one chip row and squeezed
+        // the project list to nothing once there were four.
+        let panel_h = launcher::panel_height(lp.order.len(), wh);
         let left = (ww * 0.5 - panel_w * 0.5).clamp(8., (ww - panel_w - 8.).max(8.));
         let top = (wh * 0.16).clamp(8., (wh - panel_h - 8.).max(8.));
         let sel = lp.selected.min(lp.order.len().saturating_sub(1));
@@ -12401,6 +12408,7 @@ impl Workspace {
                                 if let Some(lp) = ws.agent_launcher.as_mut() {
                                     lp.harness = h;
                                     lp.model_ix = lp.model_ix.min(h.models().len() - 1);
+                                    lp.effort = h.clamp_effort(lp.effort);
                                 }
                                 cx.notify();
                             }),
@@ -12429,12 +12437,14 @@ impl Workspace {
                 })
                 .collect::<Vec<_>>(),
         );
+        // The harness's own levels, in the harness's own words: what the chip
+        // says is what the flag will say.
         let effort_row =
             div()
                 .flex()
                 .flex_row()
                 .gap_1()
-                .children(launcher::Effort::ALL.into_iter().map(|e| {
+                .children(lp.harness.efforts().iter().copied().map(|e| {
                     sk.chip(e == lp.effort)
                         .cursor_pointer()
                         .text_size(px(11.))
@@ -12543,7 +12553,18 @@ impl Workspace {
                     .child(format!("{}▋", lp.query.text())),
             )
             .child(head("PROJECT"))
-            .child(div().flex().flex_col().overflow_hidden().children(rows))
+            // The one child allowed to give way when the window is short —
+            // and never below one row, so a squeeze reads as a list with a
+            // scroll's worth hidden rather than as no list at all.
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .flex_shrink(1.)
+                    .min_h(px(ROW_H))
+                    .overflow_hidden()
+                    .children(rows),
+            )
             .when(lp.order.is_empty(), |d| {
                 d.child(
                     div()
@@ -14016,8 +14037,11 @@ impl Workspace {
                         .unwrap_or(0);
                     lp.harness = launcher::Harness::ALL[(at + 1) % launcher::Harness::ALL.len()];
                     // The model lists are different lengths, so an index that
-                    // was valid for one harness can be past the end of the next.
+                    // was valid for one harness can be past the end of the next
+                    // — and the effort lists differ too, so the level is
+                    // clamped to the nearest one this harness takes.
                     lp.model_ix = lp.model_ix.min(lp.harness.models().len() - 1);
+                    lp.effort = lp.harness.clamp_effort(lp.effort);
                     self.agent_launcher = Some(lp);
                     cx.notify();
                     return;
@@ -14029,13 +14053,11 @@ impl Workspace {
                     return;
                 }
                 "left" | "right" => {
-                    let at = launcher::Effort::ALL
-                        .iter()
-                        .position(|e| *e == lp.effort)
-                        .unwrap_or(1) as i32;
-                    let n = launcher::Effort::ALL.len() as i32;
+                    let offered = lp.harness.efforts();
+                    let at = offered.iter().position(|e| *e == lp.effort).unwrap_or(0) as i32;
+                    let n = offered.len() as i32;
                     let step = if ks.key == "right" { 1 } else { n - 1 };
-                    lp.effort = launcher::Effort::ALL[((at + step) % n) as usize];
+                    lp.effort = offered[((at + step) % n) as usize];
                     self.agent_launcher = Some(lp);
                     cx.notify();
                     return;

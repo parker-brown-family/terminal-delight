@@ -1,6 +1,6 @@
 # TDSP — the Terminal Delight Surface Protocol
 
-**Version 0.2 · 2026-09-17 · implemented in `app/src/surface.rs`**
+**Version 0.3 · 2026-09-17 · implemented in `app/src/surface.rs`**
 
 An agent hands Terminal Delight a small JSON object describing **what it made**.
 Terminal Delight decides how that thing looks. This document is the contract
@@ -151,8 +151,76 @@ A bench holds **64 surfaces per pane**; the oldest is dropped, never the newest.
 
 ## 5 · The catalogue
 
-Seven kinds and an honest default. Small on purpose: each one gets a renderer
+Eight kinds and an honest default. Small on purpose: each one gets a renderer
 that is actually good, and the vocabulary fits in your head.
+
+### `response` — your reply, as registers
+
+The kind an agent sends **every turn**, and the only kind the bench's
+OVERVIEW shelf shows. A transcript is one register at one length; a response
+is the same reply cut for several readers, and the person picks the cut.
+
+```json
+{ "kind": "response",
+  "title": "What this turn did",
+  "model": {
+    "tldr": "One or two sentences that stand for the whole reply.",
+    "eli5": "…",
+    "layman": "…",
+    "technical": "…",
+    "evidence": ["cargo test --locked, all green", "…"],
+    "asks": ["which of the two roots wins?"],
+    "next": ["install the build", "watch the overview"],
+    "doubts": [
+      { "claim": "codex accepts xhigh",
+        "why": "read off the binary, not its docs",
+        "confidence": "inferred" },
+      "the margin holds on a 720-pixel window"
+    ],
+    "anything_else": "kept, labelled Anything else"
+  } }
+```
+
+| Key | Required | Drawn as | Notes |
+|---|---|---|---|
+| `tldr` | **yes** | the gist, large, always open | Aliases: `tl;dr`, `summary`, `gist`, `headline`. The first sentence titles the row if `title` is absent. |
+| `eli5` | no | a folded section, **ELI5** | |
+| `layman` | no | a folded section, **Plain brief** | Aliases: `plain`, `layman_brief`, `brief`. |
+| `technical` | no | a folded section, **Technical brief** | Aliases: `technical_brief`, `tech`, `detail`. |
+| `evidence` | no | a folded section, **What was verified** | Aliases: `verified`, `proof`, `checks`. |
+| `asks` | no | an **open** section, **Needs from you**, marked `needs you` | Aliases: `needs`, `questions`, `blocked_on`. |
+| `next` | no | a folded, numbered section, **What's next** | Aliases: `next_steps`, `follow_ups`. |
+| `doubts` | no | its own strip, never folded, in the complement colour | Aliases: `unsure`, `caveats`, `risks`. |
+| anything else | no | a folded section labelled by the key | `next_steps` → `Next steps`. Never dropped. |
+
+**Well defined and very flexible, both.** The known keys get a fixed label and
+a fixed order (ELI5, plain, technical, verified, needs, next, then yours by
+key). Any other key becomes a section too, because a reply shape that dropped
+what it did not expect would be the transcript problem again.
+
+**The value's own shape decides how it is drawn.** A string is prose. An array
+of strings is a list — numbered under `next`, bulleted elsewhere. An object of
+strings is facts, one per row, and a `null` fact reads `unavailable`. An empty
+string or array is a section you wrote nothing in, and is not drawn.
+
+**A doubt** is a string (the claim) or `{ claim, why, confidence }`. `why` and
+`confidence` are optional, and *absent* is drawn as `confidence undeclared`,
+which is a different fact from `"confidence": "unknown"`. Doubts are counted on
+the row (`2 doubts`) so a reader can see how sure a reply is before opening it.
+
+The registers may sit directly in `model` or one level down under
+`model.response`; both land as the same surface.
+
+**Folding.** The gist and the doubts are always open. `asks` starts open — it is
+what the agent needs from the person. Every other section starts folded behind
+a header that says how much is behind it (`Technical brief · 340 words`), and a
+click on the header flips it. The window remembers the flips per surface until
+the surface is retired.
+
+**On the shelf.** A response files under OVERVIEW and nothing else does. With
+no card opened, the overview shows the newest response by itself — the way the
+last message stands in any conversation — and a person who opens an older one
+from the rail keeps it until they close it.
 
 ### `artifact` — a thing with a location
 
@@ -408,9 +476,20 @@ much room it has and whether anyone is looking:
 | **Compact** | under 460px wide, or 220px tall | headings, counts, first rows, the recommendation |
 | **Summary** | not focused, and under 640px | one line |
 
-Also the window's: the rail's width, which shelf a kind files under
-(`overview` / `artifacts` / `decisions`), the colour of every marker, the corner
-radius, and whether the pane is bent.
+Also the window's: the rail's width, which shelf a kind files under, the colour
+of every marker, the corner radius, and whether the pane is bent.
+
+### The three shelves
+
+| Shelf | Holds |
+|---|---|
+| `overview` | `response` — the feed of what the agent said, and nothing else |
+| `artifacts` | `artifact`, `markdown`, `table`, `architecture`, and `unclassified` — things made |
+| `decisions` | `decision`, `question`, `changeset` — things a person is asked to answer |
+
+Each shelf shows exactly what files under it. Until 0.3 the overview was a view
+over everything with the other two as filters, which made it a census rather
+than an account of what happened.
 
 ### Standing — where a row sits in its shelf's story
 
@@ -482,6 +561,12 @@ New kinds are additive by design: an older build renders a newer kind as
 the sender can read.
 
 ### What changed
+
+**0.3** — the `response` kind, and the overview becomes its feed. A new kind
+is additive: a 0.2 build renders a response as `unclassified` with the reason,
+and every 0.2 payload is unchanged on 0.3. The shelf a kind files under is the
+window's decision (§9), so a changeset moving from the overview to `decisions`
+and the unclassifiable moving to `artifacts` is not a wire change.
 
 **0.2** — `question` gained `cursor`, `submit` and `round`, and each of its
 options gained `checked`. All optional, all describing a live picker rather than
