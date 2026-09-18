@@ -20,6 +20,7 @@
 //! assertion can reach.
 
 use super::*;
+use crate::workbench::Step;
 
 impl TerminalView {
     /// Un-bend a pointer and look it up, quietly.
@@ -251,7 +252,25 @@ impl TerminalView {
         if self.bench.face() != crate::workbench::Face::Workbench {
             return false;
         }
-        // The GALLERY first, and it takes every key.
+        // THE WINDOW'S CHORDS LEAVE FIRST, ahead of everything below — the
+        // gallery included.
+        //
+        // Every path out of this function ends in `cx.stop_propagation()`, so
+        // anything not declined here can never reach the workspace. That is
+        // what stranded `alt+w`, `alt+r`, the split chords and the directional
+        // focus keys on the workbench face: not a collision in any table, just
+        // this handler running first and keeping what it could not use (#524).
+        //
+        // Above the gallery rather than below it, because "the gallery takes
+        // every key" was a rule about NAVIGATION — an arrow falling through to
+        // a composer hidden behind the overlay — and the window's chords were
+        // never the gallery's to take. A plain arrow still reaches it:
+        // [`crate::workbench::window_chord`] answers only for the modified
+        // forms.
+        if crate::workbench::window_chord(ks.key.as_str(), ks.modifiers.alt, ks.modifiers.control) {
+            return false;
+        }
+        // The GALLERY next, and it takes every key.
         //
         // It is drawn over everything and it was opened by a deliberate
         // press, so attention is there — the arrows belong to it until it
@@ -372,11 +391,14 @@ impl TerminalView {
             }
             _ => None,
         };
-        let printable = ks
-            .key_char
-            .as_deref()
-            .filter(|c| !c.is_empty() && !c.chars().any(char::is_control))
-            .is_some();
+        // A modified keystroke is not a character, however gpui fills its
+        // `key_char` — see [`crate::workbench::types_a_character`].
+        let printable = crate::workbench::types_a_character(
+            ks.key_char.as_deref(),
+            ks.modifiers.alt,
+            ks.modifiers.control,
+            ks.modifiers.platform,
+        );
         match crate::workbench::reading_key(ks.key.as_str(), printable, answerable) {
             crate::workbench::Reading::Down => {
                 self.bench.step(1);
@@ -686,6 +708,7 @@ impl TerminalView {
                     sk.chip(lit || primary).child(label),
                     primary,
                     lit,
+                    sk,
                     th,
                 );
                 if answered {
@@ -719,7 +742,7 @@ impl TerminalView {
                 d.child(sk.rule_h()).child(
                     div().flex().flex_row().gap(px(8.)).justify_end().child(
                         sk.chip(false)
-                            .text_size(px(11.5))
+                            .text_size(px(sk.pt(Step::Small)))
                             .child("\u{21ba} REVIEW ANSWERS".to_string())
                             .relative()
                             .child(crate::benchdraw::zone(
@@ -745,6 +768,7 @@ impl TerminalView {
                         crate::benchdraw::verb_button(
                             sk.chip(true).child(format!("\u{2714} {submit_word}")),
                             true,
+                            sk,
                             th,
                         )
                         .relative()
@@ -830,7 +854,7 @@ impl TerminalView {
             .gap(px(2.))
             .pt(px(2.))
             .font_family(th.font_family.clone())
-            .text_size(px(9.5))
+            .text_size(px(sk.pt(Step::Fine)))
             .child(div().text_color(th.faint).child(where_to))
             .children(previews.into_iter().map(|(chip, what)| {
                 div()
@@ -886,6 +910,7 @@ impl TerminalView {
                                 .font_family(th.font_family.clone())
                                 .child(text),
                             primary,
+                            sk,
                             th,
                         )
                         .relative()
@@ -1519,6 +1544,12 @@ impl TerminalView {
         // gets the close: the stand-in was not opened and cannot be closed,
         // and a ✕ that did nothing would be a control that lies.
         let card_open = self.bench.selected().is_some();
+        // A shell pane with an empty bench has exactly one thing to say, and it
+        // is a verb. Resolved here rather than inside the arm below because the
+        // BODY's own alignment turns on it — an offer reads from the top and a
+        // transcript from the floor, and the two used to share one rule.
+        let offering =
+            self.bench.showing().is_none() && !self.mode.is_agent() && self.bench.is_empty();
         let body = match self.bench.showing() {
             Some(surface) => {
                 let tint = crate::benchdraw::ink(crate::workbench::tint_of(&surface.kind), th);
@@ -1574,7 +1605,7 @@ impl TerminalView {
                             .absolute()
                             .right(px(10.))
                             .top(px(8.))
-                            .text_size(px(13.))
+                            .text_size(px(sk.pt(Step::Lead)))
                             .text_color(th.faint)
                             .child("\u{2715}")
                             .relative()
@@ -1599,22 +1630,22 @@ impl TerminalView {
                     .flex()
                     .flex_col()
                     .gap(px(10.))
-                    .when(!self.mode.is_agent() && self.bench.is_empty(), |d| {
-                        d.child(
-                            crate::benchdraw::empty(false, "", sk, th).child(
-                                sk.chip(true)
-                                    .text_size(px(12.))
-                                    .child("\u{2301} LAUNCH AGENT")
-                                    .relative()
-                                    .child(crate::benchdraw::zone(
-                                        self.wb_zones.clone(),
-                                        crate::workbench::Hit::Launch,
-                                    )),
+                    // The offer: the button FIRST, then the reason for it as a
+                    // separate element underneath. Two children of one column
+                    // rather than one panel with a chip tacked on the end —
+                    // which is what made the only pressable thing on the
+                    // surface read as the last line of a paragraph.
+                    .when(offering, |d| {
+                        d.child(crate::benchdraw::launch_button(sk, th).child(
+                            crate::benchdraw::zone(
+                                self.wb_zones.clone(),
+                                crate::workbench::Hit::Launch,
                             ),
-                        )
+                        ))
+                        .child(crate::benchdraw::empty(false, "", sk, th))
                     })
                     .when(shows.mirror, |d| {
-                        d.child(crate::benchdraw::conversation(&tail, th))
+                        d.child(crate::benchdraw::conversation(&tail, sk, th))
                     })
                     .when_some(waiting, |d, q| {
                         let chips = self.answer_chips(&q, sk, th);
@@ -1642,7 +1673,7 @@ impl TerminalView {
 
         // ── the rail, and the handle that closes it ─────────────────────────
         let handle = (fit != RailFit::Hidden).then(|| {
-            crate::benchdraw::rail_handle(matches!(fit, RailFit::Open(_)), th)
+            crate::benchdraw::rail_handle(matches!(fit, RailFit::Open(_)), sk, th)
                 .relative()
                 .child(crate::benchdraw::zone(
                     self.wb_zones.clone(),
@@ -1760,7 +1791,7 @@ impl TerminalView {
                     .when(rows.is_empty(), |d| {
                         d.child(
                             div()
-                                .text_size(px(11.))
+                                .text_size(px(sk.pt(Step::Small)))
                                 .text_color(th.faint)
                                 .font_family(th.font_family.clone())
                                 .child(format!("No {}", shelf_now.empty_word())),
@@ -1886,7 +1917,11 @@ impl TerminalView {
                             .overflow_hidden()
                             .flex()
                             .flex_col()
-                            .when(!card_open, |d| d.justify_end())
+                            .when(
+                                crate::workbench::body_anchor(card_open, offering)
+                                    == crate::workbench::Anchor::Bottom,
+                                |d| d.justify_end(),
+                            )
                             .when(self.mode.is_agent(), |d| {
                                 d.relative().child(crate::benchdraw::zone(
                                     self.wb_zones.clone(),

@@ -1624,6 +1624,84 @@ fn graded(c: Hsla, g: &crate::theme::Grade, ch: Channel) -> Hsla {
     }
 }
 
+/// The same monitor grade, applied ONCE to a whole palette instead of per cell.
+///
+/// # Why a pane has two ways to spend its grade
+///
+/// The terminal face grades at paint time, per cell, because the colour of a
+/// cell is not known until the program has said what it is — a grid is
+/// thousands of independently coloured things and [`GradeCoeffs`] exists to
+/// make that cheap. The WORKBENCH face is the opposite: it is drawn entirely
+/// from this palette's nine colours, every one of them known before a single
+/// element is built. Grading the palette once is therefore both cheaper and
+/// simpler, and — the part that matters — it needs **no change at any of the
+/// call sites**. Seventy elements go on spelling `th.faint` and each one
+/// quietly gets the graded `faint`.
+///
+/// It also means the bench cannot drift: a colour added to the bench next year
+/// is graded on the day it is added, because the grading happened upstream of
+/// anybody choosing it.
+///
+/// # The channel each colour takes
+///
+/// `brightness` deliberately behaves differently for text and for background
+/// (see [`graded`]), so every field has to declare which it is. Backgrounds are
+/// the two surfaces a pane paints behind things; everything else is ink,
+/// including the hairlines and markers derived from `faint` and `accent` —
+/// they are marks ON the surface, and grading them as backgrounds would let a
+/// brightness lift bleach them.
+///
+/// # It is spent exactly once
+///
+/// The returned palette carries a colour-neutral [`Grade`](crate::theme::Grade)
+/// so the transform cannot be applied twice. `text_size`, `scale`, `warp` and
+/// the crawl dials are left alone: they are not paint grades, nothing here
+/// consumed them, and the bench needs `text_size` immediately afterwards.
+///
+/// An ungraded palette is returned untouched. The predicate is
+/// [`Grade::colour_is_neutral`](crate::theme::Grade::colour_is_neutral) rather
+/// than `is_neutral`, and that is not a detail: `is_neutral` also asks about
+/// `scale` and `text_size`, so a pane with only a TYPE gauge on it would fail
+/// it and be sent round the arithmetic — an identity that is not quite the
+/// identity, since `(l − 0.5) × 1.0 + 0.5` does not return every `l` exactly.
+/// It is also what makes "spent once" true by construction rather than by
+/// convention: the returned grade answers `true` here, so a second pass is a
+/// clone.
+fn graded_palette(th: &Theme) -> Theme {
+    if th.grade.colour_is_neutral() {
+        return th.clone();
+    }
+    let g = &th.grade;
+    let ink = |c: Hsla| graded(c, g, Channel::Text);
+    let field = |c: Hsla| graded(c, g, Channel::Bg);
+    let mut out = th.clone();
+    out.bg = field(th.bg);
+    out.surface = field(th.surface);
+    out.text = ink(th.text);
+    out.accent = ink(th.accent);
+    out.complement = ink(th.complement);
+    out.human = ink(th.human);
+    out.faint = ink(th.faint);
+    out.cursor = ink(th.cursor);
+    // Graded even though today's bench draws no ANSI: the mirror is one env var
+    // away from being back on, and an ungraded sixteen sitting beside a graded
+    // nine is a trap that only shows up as "why is that one line the wrong
+    // colour" months later.
+    for c in out.ansi.iter_mut() {
+        *c = graded(*c, g, Channel::Text);
+    }
+    let mut spent = out.grade;
+    let n = crate::theme::Grade::neutral();
+    spent.brightness = n.brightness;
+    spent.contrast = n.contrast;
+    spent.colour = n.colour;
+    spent.text = n.text;
+    spent.background = n.background;
+    spent.gamma = n.gamma;
+    out.grade = spent;
+    out
+}
+
 /// Frame-constant [`Grade`](crate::theme::Grade) coefficients, precomputed once
 /// per pane render so the per-cell paint loop ([`TerminalView::styled_lines`])
 /// doesn't redo identical work on every one of the thousands of cells in a
@@ -2473,6 +2551,21 @@ impl TerminalView {
         (doc, next_rev)
     }
 
+    /// What the FOCUS reader shows for this pane.
+    ///
+    /// **The GRID, on both faces — deliberately.** A pane has two of them now,
+    /// and until `alt+r` started reaching the bench again (#524) nobody had to
+    /// decide which one FOCUS mirrors. The answer is the terminal, and the
+    /// reason is that it is the one a person cannot otherwise read: the bench
+    /// hides the agent's scrollback by default (`shows.mirror` is off unless
+    /// `TD_BENCHMIRROR=1`), and the bench itself is already drawn at whatever
+    /// size its owner set. Mirroring the bench would enlarge the thing that is
+    /// legible and keep hiding the thing that is not.
+    ///
+    /// So on the workbench face, `alt+r` is how you see what the bench is
+    /// holding back. That is a feature and it is written down here because it
+    /// was an accident first — pinned by
+    /// `the_focus_reader_mirrors_the_grid_on_both_faces`.
     pub fn mirror_snapshot(&self, cx: &App) -> MirrorSnapshot {
         let th = self.resolved_theme(cx);
         // Mirror the live pane's anchor-to-top inverted read: bottom-anchor the
@@ -4340,8 +4433,17 @@ impl TerminalView {
             cx.stop_propagation();
             return;
         }
-        // alt+w flips this pane between its two faces, from either side.
-        if ks.key.as_str() == "w" && ks.modifiers.alt && !ks.modifiers.control {
+        // alt+k flips this pane between its two faces, from either side.
+        //
+        // It was alt+w for one day, and alt+w was already taken: it is the
+        // middle rung of the close ladder (ctrl+w the tab, super+w the tile,
+        // alt+w the focused PANE). Because this handler runs before the
+        // workspace's, the bench quietly ate the only chord that closes a pane
+        // — a binding that does not collide in any table, only in the order the
+        // handlers happen to run. The face toggle moves; the close stays where
+        // it was, and `keystroke_bytes` is told about `k` so the letter cannot
+        // reach a shell as ESC k on the way past.
+        if ks.key.as_str() == "k" && ks.modifiers.alt && !ks.modifiers.control {
             self.toggle_face(cx);
             cx.stop_propagation();
             return;
@@ -6483,16 +6585,21 @@ fn keystroke_bytes(ks: &Keystroke) -> Option<Vec<u8>> {
         // alt+arrows move pane focus by direction; alt+r opens the FOCUS reader (the 👓 header
         // glyph it replaces is gone); alt+v / alt+h and the ctrl+alt chords
         // split; alt+w closes the focused pane — all owned by the Workspace.
-        // Taking alt+r costs readline's revert-line, alt+v its page-scroll,
-        // alt+h its mark-paragraph and alt+w its copy-region-as-kill (the
-        // DESTRUCTIVE ^W werase is ctrl+w, intercepted a layer up in `on_key`
-        // as close-tab, and is untouched here) — fair trades for one-hand pane
-        // chords.
-        if matches!(
-            ks.key.as_str(),
-            "left" | "right" | "up" | "down" | "r" | "v" | "h" | "w"
-        ) || m.control
-        {
+        // alt+k flips the pane's face and is the PANE's own, handled in `on_key`
+        // before this is ever reached; it is listed anyway, because a chord
+        // absent from the table is one deleted `return` away from arriving as
+        // ESC k. Taking alt+r costs readline's revert-line, alt+v its
+        // page-scroll, alt+h its mark-paragraph, alt+w its copy-region-as-kill
+        // and alt+k its (unbound-by-default) slot (the DESTRUCTIVE ^W werase is
+        // ctrl+w, intercepted a layer up in `on_key` as close-tab, and is
+        // untouched here) — fair trades for one-hand pane chords.
+        //
+        // THE LIST ITSELF LIVES IN `workbench`, because the bench needs exactly
+        // the same one: a terminal and a bench are both content inside a pane,
+        // and the window's gestures have to survive whichever is on top. It was
+        // written out here and nowhere else, so the bench competed for all of
+        // them and won — see [`crate::workbench::window_chord`] (#524).
+        if crate::workbench::window_chord(ks.key.as_str(), m.alt, m.control) {
             return None;
         }
         // other alt+<char>: ESC prefix for readline (alt+b, alt+f, alt+.)
@@ -6828,11 +6935,16 @@ impl Render for TerminalView {
         // Menu-bar size rides the grade group: a pane uses its own scale when its
         // grade is detached, else the live outer (Mother) scale. This scrubber
         // sizes the HEADER (height + glyphs/icons), never the terminal grid.
-        let scale = self
-            .appearance
-            .effective(&theme::outer_choice(cx))
-            .grade
-            .scale;
+        //
+        // Its neighbour on the tray is a DIFFERENT dial with a different job, and
+        // both are read here off the one resolved grade: `text_size` sizes what a
+        // person reads — the terminal's grid, and now the bench, which is the
+        // other thing that pane can be showing. Chrome takes `scale`, content
+        // takes `text_size`, on both faces, so a pane sized to somebody's eyes
+        // stays that size when it is flipped.
+        let grade = self.appearance.effective(&theme::outer_choice(cx)).grade;
+        let scale = grade.scale;
+        let text_k = grade.text_size;
         // This pane's chrome shape. Baked against THIS pane's palette rather than
         // the window's — a pane wearing its own theme has to have its own header
         // edge, or the two disagree by exactly the amount the pane was retinted.
@@ -7226,7 +7338,23 @@ impl Render for TerminalView {
             .map(|b| f32::from(b.size.height))
             .unwrap_or(0.0);
         let bench_el = if on_bench {
-            self.bench_el(&th, &sk, pane_w, pane_h, focused_now, cx.weak_entity())
+            // The bench's own palette and its own skin — the pane's gauges, spent
+            // the way a surface drawn from a palette spends them rather than the
+            // way a grid does. `graded_palette` puts the six colour dials into
+            // the nine colours; `with_type` puts the text-size dial into the type
+            // ramp. Both are bench-local: the header above keeps the plain skin,
+            // because chrome answers to the menu-bar scale and content answers to
+            // these. See [`graded_palette`] and [`crate::skin::Skin::ty`].
+            let bench_th = graded_palette(&th);
+            let bench_sk = crate::skin::for_theme(cx, &bench_th, scale).with_type(text_k);
+            self.bench_el(
+                &bench_th,
+                &bench_sk,
+                pane_w,
+                pane_h,
+                focused_now,
+                cx.weak_entity(),
+            )
         } else {
             div().into_any_element()
         };
@@ -8006,6 +8134,101 @@ mod tests {
         assert!(
             gate.contains("wb_on_screen") && gate.contains("is_agent()"),
             "the bench gate stopped asking one of its two questions: {gate}"
+        );
+    }
+
+    /// FOCUS mirrors the grid whichever face the pane is showing.
+    ///
+    /// An undeclared case until `alt+r` could reach a bench pane at all
+    /// (#524), and the kind that gets decided by accident: `mirror_snapshot`
+    /// reads `styled_lines` because that is what it has always read, not
+    /// because anyone weighed it against the alternative. Weighed now — the
+    /// bench hides the scrollback and is already sized to be read, so the grid
+    /// is the thing worth enlarging — and pinned here, so flipping it becomes
+    /// a decision somebody makes rather than a line somebody changes.
+    #[test]
+    fn the_focus_reader_mirrors_the_grid_on_both_faces() {
+        let src = include_str!("pane.rs");
+        let at = src
+            .find("pub fn mirror_snapshot(")
+            .expect("mirror_snapshot");
+        let end = src[at..].find("\n    }\n").expect("end of fn") + at;
+        let body: String = src[at..end]
+            .lines()
+            .map(|l| l.split("//").next().unwrap_or(""))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            body.contains("styled_lines("),
+            "FOCUS stopped mirroring the terminal grid"
+        );
+        assert!(
+            !body.contains("bench_el(") && !body.contains("benchdraw::"),
+            "FOCUS is now mirroring the BENCH. That may be right, but it is a design \
+             change and not a refactor: the bench is already drawn at the size its owner \
+             chose, while the scrollback it hides is the thing a person opens FOCUS to \
+             read. Change this test in the same commit, with the reasoning."
+        );
+    }
+
+    /// `bench_key` declines the window's chords BEFORE it can swallow one.
+    ///
+    /// Structural, because the thing that goes wrong is structural. Every path
+    /// out of `bench_key` ends in `cx.stop_propagation()`, so a chord it does
+    /// not explicitly hand back can never reach the workspace — and a new
+    /// branch added at the top of that function inherits the same property
+    /// without anybody noticing. That is how `alt+w`, `alt+r`, the splits and
+    /// the directional focus keys all came to do nothing on the workbench face
+    /// (#524): no table collided, the handler simply ran first.
+    ///
+    /// So the assertion is about ORDER, not about a list: the `window_chord`
+    /// check has to sit above the first `stop_propagation` in the function.
+    /// A list would guard only the chords on it, and the next binding will be
+    /// added by somebody who has not read this.
+    ///
+    /// Mutation-tested: moving the check below the gallery block, and deleting
+    /// it outright, each failed this test.
+    #[test]
+    fn the_bench_declines_a_window_chord_before_it_can_swallow_one() {
+        let bench = include_str!("pane/bench.rs");
+        let (code, _tests) = bench
+            .split_once("#[cfg(test)]")
+            .unwrap_or((bench, "no test module yet"));
+        let at = code.find("fn bench_key(").expect("bench_key");
+        // To the end of the function: the first line that is a closing brace at
+        // method indentation.
+        let end = code[at..].find("\n    }\n").expect("end of bench_key") + at;
+        // COMMENTS STRIPPED FIRST, like every other scan in this codebase. The
+        // first draft of this test did not, and failed on its own prose: the
+        // doc comment at the top of `bench_key` explains that every path out of
+        // it ends in `cx.stop_propagation()`, and the scan read that sentence
+        // as the call it was describing. A source scan that cannot tell code
+        // from a description of code fails at whatever is best documented.
+        let body: String = code[at..end]
+            .lines()
+            .map(|l| l.split("//").next().unwrap_or(""))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let body = body.as_str();
+
+        let declines = body
+            .find("window_chord(")
+            .expect("bench_key no longer consults workbench::window_chord at all");
+        let swallows = body
+            .find("stop_propagation()")
+            .expect("bench_key stopped swallowing anything, which would be a bigger change");
+        assert!(
+            declines < swallows,
+            "bench_key can swallow a key before it has asked whether the chord is the \
+             window's — every exit below that point stops propagation, so the workspace \
+             never sees it"
+        );
+        // …and it hands the chord BACK rather than eating it silently.
+        let after = &body[declines..];
+        let ret = after.find("return false").unwrap_or(usize::MAX);
+        assert!(
+            ret < after.find("stop_propagation()").unwrap_or(usize::MAX),
+            "the window_chord branch must `return false` so the event keeps bubbling"
         );
     }
 
@@ -9484,6 +9707,154 @@ mod tests {
         }
     }
 
+    /// Every grade this project can express, for the palette tests below. The
+    /// same sweep `grade_coeffs_match_graded` builds, kept in one place so the
+    /// two paths through the grade are checked against the same inputs.
+    fn every_grade() -> Vec<crate::theme::Grade> {
+        use crate::theme::{Grade, GradeKey};
+        let mut out = vec![Grade::neutral(), Grade::default()];
+        for key in [
+            GradeKey::Brightness,
+            GradeKey::Contrast,
+            GradeKey::Colour,
+            GradeKey::Text,
+            GradeKey::Background,
+            GradeKey::Gamma,
+        ] {
+            for v in [0.0_f32, 0.25, 0.75, 1.0] {
+                let mut g = Grade::neutral();
+                g.set(key, v);
+                out.push(g);
+            }
+        }
+        let mut mix = Grade::neutral();
+        mix.set(GradeKey::Brightness, 0.23);
+        mix.set(GradeKey::Contrast, 0.77);
+        mix.set(GradeKey::Colour, 0.41);
+        mix.set(GradeKey::Text, 0.62);
+        mix.set(GradeKey::Background, 0.18);
+        mix.set(GradeKey::Gamma, 0.9);
+        out.push(mix);
+        out
+    }
+
+    /// The shipped palette, wearing one grade. The real house theme rather than
+    /// a hand-built one, so the sweep runs over the colours a person actually
+    /// sees — including the near-black and near-white ends, where the clamps in
+    /// `graded` are reachable.
+    fn themed(g: crate::theme::Grade) -> Theme {
+        let mut th = crate::theme::parse(crate::theme::DEFAULT_THEME_TOML).unwrap();
+        th.grade = g;
+        th
+    }
+
+    /// The workbench wears the same grade the grid does.
+    ///
+    /// The two spend it by different routes and MUST agree: the grid grades
+    /// each cell at paint time, the bench grades the palette once before a
+    /// single element is built. The failure this pins is not a crash — it is
+    /// one face of a pane looking graded and the other not, which a person
+    /// reports as "the workbench ignores my settings" and which no existing
+    /// test could see, because every one of them was about the grid.
+    #[test]
+    fn the_bench_palette_is_graded_exactly_as_a_cell_would_be() {
+        for g in every_grade() {
+            let th = themed(g);
+            let out = graded_palette(&th);
+            // Backgrounds take the Bg channel, where brightness may lift past
+            // 1.0 because a dark field has headroom.
+            for (name, got, src) in [("bg", out.bg, th.bg), ("surface", out.surface, th.surface)] {
+                assert_eq!(got, graded(src, &g, Channel::Bg), "{name} under {g:?}");
+            }
+            // Everything else is ink, where brightness only ever dims — raising
+            // L on text washes any hue toward white.
+            for (name, got, src) in [
+                ("text", out.text, th.text),
+                ("accent", out.accent, th.accent),
+                ("complement", out.complement, th.complement),
+                ("human", out.human, th.human),
+                ("faint", out.faint, th.faint),
+                ("cursor", out.cursor, th.cursor),
+            ] {
+                assert_eq!(got, graded(src, &g, Channel::Text), "{name} under {g:?}");
+            }
+            for (i, (got, src)) in out.ansi.iter().zip(th.ansi.iter()).enumerate() {
+                assert_eq!(
+                    *got,
+                    graded(*src, &g, Channel::Text),
+                    "ansi[{i}] under {g:?}"
+                );
+            }
+        }
+    }
+
+    /// A neutral grade changes nothing, bit for bit.
+    ///
+    /// The common case, and the one where a silent drift would be worst: a
+    /// person who has never touched a slider must get the palette the theme's
+    /// author chose, not a round-trip through six multiplications that lands
+    /// one ULP away and slowly de-saturates the product.
+    #[test]
+    fn a_neutral_grade_leaves_the_palette_untouched() {
+        let th = themed(crate::theme::Grade::neutral());
+        let out = graded_palette(&th);
+        assert_eq!(out.bg, th.bg);
+        assert_eq!(out.surface, th.surface);
+        assert_eq!(out.text, th.text);
+        assert_eq!(out.accent, th.accent);
+        assert_eq!(out.complement, th.complement);
+        assert_eq!(out.human, th.human);
+        assert_eq!(out.faint, th.faint);
+        assert_eq!(out.cursor, th.cursor);
+        assert_eq!(out.ansi, th.ansi);
+    }
+
+    /// The grade is spent exactly once, and the dials that are NOT paint
+    /// grades survive being spent.
+    ///
+    /// Two failures in one test because they are two halves of one mistake.
+    /// Grading twice would double every adjustment — a pane at −24 brightness
+    /// would draw its bench at −48 — and it is reachable by one plausible edit:
+    /// handing the graded palette to anything that grades. And zeroing the
+    /// WHOLE grade to prevent that would take `text_size` with it, which the
+    /// very next line of the render needs, so the bench would come out
+    /// correctly coloured at the wrong size.
+    #[test]
+    fn the_colour_grade_is_spent_once_and_the_other_dials_survive() {
+        let mut g = crate::theme::Grade::neutral();
+        g.set(crate::theme::GradeKey::Brightness, 0.2);
+        g.set(crate::theme::GradeKey::Contrast, 0.8);
+        g.text_size = 1.51;
+        g.scale = 1.3;
+        g.warp = 0.4;
+
+        let once = graded_palette(&themed(g));
+        let twice = graded_palette(&once);
+        assert_eq!(
+            twice.text, once.text,
+            "the colour grade was applied a second time"
+        );
+        assert_eq!(twice.bg, once.bg);
+
+        // …and the dials that were never paint grades are still there to be
+        // read by whoever asks next.
+        assert_eq!(once.grade.text_size, 1.51, "the type gauge was spent too");
+        assert_eq!(once.grade.scale, 1.3);
+        assert_eq!(once.grade.warp, 0.4);
+        // The colour half reports itself as spent, which is what makes the
+        // second application a clone rather than a repeat of the arithmetic.
+        // Note WHICH predicate: `is_neutral` is false here, because scale and
+        // text_size are still set — and that is exactly the case that would
+        // have sent an already-graded palette back round.
+        assert!(once.grade.colour_is_neutral(), "the colour grade is spent");
+        assert!(
+            !once.grade.is_neutral(),
+            "…while the pane is still, correctly, not neutral overall — if this \
+             ever flips, the short-circuit above is being tested for the wrong \
+             thing and the double-grade is reachable again"
+        );
+    }
+
     #[test]
     fn pane_on_key_only_stops_propagation_when_it_consumes_the_key() {
         // The bubbling invariant above has no compile-time or runtime signal —
@@ -9592,6 +9963,14 @@ mod tests {
         // and the pane would stay open: the chord would read as DEAD rather
         // than as wrong, which is the failure nobody files a bug about.
         assert_eq!(alt_char("w"), None);
+        // alt+k flips the pane's face. It is the PANE's chord rather than the
+        // workspace's, and `on_key` returns on it well before this encoder is
+        // reached — but it is asserted here for the same reason alt+w is: this
+        // table is the record of which alt chords are not the shell's, and the
+        // failure it guards is silent. The two are neighbours on purpose: alt+w
+        // closed the pane, then briefly toggled the face and stopped closing
+        // anything, because the pane's handler runs first.
+        assert_eq!(alt_char("k"), None);
         // ...and the neighbouring close chord is a DIFFERENT layer: ctrl+w is
         // intercepted in `on_key` as close-tab and never gets here, so it keeps
         // its werase encoding. Asserted so the two rungs stay distinguishable.
