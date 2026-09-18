@@ -571,26 +571,22 @@ pub fn reorder(ids: &mut Vec<u32>, moving: u32, neighbour: u32, after: bool) {
     ids.insert(if after { at + 1 } else { at }, moving);
 }
 
-/// The tasks the strip draws: the branch the active task is in, in tab order.
+/// The tasks the strip draws, in tab order: whatever the scope chip says.
 ///
-/// One initiative's worth of tabs and nothing else. The tree beside the strip
-/// already lists every other branch, so a strip that carried them too spent the
-/// widest surface in the window repeating the one fact that was never in doubt
-/// — and it is the reason the strip kept running out of room.
-///
-/// A task in no initiative sits with the other loose ones, which makes this the
-/// identity function for a session that has never been organised: every tab,
-/// exactly as before.
+/// This replaced `family`, which drew the active task's branch and nothing else
+/// whatever the chip said — so a session scoped to ALL saw three of its
+/// twenty-one tabs and had no control that would bring the rest back. The
+/// branch-wide strip is still one press away, and it is now the press the chip
+/// has always been labelled with.
 ///
 /// Kept beside [`rows`] on purpose: the strip and the tree answer the same
 /// question about the same session and must never disagree about which tasks
 /// exist.
-pub fn family(places: &[Place], active: usize) -> Vec<usize> {
-    let home = places.get(active).copied().unwrap_or_default();
+pub fn shown(places: &[Place], scope: Scope) -> Vec<usize> {
     places
         .iter()
         .enumerate()
-        .filter(|(_, place)| same_branch(place, &home))
+        .filter(|(_, place)| scope.shows(place))
         .map(|(i, _)| i)
         .collect()
 }
@@ -1091,7 +1087,7 @@ mod tests {
     }
 
     #[test]
-    fn the_strip_carries_the_branch_you_are_in_and_no_other() {
+    fn the_strip_carries_what_the_scope_chip_says_it_carries() {
         let places: Vec<Place> = [
             task(Some(1), Some(10)),
             task(Some(1), Some(10)),
@@ -1102,22 +1098,24 @@ mod tests {
         .iter()
         .map(|t| t.place)
         .collect();
-        // in an initiative: its members, and not the sibling initiative that
-        // happens to share a project
-        assert_eq!(family(&places, 0), vec![0, 1]);
-        assert_eq!(family(&places, 2), vec![2]);
-        // a loose task sits with its own project's loose tasks, and with
-        // nobody else's
-        assert_eq!(family(&places, 3), vec![3]);
-        assert_eq!(family(&places, 4), vec![4]);
+        // The chip says ALL, so the strip draws all of them. This is the case
+        // the old `family` filter got wrong: it drew two of these five while
+        // the chip beside them read ALL.
+        assert_eq!(shown(&places, Scope::All), vec![0, 1, 2, 3, 4]);
+        // Narrowed to an initiative: its members, and not the sibling
+        // initiative that happens to share a project.
+        assert_eq!(shown(&places, Scope::Initiative(10)), vec![0, 1]);
+        assert_eq!(shown(&places, Scope::Initiative(11)), vec![2]);
+        // Narrowed to a project: everything filed under it, initiative or not.
+        assert_eq!(shown(&places, Scope::Project(1)), vec![0, 1, 2]);
+        assert_eq!(shown(&places, Scope::Project(2)), vec![3]);
     }
 
     #[test]
-    fn two_projects_loose_tasks_are_not_one_family() {
-        // The heading names ONE branch. If every loose task in the session were
-        // one family, selecting a task in project A would draw project B's
-        // loose tasks under A's name — a label that lies about the row beneath
-        // it, which is worse than no label.
+    fn a_task_in_no_project_is_its_own_bucket_and_not_everyones() {
+        // A scope names ONE branch. If every loose task in the session answered
+        // to project A's scope, narrowing to A would draw project B's loose
+        // tasks under A's name — a label that lies about the row beneath it.
         let places: Vec<Place> = [
             task(Some(1), None),
             task(Some(2), None),
@@ -1127,10 +1125,10 @@ mod tests {
         .iter()
         .map(|t| t.place)
         .collect();
-        assert_eq!(family(&places, 0), vec![0, 2]);
-        assert_eq!(family(&places, 1), vec![1]);
-        // filed under no project at all is its own bucket, not everyone's
-        assert_eq!(family(&places, 3), vec![3]);
+        assert_eq!(shown(&places, Scope::Project(1)), vec![0, 2]);
+        assert_eq!(shown(&places, Scope::Project(2)), vec![1]);
+        // Filed under no project at all: reachable only from ALL.
+        assert_eq!(shown(&places, Scope::All), vec![0, 1, 2, 3]);
     }
 
     #[test]
@@ -1161,18 +1159,22 @@ mod tests {
         // The identity case, and the one that decides whether this is safe to
         // ship to somebody who has never made a group.
         let places: Vec<Place> = (0..4).map(|_| task(None, None).place).collect();
-        assert_eq!(family(&places, 0), vec![0, 1, 2, 3]);
+        assert_eq!(shown(&places, Scope::All), vec![0, 1, 2, 3]);
     }
 
     #[test]
-    fn an_active_index_off_the_end_narrows_to_the_loose_tabs_not_to_nothing() {
-        // A strip with nothing on it is the one state there is no way back from,
-        // so an impossible index lands somewhere rather than nowhere.
+    fn a_scope_with_nothing_under_it_draws_an_empty_strip_not_a_wrong_one() {
+        // The empty answer is a real answer, and the workspace is the layer
+        // that refuses to sit in it: `Scope::widened_for` moves the scope when
+        // an activated tab is outside it, and `Workspace::set_scope` backs out
+        // to `All` when a scope would show nothing. This function's job is to
+        // report the emptiness rather than to paper over it with a fallback
+        // branch nobody asked for.
         let places: Vec<Place> = [task(Some(1), Some(10)), task(None, None)]
             .iter()
             .map(|t| t.place)
             .collect();
-        assert_eq!(family(&places, 99), vec![1]);
+        assert_eq!(shown(&places, Scope::Project(99)), Vec::<usize>::new());
     }
 
     #[test]

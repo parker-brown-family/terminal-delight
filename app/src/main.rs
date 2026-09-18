@@ -21633,14 +21633,24 @@ impl Render for Workspace {
                     inset: false,
                 }])
         };
-        // The strip carries ONE branch — the tabs sharing the active tab's
-        // initiative — and the tree beside it carries the rest. Every other tab
-        // is still open, still running and still one click away in the tree, and
-        // still shouting through its branch's roll-up if its agent stops to ask
-        // something. A session that has never made a branch sees every tab it
-        // always saw; see [`tree::family`].
+        // THE STRIP CARRIES WHAT THE SCOPE CHIP SAYS IT CARRIES.
+        //
+        // It used to carry the active tab's branch and nothing else, always —
+        // `tree::family`, on the reasoning that a branch-wide strip cannot wrap
+        // into rows of titles nobody can read at a glance. What that reasoning
+        // missed is that the chip sitting immediately left of these tabs says
+        // ALL, and said it while eighteen of a session's twenty-one tabs were
+        // not drawn. Parker, on a window whose strip showed three: *"I don't
+        // see our top tabs"*.
+        //
+        // So the filter is [`tree::Scope::shows`] — whose own doc comment has
+        // said "does the strip show a task in this place?" since before the
+        // strip stopped asking it — and narrowing is one press on a control
+        // that is already there and already labelled. `All` wraps to a second
+        // row on a big session, which is the cost, and it is a cost a person
+        // can see and undo rather than a policy nobody was told about.
         let places = self.places();
-        let family = tree::family(&places, self.active);
+        let family = tree::shown(&places, self.scope);
         // the caret marks a gap between visible tabs, not a tab index — see
         // [`tree::caret_gap`], which is where the non-contiguous case is argued
         let caret_at = drop_slot.map(|s| tree::caret_gap(&family, s));
