@@ -1,0 +1,254 @@
+{
+  "_comment": "Curated overlay for the rodeo checklist. Keyed by PR number. Everything not in here is generated from the pull request itself and MARKED as auto-derived, because a test step nobody wrote is not the same as one somebody wrote. Add an entry when you have real gesture-level steps.",
+  "_panes": {
+    "_comment": "tab name -> the DURABLE resume uuid, not a pid. Tab names are what Parker typed in the left bar and are the identity he points with; pids die on every window restart (they all changed at 22:07 and the routing table went stale silently). The assembler resolves uuid -> live agent pid -> pane pid -> peer name at build time from ~/.claude/sessions/*.json. A pane that no longer resolves is reported as gone rather than quietly dropped.",
+    "text resize live": {
+      "resume": "abe5b632-baa9-484e-b997-acd33db367bb",
+      "group": "FEATURES",
+      "confidence": "measured"
+    },
+    "Drag and drop": {
+      "resume": "9b44c0c1-555d-442a-bfc2-2ab703f93b64",
+      "group": "FEATURES",
+      "confidence": "measured"
+    },
+    "human note": {
+      "resume": "cb29e489-c585-457a-a4c1-7b19c924516b",
+      "group": "FEATURES",
+      "confidence": "inferred"
+    },
+    "OUTER SPINE LINES": {
+      "resume": "905e3bd8-a8c1-4d69-91af-f3891c11fa01",
+      "group": "FEATURES",
+      "confidence": "measured"
+    },
+    "WORKBENCH RESTYLE!": {
+      "resume": "e0accca2-d7cf-428c-ba9e-8ca8aee2abf6",
+      "group": "WORKBENCH",
+      "confidence": "measured"
+    },
+    "button glow": {
+      "resume": "c32d4194-9362-4fc4-873a-113af566af80",
+      "group": "WORKBENCH",
+      "confidence": "inferred"
+    },
+    "workbench": {
+      "resume": "8f611aca-91a2-4dff-a926-7a801d06f77d",
+      "group": "BUGS",
+      "confidence": "inferred"
+    },
+    "choose snaps term": {
+      "resume": "624edfd3-b3b8-4051-bbdd-60b16180cfa1",
+      "group": "BUGS",
+      "confidence": "measured"
+    },
+    "agent wall": {
+      "resume": "5670c1a2-0601-4f51-bae3-6df8f8e4bd80",
+      "group": "BUGS",
+      "confidence": "measured"
+    },
+    "style": {
+      "resume": "ecf702f9-73e8-4961-9a3c-7435513e357f",
+      "group": "BUGS",
+      "confidence": "measured"
+    },
+    "artifacts jumble": {
+      "resume": "38d3be3e-0072-47e1-b8b8-2c0e65d0f6da",
+      "group": "BUGS",
+      "confidence": "inferred"
+    },
+    "hman message overv": {
+      "resume": "4afecf67-4a09-4193-9f39-001eb60cb16f",
+      "group": "BUGS",
+      "confidence": "measured"
+    },
+    "OVERSEER!": {
+      "resume": "d9054495-0710-44e9-99e2-557cdb408e19",
+      "group": "",
+      "confidence": "measured"
+    }
+  },
+  "556": {
+    "owner": "workbench",
+    "title": "Changing the model or the effort no longer sends your half-written prompt",
+    "do": "Type half a sentence into a pane's composer and leave it unsent. Change that pane's model, then its effort.",
+    "pass": "Your half-sentence is still sitting there unsent, and the dial changed.",
+    "note": "Before this, the dial change went out as your turn and took the draft with it."
+  },
+  "553": {
+    "owner": "",
+    "title": "The model and effort a pane is running stay readable while it is working",
+    "do": "Give a pane a long task so it goes busy, then read its model and effort gauges while the spinner turns. Check a dark palette and a light one.",
+    "pass": "Both values readable at a glance in every state, working or idle."
+  },
+  "554": {
+    "owner": "WORKBENCH RESTYLE!",
+    "title": "The response card is a strip of group tabs over one body",
+    "do": "Open any pane's workbench on a recent response. The registers — eli5, technical, evidence, next, doubts — should be tabs across one body, not a stack you scroll.",
+    "pass": "Clicking a register swaps the body and nothing else moves. Every register is a peer; none is emphasised over the others."
+  },
+  "555": {
+    "owner": "style",
+    "title": "A tab is a thing you can read, and TERM ⇄ BENCH is one switch",
+    "why": "Every tab drew the lit one's word in the selection colour, inside a border in the selection colour, on a seat mixed from it, under a bloom of it. Measured on <code>quiet-command</code>: the lit label ran at <b>1.38:1</b> against its own seat, the resting one at <b>1.08:1</b>. Two identical colours are 1.0. Three more chrome fixes rode in with it: <code>Skin::panel</code> gained its own inset because 7 of 14 bench panels were drawing their border through their own text; 42 sites moved off the palette's <code>faint</code> role; and <code>verb_button</code> stopped replacing a chip's halo with a region-scale glow.",
+    "do": "Look at the bench's shelf tabs, the strip across the top, and the rows in the left bar — lit and unlit, on <code>quiet-command</code> and one other palette. Throw the TERM/BENCH switch on a pane header. Then hunt the three riders: text touching its own panel border, washed-out secondary text, a chip whose glow spills past its edge.",
+    "pass": "You can read the word on every tab in every state. A tab at rest has a quiet bordered face rather than grey text floating beside a glowing pill. The switch is one bordered track with the lit half filled, not two pills with four vertical edges. None of the three riders present, on more than one palette.",
+    "relayed": "The contrast numbers are the building pane's, relayed. I verified its four claims about git and every one held; I have not redone its arithmetic."
+  },
+  "558": {
+    "owner": "OUTER SPINE LINES",
+    "title": "A tab can be dragged out of a group even when nothing is loose yet",
+    "why": "The UNFILED hairline is the only drop target meaning <i>out of every group</i>, and it was drawn only when something was already out there. So the first tab could never leave.",
+    "do": "Put every tab into a group so nothing is loose, then drag one tab toward the bottom of the left bar.",
+    "pass": "The hairline appears as you drag, the tab drops onto it, and it leaves its group. Then check the hairline is <b>not</b> a keyboard stop — ctrl+alt+down through the bar should never park on an empty divider."
+  },
+  "559": {
+    "owner": "choose snaps term",
+    "title": "Answering on the workbench keeps you on the workbench",
+    "why": "Your own complaint: picking an option on the bench spun the pane round to face the terminal.",
+    "do": "Open a pane's workbench on a question surface and click an option.",
+    "pass": "The pane is still showing its workbench. The answer still reaches the agent as a typed line and still lands in the actions journal. <b>Then try to leave on purpose</b> — alt+k, the TERM chip, and a scripted <code>bench off</code> should all still work, and nothing else should take you off."
+  },
+  "549": {
+    "owner": "text resize live",
+    "title": "Ctrl+wheel sizes exactly the surface under the pointer, and there are four of them",
+    "do": "Hold ctrl and turn the wheel over four places in turn — the outer chrome (menu bar, tabs, left bar, the gaps), a pane's <b>header</b>, a pane's <b>terminal body</b>, and a pane's <b>workbench</b>.",
+    "pass": "Four things resize independently and nothing else moves with them. The workbench has a dial of its own that does not drag the terminal's text size along."
+  },
+  "560": {
+    "owner": "agent wall",
+    "title": "A new agent opens on defaults you set, and the bench's dials say what they are on",
+    "why": "This is the work that was loose in the shared worktree with no branch under it at the first sweep. It now has a branch and a pull request — the hazard closed itself.",
+    "do": "Launch a new agent pane and check it opens on the model and effort you set as defaults. Then read the bench's dials.",
+    "pass": "The new pane wears your defaults, and the dials name what they are on rather than leaving you to guess."
+  },
+  "561": {
+    "owner": "Drag and drop",
+    "title": "A file dropped on the bench types its path into the line you are writing",
+    "do": "Drag a file from a file manager onto a pane's workbench while a prompt is half-written.",
+    "pass": "The path is inserted into the line you were writing, at the cursor, and nothing is sent."
+  },
+  "562": {
+    "owner": "style",
+    "title": "Marks, not words — a measured UX pass over all six palettes",
+    "do": "Nothing in the app — this pull request is a report and changes no code.",
+    "pass": "n/a. Read it if you want the argument; there is nothing to click.",
+    "docs_only": true
+  },
+  "578": {
+    "owner": "OVERSEER!",
+    "title": "The workbench keeps its history across a restart",
+    "why": "This is the bug you found: the overview read <b>\"No responses yet\"</b> after you relaunched. <code>present_surface</code> handed a surface to the live window and never wrote it to disk, while the module that owns the feature documented all three transports as landing in the same directory.",
+    "do": "Watch a pane's agent put a response on its bench. Quit the window and reopen it. Then look at the same pane's OVERVIEW. For the other half: retire a surface, restart again, and check it stays gone.",
+    "pass": "The response is still there, and the card still says <b>who</b> presented it — \"presented by this pane's agent\", not \"writer unknown\". A retired surface does not come back."
+  },
+  "576": {
+    "owner": "artifacts jumble",
+    "title": "One pane, one conversation — a bench stops showing its neighbour's work",
+    "why": "Four separate readers each asked <i>which conversation is this pane in?</i> one pane at a time, and each fell through to \"the newest <code>.jsonl</code> in that project directory\" — the same answer for every pane sharing a directory. With fourteen agents in one repository, eight benches read one conversation and each showed that agent's deliverable as its own.",
+    "do": "Look across several panes in the same repository — their benches, their tool glyphs, their deliverables. This is the one to check on the crowded tabs, not a lone pane.",
+    "pass": "Each pane shows its own agent's work. <b>A pane that cannot be placed shows nothing rather than a neighbour's</b> — that is the fix, and an empty bench here is the correct answer, not a failure."
+  },
+  "575": {
+    "owner": "button glow",
+    "title": "Every door into the savings face reads the same rollup",
+    "do": "Open the subscription usage panel and reach the savings face from each route into it — the chip, and whatever else opens it.",
+    "pass": "The same numbers however you got there."
+  },
+  "574": {
+    "owner": "human note",
+    "title": "alt+1 to alt+4 land on a workbench tab without the mouse",
+    "why": "Digits rather than letters because the obvious letters were taken — <code>alt+v</code> splits a pane and <code>alt+b</code> is readline's word-back, which reaches the agent's own prompt from the bench composer — and because digits extend on their own the day a fifth shelf appears.",
+    "do": "On a pane's workbench press alt+1, alt+2, alt+3, alt+4. Then press tab a few times. Then alt+m.",
+    "pass": "Each digit goes straight to its shelf in the strip's own order; tab still cycles; alt+m still opens the note box, now on the comments board."
+  },
+  "573": {
+    "owner": "OVERSEER!",
+    "title": "Two numbers that said nothing are gone",
+    "why": "You flagged both while testing tonight's build: a pane header printing its own grid size as <code>194×50</code> among the controls, and a response's group tab wearing a doubt count as <code>·2</code>.",
+    "do": "Look at a pane header — no grid size in the control cluster. Open a response on a bench that has doubts and look at the group tabs.",
+    "pass": "Neither number is there. <b>The doubts themselves are untouched</b> — same tab, same click — so check you can still reach them; only the badge in front of them went."
+  },
+  "571": {
+    "owner": "OVERSEER!",
+    "title": "The file drop and the launch defaults, folded past the changelog that blocked them",
+    "why": "Two finished pull requests that could not merge. Nothing in the code disagreed; the whole conflict was <code>CHANGELOG.md</code>. Folding them also surfaced a semantic conflict neither had alone — the comments shelf added a test asserting every corner goes through the skin, and the file drop's hover pill was rounded with a bare <code>px(3.)</code>.",
+    "do": "Nothing of its own — what it carries is tested as the file drop and the launch defaults above. Worth one look at a bench card's corners on a square skin, since that is the guard the fold had to satisfy.",
+    "pass": "Corners follow the skin rather than staying round when everything around them changes shape."
+  },
+  "572": {
+    "owner": "human note",
+    "title": "The plan brief carries its own correction",
+    "do": "Nothing in the app — a document change.",
+    "pass": "n/a.",
+    "docs_only": true
+  },
+  "566": {
+    "owner": "human note",
+    "title": "A pane's rail grows a comments board that the agent never reads",
+    "why": "A fourth tab on the rail, newest first, drawn in the palette's <code>human</code> role so the board reads as <b>yours</b> before a word of it is read. <code>Kind::Comment</code> is a ninth surface kind, so it inherits the file transport, the reload when a window opens, and the history cap for free. It also carries a DRY audit of the spine it had to live inside, which found one real hole.",
+    "do": "Open a pane's rail and find the fourth tab. Write a comment on it. Then open a new window and check the board is still there. Then confirm the agent in that pane has no idea you wrote it — ask it.",
+    "pass": "Your comments are there, newest first, visibly yours rather than the agent's, and they survive a window opening. The agent cannot see them. The corners of the board go through the skin rather than being drawn beside it.",
+    "note": "Its plan brief carries your own annotations in the branch — all four questions answered as recommended, with three amendments folded in."
+  },
+  "546": {
+    "owner": "workbench",
+    "title": "The tab strip opens on the group you are in",
+    "do": "Open a new window while standing in a group, and look at the top strip.",
+    "pass": "It shows the group you were in, not every tab in the session."
+  },
+  "532": {
+    "owner": "",
+    "title": "Escape stops at the bench",
+    "do": "Stand on a pane's workbench and press Escape.",
+    "pass": "Escape does what the bench needs and does not throw you back to the terminal. A place you put yourself stays yours until you move it."
+  },
+  "527": {
+    "owner": "",
+    "title": "The window's chords leave a pane on whichever face it is showing",
+    "do": "Put one pane on its workbench, leave a neighbour on its terminal, then move focus between them with the window chords.",
+    "pass": "Each pane is still showing the face you left it on."
+  },
+  "525": {
+    "owner": "",
+    "title": "The first Ctrl+Alt+arrow moves the left bar's cursor",
+    "do": "From a cold window, press ctrl+alt+down once.",
+    "pass": "The cursor moves on the first press, not the second."
+  },
+  "513": {
+    "owner": "",
+    "title": "A launch lands where you are standing",
+    "do": "Stand inside a group and launch a new agent pane.",
+    "pass": "It appears in the group you were in, not at the end of the session."
+  },
+  "518": {
+    "owner": "",
+    "title": "A td fence an agent prints becomes a surface",
+    "do": "Find a pane whose agent printed a fenced <code>td</code> block, and open that pane's workbench.",
+    "pass": "The fence is rendered as a surface on the bench rather than sitting as raw JSON in the terminal."
+  },
+  "534": {
+    "owner": "",
+    "title": "Attention on the bench is a tier a thing is handed",
+    "do": "Compare a pane holding a surface that declared <code>escalation: blocking</code> against one that declared <code>none</code>, and one that declared nothing at all.",
+    "pass": "Three visibly different states. <b>Undeclared reads as undeclared, not as none</b> — the one most likely to be wrong, because an omitted case leaves no hole."
+  },
+  "547": {
+    "owner": "",
+    "title": "A surface write no longer eats a concurrent update",
+    "do": "Have two agents write surfaces to the same pane at the same time.",
+    "pass": "Both land. Neither overwrites the other."
+  },
+  "545": {
+    "owner": "",
+    "title": "A window opens on the whole session, and a scope that was wrong is right",
+    "do": "Open a new window with no group selected.",
+    "pass": "It opens on the whole session rather than an arbitrary scope."
+  },
+  "543": {
+    "owner": "",
+    "title": "The bench answers ctrl+a, and the strip is three buttons",
+    "do": "Press ctrl+a with a pane's workbench showing. Then look at the strip's buttons.",
+    "pass": "The bench takes the chord. The strip is three buttons and reads as three buttons."
+  }
+}
