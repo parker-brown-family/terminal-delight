@@ -1083,7 +1083,6 @@ impl TerminalView {
                             sk.chip(true).child(format!("\u{2714} {submit_word}")),
                             true,
                             sk,
-                            th,
                         )
                         .relative()
                         .child(crate::benchdraw::zone(
@@ -1169,13 +1168,13 @@ impl TerminalView {
             .pt(px(2.))
             .font_family(th.font_family.clone())
             .text_size(px(sk.pt(Step::Fine)))
-            .child(div().text_color(th.faint).child(where_to))
+            .child(div().text_color(sk.ink.ink_faint).child(where_to))
             .children(previews.into_iter().map(|(chip, what)| {
                 div()
                     .flex()
                     .flex_row()
                     .gap(px(8.))
-                    .child(div().flex_none().text_color(th.faint).child(chip))
+                    .child(div().flex_none().text_color(sk.ink.ink_faint).child(chip))
                     .child(div().text_color(th.text.alpha(0.72)).child(what))
             }));
         let row = div()
@@ -1225,7 +1224,6 @@ impl TerminalView {
                                 .child(text),
                             primary,
                             sk,
-                            th,
                         )
                         .relative()
                         .child(crate::benchdraw::zone(
@@ -2036,7 +2034,7 @@ impl TerminalView {
                             .right(px(10.))
                             .top(px(8.))
                             .text_size(px(sk.pt(Step::Lead)))
-                            .text_color(th.faint)
+                            .text_color(sk.ink.ink_faint)
                             .child("\u{2715}")
                             .relative()
                             .child(crate::benchdraw::zone(
@@ -2253,7 +2251,7 @@ impl TerminalView {
                         d.child(
                             div()
                                 .text_size(px(sk.pt(Step::Small)))
-                                .text_color(th.faint)
+                                .text_color(sk.ink.ink_faint)
                                 .font_family(th.font_family.clone())
                                 .child(format!("No {}", shelf_now.empty_word())),
                         )
