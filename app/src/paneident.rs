@@ -791,6 +791,11 @@ mod tests {
     /// themselves are certain, and only the silent ones fall back.
     #[test]
     fn a_ledger_entry_binds_a_pane_in_a_crowd() {
+        // This test's pane pid is the test process itself, and it depends on
+        // that process having no agent child — the sibling test below spawns
+        // one on purpose, and `agent_under` would then hand the ledger lookup
+        // that child's pid. Same lock, so the two can never overlap.
+        let _guard = crate::testsync::forks_and_locks();
         let home = Home::new("ledger");
         let cwd = "/work/ledger";
         home.transcript(
@@ -860,6 +865,113 @@ mod tests {
             certain(&panes, &home.0).is_empty(),
             "two panes, no evidence, and one of them holding a synthesised line"
         );
+    }
+
+    /// A pane can hold two agents at once — suspend one with ctrl+Z and start
+    /// another — and then "the pane's agent" has two candidates. The terminal
+    /// already knows which one a keystroke reaches; the child walk finds the one
+    /// left behind, because it is older.
+    ///
+    /// Measured on this machine before the fix: a pane whose foreground group was
+    /// the live agent, bound to the stopped one's conversation on the bench, the
+    /// wall and the tool glyph.
+    #[test]
+    fn a_pane_with_a_suspended_agent_binds_to_the_one_you_are_typing_to() {
+        let live = 1390176;
+        let suspended = 1384250;
+        // The foreground group is the live agent: it wins outright, and the walk
+        // is never even asked.
+        assert_eq!(
+            vitals::pick_agent(Some((live, "claude".into())), || panic!("walk was asked")),
+            Some(live)
+        );
+        // No foreground group at all — a pane whose terminal cannot be read —
+        // falls back to the walk, exactly as before.
+        assert_eq!(
+            vitals::pick_agent(None, || Some(suspended)),
+            Some(suspended)
+        );
+        // A foreground process that is NOT an agent (a pager, a git command)
+        // leaves an agent running behind it, and that agent is still the pane's.
+        assert_eq!(
+            vitals::pick_agent(Some((999, "less".into())), || Some(suspended)),
+            Some(suspended)
+        );
+        // Codex counts too — the rule is about agents, not about one of them.
+        assert_eq!(
+            vitals::pick_agent(Some((live, "codex".into())), || None),
+            Some(live)
+        );
+        // And a pane with nothing under it stays unbound rather than inventing.
+        assert_eq!(
+            vitals::pick_agent(Some((999, "bash".into())), || None),
+            None
+        );
+    }
+
+    /// `pick_agent` proves the RULE; this proves the rule is plugged in.
+    ///
+    /// The first version of the test above passed with the wiring deleted,
+    /// because it called the pure function directly — the same sleeping-guard
+    /// shape as the elimination test earlier in this file. The branch itself
+    /// cannot be exercised from a unit test: a test harness has no controlling
+    /// terminal, so `tpgid` is -1 and the foreground arm is unreachable. What CAN
+    /// be asserted is that the caller still asks the kernel at all.
+    #[test]
+    fn the_agent_lookup_still_asks_the_kernel_which_process_is_in_front() {
+        let src = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/vitals.rs"),
+        )
+        .unwrap();
+        let body = src
+            .split("pub fn agent_under")
+            .nth(1)
+            .expect("agent_under still exists");
+        let code: String = body
+            .lines()
+            .take_while(|l| !l.starts_with("/// Is this the command name"))
+            .filter(|l| !l.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            code.contains("foreground_pid"),
+            "agent_under went back to guessing which of a pane's agents is its own"
+        );
+    }
+
+    /// The walk half, end to end against a real process tree: a child whose
+    /// command name is `claude` is found under its parent. Proves the comm match
+    /// and the descent, which the pure test cannot.
+    #[test]
+    fn a_real_child_named_like_an_agent_is_found_under_its_parent() {
+        // Spawning a process called `claude` changes what every other test in
+        // this file sees under its own pid — see the note on the ledger test.
+        let _guard = crate::testsync::forks_and_locks();
+        let dir = std::env::temp_dir().join(format!("td-agentunder-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let fake = dir.join("claude");
+        // `comm` comes from the executable name, so a copy of `sleep` called
+        // `claude` is indistinguishable from one to every reader here.
+        std::fs::copy("/usr/bin/sleep", &fake).unwrap();
+        let mut child = match std::process::Command::new(&fake).arg("30").spawn() {
+            Ok(c) => c,
+            Err(_) => return, // no /usr/bin/sleep: nothing to prove, nothing to fail
+        };
+        // The child's comm is set by exec, which has not necessarily happened
+        // the instant spawn returns.
+        let mut found = None;
+        for _ in 0..50 {
+            found = vitals::agent_under(std::process::id());
+            if found == Some(child.id()) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let got = found;
+        let _ = child.kill();
+        let _ = child.wait();
+        std::fs::remove_dir_all(&dir).ok();
+        assert_eq!(got, Some(child.id()), "the walk did not find the agent");
     }
 
     /// An empty project directory is not a directory full of possibilities.
