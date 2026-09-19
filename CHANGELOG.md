@@ -9,6 +9,56 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ### Fixed
 
+- **The small print on a card is small, not invisible.** Every subtitle, cost
+  line, consequence, section tag and provenance line on the workbench was drawn
+  in the palette's `faint` role. `faint` is furniture — it is what a divider is
+  mixed from — and a word painted in it lands between **1.22:1 and 1.62:1**
+  against the ground under it on the six palettes we ship. 1.0 is two identical
+  colours. Forty-two sites now take the skin's meta ink instead, and that ink
+  moves from 0.45 to 0.60 of the foreground, which is the first rung on which
+  every builtin palette clears the 4.5:1 small-text floor — the worst of them at
+  4.54:1. A new test walks all six and goes red under either of the old inks.
+  (#555)
+- **A panel holds its contents off its own border.** The inset lived at the call
+  sites, and seven of the bench's fourteen panels forgot it: an eleven-point line
+  of text sat with its descenders on a lit border and a ten-pixel corner arcing
+  through its first word. The inset is the skin's own `pad_x`/`pad_y` now and it
+  is applied in `Skin::panel`, so a region has to opt OUT rather than remember to
+  opt in. The seven that already padded are untouched — their own padding still
+  overwrites it — and the double rule still hugs the edge, because taffy resolves
+  an absolute child's insets against the border box and never subtracts padding.
+  (#555)
+- **The primary button on a card stops shouting.** APPROVE arrives as a chip,
+  which already carries a lit border, a seat and a halo, and was then given a
+  second border in a second hue plus `aglow` — the bloom sized for a whole
+  region, 22 pixels of blur at `glow × 0.45`, against the ring's 5.25 at 0.11.
+  Four times the spread at three and a half times the heat on a box the width of
+  one word, and the tube's own bloom pass multiplies whatever the chrome emits.
+  `verb_button` now adds only the size, which is what makes a button a button;
+  the strip's launch verb takes the new control-scale `Skin::halo` rather than a
+  region's. The empty workbench's launch button keeps the big bloom on purpose —
+  it is alone on the surface, with nothing for it to close over. (#555)
+- **A tab you can read.** Every tab in the window — the bench's shelf strip, the
+  strip across the top, the rows in the left bar — drew the lit one's label in
+  the selection colour, inside a border in the selection colour, on a seat mixed
+  from it, under a bloom of it: four devices, one hue, and the word was the only
+  one of the four anybody had to read. The unlit ones took the "not in effect"
+  ink, which is Faint, and came out as grey words floating beside a glowing pill.
+  Measured on the `quiet-command` palette, the lit label ran at **1.38:1**
+  against its own seat and the resting one at **1.08:1** against its face; 1.0 is
+  two identical colours. The hue now goes on the edge, the seat and the halo and
+  the label stays the foreground, at two weights; a tab at rest keeps a quiet
+  bordered face, because a control is a control whether or not you are standing
+  on it. The phosphor is dialled from 0.41 to 0.11 and the crisp spread-ring is
+  gone — on a box five pixels wider than its own word it closed over the glyphs
+  from every side. A new test walks every palette we ship and fails under either
+  of the old inks. (#555)
+- **TERM ⇄ BENCH is one switch.** It was two chips with two pixels between them,
+  each reserving its own ring, so one binary choice put four vertical edges on
+  the pane header and the lit half was a pill you could not read the word inside.
+  One bordered track now, with the half you are on filled and carrying the
+  control's whole phosphor budget, so throwing the switch moves the glow. (#555)
+
 - **Changing the model or the effort no longer sends your half-written prompt.**
   The bench composer mirrors the agent's own line editor, so a draft is already
   sitting on that line — and the dial announced its new value by putting
