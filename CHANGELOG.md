@@ -7,6 +7,19 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The tab strip opens on the group you are in.** Teaching the strip to obey
+  the scope chip left the chip's default on ALL, so a window opened with every
+  tab in the session across the top: the branch a person was actually working in
+  spread over two wrapped rows and mixed with a dozen they were not. The chip
+  now starts on the branch holding the active tab, names that branch instead of
+  reading ALL, and follows when the active tab moves — a sibling group under the
+  same project stays off the strip. The whole session is one press on the chip
+  away, and one press back. A narrowing lasts as long as the window: the scope
+  is no longer saved, because every state file written since the chip shipped
+  says ALL and no loader can tell that apart from somebody asking for it. (#546)
+
 ## [0.3.0] — 2026-09-18
 
 ### Added — the week of 15 September
